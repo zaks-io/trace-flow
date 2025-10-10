@@ -1,0 +1,26 @@
+SCHEMA >
+    `Timestamp` Int64 `json:$.Timestamp`,
+    `TraceId` String `json:$.TraceId`,
+    `SpanId` String `json:$.SpanId`,
+    `ParentSpanId` String `json:$.ParentSpanId`,
+    `TraceState` String `json:$.TraceState`,
+    `SpanName` LowCardinality(String) `json:$.SpanName`,
+    `SpanKind` LowCardinality(String) `json:$.SpanKind`,
+    `ServiceName` LowCardinality(String) `json:$.ServiceName`,
+    `ResourceAttributes` String `json:$.ResourceAttributes`,
+    `SpanAttributes` String `json:$.SpanAttributes`,
+    `Duration` Int64 `json:$.Duration`,
+    `StatusCode` LowCardinality(String) `json:$.StatusCode`,
+    `StatusMessage` String `json:$.StatusMessage`,
+    `Events.Timestamp` Array(Int64) DEFAULT [] `json:$.Events.Timestamp[:]`,
+    `Events.Name` Array(String) DEFAULT [] `json:$.Events.Name[:]`,
+    `Events.Attributes` Array(String) DEFAULT [] `json:$.Events.Attributes[:]`,
+    `Links.TraceId` Array(String) DEFAULT [] `json:$.Links.TraceId[:]`,
+    `Links.SpanId` Array(String) DEFAULT [] `json:$.Links.SpanId[:]`,
+    `Links.TraceState` Array(String) DEFAULT [] `json:$.Links.TraceState[:]`,
+    `Links.Attributes` Array(String) DEFAULT [] `json:$.Links.Attributes[:]`
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "Timestamp, TraceId, SpanId"
+ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(Timestamp / 1000000000))"
+ENGINE_TTL "toDateTime(Timestamp / 1000000000) + INTERVAL 90 DAY"
