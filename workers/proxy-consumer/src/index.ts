@@ -2,13 +2,12 @@ import type { QueueMessage } from '@observe/shared/types';
 
 interface Env {
   STORAGE: R2Bucket;
-  CLICKHOUSE_HOST: string;
-  CLICKHOUSE_USERNAME: string;
-  CLICKHOUSE_PASSWORD: string;
-  CLICKHOUSE_DATABASE?: string;
+  TINYBIRD_TOKEN: string;
+  TINYBIRD_DATASOURCE?: string;
+  TINYBIRD_HOST?: string;
 }
 
-interface ClickHouseTrace {
+interface TinybirdTrace {
   Timestamp: number;
   TraceId: string;
   SpanId: string;
@@ -51,20 +50,20 @@ export default {
 async function processMessage(data: QueueMessage, env: Env): Promise<void> {
   const traces = buildTraces(data);
 
-  await insertIntoClickHouse(traces, env);
+  await insertIntoTinybird(traces, env);
 
-  console.log('Successfully inserted traces into ClickHouse:', {
+  console.log('Successfully inserted traces into Tinybird:', {
     requestId: data.requestId,
     traceCount: traces.length,
   });
 }
 
-function buildTraces(data: QueueMessage): ClickHouseTrace[] {
-  const traces: ClickHouseTrace[] = [];
+function buildTraces(data: QueueMessage): TinybirdTrace[] {
+  const traces: TinybirdTrace[] = [];
   const traceId = data.requestId;
   const serviceName = 'llm-observability';
 
-  const rootSpan: ClickHouseTrace = {
+  const rootSpan: TinybirdTrace = {
     Timestamp: data.timing.requestStart * 1000000,
     TraceId: traceId,
     SpanId: generateSpanId(),
@@ -121,7 +120,7 @@ function buildTraces(data: QueueMessage): ClickHouseTrace[] {
 
   traces.push(rootSpan);
 
-  const requestSpan: ClickHouseTrace = {
+  const requestSpan: TinybirdTrace = {
     Timestamp: data.timing.requestStart * 1000000,
     TraceId: traceId,
     SpanId: generateSpanId(),
@@ -149,7 +148,7 @@ function buildTraces(data: QueueMessage): ClickHouseTrace[] {
   traces.push(requestSpan);
 
   if (data.timing.firstTokenReceived) {
-    const ttftSpan: ClickHouseTrace = {
+    const ttftSpan: TinybirdTrace = {
       Timestamp: data.timing.requestSent * 1000000,
       TraceId: traceId,
       SpanId: generateSpanId(),
@@ -180,7 +179,7 @@ function buildTraces(data: QueueMessage): ClickHouseTrace[] {
 
     traces.push(ttftSpan);
 
-    const streamingSpan: ClickHouseTrace = {
+    const streamingSpan: TinybirdTrace = {
       Timestamp: data.timing.firstTokenReceived * 1000000,
       TraceId: traceId,
       SpanId: generateSpanId(),
@@ -211,13 +210,10 @@ function buildTraces(data: QueueMessage): ClickHouseTrace[] {
   return traces;
 }
 
-async function insertIntoClickHouse(traces: ClickHouseTrace[], env: Env): Promise<void> {
-  const database = env.CLICKHOUSE_DATABASE ?? 'default';
-  const query = `INSERT INTO ${database}.otel_traces FORMAT JSONEachRow`;
-
-  const url = `${env.CLICKHOUSE_HOST}/?query=${encodeURIComponent(query)}`;
-
-  const auth = btoa(`${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`);
+async function insertIntoTinybird(traces: TinybirdTrace[], env: Env): Promise<void> {
+  const datasource = env.TINYBIRD_DATASOURCE ?? 'otel_traces';
+  const host = env.TINYBIRD_HOST ?? 'https://api.tinybird.co';
+  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
 
   const body = traces.map((trace) => JSON.stringify(trace)).join('\n');
 
@@ -225,14 +221,14 @@ async function insertIntoClickHouse(traces: ClickHouseTrace[], env: Env): Promis
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Basic ${auth}`,
+      Authorization: `Bearer ${env.TINYBIRD_TOKEN}`,
     },
     body,
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`ClickHouse insert failed: ${response.status} ${errorText}`);
+    throw new Error(`Tinybird insert failed: ${response.status} ${errorText}`);
   }
 }
 

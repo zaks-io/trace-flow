@@ -34,3 +34,6 @@ coverage/
 
 # Bun
 .bun/
+
+# Tinybird
+.tinyb

@@ -18,6 +18,11 @@ dead_letter_queue = "llm-requests-dlq"
 binding = "STORAGE"
 bucket_name = "observe-storage"
 
+# Tinybird configuration
+# TINYBIRD_TOKEN - Auth token with DATASOURCE:APPEND scope (set via wrangler secret)
+# TINYBIRD_DATASOURCE - Data source name (optional, defaults to "otel_traces")
+# TINYBIRD_HOST - API host (optional, defaults to "https://api.tinybird.co")
+
 [env.production]
 name = "observe-proxy-consumer"
 
