@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json, sys; data=json.load(sys.stdin); cmd=data.get('tool_input',{}).get('command','').lower().strip(); forbidden=['convex deploy', 'convex@latest deploy']; sys.exit(2 if any(cmd.startswith(f) for f in forbidden) else 0)\""
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json, sys; data=json.load(sys.stdin); path=data.get('tool_input',{}).get('file_path',''); sensitive_patterns=['bun.lock', 'package-lock.json', '.git/', '.credentials', 'secret', 'credential']; sys.exit(2 if any(p in path.lower() for p in sensitive_patterns) else 0)\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | { read file_path; if echo \"$file_path\" | grep -qE '\\.(ts|tsx|js|jsx|md|json|css|html|yml|yaml)$'; then cd \"$(dirname \"$file_path\")\" && bunx prettier --write \"$(basename \"$file_path\")\"; fi; }"
+          }
+        ]
+      }
+    ]
+  }
+}
