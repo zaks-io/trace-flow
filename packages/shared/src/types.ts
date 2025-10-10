@@ -14,10 +14,35 @@ export interface LLMResponse {
   latency: number;
 }
 
+export interface LLMTiming {
+  requestStart: number;
+  requestSent: number;
+  firstTokenReceived?: number;
+  responseComplete: number;
+}
+
+export interface LLMTokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  cached?: boolean;
+}
+
+export interface LLMError {
+  type?: string;
+  message?: string;
+  code?: string;
+}
+
 export interface QueueMessage {
   requestId: string;
   request: LLMRequest;
   response: LLMResponse;
   requestBodyKey: string;
   responseBodyKey: string;
+  timing: LLMTiming;
+  tokens?: LLMTokenUsage;
+  error?: LLMError;
+  traceId?: string;
+  parentSpanId?: string;
 }

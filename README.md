@@ -158,25 +158,17 @@ bun run deploy
 
 ## Configuration
 
-### Cloudflare Resources
+### Cloudflare Resources & OpenTelemetry Setup
 
-Before deploying, you need to create and configure:
+Before deploying, you need to create Cloudflare Queues and configure OpenTelemetry for ClickStack.
 
-1. **Queue** - For async processing
-2. **R2 Bucket** - For storing request/response bodies
-3. **KV Namespace** (optional) - For caching
+**See [SETUP.md](./SETUP.md) for detailed setup instructions.**
 
-Update the `wrangler.toml` files in each worker with your resource IDs.
+Quick overview:
 
-### Environment Variables
-
-For the proxy-consumer worker, configure ClickHouse credentials:
-
-```bash
-wrangler secret put CLICKHOUSE_HOST
-wrangler secret put CLICKHOUSE_USER
-wrangler secret put CLICKHOUSE_PASSWORD
-```
+1. **Queue** - Create `llm-requests` and `llm-requests-dlq` queues
+2. **R2 Bucket** - For storing request/response bodies (already configured in wrangler.toml)
+3. **ClickStack Secrets** - Configure OTLP endpoint and API key for observability
 
 ## Tech Stack
 

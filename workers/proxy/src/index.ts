@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { generateId, getCurrentTimestamp } from '@observe/shared/utils';
-import type { QueueMessage } from '@observe/shared/types';
+import type { QueueMessage, LLMTiming, LLMTokenUsage, LLMError } from '@observe/shared/types';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessage>;
@@ -14,12 +14,12 @@ app.use('*', cors());
 
 app.all('*', async (c) => {
   const requestId = generateId();
-  const startTime = getCurrentTimestamp();
+  const requestStart = getCurrentTimestamp();
   const targetUrl = c.req.header('X-Proxy-Target');
 
   console.log('Incoming Request:', {
     requestId,
-    timestamp: startTime,
+    timestamp: requestStart,
     method: c.req.method,
     url: c.req.url,
     targetUrl,
@@ -43,14 +43,16 @@ app.all('*', async (c) => {
   headers.delete('X-Proxy-Target');
   headers.delete('host');
 
+  const requestSent = getCurrentTimestamp();
   const response = await fetch(targetUrl, {
     method: c.req.method,
     headers,
     body: streamToProxy,
   });
 
-  const endTime = getCurrentTimestamp();
-  const latency = endTime - startTime;
+  let firstTokenReceived: number | undefined;
+  const responseComplete = getCurrentTimestamp();
+  const latency = responseComplete - requestStart;
 
   console.log('Response:', {
     requestId,
@@ -60,8 +62,13 @@ app.all('*', async (c) => {
   });
 
   const responseCapturedChunks: Uint8Array[] = [];
+  let isFirstChunk = true;
   const { readable, writable } = new TransformStream<Uint8Array>({
     transform(chunk, controller) {
+      if (isFirstChunk) {
+        firstTokenReceived = getCurrentTimestamp();
+        isFirstChunk = false;
+      }
       responseCapturedChunks.push(chunk);
       controller.enqueue(chunk);
     },
@@ -78,6 +85,22 @@ app.all('*', async (c) => {
         new Uint8Array(responseCapturedChunks.flatMap((chunk) => Array.from(chunk))),
       );
 
+      const timing: LLMTiming = {
+        requestStart,
+        requestSent,
+        firstTokenReceived,
+        responseComplete: getCurrentTimestamp(),
+      };
+
+      let tokens: LLMTokenUsage | undefined;
+      let error: LLMError | undefined;
+
+      if (response.status >= 400) {
+        error = parseError(responseBody, response.status);
+      } else {
+        tokens = parseTokenUsage(responseBody);
+      }
+
       const requestBodyKey = `requests/${requestId}`;
       const responseBodyKey = `responses/${requestId}`;
 
@@ -93,17 +116,20 @@ app.all('*', async (c) => {
           provider: 'unknown',
           model: 'unknown',
           messages: [],
-          timestamp: startTime,
+          timestamp: requestStart,
         },
         response: {
           id: requestId,
           provider: 'unknown',
           status: response.status,
-          timestamp: endTime,
+          timestamp: timing.responseComplete,
           latency,
         },
         requestBodyKey,
         responseBodyKey,
+        timing,
+        tokens,
+        error,
       };
 
       await c.env.REQUEST_QUEUE.send(queueMessage);
@@ -111,6 +137,8 @@ app.all('*', async (c) => {
         requestId,
         requestBodyKey,
         responseBodyKey,
+        tokens,
+        error,
       });
     })(),
   );
@@ -137,6 +165,78 @@ async function captureStream(stream: ReadableStream | null): Promise<string> {
   }
 
   return new TextDecoder().decode(new Uint8Array(chunks.flatMap((chunk) => Array.from(chunk))));
+}
+
+function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined {
+  try {
+    const parsed = JSON.parse(responseBody) as unknown;
+
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'usage' in parsed &&
+      parsed.usage &&
+      typeof parsed.usage === 'object'
+    ) {
+      const usage = parsed.usage as Record<string, unknown>;
+
+      let cached: boolean | undefined;
+      if (usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object') {
+        const details = usage.prompt_tokens_details as Record<string, unknown>;
+        if ('cached_tokens' in details && typeof details.cached_tokens === 'number') {
+          cached = details.cached_tokens > 0;
+        }
+      }
+
+      return {
+        promptTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : undefined,
+        completionTokens:
+          typeof usage.completion_tokens === 'number' ? usage.completion_tokens : undefined,
+        totalTokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : undefined,
+        cached,
+      };
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function parseError(responseBody: string, statusCode: number): LLMError {
+  try {
+    const parsed = JSON.parse(responseBody) as unknown;
+
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      const errorObj =
+        obj.error && typeof obj.error === 'object' ? (obj.error as Record<string, unknown>) : null;
+
+      return {
+        type:
+          (errorObj && typeof errorObj.type === 'string' ? errorObj.type : null) ??
+          (typeof obj.type === 'string' ? obj.type : null) ??
+          'http_error',
+        message:
+          (errorObj && typeof errorObj.message === 'string' ? errorObj.message : null) ??
+          (typeof obj.message === 'string' ? obj.message : null) ??
+          `HTTP ${statusCode}`,
+        code:
+          (errorObj && typeof errorObj.code === 'string' ? errorObj.code : null) ??
+          (typeof obj.code === 'string' ? obj.code : null) ??
+          undefined,
+      };
+    }
+  } catch {
+    return {
+      type: 'http_error',
+      message: `HTTP ${statusCode}`,
+    };
+  }
+
+  return {
+    type: 'http_error',
+    message: `HTTP ${statusCode}`,
+  };
 }
 
 export default app;

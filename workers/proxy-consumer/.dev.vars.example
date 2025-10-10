@@ -1,0 +1,11 @@
+# Copy this file to .dev.vars and fill in your values for local development
+# See SETUP.md for more information
+
+# ClickStack OTLP endpoint (usually http://localhost:4318/v1/traces for local development)
+CLICKSTACK_OTLP_ENDPOINT=http://localhost:4318/v1/traces
+
+# Your ClickStack API key (found in HyperDX app under "Team Settings → API Keys")
+CLICKSTACK_API_KEY=your-api-key-here
+
+# Optional: Custom service name (defaults to "observe-proxy-consumer")
+OTEL_SERVICE_NAME=observe-proxy-consumer-dev

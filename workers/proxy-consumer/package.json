@@ -11,7 +11,9 @@
     "lint": "eslint src"
   },
   "dependencies": {
-    "@observe/shared": "workspace:*"
+    "@microlabs/otel-cf-workers": "^1.0.0-rc.52",
+    "@observe/shared": "workspace:*",
+    "@opentelemetry/api": "^1.9.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251008.0",

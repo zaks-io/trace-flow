@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LLM observability platform built on Cloudflare Workers. Three workers form an async pipeline: a streaming proxy captures LLM requests/responses and enqueues them, a consumer processes the queue and writes to ClickHouse, and a web dashboard displays analytics.
+LLM observability platform built on Cloudflare Workers. Three workers form an async pipeline: a streaming proxy captures LLM requests/responses and enqueues them, a consumer processes the queue and sends OpenTelemetry traces to ClickStack, and a web dashboard displays analytics.
 
 ## Architecture
 
@@ -15,7 +15,7 @@ LLM observability platform built on Cloudflare Workers. Three workers form an as
 3. Captures request/response bodies during streaming using tee() and TransformStream
 4. Stores bodies in R2 asynchronously (via `c.executionCtx.waitUntil`)
 5. Sends metadata to Cloudflare Queue with R2 keys
-6. Consumer worker processes queue batches and writes to ClickHouse
+6. Consumer worker processes queue batches and sends OpenTelemetry traces to ClickStack
 
 **Key Implementation Details:**
 
@@ -85,8 +85,10 @@ curl -X POST http://localhost:8787 \
 
 **Consumer** (`workers/proxy-consumer/wrangler.toml`):
 
-- Queue consumer config (commented out - needs manual setup)
-- Secrets: `CLICKHOUSE_HOST`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`
+- Queue consumer config: `llm-requests` queue with max_batch_size=10
+- R2 bucket binding: `STORAGE` → `observe-storage` bucket
+- Secrets: `CLICKSTACK_OTLP_ENDPOINT`, `CLICKSTACK_API_KEY`, `OTEL_SERVICE_NAME`
+- Uses OpenTelemetry to send traces to ClickStack
 
 **Web** (`workers/web/wrangler.toml`):
 
@@ -97,19 +99,24 @@ curl -X POST http://localhost:8787 \
 ```bash
 # Set secrets for proxy-consumer
 cd workers/proxy-consumer
-wrangler secret put CLICKHOUSE_HOST
-wrangler secret put CLICKHOUSE_USER
-wrangler secret put CLICKHOUSE_PASSWORD
+wrangler secret put CLICKSTACK_OTLP_ENDPOINT
+wrangler secret put CLICKSTACK_API_KEY
+wrangler secret put OTEL_SERVICE_NAME  # Optional
 ```
 
 ## Queue Setup
 
-The queue consumer configuration is commented out in `wrangler.toml` because queues must be created via the Cloudflare dashboard first:
+Queues are configured in `workers/proxy-consumer/wrangler.toml`. To set them up:
 
-1. Create queue named `llm-requests` in Cloudflare dashboard
-2. Create dead letter queue `llm-requests-dlq`
-3. Uncomment queue consumer config in `workers/proxy-consumer/wrangler.toml`
-4. Deploy consumer worker
+1. Create queues using wrangler CLI:
+   ```bash
+   npx wrangler queues create llm-requests
+   npx wrangler queues create llm-requests-dlq
+   ```
+2. Configure ClickStack secrets (see SETUP.md for details)
+3. Deploy consumer worker
+
+**See [SETUP.md](./SETUP.md) for complete setup instructions.**
 
 ## Deployment
 
@@ -124,3 +131,5 @@ Manual deployment: `cd workers/<name> && wrangler deploy`
 - **Error handling**: Queue consumer must call `message.ack()` after processing
 - **Type safety**: Import shared types from `@observe/shared/types` for queue messages
 - **R2 keys**: Use consistent naming: `requests/${requestId}` and `responses/${requestId}`
+- **OpenTelemetry**: Consumer worker uses `@microlabs/otel-cf-workers` to send traces to ClickStack
+- **NodeJS compatibility**: Consumer worker requires `nodejs_compat` flag for OpenTelemetry
