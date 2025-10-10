@@ -10,6 +10,31 @@ This monorepo contains three Cloudflare Workers:
 - **Proxy Consumer** (`workers/proxy-consumer`) - Queue consumer that writes analytics to ClickHouse and stores bodies in R2
 - **Web** (`workers/web`) - React/Vite analytics dashboard
 
+### How It Works
+
+When a client sends a request to your LLM API endpoint, the Cloudflare Worker acts as an edge proxy. The Worker receives the call, extracts any tracing headers (such as those for distributed tracing or observability), and immediately begins streaming the response from the upstream LLM provider back to the user. This streaming approach supports low-latency, token-by-token delivery as responses are generated.
+
+While streaming the response, the Worker accumulates the necessary observability metadata, such as timing, request/response bodies, and trace context. Once the response is fully streamed, the Worker asynchronously sends this metadata and trace data to a Cloudflare Queue. This ensures that the user-facing proxy remains fast and that any downstream processing does not block the user experience.
+
+The Cloudflare Queue acts as a buffer and decouples the ingestion workload from the rest of the pipeline. A consumer Worker processes messages from the queue, handling retries and error cases as needed. This consumer is responsible for writing the finalized trace, request, and response metadata into ClickHouse for long-term storage and analytics.
+
+### Key Features
+
+- **Low-latency user experience** - Streaming responses are delivered immediately without blocking on observability data processing
+- **High throughput** - Queue-based architecture handles traffic spikes and scales automatically
+- **Reliable delivery** - Built-in retry logic and error handling ensure no data loss
+- **Distributed tracing support** - Captures and propagates trace context for end-to-end observability
+- **Async body storage** - Request/response bodies are stored in R2 asynchronously to minimize latency
+
+### Additional Components
+
+The platform includes several production-ready capabilities:
+
+- **Error handling and retry logic** - Queue consumer implements robust error handling with automatic retries
+- **Authentication** - Secure key management and authenticated gateway features protect your LLM endpoints
+- **Monitoring** - Built-in observability for Workers and Queues ensures production reliability
+- **Data retention and privacy** - Configurable policies for observability data lifecycle management
+
 ## Structure
 
 ```
