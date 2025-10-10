@@ -16,7 +16,7 @@ export default {
   },
 };
 
-async function processMessage(data: QueueMessage, env: Env): Promise<void> {
+async function processMessage(_data: QueueMessage, _env: Env): Promise<void> {
   // await storeInR2(data, env);
   // await writeToClickHouse(data, env);
 }

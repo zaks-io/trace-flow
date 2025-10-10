@@ -2,7 +2,7 @@ import { ConvexProvider, ConvexReactClient } from 'convex/react';
 import { useQuery } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 
-const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
+const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
 function Dashboard() {
   const apiKeys = useQuery(api.apiKeys.list);
