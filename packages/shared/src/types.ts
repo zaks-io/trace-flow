@@ -18,6 +18,6 @@ export interface QueueMessage {
   requestId: string;
   request: LLMRequest;
   response: LLMResponse;
-  requestBody: string;
-  responseBody: string;
+  requestBodyKey: string;
+  responseBodyKey: string;
 }

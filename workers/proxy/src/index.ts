@@ -78,6 +78,14 @@ app.all('*', async (c) => {
         new Uint8Array(responseCapturedChunks.flatMap((chunk) => Array.from(chunk))),
       );
 
+      const requestBodyKey = `requests/${requestId}`;
+      const responseBodyKey = `responses/${requestId}`;
+
+      await Promise.all([
+        c.env.STORAGE.put(requestBodyKey, requestBody),
+        c.env.STORAGE.put(responseBodyKey, responseBody),
+      ]);
+
       const queueMessage: QueueMessage = {
         requestId,
         request: {
@@ -94,15 +102,15 @@ app.all('*', async (c) => {
           timestamp: endTime,
           latency,
         },
-        requestBody,
-        responseBody,
+        requestBodyKey,
+        responseBodyKey,
       };
 
       await c.env.REQUEST_QUEUE.send(queueMessage);
       console.log('Queued capture:', {
         requestId,
-        requestBodyLength: requestBody.length,
-        responseBodyLength: responseBody.length,
+        requestBodyKey,
+        responseBodyKey,
       });
     })(),
   );
