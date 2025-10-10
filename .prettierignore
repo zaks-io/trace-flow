@@ -3,6 +3,7 @@ dist/
 .wrangler/
 .turbo/
 coverage/
+_generated/
 *.tsbuildinfo
 package-lock.json
 yarn.lock
