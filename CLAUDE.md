@@ -118,6 +118,145 @@ Queues are configured in `workers/proxy-consumer/wrangler.toml`. To set them up:
 
 **See [SETUP.md](./SETUP.md) for complete setup instructions.**
 
+## Tinybird (ClickHouse Database)
+
+Project uses Tinybird as the managed ClickHouse database for trace storage and analytics.
+
+### Development Workflow
+
+```bash
+# Start local development environment (uses Docker)
+tb local start
+
+# Develop with auto-reload
+tb dev
+
+# Deploy to cloud
+tb --cloud deploy
+
+# Switch between local and cloud
+tb workspace ls
+```
+
+### Datasource Management
+
+```bash
+# Analyze file before creating datasource (prints schema)
+tb datasource analyze telemetry.ndjson
+
+# Create datasource interactively
+tb datasource create
+
+# Create from file
+tb datasource create --file telemetry.ndjson --name llm_traces
+
+# Create from URL
+tb datasource create --url https://example.com/data.ndjson --name llm_traces
+
+# Append data to existing datasource
+tb datasource append llm_traces --file new_data.ndjson
+
+# Export data
+tb datasource export llm_traces --format ndjson --rows 1000
+
+# View data
+tb datasource data llm_traces --limit 100
+
+# Delete rows with condition
+tb datasource delete llm_traces --sql-condition "timestamp < now() - interval 30 day" --yes
+```
+
+### Datasource File Structure
+
+Datasources are defined in `.datasource` files in the `datasources/` directory:
+
+```
+SCHEMA >
+    `timestamp` DateTime64(3) `json:$.timestamp`,
+    `trace_id` String `json:$.traceId`,
+    `span_id` String `json:$.spanId`,
+    `service` LowCardinality(String) `json:$.service`,
+    `model` LowCardinality(String) `json:$.model`,
+    `duration_ms` UInt32 `json:$.duration`,
+    `status` LowCardinality(String) `json:$.status`
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "timestamp, trace_id, span_id"
+ENGINE_PARTITION_KEY "toYYYYMM(timestamp)"
+ENGINE_TTL "timestamp + INTERVAL 90 DAY"
+```
+
+### Schema Design Best Practices
+
+**Column Types:**
+
+- Use `LowCardinality(String)` for enums and short strings with low cardinality (< 10k unique values)
+- Use `DateTime64(3)` for millisecond timestamps
+- Use smallest types that fit (UInt32 vs UInt64, Decimal(18,2) for money)
+- Avoid `Nullable` columns (creates extra UInt8 column, degrades performance)
+- Store complex JSON as String and parse with JSONExtract functions at query time
+
+**Sorting Keys:**
+
+- Put highest-cardinality filter columns first
+- Order by query access patterns (e.g., `timestamp, trace_id, span_id`)
+- Sorting key design can impact query performance 10-100x
+
+**Partition Keys:**
+
+- Use time-based partitions for large tables: `toYYYYMM(timestamp)` or `toYYYYMMDD(timestamp)`
+- Keeps partition count manageable (< 1000 partitions)
+
+**TTL (Time To Live):**
+
+- Automatically delete old data: `timestamp + INTERVAL 90 DAY`
+- Reduces storage costs and maintains performance
+
+**JSONPath Syntax:**
+
+- Supports nested objects: `json:$.user.id`
+- Supports arrays (first level only): `json:$.tags[0]`
+- For complex nested arrays, store as String and parse at query time
+
+### Query Optimization Patterns
+
+1. **Filter on sorting key columns first** for best performance
+2. **Use PREWHERE** for high-selectivity filters on small columns (not Strings/Arrays)
+3. **Run filters before JOINs** - use IN operations to reduce data first
+4. **Denormalize over joins** - ClickHouse favors wide tables with pre-aggregated metrics
+5. **Save GROUP BY and complex operations for last**
+
+### Schema Migration
+
+**Zero-downtime migrations** using FORWARD_QUERY instruction:
+
+```
+# In .datasource file when schema changes
+FORWARD_QUERY "
+  SELECT
+    timestamp,
+    old_column as new_column_name,
+    'default_value' as newly_added_column
+  FROM original_table
+"
+```
+
+Tinybird automatically transforms data from live schema to new schema during deployment.
+
+### Error Handling
+
+- Every datasource has a **quarantine datasource** that stores rows not matching schema
+- Quarantine table name: `<datasource_name>_quarantine`
+- Check quarantine after ingestion to catch schema issues
+- Ingest never fails due to bad rows
+
+### Working with datasources/
+
+- Store all `.datasource` files in `datasources/` directory
+- Version control these files for schema history
+- Use `tb build` to validate before deployment
+- Use `--allow-destructive-operations` flag when deleting datasources
+
 ## Deployment
 
 Project uses Cloudflare's Git integration for automatic deployments on push to `main`. Each worker is configured as a separate application in Cloudflare dashboard with its own root directory and build command.
