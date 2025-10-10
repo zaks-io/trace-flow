@@ -15,7 +15,8 @@
     "@observe/shared": "workspace:*",
     "convex": "^1.27.5",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "wouter": "^3.7.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.13.3",
