@@ -70,6 +70,30 @@ curl -X POST http://localhost:8787 \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
 ```
 
+**Testing full pipeline locally (proxy + consumer + Tinybird):**
+
+```bash
+# Ensure Tinybird Local is running
+tb local start
+
+# Start both workers together (required for queue consumer to process messages)
+wrangler dev \
+  -c ./workers/proxy/wrangler.toml \
+  -c ./workers/proxy-consumer/wrangler.toml \
+  --persist-to .wrangler/state
+
+# Send test request
+curl -X POST http://localhost:8787 \
+  -H "X-Proxy-Target: https://chat.zaks.io/api/health" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
+
+# Verify traces in Tinybird Local
+tb datasource data otel_traces --limit 10
+```
+
+**Important:** Queue consumers only work in local development when both producer and consumer workers are started together using multiple `-c` flags in a single `wrangler dev` command. Running them separately will not connect the queue.
+
 ## Monorepo Structure
 
 - **Turborepo** manages builds with dependency graph
@@ -89,21 +113,32 @@ curl -X POST http://localhost:8787 \
 
 - Queue consumer config: `llm-requests` queue with max_batch_size=10
 - R2 bucket binding: `STORAGE` → `observe-storage` bucket
-- Secrets: `CLICKSTACK_OTLP_ENDPOINT`, `CLICKSTACK_API_KEY`, `OTEL_SERVICE_NAME`
-- Uses OpenTelemetry to send traces to ClickStack
+- Environment variables (cloud): `TINYBIRD_TOKEN`, `TINYBIRD_DATASOURCE`, `TINYBIRD_HOST`
+- Local dev: Create `workers/proxy-consumer/.dev.vars` with Tinybird Local credentials
 
 **Web** (`workers/web/wrangler.toml`):
 
 - Pages project with `dist` output directory
 
-## Managing Secrets
+## Managing Secrets and Environment Variables
+
+**For local development (Tinybird Local):**
+
+Create `workers/proxy-consumer/.dev.vars`:
 
 ```bash
-# Set secrets for proxy-consumer
+TINYBIRD_HOST=http://localhost:7181
+TINYBIRD_TOKEN=<token from tb local status>
+TINYBIRD_DATASOURCE=otel_traces
+```
+
+**For production (Tinybird Cloud):**
+
+```bash
 cd workers/proxy-consumer
-wrangler secret put CLICKSTACK_OTLP_ENDPOINT
-wrangler secret put CLICKSTACK_API_KEY
-wrangler secret put OTEL_SERVICE_NAME  # Optional
+wrangler secret put TINYBIRD_TOKEN
+wrangler secret put TINYBIRD_HOST  # e.g., https://api.us-west-2.aws.tinybird.co
+wrangler secret put TINYBIRD_DATASOURCE  # Optional, defaults to otel_traces
 ```
 
 ## Queue Setup
