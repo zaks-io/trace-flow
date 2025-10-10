@@ -27,13 +27,15 @@ LLM observability platform built on Cloudflare Workers. Three workers form an as
 
 ## Development Commands
 
+**IMPORTANT**: Use globally installed `wrangler` command directly, not `bunx wrangler` or `npx wrangler`. Bun has compatibility issues with wrangler that cause `wrangler dev` to hang. Install wrangler globally: `npm install -g wrangler`
+
 **Using wrangler CLI (preferred for Cloudflare Workers):**
 
 ```bash
-# Run all workers in parallel
+# Run all workers in parallel (builds only, use wrangler dev for individual workers)
 bun run dev
 
-# Run specific worker
+# Run specific worker (use global wrangler)
 cd workers/proxy && wrangler dev
 cd workers/proxy-consumer && wrangler dev
 cd workers/web && wrangler dev
@@ -41,7 +43,7 @@ cd workers/web && wrangler dev
 # Build all workers
 bun run build
 
-# Deploy specific worker
+# Deploy specific worker (use global wrangler)
 cd workers/proxy && wrangler deploy
 cd workers/proxy-consumer && wrangler deploy
 
@@ -110,8 +112,8 @@ Queues are configured in `workers/proxy-consumer/wrangler.toml`. To set them up:
 
 1. Create queues using wrangler CLI:
    ```bash
-   npx wrangler queues create llm-requests
-   npx wrangler queues create llm-requests-dlq
+   wrangler queues create llm-requests
+   wrangler queues create llm-requests-dlq
    ```
 2. Configure ClickStack secrets (see SETUP.md for details)
 3. Deploy consumer worker
@@ -261,7 +263,7 @@ Tinybird automatically transforms data from live schema to new schema during dep
 
 Project uses Cloudflare's Git integration for automatic deployments on push to `main`. Each worker is configured as a separate application in Cloudflare dashboard with its own root directory and build command.
 
-Manual deployment: `cd workers/<name> && wrangler deploy`
+Manual deployment (use global wrangler): `cd workers/<name> && wrangler deploy`
 
 ## Important Patterns
 
