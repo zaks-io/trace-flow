@@ -1,0 +1,25 @@
+name = "observe-proxy-consumer"
+main = "src/index.ts"
+compatibility_date = "2024-11-27"
+
+[observability]
+enabled = true
+
+# Queue consumer configuration
+# [[queues.consumers]]
+# queue = "llm-requests"
+# max_batch_size = 10
+# max_batch_timeout = 30
+# max_retries = 3
+# dead_letter_queue = "llm-requests-dlq"
+
+# R2 bucket for storing request/response bodies
+# [[r2_buckets]]
+# binding = "STORAGE"
+# bucket_name = "observe-storage"
+
+[env.production]
+name = "observe-proxy-consumer"
+
+[env.staging]
+name = "observe-proxy-consumer-staging"

@@ -1,0 +1,29 @@
+{
+  "name": "@observe/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "wrangler pages dev",
+    "deploy": "bun run build && wrangler pages deploy ./dist",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@observe/shared": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.13.3",
+    "@cloudflare/workers-types": "^4.20251008.0",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
+    "wrangler": "^4.42.1"
+  }
+}

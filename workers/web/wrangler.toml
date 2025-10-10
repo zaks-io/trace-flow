@@ -1,0 +1,12 @@
+name = "observe-web"
+compatibility_date = "2024-11-27"
+pages_build_output_dir = "./dist"
+
+[observability]
+enabled = true
+
+[env.production]
+name = "observe-web"
+
+[env.staging]
+name = "observe-web-staging"

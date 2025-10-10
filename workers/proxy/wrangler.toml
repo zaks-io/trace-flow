@@ -1,0 +1,27 @@
+name = "observe-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-11-27"
+
+[observability]
+enabled = true
+
+# KV Namespace for caching (optional)
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = ""
+
+# Queue for async processing
+# [[queues.producers]]
+# queue = "llm-requests"
+# binding = "REQUEST_QUEUE"
+
+# R2 bucket for storing request/response bodies
+# [[r2_buckets]]
+# binding = "STORAGE"
+# bucket_name = "observe-storage"
+
+[env.production]
+name = "observe-proxy"
+
+[env.staging]
+name = "observe-proxy-staging"
