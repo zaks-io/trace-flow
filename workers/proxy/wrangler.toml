@@ -11,14 +11,14 @@ enabled = true
 # id = ""
 
 # Queue for async processing
-# [[queues.producers]]
-# queue = "llm-requests"
-# binding = "REQUEST_QUEUE"
+[[queues.producers]]
+queue = "llm-requests"
+binding = "REQUEST_QUEUE"
 
 # R2 bucket for storing request/response bodies
-# [[r2_buckets]]
-# binding = "STORAGE"
-# bucket_name = "observe-storage"
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage"
 
 [env.production]
 name = "observe-proxy"
