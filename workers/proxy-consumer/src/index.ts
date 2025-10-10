@@ -1,151 +1,245 @@
-import { trace, context, SpanStatusCode } from '@opentelemetry/api';
-import { instrument } from '@microlabs/otel-cf-workers';
-import type { ResolveConfigFn } from '@microlabs/otel-cf-workers';
 import type { QueueMessage } from '@observe/shared/types';
 
 interface Env {
   STORAGE: R2Bucket;
-  CLICKSTACK_OTLP_ENDPOINT?: string;
-  CLICKSTACK_API_KEY?: string;
-  OTEL_SERVICE_NAME?: string;
+  CLICKHOUSE_HOST: string;
+  CLICKHOUSE_USERNAME: string;
+  CLICKHOUSE_PASSWORD: string;
+  CLICKHOUSE_DATABASE?: string;
 }
 
-const handler = {
-  queue(batch: MessageBatch<QueueMessage>, env: Env): void {
+interface ClickHouseTrace {
+  Timestamp: number;
+  TraceId: string;
+  SpanId: string;
+  ParentSpanId: string;
+  TraceState: string;
+  SpanName: string;
+  SpanKind: string;
+  ServiceName: string;
+  ResourceAttributes: Record<string, string>;
+  SpanAttributes: Record<string, string>;
+  Duration: number;
+  StatusCode: string;
+  StatusMessage: string;
+  'Events.Timestamp': number[];
+  'Events.Name': string[];
+  'Events.Attributes': Record<string, string>[];
+  'Links.TraceId': string[];
+  'Links.SpanId': string[];
+  'Links.TraceState': string[];
+  'Links.Attributes': Record<string, string>[];
+}
+
+export default {
+  async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     for (const message of batch.messages) {
-      processMessage(message.body, env);
-      message.ack();
+      try {
+        await processMessage(message.body, env);
+        message.ack();
+      } catch (error) {
+        console.error('Failed to process message:', {
+          requestId: message.body.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        message.retry();
+      }
     }
   },
 };
 
-const config: ResolveConfigFn = (env: Env) => {
-  const headers: Record<string, string> = {};
-  if (env.CLICKSTACK_API_KEY) {
-    headers.authorization = env.CLICKSTACK_API_KEY;
-  }
+async function processMessage(data: QueueMessage, env: Env): Promise<void> {
+  const traces = buildTraces(data);
 
-  return {
-    exporter: {
-      url: env.CLICKSTACK_OTLP_ENDPOINT ?? 'http://localhost:4318/v1/traces',
-      headers,
-    },
-    service: {
-      name: env.OTEL_SERVICE_NAME ?? 'llm-observability',
-    },
-  };
-};
+  await insertIntoClickHouse(traces, env);
 
-export default instrument(handler, config);
-
-function processMessage(data: QueueMessage, _env: Env): void {
-  const tracer = trace.getTracer('llm-observability');
-
-  const rootSpan = tracer.startSpan('llm.request', {
-    startTime: data.timing.requestStart,
+  console.log('Successfully inserted traces into ClickHouse:', {
+    requestId: data.requestId,
+    traceCount: traces.length,
   });
+}
 
-  const rootContext = trace.setSpan(context.active(), rootSpan);
+function buildTraces(data: QueueMessage): ClickHouseTrace[] {
+  const traces: ClickHouseTrace[] = [];
+  const traceId = data.requestId;
+  const serviceName = 'llm-observability';
 
-  rootSpan.setAttribute('llm.request_id', data.requestId);
-  rootSpan.setAttribute('llm.provider', data.request.provider);
-  rootSpan.setAttribute('llm.model', data.request.model);
-  rootSpan.setAttribute('http.status_code', data.response.status);
+  const rootSpan: ClickHouseTrace = {
+    Timestamp: data.timing.requestStart * 1000000,
+    TraceId: traceId,
+    SpanId: generateSpanId(),
+    ParentSpanId: '',
+    TraceState: '',
+    SpanName: 'llm.request',
+    SpanKind: 'SPAN_KIND_CLIENT',
+    ServiceName: serviceName,
+    ResourceAttributes: {
+      'service.name': serviceName,
+    },
+    SpanAttributes: {
+      'llm.request_id': data.requestId,
+      'llm.provider': data.request.provider,
+      'llm.model': data.request.model,
+      'llm.target_url': data.targetUrl,
+      'http.status_code': String(data.response.status),
+    },
+    Duration: (data.timing.responseComplete - data.timing.requestStart) * 1000000,
+    StatusCode: data.error ? 'STATUS_CODE_ERROR' : 'STATUS_CODE_OK',
+    StatusMessage: data.error?.message ?? '',
+    'Events.Timestamp': [],
+    'Events.Name': [],
+    'Events.Attributes': [],
+    'Links.TraceId': [],
+    'Links.SpanId': [],
+    'Links.TraceState': [],
+    'Links.Attributes': [],
+  };
 
   if (data.tokens) {
     if (data.tokens.promptTokens) {
-      rootSpan.setAttribute('llm.tokens.prompt', data.tokens.promptTokens);
+      rootSpan.SpanAttributes['llm.tokens.prompt'] = String(data.tokens.promptTokens);
     }
     if (data.tokens.completionTokens) {
-      rootSpan.setAttribute('llm.tokens.completion', data.tokens.completionTokens);
+      rootSpan.SpanAttributes['llm.tokens.completion'] = String(data.tokens.completionTokens);
     }
     if (data.tokens.totalTokens) {
-      rootSpan.setAttribute('llm.tokens.total', data.tokens.totalTokens);
+      rootSpan.SpanAttributes['llm.tokens.total'] = String(data.tokens.totalTokens);
     }
     if (data.tokens.cached !== undefined) {
-      rootSpan.setAttribute('llm.cached', data.tokens.cached);
+      rootSpan.SpanAttributes['llm.cached'] = String(data.tokens.cached);
     }
   }
 
   if (data.error) {
-    rootSpan.setStatus({ code: SpanStatusCode.ERROR, message: data.error.message });
     if (data.error.type) {
-      rootSpan.setAttribute('error.type', data.error.type);
-    }
-    if (data.error.message) {
-      rootSpan.setAttribute('error.message', data.error.message);
+      rootSpan.SpanAttributes['error.type'] = data.error.type;
     }
     if (data.error.code) {
-      rootSpan.setAttribute('error.code', data.error.code);
+      rootSpan.SpanAttributes['error.code'] = data.error.code;
     }
   }
 
-  const requestSpan = tracer.startSpan(
-    'llm.request.send',
-    {
-      startTime: data.timing.requestStart,
+  traces.push(rootSpan);
+
+  const requestSpan: ClickHouseTrace = {
+    Timestamp: data.timing.requestStart * 1000000,
+    TraceId: traceId,
+    SpanId: generateSpanId(),
+    ParentSpanId: rootSpan.SpanId,
+    TraceState: '',
+    SpanName: 'llm.request.send',
+    SpanKind: 'SPAN_KIND_INTERNAL',
+    ServiceName: serviceName,
+    ResourceAttributes: {
+      'service.name': serviceName,
     },
-    rootContext,
-  );
-  requestSpan.end(data.timing.requestSent);
+    SpanAttributes: {},
+    Duration: (data.timing.requestSent - data.timing.requestStart) * 1000000,
+    StatusCode: 'STATUS_CODE_OK',
+    StatusMessage: '',
+    'Events.Timestamp': [],
+    'Events.Name': [],
+    'Events.Attributes': [],
+    'Links.TraceId': [],
+    'Links.SpanId': [],
+    'Links.TraceState': [],
+    'Links.Attributes': [],
+  };
+
+  traces.push(requestSpan);
 
   if (data.timing.firstTokenReceived) {
-    const ttftSpan = tracer.startSpan(
-      'llm.request.ttft',
-      {
-        startTime: data.timing.requestSent,
+    const ttftSpan: ClickHouseTrace = {
+      Timestamp: data.timing.requestSent * 1000000,
+      TraceId: traceId,
+      SpanId: generateSpanId(),
+      ParentSpanId: rootSpan.SpanId,
+      TraceState: '',
+      SpanName: 'llm.request.ttft',
+      SpanKind: 'SPAN_KIND_INTERNAL',
+      ServiceName: serviceName,
+      ResourceAttributes: {
+        'service.name': serviceName,
       },
-      rootContext,
-    );
-    ttftSpan.setAttribute(
-      'llm.time_to_first_token_ms',
-      data.timing.firstTokenReceived - data.timing.requestSent,
-    );
-    ttftSpan.end(data.timing.firstTokenReceived);
+      SpanAttributes: {
+        'llm.time_to_first_token_ms': String(
+          data.timing.firstTokenReceived - data.timing.requestSent,
+        ),
+      },
+      Duration: (data.timing.firstTokenReceived - data.timing.requestSent) * 1000000,
+      StatusCode: 'STATUS_CODE_OK',
+      StatusMessage: '',
+      'Events.Timestamp': [],
+      'Events.Name': [],
+      'Events.Attributes': [],
+      'Links.TraceId': [],
+      'Links.SpanId': [],
+      'Links.TraceState': [],
+      'Links.Attributes': [],
+    };
 
-    const streamingSpan = tracer.startSpan(
-      'llm.response.streaming',
-      {
-        startTime: data.timing.firstTokenReceived,
+    traces.push(ttftSpan);
+
+    const streamingSpan: ClickHouseTrace = {
+      Timestamp: data.timing.firstTokenReceived * 1000000,
+      TraceId: traceId,
+      SpanId: generateSpanId(),
+      ParentSpanId: rootSpan.SpanId,
+      TraceState: '',
+      SpanName: 'llm.response.streaming',
+      SpanKind: 'SPAN_KIND_INTERNAL',
+      ServiceName: serviceName,
+      ResourceAttributes: {
+        'service.name': serviceName,
       },
-      rootContext,
-    );
-    streamingSpan.end(data.timing.responseComplete);
+      SpanAttributes: {},
+      Duration: (data.timing.responseComplete - data.timing.firstTokenReceived) * 1000000,
+      StatusCode: 'STATUS_CODE_OK',
+      StatusMessage: '',
+      'Events.Timestamp': [],
+      'Events.Name': [],
+      'Events.Attributes': [],
+      'Links.TraceId': [],
+      'Links.SpanId': [],
+      'Links.TraceState': [],
+      'Links.Attributes': [],
+    };
+
+    traces.push(streamingSpan);
   }
 
-  rootSpan.end(data.timing.responseComplete);
+  return traces;
 }
 
-// async function storeInR2(data: QueueMessage, env: Env): Promise<void> {
-//   if (!env.STORAGE) return;
-//
-//   const requestKey = `requests/${data.requestId}/request.json`;
-//   const responseKey = `requests/${data.requestId}/response.json`;
-//
-//   await env.STORAGE.put(requestKey, data.requestBody);
-//   await env.STORAGE.put(responseKey, data.responseBody);
-// }
+async function insertIntoClickHouse(traces: ClickHouseTrace[], env: Env): Promise<void> {
+  const database = env.CLICKHOUSE_DATABASE ?? 'default';
+  const query = `INSERT INTO ${database}.otel_traces FORMAT JSONEachRow`;
 
-// async function writeToClickHouse(data: QueueMessage, env: Env): Promise<void> {
-//   if (!env.CLICKHOUSE_HOST) return;
-//
-//   const row = {
-//     id: data.requestId,
-//     provider: data.request.provider,
-//     model: data.request.model,
-//     status: data.response.status,
-//     latency: data.response.latency,
-//     timestamp: data.request.timestamp,
-//   };
-//
-//   const url = `${env.CLICKHOUSE_HOST}/?query=INSERT INTO llm_requests FORMAT JSONEachRow`;
-//   await fetch(url, {
-//     method: 'POST',
-//     headers: {
-//       'Content-Type': 'application/json',
-//       'X-ClickHouse-User': env.CLICKHOUSE_USER || '',
-//       'X-ClickHouse-Key': env.CLICKHOUSE_PASSWORD || '',
-//     },
-//     body: JSON.stringify(row),
-//   });
-// }
+  const url = `${env.CLICKHOUSE_HOST}/?query=${encodeURIComponent(query)}`;
+
+  const auth = btoa(`${env.CLICKHOUSE_USERNAME}:${env.CLICKHOUSE_PASSWORD}`);
+
+  const body = traces.map((trace) => JSON.stringify(trace)).join('\n');
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${auth}`,
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`ClickHouse insert failed: ${response.status} ${errorText}`);
+  }
+}
+
+function generateSpanId(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}

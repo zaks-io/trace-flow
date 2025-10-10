@@ -36,6 +36,7 @@ export interface LLMError {
 
 export interface QueueMessage {
   requestId: string;
+  targetUrl: string;
   request: LLMRequest;
   response: LLMResponse;
   requestBodyKey: string;

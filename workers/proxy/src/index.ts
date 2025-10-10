@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { generateId, getCurrentTimestamp } from '@observe/shared/utils';
+import { generateId, getCurrentTimestamp, extractProviderFromUrl } from '@observe/shared/utils';
 import type { QueueMessage, LLMTiming, LLMTokenUsage, LLMError } from '@observe/shared/types';
 
 interface Env {
@@ -104,23 +104,38 @@ app.all('*', async (c) => {
       const requestBodyKey = `requests/${requestId}`;
       const responseBodyKey = `responses/${requestId}`;
 
+      console.log('Storing request/response bodies in R2:', {
+        requestId,
+        requestBodyKey,
+        responseBodyKey,
+        requestBodySize: requestBody.length,
+        responseBodySize: responseBody.length,
+      });
+
       await Promise.all([
         c.env.STORAGE.put(requestBodyKey, requestBody),
         c.env.STORAGE.put(responseBodyKey, responseBody),
       ]);
 
+      console.log('Successfully stored in R2:', {
+        requestId,
+      });
+
+      const provider = extractProviderFromUrl(targetUrl);
+
       const queueMessage: QueueMessage = {
         requestId,
+        targetUrl,
         request: {
           id: requestId,
-          provider: 'unknown',
+          provider,
           model: 'unknown',
           messages: [],
           timestamp: requestStart,
         },
         response: {
           id: requestId,
-          provider: 'unknown',
+          provider,
           status: response.status,
           timestamp: timing.responseComplete,
           latency,
@@ -133,8 +148,10 @@ app.all('*', async (c) => {
       };
 
       await c.env.REQUEST_QUEUE.send(queueMessage);
-      console.log('Queued capture:', {
+      console.log('Successfully queued message:', {
         requestId,
+        provider,
+        targetUrl,
         requestBodyKey,
         responseBodyKey,
         tokens,
