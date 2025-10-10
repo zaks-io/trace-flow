@@ -76,6 +76,26 @@ cd workers/proxy
 bun run dev
 ```
 
+### Convex Backend (for Web Worker)
+
+The web worker requires Convex for its database. Start the Convex backend:
+
+```bash
+npx convex dev
+```
+
+On first run, this will:
+
+1. Log you in with GitHub
+2. Create a Convex project
+3. Provide a deployment URL
+
+Create `workers/web/.env.local` with your deployment URL:
+
+```bash
+VITE_CONVEX_URL=https://your-deployment-url.convex.cloud
+```
+
 ## Building
 
 Build all workers:
@@ -164,6 +184,7 @@ wrangler secret put CLICKHOUSE_PASSWORD
 - **Package Manager**: Bun
 - **Monorepo**: Turborepo
 - **Frontend**: React + Vite
+- **Database**: Convex
 - **Language**: TypeScript
 - **Linting**: ESLint + Prettier
 - **Git Hooks**: Husky + lint-staged

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@observe/shared": "workspace:*",
+    "convex": "^1.27.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
