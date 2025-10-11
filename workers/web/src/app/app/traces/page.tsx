@@ -1,4 +1,6 @@
-import { useTinybirdQuery } from '../hooks/useTinybirdQuery';
+'use client';
+
+import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 
 interface TraceRow {
   Timestamp: number;

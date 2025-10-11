@@ -1,5 +1,7 @@
+'use client';
+
 import { useQuery } from 'convex/react';
-import { api } from '../../../../convex/_generated/api';
+import { api } from '../../../../../convex/_generated/api';
 
 export default function AppPage() {
   const apiKeys = useQuery(api.apiKeys.list);
