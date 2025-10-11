@@ -37,6 +37,12 @@ function AppContent({ children }: { children: React.ReactNode }) {
                   >
                     Traces
                   </Link>
+                  <Link
+                    href="/app/api-keys"
+                    className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900"
+                  >
+                    API Keys
+                  </Link>
                 </div>
                 <div className="flex items-center">
                   <AuthButton />
@@ -69,6 +75,12 @@ function AppContent({ children }: { children: React.ReactNode }) {
                     className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900"
                   >
                     Traces
+                  </Link>
+                  <Link
+                    href="/app/api-keys"
+                    className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900"
+                  >
+                    API Keys
                   </Link>
                 </div>
                 <div className="flex items-center">

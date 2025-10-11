@@ -15,6 +15,7 @@ import type {
 } from "convex/server";
 import type * as apiKeys from "../apiKeys.js";
 import type * as auth from "../auth.js";
+import type * as cloudflare from "../cloudflare.js";
 import type * as tinybird from "../tinybird.js";
 
 /**
@@ -28,6 +29,7 @@ import type * as tinybird from "../tinybird.js";
 declare const fullApi: ApiFromModules<{
   apiKeys: typeof apiKeys;
   auth: typeof auth;
+  cloudflare: typeof cloudflare;
   tinybird: typeof tinybird;
 }>;
 export declare const api: FilterApi<

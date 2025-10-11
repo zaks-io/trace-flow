@@ -1,14 +1,15 @@
-name = "observe-proxy"
+name = "observe-proxy-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
 
 [observability]
 enabled = true
 
-# KV Namespace for caching (optional)
-# [[kv_namespaces]]
-# binding = "CACHE"
-# id = ""
+# KV Namespace for API key validation (dev)
+[[kv_namespaces]]
+binding = "API_KEYS"
+id = "86d6aaf858e747e4bd9aa0a51216570d"
+preview_id = "86d6aaf858e747e4bd9aa0a51216570d"
 
 # Queue for async processing
 [[queues.producers]]
@@ -20,8 +21,16 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "observe-storage"
 
+[env.staging]
+name = "observe-proxy-staging"
+
+[[env.staging.kv_namespaces]]
+binding = "API_KEYS"
+id = "REPLACE_WITH_STAGING_NAMESPACE_ID"
+
 [env.production]
 name = "observe-proxy"
 
-[env.staging]
-name = "observe-proxy-staging"
+[[env.production.kv_namespaces]]
+binding = "API_KEYS"
+id = "REPLACE_WITH_PRODUCTION_NAMESPACE_ID"

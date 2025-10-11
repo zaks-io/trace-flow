@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { createParser } from 'eventsource-parser';
 import { generateId, getCurrentTimestamp, extractProviderFromUrl } from '@observe/shared/utils';
@@ -14,13 +14,69 @@ import type {
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessage>;
   STORAGE: R2Bucket;
+  API_KEYS: KVNamespace;
 }
 
 const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', cors());
 
+async function validateApiKey(c: Context<{ Bindings: Env }>): Promise<Response | null> {
+  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.header('X-API-Key');
+
+  if (!apiKey) {
+    return c.json(
+      {
+        error: 'Missing API key',
+        message: 'Please provide an API key via Authorization: Bearer <key> or X-API-Key header',
+      },
+      401,
+    );
+  }
+
+  const keyData = await c.env.API_KEYS.get(apiKey);
+
+  if (!keyData) {
+    return c.json(
+      {
+        error: 'Invalid API key',
+        message: 'The provided API key is not valid',
+      },
+      401,
+    );
+  }
+
+  try {
+    const parsed = JSON.parse(keyData) as { expiresAt: number; createdAt: number };
+
+    if (parsed.expiresAt < Date.now()) {
+      return c.json(
+        {
+          error: 'Expired API key',
+          message: 'The provided API key has expired',
+        },
+        401,
+      );
+    }
+  } catch {
+    return c.json(
+      {
+        error: 'Invalid API key data',
+        message: 'The API key data is corrupted',
+      },
+      500,
+    );
+  }
+
+  return null;
+}
+
 app.all('*', async (c) => {
+  const authError = await validateApiKey(c);
+  if (authError) {
+    return authError;
+  }
+
   const requestId = generateId();
   const requestStart = getCurrentTimestamp();
   const targetUrl = c.req.header('X-Proxy-Target');
