@@ -34,6 +34,28 @@ export interface LLMError {
   code?: string;
 }
 
+export interface SSEMessageTiming {
+  messageStart?: number;
+  messageStop?: number;
+  contentBlockStart?: number;
+  firstDelta?: number;
+}
+
+export interface SSEMetadata {
+  usage?: {
+    input_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    output_tokens?: number;
+  };
+  finalUsage?: {
+    input_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+    output_tokens?: number;
+  };
+}
+
 export interface QueueMessage {
   requestId: string;
   targetUrl: string;
@@ -46,4 +68,6 @@ export interface QueueMessage {
   error?: LLMError;
   traceId?: string;
   parentSpanId?: string;
+  sseMessageTiming?: SSEMessageTiming;
+  sseMetadata?: SSEMetadata;
 }

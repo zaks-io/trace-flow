@@ -11,6 +11,9 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "deploy:dev": "turbo run deploy:dev",
+    "deploy:staging": "turbo run deploy:staging",
+    "deploy:prod": "turbo run deploy:prod",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "type-check": "turbo run type-check",
@@ -40,6 +43,7 @@
     ]
   },
   "dependencies": {
-    "convex": "^1.27.5"
+    "convex": "^1.27.5",
+    "jose": "^6.1.0"
   }
 }

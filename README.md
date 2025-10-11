@@ -63,28 +63,31 @@ bun run prepare
 
 ## Development
 
-Run all workers in development mode:
+### Running Proxy + Consumer Together (Recommended)
+
+To test the complete message flow from proxy → queue → consumer locally:
 
 ```bash
-bun run dev
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
 ```
 
-Run a specific worker:
+This runs both workers in a single process with shared local R2 bucket and queue.
+
+**Note**: This multi-worker feature is experimental (requires Wrangler v3.1.0+).
+
+### Running Web Worker
+
+The web worker uses Vite and requires Convex backend:
 
 ```bash
-cd workers/proxy
-bun run dev
-```
-
-### Convex Backend (for Web Worker)
-
-The web worker requires Convex for its database. Start the Convex backend:
-
-```bash
+# Terminal 1: Start Convex backend
 npx convex dev
+
+# Terminal 2: Start web UI
+cd workers/web && bun run dev
 ```
 
-On first run, this will:
+On first run, Convex will:
 
 1. Log you in with GitHub
 2. Create a Convex project
@@ -94,6 +97,36 @@ Create `workers/web/.env.local` with your deployment URL:
 
 ```bash
 VITE_CONVEX_URL=https://your-deployment-url.convex.cloud
+```
+
+### Full Local Stack
+
+To run everything together (requires 3 terminals):
+
+```bash
+# Terminal 1: Proxy + Consumer workers
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+
+# Terminal 2: Convex backend
+npx convex dev
+
+# Terminal 3: Web UI
+cd workers/web && bun run dev
+```
+
+### Running Workers Individually
+
+You can also run workers separately:
+
+```bash
+# Proxy only
+cd workers/proxy && bun run dev
+
+# Consumer only
+cd workers/proxy-consumer && bun run dev
+
+# Web only (still requires Convex)
+cd workers/web && bun run dev
 ```
 
 ## Building

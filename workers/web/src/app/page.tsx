@@ -1,6 +1,6 @@
-import { Link } from 'wouter';
+import Link from 'next/link';
 
-export default function Index() {
+export default function Home() {
   return (
     <div>
       <h1>Observe</h1>
