@@ -194,7 +194,7 @@ Get your admin token: `tb token list` or create new one with `tb token create --
 
 **Architecture:**
 
-1. Frontend requests JWT from Convex action (`api.tinybirdJwt.generateToken`)
+1. Frontend requests JWT from Convex action (`api.tinybird.generateToken`)
 2. Convex signs JWT with admin token (HS256) and returns to frontend
 3. Frontend calls Tinybird APIs directly with JWT (no backend proxy)
 4. Tokens expire after 10 minutes (default), auto-refresh on 403

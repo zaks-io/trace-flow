@@ -1,8 +1,10 @@
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
+import { requireObserveRole } from './auth';
 
 export const list = query({
   handler: async (ctx) => {
+    await requireObserveRole(ctx);
     return await ctx.db.query('apiKeys').collect();
   },
 });
@@ -10,6 +12,7 @@ export const list = query({
 export const getByKey = query({
   args: { key: v.string() },
   handler: async (ctx, args) => {
+    await requireObserveRole(ctx);
     return await ctx.db
       .query('apiKeys')
       .filter((q) => q.eq(q.field('key'), args.key))
@@ -23,6 +26,7 @@ export const create = mutation({
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
+    await requireObserveRole(ctx);
     return await ctx.db.insert('apiKeys', {
       key: args.key,
       expiresAt: args.expiresAt,

@@ -32,7 +32,7 @@ export function useTinybirdQuery<T = unknown>(
   const [jwt, setJwt] = useState<string | null>(null);
   const hasFetchedRef = useRef(false);
 
-  const generateToken = useAction(api.tinybirdJwt.generateToken);
+  const generateToken = useAction(api.tinybird.generateToken);
   const enabled = options.enabled ?? true;
 
   const fetchToken = useCallback(async () => {
@@ -82,20 +82,17 @@ export function useTinybirdQuery<T = unknown>(
     setLoading(true);
     setError(null);
 
-    const currentToken = jwt ?? (await fetchToken());
-
-    fetchData(currentToken)
-      .then((result) => {
-        setData(result);
-        setError(null);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err : new Error(String(err)));
-        setData(null);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    try {
+      const currentToken = jwt ?? (await fetchToken());
+      const result = await fetchData(currentToken);
+      setData(result);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(String(err)));
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
   }, [enabled, jwt, fetchToken, fetchData]);
 
   useEffect(() => {
