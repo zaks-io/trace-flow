@@ -25,21 +25,73 @@ LLM observability platform built on Cloudflare Workers. Three workers form an as
 - Queue consumer handles retry logic and error cases
 - Shared types in `packages/shared` define the contract between workers
 
-## Development Commands
+## Local Development
 
 **IMPORTANT**: Use globally installed `wrangler` command directly, not `bunx wrangler` or `npx wrangler`. Bun has compatibility issues with wrangler that cause `wrangler dev` to hang. Install wrangler globally: `npm install -g wrangler`
 
-**Using wrangler CLI (preferred for Cloudflare Workers):**
+### Running Proxy + Consumer Together (Recommended)
+
+To test the complete message flow from proxy → queue → consumer locally:
 
 ```bash
-# Run all workers in parallel (builds only, use wrangler dev for individual workers)
-bun run dev
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+```
 
-# Run specific worker (use global wrangler)
+This runs both workers in a single process with shared local R2 bucket and queue. The `--persist-to` flag ensures state is shared between workers.
+
+**Note**: This multi-worker feature is experimental (requires Wrangler v3.1.0+).
+
+### Running Web Worker
+
+The web worker uses Vite for development and requires Convex backend:
+
+```bash
+# Terminal 1: Start Convex backend
+npx convex dev
+
+# Terminal 2: Start web UI
+cd workers/web && bun run dev
+```
+
+On first run, Convex will prompt you to login and create a project. Create `workers/web/.env.local`:
+
+```bash
+VITE_CONVEX_URL=https://your-deployment-url.convex.cloud
+```
+
+### Full Local Stack
+
+To run everything together (requires 3 terminals):
+
+```bash
+# Terminal 1: Proxy + Consumer workers
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+
+# Terminal 2: Convex backend
+npx convex dev
+
+# Terminal 3: Web UI
+cd workers/web && bun run dev
+```
+
+### Running Workers Individually
+
+If you need to run workers separately:
+
+```bash
+# Proxy only
 cd workers/proxy && wrangler dev
-cd workers/proxy-consumer && wrangler dev
-cd workers/web && wrangler dev
 
+# Consumer only
+cd workers/proxy-consumer && wrangler dev
+
+# Web only (still requires Convex)
+cd workers/web && bun run dev
+```
+
+### Other Commands
+
+```bash
 # Build all workers
 bun run build
 
@@ -57,13 +109,10 @@ bun run lint
 bun run format
 ```
 
-**Testing proxy locally:**
+### Testing Proxy Locally
 
 ```bash
-# Start proxy in dev mode
-cd workers/proxy && wrangler dev
-
-# Send test request with X-Proxy-Target header
+# With proxy + consumer running, send test request
 curl -X POST http://localhost:8787 \
   -H "X-Proxy-Target: https://api.openai.com/v1/chat/completions" \
   -H "Content-Type: application/json" \
