@@ -6,6 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LLM observability platform built on Cloudflare Workers. Three workers form an async pipeline: a streaming proxy captures LLM requests/responses and enqueues them, a consumer processes the queue and sends OpenTelemetry traces to ClickStack, and a web dashboard displays analytics.
 
+## DEPLOYMENT SAFETY - READ THIS FIRST
+
+**⚠️ CRITICAL: NEVER DEPLOY TO PRODUCTION ⚠️**
+
+Do NOT run any production deployment commands. Ever. Any deployments requested by the user reference the development environment.
+
+**Development Commands (use these for local dev and testing):**
+
+- Convex watch mode: `bunx convex dev` (continuous development server)
+- Convex deploy to dev: `bunx convex@latest dev --once` (deploy to dev environment once, not a watch command)
+- Cloudflare Workers dev (with queues): `wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state`
+- Tinybird dev: `tb dev` (auto-reload, local only)
+
 ## Architecture
 
 **Data Flow:**
@@ -46,8 +59,8 @@ This runs both workers in a single process with shared local R2 bucket and queue
 The web worker uses Vite for development and requires Convex backend:
 
 ```bash
-# Terminal 1: Start Convex backend
-npx convex dev
+# Terminal 1: Start Convex backend (watch mode)
+bunx convex dev
 
 # Terminal 2: Start web UI
 cd workers/web && bun run dev
@@ -67,8 +80,8 @@ To run everything together (requires 3 terminals):
 # Terminal 1: Proxy + Consumer workers
 wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
 
-# Terminal 2: Convex backend
-npx convex dev
+# Terminal 2: Convex backend (watch mode)
+bunx convex dev
 
 # Terminal 3: Web UI
 cd workers/web && bun run dev
@@ -94,10 +107,6 @@ cd workers/web && bun run dev
 ```bash
 # Build all workers
 bun run build
-
-# Deploy specific worker (use global wrangler)
-cd workers/proxy && wrangler deploy
-cd workers/proxy-consumer && wrangler deploy
 
 # Type check all workers
 bun run type-check
@@ -227,9 +236,6 @@ tb local start
 # Develop with auto-reload
 tb dev
 
-# Deploy to cloud
-tb --cloud deploy
-
 # Switch between local and cloud
 tb workspace ls
 ```
@@ -356,8 +362,6 @@ Tinybird automatically transforms data from live schema to new schema during dep
 ## Deployment
 
 Project uses Cloudflare's Git integration for automatic deployments on push to `main`. Each worker is configured as a separate application in Cloudflare dashboard with its own root directory and build command.
-
-Manual deployment (use global wrangler): `cd workers/<name> && wrangler deploy`
 
 ## Important Patterns
 
