@@ -5,23 +5,48 @@ compatibility_date = "2024-11-27"
 [observability]
 enabled = true
 
-# KV Namespace for caching (optional)
-# [[kv_namespaces]]
-# binding = "CACHE"
-# id = ""
+# KV Namespace for API key validation (dev)
+[[kv_namespaces]]
+binding = "API_KEYS"
+id = "86d6aaf858e747e4bd9aa0a51216570d"
+# preview_id = "86d6aaf858e747e4bd9aa0a51216570d"
 
 # Queue for async processing
 [[queues.producers]]
-queue = "llm-requests"
+queue = "observe-requests-dev"
 binding = "REQUEST_QUEUE"
 
 # R2 bucket for storing request/response bodies
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage"
+bucket_name = "observe-storage-dev"
+
+[env.staging]
+name = "observe-proxy-staging"
+
+[[env.staging.kv_namespaces]]
+binding = "API_KEYS"
+id = "bb7a289d3389426b979a746801d68f3c"
+
+[[env.staging.queues.producers]]
+queue = "observe-requests-staging"
+binding = "REQUEST_QUEUE"
+
+[[env.staging.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage-staging"
 
 [env.production]
 name = "observe-proxy"
 
-[env.staging]
-name = "observe-proxy-staging"
+[[env.production.kv_namespaces]]
+binding = "API_KEYS"
+id = "6d74d697f808470bbb678eda3c52bef3"
+
+[[env.production.queues.producers]]
+queue = "observe-requests-prod"
+binding = "REQUEST_QUEUE"
+
+[[env.production.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage-prod"

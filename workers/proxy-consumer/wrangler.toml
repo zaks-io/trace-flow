@@ -7,24 +7,46 @@ enabled = true
 
 # Queue consumer configuration
 [[queues.consumers]]
-queue = "llm-requests"
+queue = "observe-requests-dev"
 max_batch_size = 10
 max_batch_timeout = 30
 max_retries = 3
-dead_letter_queue = "llm-requests-dlq"
+dead_letter_queue = "observe-requests-dlq-dev"
 
 # R2 bucket for storing request/response bodies
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage"
+bucket_name = "observe-storage-dev"
 
 # Tinybird configuration
 # TINYBIRD_TOKEN - Auth token with DATASOURCE:APPEND scope (set via wrangler secret)
 # TINYBIRD_DATASOURCE - Data source name (optional, defaults to "otel_traces")
 # TINYBIRD_HOST - API host (optional, defaults to "https://api.tinybird.co")
 
+[env.staging]
+name = "observe-proxy-consumer-staging"
+
+[[env.staging.queues.consumers]]
+queue = "observe-requests-staging"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "observe-requests-dlq-staging"
+
+[[env.staging.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage-staging"
+
 [env.production]
 name = "observe-proxy-consumer"
 
-[env.staging]
-name = "observe-proxy-consumer-staging"
+[[env.production.queues.consumers]]
+queue = "observe-requests-prod"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "observe-requests-dlq-prod"
+
+[[env.production.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage-prod"

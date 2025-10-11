@@ -1,59 +1,84 @@
 # Setup Instructions
 
-## 1. Create ClickHouse Table
+## 1. Create Tinybird Datasource
 
-Run the SQL in `workers/proxy-consumer/schema.sql` in your ClickHouse Cloud console to create the `otel_traces` table.
+Create the `otel_traces` datasource in Tinybird:
 
 ```bash
-# Copy the schema from:
-cat workers/proxy-consumer/schema.sql
+# Deploy Tinybird resources (datasources, pipes, etc.)
+tb push
+
+# Or manually create datasource from schema
+tb datasource create --file datasources/otel_traces.datasource
 ```
 
-Then paste and execute in your ClickHouse Cloud SQL console.
+This will create the necessary table in your Tinybird workspace (managed ClickHouse).
 
 ## 2. Create Cloudflare Queues
 
-Run these commands to create the required queues:
+Run these commands to create the required queues for all environments:
 
 ```bash
-npx wrangler queues create llm-requests
-npx wrangler queues create llm-requests-dlq
+# Development
+wrangler queues create observe-requests-dev
+wrangler queues create observe-requests-dlq-dev
+
+# Staging
+wrangler queues create observe-requests-staging
+wrangler queues create observe-requests-dlq-staging
+
+# Production
+wrangler queues create observe-requests-prod
+wrangler queues create observe-requests-dlq-prod
 ```
 
-## 3. Configure ClickHouse Secrets
+## 3. Configure Tinybird Secrets
 
-Set the following secrets for the proxy-consumer worker:
+Set the following secrets for the proxy-consumer worker for each environment:
 
 ```bash
 cd workers/proxy-consumer
 
-# Set the ClickHouse host (include https:// and port)
-npx wrangler secret put CLICKHOUSE_HOST
-# Example: https://rtfxk4dvlo.us-central1.gcp.clickhouse.cloud:8443
+# Development environment
+wrangler secret put TINYBIRD_TOKEN
+wrangler secret put TINYBIRD_DATASOURCE  # Optional, defaults to "otel_traces"
+wrangler secret put TINYBIRD_HOST        # Optional, defaults to "https://api.tinybird.co"
 
-# Set your ClickHouse username
-npx wrangler secret put CLICKHOUSE_USERNAME
-# Example: default
+# Staging environment
+wrangler secret put TINYBIRD_TOKEN --env staging
+wrangler secret put TINYBIRD_DATASOURCE --env staging
+wrangler secret put TINYBIRD_HOST --env staging
 
-# Set your ClickHouse password
-npx wrangler secret put CLICKHOUSE_PASSWORD
+# Production environment
+wrangler secret put TINYBIRD_TOKEN --env production
+wrangler secret put TINYBIRD_DATASOURCE --env production
+wrangler secret put TINYBIRD_HOST --env production
+```
 
-# Optional: Set a custom database name (defaults to "default")
-npx wrangler secret put CLICKHOUSE_DATABASE
+Get your Tinybird token with `DATASOURCE:APPEND` scope:
+
+```bash
+tb token create --name observe-dev --scopes DATASOURCES:APPEND
 ```
 
 ## 4. Deploy the Workers
 
-After creating the queues and setting the secrets, deploy the workers:
+After creating the queues and setting the secrets, deploy the workers to your chosen environment:
 
 ```bash
-# Deploy proxy worker
-cd workers/proxy
-bun run deploy
+# Deploy all workers to development (from project root)
+bun run deploy:dev
 
-# Deploy proxy-consumer worker
-cd workers/proxy-consumer
-bun run deploy
+# Or deploy individual workers
+cd workers/proxy && bun run deploy:dev
+cd workers/proxy-consumer && bun run deploy:dev
+cd workers/web && bun run deploy:dev
+
+# For staging
+bun run deploy:staging
+
+# For production (requires explicit approval)
+bun run deploy:prod
 ```
 
 ## Testing Locally
@@ -61,17 +86,16 @@ bun run deploy
 To test locally, you'll need to set up environment variables. Create a `.dev.vars` file in `workers/proxy-consumer/`:
 
 ```
-CLICKHOUSE_HOST=https://your-instance.clickhouse.cloud:8443
-CLICKHOUSE_USERNAME=default
-CLICKHOUSE_PASSWORD=your-password
-CLICKHOUSE_DATABASE=default
+TINYBIRD_TOKEN=your-dev-token-here
+TINYBIRD_DATASOURCE=otel_traces
+TINYBIRD_HOST=https://api.tinybird.co
 ```
 
 Then run the workers in development mode:
 
 ```bash
-# From the root of the project
-bun run dev
+# From the root of the project (runs proxy + consumer together)
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
 ```
 
 ## Verifying the Setup
@@ -88,7 +112,7 @@ curl -X POST https://your-proxy.workers.dev \
 
 2. Check that the request is queued successfully in proxy logs
 3. Verify that the proxy-consumer processes the message in consumer logs
-4. Query ClickHouse to see the traces:
+4. Query Tinybird to see the traces:
 
 ```sql
 SELECT
@@ -99,7 +123,14 @@ SELECT
     SpanAttributes
 FROM otel_traces
 ORDER BY Timestamp DESC
-LIMIT 10;
+LIMIT 10
+FORMAT JSON
+```
+
+Or use the Tinybird CLI:
+
+```bash
+tb sql "SELECT * FROM otel_traces ORDER BY Timestamp DESC LIMIT 10 FORMAT JSON"
 ```
 
 ## Architecture
@@ -108,11 +139,11 @@ The system works as follows:
 
 1. **Proxy Worker** receives LLM requests and streams responses back to clients
 2. Request/response bodies are stored in R2 asynchronously
-3. Metadata is sent to Cloudflare Queue (`llm-requests`)
+3. Metadata is sent to Cloudflare Queue (`observe-requests-{env}`)
 4. **Proxy Consumer Worker** processes queue messages
 5. Consumer builds OpenTelemetry-compatible trace spans
-6. Traces are inserted directly into ClickHouse via HTTP interface
-7. Query traces in ClickHouse or visualize with Grafana
+6. Traces are inserted into Tinybird (managed ClickHouse) via HTTP interface
+7. Query traces in Tinybird or visualize with Grafana
 
 ## OpenTelemetry Traces Schema
 

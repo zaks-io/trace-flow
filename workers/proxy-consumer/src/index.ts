@@ -147,7 +147,56 @@ function buildTraces(data: QueueMessage): TinybirdTrace[] {
 
   traces.push(requestSpan);
 
-  if (data.timing.firstTokenReceived) {
+  if (data.sseMessageTiming?.messageStart && data.sseMessageTiming?.messageStop) {
+    const messageSpan: TinybirdTrace = {
+      Timestamp: data.sseMessageTiming.messageStart * 1000000,
+      TraceId: traceId,
+      SpanId: generateSpanId(),
+      ParentSpanId: rootSpan.SpanId,
+      TraceState: '',
+      SpanName: 'llm.stream.message',
+      SpanKind: 'SPAN_KIND_INTERNAL',
+      ServiceName: serviceName,
+      ResourceAttributes: {
+        'service.name': serviceName,
+      },
+      SpanAttributes: {},
+      Duration: (data.sseMessageTiming.messageStop - data.sseMessageTiming.messageStart) * 1000000,
+      StatusCode: 'STATUS_CODE_OK',
+      StatusMessage: '',
+      'Events.Timestamp': [],
+      'Events.Name': [],
+      'Events.Attributes': [],
+      'Links.TraceId': [],
+      'Links.SpanId': [],
+      'Links.TraceState': [],
+      'Links.Attributes': [],
+    };
+
+    if (data.sseMessageTiming.firstDelta && data.sseMessageTiming.messageStart) {
+      messageSpan.SpanAttributes['llm.time_to_first_token_ms'] = String(
+        data.sseMessageTiming.firstDelta - data.sseMessageTiming.messageStart,
+      );
+    }
+
+    if (data.sseMetadata) {
+      if (
+        data.sseMetadata.finalUsage &&
+        typeof data.sseMetadata.finalUsage === 'object' &&
+        data.sseMetadata.finalUsage
+      ) {
+        const usage = data.sseMetadata.finalUsage as Record<string, unknown>;
+        if (typeof usage.input_tokens === 'number') {
+          messageSpan.SpanAttributes['llm.tokens.input'] = String(usage.input_tokens);
+        }
+        if (typeof usage.output_tokens === 'number') {
+          messageSpan.SpanAttributes['llm.tokens.output'] = String(usage.output_tokens);
+        }
+      }
+    }
+
+    traces.push(messageSpan);
+  } else if (data.timing.firstTokenReceived) {
     const ttftSpan: TinybirdTrace = {
       Timestamp: data.timing.requestSent * 1000000,
       TraceId: traceId,
