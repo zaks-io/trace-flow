@@ -8,5 +8,5 @@ enabled = true
 [env.production]
 name = "observe-web"
 
-[env.staging]
-name = "observe-web-staging"
+[env.preview]
+name = "observe-web-preview"

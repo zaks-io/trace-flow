@@ -136,45 +136,97 @@ curl -X POST http://localhost:8787 \
 - Shared package (`@observe/shared`) contains types and utils
 - Pre-commit hooks run eslint + prettier on staged files
 
+## Environments
+
+Project has three separate environments with isolated resources:
+
+**Development (default):**
+
+- Queues: `observe-requests-dev`, `observe-requests-dlq-dev`
+- R2 bucket: `observe-storage-dev`
+- KV namespace: `observe-api-keys-dev` (ID: 86d6aaf858e747e4bd9aa0a51216570d)
+
+**Staging:**
+
+- Queues: `observe-requests-staging`, `observe-requests-dlq-staging`
+- R2 bucket: `observe-storage-staging`
+- KV namespace: `observe-api-keys-staging` (ID: bb7a289d3389426b979a746801d68f3c)
+
+**Production:**
+
+- Queues: `observe-requests-prod`, `observe-requests-dlq-prod`
+- R2 bucket: `observe-storage-prod`
+- KV namespace: `observe-api-keys-prod` (ID: 6d74d697f808470bbb678eda3c52bef3)
+
+### Environment Differences: Workers vs Pages
+
+**Workers (proxy, proxy-consumer):**
+
+- Support custom environment names: `dev`, `staging`, `production`
+- Each environment is a separate Worker instance
+- Deploy with `--branch` flag: `wrangler deploy --branch staging`
+
+**Pages (web):**
+
+- Only supports TWO environments: `preview` and `production`
+- `deploy:preview` deploys to `preview` environment
+- `deploy:prod` deploys to `production` environment
+- Use branch names to distinguish deployments (e.g., `--branch preview`)
+
+### Deployment Commands
+
+```bash
+# Deploy all workers to a specific environment
+bun run deploy:dev      # Workers → dev, Pages → preview
+bun run deploy:staging  # Workers → staging, Pages → preview (staging branch)
+bun run deploy:prod     # Workers → production, Pages → production (requires explicit approval)
+
+# Deploy individual workers
+cd workers/proxy && bun run deploy:dev
+cd workers/proxy-consumer && bun run deploy:staging
+cd workers/web && bun run deploy:dev  # Deploys to Pages preview environment
+```
+
 ## Wrangler Configuration
 
 **Proxy** (`workers/proxy/wrangler.toml`):
 
-- Queue producer binding: `REQUEST_QUEUE` → `llm-requests` queue
-- R2 bucket binding: `STORAGE` → `observe-storage` bucket
+- Queue producer binding: `REQUEST_QUEUE` → `observe-requests-{env}` queue
+- R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
+- KV namespace binding: `API_KEYS` → `observe-api-keys-{env}` namespace
 
 **Consumer** (`workers/proxy-consumer/wrangler.toml`):
 
-- Queue consumer config: `llm-requests` queue with max_batch_size=10
-- R2 bucket binding: `STORAGE` → `observe-storage` bucket
-- Secrets: `CLICKSTACK_OTLP_ENDPOINT`, `CLICKSTACK_API_KEY`, `OTEL_SERVICE_NAME`
-- Uses OpenTelemetry to send traces to ClickStack
+- Queue consumer config: `observe-requests-{env}` queue with max_batch_size=10
+- Dead letter queue: `observe-requests-dlq-{env}`
+- R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
+- Secrets: `TINYBIRD_TOKEN`, `TINYBIRD_DATASOURCE`, `TINYBIRD_HOST`
 
 **Web** (`workers/web/wrangler.toml`):
 
-- Pages project with `dist` output directory
+- Pages project with `.next` output directory
 
 ## Managing Secrets
 
+Secrets must be set for each environment:
+
 ```bash
-# Set secrets for proxy-consumer
+# Set secrets for dev (default)
 cd workers/proxy-consumer
-wrangler secret put CLICKSTACK_OTLP_ENDPOINT
-wrangler secret put CLICKSTACK_API_KEY
-wrangler secret put OTEL_SERVICE_NAME  # Optional
+wrangler secret put TINYBIRD_TOKEN
+wrangler secret put TINYBIRD_DATASOURCE  # Optional
+wrangler secret put TINYBIRD_HOST        # Optional
+
+# Set secrets for staging
+wrangler secret put TINYBIRD_TOKEN --env staging
+wrangler secret put TINYBIRD_DATASOURCE --env staging
+wrangler secret put TINYBIRD_HOST --env staging
+
+# Set secrets for production
+wrangler secret put TINYBIRD_TOKEN --env production
+wrangler secret put TINYBIRD_DATASOURCE --env production
+wrangler secret put TINYBIRD_HOST --env production
 ```
-
-## Queue Setup
-
-Queues are configured in `workers/proxy-consumer/wrangler.toml`. To set them up:
-
-1. Create queues using wrangler CLI:
-   ```bash
-   wrangler queues create llm-requests
-   wrangler queues create llm-requests-dlq
-   ```
-2. Configure ClickStack secrets (see SETUP.md for details)
-3. Deploy consumer worker
 
 **See [SETUP.md](./SETUP.md) for complete setup instructions.**
 

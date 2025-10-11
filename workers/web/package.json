@@ -7,8 +7,9 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "preview": "wrangler pages dev ./.next",
-    "deploy": "bun run build && wrangler pages deploy ./.next",
+    "preview": "wrangler pages dev",
+    "deploy:preview": "bun run build && wrangler pages deploy --branch preview",
+    "deploy:prod": "bun run build && wrangler pages deploy --branch production",
     "type-check": "tsc --noEmit",
     "lint": "eslint"
   },
