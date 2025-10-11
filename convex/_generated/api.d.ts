@@ -8,8 +8,13 @@
  * @module
  */
 
-import type { ApiFromModules, FilterApi, FunctionReference } from 'convex/server';
-import type * as apiKeys from '../apiKeys.js';
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
+import type * as apiKeys from "../apiKeys.js";
+import type * as tinybirdJwt from "../tinybirdJwt.js";
 
 /**
  * A utility for referencing Convex functions in your app's API.
@@ -21,6 +26,13 @@ import type * as apiKeys from '../apiKeys.js';
  */
 declare const fullApi: ApiFromModules<{
   apiKeys: typeof apiKeys;
+  tinybirdJwt: typeof tinybirdJwt;
 }>;
-export declare const api: FilterApi<typeof fullApi, FunctionReference<any, 'public'>>;
-export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, 'internal'>>;
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;

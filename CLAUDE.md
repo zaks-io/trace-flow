@@ -173,6 +173,51 @@ Queues are configured in `workers/proxy-consumer/wrangler.toml`. To set them up:
 
 Project uses Tinybird as the managed ClickHouse database for trace storage and analytics.
 
+### Authentication
+
+Project uses JWT-based authentication for secure frontend access to Tinybird APIs following their best practices.
+
+**Setup Environment Variables:**
+
+```bash
+# Set in Convex deployment
+npx convex env set TINYBIRD_ADMIN_TOKEN <your_admin_token>
+npx convex env set TINYBIRD_WORKSPACE_ID <your_workspace_id>
+npx convex env set TINYBIRD_API_URL https://api.tinybird.co
+
+# Set in workers/web/.env.local (optional, defaults to https://api.tinybird.co)
+VITE_TINYBIRD_API_URL=https://api.tinybird.co
+```
+
+Get your workspace ID: `tb workspace ls`
+Get your admin token: `tb token list` or create new one with `tb token create --name convex-admin --type ADMIN`
+
+**Architecture:**
+
+1. Frontend requests JWT from Convex action (`api.tinybirdJwt.generateToken`)
+2. Convex signs JWT with admin token (HS256) and returns to frontend
+3. Frontend calls Tinybird APIs directly with JWT (no backend proxy)
+4. Tokens expire after 10 minutes (default), auto-refresh on 403
+
+**Usage in React:**
+
+```typescript
+import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+
+const { data, loading, error } = useTinybirdQuery({
+  sql: 'SELECT * FROM otel_traces WHERE Timestamp > now() - INTERVAL 1 DAY FORMAT JSON',
+  scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+  ttl: 600, // optional, defaults to 10 minutes
+});
+```
+
+**Security Benefits:**
+
+- Short-lived tokens (default 10 min)
+- Scope-limited access (only specified pipes/datasources)
+- Direct frontend→Tinybird calls (low latency)
+- Admin token never exposed to frontend
+
 ### Development Workflow
 
 ```bash

@@ -1,12 +1,12 @@
 import { Route, Switch } from 'wouter';
 import Index from './pages/Index';
-import AppPage from './pages/AppPage';
+import AppLayout from './pages/AppLayout';
 
 export default function App() {
   return (
     <Switch>
       <Route path="/" component={Index} />
-      <Route path="/app" component={AppPage} />
+      <Route path="/app/:rest*" component={AppLayout} />
     </Switch>
   );
 }
