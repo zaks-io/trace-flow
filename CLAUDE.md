@@ -128,6 +128,30 @@ curl -X POST http://localhost:8787 \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
 ```
 
+**Testing full pipeline locally (proxy + consumer + Tinybird):**
+
+```bash
+# Ensure Tinybird Local is running
+tb local start
+
+# Start both workers together (required for queue consumer to process messages)
+wrangler dev \
+  -c ./workers/proxy/wrangler.toml \
+  -c ./workers/proxy-consumer/wrangler.toml \
+  --persist-to .wrangler/state
+
+# Send test request
+curl -X POST http://localhost:8787 \
+  -H "X-Proxy-Target: https://chat.zaks.io/api/health" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
+
+# Verify traces in Tinybird Local
+tb datasource data otel_traces --limit 10
+```
+
+**Important:** Queue consumers only work in local development when both producer and consumer workers are started together using multiple `-c` flags in a single `wrangler dev` command. Running them separately will not connect the queue.
+
 ## Monorepo Structure
 
 - **Turborepo** manages builds with dependency graph
@@ -206,7 +230,19 @@ cd workers/web && bun run deploy:dev  # Deploys to Pages preview environment
 
 - Pages project with `.next` output directory
 
-## Managing Secrets
+## Managing Secrets and Environment Variables
+
+**For local development (Tinybird Local):**
+
+Create `workers/proxy-consumer/.dev.vars`:
+
+```bash
+TINYBIRD_HOST=http://localhost:7181
+TINYBIRD_TOKEN=<token from tb local status>
+TINYBIRD_DATASOURCE=otel_traces
+```
+
+**For production (Tinybird Cloud):**
 
 Secrets must be set for each environment:
 
