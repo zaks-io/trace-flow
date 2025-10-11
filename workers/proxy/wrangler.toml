@@ -1,4 +1,4 @@
-name = "observe-proxy-dev"
+name = "observe-proxy"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
 
@@ -9,7 +9,7 @@ enabled = true
 [[kv_namespaces]]
 binding = "API_KEYS"
 id = "86d6aaf858e747e4bd9aa0a51216570d"
-preview_id = "86d6aaf858e747e4bd9aa0a51216570d"
+# preview_id = "86d6aaf858e747e4bd9aa0a51216570d"
 
 # Queue for async processing
 [[queues.producers]]
