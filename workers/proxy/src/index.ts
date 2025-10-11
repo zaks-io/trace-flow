@@ -1,7 +1,15 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { createParser } from 'eventsource-parser';
 import { generateId, getCurrentTimestamp, extractProviderFromUrl } from '@observe/shared/utils';
-import type { QueueMessage, LLMTiming, LLMTokenUsage, LLMError } from '@observe/shared/types';
+import type {
+  QueueMessage,
+  LLMTiming,
+  LLMTokenUsage,
+  LLMError,
+  SSEMessageTiming,
+  SSEMetadata,
+} from '@observe/shared/types';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessage>;
@@ -63,6 +71,33 @@ app.all('*', async (c) => {
 
   const responseCapturedChunks: Uint8Array[] = [];
   let isFirstChunk = true;
+  const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
+
+  if (isSSE) {
+    console.log('SSE stream detected for request:', requestId);
+  }
+
+  const sseMessageTiming: SSEMessageTiming = {};
+  const sseMetadata: SSEMetadata = {};
+
+  const parser = isSSE
+    ? createParser({
+        onEvent(event) {
+          const timestamp = getCurrentTimestamp();
+
+          console.log('SSE Event:', {
+            event: event.event,
+            timestamp,
+            data: event.data?.substring(0, 100),
+          });
+
+          processSSEEvent(event, timestamp, sseMessageTiming, sseMetadata);
+        },
+      })
+    : null;
+
+  const decoder = new TextDecoder();
+
   const { readable, writable } = new TransformStream<Uint8Array>({
     transform(chunk, controller) {
       if (isFirstChunk) {
@@ -70,6 +105,12 @@ app.all('*', async (c) => {
         isFirstChunk = false;
       }
       responseCapturedChunks.push(chunk);
+
+      if (isSSE && parser) {
+        const text = decoder.decode(chunk);
+        parser.feed(text);
+      }
+
       controller.enqueue(chunk);
     },
   });
@@ -146,6 +187,22 @@ app.all('*', async (c) => {
         tokens,
         error,
       };
+
+      if (isSSE && Object.keys(sseMessageTiming).length > 0) {
+        queueMessage.sseMessageTiming = sseMessageTiming;
+      }
+
+      if (isSSE && Object.keys(sseMetadata).length > 0) {
+        queueMessage.sseMetadata = sseMetadata;
+      }
+
+      if (isSSE) {
+        console.log('SSE Message Timing:', {
+          requestId,
+          sseMessageTiming: queueMessage.sseMessageTiming,
+          sseMetadata: queueMessage.sseMetadata,
+        });
+      }
 
       await c.env.REQUEST_QUEUE.send(queueMessage);
       console.log('Successfully queued message:', {
@@ -254,6 +311,85 @@ function parseError(responseBody: string, statusCode: number): LLMError {
     type: 'http_error',
     message: `HTTP ${statusCode}`,
   };
+}
+
+function processSSEEvent(
+  event: { event?: string; data: string },
+  timestamp: number,
+  timing: SSEMessageTiming,
+  metadata: SSEMetadata,
+): void {
+  try {
+    const eventType = event.event;
+    if (eventType === 'message_start' && timing.messageStart === undefined) {
+      timing.messageStart = timestamp;
+      return;
+    }
+
+    if (eventType === 'content_block_start' && timing.contentBlockStart === undefined) {
+      timing.contentBlockStart = timestamp;
+      return;
+    }
+
+    if (eventType === 'content_block_delta' && timing.firstDelta === undefined) {
+      timing.firstDelta = timestamp;
+      return;
+    }
+
+    if (eventType === 'message_delta') {
+      const parsed = JSON.parse(event.data) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        const delta = parsed as Record<string, unknown>;
+        const usage = delta.usage;
+        if (usage && typeof usage === 'object') {
+          const typedUsage = usage as Record<string, unknown>;
+          metadata.usage = {
+            input_tokens:
+              typeof typedUsage.input_tokens === 'number' ? typedUsage.input_tokens : undefined,
+            cache_creation_input_tokens:
+              typeof typedUsage.cache_creation_input_tokens === 'number'
+                ? typedUsage.cache_creation_input_tokens
+                : undefined,
+            cache_read_input_tokens:
+              typeof typedUsage.cache_read_input_tokens === 'number'
+                ? typedUsage.cache_read_input_tokens
+                : undefined,
+            output_tokens:
+              typeof typedUsage.output_tokens === 'number' ? typedUsage.output_tokens : undefined,
+          };
+        }
+      }
+      return;
+    }
+
+    if (eventType === 'message_stop') {
+      timing.messageStop = timestamp;
+      const parsed = JSON.parse(event.data) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        const stop = parsed as Record<string, unknown>;
+        const usage = stop.usage;
+        if (usage && typeof usage === 'object') {
+          const typedUsage = usage as Record<string, unknown>;
+          metadata.finalUsage = {
+            input_tokens:
+              typeof typedUsage.input_tokens === 'number' ? typedUsage.input_tokens : undefined,
+            cache_creation_input_tokens:
+              typeof typedUsage.cache_creation_input_tokens === 'number'
+                ? typedUsage.cache_creation_input_tokens
+                : undefined,
+            cache_read_input_tokens:
+              typeof typedUsage.cache_read_input_tokens === 'number'
+                ? typedUsage.cache_read_input_tokens
+                : undefined,
+            output_tokens:
+              typeof typedUsage.output_tokens === 'number' ? typedUsage.output_tokens : undefined,
+          };
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error parsing SSE event:', e);
+  }
 }
 
 export default app;

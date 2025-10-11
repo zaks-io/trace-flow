@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@observe/shared": "workspace:*",
+    "eventsource-parser": "^3.0.6",
     "hono": "^4.6.14"
   },
   "devDependencies": {
