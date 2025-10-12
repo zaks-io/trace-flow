@@ -21,6 +21,7 @@ interface TinybirdTrace {
   Duration: number;
   StatusCode: string;
   StatusMessage: string;
+  ApiKey: string;
   'Events.Timestamp': number[];
   'Events.Name': string[];
   'Events.Attributes': Record<string, string>[];
@@ -85,6 +86,7 @@ function buildTraces(data: QueueMessage): TinybirdTrace[] {
     Duration: (data.timing.responseComplete - data.timing.requestStart) * 1000000,
     StatusCode: data.error ? 'STATUS_CODE_ERROR' : 'STATUS_CODE_OK',
     StatusMessage: data.error?.message ?? '',
+    ApiKey: data.apiKey,
     'Events.Timestamp': [],
     'Events.Name': [],
     'Events.Attributes': [],
@@ -136,6 +138,7 @@ function buildTraces(data: QueueMessage): TinybirdTrace[] {
     Duration: (data.timing.requestSent - data.timing.requestStart) * 1000000,
     StatusCode: 'STATUS_CODE_OK',
     StatusMessage: '',
+    ApiKey: data.apiKey,
     'Events.Timestamp': [],
     'Events.Name': [],
     'Events.Attributes': [],
@@ -164,6 +167,7 @@ function buildTraces(data: QueueMessage): TinybirdTrace[] {
       Duration: (data.sseMessageTiming.messageStop - data.sseMessageTiming.messageStart) * 1000000,
       StatusCode: 'STATUS_CODE_OK',
       StatusMessage: '',
+      ApiKey: data.apiKey,
       'Events.Timestamp': [],
       'Events.Name': [],
       'Events.Attributes': [],
@@ -217,6 +221,7 @@ function buildTraces(data: QueueMessage): TinybirdTrace[] {
       Duration: (data.timing.firstTokenReceived - data.timing.requestSent) * 1000000,
       StatusCode: 'STATUS_CODE_OK',
       StatusMessage: '',
+      ApiKey: data.apiKey,
       'Events.Timestamp': [],
       'Events.Name': [],
       'Events.Attributes': [],
@@ -244,6 +249,7 @@ function buildTraces(data: QueueMessage): TinybirdTrace[] {
       Duration: (data.timing.responseComplete - data.timing.firstTokenReceived) * 1000000,
       StatusCode: 'STATUS_CODE_OK',
       StatusMessage: '',
+      ApiKey: data.apiKey,
       'Events.Timestamp': [],
       'Events.Name': [],
       'Events.Attributes': [],

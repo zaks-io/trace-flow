@@ -58,6 +58,7 @@ export interface SSEMetadata {
 
 export interface QueueMessage {
   requestId: string;
+  apiKey: string;
   targetUrl: string;
   request: LLMRequest;
   response: LLMResponse;

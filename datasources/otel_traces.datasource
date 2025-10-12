@@ -12,6 +12,7 @@ SCHEMA >
     `Duration` Int64 `json:$.Duration`,
     `StatusCode` LowCardinality(String) `json:$.StatusCode`,
     `StatusMessage` String `json:$.StatusMessage`,
+    `ApiKey` LowCardinality(String) `json:$.ApiKey`,
     `Events.Timestamp` Array(Int64) DEFAULT [] `json:$.Events.Timestamp[:]`,
     `Events.Name` Array(String) DEFAULT [] `json:$.Events.Name[:]`,
     `Events.Attributes` Array(String) DEFAULT [] `json:$.Events.Attributes[:]`,
@@ -21,6 +22,6 @@ SCHEMA >
     `Links.Attributes` Array(String) DEFAULT [] `json:$.Links.Attributes[:]`
 
 ENGINE "MergeTree"
-ENGINE_SORTING_KEY "Timestamp, TraceId, SpanId"
+ENGINE_SORTING_KEY "ApiKey, Timestamp, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(Timestamp / 1000000000))"
 ENGINE_TTL "toDateTime(Timestamp / 1000000000) + INTERVAL 90 DAY"
