@@ -191,6 +191,11 @@ jobs:
         run: bun run turbo run type-check --filter=@observe/web
 
       - name: Build
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+          NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
         run: bun run turbo run build --filter=@observe/web
 
   status:
