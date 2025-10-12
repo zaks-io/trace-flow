@@ -77,6 +77,8 @@ app.all('*', async (c) => {
     return authError;
   }
 
+  const apiKey =
+    c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.header('X-API-Key') ?? '';
   const requestId = generateId();
   const requestStart = getCurrentTimestamp();
   const targetUrl = c.req.header('X-Proxy-Target');
@@ -222,6 +224,7 @@ app.all('*', async (c) => {
 
       const queueMessage: QueueMessage = {
         requestId,
+        apiKey,
         targetUrl,
         request: {
           id: requestId,
