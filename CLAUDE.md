@@ -451,6 +451,165 @@ Tinybird automatically transforms data from live schema to new schema during dep
 
 Project uses Cloudflare's Git integration for automatic deployments on push to `main`. Each worker is configured as a separate application in Cloudflare dashboard with its own root directory and build command.
 
+## Creating Pull Requests
+
+Follow this workflow when creating PRs:
+
+### 1. Create Feature Branch from Main
+
+```bash
+git checkout main
+git pull origin main
+git checkout -b feature/your-feature-name
+```
+
+**Branch naming conventions:**
+
+- `feature/description` - New features
+- `fix/description` - Bug fixes
+- `refactor/description` - Code refactoring
+- `docs/description` - Documentation updates
+
+### 2. Run All CI Checks Locally
+
+Before committing, run the full CI suite to catch issues early:
+
+```bash
+# Install dependencies (if not already installed)
+bun install
+
+# Run all checks in parallel
+bun run format  # Auto-fix formatting issues
+bun run lint    # Lint all workers
+bun run type-check  # Type check all workers
+bun run build   # Build all workers
+```
+
+**Individual worker checks (if needed):**
+
+```bash
+# Proxy worker
+bun run prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
+bun run turbo run lint --filter=@observe/proxy
+bun run turbo run type-check --filter=@observe/proxy
+bun run turbo run build --filter=@observe/proxy
+
+# Proxy consumer worker
+bun run prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
+bun run turbo run lint --filter=@observe/proxy-consumer
+bun run turbo run type-check --filter=@observe/proxy-consumer
+bun run turbo run build --filter=@observe/proxy-consumer
+
+# Web worker
+bun run prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
+bun run turbo run lint --filter=@observe/web
+bun run turbo run type-check --filter=@observe/web
+bun run turbo run build --filter=@observe/web
+
+# GitHub Actions workflows (if modified)
+actionlint .github/workflows/*.yml
+```
+
+**Fix common issues:**
+
+```bash
+# Auto-fix formatting
+bun run format
+
+# Auto-fix linting issues
+bun run lint --fix
+```
+
+### 3. Commit Changes
+
+Stage and commit your changes with a descriptive message:
+
+```bash
+git add .
+git commit -m "$(cat <<'EOF'
+Add feature description
+
+Brief explanation of what changed and why.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"
+```
+
+**Commit message guidelines:**
+
+- First line: Concise summary (50-72 characters)
+- Blank line
+- Detailed explanation (if needed)
+- Always include Claude Code attribution footer
+
+### 4. Push Branch to Remote
+
+```bash
+git push -u origin feature/your-feature-name
+```
+
+### 5. Create Pull Request with gh CLI
+
+```bash
+gh pr create --title "Feature: Your feature description" --body "$(cat <<'EOF'
+## Summary
+- Brief bullet point of what changed
+- Why this change was needed
+- Any important implementation details
+
+## Test Plan
+- [ ] Local development tested
+- [ ] All CI checks passing
+- [ ] Manual testing completed
+
+## Related Issues
+Closes #123 (if applicable)
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+### Quick PR Workflow (All Steps Combined)
+
+```bash
+# Create branch from main
+git checkout main && git pull origin main
+git checkout -b feature/your-feature-name
+
+# Make your changes...
+
+# Run all checks
+bun run format && bun run lint && bun run type-check && bun run build
+
+# Commit and push
+git add . && git commit -m "$(cat <<'EOF'
+Add feature description
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"
+git push -u origin feature/your-feature-name
+
+# Create PR
+gh pr create --title "Feature: Description" --body "$(cat <<'EOF'
+## Summary
+- What changed
+
+## Test Plan
+- [x] Local testing completed
+- [x] CI checks passing
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
 ## Important Patterns
 
 - **Stream handling**: Always use `tee()` to duplicate streams when you need both proxying and capture
