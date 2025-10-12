@@ -108,7 +108,7 @@ app.all('*', async (c) => {
   headers.delete('host');
 
   const requestSent = getCurrentTimestamp();
-  const response = await fetch(targetUrl, {
+  const response = await fetch(`${targetUrl}${c.req.path}`, {
     method: c.req.method,
     headers,
     body: streamToProxy,

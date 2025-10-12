@@ -5,8 +5,5 @@ pages_build_output_dir = "./out"
 [observability]
 enabled = true
 
-[env.production]
-name = "observe-web"
-
 [env.preview]
 name = "observe-web-preview"
