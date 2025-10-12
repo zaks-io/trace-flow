@@ -9,7 +9,7 @@
     "start": "next start",
     "preview": "wrangler pages dev",
     "deploy:preview": "bun run build && wrangler pages deploy --branch preview",
-    "deploy:prod": "bun run build && wrangler pages deploy --branch production",
+    "deploy:prod": "bun run build && wrangler pages deploy",
     "type-check": "tsc --noEmit",
     "lint": "eslint"
   },
