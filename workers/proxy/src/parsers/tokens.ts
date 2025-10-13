@@ -1,5 +1,14 @@
 import type { LLMTokenUsage } from '@observe/types';
 
+/**
+ * Extracts token usage from LLM response bodies.
+ * Assumes OpenAI-compatible response format with a `usage` object at the root level.
+ *
+ * Detects prompt caching by checking for `cached_tokens` in `prompt_tokens_details`.
+ * This is an OpenAI-specific field that indicates partial cache hits during prompt processing.
+ *
+ * Returns undefined if the response doesn't contain valid usage data (non-error responses may lack usage).
+ */
 export function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined {
   try {
     const parsed = JSON.parse(responseBody) as unknown;

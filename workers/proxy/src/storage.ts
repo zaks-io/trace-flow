@@ -1,3 +1,10 @@
+/**
+ * Stores request and response bodies in R2 for later processing by the queue consumer.
+ * Uses a consistent key naming convention (`requests/{id}`, `responses/{id}`) that the consumer relies on.
+ *
+ * Uploads both bodies in parallel to minimize latency, since they're independent operations.
+ * This function is called within `waitUntil()` to avoid blocking the client response.
+ */
 export async function storeRequestResponse(
   storage: R2Bucket,
   requestId: string,

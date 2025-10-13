@@ -2,6 +2,16 @@ import { createParser, type EventSourceParser } from 'eventsource-parser';
 import type { SSEMessageTiming, SSEMetadata } from '@observe/types';
 import { getCurrentTimestamp } from '@observe/utils';
 
+/**
+ * Processes SSE events to extract timing and metadata for LLM streaming responses.
+ * Designed for Anthropic's event structure (message_start, content_block_start, content_block_delta, etc).
+ *
+ * Only captures the first occurrence of timing events to establish baseline metrics.
+ * Prevents overwriting if duplicate events arrive (some providers may send redundant events).
+ *
+ * Captures both incremental usage (message_delta) and final usage (message_stop) because
+ * streaming responses may provide partial token counts during generation.
+ */
 export function processSSEEvent(
   event: { event?: string; data: string },
   timestamp: number,
@@ -88,6 +98,10 @@ export function processSSEEvent(
   }
 }
 
+/**
+ * Creates an SSE parser that populates timing and metadata objects as events are processed.
+ * The parser mutates the provided timing and metadata objects to avoid copying overhead during streaming.
+ */
 export function createSSEParser(
   timing: SSEMessageTiming,
   metadata: SSEMetadata,

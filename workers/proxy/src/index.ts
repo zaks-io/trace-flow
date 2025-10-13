@@ -1,3 +1,19 @@
+/**
+ * LLM Proxy Worker - Streams LLM responses while capturing request/response data for observability.
+ *
+ * Architecture:
+ * 1. Receives client request with `X-Proxy-Target` header specifying the LLM provider URL
+ * 2. Duplicates request body using tee() - one stream for proxying, one for capture
+ * 3. Proxies request to target provider and streams response back to client immediately (low latency)
+ * 4. Simultaneously captures response chunks using TransformStream while streaming to client
+ * 5. Asynchronously stores bodies in R2 and enqueues metadata for processing (via waitUntil)
+ *
+ * The waitUntil pattern is critical: storage and queueing happen after the client response completes,
+ * ensuring the proxy never blocks the client for observability operations.
+ *
+ * SSE streaming responses (text/event-stream) receive special handling to extract timing metrics
+ * for streaming-specific events (message_start, content_block_delta, etc).
+ */
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { generateId, getCurrentTimestamp } from '@observe/utils';
@@ -52,8 +68,12 @@ app.all('*', async (c) => {
     );
   }
 
+  // Duplicate request body stream: one for proxying to provider, one for capture
+  // tee() creates two independent readers from the same source without buffering the entire body
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
 
+  // Forward all headers except proxy-specific ones
+  // X-Proxy-Target is internal routing metadata, host must match the target provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Proxy-Target');
   headers.delete('host');
@@ -99,6 +119,8 @@ app.all('*', async (c) => {
 
   const pipePromise = response.body?.pipeTo(writable);
 
+  // All observability operations happen in waitUntil to avoid blocking the client response
+  // This ensures the proxy returns low latency even if R2 storage or queue operations are slow
   c.executionCtx.waitUntil(
     (async () => {
       const requestBody = await captureStream(streamToCapture);

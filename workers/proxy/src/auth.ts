@@ -1,5 +1,16 @@
 import type { Context } from 'hono';
 
+/**
+ * Validates API keys from KV namespace, supporting two authentication header formats:
+ * - `Authorization: Bearer <key>` (standard OAuth-style)
+ * - `X-API-Key: <key>` (simple alternative)
+ *
+ * The dual-header support provides flexibility for different client implementations
+ * without requiring complex authentication flows.
+ *
+ * Stored key data includes expiration timestamps to support key rotation.
+ * Returns an error Response if validation fails, or null if the key is valid (null = success).
+ */
 export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   c: Context<{ Bindings: E }>,
 ): Promise<Response | null> {

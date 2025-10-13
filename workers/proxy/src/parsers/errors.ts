@@ -1,5 +1,15 @@
 import type { LLMError } from '@observe/types';
 
+/**
+ * Extracts error information from failed LLM responses.
+ * Handles multiple error formats since different providers structure errors differently:
+ * - OpenAI: `{ error: { type, message, code } }`
+ * - Anthropic: `{ type, message }`
+ * - Others may vary
+ *
+ * Checks both nested `error` object and root-level fields to support all providers.
+ * Falls back to generic HTTP error if response body is unparseable or missing error details.
+ */
 export function parseError(responseBody: string, statusCode: number): LLMError {
   try {
     const parsed = JSON.parse(responseBody) as unknown;

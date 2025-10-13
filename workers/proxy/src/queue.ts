@@ -8,6 +8,20 @@ import type {
 } from '@observe/types';
 import { extractProviderFromUrl } from '@observe/utils';
 
+/**
+ * Constructs a queue message for async processing by the consumer worker.
+ *
+ * The message structure separates concerns:
+ * - `request/response` contain basic metadata available immediately
+ * - R2 keys (`requestBodyKey`, `responseBodyKey`) allow consumer to fetch full bodies
+ * - `timing` tracks latency metrics from request initiation to completion
+ * - `tokens/error` are parsed from response body when available
+ *
+ * Sets `model` to 'unknown' because the proxy doesn't parse request bodies.
+ * The consumer extracts the actual model from the stored request body in R2.
+ *
+ * SSE metadata is only included when present (streaming responses), keeping messages compact for non-SSE requests.
+ */
 export function createQueueMessage(params: {
   requestId: string;
   apiKey: string;
