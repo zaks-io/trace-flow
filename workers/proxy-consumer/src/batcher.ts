@@ -1,12 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { TinybirdTrace } from '@observe/types';
 import type { Env } from './index';
+import { insertIntoTinybirdWithRetry } from './tinybird';
 
 const BATCH_SIZE = 100_000;
 const FLUSH_INTERVAL_MS = 1000;
 const MAX_JITTER_MS = 200;
-const MAX_RETRIES = 3;
-const INITIAL_RETRY_DELAY_MS = 1000;
 
 export class TraceBatcher extends DurableObject<Env> {
   private lastFlushTime: number = Date.now();
@@ -146,7 +145,9 @@ export class TraceBatcher extends DurableObject<Env> {
       const ids = rows.map((row) => row.id);
 
       try {
-        await this.insertIntoTinybirdWithRetry(traces);
+        const datasource = this.env.TINYBIRD_DATASOURCE ?? 'otel_traces';
+        const host = this.env.TINYBIRD_HOST ?? 'https://api.tinybird.co';
+        await insertIntoTinybirdWithRetry(traces, this.env.TINYBIRD_TOKEN, datasource, host);
 
         this.durableState.storage.sql.exec(
           `DELETE FROM traces WHERE id IN (${ids.map(() => '?').join(',')})`,
@@ -180,55 +181,6 @@ export class TraceBatcher extends DurableObject<Env> {
     this.durableState.storage.sql.exec('UPDATE metadata SET last_flush_time = ? WHERE id = 1', [
       this.lastFlushTime,
     ]);
-  }
-
-  private async insertIntoTinybirdWithRetry(traces: TinybirdTrace[]): Promise<void> {
-    let lastError: Error = new Error('Unknown error');
-
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      try {
-        await this.insertIntoTinybird(traces);
-        return;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        console.warn(`Insert attempt ${attempt + 1}/${MAX_RETRIES} failed:`, lastError.message);
-
-        if (attempt < MAX_RETRIES - 1) {
-          const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
-          const jitter = Math.floor(Math.random() * 100);
-          await new Promise((resolve) => setTimeout(resolve, delay + jitter));
-        } else {
-          console.error('Failed to insert traces into Tinybird after retries:', lastError);
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  private async insertIntoTinybird(traces: TinybirdTrace[]): Promise<void> {
-    const datasource = this.env.TINYBIRD_DATASOURCE ?? 'otel_traces';
-    const host = this.env.TINYBIRD_HOST ?? 'https://api.tinybird.co';
-    const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
-
-    const body = traces.map((trace) => JSON.stringify(trace)).join('\n');
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.env.TINYBIRD_TOKEN}`,
-      },
-      body,
-      signal: AbortSignal.timeout(60000),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Tinybird insert failed: ${response.status} ${errorText}`);
-    }
-
-    console.log(`Successfully inserted ${traces.length} traces into Tinybird`);
   }
 
   getStats(): { queuedTraces: number; lastFlushTime: number } {
