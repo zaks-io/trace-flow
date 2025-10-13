@@ -1,5 +1,5 @@
-import type { QueueMessage, TinybirdTrace } from '@observe/shared/types';
-import { generateSpanId, hashString } from '@observe/shared/utils';
+import type { QueueMessage, TinybirdTrace } from '@observe/types';
+import { generateSpanId, hashString } from '@observe/utils';
 import { TraceBatcher } from './batcher';
 
 export { TraceBatcher };

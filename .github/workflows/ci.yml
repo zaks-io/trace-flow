@@ -21,6 +21,8 @@ jobs:
       proxy: ${{ steps.filter.outputs.proxy }}
       proxy-consumer: ${{ steps.filter.outputs.proxy-consumer }}
       web: ${{ steps.filter.outputs.web }}
+      utils: ${{ steps.filter.outputs.utils }}
+      types: ${{ steps.filter.outputs.types }}
       root: ${{ steps.filter.outputs.root }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
@@ -32,13 +34,20 @@ jobs:
           filters: |
             proxy:
               - 'workers/proxy/**'
-              - 'packages/shared/**'
+              - 'packages/utils/**'
+              - 'packages/types/**'
             proxy-consumer:
               - 'workers/proxy-consumer/**'
-              - 'packages/shared/**'
+              - 'packages/utils/**'
+              - 'packages/types/**'
             web:
               - 'workers/web/**'
-              - 'packages/shared/**'
+              - 'packages/utils/**'
+              - 'packages/types/**'
+            utils:
+              - 'packages/utils/**'
+            types:
+              - 'packages/types/**'
             root:
               - 'package.json'
               - 'bun.lockb'
@@ -61,6 +70,85 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: devops-actions/actionlint@v0.1.3
+
+  utils:
+    name: Utils Package
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.utils == 'true' || needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun run prettier --check "packages/utils/**/*.{ts,tsx,js,jsx,json}"
+
+      - name: Lint
+        run: bun run turbo run lint --filter=@observe/utils
+
+      - name: Type check
+        run: bun run turbo run type-check --filter=@observe/utils
+
+      - name: Test
+        run: bun run turbo run test --filter=@observe/utils
+
+  types:
+    name: Types Package
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.types == 'true' || needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun run prettier --check "packages/types/**/*.{ts,tsx,js,jsx,json}"
+
+      - name: Lint
+        run: bun run turbo run lint --filter=@observe/types
+
+      - name: Type check
+        run: bun run turbo run type-check --filter=@observe/types
 
   proxy:
     name: Proxy Worker
@@ -99,6 +187,9 @@ jobs:
 
       - name: Type check
         run: bun run turbo run type-check --filter=@observe/proxy
+
+      - name: Test
+        run: bun run turbo run test --filter=@observe/proxy
 
       - name: Build
         run: bun run turbo run build --filter=@observe/proxy
@@ -140,6 +231,9 @@ jobs:
 
       - name: Type check
         run: bun run turbo run type-check --filter=@observe/proxy-consumer
+
+      - name: Test
+        run: bun run turbo run test --filter=@observe/proxy-consumer
 
       - name: Build
         run: bun run turbo run build --filter=@observe/proxy-consumer
@@ -190,6 +284,9 @@ jobs:
       - name: Type check
         run: bun run turbo run type-check --filter=@observe/web
 
+      - name: Test
+        run: bun run turbo run test --filter=@observe/web
+
       - name: Build
         env:
           NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL }}
@@ -205,6 +302,8 @@ jobs:
     needs:
       - changes
       - actionlint
+      - utils
+      - types
       - proxy
       - proxy-consumer
       - web
