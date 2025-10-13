@@ -48,6 +48,7 @@ describe('Queue Handler Integration', () => {
       id: '1',
       timestamp: new Date(),
       body: message,
+      attempts: 0,
       ack: () => {
         /* noop */
       },
@@ -59,6 +60,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -74,6 +81,7 @@ describe('Queue Handler Integration', () => {
         id: String(i),
         timestamp: new Date(),
         body: message,
+        attempts: 0,
         ack: () => {
           /* noop */
         },
@@ -86,6 +94,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages,
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -107,6 +121,7 @@ describe('Queue Handler Integration', () => {
       id: '1',
       timestamp: new Date(),
       body: invalidMessage,
+      attempts: 0,
       ack: () => {
         ackCalled.value = true;
       },
@@ -118,6 +133,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -135,6 +156,7 @@ describe('Queue Handler Integration', () => {
       id: '1',
       timestamp: new Date(),
       body: message,
+      attempts: 0,
       ack: () => {
         ackCalled.value = true;
       },
@@ -146,6 +168,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -162,6 +190,7 @@ describe('Queue Handler Integration', () => {
       id: '1',
       timestamp: new Date(),
       body: message,
+      attempts: 0,
       ack: () => {
         /* noop */
       },
@@ -173,6 +202,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     // Mock DO to throw error (would need to implement this in batcher)
@@ -191,6 +226,7 @@ describe('Queue Handler Integration', () => {
         id: String(i),
         timestamp: new Date(),
         body: message,
+        attempts: 0,
         ack: () => {
           /* noop */
         },
@@ -203,6 +239,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages,
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -216,6 +258,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -236,6 +284,7 @@ describe('Queue Handler Integration', () => {
       id: '1',
       timestamp: new Date(),
       body: message,
+      attempts: 0,
       ack: () => {
         /* noop */
       },
@@ -247,6 +296,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -267,6 +322,7 @@ describe('Queue Handler Integration', () => {
       id: '1',
       timestamp: new Date(),
       body: message,
+      attempts: 0,
       ack: () => {
         /* noop */
       },
@@ -278,6 +334,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
@@ -299,6 +361,7 @@ describe('Queue Handler Integration', () => {
       id: '1',
       timestamp: new Date(),
       body: message,
+      attempts: 0,
       ack: () => {
         /* noop */
       },
@@ -310,6 +373,12 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
     };
 
     await worker.queue(batch, env);
