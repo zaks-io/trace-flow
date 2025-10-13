@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { createParser } from 'eventsource-parser';
-import { generateId, getCurrentTimestamp, extractProviderFromUrl } from '@observe/shared/utils';
+import { generateId, getCurrentTimestamp, extractProviderFromUrl } from '@observe/utils';
 import type {
   QueueMessage,
   LLMTiming,
@@ -9,7 +9,7 @@ import type {
   LLMError,
   SSEMessageTiming,
   SSEMetadata,
-} from '@observe/shared/types';
+} from '@observe/types';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessage>;

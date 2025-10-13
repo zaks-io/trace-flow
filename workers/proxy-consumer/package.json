@@ -14,7 +14,8 @@
     "lint": "eslint src"
   },
   "dependencies": {
-    "@observe/shared": "workspace:*"
+    "@observe/types": "workspace:*",
+    "@observe/utils": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251008.0",

@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { TinybirdTrace } from '@observe/shared/types';
+import type { TinybirdTrace } from '@observe/types';
 import type { Env } from './index';
 
 const BATCH_SIZE = 100_000;
