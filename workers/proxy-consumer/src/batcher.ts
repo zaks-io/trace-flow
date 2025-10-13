@@ -17,26 +17,24 @@ export class TraceBatcher extends DurableObject<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     this.durableState = state;
-    void this.durableState.blockConcurrencyWhile(() => {
-      this.initializeSchema();
-      const result = this.durableState.storage.sql.exec<{ last_flush_time: number }>(
-        'SELECT last_flush_time FROM metadata WHERE id = 1',
-      );
-      const rows = [...result];
-      if (rows.length > 0 && rows[0]) {
-        this.lastFlushTime = rows[0].last_flush_time;
-      }
 
-      const countResult = this.durableState.storage.sql.exec<{ count: number }>(
-        'SELECT COUNT(*) as count FROM traces',
-      );
-      const countRows = [...countResult];
-      if (countRows.length > 0 && countRows[0]) {
-        this.traceCount = countRows[0].count;
-      }
+    this.initializeSchema();
 
-      return Promise.resolve();
-    });
+    const result = this.durableState.storage.sql.exec<{ last_flush_time: number }>(
+      'SELECT last_flush_time FROM metadata WHERE id = 1',
+    );
+    const rows = [...result];
+    if (rows.length > 0 && rows[0]) {
+      this.lastFlushTime = rows[0].last_flush_time;
+    }
+
+    const countResult = this.durableState.storage.sql.exec<{ count: number }>(
+      'SELECT COUNT(*) as count FROM traces',
+    );
+    const countRows = [...countResult];
+    if (countRows.length > 0 && countRows[0]) {
+      this.traceCount = countRows[0].count;
+    }
   }
 
   private initializeSchema(): void {
@@ -88,12 +86,10 @@ export class TraceBatcher extends DurableObject<Env> {
 
     console.log(`Added ${traces.length} traces to batch (total: ${this.traceCount})`);
 
-    if (!this.flushAlarmScheduled) {
-      await this.scheduleFlush();
-    }
-
     if (this.traceCount >= BATCH_SIZE) {
       await this.flush();
+    } else if (!this.flushAlarmScheduled) {
+      await this.scheduleFlush();
     }
   }
 
