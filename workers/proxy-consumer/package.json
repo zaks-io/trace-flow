@@ -12,7 +12,9 @@
     "deploy:prod": "wrangler deploy --env production",
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.config.integration.ts",
+    "test:unit": "vitest run",
+    "test:integration": "vitest run --config vitest.config.integration.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

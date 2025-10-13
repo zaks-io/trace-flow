@@ -114,7 +114,7 @@ describe('calculateShardId', () => {
       counts.reduce((sum, count) => sum + Math.pow(count - avg, 2), 0) / counts.length;
     const stdDev = Math.sqrt(variance);
 
-    expect(stdDev).toBeLessThan(avg * 0.3);
+    expect(stdDev).toBeLessThan(avg * 0.2);
   });
 
   it('should handle very long API keys', () => {
@@ -204,39 +204,12 @@ describe('calculateShardId', () => {
 
       const minCount = Math.min(...counts);
       const maxCount = Math.max(...counts);
-      const range = maxCount - minCount;
 
       const chiSquared = counts.reduce(
         (sum, observed) => sum + Math.pow(observed - EXPECTED_PER_SHARD, 2) / EXPECTED_PER_SHARD,
         0,
       );
-      const degreesOfFreedom = NUM_SHARDS - 1;
       const criticalValue = 16.919;
-
-      console.log('\n=== API Key Distribution Analysis ===');
-      console.log(`Sample size: ${SAMPLE_SIZE} API keys`);
-      console.log(`Number of shards: ${NUM_SHARDS}`);
-      console.log(`Expected per shard: ${EXPECTED_PER_SHARD}`);
-      console.log('\nDistribution per shard:');
-      shardCounts.forEach((count, shardId) => {
-        const deviation = ((count - EXPECTED_PER_SHARD) / EXPECTED_PER_SHARD) * 100;
-        console.log(`  Shard ${shardId}: ${count} keys (${deviation.toFixed(2)}% deviation)`);
-      });
-      console.log('\nStatistical Metrics:');
-      console.log(`  Mean: ${mean.toFixed(2)}`);
-      console.log(`  Standard Deviation: ${stdDev.toFixed(2)}`);
-      console.log(`  Coefficient of Variation: ${(coefficientOfVariation * 100).toFixed(2)}%`);
-      console.log(`  Min Count: ${minCount}`);
-      console.log(`  Max Count: ${maxCount}`);
-      console.log(`  Range: ${range}`);
-      console.log(`\nChi-Squared Test:`);
-      console.log(`  Chi-squared statistic: ${chiSquared.toFixed(2)}`);
-      console.log(`  Degrees of freedom: ${degreesOfFreedom}`);
-      console.log(`  Critical value (p=0.05): ${criticalValue}`);
-      console.log(
-        `  Result: ${chiSquared < criticalValue ? 'PASS (uniform distribution)' : 'FAIL (non-uniform)'}`,
-      );
-      console.log('=====================================\n');
 
       expect(shardCounts.size).toBe(NUM_SHARDS);
 

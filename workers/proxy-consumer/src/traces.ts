@@ -130,7 +130,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       'Links.Attributes': [],
     };
 
-    if (data.sseMessageTiming.firstDelta && data.sseMessageTiming.messageStart) {
+    if (data.sseMessageTiming.firstDelta) {
       messageSpan.SpanAttributes['llm.time_to_first_token_ms'] = String(
         data.sseMessageTiming.firstDelta - data.sseMessageTiming.messageStart,
       );

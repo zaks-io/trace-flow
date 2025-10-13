@@ -11,12 +11,12 @@ export interface Env {
   TINYBIRD_DATASOURCE?: string;
   TINYBIRD_HOST?: string;
   TRACE_BATCHER: DurableObjectNamespace<TraceBatcher>;
+  NUM_SHARDS?: number;
 }
-
-const NUM_SHARDS = 10;
 
 export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
+    const NUM_SHARDS = env.NUM_SHARDS ?? 10;
     const startTime = Date.now();
     console.log(`Processing queue batch: ${batch.messages.length} messages`);
 
