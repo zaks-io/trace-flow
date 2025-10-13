@@ -206,7 +206,6 @@ describe('insertIntoTinybirdWithRetry', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
@@ -242,17 +241,18 @@ describe('insertIntoTinybirdWithRetry', () => {
       });
     global.fetch = mockFetch;
 
-    const promise = insertIntoTinybirdWithRetry(
+    const mockDelay = vi.fn().mockResolvedValue(undefined);
+
+    await insertIntoTinybirdWithRetry(
       [mockTrace],
       'test-token',
       'otel_traces',
       'https://api.tinybird.co',
+      mockDelay,
     );
 
-    await vi.runAllTimersAsync();
-    await promise;
-
     expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockDelay).toHaveBeenCalledTimes(1);
   });
 
   it('should throw error after max retries', async () => {
@@ -263,20 +263,20 @@ describe('insertIntoTinybirdWithRetry', () => {
     });
     global.fetch = mockFetch;
 
-    const promise = insertIntoTinybirdWithRetry(
-      [mockTrace],
-      'test-token',
-      'otel_traces',
-      'https://api.tinybird.co',
-    );
+    const mockDelay = vi.fn().mockResolvedValue(undefined);
 
-    await vi.advanceTimersByTimeAsync(1100);
-    await vi.advanceTimersByTimeAsync(2100);
-    await vi.advanceTimersByTimeAsync(4100);
-
-    await expect(promise).rejects.toThrow('Tinybird insert failed: 500 Server error');
+    await expect(
+      insertIntoTinybirdWithRetry(
+        [mockTrace],
+        'test-token',
+        'otel_traces',
+        'https://api.tinybird.co',
+        mockDelay,
+      ),
+    ).rejects.toThrow('Tinybird insert failed: 500 Server error');
 
     expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockDelay).toHaveBeenCalledTimes(2);
   });
 
   it('should use exponential backoff', async () => {
@@ -298,34 +298,36 @@ describe('insertIntoTinybirdWithRetry', () => {
       });
     global.fetch = mockFetch;
 
-    const promise = insertIntoTinybirdWithRetry(
+    const mockDelay = vi.fn().mockResolvedValue(undefined);
+
+    await insertIntoTinybirdWithRetry(
       [mockTrace],
       'test-token',
       'otel_traces',
       'https://api.tinybird.co',
+      mockDelay,
     );
 
-    await vi.runAllTimersAsync();
-    await promise;
-
     expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockDelay).toHaveBeenCalledTimes(2);
+    expect(mockDelay.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(1000);
+    expect(mockDelay.mock.calls[1]?.[0]).toBeGreaterThanOrEqual(2000);
   });
 
   it('should handle non-Error exceptions', async () => {
     const mockFetch = vi.fn().mockRejectedValue('String error');
     global.fetch = mockFetch;
 
-    const promise = insertIntoTinybirdWithRetry(
-      [mockTrace],
-      'test-token',
-      'otel_traces',
-      'https://api.tinybird.co',
-    );
+    const mockDelay = vi.fn().mockResolvedValue(undefined);
 
-    await vi.advanceTimersByTimeAsync(1100);
-    await vi.advanceTimersByTimeAsync(2100);
-    await vi.advanceTimersByTimeAsync(4100);
-
-    await expect(promise).rejects.toThrow('String error');
+    await expect(
+      insertIntoTinybirdWithRetry(
+        [mockTrace],
+        'test-token',
+        'otel_traces',
+        'https://api.tinybird.co',
+        mockDelay,
+      ),
+    ).rejects.toThrow('String error');
   });
 });

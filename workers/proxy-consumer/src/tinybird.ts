@@ -53,6 +53,8 @@ export async function insertIntoTinybirdWithRetry(
   tinybirdToken: string,
   datasource: string,
   host: string,
+  delayFn: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
 ): Promise<void> {
   let lastError: Error = new Error('Unknown error');
 
@@ -67,7 +69,7 @@ export async function insertIntoTinybirdWithRetry(
       if (attempt < MAX_RETRIES - 1) {
         const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
         const jitter = Math.floor(Math.random() * 100);
-        await new Promise((resolve) => setTimeout(resolve, delay + jitter));
+        await delayFn(delay + jitter);
       } else {
         console.error('Failed to insert traces into Tinybird after retries:', lastError);
       }
