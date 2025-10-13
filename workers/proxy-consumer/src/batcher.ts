@@ -61,7 +61,7 @@ export class TraceBatcher extends DurableObject<Env> {
     if (metadataExists[0]?.count === 0) {
       this.durableState.storage.sql.exec(
         'INSERT INTO metadata (id, last_flush_time) VALUES (1, ?)',
-        [Date.now()],
+        Date.now(),
       );
     }
   }
@@ -78,7 +78,7 @@ export class TraceBatcher extends DurableObject<Env> {
 
     this.durableState.storage.sql.exec(
       `INSERT INTO traces (data, timestamp) VALUES ${values}`,
-      params,
+      ...params,
     );
 
     this.traceCount += traces.length;
@@ -133,7 +133,7 @@ export class TraceBatcher extends DurableObject<Env> {
       const rows = [
         ...this.durableState.storage.sql.exec<{ id: number; data: string }>(
           'SELECT id, data FROM traces ORDER BY id LIMIT ?',
-          [BATCH_SIZE],
+          BATCH_SIZE,
         ),
       ];
 
@@ -151,7 +151,7 @@ export class TraceBatcher extends DurableObject<Env> {
 
         this.durableState.storage.sql.exec(
           `DELETE FROM traces WHERE id IN (${ids.map(() => '?').join(',')})`,
-          ids,
+          ...ids,
         );
 
         this.traceCount -= traces.length;
@@ -178,9 +178,10 @@ export class TraceBatcher extends DurableObject<Env> {
   }
 
   private updateLastFlushTime(): void {
-    this.durableState.storage.sql.exec('UPDATE metadata SET last_flush_time = ? WHERE id = 1', [
+    this.durableState.storage.sql.exec(
+      'UPDATE metadata SET last_flush_time = ? WHERE id = 1',
       this.lastFlushTime,
-    ]);
+    );
   }
 
   getStats(): { queuedTraces: number; lastFlushTime: number } {
