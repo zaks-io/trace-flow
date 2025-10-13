@@ -18,7 +18,7 @@ declare module 'cloudflare:test' {
       intercept(options: { path: string; method?: string }): {
         reply(
           status: number,
-          body: string | ((opts: { headers?: Record<string, string> }) => string),
+          body: string | ((opts: { headers: Record<string, string> }) => string),
           options?: { headers?: Record<string, string> },
         ): void;
       };

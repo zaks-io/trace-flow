@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { env, fetchMock, SELF } from 'cloudflare:test';
 
+const WAIT_UNTIL_DELAY = 100; // Time for waitUntil operations to complete
+
 async function setupValidApiKey(key: string): Promise<void> {
   const keyData = {
     expiresAt: Date.now() + 86400000,
@@ -26,9 +28,8 @@ describe('Proxy Worker Integration', () => {
       });
 
       expect(res.status).toBe(401);
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toBe('Missing API key');
+      const body = await res.json();
+      expect(body).toHaveProperty('error', 'Missing API key');
     });
 
     it('should return 401 when API key is invalid', async () => {
@@ -42,9 +43,8 @@ describe('Proxy Worker Integration', () => {
       });
 
       expect(res.status).toBe(401);
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toBe('Invalid API key');
+      const body = await res.json();
+      expect(body).toHaveProperty('error', 'Invalid API key');
     });
 
     it('should return 401 when API key is expired', async () => {
@@ -65,9 +65,8 @@ describe('Proxy Worker Integration', () => {
       });
 
       expect(res.status).toBe(401);
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toBe('Expired API key');
+      const body = await res.json();
+      expect(body).toHaveProperty('error', 'Expired API key');
     });
   });
 
@@ -84,9 +83,8 @@ describe('Proxy Worker Integration', () => {
       });
 
       expect(res.status).toBe(400);
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
-      const body = (await res.json()) as { error: string };
-      expect(body.error).toBe('Missing X-Proxy-Target header');
+      const body = await res.json();
+      expect(body).toHaveProperty('error', 'Missing X-Proxy-Target header');
     });
   });
 
@@ -139,7 +137,7 @@ describe('Proxy Worker Integration', () => {
       expect(body).toEqual(mockResponse);
 
       // Wait for async operations (waitUntil)
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
 
       // Verify R2 storage
       const stored = await env.STORAGE.list();
@@ -175,7 +173,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(400);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
 
     it('should handle error responses (5xx)', async () => {
@@ -207,7 +205,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(500);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
 
     it('should detect and handle SSE streams', async () => {
@@ -239,7 +237,7 @@ describe('Proxy Worker Integration', () => {
       const text = await res.text();
       expect(text).toContain('message_start');
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
 
     it('should forward headers excluding X-Proxy-Target and host', async () => {
@@ -275,11 +273,10 @@ describe('Proxy Worker Integration', () => {
         body: JSON.stringify({ model: 'gpt-4' }),
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
 
       expect(capturedHeaders).not.toBeNull();
-      // TypeScript doesn't understand the null check above, so we assert the type
-      const headers = capturedHeaders as unknown as Headers;
+      const headers = capturedHeaders!;
       expect(headers.has('X-Proxy-Target')).toBe(false);
       expect(headers.has('host')).toBe(false);
       expect(headers.get('Custom-Header')).toBe('custom-value');
@@ -309,7 +306,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
 
       // Verify request body was stored
       const requestKeys = await env.STORAGE.list({ prefix: 'requests/' });
