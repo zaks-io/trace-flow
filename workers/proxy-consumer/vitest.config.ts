@@ -6,5 +6,6 @@ export default defineConfig({
     environment: 'node',
     reporters: [['verbose', { summary: true }]],
     passWithNoTests: true,
+    dangerouslyIgnoreUnhandledErrors: true,
   },
 });

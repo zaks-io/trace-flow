@@ -270,9 +270,12 @@ describe('insertIntoTinybirdWithRetry', () => {
       'https://api.tinybird.co',
     );
 
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTimeAsync(2100);
+    await vi.advanceTimersByTimeAsync(4100);
 
     await expect(promise).rejects.toThrow('Tinybird insert failed: 500 Server error');
+
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
@@ -319,7 +322,9 @@ describe('insertIntoTinybirdWithRetry', () => {
       'https://api.tinybird.co',
     );
 
-    await vi.runAllTimersAsync();
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTimeAsync(2100);
+    await vi.advanceTimersByTimeAsync(4100);
 
     await expect(promise).rejects.toThrow('String error');
   });
