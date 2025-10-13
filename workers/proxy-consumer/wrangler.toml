@@ -5,12 +5,22 @@ compatibility_date = "2024-11-27"
 [observability]
 enabled = true
 
+# Durable Object for batching traces
+[[durable_objects.bindings]]
+name = "TRACE_BATCHER"
+class_name = "TraceBatcher"
+script_name = "observe-proxy-consumer"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["TraceBatcher"]
+
 # Queue consumer configuration
 [[queues.consumers]]
 queue = "observe-requests-dev"
-max_batch_size = 10
+max_batch_size = 100
 max_batch_timeout = 30
-max_retries = 3
+max_retries = 5
 dead_letter_queue = "observe-requests-dlq-dev"
 
 # R2 bucket for storing request/response bodies
@@ -26,11 +36,16 @@ bucket_name = "observe-storage-dev"
 [env.staging]
 name = "observe-proxy-consumer-staging"
 
+[[env.staging.durable_objects.bindings]]
+name = "TRACE_BATCHER"
+class_name = "TraceBatcher"
+script_name = "observe-proxy-consumer-staging"
+
 [[env.staging.queues.consumers]]
 queue = "observe-requests-staging"
-max_batch_size = 10
+max_batch_size = 100
 max_batch_timeout = 30
-max_retries = 3
+max_retries = 5
 dead_letter_queue = "observe-requests-dlq-staging"
 
 [[env.staging.r2_buckets]]
@@ -40,11 +55,16 @@ bucket_name = "observe-storage-staging"
 [env.production]
 name = "observe-proxy-consumer"
 
+[[env.production.durable_objects.bindings]]
+name = "TRACE_BATCHER"
+class_name = "TraceBatcher"
+script_name = "observe-proxy-consumer"
+
 [[env.production.queues.consumers]]
 queue = "observe-requests-prod"
-max_batch_size = 10
+max_batch_size = 100
 max_batch_timeout = 30
-max_retries = 3
+max_retries = 5
 dead_letter_queue = "observe-requests-dlq-prod"
 
 [[env.production.r2_buckets]]

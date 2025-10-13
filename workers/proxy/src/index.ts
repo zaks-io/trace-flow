@@ -180,9 +180,14 @@ app.all('*', async (c) => {
       const requestBody = await captureStream(streamToCapture);
       await pipePromise;
 
-      const responseBody = new TextDecoder().decode(
-        new Uint8Array(responseCapturedChunks.flatMap((chunk) => Array.from(chunk))),
-      );
+      const totalSize = responseCapturedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+      const responseBytes = new Uint8Array(totalSize);
+      let offset = 0;
+      for (const chunk of responseCapturedChunks) {
+        responseBytes.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const responseBody = new TextDecoder().decode(responseBytes);
 
       const timing: LLMTiming = {
         requestStart,
@@ -297,7 +302,15 @@ async function captureStream(stream: ReadableStream | null): Promise<string> {
     }
   }
 
-  return new TextDecoder().decode(new Uint8Array(chunks.flatMap((chunk) => Array.from(chunk))));
+  const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const bytes = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return new TextDecoder().decode(bytes);
 }
 
 function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined {

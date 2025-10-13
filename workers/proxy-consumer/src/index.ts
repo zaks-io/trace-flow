@@ -1,63 +1,91 @@
-import type { QueueMessage } from '@observe/shared/types';
+import type { QueueMessage, TinybirdTrace } from '@observe/shared/types';
+import { generateSpanId, hashString } from '@observe/shared/utils';
+import { TraceBatcher } from './batcher';
 
-interface Env {
+export { TraceBatcher };
+
+export interface Env {
   STORAGE: R2Bucket;
   TINYBIRD_TOKEN: string;
   TINYBIRD_DATASOURCE?: string;
   TINYBIRD_HOST?: string;
+  TRACE_BATCHER: DurableObjectNamespace<TraceBatcher>;
 }
 
-interface TinybirdTrace {
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
-  ParentSpanId: string;
-  TraceState: string;
-  SpanName: string;
-  SpanKind: string;
-  ServiceName: string;
-  ResourceAttributes: Record<string, string>;
-  SpanAttributes: Record<string, string>;
-  Duration: number;
-  StatusCode: string;
-  StatusMessage: string;
-  ApiKey: string;
-  'Events.Timestamp': number[];
-  'Events.Name': string[];
-  'Events.Attributes': Record<string, string>[];
-  'Links.TraceId': string[];
-  'Links.SpanId': string[];
-  'Links.TraceState': string[];
-  'Links.Attributes': Record<string, string>[];
-}
+const NUM_SHARDS = 10;
 
 export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
+    const startTime = Date.now();
+    console.log(`Processing queue batch: ${batch.messages.length} messages`);
+
+    const shardedMessages = new Map<
+      number,
+      {
+        traces: TinybirdTrace[];
+        messages: Message<QueueMessage>[];
+      }
+    >();
+
+    const failedMessages: Message<QueueMessage>[] = [];
+
     for (const message of batch.messages) {
       try {
-        await processMessage(message.body, env);
-        message.ack();
+        const traces = buildTraces(message.body);
+        const shardId = hashString(message.body.apiKey) % NUM_SHARDS;
+
+        if (!shardedMessages.has(shardId)) {
+          shardedMessages.set(shardId, { traces: [], messages: [] });
+        }
+
+        const shard = shardedMessages.get(shardId)!;
+        shard.traces.push(...traces);
+        shard.messages.push(message);
       } catch (error) {
-        console.error('Failed to process message:', {
+        console.error('Failed to build traces for message:', {
           requestId: message.body.requestId,
           error: error instanceof Error ? error.message : String(error),
         });
-        message.retry();
+        failedMessages.push(message);
       }
     }
+
+    const shardPromises = Array.from(shardedMessages.entries()).map(async ([shardId, shard]) => {
+      try {
+        const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
+        const batcher = env.TRACE_BATCHER.get(batcherId);
+
+        await batcher.addTraces(shard.traces);
+
+        for (const message of shard.messages) {
+          message.ack();
+        }
+
+        console.log(
+          `Shard ${shardId}: Successfully processed ${shard.messages.length} messages (${shard.traces.length} traces)`,
+        );
+      } catch (error) {
+        console.error(`Shard ${shardId}: Failed to add traces to batcher:`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        for (const message of shard.messages) {
+          message.retry();
+        }
+      }
+    });
+
+    await Promise.all(shardPromises);
+
+    for (const message of failedMessages) {
+      message.retry();
+    }
+
+    console.log(
+      `Processed ${batch.messages.length} messages across ${shardedMessages.size} shards in ${Date.now() - startTime}ms`,
+    );
   },
 };
-
-async function processMessage(data: QueueMessage, env: Env): Promise<void> {
-  const traces = buildTraces(data);
-
-  await insertIntoTinybird(traces, env);
-
-  console.log('Successfully inserted traces into Tinybird:', {
-    requestId: data.requestId,
-    traceCount: traces.length,
-  });
-}
 
 function buildTraces(data: QueueMessage): TinybirdTrace[] {
   const traces: TinybirdTrace[] = [];
@@ -263,34 +291,4 @@ function buildTraces(data: QueueMessage): TinybirdTrace[] {
   }
 
   return traces;
-}
-
-async function insertIntoTinybird(traces: TinybirdTrace[], env: Env): Promise<void> {
-  const datasource = env.TINYBIRD_DATASOURCE ?? 'otel_traces';
-  const host = env.TINYBIRD_HOST ?? 'https://api.tinybird.co';
-  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
-
-  const body = traces.map((trace) => JSON.stringify(trace)).join('\n');
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.TINYBIRD_TOKEN}`,
-    },
-    body,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Tinybird insert failed: ${response.status} ${errorText}`);
-  }
-}
-
-function generateSpanId(): string {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
 }
