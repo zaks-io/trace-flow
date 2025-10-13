@@ -72,3 +72,27 @@ export interface QueueMessage {
   sseMessageTiming?: SSEMessageTiming;
   sseMetadata?: SSEMetadata;
 }
+
+export interface TinybirdTrace {
+  Timestamp: number;
+  TraceId: string;
+  SpanId: string;
+  ParentSpanId: string;
+  TraceState: string;
+  SpanName: string;
+  SpanKind: string;
+  ServiceName: string;
+  ResourceAttributes: Record<string, string>;
+  SpanAttributes: Record<string, string>;
+  Duration: number;
+  StatusCode: string;
+  StatusMessage: string;
+  ApiKey: string;
+  'Events.Timestamp': number[];
+  'Events.Name': string[];
+  'Events.Attributes': Record<string, string>[];
+  'Links.TraceId': string[];
+  'Links.SpanId': string[];
+  'Links.TraceState': string[];
+  'Links.Attributes': Record<string, string>[];
+}
