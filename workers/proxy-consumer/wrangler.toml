@@ -9,11 +9,10 @@ enabled = true
 [[durable_objects.bindings]]
 name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
-script_name = "observe-proxy-consumer"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["TraceBatcher"]
+new_sqlite_classes = ["TraceBatcher"]
 
 # Queue consumer configuration
 [[queues.consumers]]
@@ -39,7 +38,6 @@ name = "observe-proxy-consumer-staging"
 [[env.staging.durable_objects.bindings]]
 name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
-script_name = "observe-proxy-consumer-staging"
 
 [[env.staging.queues.consumers]]
 queue = "observe-requests-staging"
@@ -58,7 +56,6 @@ name = "observe-proxy-consumer"
 [[env.production.durable_objects.bindings]]
 name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
-script_name = "observe-proxy-consumer"
 
 [[env.production.queues.consumers]]
 queue = "observe-requests-prod"

@@ -11,6 +11,8 @@ export default defineWorkersConfig({
         wrangler: {
           configPath: './wrangler.toml',
         },
+        isolatedStorage: false,
+        singleWorker: true,
       },
     },
   },
