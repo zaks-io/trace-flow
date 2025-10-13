@@ -11,7 +11,10 @@
     "deploy:staging": "wrangler deploy --env staging",
     "deploy:prod": "wrangler deploy --env production",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@observe/types": "workspace:*",
@@ -20,8 +23,11 @@
     "hono": "^4.6.14"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.7.7",
     "@cloudflare/workers-types": "^4.20251008.0",
+    "@vitest/coverage-v8": "^3.2.4",
     "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
     "wrangler": "^4.42.1"
   }
 }

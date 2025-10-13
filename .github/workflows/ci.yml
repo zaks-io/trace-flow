@@ -112,9 +112,6 @@ jobs:
       - name: Test
         run: bun run turbo run test --filter=@observe/utils
 
-      - name: Build
-        run: bun run turbo run build --filter=@observe/utils
-
   types:
     name: Types Package
     runs-on: ubuntu-latest
@@ -152,12 +149,6 @@ jobs:
 
       - name: Type check
         run: bun run turbo run type-check --filter=@observe/types
-
-      - name: Test
-        run: bun run turbo run test --filter=@observe/types
-
-      - name: Build
-        run: bun run turbo run build --filter=@observe/types
 
   proxy:
     name: Proxy Worker

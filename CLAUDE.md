@@ -150,7 +150,7 @@ bun run test:watch
 cd packages/utils && bun run test
 
 # Run tests with coverage
-cd packages/utils && bun run test --coverage
+bun run test:coverage
 ```
 
 ### Vitest Configuration
