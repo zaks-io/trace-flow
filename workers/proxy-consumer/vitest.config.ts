@@ -6,6 +6,10 @@ export default defineWorkersConfig({
     reporters: [['verbose', { summary: true }]],
     passWithNoTests: true,
     include: ['src/__tests__/**/*.test.ts'],
+    coverage: {
+      provider: 'istanbul',
+      reporter: ['text', 'json-summary', 'json', 'html'],
+    },
     poolOptions: {
       workers: {
         wrangler: {
