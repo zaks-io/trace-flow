@@ -749,3 +749,83 @@ EOF
 - **R2 keys**: Use consistent naming: `requests/${requestId}` and `responses/${requestId}`
 - **OpenTelemetry**: Consumer worker uses `@microlabs/otel-cf-workers` to send traces to ClickStack
 - **NodeJS compatibility**: Consumer worker requires `nodejs_compat` flag for OpenTelemetry
+
+## Documentation with JSDoc
+
+Code should be self-documenting through clear naming, types, and structure. Use JSDoc comments only to capture information that cannot be expressed in code itself.
+
+### When to Use JSDoc
+
+Add JSDoc when documenting:
+
+- **Architecture decisions**: Why this approach was chosen over alternatives
+- **Non-obvious patterns**: Cloudflare Workers-specific behaviors, stream handling edge cases
+- **Performance considerations**: Why specific implementation choices affect performance
+- **Integration context**: How components interact across workers, queue semantics
+- **Gotchas and constraints**: Runtime limitations, API quirks, ordering requirements
+
+### When NOT to Use JSDoc
+
+Avoid JSDoc for:
+
+- **Obvious function signatures**: Types already express parameter and return types
+- **Implementation details**: Code should be self-explanatory through good naming
+- **Restating the code**: Don't describe what the code does, explain why it exists
+- **Temporary notes**: Use TODO comments for temporary notes, not JSDoc
+
+### Examples
+
+**Good - Explains architectural context:**
+
+```typescript
+/**
+ * Uses tee() to duplicate the request stream because Cloudflare Workers
+ * streams can only be read once. We need one stream for proxying to the
+ * target and another for capturing the body to R2.
+ *
+ * IMPORTANT: Both streams must be consumed or the Worker will hang.
+ */
+const [proxyStream, captureStream] = request.body.tee();
+```
+
+**Good - Explains non-obvious pattern:**
+
+```typescript
+/**
+ * Must use waitUntil() to defer R2 storage and queue operations.
+ * Without this, the Worker terminates before async operations complete,
+ * causing data loss. The response is returned immediately to maintain
+ * low latency for the client.
+ */
+c.executionCtx.waitUntil(storeAndEnqueue(request, response));
+```
+
+**Bad - Restates the obvious:**
+
+```typescript
+/**
+ * Generates a unique ID
+ * @returns A unique string ID
+ */
+function generateId(): string {
+  return crypto.randomUUID();
+}
+```
+
+**Bad - Implementation detail already clear:**
+
+```typescript
+/**
+ * Loops through messages and processes them
+ */
+for (const message of batch.messages) {
+  await processMessage(message);
+}
+```
+
+### JSDoc Style Guidelines
+
+- Keep comments concise and focused on the "why"
+- Use inline comments for single-line explanations
+- Use JSDoc blocks for functions/classes requiring architectural context
+- Update comments when code changes (stale comments are worse than no comments)
