@@ -1,3 +1,5 @@
+import { getCurrentTimestamp } from '@observe/utils';
+
 export async function captureStream(stream: ReadableStream | null): Promise<string> {
   if (!stream) return '';
 
@@ -12,6 +14,10 @@ export async function captureStream(stream: ReadableStream | null): Promise<stri
     }
   }
 
+  return chunksToString(chunks);
+}
+
+export function chunksToString(chunks: Uint8Array[]): string {
   const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const bytes = new Uint8Array(totalSize);
   let offset = 0;
@@ -19,14 +25,7 @@ export async function captureStream(stream: ReadableStream | null): Promise<stri
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-
   return new TextDecoder().decode(bytes);
-}
-
-export interface ResponseCaptureResult {
-  readable: ReadableStream<Uint8Array>;
-  capturedChunks: Uint8Array[];
-  firstTokenReceived: number | undefined;
 }
 
 export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boolean) => void): {
@@ -41,13 +40,16 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
   const transform = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       if (isFirstChunk) {
-        firstTokenReceived = Date.now();
-        isFirstChunk = false;
+        firstTokenReceived = getCurrentTimestamp();
       }
       capturedChunks.push(chunk);
 
       if (onChunk) {
-        onChunk(chunk, !isFirstChunk);
+        onChunk(chunk, isFirstChunk);
+      }
+
+      if (isFirstChunk) {
+        isFirstChunk = false;
       }
 
       controller.enqueue(chunk);

@@ -10,6 +10,8 @@ export function processSSEEvent(
 ): void {
   try {
     const eventType = event.event;
+    // Only capture timing for the first occurrence of each event type
+    // This prevents overwriting timings if duplicate events are received
     if (eventType === 'message_start' && timing.messageStart === undefined) {
       timing.messageStart = timestamp;
       return;
@@ -77,7 +79,12 @@ export function processSSEEvent(
       }
     }
   } catch (e) {
-    console.error('Error parsing SSE event:', e);
+    console.error('Error parsing SSE event:', {
+      error: e,
+      eventType: event.event,
+      timestamp,
+      dataPreview: event.data?.substring(0, 100),
+    });
   }
 }
 

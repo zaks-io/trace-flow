@@ -45,7 +45,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
         error: 'Invalid API key data',
         message: 'The API key data is corrupted',
       },
-      500,
+      401,
     );
   }
 

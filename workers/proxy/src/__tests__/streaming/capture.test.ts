@@ -189,7 +189,7 @@ describe('createResponseCapture', () => {
 
     expect(onChunk).toHaveBeenCalledTimes(2);
     expect(onChunk).toHaveBeenNthCalledWith(1, expect.any(Uint8Array), true);
-    expect(onChunk).toHaveBeenNthCalledWith(2, expect.any(Uint8Array), true);
+    expect(onChunk).toHaveBeenNthCalledWith(2, expect.any(Uint8Array), false);
 
     vi.useRealTimers();
   });

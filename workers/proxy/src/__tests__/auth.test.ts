@@ -160,7 +160,7 @@ describe('validateApiKey', () => {
     const result = await validateApiKey(context);
 
     expect(result).not.toBeNull();
-    expect(result?.status).toBe(500);
+    expect(result?.status).toBe(401);
 
     const body = await result?.json();
     expect(body).toEqual({

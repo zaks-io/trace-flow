@@ -5,7 +5,7 @@ import type { SSEMessageTiming, SSEMetadata, QueueMessage } from '@observe/types
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
-import { captureStream, createResponseCapture } from './streaming/capture';
+import { captureStream, createResponseCapture, chunksToString } from './streaming/capture';
 import { createSSEParser } from './streaming/sse';
 import { storeRequestResponse } from './storage';
 import { createQueueMessage } from './queue';
@@ -106,14 +106,7 @@ app.all('*', async (c) => {
 
       const responseCapturedChunks = capture.getCapturedChunks();
       const firstTokenReceived = capture.getFirstTokenTime();
-      const totalSize = responseCapturedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-      const responseBytes = new Uint8Array(totalSize);
-      let offset = 0;
-      for (const chunk of responseCapturedChunks) {
-        responseBytes.set(chunk, offset);
-        offset += chunk.length;
-      }
-      const responseBody = new TextDecoder().decode(responseBytes);
+      const responseBody = chunksToString(responseCapturedChunks);
 
       const tokens = response.status >= 400 ? undefined : parseTokenUsage(responseBody);
       const error = response.status >= 400 ? parseError(responseBody, response.status) : undefined;
