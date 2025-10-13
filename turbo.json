@@ -15,6 +15,13 @@
     "type-check": {
       "dependsOn": ["^build"]
     },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "test:watch": {
+      "cache": false,
+      "persistent": true
+    },
     "deploy": {
       "dependsOn": ["build", "lint", "type-check"],
       "cache": false

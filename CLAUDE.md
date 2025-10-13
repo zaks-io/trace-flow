@@ -116,6 +116,136 @@ bun run lint
 
 # Format all files
 bun run format
+
+# Run tests
+bun run test
+
+# Run tests in watch mode
+bun run test:watch
+```
+
+## Testing
+
+Project uses Vitest for unit and integration testing. Tests are configured per-package for optimal Turborepo caching.
+
+### Testing Strategy
+
+**Per-Package Configuration (Recommended):**
+
+- Each package maintains its own test suite
+- Turborepo parallelizes and caches test execution
+- Only tests affected by changes are re-run
+- Follows monorepo best practices
+
+### Running Tests
+
+```bash
+# Run all tests across monorepo
+bun run test
+
+# Run tests in watch mode
+bun run test:watch
+
+# Run tests for specific package
+cd packages/utils && bun run test
+
+# Run tests with coverage
+cd packages/utils && bun run test --coverage
+```
+
+### Vitest Configuration
+
+**For Standard Packages (utils, types):**
+
+Use standard Vitest configuration with Node.js environment:
+
+```typescript
+// packages/utils/vitest.config.ts
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+  },
+});
+```
+
+**For Cloudflare Workers:**
+
+Use `@cloudflare/vitest-pool-workers` for testing Workers with runtime APIs and bindings:
+
+```bash
+# Install Workers testing integration
+bun add @cloudflare/vitest-pool-workers --dev
+```
+
+```typescript
+// workers/proxy/vitest.config.ts
+import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+
+export default defineWorkersConfig({
+  test: {
+    poolOptions: {
+      workers: {
+        wrangler: {
+          configPath: './wrangler.toml',
+        },
+      },
+    },
+  },
+});
+```
+
+**Key Features:**
+
+- Runs tests inside Workers runtime (same as production)
+- Provides access to Workers APIs and bindings
+- Isolated per-test storage
+- Declarative request mocking
+- Compatible with Vitest 2.0.x - 3.2.x
+
+### Test Organization
+
+**File Structure:**
+
+```
+packages/utils/
+├── src/
+│   ├── __tests__/
+│   │   ├── generateId.test.ts
+│   │   ├── getCurrentTimestamp.test.ts
+│   │   └── ...
+│   └── index.ts
+└── vitest.config.ts
+```
+
+**Best Practices:**
+
+- Always mock external services (network, database, etc.)
+
+### Adding Tests to New Packages
+
+1. Install Vitest: `bun add vitest --cwd packages/your-package --dev`
+2. Create `vitest.config.ts` in package root
+3. Add test scripts to `package.json`:
+   ```json
+   {
+     "scripts": {
+       "test": "vitest run",
+       "test:watch": "vitest"
+     }
+   }
+   ```
+4. Create `src/__tests__/` directory
+5. Write tests following existing patterns
+
+### CI Integration
+
+Tests run automatically in CI pipeline before deployment:
+
+```bash
+bun run format && bun run lint && bun run type-check && bun run test && bun run build
 ```
 
 ### Testing Proxy Locally
