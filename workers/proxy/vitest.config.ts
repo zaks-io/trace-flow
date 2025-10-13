@@ -6,7 +6,7 @@ export default defineWorkersConfig({
     passWithNoTests: true,
     coverage: {
       provider: 'istanbul',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json-summary', 'json', 'html'],
     },
     poolOptions: {
       workers: {

@@ -8,7 +8,7 @@ export default defineWorkersConfig({
     include: ['src/__tests__/**/*.test.ts'],
     coverage: {
       provider: 'istanbul',
-      reporter: ['text', 'json', 'html'],
+      reporter: ['text', 'json-summary', 'json', 'html'],
     },
     poolOptions: {
       workers: {
