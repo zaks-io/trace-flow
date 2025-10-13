@@ -1,15 +1,30 @@
-import { Hono, type Context } from 'hono';
+/**
+ * LLM Proxy Worker - Streams LLM responses while capturing request/response data for observability.
+ *
+ * Architecture:
+ * 1. Receives client request with `X-Proxy-Target` header specifying the LLM provider URL
+ * 2. Duplicates request body using tee() - one stream for proxying, one for capture
+ * 3. Proxies request to target provider and streams response back to client immediately (low latency)
+ * 4. Simultaneously captures response chunks using TransformStream while streaming to client
+ * 5. Asynchronously stores bodies in R2 and enqueues metadata for processing (via waitUntil)
+ *
+ * The waitUntil pattern is critical: storage and queueing happen after the client response completes,
+ * ensuring the proxy never blocks the client for observability operations.
+ *
+ * SSE streaming responses (text/event-stream) receive special handling to extract timing metrics
+ * for streaming-specific events (message_start, content_block_delta, etc).
+ */
+import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createParser } from 'eventsource-parser';
-import { generateId, getCurrentTimestamp, extractProviderFromUrl } from '@observe/utils';
-import type {
-  QueueMessage,
-  LLMTiming,
-  LLMTokenUsage,
-  LLMError,
-  SSEMessageTiming,
-  SSEMetadata,
-} from '@observe/types';
+import { generateId, getCurrentTimestamp } from '@observe/utils';
+import type { SSEMessageTiming, SSEMetadata, QueueMessage } from '@observe/types';
+import { validateApiKey } from './auth';
+import { parseTokenUsage } from './parsers/tokens';
+import { parseError } from './parsers/errors';
+import { captureStream, createResponseCapture, chunksToString } from './streaming/capture';
+import { createSSEParser } from './streaming/sse';
+import { storeRequestResponse } from './storage';
+import { createQueueMessage } from './queue';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessage>;
@@ -20,56 +35,6 @@ interface Env {
 const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', cors());
-
-async function validateApiKey(c: Context<{ Bindings: Env }>): Promise<Response | null> {
-  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.header('X-API-Key');
-
-  if (!apiKey) {
-    return c.json(
-      {
-        error: 'Missing API key',
-        message: 'Please provide an API key via Authorization: Bearer <key> or X-API-Key header',
-      },
-      401,
-    );
-  }
-
-  const keyData = await c.env.API_KEYS.get(apiKey);
-
-  if (!keyData) {
-    return c.json(
-      {
-        error: 'Invalid API key',
-        message: 'The provided API key is not valid',
-      },
-      401,
-    );
-  }
-
-  try {
-    const parsed = JSON.parse(keyData) as { expiresAt: number; createdAt: number };
-
-    if (parsed.expiresAt < Date.now()) {
-      return c.json(
-        {
-          error: 'Expired API key',
-          message: 'The provided API key has expired',
-        },
-        401,
-      );
-    }
-  } catch {
-    return c.json(
-      {
-        error: 'Invalid API key data',
-        message: 'The API key data is corrupted',
-      },
-      500,
-    );
-  }
-
-  return null;
-}
 
 app.all('*', async (c) => {
   const authError = await validateApiKey(c);
@@ -103,8 +68,12 @@ app.all('*', async (c) => {
     );
   }
 
+  // Duplicate request body stream: one for proxying to provider, one for capture
+  // tee() creates two independent readers from the same source without buffering the entire body
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
 
+  // Forward all headers except proxy-specific ones
+  // X-Proxy-Target is internal routing metadata, host must match the target provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Proxy-Target');
   headers.delete('host');
@@ -116,7 +85,6 @@ app.all('*', async (c) => {
     body: streamToProxy,
   });
 
-  let firstTokenReceived: number | undefined;
   const responseComplete = getCurrentTimestamp();
   const latency = responseComplete - requestStart;
 
@@ -127,8 +95,6 @@ app.all('*', async (c) => {
     contentType: response.headers.get('Content-Type'),
   });
 
-  const responseCapturedChunks: Uint8Array[] = [];
-  let isFirstChunk = true;
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
   if (isSSE) {
@@ -138,127 +104,60 @@ app.all('*', async (c) => {
   const sseMessageTiming: SSEMessageTiming = {};
   const sseMetadata: SSEMetadata = {};
 
-  const parser = isSSE
-    ? createParser({
-        onEvent(event) {
-          const timestamp = getCurrentTimestamp();
-
-          console.log('SSE Event:', {
-            event: event.event,
-            timestamp,
-            data: event.data?.substring(0, 100),
-          });
-
-          processSSEEvent(event, timestamp, sseMessageTiming, sseMetadata);
-        },
-      })
-    : null;
+  const parser = isSSE ? createSSEParser(sseMessageTiming, sseMetadata) : null;
 
   const decoder = new TextDecoder();
 
-  const { readable, writable } = new TransformStream<Uint8Array>({
-    transform(chunk, controller) {
-      if (isFirstChunk) {
-        firstTokenReceived = getCurrentTimestamp();
-        isFirstChunk = false;
-      }
-      responseCapturedChunks.push(chunk);
-
-      if (isSSE && parser) {
-        const text = decoder.decode(chunk);
-        parser.feed(text);
-      }
-
-      controller.enqueue(chunk);
-    },
+  const capture = createResponseCapture((chunk) => {
+    if (isSSE && parser) {
+      const text = decoder.decode(chunk);
+      parser.feed(text);
+    }
   });
+
+  const { readable, writable } = capture.transform;
 
   const pipePromise = response.body?.pipeTo(writable);
 
+  // All observability operations happen in waitUntil to avoid blocking the client response
+  // This ensures the proxy returns low latency even if R2 storage or queue operations are slow
   c.executionCtx.waitUntil(
     (async () => {
       const requestBody = await captureStream(streamToCapture);
       await pipePromise;
 
-      const totalSize = responseCapturedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-      const responseBytes = new Uint8Array(totalSize);
-      let offset = 0;
-      for (const chunk of responseCapturedChunks) {
-        responseBytes.set(chunk, offset);
-        offset += chunk.length;
-      }
-      const responseBody = new TextDecoder().decode(responseBytes);
+      const responseCapturedChunks = capture.getCapturedChunks();
+      const firstTokenReceived = capture.getFirstTokenTime();
+      const responseBody = chunksToString(responseCapturedChunks);
 
-      const timing: LLMTiming = {
+      const tokens = response.status >= 400 ? undefined : parseTokenUsage(responseBody);
+      const error = response.status >= 400 ? parseError(responseBody, response.status) : undefined;
+
+      const { requestBodyKey, responseBodyKey } = await storeRequestResponse(
+        c.env.STORAGE,
+        requestId,
+        requestBody,
+        responseBody,
+      );
+
+      const queueMessage = createQueueMessage({
+        requestId,
+        apiKey,
+        targetUrl,
+        responseStatus: response.status,
         requestStart,
         requestSent,
         firstTokenReceived,
         responseComplete: getCurrentTimestamp(),
-      };
-
-      let tokens: LLMTokenUsage | undefined;
-      let error: LLMError | undefined;
-
-      if (response.status >= 400) {
-        error = parseError(responseBody, response.status);
-      } else {
-        tokens = parseTokenUsage(responseBody);
-      }
-
-      const requestBodyKey = `requests/${requestId}`;
-      const responseBodyKey = `responses/${requestId}`;
-
-      console.log('Storing request/response bodies in R2:', {
-        requestId,
+        latency,
         requestBodyKey,
         responseBodyKey,
-        requestBodySize: requestBody.length,
-        responseBodySize: responseBody.length,
-      });
-
-      await Promise.all([
-        c.env.STORAGE.put(requestBodyKey, requestBody),
-        c.env.STORAGE.put(responseBodyKey, responseBody),
-      ]);
-
-      console.log('Successfully stored in R2:', {
-        requestId,
-      });
-
-      const provider = extractProviderFromUrl(targetUrl);
-
-      const queueMessage: QueueMessage = {
-        requestId,
-        apiKey,
-        targetUrl,
-        request: {
-          id: requestId,
-          provider,
-          model: 'unknown',
-          messages: [],
-          timestamp: requestStart,
-        },
-        response: {
-          id: requestId,
-          provider,
-          status: response.status,
-          timestamp: timing.responseComplete,
-          latency,
-        },
-        requestBodyKey,
-        responseBodyKey,
-        timing,
         tokens,
         error,
-      };
-
-      if (isSSE && Object.keys(sseMessageTiming).length > 0) {
-        queueMessage.sseMessageTiming = sseMessageTiming;
-      }
-
-      if (isSSE && Object.keys(sseMetadata).length > 0) {
-        queueMessage.sseMetadata = sseMetadata;
-      }
+        sseMessageTiming:
+          isSSE && Object.keys(sseMessageTiming).length > 0 ? sseMessageTiming : undefined,
+        sseMetadata: isSSE && Object.keys(sseMetadata).length > 0 ? sseMetadata : undefined,
+      });
 
       if (isSSE) {
         console.log('SSE Message Timing:', {
@@ -271,7 +170,7 @@ app.all('*', async (c) => {
       await c.env.REQUEST_QUEUE.send(queueMessage);
       console.log('Successfully queued message:', {
         requestId,
-        provider,
+        provider: queueMessage.request.provider,
         targetUrl,
         requestBodyKey,
         responseBodyKey,
@@ -287,181 +186,5 @@ app.all('*', async (c) => {
     headers: response.headers,
   });
 });
-
-async function captureStream(stream: ReadableStream | null): Promise<string> {
-  if (!stream) return '';
-
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-
-  while (true) {
-    const result = await reader.read();
-    if (result.done) break;
-    if (result.value instanceof Uint8Array) {
-      chunks.push(result.value);
-    }
-  }
-
-  const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const bytes = new Uint8Array(totalSize);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return new TextDecoder().decode(bytes);
-}
-
-function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined {
-  try {
-    const parsed = JSON.parse(responseBody) as unknown;
-
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      'usage' in parsed &&
-      parsed.usage &&
-      typeof parsed.usage === 'object'
-    ) {
-      const usage = parsed.usage as Record<string, unknown>;
-
-      let cached: boolean | undefined;
-      if (usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object') {
-        const details = usage.prompt_tokens_details as Record<string, unknown>;
-        if ('cached_tokens' in details && typeof details.cached_tokens === 'number') {
-          cached = details.cached_tokens > 0;
-        }
-      }
-
-      return {
-        promptTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : undefined,
-        completionTokens:
-          typeof usage.completion_tokens === 'number' ? usage.completion_tokens : undefined,
-        totalTokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : undefined,
-        cached,
-      };
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-function parseError(responseBody: string, statusCode: number): LLMError {
-  try {
-    const parsed = JSON.parse(responseBody) as unknown;
-
-    if (parsed && typeof parsed === 'object') {
-      const obj = parsed as Record<string, unknown>;
-      const errorObj =
-        obj.error && typeof obj.error === 'object' ? (obj.error as Record<string, unknown>) : null;
-
-      return {
-        type:
-          (errorObj && typeof errorObj.type === 'string' ? errorObj.type : null) ??
-          (typeof obj.type === 'string' ? obj.type : null) ??
-          'http_error',
-        message:
-          (errorObj && typeof errorObj.message === 'string' ? errorObj.message : null) ??
-          (typeof obj.message === 'string' ? obj.message : null) ??
-          `HTTP ${statusCode}`,
-        code:
-          (errorObj && typeof errorObj.code === 'string' ? errorObj.code : null) ??
-          (typeof obj.code === 'string' ? obj.code : null) ??
-          undefined,
-      };
-    }
-  } catch {
-    return {
-      type: 'http_error',
-      message: `HTTP ${statusCode}`,
-    };
-  }
-
-  return {
-    type: 'http_error',
-    message: `HTTP ${statusCode}`,
-  };
-}
-
-function processSSEEvent(
-  event: { event?: string; data: string },
-  timestamp: number,
-  timing: SSEMessageTiming,
-  metadata: SSEMetadata,
-): void {
-  try {
-    const eventType = event.event;
-    if (eventType === 'message_start' && timing.messageStart === undefined) {
-      timing.messageStart = timestamp;
-      return;
-    }
-
-    if (eventType === 'content_block_start' && timing.contentBlockStart === undefined) {
-      timing.contentBlockStart = timestamp;
-      return;
-    }
-
-    if (eventType === 'content_block_delta' && timing.firstDelta === undefined) {
-      timing.firstDelta = timestamp;
-      return;
-    }
-
-    if (eventType === 'message_delta') {
-      const parsed = JSON.parse(event.data) as unknown;
-      if (parsed && typeof parsed === 'object') {
-        const delta = parsed as Record<string, unknown>;
-        const usage = delta.usage;
-        if (usage && typeof usage === 'object') {
-          const typedUsage = usage as Record<string, unknown>;
-          metadata.usage = {
-            input_tokens:
-              typeof typedUsage.input_tokens === 'number' ? typedUsage.input_tokens : undefined,
-            cache_creation_input_tokens:
-              typeof typedUsage.cache_creation_input_tokens === 'number'
-                ? typedUsage.cache_creation_input_tokens
-                : undefined,
-            cache_read_input_tokens:
-              typeof typedUsage.cache_read_input_tokens === 'number'
-                ? typedUsage.cache_read_input_tokens
-                : undefined,
-            output_tokens:
-              typeof typedUsage.output_tokens === 'number' ? typedUsage.output_tokens : undefined,
-          };
-        }
-      }
-      return;
-    }
-
-    if (eventType === 'message_stop') {
-      timing.messageStop = timestamp;
-      const parsed = JSON.parse(event.data) as unknown;
-      if (parsed && typeof parsed === 'object') {
-        const stop = parsed as Record<string, unknown>;
-        const usage = stop.usage;
-        if (usage && typeof usage === 'object') {
-          const typedUsage = usage as Record<string, unknown>;
-          metadata.finalUsage = {
-            input_tokens:
-              typeof typedUsage.input_tokens === 'number' ? typedUsage.input_tokens : undefined,
-            cache_creation_input_tokens:
-              typeof typedUsage.cache_creation_input_tokens === 'number'
-                ? typedUsage.cache_creation_input_tokens
-                : undefined,
-            cache_read_input_tokens:
-              typeof typedUsage.cache_read_input_tokens === 'number'
-                ? typedUsage.cache_read_input_tokens
-                : undefined,
-            output_tokens:
-              typeof typedUsage.output_tokens === 'number' ? typedUsage.output_tokens : undefined,
-          };
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Error parsing SSE event:', e);
-  }
-}
 
 export default app;

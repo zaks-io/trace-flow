@@ -59,7 +59,7 @@ export class TraceBatcher extends DurableObject<Env> {
       ),
     ];
 
-    if (metadataExists[0] && metadataExists[0].count === 0) {
+    if (metadataExists[0]?.count === 0) {
       this.durableState.storage.sql.exec(
         'INSERT INTO metadata (id, last_flush_time) VALUES (1, ?)',
         [Date.now()],
