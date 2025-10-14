@@ -62,11 +62,12 @@ export interface QueueMessage {
   targetUrl: string;
   request: LLMRequest;
   response: LLMResponse;
-  requestBodyKey: string;
-  responseBodyKey: string;
+  requestBodyKey?: string;
+  responseBodyKey?: string;
   timing: LLMTiming;
   tokens?: LLMTokenUsage;
   error?: LLMError;
+  truncated?: boolean;
   traceId?: string;
   parentSpanId?: string;
   sseMessageTiming?: SSEMessageTiming;

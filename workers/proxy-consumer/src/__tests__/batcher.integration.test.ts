@@ -492,7 +492,7 @@ describe('TraceBatcher Integration', () => {
       const originalLastFlush = stats.lastFlushTime;
 
       const oldDateNow = Date.now;
-      Date.now = () => originalLastFlush + 1200;
+      Date.now = () => originalLastFlush + 6000;
 
       await state.storage.deleteAlarm();
       (instance as unknown as { flushAlarmScheduled: boolean }).flushAlarmScheduled = false;

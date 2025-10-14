@@ -4,17 +4,37 @@ import { getCurrentTimestamp } from '@observe/utils';
  * Consumes a ReadableStream and returns its entire contents as a string.
  * Used to capture request bodies after they've been tee'd for proxying.
  * The stream must be fully consumed before we can send the queue message.
+ *
+ * Enforces size limit to prevent OOM. If limit is exceeded, throws error
+ * before returning captured data, preventing oversized requests from being proxied.
+ *
+ * @param stream - The readable stream to capture
+ * @param maxSize - Optional maximum size in bytes (default: no limit)
+ * @throws Error if stream exceeds maxSize during capture
  */
-export async function captureStream(stream: ReadableStream | null): Promise<string> {
+export async function captureStream(
+  stream: ReadableStream | null,
+  maxSize?: number,
+): Promise<string> {
   if (!stream) return '';
 
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
+  let totalSize = 0;
 
   while (true) {
     const result = await reader.read();
     if (result.done) break;
     if (result.value instanceof Uint8Array) {
+      totalSize += result.value.length;
+
+      if (maxSize && totalSize > maxSize) {
+        void reader.cancel();
+        throw new Error(
+          `Request body exceeds ${maxSize / (1024 * 1024)}MB limit (received ${totalSize} bytes)`,
+        );
+      }
+
       chunks.push(result.value);
     }
   }
@@ -42,34 +62,56 @@ export function chunksToString(chunks: Uint8Array[]): string {
  * This pattern is critical for low-latency proxying - we never block the client response to capture data.
  * The transform passes chunks through untouched while maintaining a side copy for storage and parsing.
  *
+ * Implements size limits to prevent OOM (Workers have 128MB memory limit per isolate):
+ * - 20MB response limit (handles ~1M tokens with overhead)
+ * - 5000 chunk limit (prevents chunk count explosion)
+ * - Truncates capture if limits exceeded while still streaming full response to client
+ *
  * @param onChunk - Optional callback invoked on each chunk, used for SSE parsing
- * @returns Transform stream, captured chunks getter, and TTFB (time to first byte) timestamp
+ * @returns Transform stream, captured chunks getter, TTFB timestamp, size and truncation status
  */
 export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boolean) => void): {
   transform: TransformStream<Uint8Array, Uint8Array>;
   getCapturedChunks: () => Uint8Array[];
   getFirstTokenTime: () => number | undefined;
+  getTotalSize: () => number;
+  isTruncated: () => boolean;
 } {
+  const MAX_RESPONSE_SIZE = 20 * 1024 * 1024;
+  const MAX_CHUNKS = 5000;
   const capturedChunks: Uint8Array[] = [];
+  let totalSize = 0;
+  let truncated = false;
   let isFirstChunk = true;
   let firstTokenReceived: number | undefined;
 
   const transform = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
+      const isFirst = isFirstChunk;
       if (isFirstChunk) {
         firstTokenReceived = getCurrentTimestamp();
-      }
-      capturedChunks.push(chunk);
-
-      if (onChunk) {
-        onChunk(chunk, isFirstChunk);
-      }
-
-      if (isFirstChunk) {
         isFirstChunk = false;
       }
 
       controller.enqueue(chunk);
+
+      if (!truncated) {
+        if (totalSize + chunk.length <= MAX_RESPONSE_SIZE && capturedChunks.length < MAX_CHUNKS) {
+          capturedChunks.push(chunk);
+          totalSize += chunk.length;
+        } else {
+          truncated = true;
+          console.warn('Response capture truncated:', {
+            totalSize,
+            chunks: capturedChunks.length,
+            maxSize: MAX_RESPONSE_SIZE,
+          });
+        }
+      }
+
+      if (onChunk) {
+        onChunk(chunk, isFirst);
+      }
     },
   });
 
@@ -77,5 +119,7 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
     transform,
     getCapturedChunks: () => capturedChunks,
     getFirstTokenTime: () => firstTokenReceived,
+    getTotalSize: () => totalSize,
+    isTruncated: () => truncated,
   };
 }

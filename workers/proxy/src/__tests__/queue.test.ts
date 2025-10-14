@@ -248,4 +248,58 @@ describe('createQueueMessage', () => {
     expect(result).toHaveProperty('tokens');
     expect(result).toHaveProperty('error');
   });
+
+  it('should include truncated field when provided', () => {
+    const params = {
+      ...baseParams,
+      truncated: true,
+    };
+
+    const result = createQueueMessage(params);
+
+    expect(result.truncated).toBe(true);
+  });
+
+  it('should exclude truncated field when not provided', () => {
+    const result = createQueueMessage(baseParams);
+
+    expect(result.truncated).toBeUndefined();
+  });
+
+  it('should exclude truncated field when explicitly false', () => {
+    const params = {
+      ...baseParams,
+      truncated: false,
+    };
+
+    const result = createQueueMessage(params);
+
+    expect(result.truncated).toBe(false);
+  });
+
+  it('should handle missing R2 keys when storage fails', () => {
+    const params = {
+      ...baseParams,
+      requestBodyKey: undefined,
+      responseBodyKey: undefined,
+    };
+
+    const result = createQueueMessage(params);
+
+    expect(result.requestBodyKey).toBeUndefined();
+    expect(result.responseBodyKey).toBeUndefined();
+  });
+
+  it('should include R2 keys when storage succeeds', () => {
+    const params = {
+      ...baseParams,
+      requestBodyKey: 'requests/test-123',
+      responseBodyKey: 'responses/test-123',
+    };
+
+    const result = createQueueMessage(params);
+
+    expect(result.requestBodyKey).toBe('requests/test-123');
+    expect(result.responseBodyKey).toBe('responses/test-123');
+  });
 });
