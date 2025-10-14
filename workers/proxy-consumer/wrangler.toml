@@ -5,6 +5,9 @@ compatibility_date = "2024-11-27"
 [observability]
 enabled = true
 
+[placement]
+mode = "smart"
+
 # Durable Object for batching traces
 [[durable_objects.bindings]]
 name = "TRACE_BATCHER"
@@ -17,8 +20,9 @@ new_sqlite_classes = ["TraceBatcher"]
 # Queue consumer configuration
 [[queues.consumers]]
 queue = "observe-requests-dev"
-max_batch_size = 100
-max_batch_timeout = 30
+max_batch_size = 1000
+max_batch_timeout = 5
+max_concurrency = 20
 max_retries = 5
 dead_letter_queue = "observe-requests-dlq-dev"
 
@@ -41,8 +45,9 @@ class_name = "TraceBatcher"
 
 [[env.staging.queues.consumers]]
 queue = "observe-requests-staging"
-max_batch_size = 100
-max_batch_timeout = 30
+max_batch_size = 1000
+max_batch_timeout = 5
+max_concurrency = 20
 max_retries = 5
 dead_letter_queue = "observe-requests-dlq-staging"
 
@@ -59,8 +64,9 @@ class_name = "TraceBatcher"
 
 [[env.production.queues.consumers]]
 queue = "observe-requests-prod"
-max_batch_size = 100
-max_batch_timeout = 30
+max_batch_size = 1000
+max_batch_timeout = 5
+max_concurrency = 20
 max_retries = 5
 dead_letter_queue = "observe-requests-dlq-prod"
 

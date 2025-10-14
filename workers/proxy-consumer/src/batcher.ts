@@ -3,9 +3,9 @@ import type { TinybirdTrace } from '@observe/types';
 import type { Env } from './index';
 import { insertIntoTinybirdWithRetry } from './tinybird';
 
-const BATCH_SIZE = 100_000;
-const FLUSH_INTERVAL_MS = 1000;
-const MAX_JITTER_MS = 200;
+const BATCH_SIZE = 10_000;
+const FLUSH_INTERVAL_MS = 5000;
+const MAX_JITTER_MS = 1000;
 
 export class TraceBatcher extends DurableObject<Env> {
   private lastFlushTime: number = Date.now();

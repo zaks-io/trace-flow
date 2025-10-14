@@ -68,6 +68,19 @@ app.all('*', async (c) => {
     );
   }
 
+  const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
+  const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
+
+  if (contentLength > MAX_REQUEST_SIZE) {
+    return c.json(
+      {
+        error: 'Request too large',
+        message: `Request body exceeds ${MAX_REQUEST_SIZE / (1024 * 1024)}MB limit`,
+      },
+      413,
+    );
+  }
+
   // Duplicate request body stream: one for proxying to provider, one for capture
   // tee() creates two independent readers from the same source without buffering the entire body
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
@@ -121,62 +134,87 @@ app.all('*', async (c) => {
 
   // All observability operations happen in waitUntil to avoid blocking the client response
   // This ensures the proxy returns low latency even if R2 storage or queue operations are slow
+  // Wrapped in try-catch to ensure proxy never fails due to observability errors
   c.executionCtx.waitUntil(
     (async () => {
-      const requestBody = await captureStream(streamToCapture);
-      await pipePromise;
+      try {
+        const requestBody = await captureStream(streamToCapture);
+        await pipePromise;
 
-      const responseCapturedChunks = capture.getCapturedChunks();
-      const firstTokenReceived = capture.getFirstTokenTime();
-      const responseBody = chunksToString(responseCapturedChunks);
+        const responseCapturedChunks = capture.getCapturedChunks();
+        const firstTokenReceived = capture.getFirstTokenTime();
+        const isTruncated = capture.isTruncated();
+        const totalSize = capture.getTotalSize();
+        let responseBody = chunksToString(responseCapturedChunks);
 
-      const tokens = response.status >= 400 ? undefined : parseTokenUsage(responseBody);
-      const error = response.status >= 400 ? parseError(responseBody, response.status) : undefined;
+        if (isTruncated) {
+          responseBody += '\n\n[TRUNCATED - Response exceeded 20MB limit]';
+          console.warn('Response truncated for storage:', {
+            requestId,
+            totalSize,
+            capturedSize: responseBody.length,
+          });
+        }
 
-      const { requestBodyKey, responseBodyKey } = await storeRequestResponse(
-        c.env.STORAGE,
-        requestId,
-        requestBody,
-        responseBody,
-      );
+        const tokens = response.status >= 400 ? undefined : parseTokenUsage(responseBody);
+        const error =
+          response.status >= 400 ? parseError(responseBody, response.status) : undefined;
 
-      const queueMessage = createQueueMessage({
-        requestId,
-        apiKey,
-        targetUrl,
-        responseStatus: response.status,
-        requestStart,
-        requestSent,
-        firstTokenReceived,
-        responseComplete: getCurrentTimestamp(),
-        latency,
-        requestBodyKey,
-        responseBodyKey,
-        tokens,
-        error,
-        sseMessageTiming:
-          isSSE && Object.keys(sseMessageTiming).length > 0 ? sseMessageTiming : undefined,
-        sseMetadata: isSSE && Object.keys(sseMetadata).length > 0 ? sseMetadata : undefined,
-      });
-
-      if (isSSE) {
-        console.log('SSE Message Timing:', {
+        const { requestBodyKey, responseBodyKey, stored } = await storeRequestResponse(
+          c.env.STORAGE,
           requestId,
-          sseMessageTiming: queueMessage.sseMessageTiming,
-          sseMetadata: queueMessage.sseMetadata,
+          requestBody,
+          responseBody,
+        );
+
+        if (!stored) {
+          console.warn('R2 storage failed, queuing message without body keys:', { requestId });
+        }
+
+        const queueMessage = createQueueMessage({
+          requestId,
+          apiKey,
+          targetUrl,
+          responseStatus: response.status,
+          requestStart,
+          requestSent,
+          firstTokenReceived,
+          responseComplete: getCurrentTimestamp(),
+          latency,
+          requestBodyKey,
+          responseBodyKey,
+          tokens,
+          error,
+          sseMessageTiming:
+            isSSE && Object.keys(sseMessageTiming).length > 0 ? sseMessageTiming : undefined,
+          sseMetadata: isSSE && Object.keys(sseMetadata).length > 0 ? sseMetadata : undefined,
+        });
+
+        if (isSSE) {
+          console.log('SSE Message Timing:', {
+            requestId,
+            sseMessageTiming: queueMessage.sseMessageTiming,
+            sseMetadata: queueMessage.sseMetadata,
+          });
+        }
+
+        await c.env.REQUEST_QUEUE.send(queueMessage);
+        console.log('Successfully queued message:', {
+          requestId,
+          provider: queueMessage.request.provider,
+          targetUrl,
+          requestBodyKey,
+          responseBodyKey,
+          tokens,
+          error,
+          truncated: isTruncated,
+        });
+      } catch (error) {
+        console.error('Failed to complete observability capture:', {
+          requestId,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
-
-      await c.env.REQUEST_QUEUE.send(queueMessage);
-      console.log('Successfully queued message:', {
-        requestId,
-        provider: queueMessage.request.provider,
-        targetUrl,
-        requestBodyKey,
-        responseBodyKey,
-        tokens,
-        error,
-      });
     })(),
   );
 
