@@ -41,6 +41,7 @@ describe('storeRequestResponse', () => {
     expect(result).toEqual({
       requestBodyKey: 'requests/my-request-123',
       responseBodyKey: 'responses/my-request-123',
+      stored: true,
     });
   });
 
@@ -84,6 +85,7 @@ describe('storeRequestResponse', () => {
     expect(result).toEqual({
       requestBodyKey: 'requests/empty-test',
       responseBodyKey: 'responses/empty-test',
+      stored: true,
     });
   });
 
@@ -104,7 +106,7 @@ describe('storeRequestResponse', () => {
     expect(mockStorage.put).toHaveBeenCalledWith('responses/large-test', largeResponseBody);
   });
 
-  it('should propagate storage errors', async () => {
+  it('should handle storage errors gracefully', async () => {
     const mockStorage = {
       put: vi.fn().mockRejectedValue(new Error('Storage error')),
     } as unknown as R2Bucket;
@@ -113,9 +115,13 @@ describe('storeRequestResponse', () => {
     const requestBody = 'request';
     const responseBody = 'response';
 
-    await expect(
-      storeRequestResponse(mockStorage, requestId, requestBody, responseBody),
-    ).rejects.toThrow('Storage error');
+    const result = await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
+
+    expect(result).toEqual({
+      requestBodyKey: 'requests/error-test',
+      responseBodyKey: 'responses/error-test',
+      stored: false,
+    });
   });
 
   it('should suppress console.log calls', async () => {
