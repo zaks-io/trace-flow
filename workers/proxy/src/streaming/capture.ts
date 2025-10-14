@@ -4,17 +4,37 @@ import { getCurrentTimestamp } from '@observe/utils';
  * Consumes a ReadableStream and returns its entire contents as a string.
  * Used to capture request bodies after they've been tee'd for proxying.
  * The stream must be fully consumed before we can send the queue message.
+ *
+ * Enforces size limit to prevent OOM. If limit is exceeded, throws error
+ * before returning captured data, preventing oversized requests from being proxied.
+ *
+ * @param stream - The readable stream to capture
+ * @param maxSize - Optional maximum size in bytes (default: no limit)
+ * @throws Error if stream exceeds maxSize during capture
  */
-export async function captureStream(stream: ReadableStream | null): Promise<string> {
+export async function captureStream(
+  stream: ReadableStream | null,
+  maxSize?: number,
+): Promise<string> {
   if (!stream) return '';
 
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
+  let totalSize = 0;
 
   while (true) {
     const result = await reader.read();
     if (result.done) break;
     if (result.value instanceof Uint8Array) {
+      totalSize += result.value.length;
+
+      if (maxSize && totalSize > maxSize) {
+        void reader.cancel();
+        throw new Error(
+          `Request body exceeds ${maxSize / (1024 * 1024)}MB limit (received ${totalSize} bytes)`,
+        );
+      }
+
       chunks.push(result.value);
     }
   }

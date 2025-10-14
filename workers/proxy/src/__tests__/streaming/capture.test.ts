@@ -64,6 +64,67 @@ describe('captureStream', () => {
     expect(result).toBe(largeText);
     expect(result.length).toBe(10000);
   });
+
+  it('should enforce size limit when provided', async () => {
+    const encoder = new TextEncoder();
+    const maxSize = 100;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('a'.repeat(50)));
+        controller.enqueue(encoder.encode('b'.repeat(60)));
+        controller.close();
+      },
+    });
+
+    await expect(captureStream(stream, maxSize)).rejects.toThrow('Request body exceeds');
+  });
+
+  it('should not enforce size limit when maxSize not provided', async () => {
+    const encoder = new TextEncoder();
+    const largeText = 'a'.repeat(100000);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(largeText));
+        controller.close();
+      },
+    });
+
+    const result = await captureStream(stream);
+
+    expect(result).toBe(largeText);
+    expect(result.length).toBe(100000);
+  });
+
+  it('should allow streams under size limit', async () => {
+    const encoder = new TextEncoder();
+    const maxSize = 1000;
+    const text = 'a'.repeat(500);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(text));
+        controller.close();
+      },
+    });
+
+    const result = await captureStream(stream, maxSize);
+
+    expect(result).toBe(text);
+    expect(result.length).toBe(500);
+  });
+
+  it('should throw error immediately when limit exceeded', async () => {
+    const encoder = new TextEncoder();
+    const maxSize = 50;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('a'.repeat(30)));
+        controller.enqueue(encoder.encode('b'.repeat(30)));
+        controller.close();
+      },
+    });
+
+    await expect(captureStream(stream, maxSize)).rejects.toThrow('Request body exceeds');
+  });
 });
 
 describe('createResponseCapture', () => {

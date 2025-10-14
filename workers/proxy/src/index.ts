@@ -138,17 +138,16 @@ app.all('*', async (c) => {
   c.executionCtx.waitUntil(
     (async () => {
       try {
-        const requestBody = await captureStream(streamToCapture);
+        const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
         await pipePromise;
 
         const responseCapturedChunks = capture.getCapturedChunks();
         const firstTokenReceived = capture.getFirstTokenTime();
         const isTruncated = capture.isTruncated();
         const totalSize = capture.getTotalSize();
-        let responseBody = chunksToString(responseCapturedChunks);
+        const responseBody = chunksToString(responseCapturedChunks);
 
         if (isTruncated) {
-          responseBody += '\n\n[TRUNCATED - Response exceeded 20MB limit]';
           console.warn('Response truncated for storage:', {
             requestId,
             totalSize,
@@ -181,10 +180,11 @@ app.all('*', async (c) => {
           firstTokenReceived,
           responseComplete: getCurrentTimestamp(),
           latency,
-          requestBodyKey,
-          responseBodyKey,
+          requestBodyKey: stored ? requestBodyKey : undefined,
+          responseBodyKey: stored ? responseBodyKey : undefined,
           tokens,
           error,
+          truncated: isTruncated,
           sseMessageTiming:
             isSSE && Object.keys(sseMessageTiming).length > 0 ? sseMessageTiming : undefined,
           sseMetadata: isSSE && Object.keys(sseMetadata).length > 0 ? sseMetadata : undefined,
