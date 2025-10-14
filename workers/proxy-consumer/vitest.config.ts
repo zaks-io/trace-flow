@@ -15,6 +15,16 @@ export default defineWorkersConfig({
         wrangler: {
           configPath: './wrangler.toml',
         },
+        miniflare: {
+          queueConsumers: {
+            'observe-requests-dev': {
+              maxBatchSize: 100,
+              maxBatchTimeout: 5,
+              maxRetries: 5,
+              deadLetterQueue: 'observe-requests-dlq-dev',
+            },
+          },
+        },
         isolatedStorage: false,
         singleWorker: true,
       },
