@@ -340,11 +340,24 @@ describe('TraceBatcher Integration', () => {
     });
     global.fetch = mockFetch;
 
-    await runInDurableObject(batcher, async (instance: TraceBatcher) => {
+    const alarmTime = await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
       await instance.addTraces([createMockTrace('trace-1')]);
+      const alarmAfterFirst = await state.storage.getAlarm();
+
       await instance.addTraces([createMockTrace('trace-2')]);
+      const alarmAfterSecond = await state.storage.getAlarm();
+
       await instance.addTraces([createMockTrace('trace-3')]);
+      const alarmAfterThird = await state.storage.getAlarm();
+
+      expect(alarmAfterSecond).toBe(alarmAfterFirst);
+      expect(alarmAfterThird).toBe(alarmAfterFirst);
+
+      return alarmAfterFirst;
     });
+
+    expect(alarmTime).toBeDefined();
+    expect(alarmTime).toBeGreaterThan(0);
 
     const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
       return instance.getStats();
@@ -436,14 +449,60 @@ describe('TraceBatcher Integration', () => {
     const namedId = env.TRACE_BATCHER.idFromName('test-batcher-reschedule');
     const namedBatcher = env.TRACE_BATCHER.get(namedId);
 
-    await runInDurableObject(namedBatcher, (instance: TraceBatcher) => {
-      return instance.addTraces([createMockTrace('trace-reschedule')]);
+    await runInDurableObject(namedBatcher, async (instance: TraceBatcher, state) => {
+      await instance.addTraces([createMockTrace('trace-reschedule')]);
+
+      const alarmBefore = await state.storage.getAlarm();
+      expect(alarmBefore).toBeDefined();
+      expect(alarmBefore).toBeGreaterThan(0);
     });
 
-    const statsBefore = await runInDurableObject(namedBatcher, (instance: TraceBatcher) => {
+    const alarmRan = await runDurableObjectAlarm(namedBatcher);
+    expect(alarmRan).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    const rescheduled = await runInDurableObject(namedBatcher, async (_instance, state) => {
+      const alarmAfter = await state.storage.getAlarm();
+      expect(alarmAfter).toBeDefined();
+      expect(alarmAfter).toBeGreaterThan(0);
+
+      return alarmAfter;
+    });
+
+    expect(rescheduled).toBeDefined();
+
+    const stats = await runInDurableObject(namedBatcher, (instance: TraceBatcher) => {
       return instance.getStats();
     });
-    expect(statsBefore.queuedTraces).toBe(1);
+    expect(stats.queuedTraces).toBe(1);
+  });
+
+  it('should handle alarm timing with jitter boundary conditions', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('OK'),
+    });
+    global.fetch = mockFetch;
+
+    await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+      await instance.addTraces([createMockTrace('trace-jitter')]);
+
+      const stats = instance.getStats();
+      const originalLastFlush = stats.lastFlushTime;
+
+      const oldDateNow = Date.now;
+      Date.now = () => originalLastFlush + 1200;
+
+      await state.storage.deleteAlarm();
+      (instance as unknown as { flushAlarmScheduled: boolean }).flushAlarmScheduled = false;
+
+      await (instance as unknown as { alarm: () => Promise<void> }).alarm();
+
+      Date.now = oldDateNow;
+    });
+
+    expect(mockFetch).toHaveBeenCalled();
   });
 
   it('should clean up alarm after flush completes', async () => {
