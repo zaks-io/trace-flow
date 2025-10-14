@@ -20,7 +20,7 @@ new_sqlite_classes = ["TraceBatcher"]
 # Queue consumer configuration
 [[queues.consumers]]
 queue = "observe-requests-dev"
-max_batch_size = 1000
+max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5
@@ -45,7 +45,7 @@ class_name = "TraceBatcher"
 
 [[env.staging.queues.consumers]]
 queue = "observe-requests-staging"
-max_batch_size = 1000
+max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5
@@ -64,7 +64,7 @@ class_name = "TraceBatcher"
 
 [[env.production.queues.consumers]]
 queue = "observe-requests-prod"
-max_batch_size = 1000
+max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5

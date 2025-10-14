@@ -351,7 +351,7 @@ cd workers/web && bun run deploy:dev  # Deploys to Pages preview environment
 
 **Consumer** (`workers/proxy-consumer/wrangler.toml`):
 
-- Queue consumer config: `observe-requests-{env}` queue with max_batch_size=10
+- Queue consumer config: `observe-requests-{env}` queue with max_batch_size=100
 - Dead letter queue: `observe-requests-dlq-{env}`
 - R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
 - Secrets: `TINYBIRD_TOKEN`, `TINYBIRD_DATASOURCE`, `TINYBIRD_HOST`
