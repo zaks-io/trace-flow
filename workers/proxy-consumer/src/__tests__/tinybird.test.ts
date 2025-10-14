@@ -330,4 +330,28 @@ describe('insertIntoTinybirdWithRetry', () => {
       ),
     ).rejects.toThrow('String error');
   });
+
+  it('should use default setTimeout delay function when not provided', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Server error'),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      });
+    global.fetch = mockFetch;
+
+    await insertIntoTinybirdWithRetry(
+      [mockTrace],
+      'test-token',
+      'otel_traces',
+      'https://api.tinybird.co',
+    );
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
 });

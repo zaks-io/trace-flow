@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import type { QueueMessage } from '@observe/types';
+import type { TraceBatcher } from '../batcher';
 import worker from '../index';
 
 describe('Queue Handler Integration', () => {
@@ -185,6 +186,7 @@ describe('Queue Handler Integration', () => {
   it('should retry messages when Durable Object fails', async () => {
     const message = createMockQueueMessage('test-do-fail', 'api-key-do-fail');
     const retryCalled = { value: false };
+    const ackCalled = { value: false };
 
     const mockMessage: Message<QueueMessage> = {
       id: '1',
@@ -192,7 +194,7 @@ describe('Queue Handler Integration', () => {
       body: message,
       attempts: 0,
       ack: () => {
-        /* noop */
+        ackCalled.value = true;
       },
       retry: () => {
         retryCalled.value = true;
@@ -210,12 +212,21 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    // Mock DO to throw error (would need to implement this in batcher)
+    const originalGet = env.TRACE_BATCHER.get.bind(env.TRACE_BATCHER);
+    const mockDOStub = {
+      addTraces: (): Promise<void> => {
+        throw new Error('Durable Object failure');
+      },
+    } as unknown as DurableObjectStub<TraceBatcher>;
+
+    env.TRACE_BATCHER.get = () => mockDOStub;
+
     await worker.queue(batch, env);
 
-    // In real scenario with DO failure, retry would be called
-    // This test structure shows how to test it
-    expect(retryCalled).toBeDefined();
+    env.TRACE_BATCHER.get = originalGet;
+
+    expect(retryCalled.value).toBe(true);
+    expect(ackCalled.value).toBe(false);
   });
 
   it('should process batch of messages from same API key to same shard', async () => {

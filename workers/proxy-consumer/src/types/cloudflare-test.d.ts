@@ -6,4 +6,5 @@ declare module 'cloudflare:test' {
     stub: DurableObjectStub,
     callback: (instance: T, state: DurableObjectState) => any,
   ): Promise<any>;
+  export function runDurableObjectAlarm(stub: DurableObjectStub): Promise<boolean>;
 }
