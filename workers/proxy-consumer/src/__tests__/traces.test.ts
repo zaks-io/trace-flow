@@ -271,6 +271,88 @@ describe('buildTraces', () => {
       expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBe('80');
     });
 
+    it('should handle SSE metadata with invalid input_tokens type', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseMessageTiming: {
+          messageStart: 1150,
+          messageStop: 1480,
+        },
+        sseMetadata: {
+          finalUsage: {
+            input_tokens: '120' as unknown as number,
+            output_tokens: 80,
+          },
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
+      expect(messageSpan?.SpanAttributes['llm.tokens.input']).toBeUndefined();
+      expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBe('80');
+    });
+
+    it('should handle SSE metadata with invalid output_tokens type', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseMessageTiming: {
+          messageStart: 1150,
+          messageStop: 1480,
+        },
+        sseMetadata: {
+          finalUsage: {
+            input_tokens: 120,
+            output_tokens: null as unknown as number,
+          },
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
+      expect(messageSpan?.SpanAttributes['llm.tokens.input']).toBe('120');
+      expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBeUndefined();
+    });
+
+    it('should handle SSE metadata with missing finalUsage', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseMessageTiming: {
+          messageStart: 1150,
+          messageStop: 1480,
+        },
+        sseMetadata: {
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+          },
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
+      expect(messageSpan?.SpanAttributes['llm.tokens.input']).toBeUndefined();
+      expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBeUndefined();
+    });
+
+    it('should handle SSE timing without firstDelta', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseMessageTiming: {
+          messageStart: 1150,
+          messageStop: 1480,
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
+      expect(messageSpan).toBeDefined();
+      expect(messageSpan?.SpanAttributes['llm.time_to_first_token_ms']).toBeUndefined();
+    });
+
     it('should not generate SSE span when timing is incomplete', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,

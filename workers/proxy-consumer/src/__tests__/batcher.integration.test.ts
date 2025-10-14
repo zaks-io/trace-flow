@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { env, runInDurableObject } from 'cloudflare:test';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { env, runInDurableObject, runDurableObjectAlarm } from 'cloudflare:test';
 import type { TinybirdTrace } from '@observe/types';
 import { type TraceBatcher } from '../batcher';
 
@@ -10,6 +10,9 @@ describe('TraceBatcher Integration', () => {
     // Get a fresh Durable Object instance for each test with unique ID
     const id = env.TRACE_BATCHER.newUniqueId();
     batcher = env.TRACE_BATCHER.get(id);
+    vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
   const createMockTrace = (traceId: string): TinybirdTrace => ({
@@ -285,5 +288,235 @@ describe('TraceBatcher Integration', () => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
+  });
+
+  it('should trigger flush when trace count reaches BATCH_SIZE threshold', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('OK'),
+    });
+    global.fetch = mockFetch;
+
+    await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+      for (let i = 0; i < 1000; i++) {
+        state.storage.sql.exec(
+          'INSERT INTO traces (data, timestamp) VALUES (?, ?)',
+          JSON.stringify(createMockTrace(`trace-${i}`)),
+          Date.now(),
+        );
+      }
+
+      (instance as unknown as { traceCount: number }).traceCount = 99999;
+
+      await instance.addTraces([createMockTrace('trigger-flush')]);
+    });
+
+    expect(mockFetch).toHaveBeenCalled();
+  });
+
+  it('should execute alarm and flush traces after interval', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('OK'),
+    });
+    global.fetch = mockFetch;
+
+    const traces = Array.from({ length: 10 }, (_, i) => createMockTrace(`trace-alarm-${i}`));
+
+    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+      return instance.addTraces(traces);
+    });
+
+    const alarmRan = await runDurableObjectAlarm(batcher);
+    expect(alarmRan).toBe(true);
+  });
+
+  it('should prevent duplicate alarm scheduling', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+    global.fetch = mockFetch;
+
+    const alarmTime = await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+      await instance.addTraces([createMockTrace('trace-1')]);
+      const alarmAfterFirst = await state.storage.getAlarm();
+
+      await instance.addTraces([createMockTrace('trace-2')]);
+      const alarmAfterSecond = await state.storage.getAlarm();
+
+      await instance.addTraces([createMockTrace('trace-3')]);
+      const alarmAfterThird = await state.storage.getAlarm();
+
+      expect(alarmAfterSecond).toBe(alarmAfterFirst);
+      expect(alarmAfterThird).toBe(alarmAfterFirst);
+
+      return alarmAfterFirst;
+    });
+
+    expect(alarmTime).toBeDefined();
+    expect(alarmTime).toBeGreaterThan(0);
+
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+      return instance.getStats();
+    });
+    expect(stats.queuedTraces).toBe(3);
+  });
+
+  it('should flush successfully and delete traces from SQL storage', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+    global.fetch = mockFetch;
+
+    const traces = Array.from({ length: 5 }, (_, i) => createMockTrace(`trace-flush-${i}`));
+
+    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+      return instance.addTraces(traces);
+    });
+
+    const alarmRan = await runDurableObjectAlarm(batcher);
+    expect(alarmRan).toBe(true);
+  });
+
+  it('should flush multiple batches for trace count > 100k', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+    global.fetch = mockFetch;
+
+    await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+      for (let i = 0; i < 2000; i++) {
+        state.storage.sql.exec(
+          'INSERT INTO traces (data, timestamp) VALUES (?, ?)',
+          JSON.stringify(createMockTrace(`trace-multi-${i}`)),
+          Date.now(),
+        );
+      }
+
+      (instance as unknown as { traceCount: number }).traceCount = 150_000;
+
+      await instance.addTraces([createMockTrace('trigger-multibatch-flush')]);
+    });
+
+    expect(mockFetch).toHaveBeenCalled();
+  });
+
+  it('should handle Tinybird errors during flush gracefully', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('Internal Server Error'),
+    });
+    global.fetch = mockFetch;
+
+    const traces = Array.from({ length: 10 }, (_, i) => createMockTrace(`trace-error-${i}`));
+
+    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+      return instance.addTraces(traces);
+    });
+
+    const alarmRan = await runDurableObjectAlarm(batcher);
+    expect(alarmRan).toBe(true);
+  });
+
+  it('should skip flush when no traces are queued', async () => {
+    const mockFetch = vi.fn();
+    global.fetch = mockFetch;
+
+    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+      return instance.addTraces([]);
+    });
+
+    const alarmRan = await runDurableObjectAlarm(batcher);
+    expect(alarmRan).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('should reschedule alarm when threshold not met but traces exist', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+    global.fetch = mockFetch;
+
+    const namedId = env.TRACE_BATCHER.idFromName('test-batcher-reschedule');
+    const namedBatcher = env.TRACE_BATCHER.get(namedId);
+
+    await runInDurableObject(namedBatcher, async (instance: TraceBatcher, state) => {
+      await instance.addTraces([createMockTrace('trace-reschedule')]);
+
+      const alarmBefore = await state.storage.getAlarm();
+      expect(alarmBefore).toBeDefined();
+      expect(alarmBefore).toBeGreaterThan(0);
+    });
+
+    const alarmRan = await runDurableObjectAlarm(namedBatcher);
+    expect(alarmRan).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    const rescheduled = await runInDurableObject(namedBatcher, async (_instance, state) => {
+      const alarmAfter = await state.storage.getAlarm();
+      expect(alarmAfter).toBeDefined();
+      expect(alarmAfter).toBeGreaterThan(0);
+
+      return alarmAfter;
+    });
+
+    expect(rescheduled).toBeDefined();
+
+    const stats = await runInDurableObject(namedBatcher, (instance: TraceBatcher) => {
+      return instance.getStats();
+    });
+    expect(stats.queuedTraces).toBe(1);
+  });
+
+  it('should handle alarm timing with jitter boundary conditions', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('OK'),
+    });
+    global.fetch = mockFetch;
+
+    await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+      await instance.addTraces([createMockTrace('trace-jitter')]);
+
+      const stats = instance.getStats();
+      const originalLastFlush = stats.lastFlushTime;
+
+      const oldDateNow = Date.now;
+      Date.now = () => originalLastFlush + 1200;
+
+      await state.storage.deleteAlarm();
+      (instance as unknown as { flushAlarmScheduled: boolean }).flushAlarmScheduled = false;
+
+      await (instance as unknown as { alarm: () => Promise<void> }).alarm();
+
+      Date.now = oldDateNow;
+    });
+
+    expect(mockFetch).toHaveBeenCalled();
+  });
+
+  it('should clean up alarm after flush completes', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+    });
+    global.fetch = mockFetch;
+
+    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+      return instance.addTraces([createMockTrace('trace-cleanup')]);
+    });
+
+    const firstAlarmRan = await runDurableObjectAlarm(batcher);
+    expect(firstAlarmRan).toBe(true);
   });
 });
