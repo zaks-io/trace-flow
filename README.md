@@ -52,13 +52,13 @@ observe/
 Install dependencies:
 
 ```bash
-bun install
+pnpm install
 ```
 
 Initialize husky:
 
 ```bash
-bun run prepare
+pnpm run prepare
 ```
 
 ## Development
@@ -84,7 +84,7 @@ The web worker uses Vite and requires Convex backend:
 npx convex dev
 
 # Terminal 2: Start web UI
-cd workers/web && bun run dev
+cd workers/web && pnpm run dev
 ```
 
 On first run, Convex will:
@@ -111,7 +111,7 @@ wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.t
 npx convex dev
 
 # Terminal 3: Web UI
-cd workers/web && bun run dev
+cd workers/web && pnpm run dev
 ```
 
 ### Running Workers Individually
@@ -120,13 +120,13 @@ You can also run workers separately:
 
 ```bash
 # Proxy only
-cd workers/proxy && bun run dev
+cd workers/proxy && pnpm run dev
 
 # Consumer only
-cd workers/proxy-consumer && bun run dev
+cd workers/proxy-consumer && pnpm run dev
 
 # Web only (still requires Convex)
-cd workers/web && bun run dev
+cd workers/web && pnpm run dev
 ```
 
 ## Building
@@ -134,7 +134,7 @@ cd workers/web && bun run dev
 Build all workers:
 
 ```bash
-bun run build
+pnpm run build
 ```
 
 ## Deployment
@@ -156,19 +156,19 @@ This project uses Cloudflare's native Git integration for automatic deployments 
    **Proxy Worker:**
    - Name: `observe-proxy`
    - Root directory: `workers/proxy`
-   - Build command: `bun run build`
+   - Build command: `pnpm run build`
    - Branch: `main`
 
    **Proxy Consumer Worker:**
    - Name: `observe-proxy-consumer`
    - Root directory: `workers/proxy-consumer`
-   - Build command: `bun run build`
+   - Build command: `pnpm run build`
    - Branch: `main`
 
    **Web App:**
    - Name: `observe-web`
    - Root directory: `workers/web`
-   - Build command: `bun run build`
+   - Build command: `pnpm run build`
    - Branch: `main`
 
 6. Cloudflare will automatically build and deploy on every push to `main`
@@ -186,7 +186,7 @@ Deploy a specific worker manually:
 
 ```bash
 cd workers/proxy
-bun run deploy
+pnpm run deploy
 ```
 
 ## Configuration
@@ -206,7 +206,7 @@ Quick overview:
 ## Tech Stack
 
 - **Runtime**: Cloudflare Workers
-- **Package Manager**: Bun
+- **Package Manager**: pnpm
 - **Monorepo**: Turborepo
 - **Frontend**: React + Vite
 - **Database**: Convex

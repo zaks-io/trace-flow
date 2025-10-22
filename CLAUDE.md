@@ -19,8 +19,8 @@ Do NOT run any production deployment commands. Ever. Any deployments requested b
 
 **Development Commands (use these for local dev and testing):**
 
-- Convex watch mode: `bunx convex dev` (continuous development server)
-- Convex deploy to dev: `bunx convex@latest dev --once` (deploy to dev environment once, not a watch command)
+- Convex watch mode: `pnpm dlx convex dev` (continuous development server)
+- Convex deploy to dev: `pnpm dlx convex@latest dev --once` (deploy to dev environment once, not a watch command)
 - Cloudflare Workers dev (with queues): `wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state`
 - Tinybird dev: `tb dev` (auto-reload, local only)
 
@@ -47,7 +47,7 @@ Do NOT run any production deployment commands. Ever. Any deployments requested b
 
 ## Local Development
 
-**IMPORTANT**: Use globally installed `wrangler` command directly, not `bunx wrangler` or `npx wrangler`. Bun has compatibility issues with wrangler that cause `wrangler dev` to hang. Install wrangler globally: `npm install -g wrangler`
+**IMPORTANT**: Use globally installed `wrangler` command directly, not `pnpm dlx wrangler` or `npx wrangler`. The global install ensures consistent behavior and avoids potential compatibility issues. Install wrangler globally: `npm install -g wrangler`
 
 ### Running Proxy + Consumer Together (Recommended)
 
@@ -67,10 +67,10 @@ The web worker uses Vite for development and requires Convex backend:
 
 ```bash
 # Terminal 1: Start Convex backend (watch mode)
-bunx convex dev
+pnpm dlx convex dev
 
 # Terminal 2: Start web UI
-cd workers/web && bun run dev
+cd workers/web && pnpm run dev
 ```
 
 On first run, Convex will prompt you to login and create a project. Create `workers/web/.env.local`:
@@ -88,13 +88,16 @@ NEXT_PUBLIC_AUTH0_CLIENT_ID=your-auth0-client-id
 
 ```bash
 # Terminal 1: All workers with shared R2
-bun run dev:all
+pnpm run dev:all
 
-# Terminal 2: Convex backend (watch mode)
-bunx convex dev
+# Terminal 2: API worker (MUST use same persist path)
+cd workers/api && wrangler dev --persist-to ../../.wrangler/state
 
-# Terminal 3: Web UI
-cd workers/web && bun run dev
+# Terminal 3: Convex backend (watch mode)
+pnpm dlx convex dev
+
+# Terminal 4: Web UI
+cd workers/web && pnpm run dev
 ```
 
 The `dev:all` script runs proxy, consumer, and API workers together with shared R2 storage, solving storage isolation issues.
@@ -111,10 +114,10 @@ wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.t
 cd workers/api && wrangler dev --persist-to ../../.wrangler/state
 
 # Terminal 3: Convex backend (watch mode)
-bunx convex dev
+pnpm dlx convex dev
 
 # Terminal 4: Web UI
-cd workers/web && bun run dev
+cd workers/web && pnpm run dev
 ```
 
 **IMPORTANT**: When running workers separately, all workers MUST use the same `--persist-to` path or R2 storage will be isolated and bodies won't be accessible.
@@ -134,29 +137,33 @@ cd workers/proxy-consumer && wrangler dev
 cd workers/api && wrangler dev
 
 # Web only (still requires Convex and API worker)
+<<<<<<< HEAD
+cd workers/web && pnpm run dev
+=======
 cd workers/web && bun run dev
+>>>>>>> origin/main
 ```
 
 ### Other Commands
 
 ```bash
 # Build all workers
-bun run build
+pnpm run build
 
 # Type check all workers
-bun run type-check
+pnpm run type-check
 
 # Lint all workers
-bun run lint
+pnpm run lint
 
 # Format all files
-bun run format
+pnpm run format
 
 # Run tests
-bun run test
+pnpm run test
 
 # Run tests in watch mode
-bun run test:watch
+pnpm run test:watch
 ```
 
 ## Testing
@@ -176,16 +183,16 @@ Project uses Vitest for unit and integration testing. Tests are configured per-p
 
 ```bash
 # Run all tests across monorepo
-bun run test
+pnpm run test
 
 # Run tests in watch mode
-bun run test:watch
+pnpm run test:watch
 
 # Run tests for specific package
-cd packages/utils && bun run test
+cd packages/utils && pnpm run test
 
 # Run tests with coverage
-bun run test:coverage
+pnpm run test:coverage
 ```
 
 ### Vitest Configuration
@@ -212,7 +219,7 @@ Use `@cloudflare/vitest-pool-workers` for testing Workers with runtime APIs and 
 
 ```bash
 # Install Workers testing integration
-bun add @cloudflare/vitest-pool-workers --dev
+pnpm add @cloudflare/vitest-pool-workers --dev
 ```
 
 ```typescript
@@ -261,7 +268,7 @@ packages/utils/
 
 ### Adding Tests to New Packages
 
-1. Install Vitest: `bun add vitest --cwd packages/your-package --dev`
+1. Install Vitest: `pnpm add vitest --cwd packages/your-package --dev`
 2. Create `vitest.config.ts` in package root
 3. Add test scripts to `package.json`:
    ```json
@@ -280,7 +287,7 @@ packages/utils/
 Tests run automatically in CI pipeline before deployment:
 
 ```bash
-bun run format && bun run lint && bun run type-check && bun run test && bun run build
+pnpm run format && pnpm run lint && pnpm run type-check && pnpm run test && pnpm run build
 ```
 
 ### Testing Proxy Locally
@@ -366,14 +373,14 @@ Project has three separate environments with isolated resources:
 
 ```bash
 # Deploy all workers to a specific environment
-bun run deploy:dev      # Workers → dev, Pages → preview
-bun run deploy:staging  # Workers → staging, Pages → preview (staging branch)
-bun run deploy:prod     # Workers → production, Pages → production (requires explicit approval)
+pnpm run deploy:dev      # Workers → dev, Pages → preview
+pnpm run deploy:staging  # Workers → staging, Pages → preview (staging branch)
+pnpm run deploy:prod     # Workers → production, Pages → production (requires explicit approval)
 
 # Deploy individual workers
-cd workers/proxy && bun run deploy:dev
-cd workers/proxy-consumer && bun run deploy:staging
-cd workers/web && bun run deploy:dev  # Deploys to Pages preview environment
+cd workers/proxy && pnpm run deploy:dev
+cd workers/proxy-consumer && pnpm run deploy:staging
+cd workers/web && pnpm run deploy:dev  # Deploys to Pages preview environment
 ```
 
 ## Wrangler Configuration
@@ -648,35 +655,35 @@ Before committing, run the full CI suite to catch issues early:
 
 ```bash
 # Install dependencies (if not already installed)
-bun install
+pnpm install
 
 # Run all checks in parallel
-bun run format  # Auto-fix formatting issues
-bun run lint    # Lint all workers
-bun run type-check  # Type check all workers
-bun run build   # Build all workers
+pnpm run format  # Auto-fix formatting issues
+pnpm run lint    # Lint all workers
+pnpm run type-check  # Type check all workers
+pnpm run build   # Build all workers
 ```
 
 **Individual worker checks (if needed):**
 
 ```bash
 # Proxy worker
-bun run prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
-bun run turbo run lint --filter=@observe/proxy
-bun run turbo run type-check --filter=@observe/proxy
-bun run turbo run build --filter=@observe/proxy
+pnpm run prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
+pnpm run turbo run lint --filter=@observe/proxy
+pnpm run turbo run type-check --filter=@observe/proxy
+pnpm run turbo run build --filter=@observe/proxy
 
 # Proxy consumer worker
-bun run prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
-bun run turbo run lint --filter=@observe/proxy-consumer
-bun run turbo run type-check --filter=@observe/proxy-consumer
-bun run turbo run build --filter=@observe/proxy-consumer
+pnpm run prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
+pnpm run turbo run lint --filter=@observe/proxy-consumer
+pnpm run turbo run type-check --filter=@observe/proxy-consumer
+pnpm run turbo run build --filter=@observe/proxy-consumer
 
 # Web worker
-bun run prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
-bun run turbo run lint --filter=@observe/web
-bun run turbo run type-check --filter=@observe/web
-bun run turbo run build --filter=@observe/web
+pnpm run prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
+pnpm run turbo run lint --filter=@observe/web
+pnpm run turbo run type-check --filter=@observe/web
+pnpm run turbo run build --filter=@observe/web
 
 # GitHub Actions workflows (if modified)
 actionlint .github/workflows/*.yml
@@ -686,10 +693,10 @@ actionlint .github/workflows/*.yml
 
 ```bash
 # Auto-fix formatting
-bun run format
+pnpm run format
 
 # Auto-fix linting issues
-bun run lint --fix
+pnpm run lint --fix
 ```
 
 ### 3. Commit Changes
@@ -755,7 +762,7 @@ git checkout -b feature/your-feature-name
 # Make your changes...
 
 # Run all checks
-bun run format && bun run lint && bun run type-check && bun run build
+pnpm run format && pnpm run lint && pnpm run type-check && pnpm run build
 
 # Commit and push
 git add . && git commit -m "$(cat <<'EOF'

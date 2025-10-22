@@ -67,18 +67,18 @@ After creating the queues and setting the secrets, deploy the workers to your ch
 
 ```bash
 # Deploy all workers to development (from project root)
-bun run deploy:dev
+pnpm run deploy:dev
 
 # Or deploy individual workers
-cd workers/proxy && bun run deploy:dev
-cd workers/proxy-consumer && bun run deploy:dev
-cd workers/web && bun run deploy:dev
+cd workers/proxy && pnpm run deploy:dev
+cd workers/proxy-consumer && pnpm run deploy:dev
+cd workers/web && pnpm run deploy:dev
 
 # For staging
-bun run deploy:staging
+pnpm run deploy:staging
 
 # For production (requires explicit approval)
-bun run deploy:prod
+pnpm run deploy:prod
 ```
 
 ## Testing Locally

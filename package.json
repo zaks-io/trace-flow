@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.0.0",
+  "packageManager": "pnpm@10.19.0",
   "workspaces": [
     "packages/*",
     "workers/*"

@@ -50,7 +50,7 @@ jobs:
               - 'packages/types/**'
             root:
               - 'package.json'
-              - 'bun.lockb'
+              - 'pnpm-lock.yaml'
               - 'turbo.json'
               - 'eslint.config.js'
               - '.prettierrc'
@@ -79,15 +79,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 20
+          cache: 'pnpm'
 
       - name: Cache Turbo
         uses: actions/cache@v4
@@ -98,19 +95,19 @@ jobs:
             ${{ runner.os }}-turbo-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: bun run prettier --check "packages/utils/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "packages/utils/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: bun run turbo run lint --filter=@observe/utils
+        run: pnpm turbo run lint --filter=@observe/utils
 
       - name: Type check
-        run: bun run turbo run type-check --filter=@observe/utils
+        run: pnpm turbo run type-check --filter=@observe/utils
 
       - name: Test
-        run: bun run turbo run test --filter=@observe/utils
+        run: pnpm turbo run test --filter=@observe/utils
 
   types:
     name: Types Package
@@ -120,15 +117,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 20
+          cache: 'pnpm'
 
       - name: Cache Turbo
         uses: actions/cache@v4
@@ -139,16 +133,16 @@ jobs:
             ${{ runner.os }}-turbo-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: bun run prettier --check "packages/types/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "packages/types/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: bun run turbo run lint --filter=@observe/types
+        run: pnpm turbo run lint --filter=@observe/types
 
       - name: Type check
-        run: bun run turbo run type-check --filter=@observe/types
+        run: pnpm turbo run type-check --filter=@observe/types
 
   proxy:
     name: Proxy Worker
@@ -161,15 +155,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 20
+          cache: 'pnpm'
 
       - name: Cache Turbo
         uses: actions/cache@v4
@@ -180,19 +171,19 @@ jobs:
             ${{ runner.os }}-turbo-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: bun run prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: bun run turbo run lint --filter=@observe/proxy
+        run: pnpm turbo run lint --filter=@observe/proxy
 
       - name: Type check
-        run: bun run turbo run type-check --filter=@observe/proxy
+        run: pnpm turbo run type-check --filter=@observe/proxy
 
       - name: Test with coverage
-        run: bun run turbo run test:coverage --filter=@observe/proxy
+        run: pnpm turbo run test:coverage --filter=@observe/proxy
 
       - name: Report coverage
         if: github.event_name == 'pull_request'
@@ -204,7 +195,7 @@ jobs:
           file-coverage-mode: changes
 
       - name: Build
-        run: bun run turbo run build --filter=@observe/proxy
+        run: pnpm turbo run build --filter=@observe/proxy
 
   proxy-consumer:
     name: Proxy Consumer Worker
@@ -217,15 +208,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 20
+          cache: 'pnpm'
 
       - name: Cache Turbo
         uses: actions/cache@v4
@@ -236,19 +224,19 @@ jobs:
             ${{ runner.os }}-turbo-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: bun run prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: bun run turbo run lint --filter=@observe/proxy-consumer
+        run: pnpm turbo run lint --filter=@observe/proxy-consumer
 
       - name: Type check
-        run: bun run turbo run type-check --filter=@observe/proxy-consumer
+        run: pnpm turbo run type-check --filter=@observe/proxy-consumer
 
       - name: Test with coverage
-        run: bun run turbo run test:coverage --filter=@observe/proxy-consumer
+        run: pnpm turbo run test:coverage --filter=@observe/proxy-consumer
 
       - name: Report coverage
         if: github.event_name == 'pull_request'
@@ -260,7 +248,7 @@ jobs:
           file-coverage-mode: changes
 
       - name: Build
-        run: bun run turbo run build --filter=@observe/proxy-consumer
+        run: pnpm turbo run build --filter=@observe/proxy-consumer
 
   web:
     name: Web Worker
@@ -270,23 +258,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
+          node-version: 20
+          cache: 'pnpm'
 
       - name: Cache Next.js
         uses: actions/cache@v4
         with:
           path: workers/web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/bun.lockb') }}-${{ hashFiles('**/*.[jt]s', '**/*.[jt]sx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.[jt]s', '**/*.[jt]sx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/bun.lockb') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
       - name: Cache Turbo
         uses: actions/cache@v4
@@ -297,19 +282,19 @@ jobs:
             ${{ runner.os }}-turbo-
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: bun run prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
+        run: pnpm prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
 
       - name: Lint
-        run: bun run turbo run lint --filter=@observe/web
+        run: pnpm turbo run lint --filter=@observe/web
 
       - name: Type check
-        run: bun run turbo run type-check --filter=@observe/web
+        run: pnpm turbo run type-check --filter=@observe/web
 
       - name: Test
-        run: bun run turbo run test --filter=@observe/web
+        run: pnpm turbo run test --filter=@observe/web
 
       - name: Build
         env:
@@ -317,7 +302,7 @@ jobs:
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
-        run: bun run turbo run build --filter=@observe/web
+        run: pnpm turbo run build --filter=@observe/web
 
   status:
     name: CI Status
