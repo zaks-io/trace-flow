@@ -85,7 +85,7 @@ export function useTinybirdQuery<T = unknown>(
     try {
       const currentToken = jwt ?? (await fetchToken());
       const result = await fetchData(currentToken);
-      setData(result);
+      setData(result as T);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));

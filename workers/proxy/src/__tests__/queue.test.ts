@@ -4,6 +4,7 @@ import { createQueueMessage } from '../queue';
 describe('createQueueMessage', () => {
   const baseParams = {
     requestId: 'test-123',
+    traceId: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
     apiKey: 'api-key-123',
     targetUrl: 'https://api.openai.com/v1/chat/completions',
     responseStatus: 200,
@@ -12,8 +13,8 @@ describe('createQueueMessage', () => {
     firstTokenReceived: 1200,
     responseComplete: 1500,
     latency: 500,
-    requestBodyKey: 'requests/test-123',
-    responseBodyKey: 'responses/test-123',
+    requestBodyKey: 'requests/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
+    responseBodyKey: 'responses/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
     tokens: {
       promptTokens: 100,
       completionTokens: 50,
@@ -27,10 +28,11 @@ describe('createQueueMessage', () => {
 
     expect(result).toMatchObject({
       requestId: 'test-123',
+      traceId: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
       apiKey: 'api-key-123',
       targetUrl: 'https://api.openai.com/v1/chat/completions',
-      requestBodyKey: 'requests/test-123',
-      responseBodyKey: 'responses/test-123',
+      requestBodyKey: 'requests/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
+      responseBodyKey: 'responses/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
       tokens: {
         promptTokens: 100,
         completionTokens: 50,

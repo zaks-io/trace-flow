@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LLM observability platform built on Cloudflare Workers. Three workers form an async pipeline: a streaming proxy captures LLM requests/responses and enqueues them, a consumer processes the queue and sends OpenTelemetry traces to ClickStack, and a web dashboard displays analytics.
+LLM observability platform built on Cloudflare Workers. Four workers form the system:
+
+- **Proxy** - Streaming proxy that captures LLM requests/responses and enqueues them
+- **Consumer** - Processes queue batches and sends OpenTelemetry traces to Tinybird
+- **API** - Provides R2 access for fetching request/response bodies
+- **Web** - Static dashboard (Cloudflare Pages) displaying analytics via Tinybird
 
 ## DEPLOYMENT SAFETY - READ THIS FIRST
 
@@ -28,7 +33,9 @@ Do NOT run any production deployment commands. Ever. Any deployments requested b
 3. Captures request/response bodies during streaming using tee() and TransformStream
 4. Stores bodies in R2 asynchronously (via `c.executionCtx.waitUntil`)
 5. Sends metadata to Cloudflare Queue with R2 keys
-6. Consumer worker processes queue batches and sends OpenTelemetry traces to ClickStack
+6. Consumer worker processes queue batches and sends OpenTelemetry traces to Tinybird
+7. Web UI fetches trace metadata from Tinybird and request/response bodies from API worker
+8. API worker retrieves bodies from R2 bucket and returns them to the web UI
 
 **Key Implementation Details:**
 
@@ -69,16 +76,19 @@ cd workers/web && bun run dev
 On first run, Convex will prompt you to login and create a project. Create `workers/web/.env.local`:
 
 ```bash
-VITE_CONVEX_URL=https://your-deployment-url.convex.cloud
+NEXT_PUBLIC_CONVEX_URL=https://your-deployment-url.convex.cloud
+NEXT_PUBLIC_API_URL=http://localhost:8788
+NEXT_PUBLIC_AUTH0_DOMAIN=your-auth0-domain
+NEXT_PUBLIC_AUTH0_CLIENT_ID=your-auth0-client-id
 ```
 
-### Full Local Stack
+### Full Local Stack (Recommended)
 
-To run everything together (requires 3 terminals):
+**Single Command (Recommended):**
 
 ```bash
-# Terminal 1: Proxy + Consumer workers
-wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+# Terminal 1: All workers with shared R2
+bun run dev:all
 
 # Terminal 2: Convex backend (watch mode)
 bunx convex dev
@@ -86,6 +96,28 @@ bunx convex dev
 # Terminal 3: Web UI
 cd workers/web && bun run dev
 ```
+
+The `dev:all` script runs proxy, consumer, and API workers together with shared R2 storage, solving storage isolation issues.
+
+**Multi-Terminal Setup (For Debugging):**
+
+If you need to run workers separately for debugging:
+
+```bash
+# Terminal 1: Proxy + Consumer workers
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+
+# Terminal 2: API worker (MUST use same persist path)
+cd workers/api && wrangler dev --persist-to ../../.wrangler/state
+
+# Terminal 3: Convex backend (watch mode)
+bunx convex dev
+
+# Terminal 4: Web UI
+cd workers/web && bun run dev
+```
+
+**IMPORTANT**: When running workers separately, all workers MUST use the same `--persist-to` path or R2 storage will be isolated and bodies won't be accessible.
 
 ### Running Workers Individually
 
@@ -98,7 +130,10 @@ cd workers/proxy && wrangler dev
 # Consumer only
 cd workers/proxy-consumer && wrangler dev
 
-# Web only (still requires Convex)
+# API only
+cd workers/api && wrangler dev
+
+# Web only (still requires Convex and API worker)
 cd workers/web && bun run dev
 ```
 
@@ -356,9 +391,16 @@ cd workers/web && bun run deploy:dev  # Deploys to Pages preview environment
 - R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
 - Secrets: `TINYBIRD_TOKEN`, `TINYBIRD_DATASOURCE`, `TINYBIRD_HOST`
 
+**API** (`workers/api/wrangler.toml`):
+
+- R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
+- Simple Hono worker with GET `/bodies/:traceId` endpoint
+- Returns request/response bodies from R2 for the web UI
+
 **Web** (`workers/web/wrangler.toml`):
 
-- Pages project with `.next` output directory
+- Pages project with static export (no R2 bindings)
+- Fetches trace data from Tinybird and bodies from API worker
 
 ## Managing Secrets and Environment Variables
 

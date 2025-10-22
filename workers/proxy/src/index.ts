@@ -16,7 +16,7 @@
  */
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { generateId, getCurrentTimestamp } from '@observe/utils';
+import { generateId, generateTraceId, getCurrentTimestamp } from '@observe/utils';
 import type { SSEMessageTiming, SSEMetadata, QueueMessage } from '@observe/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
@@ -46,11 +46,13 @@ app.all('*', async (c) => {
   const apiKey =
     c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.header('X-API-Key') ?? '';
   const requestId = generateId();
+  const traceId = generateTraceId();
   const requestStart = getCurrentTimestamp();
   const targetUrl = c.req.header('X-Proxy-Target');
 
   console.log('Incoming Request:', {
     requestId,
+    traceId,
     timestamp: requestStart,
     method: c.req.method,
     url: c.req.url,
@@ -178,7 +180,7 @@ app.all('*', async (c) => {
 
         const { requestBodyKey, responseBodyKey, stored } = await storeRequestResponse(
           c.env.STORAGE,
-          requestId,
+          traceId,
           requestBody,
           responseBody,
         );
@@ -189,6 +191,7 @@ app.all('*', async (c) => {
 
         const queueMessage = createQueueMessage({
           requestId,
+          traceId,
           apiKey,
           targetUrl,
           responseStatus: response.status,

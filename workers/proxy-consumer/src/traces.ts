@@ -14,7 +14,7 @@ import { generateSpanId } from '@observe/utils';
  */
 export function buildTraces(data: QueueMessage): TinybirdTrace[] {
   const traces: TinybirdTrace[] = [];
-  const traceId = data.requestId;
+  const traceId = data.traceId ?? data.requestId;
   const serviceName = 'llm-observability';
 
   const rootSpan: TinybirdTrace = {
