@@ -50,17 +50,6 @@ app.all('*', async (c) => {
   const requestStart = getCurrentTimestamp();
   const targetUrl = c.req.header('X-Proxy-Target');
 
-  console.log('Incoming Request:', {
-    requestId,
-    traceId,
-    timestamp: requestStart,
-    method: c.req.method,
-    url: c.req.url,
-    targetUrl,
-    contentType: c.req.header('Content-Type'),
-    authorization: c.req.header('Authorization') ? '[PRESENT]' : '[MISSING]',
-  });
-
   if (!targetUrl) {
     return c.json(
       {
@@ -119,17 +108,7 @@ app.all('*', async (c) => {
 
   const requestSent = getCurrentTimestamp();
 
-  console.log('Response:', {
-    requestId,
-    status: response.status,
-    contentType: response.headers.get('Content-Type'),
-  });
-
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
-
-  if (isSSE) {
-    console.log('SSE stream detected for request:', requestId);
-  }
 
   const sseStreamData: SSEStreamData = { messages: [] };
 
@@ -208,25 +187,7 @@ app.all('*', async (c) => {
           sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
         });
 
-        if (isSSE) {
-          console.log('SSE Stream Data:', {
-            requestId,
-            messageCount: queueMessage.sseStreamData?.messages.length ?? 0,
-            messages: queueMessage.sseStreamData?.messages,
-          });
-        }
-
         await c.env.REQUEST_QUEUE.send(queueMessage);
-        console.log('Successfully queued message:', {
-          requestId,
-          provider: queueMessage.request.provider,
-          targetUrl,
-          requestBodyKey,
-          responseBodyKey,
-          tokens,
-          error,
-          truncated: isTruncated,
-        });
       } catch (error) {
         console.error('Failed to complete observability capture:', {
           requestId,

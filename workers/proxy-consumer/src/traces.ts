@@ -154,7 +154,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
         ApiKey: data.apiKey,
         'Events.Timestamp': message.events.map((e) => e.timestamp * 1000000),
         'Events.Name': message.events.map((e) => e.type),
-        'Events.Attributes': message.events.map((e) => ({ data: e.data ?? '' })),
+        'Events.Attributes': message.events.map(() => '{}'),
         'Links.TraceId': [],
         'Links.SpanId': [],
         'Links.TraceState': [],

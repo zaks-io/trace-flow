@@ -210,6 +210,8 @@ describe('buildTraces', () => {
         'message_stop',
       ]);
       expect(messageSpan?.['Events.Timestamp'].length).toBe(3);
+      expect(messageSpan?.['Events.Attributes'].length).toBe(3);
+      expect(messageSpan?.['Events.Attributes']).toEqual(['{}', '{}', '{}']);
     });
 
     it('should include SSE token usage from message', () => {

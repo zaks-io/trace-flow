@@ -167,7 +167,6 @@ describe('processSSEEvent', () => {
 describe('createSSEParser', () => {
   it('should create EventSourceParser that processes events', () => {
     const streamData: SSEStreamData = { messages: [] };
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     const parser = createSSEParser(streamData);
 
@@ -179,35 +178,10 @@ describe('createSSEParser', () => {
 
     expect(streamData.messages.length).toBe(1);
     expect(streamData.messages[0]?.messageStart).toBeDefined();
-    expect(consoleLogSpy).toHaveBeenCalled();
-
-    consoleLogSpy.mockRestore();
-  });
-
-  it('should log SSE events with truncated data', () => {
-    const streamData: SSEStreamData = { messages: [] };
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-
-    const parser = createSSEParser(streamData);
-    const longData = 'a'.repeat(200);
-
-    parser.feed(`event: message_start\n`);
-    parser.feed(`data: ${longData}\n\n`);
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      'SSE Event:',
-      expect.objectContaining({
-        event: 'message_start',
-        data: longData.substring(0, 100),
-      }),
-    );
-
-    consoleLogSpy.mockRestore();
   });
 
   it('should process multiple events correctly', () => {
     const streamData: SSEStreamData = { messages: [] };
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     const parser = createSSEParser(streamData);
 
@@ -220,7 +194,5 @@ describe('createSSEParser', () => {
     expect(streamData.messages[0]?.events[0]?.type).toBe('message_start');
     expect(streamData.messages[0]?.events[1]?.type).toBe('content_block_start');
     expect(streamData.messages[0]?.events[2]?.type).toBe('content_block_delta');
-
-    consoleLogSpy.mockRestore();
   });
 });

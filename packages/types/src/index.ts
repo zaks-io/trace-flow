@@ -90,9 +90,9 @@ export interface TinybirdTrace {
   ApiKey: string;
   'Events.Timestamp': number[];
   'Events.Name': string[];
-  'Events.Attributes': Record<string, string>[];
+  'Events.Attributes': string[];
   'Links.TraceId': string[];
   'Links.SpanId': string[];
   'Links.TraceState': string[];
-  'Links.Attributes': Record<string, string>[];
+  'Links.Attributes': string[];
 }

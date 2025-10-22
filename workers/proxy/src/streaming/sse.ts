@@ -86,13 +86,6 @@ export function createSSEParser(streamData: SSEStreamData): EventSourceParser {
   return createParser({
     onEvent(event) {
       const timestamp = getCurrentTimestamp();
-
-      console.log('SSE Event:', {
-        event: event.event,
-        timestamp,
-        data: event.data?.substring(0, 100),
-      });
-
       processSSEEvent(event, timestamp, streamData);
     },
   });

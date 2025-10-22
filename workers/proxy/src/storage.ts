@@ -17,23 +17,11 @@ export async function storeRequestResponse(
   const requestBodyKey = `requests/${traceId}`;
   const responseBodyKey = `responses/${traceId}`;
 
-  console.log('Storing request/response bodies in R2:', {
-    traceId,
-    requestBodyKey,
-    responseBodyKey,
-    requestBodySize: requestBody.length,
-    responseBodySize: responseBody.length,
-  });
-
   try {
     await Promise.all([
       storage.put(requestBodyKey, requestBody),
       storage.put(responseBodyKey, responseBody),
     ]);
-
-    console.log('Successfully stored in R2:', {
-      traceId,
-    });
 
     return { requestBodyKey, responseBodyKey, stored: true };
   } catch (error) {
