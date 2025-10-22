@@ -67,17 +67,6 @@ describe('buildTraces', () => {
       expect(rootSpan.Timestamp).toBe(1000 * 1000000);
       expect(rootSpan.Duration).toBe((1500 - 1000) * 1000000);
     });
-
-    it('should generate request send span', () => {
-      const traces = buildTraces(baseQueueMessage);
-
-      const requestSpan = traces.find((t) => t.SpanName === 'llm.request.send');
-      expect(requestSpan).toBeDefined();
-      expect(requestSpan?.SpanKind).toBe('SPAN_KIND_INTERNAL');
-      expect(requestSpan?.ParentSpanId).toBe(traces[0]!.SpanId);
-      expect(requestSpan?.Timestamp).toBe(1000 * 1000000);
-      expect(requestSpan?.Duration).toBe((1100 - 1000) * 1000000);
-    });
   });
 
   describe('token usage', () => {
@@ -190,53 +179,22 @@ describe('buildTraces', () => {
     });
   });
 
-  describe('TTFT and streaming spans', () => {
-    it('should generate TTFT span when firstTokenReceived is present', () => {
-      const traces = buildTraces(baseQueueMessage);
-
-      const ttftSpan = traces.find((t) => t.SpanName === 'llm.request.ttft');
-      expect(ttftSpan).toBeDefined();
-      expect(ttftSpan?.Timestamp).toBe(1100 * 1000000);
-      expect(ttftSpan?.Duration).toBe((1200 - 1100) * 1000000);
-      expect(ttftSpan?.SpanAttributes['llm.time_to_first_token_ms']).toBe('100');
-    });
-
-    it('should generate streaming span when firstTokenReceived is present', () => {
-      const traces = buildTraces(baseQueueMessage);
-
-      const streamingSpan = traces.find((t) => t.SpanName === 'llm.response.streaming');
-      expect(streamingSpan).toBeDefined();
-      expect(streamingSpan?.Timestamp).toBe(1200 * 1000000);
-      expect(streamingSpan?.Duration).toBe((1500 - 1200) * 1000000);
-    });
-
-    it('should not generate TTFT/streaming spans when firstTokenReceived is missing', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        timing: {
-          ...baseQueueMessage.timing,
-          firstTokenReceived: undefined,
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const ttftSpan = traces.find((t) => t.SpanName === 'llm.request.ttft');
-      const streamingSpan = traces.find((t) => t.SpanName === 'llm.response.streaming');
-
-      expect(ttftSpan).toBeUndefined();
-      expect(streamingSpan).toBeUndefined();
-    });
-  });
-
   describe('SSE spans', () => {
-    it('should generate SSE message span when SSE timing is present', () => {
+    it('should generate SSE message span with events when SSE stream data is present', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
-          firstDelta: 1250,
-          messageStop: 1480,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'content_block_delta', timestamp: 1250, data: '{}' },
+                { type: 'message_stop', timestamp: 1480, data: '{}' },
+              ],
+            },
+          ],
         },
       };
 
@@ -246,21 +204,32 @@ describe('buildTraces', () => {
       expect(messageSpan).toBeDefined();
       expect(messageSpan?.Timestamp).toBe(1150 * 1000000);
       expect(messageSpan?.Duration).toBe((1480 - 1150) * 1000000);
-      expect(messageSpan?.SpanAttributes['llm.time_to_first_token_ms']).toBe('100');
+      expect(messageSpan?.['Events.Name']).toEqual([
+        'message_start',
+        'content_block_delta',
+        'message_stop',
+      ]);
+      expect(messageSpan?.['Events.Timestamp'].length).toBe(3);
     });
 
-    it('should include SSE token usage from metadata', () => {
+    it('should include SSE token usage from message', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
-          messageStop: 1480,
-        },
-        sseMetadata: {
-          finalUsage: {
-            input_tokens: 120,
-            output_tokens: 80,
-          },
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'message_stop', timestamp: 1480, data: '{}' },
+              ],
+              usage: {
+                input_tokens: 120,
+                output_tokens: 80,
+              },
+            },
+          ],
         },
       };
 
@@ -271,18 +240,21 @@ describe('buildTraces', () => {
       expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBe('80');
     });
 
-    it('should handle SSE metadata with invalid input_tokens type', () => {
+    it('should handle SSE message with invalid input_tokens type', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
-          messageStop: 1480,
-        },
-        sseMetadata: {
-          finalUsage: {
-            input_tokens: '120' as unknown as number,
-            output_tokens: 80,
-          },
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+              usage: {
+                input_tokens: '120' as unknown as number,
+                output_tokens: 80,
+              },
+            },
+          ],
         },
       };
 
@@ -293,40 +265,17 @@ describe('buildTraces', () => {
       expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBe('80');
     });
 
-    it('should handle SSE metadata with invalid output_tokens type', () => {
+    it('should handle SSE message without usage', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
-          messageStop: 1480,
-        },
-        sseMetadata: {
-          finalUsage: {
-            input_tokens: 120,
-            output_tokens: null as unknown as number,
-          },
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      expect(messageSpan?.SpanAttributes['llm.tokens.input']).toBe('120');
-      expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBeUndefined();
-    });
-
-    it('should handle SSE metadata with missing finalUsage', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
-          messageStop: 1480,
-        },
-        sseMetadata: {
-          usage: {
-            input_tokens: 100,
-            output_tokens: 50,
-          },
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+            },
+          ],
         },
       };
 
@@ -337,12 +286,20 @@ describe('buildTraces', () => {
       expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBeUndefined();
     });
 
-    it('should handle SSE timing without firstDelta', () => {
+    it('should handle SSE events without first delta', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
-          messageStop: 1480,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'message_stop', timestamp: 1480, data: '{}' },
+              ],
+            },
+          ],
         },
       };
 
@@ -353,11 +310,16 @@ describe('buildTraces', () => {
       expect(messageSpan?.SpanAttributes['llm.time_to_first_token_ms']).toBeUndefined();
     });
 
-    it('should not generate SSE span when timing is incomplete', () => {
+    it('should not generate SSE span when message is incomplete', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+            },
+          ],
         },
       };
 
@@ -367,12 +329,50 @@ describe('buildTraces', () => {
       expect(messageSpan).toBeUndefined();
     });
 
+    it('should generate multiple spans for multiple messages', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1200,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'message_stop', timestamp: 1200, data: '{}' },
+              ],
+            },
+            {
+              messageStart: 1300,
+              messageStop: 1350,
+              events: [
+                { type: 'message_start', timestamp: 1300, data: '{}' },
+                { type: 'message_stop', timestamp: 1350, data: '{}' },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const messageSpans = traces.filter((t) => t.SpanName.startsWith('llm.stream.message'));
+      expect(messageSpans.length).toBe(2);
+      expect(messageSpans[0]?.SpanName).toBe('llm.stream.message.1');
+      expect(messageSpans[1]?.SpanName).toBe('llm.stream.message.2');
+    });
+
     it('should prefer SSE spans over TTFT spans when both are available', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
-        sseMessageTiming: {
-          messageStart: 1150,
-          messageStop: 1480,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+            },
+          ],
         },
       };
 
@@ -387,16 +387,33 @@ describe('buildTraces', () => {
   });
 
   describe('span hierarchy', () => {
-    it('should create correct parent-child relationships', () => {
-      const traces = buildTraces(baseQueueMessage);
+    it('should create correct parent-child relationships for SSE responses', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'content_block_delta', timestamp: 1250, data: '{}' },
+                { type: 'message_stop', timestamp: 1480, data: '{}' },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
 
       const rootSpan = traces.find((t) => t.SpanName === 'llm.request')!;
-      const requestSpan = traces.find((t) => t.SpanName === 'llm.request.send')!;
       const ttftSpan = traces.find((t) => t.SpanName === 'llm.request.ttft')!;
+      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message')!;
 
       expect(rootSpan.ParentSpanId).toBe('');
-      expect(requestSpan.ParentSpanId).toBe(rootSpan.SpanId);
       expect(ttftSpan.ParentSpanId).toBe(rootSpan.SpanId);
+      expect(messageSpan.ParentSpanId).toBe(rootSpan.SpanId);
     });
 
     it('should generate unique span IDs', () => {

@@ -34,26 +34,26 @@ export interface LLMError {
   code?: string;
 }
 
-export interface SSEMessageTiming {
-  messageStart?: number;
-  messageStop?: number;
-  contentBlockStart?: number;
-  firstDelta?: number;
+export interface SSEEvent {
+  type: string;
+  timestamp: number;
+  data?: string;
 }
 
-export interface SSEMetadata {
+export interface SSEMessage {
+  messageStart: number;
+  messageStop?: number;
+  events: SSEEvent[];
   usage?: {
     input_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     output_tokens?: number;
   };
-  finalUsage?: {
-    input_tokens?: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-    output_tokens?: number;
-  };
+}
+
+export interface SSEStreamData {
+  messages: SSEMessage[];
 }
 
 export interface QueueMessage {
@@ -70,8 +70,7 @@ export interface QueueMessage {
   truncated?: boolean;
   traceId?: string;
   parentSpanId?: string;
-  sseMessageTiming?: SSEMessageTiming;
-  sseMetadata?: SSEMetadata;
+  sseStreamData?: SSEStreamData;
 }
 
 export interface TinybirdTrace {

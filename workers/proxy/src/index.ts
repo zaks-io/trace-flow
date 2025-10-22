@@ -17,7 +17,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { generateId, generateTraceId, getCurrentTimestamp } from '@observe/utils';
-import type { SSEMessageTiming, SSEMetadata, QueueMessage } from '@observe/types';
+import type { SSEStreamData, QueueMessage } from '@observe/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
@@ -110,20 +110,18 @@ app.all('*', async (c) => {
     injectProviderAuth(headers, providerApiKey, targetUrl);
   }
 
-  const requestSent = getCurrentTimestamp();
-  const response = await fetch(`${targetUrl}${c.req.path}`, {
+  const finalUrl = c.req.path === '/' ? targetUrl : `${targetUrl}${c.req.path}`;
+  const response = await fetch(finalUrl, {
     method: c.req.method,
     headers,
     body: streamToProxy,
   });
 
-  const responseComplete = getCurrentTimestamp();
-  const latency = responseComplete - requestStart;
+  const requestSent = getCurrentTimestamp();
 
   console.log('Response:', {
     requestId,
     status: response.status,
-    latency,
     contentType: response.headers.get('Content-Type'),
   });
 
@@ -133,10 +131,9 @@ app.all('*', async (c) => {
     console.log('SSE stream detected for request:', requestId);
   }
 
-  const sseMessageTiming: SSEMessageTiming = {};
-  const sseMetadata: SSEMetadata = {};
+  const sseStreamData: SSEStreamData = { messages: [] };
 
-  const parser = isSSE ? createSSEParser(sseMessageTiming, sseMetadata) : null;
+  const parser = isSSE ? createSSEParser(sseStreamData) : null;
 
   const decoder = new TextDecoder();
 
@@ -159,6 +156,9 @@ app.all('*', async (c) => {
       try {
         const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
         await pipePromise;
+
+        const responseComplete = getCurrentTimestamp();
+        const latency = responseComplete - requestStart;
 
         const responseCapturedChunks = capture.getCapturedChunks();
         const firstTokenReceived = capture.getFirstTokenTime();
@@ -198,23 +198,21 @@ app.all('*', async (c) => {
           requestStart,
           requestSent,
           firstTokenReceived,
-          responseComplete: getCurrentTimestamp(),
+          responseComplete,
           latency,
           requestBodyKey: stored ? requestBodyKey : undefined,
           responseBodyKey: stored ? responseBodyKey : undefined,
           tokens,
           error,
           truncated: isTruncated,
-          sseMessageTiming:
-            isSSE && Object.keys(sseMessageTiming).length > 0 ? sseMessageTiming : undefined,
-          sseMetadata: isSSE && Object.keys(sseMetadata).length > 0 ? sseMetadata : undefined,
+          sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
         });
 
         if (isSSE) {
-          console.log('SSE Message Timing:', {
+          console.log('SSE Stream Data:', {
             requestId,
-            sseMessageTiming: queueMessage.sseMessageTiming,
-            sseMetadata: queueMessage.sseMetadata,
+            messageCount: queueMessage.sseStreamData?.messages.length ?? 0,
+            messages: queueMessage.sseStreamData?.messages,
           });
         }
 

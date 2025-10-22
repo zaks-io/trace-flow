@@ -6,11 +6,13 @@ import { generateSpanId } from '@observe/utils';
  *
  * Creates a trace hierarchy:
  * - Root span: Overall LLM request with status, model, provider metadata
- * - Request span: Time to send request to provider
- * - SSE/TTFT spans: Streaming-specific timing (when available)
  *
- * SSE responses generate a message span with TTFT and token usage.
- * Non-SSE responses generate separate TTFT and streaming spans when firstTokenReceived is present.
+ * For SSE streaming responses:
+ * - TTFT span: Total time to first token from user perspective (requestStart → first content_block_delta)
+ * - Message spans: Individual SSE messages with events and token usage
+ *
+ * For non-streaming responses:
+ * - Root span only (no additional timing spans)
  */
 export function buildTraces(data: QueueMessage): TinybirdTrace[] {
   const traces: TinybirdTrace[] = [];
@@ -75,144 +77,111 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
 
   traces.push(rootSpan);
 
-  const requestSpan: TinybirdTrace = {
-    Timestamp: data.timing.requestStart * 1000000,
-    TraceId: traceId,
-    SpanId: generateSpanId(),
-    ParentSpanId: rootSpan.SpanId,
-    TraceState: '',
-    SpanName: 'llm.request.send',
-    SpanKind: 'SPAN_KIND_INTERNAL',
-    ServiceName: serviceName,
-    ResourceAttributes: {
-      'service.name': serviceName,
-    },
-    SpanAttributes: {},
-    Duration: (data.timing.requestSent - data.timing.requestStart) * 1000000,
-    StatusCode: 'STATUS_CODE_OK',
-    StatusMessage: '',
-    ApiKey: data.apiKey,
-    'Events.Timestamp': [],
-    'Events.Name': [],
-    'Events.Attributes': [],
-    'Links.TraceId': [],
-    'Links.SpanId': [],
-    'Links.TraceState': [],
-    'Links.Attributes': [],
-  };
-
-  traces.push(requestSpan);
-
-  if (data.sseMessageTiming?.messageStart && data.sseMessageTiming?.messageStop) {
-    const messageSpan: TinybirdTrace = {
-      Timestamp: data.sseMessageTiming.messageStart * 1000000,
-      TraceId: traceId,
-      SpanId: generateSpanId(),
-      ParentSpanId: rootSpan.SpanId,
-      TraceState: '',
-      SpanName: 'llm.stream.message',
-      SpanKind: 'SPAN_KIND_INTERNAL',
-      ServiceName: serviceName,
-      ResourceAttributes: {
-        'service.name': serviceName,
-      },
-      SpanAttributes: {},
-      Duration: (data.sseMessageTiming.messageStop - data.sseMessageTiming.messageStart) * 1000000,
-      StatusCode: 'STATUS_CODE_OK',
-      StatusMessage: '',
-      ApiKey: data.apiKey,
-      'Events.Timestamp': [],
-      'Events.Name': [],
-      'Events.Attributes': [],
-      'Links.TraceId': [],
-      'Links.SpanId': [],
-      'Links.TraceState': [],
-      'Links.Attributes': [],
-    };
-
-    if (data.sseMessageTiming.firstDelta) {
-      messageSpan.SpanAttributes['llm.time_to_first_token_ms'] = String(
-        data.sseMessageTiming.firstDelta - data.sseMessageTiming.messageStart,
-      );
-    }
-
-    if (data.sseMetadata) {
-      if (
-        data.sseMetadata.finalUsage &&
-        typeof data.sseMetadata.finalUsage === 'object' &&
-        data.sseMetadata.finalUsage
-      ) {
-        const usage = data.sseMetadata.finalUsage as Record<string, unknown>;
-        if (typeof usage.input_tokens === 'number') {
-          messageSpan.SpanAttributes['llm.tokens.input'] = String(usage.input_tokens);
-        }
-        if (typeof usage.output_tokens === 'number') {
-          messageSpan.SpanAttributes['llm.tokens.output'] = String(usage.output_tokens);
-        }
+  if (data.sseStreamData?.messages && data.sseStreamData.messages.length > 0) {
+    // Find first content_block_delta across ALL messages for TTFT tracking
+    let firstContentDelta: { timestamp: number } | undefined;
+    for (const message of data.sseStreamData.messages) {
+      const delta = message.events.find((e) => e.type === 'content_block_delta');
+      if (delta) {
+        firstContentDelta = delta;
+        break;
       }
     }
 
-    traces.push(messageSpan);
-  } else if (data.timing.firstTokenReceived) {
-    const ttftSpan: TinybirdTrace = {
-      Timestamp: data.timing.requestSent * 1000000,
-      TraceId: traceId,
-      SpanId: generateSpanId(),
-      ParentSpanId: rootSpan.SpanId,
-      TraceState: '',
-      SpanName: 'llm.request.ttft',
-      SpanKind: 'SPAN_KIND_INTERNAL',
-      ServiceName: serviceName,
-      ResourceAttributes: {
-        'service.name': serviceName,
-      },
-      SpanAttributes: {
-        'llm.time_to_first_token_ms': String(
-          data.timing.firstTokenReceived - data.timing.requestSent,
-        ),
-      },
-      Duration: (data.timing.firstTokenReceived - data.timing.requestSent) * 1000000,
-      StatusCode: 'STATUS_CODE_OK',
-      StatusMessage: '',
-      ApiKey: data.apiKey,
-      'Events.Timestamp': [],
-      'Events.Name': [],
-      'Events.Attributes': [],
-      'Links.TraceId': [],
-      'Links.SpanId': [],
-      'Links.TraceState': [],
-      'Links.Attributes': [],
-    };
+    // Create TTFT span measuring total time to first token from user perspective
+    if (firstContentDelta) {
+      const ttftSpan: TinybirdTrace = {
+        Timestamp: data.timing.requestStart * 1000000,
+        TraceId: traceId,
+        SpanId: generateSpanId(),
+        ParentSpanId: rootSpan.SpanId,
+        TraceState: '',
+        SpanName: 'llm.request.ttft',
+        SpanKind: 'SPAN_KIND_INTERNAL',
+        ServiceName: serviceName,
+        ResourceAttributes: {
+          'service.name': serviceName,
+        },
+        SpanAttributes: {
+          'llm.time_to_first_token_ms': String(
+            firstContentDelta.timestamp - data.timing.requestStart,
+          ),
+        },
+        Duration: (firstContentDelta.timestamp - data.timing.requestStart) * 1000000,
+        StatusCode: 'STATUS_CODE_OK',
+        StatusMessage: '',
+        ApiKey: data.apiKey,
+        'Events.Timestamp': [],
+        'Events.Name': [],
+        'Events.Attributes': [],
+        'Links.TraceId': [],
+        'Links.SpanId': [],
+        'Links.TraceState': [],
+        'Links.Attributes': [],
+      };
 
-    traces.push(ttftSpan);
+      traces.push(ttftSpan);
+    }
 
-    const streamingSpan: TinybirdTrace = {
-      Timestamp: data.timing.firstTokenReceived * 1000000,
-      TraceId: traceId,
-      SpanId: generateSpanId(),
-      ParentSpanId: rootSpan.SpanId,
-      TraceState: '',
-      SpanName: 'llm.response.streaming',
-      SpanKind: 'SPAN_KIND_INTERNAL',
-      ServiceName: serviceName,
-      ResourceAttributes: {
-        'service.name': serviceName,
-      },
-      SpanAttributes: {},
-      Duration: (data.timing.responseComplete - data.timing.firstTokenReceived) * 1000000,
-      StatusCode: 'STATUS_CODE_OK',
-      StatusMessage: '',
-      ApiKey: data.apiKey,
-      'Events.Timestamp': [],
-      'Events.Name': [],
-      'Events.Attributes': [],
-      'Links.TraceId': [],
-      'Links.SpanId': [],
-      'Links.TraceState': [],
-      'Links.Attributes': [],
-    };
+    for (const [index, message] of data.sseStreamData.messages.entries()) {
+      if (!message.messageStop) {
+        console.warn('Incomplete message detected (no messageStop):', {
+          messageIndex: index,
+          traceId,
+        });
+        continue;
+      }
 
-    traces.push(streamingSpan);
+      const messageSpan: TinybirdTrace = {
+        Timestamp: message.messageStart * 1000000,
+        TraceId: traceId,
+        SpanId: generateSpanId(),
+        ParentSpanId: rootSpan.SpanId,
+        TraceState: '',
+        SpanName:
+          data.sseStreamData.messages.length > 1
+            ? `llm.stream.message.${index + 1}`
+            : 'llm.stream.message',
+        SpanKind: 'SPAN_KIND_INTERNAL',
+        ServiceName: serviceName,
+        ResourceAttributes: {
+          'service.name': serviceName,
+        },
+        SpanAttributes: {},
+        Duration: (message.messageStop - message.messageStart) * 1000000,
+        StatusCode: 'STATUS_CODE_OK',
+        StatusMessage: '',
+        ApiKey: data.apiKey,
+        'Events.Timestamp': message.events.map((e) => e.timestamp * 1000000),
+        'Events.Name': message.events.map((e) => e.type),
+        'Events.Attributes': message.events.map((e) => ({ data: e.data ?? '' })),
+        'Links.TraceId': [],
+        'Links.SpanId': [],
+        'Links.TraceState': [],
+        'Links.Attributes': [],
+      };
+
+      if (message.usage) {
+        if (typeof message.usage.input_tokens === 'number') {
+          messageSpan.SpanAttributes['llm.tokens.input'] = String(message.usage.input_tokens);
+        }
+        if (typeof message.usage.output_tokens === 'number') {
+          messageSpan.SpanAttributes['llm.tokens.output'] = String(message.usage.output_tokens);
+        }
+        if (typeof message.usage.cache_creation_input_tokens === 'number') {
+          messageSpan.SpanAttributes['llm.tokens.cache_creation'] = String(
+            message.usage.cache_creation_input_tokens,
+          );
+        }
+        if (typeof message.usage.cache_read_input_tokens === 'number') {
+          messageSpan.SpanAttributes['llm.tokens.cache_read'] = String(
+            message.usage.cache_read_input_tokens,
+          );
+        }
+      }
+
+      traces.push(messageSpan);
+    }
   }
 
   return traces;

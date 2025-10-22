@@ -3,8 +3,7 @@ import type {
   LLMTiming,
   LLMTokenUsage,
   LLMError,
-  SSEMessageTiming,
-  SSEMetadata,
+  SSEStreamData,
 } from '@observe/types';
 import { extractProviderFromUrl } from '@observe/utils';
 
@@ -42,8 +41,7 @@ export function createQueueMessage(params: {
   tokens: LLMTokenUsage | undefined;
   error: LLMError | undefined;
   truncated?: boolean;
-  sseMessageTiming?: SSEMessageTiming;
-  sseMetadata?: SSEMetadata;
+  sseStreamData?: SSEStreamData;
 }): QueueMessage {
   const {
     requestId,
@@ -61,8 +59,7 @@ export function createQueueMessage(params: {
     tokens,
     error,
     truncated,
-    sseMessageTiming,
-    sseMetadata,
+    sseStreamData,
   } = params;
 
   const provider = extractProviderFromUrl(targetUrl);
@@ -110,12 +107,8 @@ export function createQueueMessage(params: {
     queueMessage.truncated = truncated;
   }
 
-  if (sseMessageTiming && Object.keys(sseMessageTiming).length > 0) {
-    queueMessage.sseMessageTiming = sseMessageTiming;
-  }
-
-  if (sseMetadata && Object.keys(sseMetadata).length > 0) {
-    queueMessage.sseMetadata = sseMetadata;
+  if (sseStreamData && sseStreamData.messages.length > 0) {
+    queueMessage.sseStreamData = sseStreamData;
   }
 
   return queueMessage;
