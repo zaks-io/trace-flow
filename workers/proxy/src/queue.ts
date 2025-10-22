@@ -28,6 +28,7 @@ import { extractProviderFromUrl } from '@observe/utils';
  */
 export function createQueueMessage(params: {
   requestId: string;
+  traceId: string;
   apiKey: string;
   targetUrl: string;
   responseStatus: number;
@@ -46,6 +47,7 @@ export function createQueueMessage(params: {
 }): QueueMessage {
   const {
     requestId,
+    traceId,
     apiKey,
     targetUrl,
     responseStatus,
@@ -74,6 +76,7 @@ export function createQueueMessage(params: {
 
   const queueMessage: QueueMessage = {
     requestId,
+    traceId,
     apiKey,
     targetUrl,
     request: {

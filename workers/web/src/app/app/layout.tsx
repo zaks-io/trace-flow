@@ -32,6 +32,12 @@ function AppContent({ children }: { children: React.ReactNode }) {
                     Dashboard
                   </Link>
                   <Link
+                    href="/app/requests"
+                    className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900"
+                  >
+                    Requests
+                  </Link>
+                  <Link
                     href="/app/traces"
                     className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900"
                   >
@@ -69,6 +75,12 @@ function AppContent({ children }: { children: React.ReactNode }) {
                     className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900"
                   >
                     Dashboard
+                  </Link>
+                  <Link
+                    href="/app/requests"
+                    className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-900"
+                  >
+                    Requests
                   </Link>
                   <Link
                     href="/app/traces"
@@ -123,6 +135,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       clientId={process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID ?? ''}
       authorizationParams={{
         redirect_uri: typeof window !== 'undefined' ? window.location.origin : '',
+        scope: 'openid profile email offline_access',
       }}
       useRefreshTokens={true}
       cacheLocation="localstorage"

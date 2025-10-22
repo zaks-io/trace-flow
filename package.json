@@ -11,6 +11,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "dev:all": "wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml -c workers/api/wrangler.toml --persist-to .wrangler/state",
     "deploy:dev": "turbo run deploy:dev",
     "deploy:staging": "turbo run deploy:staging",
     "deploy:prod": "turbo run deploy:prod",

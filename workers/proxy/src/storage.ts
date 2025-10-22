@@ -10,15 +10,15 @@
  */
 export async function storeRequestResponse(
   storage: R2Bucket,
-  requestId: string,
+  traceId: string,
   requestBody: string,
   responseBody: string,
 ): Promise<{ requestBodyKey: string; responseBodyKey: string; stored: boolean }> {
-  const requestBodyKey = `requests/${requestId}`;
-  const responseBodyKey = `responses/${requestId}`;
+  const requestBodyKey = `requests/${traceId}`;
+  const responseBodyKey = `responses/${traceId}`;
 
   console.log('Storing request/response bodies in R2:', {
-    requestId,
+    traceId,
     requestBodyKey,
     responseBodyKey,
     requestBodySize: requestBody.length,
@@ -32,13 +32,13 @@ export async function storeRequestResponse(
     ]);
 
     console.log('Successfully stored in R2:', {
-      requestId,
+      traceId,
     });
 
     return { requestBodyKey, responseBodyKey, stored: true };
   } catch (error) {
     console.error('Failed to store in R2:', {
-      requestId,
+      traceId,
       error: error instanceof Error ? error.message : String(error),
     });
 
