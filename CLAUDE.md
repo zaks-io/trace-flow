@@ -90,10 +90,13 @@ NEXT_PUBLIC_AUTH0_CLIENT_ID=your-auth0-client-id
 # Terminal 1: All workers with shared R2
 pnpm run dev:all
 
-# Terminal 2: Convex backend (watch mode)
+# Terminal 2: API worker (MUST use same persist path)
+cd workers/api && wrangler dev --persist-to ../../.wrangler/state
+
+# Terminal 3: Convex backend (watch mode)
 pnpm dlx convex dev
 
-# Terminal 3: Web UI
+# Terminal 4: Web UI
 cd workers/web && pnpm run dev
 ```
 
@@ -134,7 +137,11 @@ cd workers/proxy-consumer && wrangler dev
 cd workers/api && wrangler dev
 
 # Web only (still requires Convex and API worker)
+<<<<<<< HEAD
 cd workers/web && pnpm run dev
+=======
+cd workers/web && bun run dev
+>>>>>>> origin/main
 ```
 
 ### Other Commands
