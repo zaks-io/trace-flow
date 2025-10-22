@@ -240,7 +240,7 @@ describe('Proxy Worker Integration', () => {
       await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
 
-    it('should forward headers excluding X-Proxy-Target and host', async () => {
+    it('should strip proxy auth headers and not forward them', async () => {
       await setupValidApiKey('test-key');
 
       let capturedHeaders: Headers | null = null;
@@ -268,6 +268,7 @@ describe('Proxy Worker Integration', () => {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com',
           Authorization: 'Bearer test-key',
+          'X-API-Key': 'another-proxy-key',
           'Custom-Header': 'custom-value',
         },
         body: JSON.stringify({ model: 'gpt-4' }),
@@ -279,7 +280,92 @@ describe('Proxy Worker Integration', () => {
       const headers = capturedHeaders!;
       expect(headers.has('X-Proxy-Target')).toBe(false);
       expect(headers.has('host')).toBe(false);
+      expect(headers.has('Authorization')).toBe(false);
+      expect(headers.has('X-API-Key')).toBe(false);
       expect(headers.get('Custom-Header')).toBe('custom-value');
+    });
+
+    it('should inject Bearer token for OpenAI with X-Provider-Api-Key', async () => {
+      await setupValidApiKey('test-key');
+
+      let capturedHeaders: Headers | null = null;
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({
+          path: '/v1/chat/completions',
+          method: 'POST',
+        })
+        .reply(
+          200,
+          (opts: { headers?: Record<string, string> }) => {
+            capturedHeaders = new Headers(opts.headers as HeadersInit);
+            return JSON.stringify({ ok: true });
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+
+      await SELF.fetch('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Proxy-Target': 'https://api.openai.com',
+          Authorization: 'Bearer test-key',
+          'X-Provider-Api-Key': 'openai-key-123',
+        },
+        body: JSON.stringify({ model: 'gpt-4' }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+      expect(capturedHeaders).not.toBeNull();
+      const headers = capturedHeaders!;
+      expect(headers.has('X-Provider-Api-Key')).toBe(false);
+      expect(headers.get('Authorization')).toBe('Bearer openai-key-123');
+    });
+
+    it('should inject x-api-key header for Anthropic with X-Provider-Api-Key', async () => {
+      await setupValidApiKey('test-key');
+
+      let capturedHeaders: Headers | null = null;
+
+      fetchMock
+        .get('https://api.anthropic.com')
+        .intercept({
+          path: '/v1/messages',
+          method: 'POST',
+        })
+        .reply(
+          200,
+          (opts: { headers?: Record<string, string> }) => {
+            capturedHeaders = new Headers(opts.headers as HeadersInit);
+            return JSON.stringify({ ok: true });
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+
+      await SELF.fetch('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Proxy-Target': 'https://api.anthropic.com',
+          Authorization: 'Bearer test-key',
+          'X-Provider-Api-Key': 'anthropic-key-456',
+        },
+        body: JSON.stringify({ model: 'claude-3' }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+      expect(capturedHeaders).not.toBeNull();
+      const headers = capturedHeaders!;
+      expect(headers.has('X-Provider-Api-Key')).toBe(false);
+      expect(headers.has('Authorization')).toBe(false);
+      expect(headers.get('x-api-key')).toBe('anthropic-key-456');
     });
 
     it('should capture request body via tee()', async () => {
