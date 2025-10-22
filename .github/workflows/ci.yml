@@ -98,16 +98,16 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: pnpm run prettier --check "packages/utils/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "packages/utils/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm run turbo run lint --filter=@observe/utils
+        run: pnpm turbo run lint --filter=@observe/utils
 
       - name: Type check
-        run: pnpm run turbo run type-check --filter=@observe/utils
+        run: pnpm turbo run type-check --filter=@observe/utils
 
       - name: Test
-        run: pnpm run turbo run test --filter=@observe/utils
+        run: pnpm turbo run test --filter=@observe/utils
 
   types:
     name: Types Package
@@ -136,13 +136,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: pnpm run prettier --check "packages/types/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "packages/types/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm run turbo run lint --filter=@observe/types
+        run: pnpm turbo run lint --filter=@observe/types
 
       - name: Type check
-        run: pnpm run turbo run type-check --filter=@observe/types
+        run: pnpm turbo run type-check --filter=@observe/types
 
   proxy:
     name: Proxy Worker
@@ -174,16 +174,16 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: pnpm run prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm run turbo run lint --filter=@observe/proxy
+        run: pnpm turbo run lint --filter=@observe/proxy
 
       - name: Type check
-        run: pnpm run turbo run type-check --filter=@observe/proxy
+        run: pnpm turbo run type-check --filter=@observe/proxy
 
       - name: Test with coverage
-        run: pnpm run turbo run test:coverage --filter=@observe/proxy
+        run: pnpm turbo run test:coverage --filter=@observe/proxy
 
       - name: Report coverage
         if: github.event_name == 'pull_request'
@@ -195,7 +195,7 @@ jobs:
           file-coverage-mode: changes
 
       - name: Build
-        run: pnpm run turbo run build --filter=@observe/proxy
+        run: pnpm turbo run build --filter=@observe/proxy
 
   proxy-consumer:
     name: Proxy Consumer Worker
@@ -227,16 +227,16 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: pnpm run prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm run turbo run lint --filter=@observe/proxy-consumer
+        run: pnpm turbo run lint --filter=@observe/proxy-consumer
 
       - name: Type check
-        run: pnpm run turbo run type-check --filter=@observe/proxy-consumer
+        run: pnpm turbo run type-check --filter=@observe/proxy-consumer
 
       - name: Test with coverage
-        run: pnpm run turbo run test:coverage --filter=@observe/proxy-consumer
+        run: pnpm turbo run test:coverage --filter=@observe/proxy-consumer
 
       - name: Report coverage
         if: github.event_name == 'pull_request'
@@ -248,7 +248,7 @@ jobs:
           file-coverage-mode: changes
 
       - name: Build
-        run: pnpm run turbo run build --filter=@observe/proxy-consumer
+        run: pnpm turbo run build --filter=@observe/proxy-consumer
 
   web:
     name: Web Worker
@@ -285,16 +285,16 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: pnpm run prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
+        run: pnpm prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
 
       - name: Lint
-        run: pnpm run turbo run lint --filter=@observe/web
+        run: pnpm turbo run lint --filter=@observe/web
 
       - name: Type check
-        run: pnpm run turbo run type-check --filter=@observe/web
+        run: pnpm turbo run type-check --filter=@observe/web
 
       - name: Test
-        run: pnpm run turbo run test --filter=@observe/web
+        run: pnpm turbo run test --filter=@observe/web
 
       - name: Build
         env:
@@ -302,7 +302,7 @@ jobs:
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
-        run: pnpm run turbo run build --filter=@observe/web
+        run: pnpm turbo run build --filter=@observe/web
 
   status:
     name: CI Status
