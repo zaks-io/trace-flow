@@ -25,6 +25,7 @@ import { captureStream, createResponseCapture, chunksToString } from './streamin
 import { createSSEParser } from './streaming/sse';
 import { storeRequestResponse } from './storage';
 import { createQueueMessage } from './queue';
+import { injectProviderAuth } from './providers';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessage>;
@@ -85,11 +86,27 @@ app.all('*', async (c) => {
   // tee() creates two independent readers from the same source without buffering the entire body
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
 
+  // Extract provider API key before stripping headers
+  const providerApiKey = c.req.header('X-Provider-Api-Key');
+
   // Forward all headers except proxy-specific ones
-  // X-Proxy-Target is internal routing metadata, host must match the target provider
+  // Strip ALL proxy authentication headers to prevent credential leakage:
+  // - Authorization: used for proxy authentication, never forward to provider
+  // - X-API-Key: alternative proxy auth, never forward to provider
+  // - X-Proxy-Target: internal routing metadata
+  // - X-Provider-Api-Key: used to inject provider auth, don't forward raw
+  // - host: must match target provider
   const headers = new Headers(c.req.raw.headers);
+  headers.delete('Authorization');
+  headers.delete('X-API-Key');
   headers.delete('X-Proxy-Target');
+  headers.delete('X-Provider-Api-Key');
   headers.delete('host');
+
+  // Inject provider-specific authentication if X-Provider-Api-Key was provided
+  if (providerApiKey) {
+    injectProviderAuth(headers, providerApiKey, targetUrl);
+  }
 
   const requestSent = getCurrentTimestamp();
   const response = await fetch(`${targetUrl}${c.req.path}`, {
