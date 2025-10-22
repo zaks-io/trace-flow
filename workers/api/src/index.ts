@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { validateAuth0JWT } from './auth';
 
 interface Env {
   STORAGE: R2Bucket;
+  AUTH0_DOMAIN: string;
+  AUTH0_CLIENT_ID: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -10,6 +13,11 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', cors());
 
 app.get('/bodies/:traceId', async (c) => {
+  const authError = await validateAuth0JWT(c);
+  if (authError) {
+    return authError;
+  }
+
   const traceId = c.req.param('traceId');
 
   if (!traceId) {

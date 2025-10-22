@@ -135,6 +135,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       clientId={process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID ?? ''}
       authorizationParams={{
         redirect_uri: typeof window !== 'undefined' ? window.location.origin : '',
+        scope: 'openid profile email offline_access',
       }}
       useRefreshTokens={true}
       cacheLocation="localstorage"

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useAuth0 } from '@auth0/auth0-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -28,12 +29,6 @@ interface TinybirdResponse {
   data: TraceSpan[];
 }
 
-interface _BodiesResponse {
-  requestBody: string | null;
-  responseBody: string | null;
-  error?: string;
-}
-
 interface TraceDetailPanelProps {
   traceId: string;
   isOpen: boolean;
@@ -41,6 +36,7 @@ interface TraceDetailPanelProps {
 }
 
 export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelProps) {
+  const { getAccessTokenSilently } = useAuth0();
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
   const [bodiesLoading, setBodiesLoading] = useState(false);
@@ -66,20 +62,35 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
       setBodiesLoading(true);
       setBodiesError(null);
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
-      fetch(`${apiUrl}/bodies/${traceId}`)
-        .then((res) => res.json())
-        .then((data) => {
+      const fetchBodies = async () => {
+        try {
+          const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+
+          const res = await fetch(`${apiUrl}/bodies/${traceId}`, {
+            headers: {
+              Authorization: `Bearer ${id_token}`,
+            },
+          });
+
+          if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(errorData.message ?? `HTTP ${res.status}: ${res.statusText}`);
+          }
+
+          const data = await res.json();
           setRequestBody(formatBodyForDisplay(data.requestBody));
           setResponseBody(formatBodyForDisplay(data.responseBody));
           setBodiesLoading(false);
-        })
-        .catch((err: Error) => {
-          setBodiesError(err.message);
+        } catch (err) {
+          setBodiesError(err instanceof Error ? err.message : 'Failed to fetch bodies');
           setBodiesLoading(false);
-        });
+        }
+      };
+
+      void fetchBodies();
     }
-  }, [isOpen, traceId]);
+  }, [isOpen, traceId, getAccessTokenSilently]);
 
   const spans = data?.data ?? [];
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
