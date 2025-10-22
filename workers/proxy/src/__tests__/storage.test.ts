@@ -123,21 +123,4 @@ describe('storeRequestResponse', () => {
       stored: false,
     });
   });
-
-  it('should suppress console.log calls', async () => {
-    const mockStorage = {
-      put: vi.fn().mockResolvedValue(undefined),
-    } as unknown as R2Bucket;
-    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-
-    const requestId = 'console-test';
-    const requestBody = 'request';
-    const responseBody = 'response';
-
-    await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
-
-    expect(consoleLogSpy).toHaveBeenCalled();
-
-    consoleLogSpy.mockRestore();
-  });
 });

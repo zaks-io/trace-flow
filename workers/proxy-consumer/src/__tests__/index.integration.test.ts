@@ -285,10 +285,18 @@ describe('Queue Handler Integration', () => {
 
   it('should handle messages with SSE timing data', async () => {
     const message = createMockQueueMessage('test-sse', 'api-key-sse');
-    message.sseMessageTiming = {
-      messageStart: 1150,
-      firstDelta: 1250,
-      messageStop: 1480,
+    message.sseStreamData = {
+      messages: [
+        {
+          messageStart: 1150,
+          messageStop: 1480,
+          events: [
+            { type: 'message_start', timestamp: 1150, data: '{}' },
+            { type: 'content_block_delta', timestamp: 1250, data: '{}' },
+            { type: 'message_stop', timestamp: 1480, data: '{}' },
+          ],
+        },
+      ],
     };
 
     const mockMessage: Message<QueueMessage> = {

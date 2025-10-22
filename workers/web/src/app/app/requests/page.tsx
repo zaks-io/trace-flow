@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { TraceDetailPanel } from '@/components/TraceDetailPanel';
 
@@ -19,6 +20,7 @@ interface TinybirdResponse {
 }
 
 export default function Requests() {
+  const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
 
@@ -63,9 +65,13 @@ export default function Requests() {
     return id.length > 16 ? `${id.slice(0, 16)}...` : id;
   };
 
-  const handleRowClick = (traceId: string) => {
-    setSelectedTraceId(traceId);
-    setIsPanelOpen(true);
+  const handleRowClick = (traceId: string, event: React.MouseEvent) => {
+    if (event.metaKey || event.ctrlKey) {
+      setSelectedTraceId(traceId);
+      setIsPanelOpen(true);
+    } else {
+      router.push(`/app/request?id=${traceId}`);
+    }
   };
 
   const handleClosePanel = () => {
@@ -97,7 +103,8 @@ export default function Requests() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">LLM Requests</h1>
         <p className="text-gray-600 mt-1">
-          Root traces from your LLM requests. Click a row to view details and child spans.
+          Root traces from your LLM requests. Click a row to view full details, or Cmd/Ctrl+click
+          for quick preview.
         </p>
       </div>
 
@@ -136,7 +143,7 @@ export default function Requests() {
                   <tr
                     key={`${request.TraceId}-${request.SpanId}`}
                     className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => handleRowClick(request.TraceId)}
+                    onClick={(e) => handleRowClick(request.TraceId, e)}
                   >
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {formatTimestamp(request.Timestamp)}

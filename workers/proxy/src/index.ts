@@ -17,7 +17,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { generateId, generateTraceId, getCurrentTimestamp } from '@observe/utils';
-import type { SSEMessageTiming, SSEMetadata, QueueMessage } from '@observe/types';
+import type { SSEStreamData, QueueMessage } from '@observe/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
@@ -49,17 +49,6 @@ app.all('*', async (c) => {
   const traceId = generateTraceId();
   const requestStart = getCurrentTimestamp();
   const targetUrl = c.req.header('X-Proxy-Target');
-
-  console.log('Incoming Request:', {
-    requestId,
-    traceId,
-    timestamp: requestStart,
-    method: c.req.method,
-    url: c.req.url,
-    targetUrl,
-    contentType: c.req.header('Content-Type'),
-    authorization: c.req.header('Authorization') ? '[PRESENT]' : '[MISSING]',
-  });
 
   if (!targetUrl) {
     return c.json(
@@ -110,33 +99,20 @@ app.all('*', async (c) => {
     injectProviderAuth(headers, providerApiKey, targetUrl);
   }
 
-  const requestSent = getCurrentTimestamp();
-  const response = await fetch(`${targetUrl}${c.req.path}`, {
+  const finalUrl = c.req.path === '/' ? targetUrl : `${targetUrl}${c.req.path}`;
+  const response = await fetch(finalUrl, {
     method: c.req.method,
     headers,
     body: streamToProxy,
   });
 
-  const responseComplete = getCurrentTimestamp();
-  const latency = responseComplete - requestStart;
-
-  console.log('Response:', {
-    requestId,
-    status: response.status,
-    latency,
-    contentType: response.headers.get('Content-Type'),
-  });
+  const requestSent = getCurrentTimestamp();
 
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
-  if (isSSE) {
-    console.log('SSE stream detected for request:', requestId);
-  }
+  const sseStreamData: SSEStreamData = { messages: [] };
 
-  const sseMessageTiming: SSEMessageTiming = {};
-  const sseMetadata: SSEMetadata = {};
-
-  const parser = isSSE ? createSSEParser(sseMessageTiming, sseMetadata) : null;
+  const parser = isSSE ? createSSEParser(sseStreamData) : null;
 
   const decoder = new TextDecoder();
 
@@ -159,6 +135,9 @@ app.all('*', async (c) => {
       try {
         const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
         await pipePromise;
+
+        const responseComplete = getCurrentTimestamp();
+        const latency = responseComplete - requestStart;
 
         const responseCapturedChunks = capture.getCapturedChunks();
         const firstTokenReceived = capture.getFirstTokenTime();
@@ -198,37 +177,17 @@ app.all('*', async (c) => {
           requestStart,
           requestSent,
           firstTokenReceived,
-          responseComplete: getCurrentTimestamp(),
+          responseComplete,
           latency,
           requestBodyKey: stored ? requestBodyKey : undefined,
           responseBodyKey: stored ? responseBodyKey : undefined,
           tokens,
           error,
           truncated: isTruncated,
-          sseMessageTiming:
-            isSSE && Object.keys(sseMessageTiming).length > 0 ? sseMessageTiming : undefined,
-          sseMetadata: isSSE && Object.keys(sseMetadata).length > 0 ? sseMetadata : undefined,
+          sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
         });
-
-        if (isSSE) {
-          console.log('SSE Message Timing:', {
-            requestId,
-            sseMessageTiming: queueMessage.sseMessageTiming,
-            sseMetadata: queueMessage.sseMetadata,
-          });
-        }
 
         await c.env.REQUEST_QUEUE.send(queueMessage);
-        console.log('Successfully queued message:', {
-          requestId,
-          provider: queueMessage.request.provider,
-          targetUrl,
-          requestBodyKey,
-          responseBodyKey,
-          tokens,
-          error,
-          truncated: isTruncated,
-        });
       } catch (error) {
         console.error('Failed to complete observability capture:', {
           requestId,

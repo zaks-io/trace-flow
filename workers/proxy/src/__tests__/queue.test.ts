@@ -99,89 +99,77 @@ describe('createQueueMessage', () => {
     expect(result.request.provider).toBe('anthropic');
   });
 
-  it('should include SSE timing when provided and non-empty', () => {
-    const sseMessageTiming = {
-      messageStart: 1150,
-      firstDelta: 1250,
-      messageStop: 1480,
+  it('should include SSE stream data when provided and non-empty', () => {
+    const sseStreamData = {
+      messages: [
+        {
+          messageStart: 1150,
+          messageStop: 1480,
+          events: [
+            { type: 'message_start', timestamp: 1150, data: '{}' },
+            { type: 'content_block_delta', timestamp: 1250, data: '{}' },
+            { type: 'message_stop', timestamp: 1480, data: '{}' },
+          ],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+          },
+        },
+      ],
     };
 
     const params = {
       ...baseParams,
-      sseMessageTiming,
+      sseStreamData,
     };
 
     const result = createQueueMessage(params);
 
-    expect(result.sseMessageTiming).toEqual(sseMessageTiming);
+    expect(result.sseStreamData).toEqual(sseStreamData);
   });
 
-  it('should exclude SSE timing when empty object', () => {
+  it('should exclude SSE stream data when messages array is empty', () => {
     const params = {
       ...baseParams,
-      sseMessageTiming: {},
+      sseStreamData: { messages: [] },
     };
 
     const result = createQueueMessage(params);
 
-    expect(result.sseMessageTiming).toBeUndefined();
+    expect(result.sseStreamData).toBeUndefined();
   });
 
-  it('should include SSE metadata when provided and non-empty', () => {
-    const sseMetadata = {
-      usage: {
-        input_tokens: 100,
-        output_tokens: 50,
-      },
-      finalUsage: {
-        input_tokens: 100,
-        output_tokens: 50,
-      },
+  it('should include SSE stream data with multiple messages', () => {
+    const sseStreamData = {
+      messages: [
+        {
+          messageStart: 1150,
+          messageStop: 1480,
+          events: [
+            { type: 'message_start', timestamp: 1150, data: '{}' },
+            { type: 'message_stop', timestamp: 1480, data: '{}' },
+          ],
+        },
+        {
+          messageStart: 2000,
+          messageStop: 2300,
+          events: [
+            { type: 'message_start', timestamp: 2000, data: '{}' },
+            { type: 'message_stop', timestamp: 2300, data: '{}' },
+          ],
+        },
+      ],
     };
 
     const params = {
       ...baseParams,
-      sseMetadata,
+      sseStreamData,
     };
 
     const result = createQueueMessage(params);
 
-    expect(result.sseMetadata).toEqual(sseMetadata);
-  });
-
-  it('should exclude SSE metadata when empty object', () => {
-    const params = {
-      ...baseParams,
-      sseMetadata: {},
-    };
-
-    const result = createQueueMessage(params);
-
-    expect(result.sseMetadata).toBeUndefined();
-  });
-
-  it('should include both SSE timing and metadata when provided', () => {
-    const sseMessageTiming = {
-      messageStart: 1150,
-      messageStop: 1480,
-    };
-    const sseMetadata = {
-      finalUsage: {
-        input_tokens: 100,
-        output_tokens: 50,
-      },
-    };
-
-    const params = {
-      ...baseParams,
-      sseMessageTiming,
-      sseMetadata,
-    };
-
-    const result = createQueueMessage(params);
-
-    expect(result.sseMessageTiming).toEqual(sseMessageTiming);
-    expect(result.sseMetadata).toEqual(sseMetadata);
+    expect(result.sseStreamData).toEqual(sseStreamData);
+    expect(result.sseStreamData?.messages.length).toBe(2);
   });
 
   it('should handle error response without tokens', () => {

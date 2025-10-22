@@ -83,8 +83,6 @@ export class TraceBatcher extends DurableObject<Env> {
 
     this.traceCount += traces.length;
 
-    console.log(`Added ${traces.length} traces to batch (total: ${this.traceCount})`);
-
     if (this.traceCount >= BATCH_SIZE) {
       await this.flush();
     } else if (!this.flushAlarmScheduled) {
@@ -156,7 +154,6 @@ export class TraceBatcher extends DurableObject<Env> {
 
         this.traceCount -= traces.length;
         totalFlushed += traces.length;
-        console.log(`Successfully flushed batch ${i + 1}/${batchCount} (${traces.length} traces)`);
       } catch (error) {
         console.error('Failed to insert batch after retries:', {
           batchSize: traces.length,

@@ -18,7 +18,38 @@ export async function insertIntoTinybird(
   host: string,
 ): Promise<void> {
   const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
-  const body = traces.map((trace) => JSON.stringify(trace)).join('\n');
+
+  const body = traces
+    .map((trace) => {
+      const {
+        'Events.Timestamp': eventsTimestamp,
+        'Events.Name': eventsName,
+        'Events.Attributes': eventsAttributes,
+        'Links.TraceId': linksTraceId,
+        'Links.SpanId': linksSpanId,
+        'Links.TraceState': linksTraceState,
+        'Links.Attributes': linksAttributes,
+        ...rest
+      } = trace;
+
+      const transformed = {
+        ...rest,
+        Events: {
+          Timestamp: eventsTimestamp,
+          Name: eventsName,
+          Attributes: eventsAttributes,
+        },
+        Links: {
+          TraceId: linksTraceId,
+          SpanId: linksSpanId,
+          TraceState: linksTraceState,
+          Attributes: linksAttributes,
+        },
+      };
+
+      return JSON.stringify(transformed);
+    })
+    .join('\n');
 
   const response = await fetch(url, {
     method: 'POST',
@@ -34,8 +65,6 @@ export async function insertIntoTinybird(
     const errorText = await response.text();
     throw new Error(`Tinybird insert failed: ${response.status} ${errorText}`);
   }
-
-  console.log(`Successfully inserted ${traces.length} traces into Tinybird`);
 }
 
 /**
