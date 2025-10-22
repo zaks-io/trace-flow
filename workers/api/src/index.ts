@@ -12,32 +12,34 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', cors());
 
-app.get('/bodies/:traceId', async (c) => {
+app.get('/bodies/:traceId/:type', async (c) => {
   const authError = await validateAuth0JWT(c);
   if (authError) {
     return authError;
   }
 
   const traceId = c.req.param('traceId');
+  const type = c.req.param('type');
 
   if (!traceId) {
     return c.json({ error: 'Missing traceId' }, 400);
   }
 
-  const requestKey = `requests/${traceId}`;
-  const responseKey = `responses/${traceId}`;
+  if (type !== 'request' && type !== 'response') {
+    return c.json({ error: 'Invalid type. Must be "request" or "response"' }, 400);
+  }
 
-  const [requestObject, responseObject] = await Promise.all([
-    c.env.STORAGE.get(requestKey),
-    c.env.STORAGE.get(responseKey),
-  ]);
+  const key = `${type}s/${traceId}`;
+  const object = await c.env.STORAGE.get(key);
 
-  const requestBody = requestObject ? await requestObject.text() : null;
-  const responseBody = responseObject ? await responseObject.text() : null;
+  if (!object) {
+    return c.json({ error: `${type} body not found` }, 404);
+  }
 
-  return c.json({
-    requestBody,
-    responseBody,
+  return new Response(object.body, {
+    headers: {
+      'Content-Type': object.httpMetadata?.contentType ?? 'text/plain',
+    },
   });
 });
 

@@ -58,16 +58,16 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
   });
 
   useEffect(() => {
-    if (isOpen && traceId) {
+    if (isOpen && traceId && isRequestOpen && !requestBody) {
       setBodiesLoading(true);
       setBodiesError(null);
 
-      const fetchBodies = async () => {
+      const fetchRequestBody = async () => {
         try {
           const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
           const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
-          const res = await fetch(`${apiUrl}/bodies/${traceId}`, {
+          const res = await fetch(`${apiUrl}/bodies/${traceId}/request`, {
             headers: {
               Authorization: `Bearer ${id_token}`,
             },
@@ -78,19 +78,52 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
             throw new Error(errorData.message ?? `HTTP ${res.status}: ${res.statusText}`);
           }
 
-          const data = await res.json();
-          setRequestBody(formatBodyForDisplay(data.requestBody));
-          setResponseBody(formatBodyForDisplay(data.responseBody));
+          const text = await res.text();
+          setRequestBody(formatBodyForDisplay(text));
           setBodiesLoading(false);
         } catch (err) {
-          setBodiesError(err instanceof Error ? err.message : 'Failed to fetch bodies');
+          setBodiesError(err instanceof Error ? err.message : 'Failed to fetch request body');
           setBodiesLoading(false);
         }
       };
 
-      void fetchBodies();
+      void fetchRequestBody();
     }
-  }, [isOpen, traceId, getAccessTokenSilently]);
+  }, [isOpen, traceId, isRequestOpen, requestBody, getAccessTokenSilently]);
+
+  useEffect(() => {
+    if (isOpen && traceId && isResponseOpen && !responseBody) {
+      setBodiesLoading(true);
+      setBodiesError(null);
+
+      const fetchResponseBody = async () => {
+        try {
+          const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+
+          const res = await fetch(`${apiUrl}/bodies/${traceId}/response`, {
+            headers: {
+              Authorization: `Bearer ${id_token}`,
+            },
+          });
+
+          if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(errorData.message ?? `HTTP ${res.status}: ${res.statusText}`);
+          }
+
+          const text = await res.text();
+          setResponseBody(formatBodyForDisplay(text));
+          setBodiesLoading(false);
+        } catch (err) {
+          setBodiesError(err instanceof Error ? err.message : 'Failed to fetch response body');
+          setBodiesLoading(false);
+        }
+      };
+
+      void fetchResponseBody();
+    }
+  }, [isOpen, traceId, isResponseOpen, responseBody, getAccessTokenSilently]);
 
   const spans = data?.data ?? [];
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
