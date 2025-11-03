@@ -9,6 +9,8 @@ on:
     types: [opened, assigned]
   pull_request_review:
     types: [submitted]
+  pull_request:
+    types: [opened, ready_for_review]
 
 jobs:
   claude:
@@ -36,12 +38,17 @@ jobs:
           claude_args: "--allowedTools 'Edit,MultiEdit,Write,Read,Glob,Grep,LS,Bash(git:*),Bash(bun:*),Bash(npm:*),Bash(npx:*),Bash(gh:*)'"
 
   code-review:
-    name: Manual Code Review
+    name: Code Review
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/review')
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '/review')) ||
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'opened' &&
+       github.event.pull_request.draft == false) ||
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'ready_for_review')
     permissions:
       contents: read
       pull-requests: write
@@ -50,6 +57,7 @@ jobs:
       actions: read
     steps:
       - name: React to comment
+        if: github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         with:
           script: |
@@ -70,7 +78,22 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = context.issue.number;
+            // Extract PR number based on event type
+            const prNumber = context.eventName === 'pull_request' 
+              ? context.payload.pull_request.number 
+              : context.issue.number;
+            
+            // Determine trigger source for output
+            let triggerSource;
+            if (context.eventName === 'pull_request') {
+              if (context.payload.action === 'opened') {
+                triggerSource = 'Automatic (PR opened)';
+              } else if (context.payload.action === 'ready_for_review') {
+                triggerSource = 'Automatic (PR ready for review)';
+              }
+            } else {
+              triggerSource = 'Manual `/review` comment';
+            }
 
             // Get PR details
             const pr = await github.rest.pulls.get({
@@ -137,6 +160,8 @@ jobs:
             core.setOutput('pr_head_sha', pr.data.head.sha);
             core.setOutput('workflow_runs', JSON.stringify(formattedWorkflows, null, 2));
             core.setOutput('check_runs', JSON.stringify(formattedChecks, null, 2));
+            core.setOutput('trigger_source', triggerSource);
+            core.setOutput('is_manual_trigger', context.eventName === 'issue_comment');
 
             return reviewCheck.data.id;
 
@@ -156,7 +181,7 @@ jobs:
             - Branch: ${{ steps.context.outputs.pr_branch }} → ${{ steps.context.outputs.pr_base_branch }}
             - Head SHA: ${{ steps.context.outputs.pr_head_sha }}
             - Check Run ID: ${{ steps.context.outputs.check_run_id }}
-            - Triggered by: Manual `/review` comment
+            - Triggered by: ${{ steps.context.outputs.trigger_source }}
 
             **Workflow Runs:**
             ```json
@@ -235,7 +260,7 @@ jobs:
             });
 
       - name: React on success
-        if: success()
+        if: success() && github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         with:
           script: |
@@ -247,7 +272,7 @@ jobs:
             });
 
       - name: React on failure
-        if: failure()
+        if: failure() && github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         with:
           script: |
