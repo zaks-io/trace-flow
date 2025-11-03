@@ -13,6 +13,11 @@ describe('Provider Detection and Auth Injection', () => {
       expect(config.authType).toBe(ProviderAuthType.BEARER);
     });
 
+    it('should detect OpenRouter provider', () => {
+      const config = detectProvider('https://openrouter.ai/api/v1/chat/completions');
+      expect(config.authType).toBe(ProviderAuthType.BEARER);
+    });
+
     it('should default to Bearer for unknown providers', () => {
       const config = detectProvider('https://api.unknown.com/v1/endpoint');
       expect(config.authType).toBe(ProviderAuthType.BEARER);
@@ -38,6 +43,18 @@ describe('Provider Detection and Auth Injection', () => {
       injectProviderAuth(headers, 'test-openai-key', 'https://api.openai.com/v1/chat/completions');
 
       expect(headers.get('Authorization')).toBe('Bearer test-openai-key');
+      expect(headers.get('x-api-key')).toBeNull();
+    });
+
+    it('should inject Bearer token for OpenRouter', () => {
+      const headers = new Headers();
+      injectProviderAuth(
+        headers,
+        'test-openrouter-key',
+        'https://openrouter.ai/api/v1/chat/completions',
+      );
+
+      expect(headers.get('Authorization')).toBe('Bearer test-openrouter-key');
       expect(headers.get('x-api-key')).toBeNull();
     });
 

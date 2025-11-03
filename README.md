@@ -61,6 +61,60 @@ Initialize husky:
 pnpm run prepare
 ```
 
+## Using the Proxy
+
+The Observe proxy can be integrated with any LLM client, including the popular [Vercel AI SDK](https://sdk.vercel.ai/).
+
+### Quick Start
+
+**For complete integration guide, see [USAGE.md](./USAGE.md).**
+
+The proxy requires three headers:
+
+- `X-Observe-Api-Key`: Your Observe API key for authentication
+- `X-Proxy-Target`: The target LLM provider URL (e.g., `https://api.openai.com/v1/chat/completions`)
+- `X-Provider-Api-Key`: Your LLM provider API key (optional, will be injected into provider-specific auth headers)
+
+### Example: Using with Vercel AI SDK
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { generateText } from 'ai';
+
+const openaiClient = openai({
+  apiKey: process.env.OPENAI_API_KEY,
+  // baseURL omitted - SDK uses OpenAI's default URL, custom fetch routes through proxy
+  fetch: async (url, options) => {
+    return fetch(process.env.PROXY_URL!, {
+      method: options?.method || 'POST',
+      headers: {
+        ...options?.headers,
+        'X-Observe-Api-Key': process.env.OBSERVE_API_KEY!,
+        'X-Proxy-Target': url, // Original provider URL intercepted here
+        'X-Provider-Api-Key': process.env.OPENAI_API_KEY!,
+        Authorization: undefined,
+      } as HeadersInit,
+      body: options?.body,
+    });
+  },
+});
+
+const { text } = await generateText({
+  model: openaiClient('gpt-4'),
+  prompt: 'Hello, world!',
+});
+```
+
+The proxy automatically captures:
+
+- Request/response bodies
+- Token usage
+- Performance metrics (latency, time to first token)
+- Errors and status codes
+- Streaming events
+
+View all captured data in the Observe dashboard.
+
 ## Development
 
 ### Running Proxy + Consumer Together (Recommended)
