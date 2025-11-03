@@ -1,12 +1,10 @@
 import type { Context } from 'hono';
 
 /**
- * Validates API keys from KV namespace, supporting two authentication header formats:
- * - `Authorization: Bearer <key>` (standard OAuth-style)
- * - `X-API-Key: <key>` (simple alternative)
+ * Validates API keys from KV namespace using the X-Observe-Api-Key header.
  *
- * The dual-header support provides flexibility for different client implementations
- * without requiring complex authentication flows.
+ * This header is used exclusively for proxy authentication, allowing Authorization
+ * and X-API-Key headers to pass through to LLM providers unchanged.
  *
  * Stored key data includes expiration timestamps to support key rotation.
  * Returns an error Response if validation fails, or null if the key is valid (null = success).
@@ -14,13 +12,13 @@ import type { Context } from 'hono';
 export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   c: Context<{ Bindings: E }>,
 ): Promise<Response | null> {
-  const apiKey = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.header('X-API-Key');
+  const apiKey = c.req.header('X-Observe-Api-Key');
 
   if (!apiKey) {
     return c.json(
       {
         error: 'Missing API key',
-        message: 'Please provide an API key via Authorization: Bearer <key> or X-API-Key header',
+        message: 'Please provide an API key via X-Observe-Api-Key header',
       },
       401,
     );

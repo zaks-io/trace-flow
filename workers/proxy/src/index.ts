@@ -43,8 +43,7 @@ app.all('*', async (c) => {
     return authError;
   }
 
-  const apiKey =
-    c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.header('X-API-Key') ?? '';
+  const apiKey = c.req.header('X-Observe-Api-Key') ?? '';
   const requestId = generateId();
   const traceId = generateTraceId();
   const requestStart = getCurrentTimestamp();
@@ -81,15 +80,14 @@ app.all('*', async (c) => {
   const providerApiKey = c.req.header('X-Provider-Api-Key');
 
   // Forward all headers except proxy-specific ones
-  // Strip ALL proxy authentication headers to prevent credential leakage:
-  // - Authorization: used for proxy authentication, never forward to provider
-  // - X-API-Key: alternative proxy auth, never forward to provider
+  // Strip proxy-specific headers to prevent credential leakage:
+  // - X-Observe-Api-Key: used for proxy authentication, never forward to provider
   // - X-Proxy-Target: internal routing metadata
   // - X-Provider-Api-Key: used to inject provider auth, don't forward raw
   // - host: must match target provider
+  // Note: Authorization and X-API-Key headers are allowed to pass through to providers
   const headers = new Headers(c.req.raw.headers);
-  headers.delete('Authorization');
-  headers.delete('X-API-Key');
+  headers.delete('X-Observe-Api-Key');
   headers.delete('X-Proxy-Target');
   headers.delete('X-Provider-Api-Key');
   headers.delete('host');
