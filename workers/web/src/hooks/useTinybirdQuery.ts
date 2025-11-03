@@ -14,6 +14,7 @@ interface UseTinybirdQueryOptions {
   params?: Record<string, unknown>;
   ttl?: number;
   enabled?: boolean;
+  pollInterval?: number;
 }
 
 interface TinybirdQueryResult<T = unknown> {
@@ -101,6 +102,30 @@ export function useTinybirdQuery<T = unknown>(
       void refetch();
     }
   }, [enabled, refetch]);
+
+  // Set up polling when pollInterval is provided
+  // Stop polling if there's an error
+  useEffect(() => {
+    if (!enabled || !options.pollInterval || options.pollInterval <= 0) {
+      return;
+    }
+
+    // Don't start polling if there's already an error
+    if (error) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      // Check error state before each poll - stop if error occurred
+      // We can't directly access error state here, so we'll rely on the effect
+      // being re-run when error changes
+      void refetch();
+    }, options.pollInterval);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [enabled, options.pollInterval, refetch, error]);
 
   return { data, loading, error, refetch };
 }

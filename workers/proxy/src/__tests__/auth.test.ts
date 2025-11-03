@@ -39,11 +39,11 @@ describe('validateApiKey', () => {
     const body = await result?.json();
     expect(body).toEqual({
       error: 'Missing API key',
-      message: 'Please provide an API key via Authorization: Bearer <key> or X-API-Key header',
+      message: 'Please provide an API key via X-Observe-Api-Key header',
     });
   });
 
-  it('should accept API key from Authorization header', async () => {
+  it('should accept API key from X-Observe-Api-Key header', async () => {
     const validKeyData = JSON.stringify({
       expiresAt: Date.now() + 100000,
       createdAt: Date.now(),
@@ -51,7 +51,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        authorization: 'Bearer valid-api-key',
+        'x-observe-api-key': 'valid-api-key',
       },
       validKeyData,
     );
@@ -61,53 +61,12 @@ describe('validateApiKey', () => {
     expect(result).toBeNull();
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(context.env.API_KEYS.get).toHaveBeenCalledWith('valid-api-key');
-  });
-
-  it('should accept API key from X-API-Key header', async () => {
-    const validKeyData = JSON.stringify({
-      expiresAt: Date.now() + 100000,
-      createdAt: Date.now(),
-    });
-
-    const context = createMockContext(
-      {
-        'x-api-key': 'valid-api-key',
-      },
-      validKeyData,
-    );
-
-    const result = await validateApiKey(context);
-
-    expect(result).toBeNull();
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(context.env.API_KEYS.get).toHaveBeenCalledWith('valid-api-key');
-  });
-
-  it('should prefer Authorization header over X-API-Key', async () => {
-    const validKeyData = JSON.stringify({
-      expiresAt: Date.now() + 100000,
-      createdAt: Date.now(),
-    });
-
-    const context = createMockContext(
-      {
-        authorization: 'Bearer auth-key',
-        'x-api-key': 'x-api-key',
-      },
-      validKeyData,
-    );
-
-    const result = await validateApiKey(context);
-
-    expect(result).toBeNull();
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(context.env.API_KEYS.get).toHaveBeenCalledWith('auth-key');
   });
 
   it('should return error when API key is not found in KV', async () => {
     const context = createMockContext(
       {
-        authorization: 'Bearer invalid-key',
+        'x-observe-api-key': 'invalid-key',
       },
       null,
     );
@@ -132,7 +91,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        authorization: 'Bearer expired-key',
+        'x-observe-api-key': 'expired-key',
       },
       expiredKeyData,
     );
@@ -152,7 +111,7 @@ describe('validateApiKey', () => {
   it('should return error when API key data is corrupted', async () => {
     const context = createMockContext(
       {
-        authorization: 'Bearer corrupt-key',
+        'x-observe-api-key': 'corrupt-key',
       },
       'not valid json',
     );
@@ -177,7 +136,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        authorization: 'Bearer valid-key',
+        'x-observe-api-key': 'valid-key',
       },
       validKeyData,
     );
@@ -185,44 +144,6 @@ describe('validateApiKey', () => {
     const result = await validateApiKey(context);
 
     expect(result).toBeNull();
-  });
-
-  it('should strip Bearer prefix from Authorization header', async () => {
-    const validKeyData = JSON.stringify({
-      expiresAt: Date.now() + 100000,
-      createdAt: Date.now(),
-    });
-
-    const context = createMockContext(
-      {
-        authorization: 'Bearer my-api-key-123',
-      },
-      validKeyData,
-    );
-
-    await validateApiKey(context);
-
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(context.env.API_KEYS.get).toHaveBeenCalledWith('my-api-key-123');
-  });
-
-  it('should handle API key without Bearer prefix', async () => {
-    const validKeyData = JSON.stringify({
-      expiresAt: Date.now() + 100000,
-      createdAt: Date.now(),
-    });
-
-    const context = createMockContext(
-      {
-        authorization: 'my-api-key-123',
-      },
-      validKeyData,
-    );
-
-    await validateApiKey(context);
-
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(context.env.API_KEYS.get).toHaveBeenCalledWith('my-api-key-123');
   });
 
   it('should handle edge case where expiresAt equals current time', async () => {
@@ -234,7 +155,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        authorization: 'Bearer edge-case-key',
+        'x-observe-api-key': 'edge-case-key',
       },
       edgeCaseKeyData,
     );

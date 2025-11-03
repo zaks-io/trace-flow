@@ -14,6 +14,9 @@ const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   'api.openai.com': {
     authType: ProviderAuthType.BEARER,
   },
+  'openrouter.ai': {
+    authType: ProviderAuthType.BEARER,
+  },
 };
 
 export function detectProvider(targetUrl: string): ProviderConfig {

@@ -12,6 +12,7 @@ export function extractProviderFromUrl(url: string): string {
 
     if (hostname.includes('openai.com')) return 'openai';
     if (hostname.includes('anthropic.com')) return 'anthropic';
+    if (hostname.includes('openrouter.ai')) return 'openrouter';
     if (hostname.includes('generativelanguage.googleapis.com')) return 'google';
     if (hostname.includes('api.mistral.ai')) return 'mistral';
     if (hostname.includes('api.cohere.ai')) return 'cohere';

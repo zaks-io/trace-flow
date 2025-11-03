@@ -38,7 +38,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com/v1/chat/completions',
-          Authorization: 'Bearer invalid-key',
+          'X-Observe-Api-Key': 'invalid-key',
         },
       });
 
@@ -60,7 +60,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com/v1/chat/completions',
-          Authorization: `Bearer ${expiredKey}`,
+          'X-Observe-Api-Key': expiredKey,
         },
       });
 
@@ -78,7 +78,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
         },
       });
 
@@ -127,7 +127,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify({ model: 'gpt-4', messages: [] }),
       });
@@ -166,7 +166,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify({ invalid: 'data' }),
       });
@@ -198,7 +198,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify({ model: 'gpt-4' }),
       });
@@ -226,7 +226,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.anthropic.com',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify({ model: 'claude-3', messages: [] }),
       });
@@ -240,7 +240,7 @@ describe('Proxy Worker Integration', () => {
       await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
 
-    it('should strip proxy auth headers and not forward them', async () => {
+    it('should strip proxy auth headers and allow provider headers to pass through', async () => {
       await setupValidApiKey('test-key');
 
       let capturedHeaders: Headers | null = null;
@@ -267,8 +267,9 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com',
-          Authorization: 'Bearer test-key',
-          'X-API-Key': 'another-proxy-key',
+          'X-Observe-Api-Key': 'test-key',
+          Authorization: 'Bearer provider-auth-token',
+          'X-API-Key': 'provider-api-key',
           'Custom-Header': 'custom-value',
         },
         body: JSON.stringify({ model: 'gpt-4' }),
@@ -280,8 +281,10 @@ describe('Proxy Worker Integration', () => {
       const headers = capturedHeaders!;
       expect(headers.has('X-Proxy-Target')).toBe(false);
       expect(headers.has('host')).toBe(false);
-      expect(headers.has('Authorization')).toBe(false);
-      expect(headers.has('X-API-Key')).toBe(false);
+      expect(headers.has('X-Observe-Api-Key')).toBe(false);
+      // Authorization and X-API-Key should pass through to provider
+      expect(headers.get('Authorization')).toBe('Bearer provider-auth-token');
+      expect(headers.get('X-API-Key')).toBe('provider-api-key');
       expect(headers.get('Custom-Header')).toBe('custom-value');
     });
 
@@ -312,7 +315,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
           'X-Provider-Api-Key': 'openai-key-123',
         },
         body: JSON.stringify({ model: 'gpt-4' }),
@@ -353,7 +356,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.anthropic.com',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
           'X-Provider-Api-Key': 'anthropic-key-456',
         },
         body: JSON.stringify({ model: 'claude-3' }),
@@ -385,7 +388,7 @@ describe('Proxy Worker Integration', () => {
         headers: {
           'Content-Type': 'application/json',
           'X-Proxy-Target': 'https://api.openai.com',
-          Authorization: 'Bearer test-key',
+          'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify(largeBody),
       });
