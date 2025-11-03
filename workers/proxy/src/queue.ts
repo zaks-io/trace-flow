@@ -4,6 +4,7 @@ import type {
   LLMTokenUsage,
   LLMError,
   SSEStreamData,
+  LLMResponseMetadata,
 } from '@observe/types';
 import { extractProviderFromUrl } from '@observe/utils';
 
@@ -42,6 +43,7 @@ export function createQueueMessage(params: {
   error: LLMError | undefined;
   truncated?: boolean;
   sseStreamData?: SSEStreamData;
+  responseMetadata?: Partial<LLMResponseMetadata>;
 }): QueueMessage {
   const {
     requestId,
@@ -60,6 +62,7 @@ export function createQueueMessage(params: {
     error,
     truncated,
     sseStreamData,
+    responseMetadata,
   } = params;
 
   const provider = extractProviderFromUrl(targetUrl);
@@ -71,6 +74,9 @@ export function createQueueMessage(params: {
     responseComplete,
   };
 
+  // Use model from response metadata if available, otherwise default to 'unknown'
+  const model = responseMetadata?.model ?? 'unknown';
+
   const queueMessage: QueueMessage = {
     requestId,
     traceId,
@@ -79,7 +85,7 @@ export function createQueueMessage(params: {
     request: {
       id: requestId,
       provider,
-      model: 'unknown',
+      model,
       messages: [],
       timestamp: requestStart,
     },
@@ -109,6 +115,10 @@ export function createQueueMessage(params: {
 
   if (sseStreamData && sseStreamData.messages.length > 0) {
     queueMessage.sseStreamData = sseStreamData;
+  }
+
+  if (responseMetadata) {
+    queueMessage.responseMetadata = responseMetadata;
   }
 
   return queueMessage;

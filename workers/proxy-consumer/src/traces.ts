@@ -64,6 +64,9 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     if (data.tokens.cached !== undefined) {
       rootSpan.SpanAttributes['llm.cached'] = String(data.tokens.cached);
     }
+    if (data.tokens.reasoningTokens !== undefined) {
+      rootSpan.SpanAttributes['llm.reasoning_tokens'] = String(data.tokens.reasoningTokens);
+    }
   }
 
   if (data.error) {
@@ -72,6 +75,48 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     }
     if (data.error.code) {
       rootSpan.SpanAttributes['error.code'] = data.error.code;
+    }
+  }
+
+  // Add response metadata to span attributes
+  if (data.responseMetadata) {
+    const meta = data.responseMetadata;
+    if (meta.id) {
+      rootSpan.SpanAttributes['llm.response_id'] = meta.id;
+    }
+    if (meta.model) {
+      // Update model from response if available (overrides request model)
+      rootSpan.SpanAttributes['llm.model'] = meta.model;
+    }
+    if (meta.object) {
+      rootSpan.SpanAttributes['llm.response_object'] = meta.object;
+    }
+    if (meta.created !== undefined) {
+      rootSpan.SpanAttributes['llm.response_created'] = String(meta.created);
+    }
+    if (meta.finishReason) {
+      rootSpan.SpanAttributes['llm.finish_reason'] = meta.finishReason;
+    }
+    if (meta.nativeFinishReason) {
+      rootSpan.SpanAttributes['llm.native_finish_reason'] = meta.nativeFinishReason;
+    }
+    if (meta.stopReason) {
+      rootSpan.SpanAttributes['llm.stop_reason'] = meta.stopReason;
+    }
+    if (meta.stopSequence) {
+      rootSpan.SpanAttributes['llm.stop_sequence'] = meta.stopSequence;
+    }
+    if (meta.hasLogprobs !== undefined) {
+      rootSpan.SpanAttributes['llm.has_logprobs'] = String(meta.hasLogprobs);
+    }
+    if (meta.reasoningTokens !== undefined) {
+      rootSpan.SpanAttributes['llm.reasoning_tokens'] = String(meta.reasoningTokens);
+    }
+    if (meta.refusal !== undefined) {
+      rootSpan.SpanAttributes['llm.has_refusal'] = String(meta.refusal !== null);
+    }
+    if (meta.reasoning !== undefined) {
+      rootSpan.SpanAttributes['llm.has_reasoning'] = String(meta.reasoning !== null);
     }
   }
 
