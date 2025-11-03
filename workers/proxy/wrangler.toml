@@ -39,6 +39,10 @@ bucket_name = "observe-storage-staging"
 [env.production]
 name = "observe-proxy"
 
+[[env.production.routes]]
+pattern = "gateway.trace-flow.dev/*"
+zone_name = "trace-flow.dev"
+
 [[env.production.kv_namespaces]]
 binding = "API_KEYS"
 id = "6d74d697f808470bbb678eda3c52bef3"

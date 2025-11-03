@@ -81,6 +81,38 @@ pnpm run deploy:staging
 pnpm run deploy:prod
 ```
 
+## 5. Configure Custom Domains (Production)
+
+Custom domains are configured in `wrangler.toml` and connected through the Cloudflare Dashboard:
+
+**Production domains:**
+
+- `api.trace-flow.dev` → API worker
+- `gateway.trace-flow.dev` → Proxy worker
+- `trace-flow.dev` → Web worker (Cloudflare Pages)
+
+**To connect domains:**
+
+1. **Routes are already configured** in `wrangler.toml` for production environments
+
+2. **Connect domains via Cloudflare Dashboard:**
+   - Navigate to **Workers & Pages** → Select your worker (e.g., `observe-api-production`)
+   - Go to **Settings** → **Domains**
+   - Click **Add Custom Domain**
+   - Enter the subdomain (e.g., `api.trace-flow.dev`)
+   - Cloudflare will automatically create DNS records if the domain is in the same account
+
+3. **Verify DNS records** (auto-created):
+   - `api.trace-flow.dev` → CNAME to worker route
+   - `gateway.trace-flow.dev` → CNAME to worker route
+
+**Note:** After adding routes to `wrangler.toml`, redeploy the worker for the routes to take effect:
+
+```bash
+cd workers/api && wrangler deploy --env production
+cd workers/proxy && wrangler deploy --env production
+```
+
 ## Testing Locally
 
 To test locally, you'll need to set up environment variables. Create a `.dev.vars` file in `workers/proxy-consumer/`:
