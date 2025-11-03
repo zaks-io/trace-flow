@@ -37,10 +37,12 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
   const { getAccessTokenSilently } = useAuth0();
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
-  const [bodiesLoading, setBodiesLoading] = useState(false);
-  const [bodiesError, setBodiesError] = useState<string | null>(null);
-  const [isRequestOpen, setIsRequestOpen] = useState(false);
-  const [isResponseOpen, setIsResponseOpen] = useState(false);
+  const [requestBodyLoading, setRequestBodyLoading] = useState(false);
+  const [responseBodyLoading, setResponseBodyLoading] = useState(false);
+  const [requestBodyError, setRequestBodyError] = useState<string | null>(null);
+  const [responseBodyError, setResponseBodyError] = useState<string | null>(null);
+  const [isRequestOpen, setIsRequestOpen] = useState(true);
+  const [isResponseOpen, setIsResponseOpen] = useState(true);
 
   const { data, loading, error } = useTinybirdQuery<TinybirdResponse>({
     sql: `SELECT
@@ -55,10 +57,21 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
     enabled: enabled && !!traceId,
   });
 
+  // Reset body states when traceId changes
   useEffect(() => {
-    if (enabled && traceId && isRequestOpen && !requestBody) {
-      setBodiesLoading(true);
-      setBodiesError(null);
+    setRequestBody(null);
+    setResponseBody(null);
+    setRequestBodyLoading(false);
+    setResponseBodyLoading(false);
+    setRequestBodyError(null);
+    setResponseBodyError(null);
+  }, [traceId]);
+
+  // Fetch request body automatically when component is enabled
+  useEffect(() => {
+    if (enabled && traceId && !requestBody && !requestBodyLoading && requestBodyError === null) {
+      setRequestBodyLoading(true);
+      setRequestBodyError(null);
 
       const fetchRequestBody = async () => {
         try {
@@ -72,27 +85,34 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           });
 
           if (!res.ok) {
+            // 404 means no body exists, which is fine
+            if (res.status === 404) {
+              setRequestBody(null);
+              setRequestBodyLoading(false);
+              return;
+            }
             const errorData = await res.json();
             throw new Error(errorData.message ?? `HTTP ${res.status}: ${res.statusText}`);
           }
 
           const text = await res.text();
           setRequestBody(formatBodyForDisplay(text));
-          setBodiesLoading(false);
+          setRequestBodyLoading(false);
         } catch (err) {
-          setBodiesError(err instanceof Error ? err.message : 'Failed to fetch request body');
-          setBodiesLoading(false);
+          setRequestBodyError(err instanceof Error ? err.message : 'Failed to fetch request body');
+          setRequestBodyLoading(false);
         }
       };
 
       void fetchRequestBody();
     }
-  }, [enabled, traceId, isRequestOpen, requestBody, getAccessTokenSilently]);
+  }, [enabled, traceId, requestBody, requestBodyLoading, requestBodyError, getAccessTokenSilently]);
 
+  // Fetch response body automatically when component is enabled
   useEffect(() => {
-    if (enabled && traceId && isResponseOpen && !responseBody) {
-      setBodiesLoading(true);
-      setBodiesError(null);
+    if (enabled && traceId && !responseBody && !responseBodyLoading && responseBodyError === null) {
+      setResponseBodyLoading(true);
+      setResponseBodyError(null);
 
       const fetchResponseBody = async () => {
         try {
@@ -106,22 +126,37 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           });
 
           if (!res.ok) {
+            // 404 means no body exists, which is fine
+            if (res.status === 404) {
+              setResponseBody(null);
+              setResponseBodyLoading(false);
+              return;
+            }
             const errorData = await res.json();
             throw new Error(errorData.message ?? `HTTP ${res.status}: ${res.statusText}`);
           }
 
           const text = await res.text();
           setResponseBody(formatBodyForDisplay(text));
-          setBodiesLoading(false);
+          setResponseBodyLoading(false);
         } catch (err) {
-          setBodiesError(err instanceof Error ? err.message : 'Failed to fetch response body');
-          setBodiesLoading(false);
+          setResponseBodyError(
+            err instanceof Error ? err.message : 'Failed to fetch response body',
+          );
+          setResponseBodyLoading(false);
         }
       };
 
       void fetchResponseBody();
     }
-  }, [enabled, traceId, isResponseOpen, responseBody, getAccessTokenSilently]);
+  }, [
+    enabled,
+    traceId,
+    responseBody,
+    responseBodyLoading,
+    responseBodyError,
+    getAccessTokenSilently,
+  ]);
 
   const spans = data?.data ?? [];
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
@@ -324,14 +359,22 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
               className={`h-4 w-4 transition-transform ${isRequestOpen ? 'rotate-0' : '-rotate-90'}`}
             />
             <span className="text-sm font-medium">
-              {bodiesLoading ? 'Loading...' : requestBody ? 'Click to view' : 'No request body'}
+              {requestBodyLoading
+                ? 'Loading...'
+                : requestBody
+                  ? 'Request Body'
+                  : requestBodyError
+                    ? 'Error loading request body'
+                    : 'No request body'}
             </span>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            {bodiesError ? (
+            {requestBodyError ? (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-2">
-                <p className="text-red-600 text-sm">{bodiesError}</p>
+                <p className="text-red-600 text-sm">{requestBodyError}</p>
               </div>
+            ) : requestBodyLoading ? (
+              <div className="text-sm text-gray-500 p-4 mt-2">Loading request body...</div>
             ) : (
               renderBodyContent(requestBody)
             )}
@@ -347,14 +390,22 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
               className={`h-4 w-4 transition-transform ${isResponseOpen ? 'rotate-0' : '-rotate-90'}`}
             />
             <span className="text-sm font-medium">
-              {bodiesLoading ? 'Loading...' : responseBody ? 'Click to view' : 'No response body'}
+              {responseBodyLoading
+                ? 'Loading...'
+                : responseBody
+                  ? 'Response Body'
+                  : responseBodyError
+                    ? 'Error loading response body'
+                    : 'No response body'}
             </span>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            {bodiesError ? (
+            {responseBodyError ? (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-2">
-                <p className="text-red-600 text-sm">{bodiesError}</p>
+                <p className="text-red-600 text-sm">{responseBodyError}</p>
               </div>
+            ) : responseBodyLoading ? (
+              <div className="text-sm text-gray-500 p-4 mt-2">Loading response body...</div>
             ) : (
               renderBodyContent(responseBody)
             )}
