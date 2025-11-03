@@ -40,7 +40,7 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
           <SheetTitle>Trace Details</SheetTitle>
         </SheetHeader>
 
-        <div className="px-4 space-y-6 mt-6">
+        <div className="px-4 space-y-6">
           <Link
             href={`/app/request?id=${traceId}`}
             className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors w-fit"

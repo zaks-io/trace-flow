@@ -1,6 +1,10 @@
 import { createParser, type EventSourceParser } from 'eventsource-parser';
 import type { SSEStreamData, SSEMessage, SSEEvent } from '@observe/types';
 import { getCurrentTimestamp } from '@observe/utils';
+import {
+  extractMetadataFromSSEData,
+  extractTokenUsageFromSSEData,
+} from '../parsers/metadata-regex';
 
 /**
  * Processes SSE events to track multiple messages and record all events as OpenTelemetry events.
@@ -19,6 +23,25 @@ export function processSSEEvent(
     const eventType = event.event;
     if (!eventType) return;
 
+    // Validate JSON structure for event data (regex parsing won't catch malformed JSON)
+    // This helps catch errors that would have been caught by JSON.parse in the old implementation
+    // SSE event data should be valid JSON, so validate it
+    if (event.data && event.data.trim().length > 0) {
+      try {
+        // Quick validation: try parsing to detect malformed JSON
+        // This matches the old behavior where JSON.parse would throw on invalid JSON
+        JSON.parse(event.data);
+      } catch (parseError) {
+        console.error('Error parsing SSE event:', {
+          error: parseError,
+          eventType: event.event,
+          timestamp,
+          dataPreview: event.data?.substring(0, 100),
+        });
+        return;
+      }
+    }
+
     const sseEvent: SSEEvent = {
       type: eventType,
       timestamp,
@@ -26,9 +49,15 @@ export function processSSEEvent(
     };
 
     if (eventType === 'message_start') {
+      // Extract metadata and usage from message_start (Anthropic includes usage here)
+      const metadata = extractMetadataFromSSEData(event.data);
+      const usage = event.data ? extractTokenUsageFromSSEData(event.data) : undefined;
+
       const newMessage: SSEMessage = {
         messageStart: timestamp,
         events: [sseEvent],
+        metadata,
+        usage: usage?.input_tokens || usage?.output_tokens ? usage : undefined,
       };
       streamData.messages.push(newMessage);
       return;
@@ -42,30 +71,34 @@ export function processSSEEvent(
 
     currentMessage.events.push(sseEvent);
 
-    if (eventType === 'message_stop') {
-      currentMessage.messageStop = timestamp;
+    // Extract metadata from this event (accumulates across events)
+    // This handles all event types including finish_reason, stop_reason, etc.
+    if (event.data) {
+      const eventMetadata = extractMetadataFromSSEData(event.data, currentMessage.metadata);
+      currentMessage.metadata = { ...currentMessage.metadata, ...eventMetadata };
+    }
 
-      const parsed = JSON.parse(event.data) as unknown;
-      if (parsed && typeof parsed === 'object') {
-        const stop = parsed as Record<string, unknown>;
-        const usage = stop.usage;
-        if (usage && typeof usage === 'object') {
-          const typedUsage = usage as Record<string, unknown>;
-          currentMessage.usage = {
-            input_tokens:
-              typeof typedUsage.input_tokens === 'number' ? typedUsage.input_tokens : undefined,
-            cache_creation_input_tokens:
-              typeof typedUsage.cache_creation_input_tokens === 'number'
-                ? typedUsage.cache_creation_input_tokens
-                : undefined,
-            cache_read_input_tokens:
-              typeof typedUsage.cache_read_input_tokens === 'number'
-                ? typedUsage.cache_read_input_tokens
-                : undefined,
-            output_tokens:
-              typeof typedUsage.output_tokens === 'number' ? typedUsage.output_tokens : undefined,
-          };
-        }
+    if (eventType === 'message_stop' || eventType === 'message_delta') {
+      // Update messageStop timestamp for message_stop events
+      if (eventType === 'message_stop') {
+        currentMessage.messageStop = timestamp;
+      }
+
+      // Extract usage from stop/delta events using regex (for token counts)
+      if (event.data) {
+        const extractedUsage = extractTokenUsageFromSSEData(event.data);
+        // Merge with existing usage (accumulate across events)
+        const mergedUsage = {
+          ...currentMessage.usage,
+          ...extractedUsage,
+        };
+        // Only set usage if it has at least one property with a value
+        const hasUsageData =
+          mergedUsage.input_tokens !== undefined ||
+          mergedUsage.output_tokens !== undefined ||
+          mergedUsage.cache_creation_input_tokens !== undefined ||
+          mergedUsage.cache_read_input_tokens !== undefined;
+        currentMessage.usage = hasUsageData ? mergedUsage : undefined;
       }
     }
   } catch (e) {

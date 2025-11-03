@@ -17,10 +17,11 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { generateId, generateTraceId, getCurrentTimestamp } from '@observe/utils';
-import type { SSEStreamData, QueueMessage } from '@observe/types';
+import type { SSEStreamData, QueueMessage, LLMResponseMetadata } from '@observe/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
+import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
 import { captureStream, createResponseCapture, chunksToString } from './streaming/capture';
 import { createSSEParser } from './streaming/sse';
 import { storeRequestResponse } from './storage';
@@ -155,6 +156,19 @@ app.all('*', async (c) => {
         const error =
           response.status >= 400 ? parseError(responseBody, response.status) : undefined;
 
+        // Extract response metadata
+        let responseMetadata: Partial<LLMResponseMetadata> | undefined;
+        if (response.status < 400) {
+          if (isSSE && sseStreamData.messages.length > 0) {
+            // For SSE responses, extract metadata from the last message (accumulated across events)
+            const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
+            responseMetadata = lastMessage?.metadata;
+          } else {
+            // For non-streaming responses, extract from response body using regex
+            responseMetadata = extractMetadataFromResponseBody(responseBody);
+          }
+        }
+
         const { requestBodyKey, responseBodyKey, stored } = await storeRequestResponse(
           c.env.STORAGE,
           traceId,
@@ -183,6 +197,7 @@ app.all('*', async (c) => {
           error,
           truncated: isTruncated,
           sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
+          responseMetadata,
         });
 
         await c.env.REQUEST_QUEUE.send(queueMessage);
