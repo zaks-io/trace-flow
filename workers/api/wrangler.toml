@@ -29,7 +29,11 @@ name = "observe-api-production"
 
 [env.production.vars]
 AUTH0_DOMAIN = "auth0.zaks.io"
-AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
+AUTH0_CLIENT_ID = "asEG3J6UWZOeKWclu2WxONmoIhTsCfdp"
+
+[[env.production.routes]]
+pattern = "api.trace-flow.dev/*"
+zone_name = "trace-flow.dev"
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"

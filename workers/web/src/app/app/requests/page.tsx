@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { TraceDetailPanel } from '@/components/TraceDetailPanel';
 
@@ -21,6 +21,7 @@ interface TinybirdResponse {
 
 export default function Requests() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(false);
@@ -30,6 +31,8 @@ export default function Requests() {
 
   // Use ref to track latest timestamp without causing query re-evaluation
   const latestTimestampRef = useRef<number | null>(null);
+  // Use ref to track if we're intentionally closing to prevent URL sync from reopening
+  const isClosingRef = useRef(false);
 
   // Keep SQL query stable - don't change it based on latestTimestamp
   // In live mode, we'll fetch full dataset and filter client-side
@@ -86,17 +89,74 @@ export default function Requests() {
 
   const handleRowClick = (traceId: string, event: React.MouseEvent) => {
     if (event.metaKey || event.ctrlKey) {
+      // Cmd/Ctrl+click opens full page in new tab
+      window.open(`/app/request?id=${traceId}`, '_blank');
+    } else {
+      // Regular click opens sidebar
+      isClosingRef.current = false; // Reset closing flag when opening
       setSelectedTraceId(traceId);
       setIsPanelOpen(true);
-    } else {
-      router.push(`/app/request?id=${traceId}`);
+      // Update URL without navigation
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('id', traceId);
+      router.replace(`/app/requests?${params.toString()}`, { scroll: false });
     }
   };
 
-  const handleClosePanel = () => {
+  const handleClosePanel = useCallback(() => {
+    isClosingRef.current = true;
     setIsPanelOpen(false);
-    setTimeout(() => setSelectedTraceId(null), 300);
-  };
+    // Remove id from URL immediately when closing
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('id');
+    const newUrl = params.toString() ? `/app/requests?${params.toString()}` : '/app/requests';
+    router.replace(newUrl, { scroll: false });
+    setTimeout(() => {
+      setSelectedTraceId(null);
+      // Reset flag after a delay to allow URL update to complete
+      setTimeout(() => {
+        isClosingRef.current = false;
+      }, 100);
+    }, 300);
+  }, [searchParams, router]);
+
+  // Handle URL query param on load (for shareable links)
+  useEffect(() => {
+    // Don't sync if we're intentionally closing the panel
+    if (isClosingRef.current) {
+      return;
+    }
+
+    const traceIdFromUrl = searchParams.get('id');
+    if (traceIdFromUrl) {
+      // Only update if different from current selection
+      if (traceIdFromUrl !== selectedTraceId) {
+        isClosingRef.current = false; // Reset closing flag when opening from URL
+        setSelectedTraceId(traceIdFromUrl);
+        setIsPanelOpen(true);
+      }
+    } else if (selectedTraceId && isPanelOpen) {
+      // URL param was removed but panel is still open - close it
+      setIsPanelOpen(false);
+      setTimeout(() => setSelectedTraceId(null), 300);
+    }
+  }, [searchParams, selectedTraceId, isPanelOpen]);
+
+  // Handle keyboard shortcut (Esc) to close sidebar
+  useEffect(() => {
+    if (!isPanelOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleClosePanel();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPanelOpen, handleClosePanel]);
 
   // Handle initial load
   useEffect(() => {
@@ -204,8 +264,8 @@ export default function Requests() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">LLM Requests</h1>
           <p className="text-gray-600 mt-1">
-            Root traces from your LLM requests. Click a row to view full details, or Cmd/Ctrl+click
-            for quick preview.
+            Root traces from your LLM requests. Click a row to view details in sidebar, or
+            Cmd/Ctrl+click to open in a new tab.
           </p>
         </div>
         <button
