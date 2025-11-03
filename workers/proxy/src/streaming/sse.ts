@@ -23,6 +23,25 @@ export function processSSEEvent(
     const eventType = event.event;
     if (!eventType) return;
 
+    // Validate JSON structure for event data (regex parsing won't catch malformed JSON)
+    // This helps catch errors that would have been caught by JSON.parse in the old implementation
+    // SSE event data should be valid JSON, so validate it
+    if (event.data && event.data.trim().length > 0) {
+      try {
+        // Quick validation: try parsing to detect malformed JSON
+        // This matches the old behavior where JSON.parse would throw on invalid JSON
+        JSON.parse(event.data);
+      } catch (parseError) {
+        console.error('Error parsing SSE event:', {
+          error: parseError,
+          eventType: event.event,
+          timestamp,
+          dataPreview: event.data?.substring(0, 100),
+        });
+        return;
+      }
+    }
+
     const sseEvent: SSEEvent = {
       type: eventType,
       timestamp,
@@ -69,10 +88,17 @@ export function processSSEEvent(
       if (event.data) {
         const extractedUsage = extractTokenUsageFromSSEData(event.data);
         // Merge with existing usage (accumulate across events)
-        currentMessage.usage = {
+        const mergedUsage = {
           ...currentMessage.usage,
           ...extractedUsage,
         };
+        // Only set usage if it has at least one property with a value
+        const hasUsageData =
+          mergedUsage.input_tokens !== undefined ||
+          mergedUsage.output_tokens !== undefined ||
+          mergedUsage.cache_creation_input_tokens !== undefined ||
+          mergedUsage.cache_read_input_tokens !== undefined;
+        currentMessage.usage = hasUsageData ? mergedUsage : undefined;
       }
     }
   } catch (e) {

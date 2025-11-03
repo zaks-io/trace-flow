@@ -127,16 +127,16 @@ export function extractAnthropicMetadata(
   const stopReasonMatch = ANTHROPIC_STOP_REASON_PATTERN.exec(data);
   if (stopReasonMatch && !metadata.stopReason) {
     // stopReasonMatch[1] will be undefined if the value is null in JSON
-    // We store undefined (not null) to match the type definition
-    metadata.stopReason = stopReasonMatch[1];
+    // We need to explicitly set null when the pattern matched but group 1 is undefined
+    metadata.stopReason = stopReasonMatch[1] ?? null;
   }
 
   // Extract stop_sequence (from message_delta or message_stop)
   const stopSequenceMatch = ANTHROPIC_STOP_SEQUENCE_PATTERN.exec(data);
   if (stopSequenceMatch && !metadata.stopSequence) {
     // stopSequenceMatch[1] will be undefined if the value is null in JSON
-    // We store undefined (not null) to match the type definition
-    metadata.stopSequence = stopSequenceMatch[1];
+    // We need to explicitly set null when the pattern matched but group 1 is undefined
+    metadata.stopSequence = stopSequenceMatch[1] ?? null;
   }
 
   return metadata;

@@ -189,7 +189,7 @@ describe('extractMetadataFromResponseBody', () => {
 
     expect(metadata.id).toBe('msg_01BK1fpyqpgrrGvA4HTgaNCu');
     expect(metadata.object).toBe('claude-sonnet-4-5-20250929');
-    expect(metadata.stopReason).toBeUndefined(); // null in JSON becomes undefined
+    expect(metadata.stopReason).toBe(null); // null in JSON is preserved as null
   });
 });
 

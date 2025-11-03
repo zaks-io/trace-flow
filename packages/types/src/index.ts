@@ -36,8 +36,8 @@ export interface LLMResponseMetadata {
   created?: number;
   finishReason?: string;
   nativeFinishReason?: string;
-  stopReason?: string; // Anthropic
-  stopSequence?: string; // Anthropic
+  stopReason?: string | null; // Anthropic
+  stopSequence?: string | null; // Anthropic
   hasLogprobs?: boolean;
   refusal?: string | null;
   reasoning?: string | null;
