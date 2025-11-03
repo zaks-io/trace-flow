@@ -26,6 +26,22 @@ export interface LLMTokenUsage {
   completionTokens?: number;
   totalTokens?: number;
   cached?: boolean;
+  reasoningTokens?: number;
+}
+
+export interface LLMResponseMetadata {
+  id?: string;
+  model?: string;
+  object?: string;
+  created?: number;
+  finishReason?: string;
+  nativeFinishReason?: string;
+  stopReason?: string | null; // Anthropic
+  stopSequence?: string | null; // Anthropic
+  hasLogprobs?: boolean;
+  refusal?: string | null;
+  reasoning?: string | null;
+  reasoningTokens?: number;
 }
 
 export interface LLMError {
@@ -50,6 +66,7 @@ export interface SSEMessage {
     cache_read_input_tokens?: number;
     output_tokens?: number;
   };
+  metadata?: Partial<LLMResponseMetadata>;
 }
 
 export interface SSEStreamData {
@@ -71,6 +88,7 @@ export interface QueueMessage {
   traceId?: string;
   parentSpanId?: string;
   sseStreamData?: SSEStreamData;
+  responseMetadata?: Partial<LLMResponseMetadata>;
 }
 
 export interface TinybirdTrace {

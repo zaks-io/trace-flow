@@ -41,7 +41,7 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
   const [responseBodyLoading, setResponseBodyLoading] = useState(false);
   const [requestBodyError, setRequestBodyError] = useState<string | null>(null);
   const [responseBodyError, setResponseBodyError] = useState<string | null>(null);
-  const [isRequestOpen, setIsRequestOpen] = useState(true);
+  const [isRequestOpen, setIsRequestOpen] = useState(false);
   const [isResponseOpen, setIsResponseOpen] = useState(true);
 
   const { data, loading, error } = useTinybirdQuery<TinybirdResponse>({
