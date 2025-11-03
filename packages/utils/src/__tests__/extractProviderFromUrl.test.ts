@@ -17,6 +17,15 @@ describe('extractProviderFromUrl', () => {
     });
   });
 
+  describe('OpenRouter', () => {
+    it('should identify OpenRouter URLs', () => {
+      expect(extractProviderFromUrl('https://openrouter.ai/api/v1/chat/completions')).toBe(
+        'openrouter',
+      );
+      expect(extractProviderFromUrl('https://OPENROUTER.AI/api')).toBe('openrouter');
+    });
+  });
+
   describe('Google', () => {
     it('should identify Google URLs', () => {
       expect(extractProviderFromUrl('https://generativelanguage.googleapis.com/v1/models')).toBe(
@@ -68,6 +77,7 @@ describe('extractProviderFromUrl', () => {
     it('should handle URLs with mixed case', () => {
       expect(extractProviderFromUrl('https://API.OpenAI.COM/v1')).toBe('openai');
       expect(extractProviderFromUrl('https://Api.Anthropic.Com/v1')).toBe('anthropic');
+      expect(extractProviderFromUrl('https://OpenRouter.AI/api/v1')).toBe('openrouter');
     });
   });
 });
