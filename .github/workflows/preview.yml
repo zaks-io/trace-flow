@@ -68,7 +68,8 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
         with:
           script: |
-            const branchName = process.env.BRANCH_NAME;
+            // Cloudflare Pages sanitizes branch names: slashes become hyphens
+            const branchName = process.env.BRANCH_NAME.replace(/\//g, '-');
             const body = `## 🚀 Preview Deployed
 
             | Service | URL |
