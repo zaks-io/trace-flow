@@ -89,9 +89,11 @@ export interface QueueMessage {
   parentSpanId?: string;
   sseStreamData?: SSEStreamData;
   responseMetadata?: Partial<LLMResponseMetadata>;
+  receivedAt: number;
 }
 
 export interface TinybirdTrace {
+  ReceivedAt: number;
   Timestamp: number;
   TraceId: string;
   SpanId: string;
@@ -114,3 +116,28 @@ export interface TinybirdTrace {
   'Links.TraceState': string[];
   'Links.Attributes': string[];
 }
+
+/**
+ * Queue message for OTLP trace ingestion.
+ * Contains pre-transformed TinybirdTrace objects ready for insertion.
+ */
+export interface OTLPQueueMessage {
+  type: 'otlp';
+  apiKey: string;
+  traces: TinybirdTrace[];
+  receivedAt: number;
+}
+
+/**
+ * LLM proxy queue message with optional type discriminator.
+ * The type field is optional for backward compatibility with existing messages.
+ */
+export interface LLMQueueMessage extends QueueMessage {
+  type?: 'llm';
+}
+
+/**
+ * Union type for all queue message types.
+ * Use type guard to distinguish between message types.
+ */
+export type QueueMessageUnion = LLMQueueMessage | OTLPQueueMessage;

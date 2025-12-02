@@ -41,6 +41,7 @@ describe('Queue Handler Integration', () => {
       firstTokenReceived: 1200,
       responseComplete: 1500,
     },
+    receivedAt: 1000000000000000,
   });
 
   it('should process single message and route to correct shard', async () => {

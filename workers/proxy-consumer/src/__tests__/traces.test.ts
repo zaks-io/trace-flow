@@ -29,6 +29,7 @@ describe('buildTraces', () => {
       firstTokenReceived: 1200,
       responseComplete: 1500,
     },
+    receivedAt: 1000000000000000,
   };
 
   describe('basic trace generation', () => {
