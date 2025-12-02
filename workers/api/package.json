@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy:dev": "wrangler deploy",
+    "deploy:preview": "wrangler deploy --env preview",
     "type-check": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",

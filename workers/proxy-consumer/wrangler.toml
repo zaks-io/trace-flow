@@ -54,3 +54,21 @@ dead_letter_queue = "observe-requests-dlq-prod"
 [[env.production.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "observe-storage-prod"
+
+[env.preview]
+name = "observe-proxy-consumer-preview"
+
+[[env.preview.durable_objects.bindings]]
+name = "TRACE_BATCHER"
+class_name = "TraceBatcher"
+
+[[env.preview.queues.consumers]]
+queue = "observe-requests-preview"
+max_batch_size = 100
+max_batch_timeout = 5
+max_concurrency = 20
+max_retries = 5
+
+[[env.preview.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage-dev"
