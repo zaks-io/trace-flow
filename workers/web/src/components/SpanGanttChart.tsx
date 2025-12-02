@@ -39,7 +39,7 @@ const getEventColor = (eventType: string): string => {
     'bg-teal-500',
   ];
 
-  return colors[Math.abs(hash) % colors.length] ?? 'bg-gray-500';
+  return colors[Math.abs(hash) % colors.length] ?? 'bg-muted-foreground';
 };
 export function SpanGanttChart({ spans }: SpanGanttChartProps) {
   const assignEventRows = (
@@ -188,73 +188,75 @@ export function SpanGanttChart({ spans }: SpanGanttChartProps) {
   const getStatusColor = (statusCode: string) => {
     switch (statusCode) {
       case 'OK':
-        return 'bg-green-500';
+        return 'bg-emerald-500';
       case 'ERROR':
-        return 'bg-red-500';
+        return 'bg-destructive';
       default:
-        return 'bg-gray-400';
+        return 'bg-muted-foreground';
     }
   };
 
   const getStatusBorderColor = (statusCode: string) => {
     switch (statusCode) {
       case 'OK':
-        return 'border-green-600';
+        return 'border-emerald-600';
       case 'ERROR':
-        return 'border-red-600';
+        return 'border-destructive';
       default:
-        return 'border-gray-500';
+        return 'border-muted-foreground';
     }
   };
 
   if (spanRows.length === 0) {
-    return <div className="text-sm text-gray-500 text-center py-8">No spans to display</div>;
+    return (
+      <div className="py-8 text-center text-sm text-muted-foreground">No spans to display</div>
+    );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-4 text-xs text-gray-600">
+      <div className="flex items-center gap-4 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 bg-green-500 rounded"></div>
+          <div className="h-3 w-3 rounded bg-emerald-500"></div>
           <span>OK</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 bg-red-500 rounded"></div>
+          <div className="h-3 w-3 rounded bg-destructive"></div>
           <span>ERROR</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 bg-gray-400 rounded"></div>
+          <div className="h-3 w-3 rounded bg-muted-foreground"></div>
           <span>UNSET</span>
         </div>
       </div>
 
-      <div className="relative bg-gray-50 rounded-lg p-4">
+      <div className="relative rounded-lg bg-muted/50 p-4">
         <div className="space-y-1">
           {spanRows.map((row) => (
             <div key={row.span.SpanId}>
-              <div className="relative h-8 group" style={{ paddingLeft: `${row.depth * 24}px` }}>
+              <div className="group relative h-8" style={{ paddingLeft: `${row.depth * 24}px` }}>
                 <div className="absolute inset-0 flex items-center">
-                  <div className="flex-1 relative h-6">
+                  <div className="relative h-6 flex-1">
                     <div
-                      className={`absolute h-full rounded border ${getStatusColor(row.span.StatusCode)} ${getStatusBorderColor(row.span.StatusCode)} transition-all cursor-pointer hover:opacity-80`}
+                      className={`absolute h-full cursor-pointer rounded border transition-all hover:opacity-80 ${getStatusColor(row.span.StatusCode)} ${getStatusBorderColor(row.span.StatusCode)}`}
                       style={{
                         left: `${row.startOffset}%`,
                         width: `${row.width}%`,
                       }}
                       title={`${row.span.SpanName} - ${formatDuration(row.span.Duration)}`}
                     >
-                      <div className="absolute inset-0 flex items-center px-2 text-xs text-white font-medium truncate">
+                      <div className="absolute inset-0 flex items-center truncate px-2 text-xs font-medium text-white">
                         {row.width > 5 ? row.span.SpanName : ''}
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="absolute left-0 top-0 bottom-0 flex items-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  <div className="bg-gray-900 text-white text-xs px-2 py-1 rounded shadow-lg whitespace-nowrap z-10">
+                <div className="pointer-events-none absolute bottom-0 left-0 top-0 flex items-center opacity-0 transition-opacity group-hover:opacity-100">
+                  <div className="z-10 whitespace-nowrap rounded bg-popover px-2 py-1 text-xs text-popover-foreground shadow-lg">
                     <div className="font-medium">{row.span.SpanName}</div>
-                    <div className="text-gray-300">{formatDuration(row.span.Duration)}</div>
-                    <div className="text-gray-400">{row.span.ServiceName}</div>
+                    <div className="text-muted-foreground">{formatDuration(row.span.Duration)}</div>
+                    <div className="text-muted-foreground/70">{row.span.ServiceName}</div>
                   </div>
                 </div>
               </div>
@@ -268,25 +270,25 @@ export function SpanGanttChart({ spans }: SpanGanttChartProps) {
                   }}
                 >
                   <div className="absolute inset-0">
-                    <div className="flex-1 relative h-full">
+                    <div className="relative h-full flex-1">
                       {row.events.map((event, idx) => (
                         <div
                           key={idx}
-                          className="absolute group/event -translate-x-1/2"
+                          className="group/event absolute -translate-x-1/2"
                           style={{
                             left: `${event.offset}%`,
                             top: `${event.row * 16}px`,
                           }}
                         >
                           <div
-                            className={`w-3 h-3 rounded-full ${getEventColor(event.name)} border-2 border-white cursor-pointer hover:scale-150 transition-transform shadow-sm`}
+                            className={`h-3 w-3 cursor-pointer rounded-full border-2 border-background shadow-sm transition-transform hover:scale-150 ${getEventColor(event.name)}`}
                             title={event.name}
                           />
-                          <div className="absolute left-1/2 -translate-x-1/2 top-5 opacity-0 group-hover/event:opacity-100 transition-opacity pointer-events-none z-20">
-                            <div className="bg-gray-900 text-white text-xs px-2 py-1 rounded shadow-lg whitespace-nowrap min-w-max">
+                          <div className="pointer-events-none absolute left-1/2 top-5 z-20 -translate-x-1/2 opacity-0 transition-opacity group-hover/event:opacity-100">
+                            <div className="min-w-max whitespace-nowrap rounded bg-popover px-2 py-1 text-xs text-popover-foreground shadow-lg">
                               <div className="font-medium">{event.name}</div>
                               {event.attributes !== '{}' && (
-                                <pre className="text-gray-300 text-xs mt-1 max-w-xs overflow-x-auto">
+                                <pre className="mt-1 max-w-xs overflow-x-auto text-xs text-muted-foreground">
                                   {JSON.stringify(JSON.parse(event.attributes), null, 2)}
                                 </pre>
                               )}
@@ -302,7 +304,7 @@ export function SpanGanttChart({ spans }: SpanGanttChartProps) {
           ))}
         </div>
 
-        <div className="flex justify-between text-xs text-gray-500 mt-4 pt-2 border-t">
+        <div className="mt-4 flex justify-between border-t border-border pt-2 text-xs text-muted-foreground">
           <span>0ms</span>
           <span>Timeline</span>
           <span>

@@ -57,7 +57,6 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
     enabled: enabled && !!traceId,
   });
 
-  // Reset body states when traceId changes
   useEffect(() => {
     setRequestBody(null);
     setResponseBody(null);
@@ -67,7 +66,6 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
     setResponseBodyError(null);
   }, [traceId]);
 
-  // Fetch request body automatically when component is enabled
   useEffect(() => {
     if (enabled && traceId && !requestBody && !requestBodyLoading && requestBodyError === null) {
       setRequestBodyLoading(true);
@@ -85,7 +83,6 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           });
 
           if (!res.ok) {
-            // 404 means no body exists, which is fine
             if (res.status === 404) {
               setRequestBody(null);
               setRequestBodyLoading(false);
@@ -108,7 +105,6 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
     }
   }, [enabled, traceId, requestBody, requestBodyLoading, requestBodyError, getAccessTokenSilently]);
 
-  // Fetch response body automatically when component is enabled
   useEffect(() => {
     if (enabled && traceId && !responseBody && !responseBodyLoading && responseBodyError === null) {
       setResponseBodyLoading(true);
@@ -126,7 +122,6 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           });
 
           if (!res.ok) {
-            // 404 means no body exists, which is fine
             if (res.status === 404) {
               setResponseBody(null);
               setResponseBodyLoading(false);
@@ -187,19 +182,19 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
 
   const renderBodyContent = (formattedBody: FormattedBody | null) => {
     if (!formattedBody) {
-      return <p className="text-sm text-gray-500 p-4 mt-2">No body available</p>;
+      return <p className="mt-2 p-4 text-sm text-muted-foreground">No body available</p>;
     }
 
     switch (formattedBody.format) {
       case 'json':
         return (
           <div className="mt-2">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="inline-block px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="inline-block rounded bg-blue-500/20 px-2 py-1 text-xs font-medium text-blue-400">
                 JSON
               </span>
             </div>
-            <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto text-xs">
+            <pre className="overflow-x-auto rounded-lg bg-background p-4 text-xs text-foreground">
               {JSON.stringify(formattedBody.content, null, 2)}
             </pre>
           </div>
@@ -209,21 +204,23 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
         const events = formattedBody.content as ParsedSSEEvent[];
         return (
           <div className="mt-2">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="inline-block px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="inline-block rounded bg-purple-500/20 px-2 py-1 text-xs font-medium text-purple-400">
                 Server-Sent Events ({events.length} events)
               </span>
             </div>
             <div className="space-y-2">
               {events.map((event, index) => (
-                <div key={index} className="bg-gray-900 text-gray-100 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
+                <div key={index} className="rounded-lg bg-background p-4 text-foreground">
+                  <div className="mb-2 flex items-center gap-2">
                     <span className="text-xs font-medium text-purple-400">
                       {event.event ?? 'message'}
                     </span>
-                    {event.id && <span className="text-xs text-gray-500">ID: {event.id}</span>}
+                    {event.id && (
+                      <span className="text-xs text-muted-foreground">ID: {event.id}</span>
+                    )}
                   </div>
-                  <pre className="text-xs overflow-x-auto">
+                  <pre className="overflow-x-auto text-xs">
                     {(() => {
                       try {
                         return JSON.stringify(JSON.parse(event.data), null, 2);
@@ -242,12 +239,12 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
       case 'text':
         return (
           <div className="mt-2">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="inline-block px-2 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="inline-block rounded bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
                 Plain Text
               </span>
             </div>
-            <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto text-xs whitespace-pre-wrap break-words">
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-background p-4 text-xs text-foreground">
               {formattedBody.content as string}
             </pre>
           </div>
@@ -255,7 +252,7 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
 
       default:
         return (
-          <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 mt-2 overflow-x-auto text-xs">
+          <pre className="mt-2 overflow-x-auto rounded-lg bg-background p-4 text-xs text-foreground">
             {formattedBody.raw}
           </pre>
         );
@@ -267,14 +264,14 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
 
     return children.map((span) => (
       <div key={span.SpanId} style={{ marginLeft: `${depth * 20}px` }}>
-        <div className="border-l-2 border-gray-300 pl-3 py-2">
+        <div className="border-l-2 border-border py-2 pl-3">
           <div className="flex items-start justify-between">
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <span className="font-medium text-gray-900">{span.SpanName}</span>
-                <span className="text-xs text-gray-500">{span.ServiceName}</span>
+                <span className="font-medium text-foreground">{span.SpanName}</span>
+                <span className="text-xs text-muted-foreground">{span.ServiceName}</span>
               </div>
-              <div className="flex items-center gap-3 mt-1 text-xs text-gray-600">
+              <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
                 <span>Duration: {formatDuration(span.Duration)}</span>
                 <span>Status: {span.StatusCode}</span>
               </div>
@@ -288,25 +285,25 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center py-12">
-        <div className="text-gray-600">Loading trace details...</div>
+      <div className="flex items-center justify-center py-12">
+        <div className="text-muted-foreground">Loading trace details...</div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <h3 className="text-red-800 font-semibold mb-2">Error loading trace</h3>
-        <p className="text-red-600 text-sm">{error.message}</p>
+      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+        <h3 className="mb-2 font-semibold text-destructive">Error loading trace</h3>
+        <p className="text-sm text-destructive/80">{error.message}</p>
       </div>
     );
   }
 
   if (!rootSpan) {
     return (
-      <div className="flex justify-center items-center py-12">
-        <div className="text-gray-600">No trace data found</div>
+      <div className="flex items-center justify-center py-12">
+        <div className="text-muted-foreground">No trace data found</div>
       </div>
     );
   }
@@ -314,47 +311,47 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
   return (
     <div className="space-y-6">
       <section>
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">Request Metadata</h3>
-        <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+        <h3 className="mb-3 text-lg font-semibold text-foreground">Request Metadata</h3>
+        <div className="space-y-2 rounded-lg bg-muted/50 p-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <span className="text-sm text-gray-500">Timestamp</span>
-              <p className="text-sm font-medium text-gray-900">
+              <span className="text-sm text-muted-foreground">Timestamp</span>
+              <p className="text-sm font-medium text-foreground">
                 {formatTimestamp(rootSpan.Timestamp)}
               </p>
             </div>
             <div>
-              <span className="text-sm text-gray-500">Duration</span>
-              <p className="text-sm font-medium text-gray-900">
+              <span className="text-sm text-muted-foreground">Duration</span>
+              <p className="text-sm font-medium text-foreground">
                 {formatDuration(rootSpan.Duration)}
               </p>
             </div>
             <div>
-              <span className="text-sm text-gray-500">Status</span>
-              <p className="text-sm font-medium text-gray-900">{rootSpan.StatusCode}</p>
+              <span className="text-sm text-muted-foreground">Status</span>
+              <p className="text-sm font-medium text-foreground">{rootSpan.StatusCode}</p>
             </div>
             <div>
-              <span className="text-sm text-gray-500">Service</span>
-              <p className="text-sm font-medium text-gray-900">{rootSpan.ServiceName}</p>
+              <span className="text-sm text-muted-foreground">Service</span>
+              <p className="text-sm font-medium text-foreground">{rootSpan.ServiceName}</p>
             </div>
           </div>
           <div>
-            <span className="text-sm text-gray-500">Trace ID</span>
-            <p className="text-xs font-mono text-gray-900 break-all">{rootSpan.TraceId}</p>
+            <span className="text-sm text-muted-foreground">Trace ID</span>
+            <p className="break-all font-mono text-xs text-foreground">{rootSpan.TraceId}</p>
           </div>
           {rootSpan.StatusMessage && (
             <div>
-              <span className="text-sm text-gray-500">Status Message</span>
-              <p className="text-sm text-gray-900">{rootSpan.StatusMessage}</p>
+              <span className="text-sm text-muted-foreground">Status Message</span>
+              <p className="text-sm text-foreground">{rootSpan.StatusMessage}</p>
             </div>
           )}
         </div>
       </section>
 
       <section>
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">Request Body</h3>
+        <h3 className="mb-3 text-lg font-semibold text-foreground">Request Body</h3>
         <Collapsible open={isRequestOpen} onOpenChange={setIsRequestOpen}>
-          <CollapsibleTrigger className="flex items-center gap-2 w-full bg-gray-50 hover:bg-gray-100 rounded-lg p-3 text-left transition-colors">
+          <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-lg bg-muted/50 p-3 text-left transition-colors hover:bg-muted">
             <ChevronDown
               className={`h-4 w-4 transition-transform ${isRequestOpen ? 'rotate-0' : '-rotate-90'}`}
             />
@@ -370,11 +367,11 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           </CollapsibleTrigger>
           <CollapsibleContent>
             {requestBodyError ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-2">
-                <p className="text-red-600 text-sm">{requestBodyError}</p>
+              <div className="mt-2 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+                <p className="text-sm text-destructive">{requestBodyError}</p>
               </div>
             ) : requestBodyLoading ? (
-              <div className="text-sm text-gray-500 p-4 mt-2">Loading request body...</div>
+              <div className="mt-2 p-4 text-sm text-muted-foreground">Loading request body...</div>
             ) : (
               renderBodyContent(requestBody)
             )}
@@ -383,9 +380,9 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
       </section>
 
       <section>
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">Response Body</h3>
+        <h3 className="mb-3 text-lg font-semibold text-foreground">Response Body</h3>
         <Collapsible open={isResponseOpen} onOpenChange={setIsResponseOpen}>
-          <CollapsibleTrigger className="flex items-center gap-2 w-full bg-gray-50 hover:bg-gray-100 rounded-lg p-3 text-left transition-colors">
+          <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-lg bg-muted/50 p-3 text-left transition-colors hover:bg-muted">
             <ChevronDown
               className={`h-4 w-4 transition-transform ${isResponseOpen ? 'rotate-0' : '-rotate-90'}`}
             />
@@ -401,11 +398,11 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           </CollapsibleTrigger>
           <CollapsibleContent>
             {responseBodyError ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-2">
-                <p className="text-red-600 text-sm">{responseBodyError}</p>
+              <div className="mt-2 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+                <p className="text-sm text-destructive">{responseBodyError}</p>
               </div>
             ) : responseBodyLoading ? (
-              <div className="text-sm text-gray-500 p-4 mt-2">Loading response body...</div>
+              <div className="mt-2 p-4 text-sm text-muted-foreground">Loading response body...</div>
             ) : (
               renderBodyContent(responseBody)
             )}
@@ -414,68 +411,72 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
       </section>
 
       <section>
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">Span Attributes</h3>
-        <div className="bg-gray-50 rounded-lg p-4">
+        <h3 className="mb-3 text-lg font-semibold text-foreground">Span Attributes</h3>
+        <div className="rounded-lg bg-muted/50 p-4">
           <div className="space-y-1">
             {Object.entries(parseAttributes(rootSpan.SpanAttributes)).map(([key, value]) => (
               <div key={key} className="flex items-start gap-2">
-                <span className="text-sm font-mono text-gray-600 min-w-[200px]">{key}:</span>
-                <span className="text-sm text-gray-900 break-all">{value}</span>
+                <span className="min-w-[200px] font-mono text-sm text-muted-foreground">
+                  {key}:
+                </span>
+                <span className="break-all text-sm text-foreground">{value}</span>
               </div>
             ))}
             {Object.keys(parseAttributes(rootSpan.SpanAttributes)).length === 0 && (
-              <p className="text-sm text-gray-500">No span attributes</p>
+              <p className="text-sm text-muted-foreground">No span attributes</p>
             )}
           </div>
         </div>
       </section>
 
       <section>
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">Resource Attributes</h3>
-        <div className="bg-gray-50 rounded-lg p-4">
+        <h3 className="mb-3 text-lg font-semibold text-foreground">Resource Attributes</h3>
+        <div className="rounded-lg bg-muted/50 p-4">
           <div className="space-y-1">
             {Object.entries(parseAttributes(rootSpan.ResourceAttributes)).map(([key, value]) => (
               <div key={key} className="flex items-start gap-2">
-                <span className="text-sm font-mono text-gray-600 min-w-[200px]">{key}:</span>
-                <span className="text-sm text-gray-900 break-all">{value}</span>
+                <span className="min-w-[200px] font-mono text-sm text-muted-foreground">
+                  {key}:
+                </span>
+                <span className="break-all text-sm text-foreground">{value}</span>
               </div>
             ))}
             {Object.keys(parseAttributes(rootSpan.ResourceAttributes)).length === 0 && (
-              <p className="text-sm text-gray-500">No resource attributes</p>
+              <p className="text-sm text-muted-foreground">No resource attributes</p>
             )}
           </div>
         </div>
       </section>
 
       <section>
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">
+        <h3 className="mb-3 text-lg font-semibold text-foreground">
           Child Spans ({spans.length - 1})
         </h3>
-        <div className="bg-gray-50 rounded-lg p-4">
+        <div className="rounded-lg bg-muted/50 p-4">
           {spans.length > 1 ? (
             renderSpanTree(spans, rootSpan.SpanId, 0)
           ) : (
-            <p className="text-sm text-gray-500">No child spans</p>
+            <p className="text-sm text-muted-foreground">No child spans</p>
           )}
         </div>
       </section>
 
       {rootSpan['Events.Name'] && rootSpan['Events.Name'].length > 0 && (
         <section>
-          <h3 className="text-lg font-semibold text-gray-900 mb-3">Events</h3>
-          <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+          <h3 className="mb-3 text-lg font-semibold text-foreground">Events</h3>
+          <div className="space-y-3 rounded-lg bg-muted/50 p-4">
             {rootSpan['Events.Name'].map((name, index) => (
-              <div key={index} className="border-l-2 border-blue-400 pl-3">
+              <div key={index} className="border-l-2 border-primary pl-3">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <span className="font-medium text-gray-900">{name}</span>
+                    <span className="font-medium text-foreground">{name}</span>
                     {rootSpan['Events.Timestamp'][index] && (
-                      <p className="text-xs text-gray-600 mt-1">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {formatTimestamp(rootSpan['Events.Timestamp'][index])}
                       </p>
                     )}
                     {rootSpan['Events.Attributes'][index] && (
-                      <pre className="text-xs text-gray-600 mt-2 overflow-x-auto">
+                      <pre className="mt-2 overflow-x-auto text-xs text-muted-foreground">
                         {JSON.stringify(
                           parseAttributes(rootSpan['Events.Attributes'][index]),
                           null,

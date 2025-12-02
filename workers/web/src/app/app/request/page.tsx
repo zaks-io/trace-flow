@@ -62,11 +62,13 @@ export default function RequestDetailPage() {
 
   if (!traceId) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">No Trace ID Provided</h1>
-          <p className="text-gray-600 mb-4">Please select a request from the requests list.</p>
-          <Link href="/app/requests" className="text-blue-600 hover:text-blue-700 underline">
+          <h1 className="mb-2 text-2xl font-bold text-foreground">No Trace ID Provided</h1>
+          <p className="mb-4 text-muted-foreground">
+            Please select a request from the requests list.
+          </p>
+          <Link href="/app/requests" className="text-primary underline hover:text-primary/80">
             Go to Requests
           </Link>
         </div>
@@ -75,31 +77,31 @@ export default function RequestDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="border-b bg-white sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+    <div className="min-h-screen bg-background">
+      <div className="sticky top-0 z-10 border-b border-border bg-card">
+        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <nav className="flex items-center space-x-2 text-sm">
               <Link
                 href="/app/requests"
-                className="text-gray-500 hover:text-gray-700 transition-colors"
+                className="text-muted-foreground transition-colors hover:text-foreground"
               >
                 Requests
               </Link>
-              <ChevronRight className="h-4 w-4 text-gray-400" />
-              <span className="text-gray-900 font-medium">
+              <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+              <span className="font-medium text-foreground">
                 {rootSpan?.SpanName ?? 'Trace Details'}
               </span>
             </nav>
 
             <button
               onClick={() => void handleCopyLink()}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors"
+              className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               {copied ? (
                 <>
-                  <Check className="h-4 w-4 text-green-600" />
-                  <span className="text-green-600">Copied!</span>
+                  <Check className="h-4 w-4 text-emerald-400" />
+                  <span className="text-emerald-400">Copied!</span>
                 </>
               ) : (
                 <>
@@ -112,15 +114,15 @@ export default function RequestDetailPage() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Trace Details</h1>
-          <p className="text-sm text-gray-500 font-mono break-all">{traceId}</p>
+          <h1 className="mb-2 text-2xl font-bold text-foreground">Trace Details</h1>
+          <p className="break-all font-mono text-sm text-muted-foreground">{traceId}</p>
         </div>
 
         {spans.length > 0 && (
           <section className="mb-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Span Timeline</h2>
+            <h2 className="mb-4 text-xl font-semibold text-foreground">Span Timeline</h2>
             <SpanGanttChart spans={spans} />
           </section>
         )}

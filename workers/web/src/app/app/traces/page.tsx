@@ -37,18 +37,6 @@ export default function Traces() {
     return `${milliseconds.toFixed(2)}ms`;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status.toUpperCase()) {
-      case 'OK':
-      case 'UNSET':
-        return 'text-green-600';
-      case 'ERROR':
-        return 'text-red-600';
-      default:
-        return 'text-gray-600';
-    }
-  };
-
   const truncateId = (id: string) => {
     return id.length > 16 ? `${id.slice(0, 16)}...` : id;
   };
@@ -57,91 +45,109 @@ export default function Traces() {
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center py-12">
-        <div className="text-gray-600">Loading traces...</div>
+      <div className="flex items-center justify-center py-12">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          Loading traces...
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <h3 className="text-red-800 font-semibold mb-2">Error loading traces</h3>
-        <p className="text-red-600 text-sm">{error.message}</p>
+      <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-4">
+        <h3 className="mb-2 font-semibold text-destructive">Error loading traces</h3>
+        <p className="text-sm text-destructive/80">{error.message}</p>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Traces</h1>
-        <p className="text-gray-600 mt-1">Recent OpenTelemetry traces from your LLM requests</p>
+    <div className="animate-fade-in">
+      <div className="mb-8">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Traces</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Recent OpenTelemetry traces from your LLM requests
+        </p>
       </div>
 
       {traces.length === 0 ? (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-          <p className="text-gray-600">No traces found</p>
+        <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
+          <p className="text-muted-foreground">No traces found</p>
+          <p className="mt-1 text-sm text-muted-foreground/70">
+            Traces will appear here once your LLM proxy receives traffic
+          </p>
         </div>
       ) : (
-        <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+        <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-border">
+              <thead className="bg-muted/30">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Timestamp
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Trace ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Span Name
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Service
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Duration
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Status
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-border bg-card">
                 {traces.map((trace) => (
-                  <tr key={`${trace.TraceId}-${trace.SpanId}`} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <tr key={`${trace.TraceId}-${trace.SpanId}`} className="table-row-interactive">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
                       {formatTimestamp(trace.Timestamp)}
                     </td>
                     <td
-                      className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-mono"
+                      className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground"
                       title={trace.TraceId}
                     >
-                      {truncateId(trace.TraceId)}
+                      <code className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-xs">
+                        {truncateId(trace.TraceId)}
+                      </code>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
                       {trace.SpanName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                       {trace.ServiceName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="whitespace-nowrap px-6 py-4 font-mono text-sm text-foreground">
                       {formatDuration(trace.Duration)}
                     </td>
-                    <td
-                      className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${getStatusColor(trace.StatusCode)}`}
-                    >
-                      {trace.StatusCode}
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          trace.StatusCode === 'OK' || trace.StatusCode === 'UNSET'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : trace.StatusCode === 'ERROR'
+                              ? 'bg-destructive/20 text-destructive'
+                              : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {trace.StatusCode}
+                      </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
-            <p className="text-sm text-gray-600">
+          <div className="border-t border-border bg-muted/20 px-6 py-3">
+            <p className="text-xs text-muted-foreground">
               Showing {traces.length} {traces.length === 1 ? 'trace' : 'traces'}
             </p>
           </div>
