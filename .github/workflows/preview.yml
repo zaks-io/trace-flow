@@ -27,7 +27,7 @@ jobs:
 
       # Deploy workers to preview environment
       - name: Deploy Preview Workers
-        run: pnpm turbo run deploy:preview --filter='./workers/*' --filter='!@observe/web'
+        run: pnpm turbo run deploy:preview --filter='./workers/*' --filter='!@observe/web' --env-mode=loose
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
