@@ -63,12 +63,11 @@ name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
 
 [[env.preview.queues.consumers]]
-queue = "observe-requests-dev"
+queue = "observe-requests-preview"
 max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5
-dead_letter_queue = "observe-requests-dlq-dev"
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
