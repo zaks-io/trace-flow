@@ -7,29 +7,37 @@ export default function AppPage() {
   const apiKeys = useQuery(api.apiKeys.list);
 
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-600 mt-1">LLM Request Analytics Dashboard</p>
+    <div className="animate-fade-in">
+      <div className="mb-8">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Dashboard</h1>
+        <p className="mt-1 text-sm text-muted-foreground">LLM Request Analytics Dashboard</p>
       </div>
 
-      <div className="bg-white shadow-sm rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">API Keys</h2>
+      <div className="card-elevated rounded-xl border border-border bg-card p-6">
+        <h2 className="mb-4 text-base font-medium text-foreground">API Keys</h2>
         {apiKeys === undefined ? (
-          <p className="text-gray-600">Loading...</p>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            Loading...
+          </div>
         ) : apiKeys.length === 0 ? (
-          <p className="text-gray-600">No API keys found</p>
+          <p className="text-sm text-muted-foreground">No API keys found</p>
         ) : (
-          <div className="space-y-2">
+          <div className="stagger-children space-y-2">
             {apiKeys.map((apiKey) => (
-              <div key={apiKey._id} className="p-3 bg-gray-50 rounded border border-gray-200">
+              <div
+                key={apiKey._id}
+                className="rounded-lg border border-border bg-muted/30 p-3 transition-colors hover:bg-muted/50"
+              >
                 <p className="text-sm">
-                  <strong className="text-gray-700">Key:</strong>{' '}
-                  <span className="font-mono text-gray-900">{apiKey.key}</span>
+                  <span className="text-muted-foreground">Key:</span>{' '}
+                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                    {apiKey.key}
+                  </code>
                 </p>
-                <p className="text-sm mt-1">
-                  <strong className="text-gray-700">Expires:</strong>{' '}
-                  <span className="text-gray-900">
+                <p className="mt-1.5 text-sm">
+                  <span className="text-muted-foreground">Expires:</span>{' '}
+                  <span className="text-foreground">
                     {new Date(apiKey.expiresAt).toLocaleString()}
                   </span>
                 </p>
