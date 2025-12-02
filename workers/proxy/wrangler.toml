@@ -39,3 +39,18 @@ binding = "REQUEST_QUEUE"
 [[env.production.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "observe-storage-prod"
+
+[env.preview]
+name = "observe-proxy-preview"
+
+[[env.preview.kv_namespaces]]
+binding = "API_KEYS"
+id = "86d6aaf858e747e4bd9aa0a51216570d"
+
+[[env.preview.queues.producers]]
+queue = "observe-requests-dev"
+binding = "REQUEST_QUEUE"
+
+[[env.preview.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage-dev"
