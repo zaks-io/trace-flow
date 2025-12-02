@@ -35,7 +35,7 @@ jobs:
       # Deploy Convex preview and build web
       - name: Deploy Convex Preview and Build Web
         run: |
-          npx convex deploy --preview "$BRANCH_NAME" \
+          npx convex deploy --preview-create "$BRANCH_NAME" \
             --cmd 'pnpm turbo run build --filter=@observe/web' \
             --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
         env:
