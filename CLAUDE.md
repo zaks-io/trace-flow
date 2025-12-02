@@ -11,11 +11,15 @@ LLM observability platform built on Cloudflare Workers. Four workers form the sy
 - **API** - Provides R2 access for fetching request/response bodies
 - **Web** - Static dashboard (Cloudflare Pages) displaying analytics via Tinybird
 
-## DEPLOYMENT SAFETY - READ THIS FIRST
+## DEPLOYMENT
 
-**⚠️ CRITICAL: NEVER DEPLOY TO PRODUCTION ⚠️**
+Production deployments are automated via GitHub Actions. When code is merged to `main`, the deploy workflow automatically:
 
-Do NOT run any production deployment commands. Ever. Any deployments requested by the user reference the development environment.
+1. Runs CI checks (format, lint, type-check, test, build)
+2. Deploys Convex backend
+3. Deploys all Cloudflare Workers in parallel (proxy, proxy-consumer, api, web)
+
+**Do NOT run manual production deployment commands.** Use the GitHub Actions workflow instead.
 
 **Development Commands (use these for local dev and testing):**
 
@@ -333,19 +337,13 @@ tb datasource data otel_traces --limit 10
 
 ## Environments
 
-Project has three separate environments with isolated resources:
+Project has two separate environments with isolated resources:
 
 **Development (default):**
 
 - Queues: `observe-requests-dev`, `observe-requests-dlq-dev`
 - R2 bucket: `observe-storage-dev`
 - KV namespace: `observe-api-keys-dev` (ID: 86d6aaf858e747e4bd9aa0a51216570d)
-
-**Staging:**
-
-- Queues: `observe-requests-staging`, `observe-requests-dlq-staging`
-- R2 bucket: `observe-storage-staging`
-- KV namespace: `observe-api-keys-staging` (ID: bb7a289d3389426b979a746801d68f3c)
 
 **Production:**
 
@@ -355,31 +353,29 @@ Project has three separate environments with isolated resources:
 
 ### Environment Differences: Workers vs Pages
 
-**Workers (proxy, proxy-consumer):**
+**Workers (proxy, proxy-consumer, api):**
 
-- Support custom environment names: `dev`, `staging`, `production`
-- Each environment is a separate Worker instance
-- Deploy with `--branch` flag: `wrangler deploy --branch staging`
+- Default deployment goes to dev environment
+- Production deployment uses `--env production` flag
+- Worker names are consistent across environments (no env suffix in name)
 
 **Pages (web):**
 
 - Only supports TWO environments: `preview` and `production`
-- `deploy:preview` deploys to `preview` environment
+- `deploy:preview` deploys to `preview` environment (same as dev)
 - `deploy:prod` deploys to `production` environment
-- Use branch names to distinguish deployments (e.g., `--branch preview`)
 
 ### Deployment Commands
 
 ```bash
 # Deploy all workers to a specific environment
 pnpm run deploy:dev      # Workers → dev, Pages → preview
-pnpm run deploy:staging  # Workers → staging, Pages → preview (staging branch)
 pnpm run deploy:prod     # Workers → production, Pages → production (requires explicit approval)
 
 # Deploy individual workers
 cd workers/proxy && pnpm run deploy:dev
-cd workers/proxy-consumer && pnpm run deploy:staging
-cd workers/web && pnpm run deploy:dev  # Deploys to Pages preview environment
+cd workers/proxy-consumer && pnpm run deploy:prod
+cd workers/web && pnpm run deploy:preview  # Deploys to Pages preview environment
 ```
 
 ## Wrangler Configuration
@@ -430,11 +426,6 @@ cd workers/proxy-consumer
 wrangler secret put TINYBIRD_TOKEN
 wrangler secret put TINYBIRD_DATASOURCE  # Optional
 wrangler secret put TINYBIRD_HOST        # Optional
-
-# Set secrets for staging
-wrangler secret put TINYBIRD_TOKEN --env staging
-wrangler secret put TINYBIRD_DATASOURCE --env staging
-wrangler secret put TINYBIRD_HOST --env staging
 
 # Set secrets for production
 wrangler secret put TINYBIRD_TOKEN --env production
@@ -627,7 +618,26 @@ Tinybird automatically transforms data from live schema to new schema during dep
 
 ## Deployment
 
-Project uses Cloudflare's Git integration for automatic deployments on push to `main`. Each worker is configured as a separate application in Cloudflare dashboard with its own root directory and build command.
+### GitHub Actions (Production)
+
+Production deployments are automated via `.github/workflows/deploy.yml`. On push to `main`:
+
+1. **CI job** - Runs format, lint, type-check, test, build
+2. **Convex** - Deploys backend first (workers may depend on schema)
+3. **Workers** - Deploys proxy, proxy-consumer, api, web in parallel
+4. **Status** - Verifies all deployments succeeded
+
+The workflow uses the `Production` GitHub environment for secrets.
+
+### Manual Development Deployment
+
+```bash
+# Deploy all workers to development
+pnpm run deploy:dev
+
+# Deploy individual workers to dev
+cd workers/proxy && pnpm run deploy:dev
+```
 
 ## Creating Pull Requests
 
