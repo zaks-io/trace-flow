@@ -19,11 +19,10 @@ describe('Proxy Worker Integration', () => {
 
   describe('Authentication', () => {
     it('should return 401 when API key is missing', async () => {
-      const res = await SELF.fetch('http://localhost/', {
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com/v1/chat/completions',
         },
       });
 
@@ -33,11 +32,10 @@ describe('Proxy Worker Integration', () => {
     });
 
     it('should return 401 when API key is invalid', async () => {
-      const res = await SELF.fetch('http://localhost/', {
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com/v1/chat/completions',
           'X-Observe-Api-Key': 'invalid-key',
         },
       });
@@ -55,11 +53,10 @@ describe('Proxy Worker Integration', () => {
       };
       await env.API_KEYS.put(expiredKey, JSON.stringify(keyData));
 
-      const res = await SELF.fetch('http://localhost/', {
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com/v1/chat/completions',
           'X-Observe-Api-Key': expiredKey,
         },
       });
@@ -70,8 +67,8 @@ describe('Proxy Worker Integration', () => {
     });
   });
 
-  describe('Request Validation', () => {
-    it('should return 400 when X-Proxy-Target header is missing', async () => {
+  describe('Route Validation', () => {
+    it('should return 404 for invalid route', async () => {
       await setupValidApiKey('test-key');
 
       const res = await SELF.fetch('http://localhost/', {
@@ -82,9 +79,25 @@ describe('Proxy Worker Integration', () => {
         },
       });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(404);
       const body = await res.json();
-      expect(body).toHaveProperty('error', 'Missing X-Proxy-Target header');
+      expect(body).toHaveProperty('error', 'Invalid route');
+    });
+
+    it('should return 404 for unknown provider', async () => {
+      await setupValidApiKey('test-key');
+
+      const res = await SELF.fetch('http://localhost/unknown/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Observe-Api-Key': 'test-key',
+        },
+      });
+
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body).toHaveProperty('error', 'Invalid route');
     });
   });
 
@@ -102,7 +115,7 @@ describe('Proxy Worker Integration', () => {
   });
 
   describe('Proxy Requests', () => {
-    it('should proxy successful non-streaming request', async () => {
+    it('should proxy successful non-streaming request to OpenAI', async () => {
       await setupValidApiKey('test-key');
 
       const mockResponse = {
@@ -122,12 +135,12 @@ describe('Proxy Worker Integration', () => {
           headers: { 'Content-Type': 'application/json' },
         });
 
-      const res = await SELF.fetch('http://localhost/v1/chat/completions', {
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com',
           'X-Observe-Api-Key': 'test-key',
+          Authorization: 'Bearer openai-key',
         },
         body: JSON.stringify({ model: 'gpt-4', messages: [] }),
       });
@@ -142,6 +155,106 @@ describe('Proxy Worker Integration', () => {
       // Verify R2 storage
       const stored = await env.STORAGE.list();
       expect(stored.objects.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should proxy successful request to Anthropic', async () => {
+      await setupValidApiKey('test-key');
+
+      const mockResponse = {
+        id: 'msg-123',
+        content: [{ type: 'text', text: 'Hello!' }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+        },
+      };
+
+      fetchMock
+        .get('https://api.anthropic.com')
+        .intercept({ path: '/v1/messages', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/anthropic/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Observe-Api-Key': 'test-key',
+          'x-api-key': 'anthropic-key',
+        },
+        body: JSON.stringify({ model: 'claude-3-sonnet', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual(mockResponse);
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+    });
+
+    it('should proxy successful request to OpenRouter', async () => {
+      await setupValidApiKey('test-key');
+
+      const mockResponse = {
+        id: 'chatcmpl-123',
+        choices: [{ message: { content: 'Hello!' } }],
+      };
+
+      fetchMock
+        .get('https://openrouter.ai')
+        .intercept({ path: '/api/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openrouter/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Observe-Api-Key': 'test-key',
+          Authorization: 'Bearer openrouter-key',
+        },
+        body: JSON.stringify({ model: 'openai/gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual(mockResponse);
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+    });
+
+    it('should proxy successful request to Groq', async () => {
+      await setupValidApiKey('test-key');
+
+      const mockResponse = {
+        id: 'chatcmpl-123',
+        choices: [{ message: { content: 'Hello!' } }],
+      };
+
+      fetchMock
+        .get('https://api.groq.com')
+        .intercept({ path: '/openai/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/groq/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Observe-Api-Key': 'test-key',
+          Authorization: 'Bearer groq-key',
+        },
+        body: JSON.stringify({ model: 'llama-3.1-70b', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual(mockResponse);
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
 
     it('should handle error responses (4xx)', async () => {
@@ -161,11 +274,10 @@ describe('Proxy Worker Integration', () => {
           headers: { 'Content-Type': 'application/json' },
         });
 
-      const res = await SELF.fetch('http://localhost/v1/chat/completions', {
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com',
           'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify({ invalid: 'data' }),
@@ -193,11 +305,10 @@ describe('Proxy Worker Integration', () => {
           headers: { 'Content-Type': 'application/json' },
         });
 
-      const res = await SELF.fetch('http://localhost/v1/chat/completions', {
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com',
           'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify({ model: 'gpt-4' }),
@@ -221,14 +332,14 @@ describe('Proxy Worker Integration', () => {
           headers: { 'Content-Type': 'text/event-stream' },
         });
 
-      const res = await SELF.fetch('http://localhost/v1/messages', {
+      const res = await SELF.fetch('http://localhost/anthropic/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.anthropic.com',
           'X-Observe-Api-Key': 'test-key',
+          'x-api-key': 'anthropic-key',
         },
-        body: JSON.stringify({ model: 'claude-3', messages: [] }),
+        body: JSON.stringify({ model: 'claude-3', messages: [], stream: true }),
       });
 
       expect(res.status).toBe(200);
@@ -240,7 +351,7 @@ describe('Proxy Worker Integration', () => {
       await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
 
-    it('should strip proxy auth headers and allow provider headers to pass through', async () => {
+    it('should strip proxy auth header and pass through provider auth headers', async () => {
       await setupValidApiKey('test-key');
 
       let capturedHeaders: Headers | null = null;
@@ -262,14 +373,13 @@ describe('Proxy Worker Integration', () => {
           },
         );
 
-      await SELF.fetch('http://localhost/v1/chat/completions', {
+      await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com',
           'X-Observe-Api-Key': 'test-key',
           Authorization: 'Bearer provider-auth-token',
-          'X-API-Key': 'provider-api-key',
+          'x-api-key': 'provider-api-key',
           'Custom-Header': 'custom-value',
         },
         body: JSON.stringify({ model: 'gpt-4' }),
@@ -279,96 +389,12 @@ describe('Proxy Worker Integration', () => {
 
       expect(capturedHeaders).not.toBeNull();
       const headers = capturedHeaders!;
-      expect(headers.has('X-Proxy-Target')).toBe(false);
       expect(headers.has('host')).toBe(false);
       expect(headers.has('X-Observe-Api-Key')).toBe(false);
-      // Authorization and X-API-Key should pass through to provider
+      // Provider auth headers should pass through unchanged
       expect(headers.get('Authorization')).toBe('Bearer provider-auth-token');
-      expect(headers.get('X-API-Key')).toBe('provider-api-key');
+      expect(headers.get('x-api-key')).toBe('provider-api-key');
       expect(headers.get('Custom-Header')).toBe('custom-value');
-    });
-
-    it('should inject Bearer token for OpenAI with X-Provider-Api-Key', async () => {
-      await setupValidApiKey('test-key');
-
-      let capturedHeaders: Headers | null = null;
-
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({
-          path: '/v1/chat/completions',
-          method: 'POST',
-        })
-        .reply(
-          200,
-          (opts: { headers?: Record<string, string> }) => {
-            capturedHeaders = new Headers(opts.headers as HeadersInit);
-            return JSON.stringify({ ok: true });
-          },
-          {
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
-
-      await SELF.fetch('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com',
-          'X-Observe-Api-Key': 'test-key',
-          'X-Provider-Api-Key': 'openai-key-123',
-        },
-        body: JSON.stringify({ model: 'gpt-4' }),
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
-
-      expect(capturedHeaders).not.toBeNull();
-      const headers = capturedHeaders!;
-      expect(headers.has('X-Provider-Api-Key')).toBe(false);
-      expect(headers.get('Authorization')).toBe('Bearer openai-key-123');
-    });
-
-    it('should inject x-api-key header for Anthropic with X-Provider-Api-Key', async () => {
-      await setupValidApiKey('test-key');
-
-      let capturedHeaders: Headers | null = null;
-
-      fetchMock
-        .get('https://api.anthropic.com')
-        .intercept({
-          path: '/v1/messages',
-          method: 'POST',
-        })
-        .reply(
-          200,
-          (opts: { headers?: Record<string, string> }) => {
-            capturedHeaders = new Headers(opts.headers as HeadersInit);
-            return JSON.stringify({ ok: true });
-          },
-          {
-            headers: { 'Content-Type': 'application/json' },
-          },
-        );
-
-      await SELF.fetch('http://localhost/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.anthropic.com',
-          'X-Observe-Api-Key': 'test-key',
-          'X-Provider-Api-Key': 'anthropic-key-456',
-        },
-        body: JSON.stringify({ model: 'claude-3' }),
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
-
-      expect(capturedHeaders).not.toBeNull();
-      const headers = capturedHeaders!;
-      expect(headers.has('X-Provider-Api-Key')).toBe(false);
-      expect(headers.has('Authorization')).toBe(false);
-      expect(headers.get('x-api-key')).toBe('anthropic-key-456');
     });
 
     it('should capture request body via tee()', async () => {
@@ -383,11 +409,10 @@ describe('Proxy Worker Integration', () => {
           headers: { 'Content-Type': 'application/json' },
         });
 
-      const res = await SELF.fetch('http://localhost/v1/chat/completions', {
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Proxy-Target': 'https://api.openai.com',
           'X-Observe-Api-Key': 'test-key',
         },
         body: JSON.stringify(largeBody),

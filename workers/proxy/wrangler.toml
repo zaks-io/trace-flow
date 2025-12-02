@@ -26,7 +26,7 @@ name = "observe-proxy-staging"
 
 [[env.staging.kv_namespaces]]
 binding = "API_KEYS"
-id = "bb7a289d3389426b979a746801d68f3c"
+id = "86d6aaf858e747e4bd9aa0a51216570d"
 
 [[env.staging.queues.producers]]
 queue = "observe-requests-staging"
