@@ -113,6 +113,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/proxy
           command: deploy --env production
+          packageManager: pnpm
 
   deploy-proxy-consumer:
     name: Deploy Proxy Consumer Worker
@@ -129,6 +130,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/proxy-consumer
           command: deploy --env production
+          packageManager: pnpm
 
   deploy-api:
     name: Deploy API Worker
@@ -145,6 +147,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/api
           command: deploy --env production
+          packageManager: pnpm
 
   deploy-web:
     name: Deploy Web (Pages)
@@ -167,6 +170,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/web
           command: pages deploy ./out --project-name=observe-web --branch=main
+          packageManager: pnpm
 
   deploy-status:
     name: Deployment Status
