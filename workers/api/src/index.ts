@@ -10,7 +10,14 @@ interface Env {
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.use('*', cors());
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+  }),
+);
 
 app.get('/bodies/:traceId/:type', async (c) => {
   const authError = await validateAuth0JWT(c);
