@@ -28,22 +28,35 @@ export default function Requests() {
   const [mergedRequests, setMergedRequests] = useState<RequestRow[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoStoppedLiveMode, setAutoStoppedLiveMode] = useState(false);
+  // Track latest timestamp in state so query can depend on it
+  const [latestTimestamp, setLatestTimestamp] = useState<number | null>(null);
 
-  // Use ref to track latest timestamp without causing query re-evaluation
+  // Use ref to track latest timestamp without causing query re-evaluation (for internal tracking)
   const latestTimestampRef = useRef<number | null>(null);
   // Use ref to track if we're intentionally closing to prevent URL sync from reopening
   const isClosingRef = useRef(false);
+  // Track previous live mode state to detect when it's first enabled
+  const prevLiveModeRef = useRef(false);
 
-  // Keep SQL query stable - don't change it based on latestTimestamp
-  // In live mode, we'll fetch full dataset and filter client-side
+  // SQL query with timestamp filter in live mode
   const sqlQuery = useMemo(() => {
+    // In live mode with a timestamp, query for records newer than our latest
+    if (isLiveMode && latestTimestamp !== null) {
+      return `SELECT Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
+        FROM otel_traces
+        WHERE ParentSpanId = '' AND Timestamp > ${latestTimestamp}
+        ORDER BY Timestamp DESC
+        LIMIT 100
+        FORMAT JSON`;
+    }
+    // Otherwise, get top 100 records
     return `SELECT Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
       FROM otel_traces
       WHERE ParentSpanId = ''
       ORDER BY Timestamp DESC
       LIMIT 100
       FORMAT JSON`;
-  }, []);
+  }, [isLiveMode, latestTimestamp]);
 
   const {
     data,
@@ -163,10 +176,21 @@ export default function Requests() {
     if (!initialLoadComplete && data?.data && data.data.length > 0) {
       const requests = data.data;
       setMergedRequests(requests);
-      latestTimestampRef.current = requests[0]!.Timestamp;
+      const newestTimestamp = requests[0]!.Timestamp;
+      latestTimestampRef.current = newestTimestamp;
+      setLatestTimestamp(newestTimestamp);
       setInitialLoadComplete(true);
     }
   }, [data, initialLoadComplete]);
+
+  // Refetch when live mode is enabled and we have a timestamp (to immediately use timestamp-filtered query)
+  useEffect(() => {
+    // Only refetch when live mode is first enabled (transitions from false to true)
+    if (isLiveMode && !prevLiveModeRef.current && latestTimestamp !== null && initialLoadComplete) {
+      void refetch();
+    }
+    prevLiveModeRef.current = isLiveMode;
+  }, [isLiveMode, latestTimestamp, initialLoadComplete, refetch]);
 
   // Handle live mode updates
   useEffect(() => {
@@ -179,32 +203,14 @@ export default function Requests() {
       return;
     }
 
-    // Merge new requests with existing, deduplicating by TraceId + SpanId
-    // Filter to only include records newer than our latest timestamp
+    // In live mode with timestamp filter, query only returns new records
+    // Still use Set-based deduplication as a safety measure
     setMergedRequests((prev) => {
-      const currentLatest = latestTimestampRef.current;
-
-      if (!currentLatest) {
-        // No previous timestamp, just use all data
-        const requests = data.data;
-        if (requests.length > 0) {
-          latestTimestampRef.current = requests[0]!.Timestamp;
-        }
-        return requests;
-      }
-
-      // Filter to only new records
-      const newRequests = data.data.filter((r) => r.Timestamp > currentLatest);
-
-      if (newRequests.length === 0) {
-        return prev;
-      }
-
       // Get existing keys for deduplication
       const existingKeys = new Set(prev.map((r) => `${r.TraceId}-${r.SpanId}`));
 
-      // Filter out duplicates
-      const uniqueNewRequests = newRequests.filter(
+      // Filter out any duplicates (shouldn't happen with timestamp filter, but safety first)
+      const uniqueNewRequests = data.data.filter(
         (r) => !existingKeys.has(`${r.TraceId}-${r.SpanId}`),
       );
 
@@ -215,9 +221,11 @@ export default function Requests() {
       // Prepend new requests and sort by timestamp DESC
       const merged = [...uniqueNewRequests, ...prev].sort((a, b) => b.Timestamp - a.Timestamp);
 
-      // Update latest timestamp ref (not state, to avoid re-renders)
+      // Update latest timestamp (both ref and state)
       if (merged.length > 0) {
-        latestTimestampRef.current = merged[0]!.Timestamp;
+        const newestTimestamp = merged[0]!.Timestamp;
+        latestTimestampRef.current = newestTimestamp;
+        setLatestTimestamp(newestTimestamp);
       }
 
       // Limit to 100 most recent
@@ -231,7 +239,9 @@ export default function Requests() {
       const requests = data.data;
       setMergedRequests(requests);
       if (requests.length > 0) {
-        latestTimestampRef.current = requests[0]!.Timestamp;
+        const newestTimestamp = requests[0]!.Timestamp;
+        latestTimestampRef.current = newestTimestamp;
+        setLatestTimestamp(newestTimestamp);
       }
     }
   }, [isLiveMode, data, initialLoadComplete]);
