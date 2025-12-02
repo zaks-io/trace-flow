@@ -4,6 +4,7 @@ import type { TinybirdTrace } from '@observe/types';
 
 describe('insertIntoTinybird', () => {
   const mockTrace: TinybirdTrace = {
+    ReceivedAt: 1700000000000000000,
     Timestamp: 1000000000,
     TraceId: 'trace-123',
     SpanId: 'span-456',
@@ -181,6 +182,7 @@ describe('insertIntoTinybird', () => {
 
 describe('insertIntoTinybirdWithRetry', () => {
   const mockTrace: TinybirdTrace = {
+    ReceivedAt: 1700000000000000000,
     Timestamp: 1000000000,
     TraceId: 'trace-123',
     SpanId: 'span-456',

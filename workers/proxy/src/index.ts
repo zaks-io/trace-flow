@@ -15,10 +15,10 @@
  * SSE streaming responses (text/event-stream) receive special handling to extract timing metrics
  * for streaming-specific events (message_start, content_block_delta, etc).
  */
-import { Hono } from 'hono';
+import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { generateId, generateTraceId, getCurrentTimestamp } from '@observe/utils';
-import type { SSEStreamData, QueueMessage, LLMResponseMetadata } from '@observe/types';
+import type { SSEStreamData, QueueMessageUnion, LLMResponseMetadata } from '@observe/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
@@ -28,16 +28,50 @@ import { createSSEParser } from './streaming/sse';
 import { storeRequestResponse } from './storage';
 import { createQueueMessage } from './queue';
 import { resolveRoute, PROVIDERS } from './providers';
+import { handleOTLPTraces } from './otlp';
+import { otlpTracesRoute } from './otlp/routes';
 
 interface Env {
-  REQUEST_QUEUE: Queue<QueueMessage>;
+  REQUEST_QUEUE: Queue<QueueMessageUnion>;
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
 }
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new OpenAPIHono<{ Bindings: Env }>();
 
 app.use('*', cors());
+
+// Register security scheme for API key authentication
+app.openAPIRegistry.registerComponent('securitySchemes', 'apiKey', {
+  type: 'apiKey',
+  in: 'header',
+  name: 'X-Observe-Api-Key',
+  description: 'API key for authentication. Obtain from your Observe dashboard.',
+});
+
+// OpenAPI spec endpoint
+app.doc('/openapi.json', {
+  openapi: '3.0.0',
+  info: {
+    title: 'Observe Traces API',
+    version: '1.0.0',
+    description: 'OpenTelemetry trace ingestion API for observability and analytics.',
+  },
+  servers: [{ url: 'https://trace-flow.dev', description: 'Production' }],
+  tags: [
+    {
+      name: 'Traces',
+      description: 'OpenTelemetry trace ingestion endpoints',
+    },
+  ],
+  security: [{ apiKey: [] }],
+});
+
+// OTLP trace ingestion endpoint - must be before catch-all proxy handler
+app.post('/v1/traces', handleOTLPTraces);
+
+// Register the route definition for OpenAPI spec generation
+app.openAPIRegistry.registerPath(otlpTracesRoute);
 
 app.all('*', async (c) => {
   const authError = await validateApiKey(c);
@@ -186,6 +220,7 @@ app.all('*', async (c) => {
           truncated: isTruncated,
           sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
           responseMetadata,
+          receivedAt: requestStart * 1_000_000,
         });
 
         await c.env.REQUEST_QUEUE.send(queueMessage);

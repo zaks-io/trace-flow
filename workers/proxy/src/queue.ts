@@ -44,6 +44,7 @@ export function createQueueMessage(params: {
   truncated?: boolean;
   sseStreamData?: SSEStreamData;
   responseMetadata?: Partial<LLMResponseMetadata>;
+  receivedAt: number;
 }): QueueMessage {
   const {
     requestId,
@@ -63,6 +64,7 @@ export function createQueueMessage(params: {
     truncated,
     sseStreamData,
     responseMetadata,
+    receivedAt,
   } = params;
 
   const provider = extractProviderFromUrl(targetUrl);
@@ -99,6 +101,7 @@ export function createQueueMessage(params: {
     timing,
     tokens,
     error,
+    receivedAt,
   };
 
   if (requestBodyKey) {

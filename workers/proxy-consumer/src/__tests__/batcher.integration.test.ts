@@ -16,6 +16,7 @@ describe('TraceBatcher Integration', () => {
   });
 
   const createMockTrace = (traceId: string): TinybirdTrace => ({
+    ReceivedAt: 1700000000000000000,
     Timestamp: 1000000000,
     TraceId: traceId,
     SpanId: 'span-123',

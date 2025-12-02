@@ -10,7 +10,7 @@ export default function AppPage() {
     <div className="animate-fade-in">
       <div className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">LLM Request Analytics Dashboard</p>
+        <p className="mt-1 text-sm text-muted-foreground">Request Analytics Dashboard</p>
       </div>
 
       <div className="card-elevated rounded-xl border border-border bg-card p-6">
