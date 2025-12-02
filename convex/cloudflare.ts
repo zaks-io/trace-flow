@@ -48,6 +48,32 @@ export const syncKeyToKV = internalAction({
   },
 });
 
+export const checkKeyInKV = internalAction({
+  args: {
+    key: v.string(),
+  },
+  handler: async (_ctx, args): Promise<boolean> => {
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+    const namespaceId = process.env.CLOUDFLARE_KV_NAMESPACE_ID;
+
+    if (!accountId || !apiToken || !namespaceId) {
+      throw new Error('Cloudflare environment variables not set');
+    }
+
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${args.key}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+      },
+    });
+
+    return response.ok;
+  },
+});
+
 export const deleteKeyFromKV = internalAction({
   args: {
     key: v.string(),

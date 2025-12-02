@@ -4,11 +4,12 @@ LLM request proxy and analytics platform built on Cloudflare Workers.
 
 ## Architecture
 
-This monorepo contains three Cloudflare Workers:
+This monorepo contains four Cloudflare Workers:
 
 - **Proxy** (`workers/proxy`) - LLM request proxy that logs requests and enqueues them for processing
-- **Proxy Consumer** (`workers/proxy-consumer`) - Queue consumer that writes analytics to ClickHouse and stores bodies in R2
-- **Web** (`workers/web`) - React/Vite analytics dashboard
+- **Proxy Consumer** (`workers/proxy-consumer`) - Queue consumer that writes traces to Tinybird and stores bodies in R2
+- **API** (`workers/api`) - Provides R2 access for fetching request/response bodies
+- **Web** (`workers/web`) - Next.js analytics dashboard (Cloudflare Pages)
 
 ### How It Works
 
@@ -40,11 +41,13 @@ The platform includes several production-ready capabilities:
 ```
 observe/
 ├── packages/
-│   └── shared/              # Shared TypeScript types and utilities
+│   ├── types/               # Shared TypeScript types
+│   └── utils/               # Shared utilities
 └── workers/
     ├── proxy/               # LLM proxy worker
     ├── proxy-consumer/      # Queue consumer worker
-    └── web/                 # React dashboard
+    ├── api/                 # API worker for R2 body access
+    └── web/                 # Next.js dashboard (Cloudflare Pages)
 ```
 
 ## Setup
@@ -117,55 +120,52 @@ View all captured data in the Observe dashboard.
 
 ## Development
 
-### Running Proxy + Consumer Together (Recommended)
+### Full Local Stack (Recommended)
+
+Run all workers together with shared R2 storage:
+
+```bash
+# Terminal 1: All workers with shared R2
+pnpm run dev:all
+
+# Terminal 2: Convex backend (watch mode)
+pnpm dlx convex dev
+
+# Terminal 3: Web UI
+cd workers/web && pnpm run dev
+```
+
+### Running Proxy + Consumer + API Together
 
 To test the complete message flow from proxy → queue → consumer locally:
 
 ```bash
-wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml -c workers/api/wrangler.toml --persist-to .wrangler/state
 ```
 
-This runs both workers in a single process with shared local R2 bucket and queue.
-
-**Note**: This multi-worker feature is experimental (requires Wrangler v3.1.0+).
+This runs all workers in a single process with shared local R2 bucket and queue.
 
 ### Running Web Worker
 
-The web worker uses Vite and requires Convex backend:
+The web worker uses Next.js and requires Convex backend:
 
 ```bash
 # Terminal 1: Start Convex backend
-npx convex dev
+pnpm dlx convex dev
 
 # Terminal 2: Start web UI
 cd workers/web && pnpm run dev
 ```
 
-On first run, Convex will:
+On first run, Convex will prompt you to login and create a project.
 
-1. Log you in with GitHub
-2. Create a Convex project
-3. Provide a deployment URL
-
-Create `workers/web/.env.local` with your deployment URL:
+Create `workers/web/.env.local`:
 
 ```bash
-VITE_CONVEX_URL=https://your-deployment-url.convex.cloud
-```
-
-### Full Local Stack
-
-To run everything together (requires 3 terminals):
-
-```bash
-# Terminal 1: Proxy + Consumer workers
-wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
-
-# Terminal 2: Convex backend
-npx convex dev
-
-# Terminal 3: Web UI
-cd workers/web && pnpm run dev
+NEXT_PUBLIC_CONVEX_URL=https://your-deployment-url.convex.cloud
+NEXT_PUBLIC_API_URL=http://localhost:8788
+NEXT_PUBLIC_AUTH0_DOMAIN=your-auth0-domain
+NEXT_PUBLIC_AUTH0_CLIENT_ID=your-auth0-client-id
 ```
 
 ### Running Workers Individually
@@ -178,6 +178,9 @@ cd workers/proxy && pnpm run dev
 
 # Consumer only
 cd workers/proxy-consumer && pnpm run dev
+
+# API only
+cd workers/api && pnpm run dev
 
 # Web only (still requires Convex)
 cd workers/web && pnpm run dev
@@ -193,77 +196,57 @@ pnpm run build
 
 ## Deployment
 
-This project uses Cloudflare's native Git integration for automatic deployments on push to `main`.
+### Production (Automated)
 
-### Setup Git Integration
+Production deployments are automated via GitHub Actions. When code is merged to `main`, the workflow:
 
-1. Push your code to GitHub
+1. Runs CI checks (format, lint, type-check, test, build)
+2. Deploys Convex backend
+3. Deploys all Cloudflare Workers in parallel (proxy, proxy-consumer, api, web)
 
-2. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) → Workers & Pages
+See `.github/workflows/deploy.yml` for the full workflow.
 
-3. Click **Create application** → **Import a repository**
+### Environments
 
-4. Connect the **Cloudflare Workers & Pages** GitHub App and authorize access to your repository
+The project has two environments:
 
-5. Configure each worker with the following build settings:
+- **Development** - Default environment for local testing and `deploy:dev`
+- **Production** - Deployed automatically on merge to `main`
 
-   **Proxy Worker:**
-   - Name: `observe-proxy`
-   - Root directory: `workers/proxy`
-   - Build command: `pnpm run build`
-   - Branch: `main`
-
-   **Proxy Consumer Worker:**
-   - Name: `observe-proxy-consumer`
-   - Root directory: `workers/proxy-consumer`
-   - Build command: `pnpm run build`
-   - Branch: `main`
-
-   **Web App:**
-   - Name: `observe-web`
-   - Root directory: `workers/web`
-   - Build command: `pnpm run build`
-   - Branch: `main`
-
-6. Cloudflare will automatically build and deploy on every push to `main`
-
-### Features
-
-- Automatic deployments on push to main
-- Preview deployments on pull requests
-- Build status comments on PRs
-- Preview URLs for testing changes
-
-### Manual Deployment
-
-Deploy a specific worker manually:
+### Development Deployment
 
 ```bash
-cd workers/proxy
-pnpm run deploy
+# Deploy all workers to development
+pnpm run deploy:dev
+
+# Deploy individual workers to dev
+cd workers/proxy && pnpm run deploy:dev
 ```
 
 ## Configuration
 
-### Cloudflare Resources & OpenTelemetry Setup
+### Cloudflare Resources
 
-Before deploying, you need to create Cloudflare Queues and configure OpenTelemetry for ClickStack.
+Before deploying, you need to create Cloudflare resources.
 
 **See [SETUP.md](./SETUP.md) for detailed setup instructions.**
 
 Quick overview:
 
-1. **Queue** - Create `llm-requests` and `llm-requests-dlq` queues
-2. **R2 Bucket** - For storing request/response bodies (already configured in wrangler.toml)
-3. **ClickStack Secrets** - Configure OTLP endpoint and API key for observability
+1. **Queues** - `observe-requests-dev`/`observe-requests-prod` and DLQ queues
+2. **R2 Bucket** - `observe-storage-dev`/`observe-storage-prod` for storing request/response bodies
+3. **KV Namespace** - `observe-api-keys-dev`/`observe-api-keys-prod` for API key validation
+4. **Tinybird** - Configure token and datasource for trace storage
 
 ## Tech Stack
 
 - **Runtime**: Cloudflare Workers
 - **Package Manager**: pnpm
 - **Monorepo**: Turborepo
-- **Frontend**: React + Vite
-- **Database**: Convex
+- **Frontend**: Next.js (Cloudflare Pages)
+- **Backend**: Convex
+- **Analytics**: Tinybird (ClickHouse)
+- **Storage**: Cloudflare R2
 - **Language**: TypeScript
 - **Linting**: ESLint + Prettier
 - **Git Hooks**: Husky + lint-staged

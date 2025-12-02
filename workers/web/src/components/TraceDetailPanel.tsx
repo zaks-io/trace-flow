@@ -35,22 +35,22 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
-      <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto">
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-3xl">
         <SheetHeader>
           <SheetTitle>Trace Details</SheetTitle>
         </SheetHeader>
 
-        <div className="px-4 space-y-6">
+        <div className="space-y-6 px-4">
           <Link
             href={`/app/request?id=${traceId}`}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors w-fit"
+            className="flex w-fit items-center gap-2 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <span>View Full Page</span>
             <ExternalLink className="h-4 w-4" />
           </Link>
           {spans.length > 0 && (
             <section>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">Span Timeline</h2>
+              <h2 className="mb-4 text-xl font-semibold text-foreground">Span Timeline</h2>
               <SpanGanttChart spans={spans} />
             </section>
           )}

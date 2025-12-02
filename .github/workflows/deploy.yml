@@ -1,0 +1,230 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Choose an environment to deploy to: <production>'
+        required: true
+        default: 'production'
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm prettier --check "**/*.{ts,tsx,js,jsx,json,css,md}"
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Type check
+        run: pnpm run type-check
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build (non-web workers)
+        run: pnpm turbo run build --filter='!@observe/web'
+
+  deploy-convex:
+    name: Deploy Convex
+    runs-on: ubuntu-latest
+    needs: [ci]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy Convex and build web
+        run: |
+          npx convex deploy \
+            --cmd 'pnpm turbo run build --filter=@observe/web' \
+            --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+          NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: workers/web/out
+          retention-days: 1
+
+  deploy-proxy:
+    name: Deploy Proxy Worker
+    runs-on: ubuntu-latest
+    needs: [ci]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy Proxy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/proxy
+          command: deploy --env production
+          packageManager: pnpm
+
+  deploy-proxy-consumer:
+    name: Deploy Proxy Consumer Worker
+    runs-on: ubuntu-latest
+    needs: [ci]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy Proxy Consumer Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/proxy-consumer
+          command: deploy --env production
+          packageManager: pnpm
+
+  deploy-api:
+    name: Deploy API Worker
+    runs-on: ubuntu-latest
+    needs: [ci]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy API Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/api
+          command: deploy --env production
+          packageManager: pnpm
+
+  deploy-web:
+    name: Deploy Web (Pages)
+    runs-on: ubuntu-latest
+    needs: [deploy-convex]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download web build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: workers/web/out
+
+      - name: Deploy Web (Pages)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/web
+          command: pages deploy ./out --project-name=observe-web --branch=main
+          packageManager: pnpm
+
+  deploy-status:
+    name: Deployment Status
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - deploy-convex
+      - deploy-proxy
+      - deploy-proxy-consumer
+      - deploy-api
+      - deploy-web
+    steps:
+      - name: Check deployment statuses
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more deployments failed"
+            exit 1
+          elif [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more deployments were cancelled"
+            exit 1
+          else
+            echo "All deployments completed successfully"
+          fi

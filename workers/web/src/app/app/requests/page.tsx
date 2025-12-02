@@ -28,22 +28,28 @@ export default function Requests() {
   const [mergedRequests, setMergedRequests] = useState<RequestRow[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoStoppedLiveMode, setAutoStoppedLiveMode] = useState(false);
+  const [latestTimestamp, setLatestTimestamp] = useState<number | null>(null);
 
-  // Use ref to track latest timestamp without causing query re-evaluation
   const latestTimestampRef = useRef<number | null>(null);
-  // Use ref to track if we're intentionally closing to prevent URL sync from reopening
   const isClosingRef = useRef(false);
+  const prevLiveModeRef = useRef(false);
 
-  // Keep SQL query stable - don't change it based on latestTimestamp
-  // In live mode, we'll fetch full dataset and filter client-side
   const sqlQuery = useMemo(() => {
+    if (isLiveMode && latestTimestamp !== null) {
+      return `SELECT Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
+        FROM otel_traces
+        WHERE ParentSpanId = '' AND Timestamp > ${latestTimestamp}
+        ORDER BY Timestamp DESC
+        LIMIT 100
+        FORMAT JSON`;
+    }
     return `SELECT Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
       FROM otel_traces
       WHERE ParentSpanId = ''
       ORDER BY Timestamp DESC
       LIMIT 100
       FORMAT JSON`;
-  }, []);
+  }, [isLiveMode, latestTimestamp]);
 
   const {
     data,
@@ -71,32 +77,17 @@ export default function Requests() {
     return `${milliseconds.toFixed(2)}ms`;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status.toUpperCase()) {
-      case 'OK':
-      case 'UNSET':
-        return 'text-green-600';
-      case 'ERROR':
-        return 'text-red-600';
-      default:
-        return 'text-gray-600';
-    }
-  };
-
   const truncateId = (id: string) => {
     return id.length > 16 ? `${id.slice(0, 16)}...` : id;
   };
 
   const handleRowClick = (traceId: string, event: React.MouseEvent) => {
     if (event.metaKey || event.ctrlKey) {
-      // Cmd/Ctrl+click opens full page in new tab
       window.open(`/app/request?id=${traceId}`, '_blank');
     } else {
-      // Regular click opens sidebar
-      isClosingRef.current = false; // Reset closing flag when opening
+      isClosingRef.current = false;
       setSelectedTraceId(traceId);
       setIsPanelOpen(true);
-      // Update URL without navigation
       const params = new URLSearchParams(searchParams.toString());
       params.set('id', traceId);
       router.replace(`/app/requests?${params.toString()}`, { scroll: false });
@@ -106,43 +97,36 @@ export default function Requests() {
   const handleClosePanel = useCallback(() => {
     isClosingRef.current = true;
     setIsPanelOpen(false);
-    // Remove id from URL immediately when closing
     const params = new URLSearchParams(searchParams.toString());
     params.delete('id');
     const newUrl = params.toString() ? `/app/requests?${params.toString()}` : '/app/requests';
     router.replace(newUrl, { scroll: false });
     setTimeout(() => {
       setSelectedTraceId(null);
-      // Reset flag after a delay to allow URL update to complete
       setTimeout(() => {
         isClosingRef.current = false;
       }, 100);
     }, 300);
   }, [searchParams, router]);
 
-  // Handle URL query param on load (for shareable links)
   useEffect(() => {
-    // Don't sync if we're intentionally closing the panel
     if (isClosingRef.current) {
       return;
     }
 
     const traceIdFromUrl = searchParams.get('id');
     if (traceIdFromUrl) {
-      // Only update if different from current selection
       if (traceIdFromUrl !== selectedTraceId) {
-        isClosingRef.current = false; // Reset closing flag when opening from URL
+        isClosingRef.current = false;
         setSelectedTraceId(traceIdFromUrl);
         setIsPanelOpen(true);
       }
     } else if (selectedTraceId && isPanelOpen) {
-      // URL param was removed but panel is still open - close it
       setIsPanelOpen(false);
       setTimeout(() => setSelectedTraceId(null), 300);
     }
   }, [searchParams, selectedTraceId, isPanelOpen]);
 
-  // Handle keyboard shortcut (Esc) to close sidebar
   useEffect(() => {
     if (!isPanelOpen) return;
 
@@ -158,53 +142,37 @@ export default function Requests() {
     };
   }, [isPanelOpen, handleClosePanel]);
 
-  // Handle initial load
   useEffect(() => {
     if (!initialLoadComplete && data?.data && data.data.length > 0) {
       const requests = data.data;
       setMergedRequests(requests);
-      latestTimestampRef.current = requests[0]!.Timestamp;
+      const newestTimestamp = requests[0]!.Timestamp;
+      latestTimestampRef.current = newestTimestamp;
+      setLatestTimestamp(newestTimestamp);
       setInitialLoadComplete(true);
     }
   }, [data, initialLoadComplete]);
 
-  // Handle live mode updates
+  useEffect(() => {
+    if (isLiveMode && !prevLiveModeRef.current && latestTimestamp !== null && initialLoadComplete) {
+      void refetch();
+    }
+    prevLiveModeRef.current = isLiveMode;
+  }, [isLiveMode, latestTimestamp, initialLoadComplete, refetch]);
+
   useEffect(() => {
     if (!isLiveMode || !data?.data || !initialLoadComplete) {
       return;
     }
 
     if (data.data.length === 0) {
-      // No new data, keep existing list
       return;
     }
 
-    // Merge new requests with existing, deduplicating by TraceId + SpanId
-    // Filter to only include records newer than our latest timestamp
     setMergedRequests((prev) => {
-      const currentLatest = latestTimestampRef.current;
-
-      if (!currentLatest) {
-        // No previous timestamp, just use all data
-        const requests = data.data;
-        if (requests.length > 0) {
-          latestTimestampRef.current = requests[0]!.Timestamp;
-        }
-        return requests;
-      }
-
-      // Filter to only new records
-      const newRequests = data.data.filter((r) => r.Timestamp > currentLatest);
-
-      if (newRequests.length === 0) {
-        return prev;
-      }
-
-      // Get existing keys for deduplication
       const existingKeys = new Set(prev.map((r) => `${r.TraceId}-${r.SpanId}`));
 
-      // Filter out duplicates
-      const uniqueNewRequests = newRequests.filter(
+      const uniqueNewRequests = data.data.filter(
         (r) => !existingKeys.has(`${r.TraceId}-${r.SpanId}`),
       );
 
@@ -212,97 +180,97 @@ export default function Requests() {
         return prev;
       }
 
-      // Prepend new requests and sort by timestamp DESC
       const merged = [...uniqueNewRequests, ...prev].sort((a, b) => b.Timestamp - a.Timestamp);
 
-      // Update latest timestamp ref (not state, to avoid re-renders)
       if (merged.length > 0) {
-        latestTimestampRef.current = merged[0]!.Timestamp;
+        const newestTimestamp = merged[0]!.Timestamp;
+        latestTimestampRef.current = newestTimestamp;
+        setLatestTimestamp(newestTimestamp);
       }
 
-      // Limit to 100 most recent
       return merged.slice(0, 100);
     });
   }, [data, isLiveMode, initialLoadComplete]);
 
-  // Reset when live mode is disabled
   useEffect(() => {
     if (!isLiveMode && initialLoadComplete && data?.data) {
       const requests = data.data;
       setMergedRequests(requests);
       if (requests.length > 0) {
-        latestTimestampRef.current = requests[0]!.Timestamp;
+        const newestTimestamp = requests[0]!.Timestamp;
+        latestTimestampRef.current = newestTimestamp;
+        setLatestTimestamp(newestTimestamp);
       }
     }
   }, [isLiveMode, data, initialLoadComplete]);
 
   const requests = isLiveMode && initialLoadComplete ? mergedRequests : (data?.data ?? []);
 
-  // Handle errors - stop live mode if error occurs
   useEffect(() => {
     if (error && isLiveMode) {
       setAutoStoppedLiveMode(true);
       setIsLiveMode(false);
     } else if (!error) {
-      // Reset flag when error clears
       setAutoStoppedLiveMode(false);
     }
   }, [error, isLiveMode]);
 
-  // Show loading only on initial load, not during live mode polling
   if (loading && !initialLoadComplete) {
     return (
-      <div className="flex justify-center items-center py-12">
-        <div className="text-gray-600">Loading requests...</div>
+      <div className="flex items-center justify-center py-12">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          Loading requests...
+        </div>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="mb-6 flex items-start justify-between">
+    <div className="animate-fade-in">
+      <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">LLM Requests</h1>
-          <p className="text-gray-600 mt-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">LLM Requests</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
             Root traces from your LLM requests. Click a row to view details in sidebar, or
             Cmd/Ctrl+click to open in a new tab.
           </p>
         </div>
         <button
           onClick={() => setIsLiveMode(!isLiveMode)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${
+          className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all ${
             isLiveMode
-              ? 'bg-red-50 border-red-200 text-red-700 hover:bg-red-100'
-              : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+              ? 'border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20'
+              : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
           }`}
         >
           <div className="flex items-center gap-2">
             {isLiveMode && (
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-destructive"></span>
               </span>
             )}
-            <span className="font-medium">{isLiveMode ? 'LIVE' : 'Live Mode'}</span>
+            <span>{isLiveMode ? 'LIVE' : 'Live Mode'}</span>
           </div>
         </button>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+        <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
           <div className="flex items-start justify-between">
             <div>
-              <h3 className="text-red-800 font-semibold mb-2">Error loading requests</h3>
-              <p className="text-red-600 text-sm">{error.message}</p>
+              <h3 className="mb-2 font-semibold text-destructive">Error loading requests</h3>
+              <p className="text-sm text-destructive/80">{error.message}</p>
               {autoStoppedLiveMode && (
-                <p className="text-red-600 text-sm mt-2">
+                <p className="mt-2 text-sm text-destructive/80">
                   Live mode has been stopped due to the error.
                 </p>
               )}
             </div>
             <button
               onClick={() => void refetch()}
-              className="ml-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+              className="ml-4 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
             >
               Retry
             </button>
@@ -311,72 +279,85 @@ export default function Requests() {
       )}
 
       {requests.length === 0 && !error ? (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-          <p className="text-gray-600">No requests found</p>
+        <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
+          <p className="text-muted-foreground">No requests found</p>
+          <p className="mt-1 text-sm text-muted-foreground/70">
+            Requests will appear here once your LLM proxy receives traffic
+          </p>
         </div>
       ) : (
-        <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+        <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-border">
+              <thead className="bg-muted/30">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Timestamp
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Trace ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Request Name
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Service
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Duration
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Status
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-border bg-card">
                 {requests.map((request) => (
                   <tr
                     key={`${request.TraceId}-${request.SpanId}`}
-                    className="hover:bg-gray-50 cursor-pointer"
+                    className="table-row-interactive cursor-pointer"
                     onClick={(e) => handleRowClick(request.TraceId, e)}
                   >
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
                       {formatTimestamp(request.Timestamp)}
                     </td>
                     <td
-                      className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-mono"
+                      className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground"
                       title={request.TraceId}
                     >
-                      {truncateId(request.TraceId)}
+                      <code className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-xs">
+                        {truncateId(request.TraceId)}
+                      </code>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
                       {request.SpanName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                       {request.ServiceName}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="whitespace-nowrap px-6 py-4 font-mono text-sm text-foreground">
                       {formatDuration(request.Duration)}
                     </td>
-                    <td
-                      className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${getStatusColor(request.StatusCode)}`}
-                    >
-                      {request.StatusCode}
+                    <td className="whitespace-nowrap px-6 py-4">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          request.StatusCode === 'OK' || request.StatusCode === 'UNSET'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : request.StatusCode === 'ERROR'
+                              ? 'bg-destructive/20 text-destructive'
+                              : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {request.StatusCode}
+                      </span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
-            <p className="text-sm text-gray-600">
+          <div className="border-t border-border bg-muted/20 px-6 py-3">
+            <p className="text-xs text-muted-foreground">
               Showing {requests.length} {requests.length === 1 ? 'request' : 'requests'}
             </p>
           </div>

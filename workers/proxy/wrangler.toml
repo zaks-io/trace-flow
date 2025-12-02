@@ -21,21 +21,6 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "observe-storage-dev"
 
-[env.staging]
-name = "observe-proxy-staging"
-
-[[env.staging.kv_namespaces]]
-binding = "API_KEYS"
-id = "bb7a289d3389426b979a746801d68f3c"
-
-[[env.staging.queues.producers]]
-queue = "observe-requests-staging"
-binding = "REQUEST_QUEUE"
-
-[[env.staging.r2_buckets]]
-binding = "STORAGE"
-bucket_name = "observe-storage-staging"
-
 [env.production]
 name = "observe-proxy"
 
@@ -54,3 +39,18 @@ binding = "REQUEST_QUEUE"
 [[env.production.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "observe-storage-prod"
+
+[env.preview]
+name = "observe-proxy-preview"
+
+[[env.preview.kv_namespaces]]
+binding = "API_KEYS"
+id = "86d6aaf858e747e4bd9aa0a51216570d"
+
+[[env.preview.queues.producers]]
+queue = "observe-requests-preview"
+binding = "REQUEST_QUEUE"
+
+[[env.preview.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "observe-storage-dev"

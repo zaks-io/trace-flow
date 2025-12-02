@@ -1,51 +1,33 @@
-export enum ProviderAuthType {
-  X_API_KEY = 'x-api-key',
-  BEARER = 'bearer',
-}
-
 export interface ProviderConfig {
-  authType: ProviderAuthType;
+  id: string;
+  baseUrl: string;
 }
 
-const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
-  'api.anthropic.com': {
-    authType: ProviderAuthType.X_API_KEY,
-  },
-  'api.openai.com': {
-    authType: ProviderAuthType.BEARER,
-  },
-  'openrouter.ai': {
-    authType: ProviderAuthType.BEARER,
-  },
+export const PROVIDERS: Record<string, ProviderConfig> = {
+  openai: { id: 'openai', baseUrl: 'https://api.openai.com' },
+  anthropic: { id: 'anthropic', baseUrl: 'https://api.anthropic.com' },
+  openrouter: { id: 'openrouter', baseUrl: 'https://openrouter.ai/api' },
+  groq: { id: 'groq', baseUrl: 'https://api.groq.com/openai' },
 };
 
-export function detectProvider(targetUrl: string): ProviderConfig {
-  try {
-    const url = new URL(targetUrl);
-    const hostname = url.hostname;
-
-    return (
-      PROVIDER_CONFIGS[hostname] ?? {
-        authType: ProviderAuthType.BEARER,
-      }
-    );
-  } catch {
-    return {
-      authType: ProviderAuthType.BEARER,
-    };
-  }
+export interface ResolvedRoute {
+  provider: ProviderConfig;
+  targetUrl: string;
 }
 
-export function injectProviderAuth(
-  headers: Headers,
-  providerApiKey: string,
-  targetUrl: string,
-): void {
-  const config = detectProvider(targetUrl);
+export function resolveRoute(path: string): ResolvedRoute | null {
+  const regex = /^\/([^/]+)(\/.*)?$/;
+  const match = regex.exec(path);
+  if (!match?.[1]) return null;
 
-  if (config.authType === ProviderAuthType.X_API_KEY) {
-    headers.set('x-api-key', providerApiKey);
-  } else {
-    headers.set('Authorization', `Bearer ${providerApiKey}`);
-  }
+  const providerId = match[1].toLowerCase();
+  const provider = PROVIDERS[providerId];
+  if (!provider) return null;
+
+  const remainingPath = match[2] ?? '';
+
+  return {
+    provider,
+    targetUrl: `${provider.baseUrl}${remainingPath}`,
+  };
 }

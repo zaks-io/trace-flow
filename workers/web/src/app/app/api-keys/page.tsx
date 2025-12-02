@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery, useMutation } from 'convex/react';
+import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../../../../convex/_generated/api';
 import { useState } from 'react';
 import type { Id } from '../../../../../../convex/_generated/dataModel';
@@ -9,9 +9,11 @@ export default function ApiKeys() {
   const apiKeys = useQuery(api.apiKeys.list);
   const createApiKey = useMutation(api.apiKeys.create);
   const deleteApiKey = useMutation(api.apiKeys.remove);
+  const syncToKV = useAction(api.apiKeys.syncToKV);
 
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<'apiKeys'> | null>(null);
+  const [syncingId, setSyncingId] = useState<Id<'apiKeys'> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -37,6 +39,20 @@ export default function ApiKeys() {
     setDeletingId(null);
   };
 
+  const handleSyncKey = async (id: Id<'apiKeys'>) => {
+    setSyncingId(id);
+    setError(null);
+    setSuccess(null);
+
+    const result = await syncToKV({ id });
+    if (result.existed) {
+      setSuccess('API key already exists in KV');
+    } else {
+      setSuccess('API key synced to KV');
+    }
+    setSyncingId(null);
+  };
+
   const formatExpiration = (timestamp: number) => {
     const date = new Date(timestamp);
     const now = Date.now();
@@ -55,91 +71,114 @@ export default function ApiKeys() {
   };
 
   return (
-    <div>
-      <div className="mb-6 flex justify-between items-center">
+    <div className="animate-fade-in">
+      <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">API Keys</h1>
-          <p className="text-gray-600 mt-1">Manage your API keys for accessing the proxy service</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">API Keys</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage your API keys for accessing the proxy service
+          </p>
         </div>
         <button
           onClick={() => void handleCreateKey()}
           disabled={isCreating}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow-md hover:shadow-primary/20 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isCreating ? 'Creating...' : 'Create API Key'}
+          {isCreating ? (
+            <>
+              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+              Creating...
+            </>
+          ) : (
+            'Create API Key'
+          )}
         </button>
       </div>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-red-600 text-sm">{error}</p>
+        <div className="mb-4 rounded-xl border border-destructive/50 bg-destructive/10 p-4">
+          <p className="text-sm text-destructive">{error}</p>
         </div>
       )}
 
       {success && (
-        <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-4">
-          <p className="text-green-600 text-sm">{success}</p>
+        <div className="mb-4 rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-4">
+          <p className="text-sm text-emerald-400">{success}</p>
         </div>
       )}
 
       {apiKeys === undefined ? (
-        <div className="flex justify-center items-center py-12">
-          <div className="text-gray-600">Loading API keys...</div>
+        <div className="flex items-center justify-center py-12">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            Loading API keys...
+          </div>
         </div>
       ) : apiKeys.length === 0 ? (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-          <p className="text-gray-600">No API keys found</p>
-          <p className="text-gray-500 text-sm mt-2">Create your first API key to get started</p>
+        <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
+          <p className="text-muted-foreground">No API keys found</p>
+          <p className="mt-1 text-sm text-muted-foreground/70">
+            Create your first API key to get started
+          </p>
         </div>
       ) : (
-        <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+        <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card">
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-border">
+              <thead className="bg-muted/30">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     API Key
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Expiration Date
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3.5 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-border bg-card">
                 {apiKeys.map((apiKey) => {
                   const { formatted, isExpired } = formatExpiration(apiKey.expiresAt);
                   const expiringSoon = isExpiringSoon(apiKey.expiresAt);
 
                   return (
-                    <tr key={apiKey._id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-mono">
-                        {apiKey.key}
+                    <tr key={apiKey._id} className="table-row-interactive">
+                      <td className="whitespace-nowrap px-6 py-4 text-sm">
+                        <code className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-xs text-foreground">
+                          {apiKey.key}
+                        </code>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
                         {formatted}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="whitespace-nowrap px-6 py-4">
                         {isExpired ? (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                          <span className="inline-flex items-center rounded-full bg-destructive/20 px-2 py-0.5 text-xs font-medium text-destructive">
                             Expired
                           </span>
                         ) : expiringSoon ? (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                          <span className="inline-flex items-center rounded-full bg-yellow-500/20 px-2 py-0.5 text-xs font-medium text-yellow-400">
                             Expiring Soon
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          <span className="inline-flex items-center rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-400">
                             Active
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
+                        <button
+                          onClick={() => void handleSyncKey(apiKey._id)}
+                          disabled={syncingId === apiKey._id}
+                          className="mr-3 font-medium text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {syncingId === apiKey._id ? 'Syncing...' : 'Sync'}
+                        </button>
                         <button
                           onClick={() => {
                             if (
@@ -151,7 +190,7 @@ export default function ApiKeys() {
                             }
                           }}
                           disabled={deletingId === apiKey._id}
-                          className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                          className="font-medium text-destructive transition-colors hover:text-destructive/80 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {deletingId === apiKey._id ? 'Deleting...' : 'Delete'}
                         </button>
@@ -162,8 +201,8 @@ export default function ApiKeys() {
               </tbody>
             </table>
           </div>
-          <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
-            <p className="text-sm text-gray-600">
+          <div className="border-t border-border bg-muted/20 px-6 py-3">
+            <p className="text-xs text-muted-foreground">
               Showing {apiKeys.length} {apiKeys.length === 1 ? 'key' : 'keys'}
             </p>
           </div>
