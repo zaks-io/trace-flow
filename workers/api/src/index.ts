@@ -8,12 +8,20 @@ interface Env {
   AUTH0_CLIENT_ID: string;
 }
 
+const ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:8788',
+  'https://trace-flow.dev',
+  'https://observe-web.pages.dev',
+  'https://observe-web-preview.pages.dev',
+];
+
 const app = new Hono<{ Bindings: Env }>();
 
 app.use(
   '*',
   cors({
-    origin: '*',
+    origin: (origin) => (ALLOWED_ORIGINS.includes(origin) ? origin : null),
     allowMethods: ['GET', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
   }),
