@@ -10,6 +10,7 @@ concurrency:
 
 jobs:
   preview:
+    name: Deploy Preview
     runs-on: ubuntu-latest
     environment: Preview
     steps:
@@ -48,13 +49,13 @@ jobs:
 
       # Deploy web to Pages preview
       - name: Deploy Web Preview
-        run: |
-          wrangler pages deploy workers/web/out \
-            --project-name=observe-web \
-            --branch="$BRANCH_NAME"
-        env:
-          BRANCH_NAME: ${{ github.head_ref }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/web
+          command: pages deploy ./out --project-name=observe-web --branch="${{ github.head_ref }}"
+          packageManager: pnpm
 
       # Post/update comment with preview URLs
       - name: Comment PR
