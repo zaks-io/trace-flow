@@ -487,7 +487,8 @@ function SidebarMenuButton({
 }: React.ComponentProps<'button'> & {
   asChild?: boolean;
   isActive?: boolean;
-  tooltip?: string | Omit<React.ComponentProps<typeof TooltipContent>, 'children'>;
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+  tooltip?: string | React.ComponentProps<typeof TooltipContent>;
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const Comp = asChild ? Slot : 'button';
   const { isMobile, state } = useSidebar();
