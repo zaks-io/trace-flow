@@ -101,7 +101,7 @@ jobs:
   deploy-proxy:
     name: Deploy Proxy Worker
     runs-on: ubuntu-latest
-    needs: [ci, deploy-convex]
+    needs: [ci]
     environment: Production
     steps:
       - uses: actions/checkout@v4
@@ -117,7 +117,7 @@ jobs:
   deploy-proxy-consumer:
     name: Deploy Proxy Consumer Worker
     runs-on: ubuntu-latest
-    needs: [ci, deploy-convex]
+    needs: [ci]
     environment: Production
     steps:
       - uses: actions/checkout@v4
@@ -133,7 +133,7 @@ jobs:
   deploy-api:
     name: Deploy API Worker
     runs-on: ubuntu-latest
-    needs: [ci, deploy-convex]
+    needs: [ci]
     environment: Production
     steps:
       - uses: actions/checkout@v4
@@ -149,7 +149,7 @@ jobs:
   deploy-web:
     name: Deploy Web (Pages)
     runs-on: ubuntu-latest
-    needs: [ci, deploy-convex]
+    needs: [ci]
     environment: Production
     steps:
       - uses: actions/checkout@v4
