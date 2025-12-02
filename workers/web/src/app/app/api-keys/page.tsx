@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery, useMutation } from 'convex/react';
+import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../../../../convex/_generated/api';
 import { useState } from 'react';
 import type { Id } from '../../../../../../convex/_generated/dataModel';
@@ -9,9 +9,11 @@ export default function ApiKeys() {
   const apiKeys = useQuery(api.apiKeys.list);
   const createApiKey = useMutation(api.apiKeys.create);
   const deleteApiKey = useMutation(api.apiKeys.remove);
+  const syncToKV = useAction(api.apiKeys.syncToKV);
 
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<'apiKeys'> | null>(null);
+  const [syncingId, setSyncingId] = useState<Id<'apiKeys'> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -35,6 +37,20 @@ export default function ApiKeys() {
     await deleteApiKey({ id });
     setSuccess('API key deleted successfully');
     setDeletingId(null);
+  };
+
+  const handleSyncKey = async (id: Id<'apiKeys'>) => {
+    setSyncingId(id);
+    setError(null);
+    setSuccess(null);
+
+    const result = await syncToKV({ id });
+    if (result.existed) {
+      setSuccess('API key already exists in KV');
+    } else {
+      setSuccess('API key synced to KV');
+    }
+    setSyncingId(null);
   };
 
   const formatExpiration = (timestamp: number) => {
@@ -139,7 +155,14 @@ export default function ApiKeys() {
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-3">
+                        <button
+                          onClick={() => void handleSyncKey(apiKey._id)}
+                          disabled={syncingId === apiKey._id}
+                          className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                        >
+                          {syncingId === apiKey._id ? 'Syncing...' : 'Sync'}
+                        </button>
                         <button
                           onClick={() => {
                             if (

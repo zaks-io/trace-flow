@@ -2,11 +2,12 @@
  * LLM Proxy Worker - Streams LLM responses while capturing request/response data for observability.
  *
  * Architecture:
- * 1. Receives client request with `X-Proxy-Target` header specifying the LLM provider URL
- * 2. Duplicates request body using tee() - one stream for proxying, one for capture
- * 3. Proxies request to target provider and streams response back to client immediately (low latency)
- * 4. Simultaneously captures response chunks using TransformStream while streaming to client
- * 5. Asynchronously stores bodies in R2 and enqueues metadata for processing (via waitUntil)
+ * 1. Receives client request at `/{provider}/*` endpoint (e.g., /openai/v1/chat/completions)
+ * 2. Routes to the correct provider base URL based on path prefix (OpenAI, Anthropic, OpenRouter, Groq)
+ * 3. Duplicates request body using tee() - one stream for proxying, one for capture
+ * 4. Proxies request to target provider and streams response back to client immediately (low latency)
+ * 5. Simultaneously captures response chunks using TransformStream while streaming to client
+ * 6. Asynchronously stores bodies in R2 and enqueues metadata for processing (via waitUntil)
  *
  * The waitUntil pattern is critical: storage and queueing happen after the client response completes,
  * ensuring the proxy never blocks the client for observability operations.
@@ -26,7 +27,7 @@ import { captureStream, createResponseCapture, chunksToString } from './streamin
 import { createSSEParser } from './streaming/sse';
 import { storeRequestResponse } from './storage';
 import { createQueueMessage } from './queue';
-import { injectProviderAuth } from './providers';
+import { resolveRoute, PROVIDERS } from './providers';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessage>;
@@ -48,17 +49,19 @@ app.all('*', async (c) => {
   const requestId = generateId();
   const traceId = generateTraceId();
   const requestStart = getCurrentTimestamp();
-  const targetUrl = c.req.header('X-Proxy-Target');
 
-  if (!targetUrl) {
+  const route = resolveRoute(c.req.path);
+  if (!route) {
     return c.json(
       {
-        error: 'Missing X-Proxy-Target header',
-        message: 'Please provide the target URL in the X-Proxy-Target header',
+        error: 'Invalid route',
+        message: `Use /{provider}/... where provider is one of: ${Object.keys(PROVIDERS).join(', ')}`,
       },
-      400,
+      404,
     );
   }
+
+  const { targetUrl } = route;
 
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
@@ -77,29 +80,14 @@ app.all('*', async (c) => {
   // tee() creates two independent readers from the same source without buffering the entire body
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
 
-  // Extract provider API key before stripping headers
-  const providerApiKey = c.req.header('X-Provider-Api-Key');
-
   // Forward all headers except proxy-specific ones
-  // Strip proxy-specific headers to prevent credential leakage:
-  // - X-Observe-Api-Key: used for proxy authentication, never forward to provider
-  // - X-Proxy-Target: internal routing metadata
-  // - X-Provider-Api-Key: used to inject provider auth, don't forward raw
-  // - host: must match target provider
-  // Note: Authorization and X-API-Key headers are allowed to pass through to providers
+  // Strip X-Observe-Api-Key (proxy auth) and host header
+  // All other headers (including Authorization, x-api-key) pass through to provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Observe-Api-Key');
-  headers.delete('X-Proxy-Target');
-  headers.delete('X-Provider-Api-Key');
   headers.delete('host');
 
-  // Inject provider-specific authentication if X-Provider-Api-Key was provided
-  if (providerApiKey) {
-    injectProviderAuth(headers, providerApiKey, targetUrl);
-  }
-
-  const finalUrl = c.req.path === '/' ? targetUrl : `${targetUrl}${c.req.path}`;
-  const response = await fetch(finalUrl, {
+  const response = await fetch(targetUrl, {
     method: c.req.method,
     headers,
     body: streamToProxy,

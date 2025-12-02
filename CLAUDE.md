@@ -28,7 +28,7 @@ Do NOT run any production deployment commands. Ever. Any deployments requested b
 
 **Data Flow:**
 
-1. Proxy worker receives LLM request with `X-Proxy-Target` header
+1. Proxy worker receives LLM request via route-based paths (e.g., `/openai/v1/chat/completions`)
 2. Streams response back to client immediately (low latency)
 3. Captures request/response bodies during streaming using tee() and TransformStream
 4. Stores bodies in R2 asynchronously (via `c.executionCtx.waitUntil`)
@@ -39,11 +39,12 @@ Do NOT run any production deployment commands. Ever. Any deployments requested b
 
 **Key Implementation Details:**
 
+- Route-based proxy: `/openai/*`, `/anthropic/*`, `/openrouter/*`, `/groq/*`
 - Uses `ReadableStream.tee()` to duplicate request body for both proxying and capture
 - Uses `TransformStream` to capture response chunks while streaming to client
 - All storage/queue operations happen in `c.executionCtx.waitUntil()` to avoid blocking response
 - Queue consumer handles retry logic and error cases
-- Shared types in `packages/shared` define the contract between workers
+- Shared types in `packages/types` define the contract between workers
 
 ## Local Development
 
@@ -137,11 +138,7 @@ cd workers/proxy-consumer && wrangler dev
 cd workers/api && wrangler dev
 
 # Web only (still requires Convex and API worker)
-<<<<<<< HEAD
 cd workers/web && pnpm run dev
-=======
-cd workers/web && bun run dev
->>>>>>> origin/main
 ```
 
 ### Other Commands
@@ -294,8 +291,9 @@ pnpm run format && pnpm run lint && pnpm run type-check && pnpm run test && pnpm
 
 ```bash
 # With proxy + consumer running, send test request
-curl -X POST http://localhost:8787 \
-  -H "X-Proxy-Target: https://api.openai.com/v1/chat/completions" \
+curl -X POST http://localhost:8787/openai/v1/chat/completions \
+  -H "X-Observe-Api-Key: your-api-key" \
+  -H "Authorization: Bearer your-openai-key" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
 ```
@@ -312,9 +310,10 @@ wrangler dev \
   -c ./workers/proxy-consumer/wrangler.toml \
   --persist-to .wrangler/state
 
-# Send test request
-curl -X POST http://localhost:8787 \
-  -H "X-Proxy-Target: https://chat.zaks.io/api/health" \
+# Send test request (example with OpenAI)
+curl -X POST http://localhost:8787/openai/v1/chat/completions \
+  -H "X-Observe-Api-Key: your-api-key" \
+  -H "Authorization: Bearer your-openai-key" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
 

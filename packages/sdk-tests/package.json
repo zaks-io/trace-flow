@@ -1,0 +1,22 @@
+{
+  "name": "@observe/sdk-tests",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:openai": "bun run src/test-openai.ts",
+    "test:anthropic": "bun run src/test-anthropic.ts",
+    "test:openrouter": "bun run src/test-openrouter.ts",
+    "test:groq": "bun run src/test-groq.ts",
+    "test:all": "bun run src/test-all.ts"
+  },
+  "dependencies": {
+    "ai": "latest",
+    "@ai-sdk/openai": "latest",
+    "@ai-sdk/anthropic": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}

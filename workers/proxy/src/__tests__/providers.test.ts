@@ -1,87 +1,73 @@
 import { describe, it, expect } from 'vitest';
-import { detectProvider, injectProviderAuth, ProviderAuthType } from '../providers';
+import { resolveRoute, PROVIDERS } from '../providers';
 
-describe('Provider Detection and Auth Injection', () => {
-  describe('detectProvider', () => {
-    it('should detect Anthropic provider', () => {
-      const config = detectProvider('https://api.anthropic.com/v1/messages');
-      expect(config.authType).toBe(ProviderAuthType.X_API_KEY);
+describe('Provider Routing', () => {
+  describe('resolveRoute', () => {
+    it('should resolve OpenAI route with full path', () => {
+      const result = resolveRoute('/openai/v1/chat/completions');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('openai');
+      expect(result!.targetUrl).toBe('https://api.openai.com/v1/chat/completions');
     });
 
-    it('should detect OpenAI provider', () => {
-      const config = detectProvider('https://api.openai.com/v1/chat/completions');
-      expect(config.authType).toBe(ProviderAuthType.BEARER);
+    it('should resolve Anthropic route with full path', () => {
+      const result = resolveRoute('/anthropic/v1/messages');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('anthropic');
+      expect(result!.targetUrl).toBe('https://api.anthropic.com/v1/messages');
     });
 
-    it('should detect OpenRouter provider', () => {
-      const config = detectProvider('https://openrouter.ai/api/v1/chat/completions');
-      expect(config.authType).toBe(ProviderAuthType.BEARER);
+    it('should resolve OpenRouter route with full path', () => {
+      const result = resolveRoute('/openrouter/v1/chat/completions');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('openrouter');
+      expect(result!.targetUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
     });
 
-    it('should default to Bearer for unknown providers', () => {
-      const config = detectProvider('https://api.unknown.com/v1/endpoint');
-      expect(config.authType).toBe(ProviderAuthType.BEARER);
+    it('should resolve Groq route with full path', () => {
+      const result = resolveRoute('/groq/v1/chat/completions');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('groq');
+      expect(result!.targetUrl).toBe('https://api.groq.com/openai/v1/chat/completions');
     });
 
-    it('should handle invalid URLs gracefully', () => {
-      const config = detectProvider('not-a-url');
-      expect(config.authType).toBe(ProviderAuthType.BEARER);
+    it('should handle provider path with no sub-path', () => {
+      const result = resolveRoute('/openai');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('openai');
+      expect(result!.targetUrl).toBe('https://api.openai.com');
+    });
+
+    it('should handle nested paths', () => {
+      const result = resolveRoute('/openai/v1/models/gpt-4');
+      expect(result).not.toBeNull();
+      expect(result!.targetUrl).toBe('https://api.openai.com/v1/models/gpt-4');
+    });
+
+    it('should be case-insensitive for provider names', () => {
+      const result = resolveRoute('/OpenAI/v1/chat/completions');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('openai');
+    });
+
+    it('should return null for unknown provider', () => {
+      const result = resolveRoute('/unknown/v1/messages');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for invalid path format', () => {
+      expect(resolveRoute('/')).toBeNull();
     });
   });
 
-  describe('injectProviderAuth', () => {
-    it('should inject x-api-key header for Anthropic', () => {
-      const headers = new Headers();
-      injectProviderAuth(headers, 'test-anthropic-key', 'https://api.anthropic.com/v1/messages');
-
-      expect(headers.get('x-api-key')).toBe('test-anthropic-key');
-      expect(headers.get('Authorization')).toBeNull();
-    });
-
-    it('should inject Bearer token for OpenAI', () => {
-      const headers = new Headers();
-      injectProviderAuth(headers, 'test-openai-key', 'https://api.openai.com/v1/chat/completions');
-
-      expect(headers.get('Authorization')).toBe('Bearer test-openai-key');
-      expect(headers.get('x-api-key')).toBeNull();
-    });
-
-    it('should inject Bearer token for OpenRouter', () => {
-      const headers = new Headers();
-      injectProviderAuth(
-        headers,
-        'test-openrouter-key',
-        'https://openrouter.ai/api/v1/chat/completions',
-      );
-
-      expect(headers.get('Authorization')).toBe('Bearer test-openrouter-key');
-      expect(headers.get('x-api-key')).toBeNull();
-    });
-
-    it('should inject Bearer token for unknown providers', () => {
-      const headers = new Headers();
-      injectProviderAuth(headers, 'test-key', 'https://api.unknown.com/v1/endpoint');
-
-      expect(headers.get('Authorization')).toBe('Bearer test-key');
-      expect(headers.get('x-api-key')).toBeNull();
-    });
-
-    it('should replace existing auth headers', () => {
-      const headers = new Headers();
-      headers.set('Authorization', 'Bearer old-key');
-
-      injectProviderAuth(headers, 'new-key', 'https://api.openai.com/v1/chat/completions');
-
-      expect(headers.get('Authorization')).toBe('Bearer new-key');
-    });
-
-    it('should replace x-api-key if it exists', () => {
-      const headers = new Headers();
-      headers.set('x-api-key', 'old-key');
-
-      injectProviderAuth(headers, 'new-key', 'https://api.anthropic.com/v1/messages');
-
-      expect(headers.get('x-api-key')).toBe('new-key');
+  describe('PROVIDERS config', () => {
+    it('should have correct base URLs', () => {
+      /* eslint-disable @typescript-eslint/dot-notation */
+      expect(PROVIDERS['openai']!.baseUrl).toBe('https://api.openai.com');
+      expect(PROVIDERS['anthropic']!.baseUrl).toBe('https://api.anthropic.com');
+      expect(PROVIDERS['openrouter']!.baseUrl).toBe('https://openrouter.ai/api');
+      expect(PROVIDERS['groq']!.baseUrl).toBe('https://api.groq.com/openai');
+      /* eslint-enable @typescript-eslint/dot-notation */
     });
   });
 });
