@@ -33,10 +33,6 @@
     "deploy:dev": {
       "dependsOn": ["build", "lint", "type-check"],
       "cache": false
-    },
-    "deploy:prod": {
-      "dependsOn": ["build", "lint", "type-check"],
-      "cache": false
     }
   }
 }
