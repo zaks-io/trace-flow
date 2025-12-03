@@ -15,6 +15,7 @@ bucket_name = "observe-storage-dev"
 
 [env.production]
 name = "observe-api"
+workers_dev = true
 
 [env.production.vars]
 AUTH0_DOMAIN = "auth0.zaks.io"

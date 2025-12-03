@@ -23,6 +23,7 @@ bucket_name = "observe-storage-dev"
 
 [env.production]
 name = "observe-proxy"
+workers_dev = true
 
 [[env.production.routes]]
 pattern = "gateway.trace-flow.dev/*"
