@@ -41,6 +41,8 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
   const [responseBodyLoading, setResponseBodyLoading] = useState(false);
   const [requestBodyError, setRequestBodyError] = useState<string | null>(null);
   const [responseBodyError, setResponseBodyError] = useState<string | null>(null);
+  const [requestBodyFetched, setRequestBodyFetched] = useState(false);
+  const [responseBodyFetched, setResponseBodyFetched] = useState(false);
   const [isRequestOpen, setIsRequestOpen] = useState(false);
   const [isResponseOpen, setIsResponseOpen] = useState(true);
 
@@ -64,10 +66,12 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
     setResponseBodyLoading(false);
     setRequestBodyError(null);
     setResponseBodyError(null);
+    setRequestBodyFetched(false);
+    setResponseBodyFetched(false);
   }, [traceId]);
 
   useEffect(() => {
-    if (enabled && traceId && !requestBody && !requestBodyLoading && requestBodyError === null) {
+    if (enabled && traceId && !requestBodyFetched && !requestBodyLoading) {
       setRequestBodyLoading(true);
       setRequestBodyError(null);
 
@@ -86,6 +90,7 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
             if (res.status === 404) {
               setRequestBody(null);
               setRequestBodyLoading(false);
+              setRequestBodyFetched(true);
               return;
             }
             const errorData = await res.json();
@@ -95,18 +100,20 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           const text = await res.text();
           setRequestBody(formatBodyForDisplay(text));
           setRequestBodyLoading(false);
+          setRequestBodyFetched(true);
         } catch (err) {
           setRequestBodyError(err instanceof Error ? err.message : 'Failed to fetch request body');
           setRequestBodyLoading(false);
+          setRequestBodyFetched(true);
         }
       };
 
       void fetchRequestBody();
     }
-  }, [enabled, traceId, requestBody, requestBodyLoading, requestBodyError, getAccessTokenSilently]);
+  }, [enabled, traceId, requestBodyFetched, requestBodyLoading, getAccessTokenSilently]);
 
   useEffect(() => {
-    if (enabled && traceId && !responseBody && !responseBodyLoading && responseBodyError === null) {
+    if (enabled && traceId && !responseBodyFetched && !responseBodyLoading) {
       setResponseBodyLoading(true);
       setResponseBodyError(null);
 
@@ -125,6 +132,7 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
             if (res.status === 404) {
               setResponseBody(null);
               setResponseBodyLoading(false);
+              setResponseBodyFetched(true);
               return;
             }
             const errorData = await res.json();
@@ -134,24 +142,19 @@ export function TraceDetailContent({ traceId, enabled = true }: TraceDetailConte
           const text = await res.text();
           setResponseBody(formatBodyForDisplay(text));
           setResponseBodyLoading(false);
+          setResponseBodyFetched(true);
         } catch (err) {
           setResponseBodyError(
             err instanceof Error ? err.message : 'Failed to fetch response body',
           );
           setResponseBodyLoading(false);
+          setResponseBodyFetched(true);
         }
       };
 
       void fetchResponseBody();
     }
-  }, [
-    enabled,
-    traceId,
-    responseBody,
-    responseBodyLoading,
-    responseBodyError,
-    getAccessTokenSilently,
-  ]);
+  }, [enabled, traceId, responseBodyFetched, responseBodyLoading, getAccessTokenSilently]);
 
   const spans = data?.data ?? [];
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
