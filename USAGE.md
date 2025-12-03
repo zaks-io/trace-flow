@@ -1,15 +1,15 @@
-# Using the Observe Proxy with Vercel AI SDK
+# Using the Trace Flow Proxy with Vercel AI SDK
 
-This guide shows you how to integrate the Observe proxy to add observability to your LLM applications.
+This guide shows you how to integrate the Trace Flow proxy to add observability to your LLM applications.
 
 ## Overview
 
-The Observe proxy acts as an intermediary between your application and LLM providers (OpenAI, Anthropic, etc.), automatically capturing request/response data, token usage, errors, and streaming metrics for analytics.
+The Trace Flow proxy acts as an intermediary between your application and LLM providers (OpenAI, Anthropic, etc.), automatically capturing request/response data, token usage, errors, and streaming metrics for analytics.
 
 ## Prerequisites
 
-1. **Proxy endpoint**: Your deployed Observe proxy URL (e.g., `https://observe-proxy.isaac-a46.workers.dev`)
-2. **API key**: An Observe API key for authentication (stored in Cloudflare KV)
+1. **Proxy endpoint**: Your deployed Trace Flow proxy URL (e.g., `https://trace-flow-proxy.workers.dev`)
+2. **API key**: A Trace Flow API key for authentication (stored in Cloudflare KV)
 3. **Provider API key**: Your LLM provider API key (OpenAI, Anthropic, etc.)
 
 ## Quick Start
@@ -26,7 +26,7 @@ yarn add ai @ai-sdk/openai @ai-sdk/anthropic
 
 ### 2. Configure the AI SDK with Custom Fetch
 
-The Vercel AI SDK supports custom fetch functions, which allows you to route requests through the Observe proxy. Here's how to set it up:
+The Vercel AI SDK supports custom fetch functions, which allows you to route requests through the Trace Flow proxy. Here's how to set it up:
 
 #### For OpenAI
 
@@ -34,8 +34,8 @@ The Vercel AI SDK supports custom fetch functions, which allows you to route req
 import { openai } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 
-// Create a custom fetch function that routes through the Observe proxy
-const createProxyFetch = (proxyUrl: string, observeApiKey: string, providerApiKey: string) => {
+// Create a custom fetch function that routes through the Trace Flow proxy
+const createProxyFetch = (proxyUrl: string, traceFlowApiKey: string, providerApiKey: string) => {
   return async (url: string, options?: RequestInit): Promise<Response> => {
     // Extract the original target URL from the OpenAI SDK request
     const targetUrl = url;
@@ -44,7 +44,7 @@ const createProxyFetch = (proxyUrl: string, observeApiKey: string, providerApiKe
       method: options?.method || 'POST',
       headers: {
         ...options?.headers,
-        'X-Observe-Api-Key': observeApiKey,
+        'X-Trace-Flow-Api-Key': traceFlowApiKey,
         'X-Proxy-Target': targetUrl,
         'X-Provider-Api-Key': providerApiKey,
         // Remove OpenAI's Authorization header since we're using X-Provider-Api-Key
@@ -62,7 +62,7 @@ const openaiClient = openai({
   apiKey: process.env.OPENAI_API_KEY, // Still required by SDK for validation
   fetch: createProxyFetch(
     'https://your-proxy-url.workers.dev',
-    process.env.OBSERVE_API_KEY!,
+    process.env.TRACE_FLOW_API_KEY!,
     process.env.OPENAI_API_KEY!,
   ),
 });
@@ -80,13 +80,13 @@ const { text } = await generateText({
 import { anthropic } from '@ai-sdk/anthropic';
 import { generateText } from 'ai';
 
-const createProxyFetch = (proxyUrl: string, observeApiKey: string, providerApiKey: string) => {
+const createProxyFetch = (proxyUrl: string, traceFlowApiKey: string, providerApiKey: string) => {
   return async (url: string, options?: RequestInit): Promise<Response> => {
     return fetch(proxyUrl, {
       method: options?.method || 'POST',
       headers: {
         ...options?.headers,
-        'X-Observe-Api-Key': observeApiKey,
+        'X-Trace-Flow-Api-Key': traceFlowApiKey,
         'X-Proxy-Target': url,
         'X-Provider-Api-Key': providerApiKey,
         'x-api-key': undefined, // Remove Anthropic's header, proxy will inject it
@@ -101,7 +101,7 @@ const anthropicClient = anthropic({
   // baseURL omitted - SDK will use Anthropic's default URL
   fetch: createProxyFetch(
     'https://your-proxy-url.workers.dev',
-    process.env.OBSERVE_API_KEY!,
+    process.env.TRACE_FLOW_API_KEY!,
     process.env.ANTHROPIC_API_KEY!,
   ),
 });
@@ -120,13 +120,13 @@ OpenRouter uses an OpenAI-compatible API, so you can use the `@ai-sdk/openai` SD
 import { openai } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 
-const createProxyFetch = (proxyUrl: string, observeApiKey: string, providerApiKey: string) => {
+const createProxyFetch = (proxyUrl: string, traceFlowApiKey: string, providerApiKey: string) => {
   return async (url: string, options?: RequestInit): Promise<Response> => {
     return fetch(proxyUrl, {
       method: options?.method || 'POST',
       headers: {
         ...options?.headers,
-        'X-Observe-Api-Key': observeApiKey,
+        'X-Trace-Flow-Api-Key': traceFlowApiKey,
         'X-Proxy-Target': url,
         'X-Provider-Api-Key': providerApiKey,
         Authorization: undefined, // Remove OpenAI's header, proxy will inject it
@@ -141,7 +141,7 @@ const openrouterClient = openai({
   baseURL: 'https://openrouter.ai/api/v1',
   fetch: createProxyFetch(
     'https://your-proxy-url.workers.dev',
-    process.env.OBSERVE_API_KEY!,
+    process.env.TRACE_FLOW_API_KEY!,
     process.env.OPENROUTER_API_KEY!,
   ),
 });
@@ -157,8 +157,8 @@ const { text } = await generateText({
 Create a `.env.local` file with your keys:
 
 ```bash
-# Observe proxy configuration
-OBSERVE_API_KEY=your-observe-api-key-here
+# Trace Flow proxy configuration
+TRACE_FLOW_API_KEY=your-trace-flow-api-key-here
 PROXY_URL=https://your-proxy-url.workers.dev
 
 # Provider API keys
@@ -199,13 +199,13 @@ The proxy captures:
 import { openai } from '@ai-sdk/openai';
 import { streamText } from 'ai';
 
-const createProxyFetch = (proxyUrl: string, observeApiKey: string, providerApiKey: string) => {
+const createProxyFetch = (proxyUrl: string, traceFlowApiKey: string, providerApiKey: string) => {
   return async (url: string, options?: RequestInit): Promise<Response> => {
     return fetch(proxyUrl, {
       method: options?.method || 'POST',
       headers: {
         ...options?.headers,
-        'X-Observe-Api-Key': observeApiKey,
+        'X-Trace-Flow-Api-Key': traceFlowApiKey,
         'X-Proxy-Target': url,
         'X-Provider-Api-Key': providerApiKey,
         Authorization: undefined,
@@ -220,7 +220,7 @@ const openaiClient = openai({
   // baseURL omitted - SDK uses OpenAI's default, custom fetch routes through proxy
   fetch: createProxyFetch(
     process.env.PROXY_URL!,
-    process.env.OBSERVE_API_KEY!,
+    process.env.TRACE_FLOW_API_KEY!,
     process.env.OPENAI_API_KEY!,
   ),
 });
@@ -280,7 +280,7 @@ import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 
 const PROXY_URL = process.env.PROXY_URL!;
-const OBSERVE_API_KEY = process.env.OBSERVE_API_KEY!;
+const TRACE_FLOW_API_KEY = process.env.TRACE_FLOW_API_KEY!;
 
 function createProxyFetch(providerApiKey: string) {
   return async (url: string, options?: RequestInit): Promise<Response> => {
@@ -288,7 +288,7 @@ function createProxyFetch(providerApiKey: string) {
       method: options?.method || 'POST',
       headers: {
         ...options?.headers,
-        'X-Observe-Api-Key': OBSERVE_API_KEY,
+        'X-Trace-Flow-Api-Key': TRACE_FLOW_API_KEY,
         'X-Proxy-Target': url,
         'X-Provider-Api-Key': providerApiKey,
         Authorization: undefined,
@@ -338,13 +338,13 @@ Every request routed through the proxy automatically captures:
 - **Errors**: Parsed error messages and status codes
 - **Streaming events**: SSE message parsing for detailed streaming metrics
 
-View all captured data in the Observe dashboard at your web worker URL.
+View all captured data in the Trace Flow dashboard at your web worker URL.
 
 ## Troubleshooting
 
 ### 401 Unauthorized
 
-- Check that `X-Observe-Api-Key` is set correctly
+- Check that `X-Trace-Flow-Api-Key` is set correctly
 - Verify the API key exists in Cloudflare KV namespace
 - Ensure the API key hasn't expired
 
@@ -369,7 +369,7 @@ View all captured data in the Observe dashboard at your web worker URL.
 ## Security Best Practices
 
 1. **Never expose provider API keys** - Always use `X-Provider-Api-Key` header, never put keys in URLs or query params
-2. **Rotate Observe API keys** - Set expiration dates on API keys and rotate regularly
+2. **Rotate Trace Flow API keys** - Set expiration dates on API keys and rotate regularly
 3. **Use environment variables** - Never hardcode API keys in source code
 4. **Limit API key scopes** - Create separate API keys for different environments (dev, staging, prod)
 

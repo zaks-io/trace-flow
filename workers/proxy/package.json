@@ -1,5 +1,5 @@
 {
-  "name": "@observe/proxy",
+  "name": "@trace-flow/proxy",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -17,8 +17,8 @@
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.1.5",
-    "@observe/types": "workspace:*",
-    "@observe/utils": "workspace:*",
+    "@trace-flow/types": "workspace:*",
+    "@trace-flow/utils": "workspace:*",
     "eventsource-parser": "^3.0.6",
     "hono": "^4.6.14",
     "zod": "^4.1.13"

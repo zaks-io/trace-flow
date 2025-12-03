@@ -188,11 +188,11 @@ describe('validateAuth0JWT', () => {
     const body = await result?.json();
     expect(body).toEqual({
       error: 'Insufficient permissions',
-      message: 'The Observe role is required to access this resource',
+      message: 'The Trace Flow role is required to access this resource',
     });
   });
 
-  it('should return error when Observe role is not present', async () => {
+  it('should return error when Trace Flow role is not present', async () => {
     const context = createMockContext(
       {
         authorization: 'Bearer valid-token',
@@ -219,11 +219,11 @@ describe('validateAuth0JWT', () => {
     const body = await result?.json();
     expect(body).toEqual({
       error: 'Insufficient permissions',
-      message: 'The Observe role is required to access this resource',
+      message: 'The Trace Flow role is required to access this resource',
     });
   });
 
-  it('should return null when JWT is valid and has Observe role', async () => {
+  it('should return null when JWT is valid and has Trace Flow role', async () => {
     const context = createMockContext(
       {
         authorization: 'Bearer valid-token',
@@ -236,7 +236,7 @@ describe('validateAuth0JWT', () => {
         iss: 'https://dev-test.auth0.com/',
         aud: 'https://api.example.com',
         exp: Math.floor(Date.now() / 1000) + 3600,
-        'neuron/roles': ['Observe'],
+        'neuron/roles': ['Trace Flow'],
       },
       protectedHeader: { alg: 'RS256' },
       key: {} as never,
@@ -255,7 +255,7 @@ describe('validateAuth0JWT', () => {
     );
   });
 
-  it('should return null when JWT has Observe role among multiple roles', async () => {
+  it('should return null when JWT has Trace Flow role among multiple roles', async () => {
     const context = createMockContext(
       {
         authorization: 'Bearer valid-token',
@@ -268,7 +268,7 @@ describe('validateAuth0JWT', () => {
         iss: 'https://dev-test.auth0.com/',
         aud: 'https://api.example.com',
         exp: Math.floor(Date.now() / 1000) + 3600,
-        'neuron/roles': ['User', 'Observe', 'Admin'],
+        'neuron/roles': ['User', 'Trace Flow', 'Admin'],
       },
       protectedHeader: { alg: 'RS256' },
       key: {} as never,
@@ -292,7 +292,7 @@ describe('validateAuth0JWT', () => {
         iss: 'https://dev-test.auth0.com/',
         aud: 'https://api.example.com',
         exp: Math.floor(Date.now() / 1000) + 3600,
-        'neuron/roles': ['Observe'],
+        'neuron/roles': ['Trace Flow'],
       },
       protectedHeader: { alg: 'RS256' },
       key: {} as never,

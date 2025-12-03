@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { processSSEEvent, createSSEParser } from '../../streaming/sse';
-import type { SSEStreamData } from '@observe/types';
+import type { SSEStreamData } from '@trace-flow/types';
 
 describe('processSSEEvent', () => {
   it('should create new message on message_start event', () => {

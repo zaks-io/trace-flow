@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Observe - LLM Analytics',
+  title: 'Trace Flow - LLM Analytics',
   description: 'LLM Request Analytics Platform',
 };
 

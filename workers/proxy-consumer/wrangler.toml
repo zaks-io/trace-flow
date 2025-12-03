@@ -1,4 +1,4 @@
-name = "observe-proxy-consumer-dev"
+name = "trace-flow-consumer-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
 
@@ -19,17 +19,17 @@ new_sqlite_classes = ["TraceBatcher"]
 
 # Queue consumer configuration
 [[queues.consumers]]
-queue = "observe-requests-dev"
+queue = "trace-flow-requests-dev"
 max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5
-dead_letter_queue = "observe-requests-dlq-dev"
+dead_letter_queue = "trace-flow-requests-dlq-dev"
 
 # R2 bucket for storing request/response bodies
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-dev"
+bucket_name = "trace-flow-storage-dev"
 
 # Tinybird configuration
 # TINYBIRD_TOKEN - Auth token with DATASOURCE:APPEND scope (set via wrangler secret)
@@ -37,7 +37,7 @@ bucket_name = "observe-storage-dev"
 # TINYBIRD_HOST - API host (optional, defaults to "https://api.tinybird.co")
 
 [env.production]
-name = "observe-proxy-consumer"
+name = "trace-flow-consumer"
 workers_dev = false
 
 [[env.production.durable_objects.bindings]]
@@ -45,26 +45,26 @@ name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
 
 [[env.production.queues.consumers]]
-queue = "observe-requests-prod"
+queue = "trace-flow-requests-prod"
 max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5
-dead_letter_queue = "observe-requests-dlq-prod"
+dead_letter_queue = "trace-flow-requests-dlq-prod"
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-prod"
+bucket_name = "trace-flow-storage-prod"
 
 [env.preview]
-name = "observe-proxy-consumer-preview"
+name = "trace-flow-consumer-preview"
 
 [[env.preview.durable_objects.bindings]]
 name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
 
 [[env.preview.queues.consumers]]
-queue = "observe-requests-preview"
+queue = "trace-flow-requests-preview"
 max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
@@ -72,4 +72,4 @@ max_retries = 5
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-dev"
+bucket_name = "trace-flow-storage-dev"

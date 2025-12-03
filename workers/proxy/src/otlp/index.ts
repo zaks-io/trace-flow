@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
-import type { OTLPQueueMessage, QueueMessageUnion } from '@observe/types';
-import { getCurrentTimestamp } from '@observe/utils';
+import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
+import { getCurrentTimestamp } from '@trace-flow/utils';
 import { validateApiKey } from '../auth';
 import { transformOTLPToTraces } from './transform';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
@@ -159,7 +159,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
-  const apiKey = c.req.header('X-Observe-Api-Key')!;
+  const apiKey = c.req.header('X-Trace-Flow-Api-Key')!;
   // Convert milliseconds to nanoseconds for OTLP spec compliance
   const receivedAtNano = getCurrentTimestamp() * 1_000_000;
   const traces = transformOTLPToTraces(body, apiKey, receivedAtNano);

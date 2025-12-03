@@ -1,4 +1,4 @@
-import type { TinybirdTrace } from '@observe/types';
+import type { TinybirdTrace } from '@trace-flow/types';
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;

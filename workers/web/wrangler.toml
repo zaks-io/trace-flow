@@ -1,4 +1,4 @@
-name = "observe-web"
+name = "trace-flow-web"
 compatibility_date = "2024-11-27"
 pages_build_output_dir = "./out"
 
@@ -6,4 +6,4 @@ pages_build_output_dir = "./out"
 enabled = true
 
 [env.preview]
-name = "observe-web-preview"
+name = "trace-flow-web-preview"

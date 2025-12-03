@@ -15,9 +15,9 @@ export const otlpTracesRoute = createRoute({
   security: [{ apiKey: [] }],
   request: {
     headers: z.object({
-      'x-observe-api-key': z.string().openapi({
+      'x-trace-flow-api-key': z.string().openapi({
         description: 'API key for authentication',
-        example: 'obs_xxxxxxxxxxxxxxxxxxxx',
+        example: 'tf_xxxxxxxxxxxxxxxxxxxx',
       }),
       'content-type': z.literal('application/json'),
     }),

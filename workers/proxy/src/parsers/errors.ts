@@ -1,4 +1,4 @@
-import type { LLMError } from '@observe/types';
+import type { LLMError } from '@trace-flow/types';
 
 /**
  * Extracts error information from failed LLM responses using regex.

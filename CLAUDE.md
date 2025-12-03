@@ -27,8 +27,8 @@ LLM observability platform built on Cloudflare Workers. Four workers form the sy
 Pull requests automatically get preview deployments via `.github/workflows/preview.yml`:
 
 - **Convex**: Creates isolated preview backend per branch
-- **Workers**: Deploy to `-preview` suffixed workers (observe-proxy-preview, observe-api-preview)
-- **Web**: Deploys to branch-specific Pages URL (`{branch}.observe-web.pages.dev`)
+- **Workers**: Deploy to `-preview` suffixed workers (trace-flow-proxy-preview, trace-flow-api-preview)
+- **Web**: Deploys to branch-specific Pages URL (`{branch}.trace-flow-web.pages.dev`)
 
 A comment with preview URLs is posted to each PR.
 
@@ -301,7 +301,7 @@ pnpm run format && pnpm run lint && pnpm run type-check && pnpm run test && pnpm
 ```bash
 # With proxy + consumer running, send test request
 curl -X POST http://localhost:8787/openai/v1/chat/completions \
-  -H "X-Observe-Api-Key: your-api-key" \
+  -H "X-Trace-Flow-Api-Key: your-api-key" \
   -H "Authorization: Bearer your-openai-key" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
@@ -318,7 +318,7 @@ pnpm run dev:all
 
 # Send test request (example with OpenAI)
 curl -X POST http://localhost:8787/openai/v1/chat/completions \
-  -H "X-Observe-Api-Key: your-api-key" \
+  -H "X-Trace-Flow-Api-Key: your-api-key" \
   -H "Authorization: Bearer your-openai-key" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
@@ -334,7 +334,7 @@ tb datasource data otel_traces --limit 10
 - **Turborepo** manages builds with dependency graph
 - **Bun workspaces** link packages
 - Each worker has its own `wrangler.toml` and `package.json`
-- Shared package (`@observe/shared`) contains types and utils
+- Shared package (`@trace-flow/shared`) contains types and utils
 - Pre-commit hooks run eslint + prettier on staged files
 
 ## Environments
@@ -343,15 +343,15 @@ Project has two separate environments with isolated resources:
 
 **Development (default):**
 
-- Queues: `observe-requests-dev`, `observe-requests-dlq-dev`
-- R2 bucket: `observe-storage-dev`
-- KV namespace: `observe-api-keys-dev` (ID: 86d6aaf858e747e4bd9aa0a51216570d)
+- Queues: `trace-flow-requests-dev`, `trace-flow-requests-dlq-dev`
+- R2 bucket: `trace-flow-storage-dev`
+- KV namespace: `trace-flow-api-keys-dev` (ID: 30c9a31ff3af4b408b4d64b8ecfa98a5)
 
 **Production:**
 
-- Queues: `observe-requests-prod`, `observe-requests-dlq-prod`
-- R2 bucket: `observe-storage-prod`
-- KV namespace: `observe-api-keys-prod` (ID: 6d74d697f808470bbb678eda3c52bef3)
+- Queues: `trace-flow-requests-prod`, `trace-flow-requests-dlq-prod`
+- R2 bucket: `trace-flow-storage-prod`
+- KV namespace: `trace-flow-api-keys-prod` (ID: f004c21e2b8c4754af5947c08069bd00)
 
 ### Environment Differences: Workers vs Pages
 
@@ -384,20 +384,20 @@ cd workers/web && pnpm run deploy:preview  # Deploys to Pages preview environmen
 
 **Proxy** (`workers/proxy/wrangler.toml`):
 
-- Queue producer binding: `REQUEST_QUEUE` → `observe-requests-{env}` queue
-- R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
-- KV namespace binding: `API_KEYS` → `observe-api-keys-{env}` namespace
+- Queue producer binding: `REQUEST_QUEUE` → `trace-flow-requests-{env}` queue
+- R2 bucket binding: `STORAGE` → `trace-flow-storage-{env}` bucket
+- KV namespace binding: `API_KEYS` → `trace-flow-api-keys-{env}` namespace
 
 **Consumer** (`workers/proxy-consumer/wrangler.toml`):
 
-- Queue consumer config: `observe-requests-{env}` queue with max_batch_size=100
-- Dead letter queue: `observe-requests-dlq-{env}`
-- R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
+- Queue consumer config: `trace-flow-requests-{env}` queue with max_batch_size=100
+- Dead letter queue: `trace-flow-requests-dlq-{env}`
+- R2 bucket binding: `STORAGE` → `trace-flow-storage-{env}` bucket
 - Secrets: `TINYBIRD_TOKEN`, `TINYBIRD_DATASOURCE`, `TINYBIRD_HOST`
 
 **API** (`workers/api/wrangler.toml`):
 
-- R2 bucket binding: `STORAGE` → `observe-storage-{env}` bucket
+- R2 bucket binding: `STORAGE` → `trace-flow-storage-{env}` bucket
 - Simple Hono worker with GET `/bodies/:traceId` endpoint
 - Returns request/response bodies from R2 for the web UI
 
@@ -671,21 +671,21 @@ pnpm run build   # Build all workers
 ```bash
 # Proxy worker
 pnpm run prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
-pnpm run turbo run lint --filter=@observe/proxy
-pnpm run turbo run type-check --filter=@observe/proxy
-pnpm run turbo run build --filter=@observe/proxy
+pnpm run turbo run lint --filter=@trace-flow/proxy
+pnpm run turbo run type-check --filter=@trace-flow/proxy
+pnpm run turbo run build --filter=@trace-flow/proxy
 
 # Proxy consumer worker
 pnpm run prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
-pnpm run turbo run lint --filter=@observe/proxy-consumer
-pnpm run turbo run type-check --filter=@observe/proxy-consumer
-pnpm run turbo run build --filter=@observe/proxy-consumer
+pnpm run turbo run lint --filter=@trace-flow/proxy-consumer
+pnpm run turbo run type-check --filter=@trace-flow/proxy-consumer
+pnpm run turbo run build --filter=@trace-flow/proxy-consumer
 
 # Web worker
 pnpm run prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
-pnpm run turbo run lint --filter=@observe/web
-pnpm run turbo run type-check --filter=@observe/web
-pnpm run turbo run build --filter=@observe/web
+pnpm run turbo run lint --filter=@trace-flow/web
+pnpm run turbo run type-check --filter=@trace-flow/web
+pnpm run turbo run build --filter=@trace-flow/web
 
 # GitHub Actions workflows (if modified)
 actionlint .github/workflows/*.yml
@@ -796,7 +796,7 @@ EOF
 - **Stream handling**: Always use `tee()` to duplicate streams when you need both proxying and capture
 - **Async operations**: Use `c.executionCtx.waitUntil()` in Hono handlers to avoid blocking responses
 - **Error handling**: Queue consumer must call `message.ack()` after processing
-- **Type safety**: Import shared types from `@observe/shared/types` for queue messages
+- **Type safety**: Import shared types from `@trace-flow/shared/types` for queue messages
 - **R2 keys**: Use consistent naming: `requests/${requestId}` and `responses/${requestId}`
 - **OpenTelemetry**: Consumer worker uses `@microlabs/otel-cf-workers` to send traces to ClickStack
 - **NodeJS compatibility**: Consumer worker requires `nodejs_compat` flag for OpenTelemetry

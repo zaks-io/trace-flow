@@ -1,4 +1,4 @@
-import type { LLMTokenUsage } from '@observe/types';
+import type { LLMTokenUsage } from '@trace-flow/types';
 
 /**
  * Extracts token usage from LLM response bodies using regex.

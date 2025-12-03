@@ -3,7 +3,7 @@ import { query } from './_generated/server';
 
 type AuthContext = QueryCtx | MutationCtx | ActionCtx;
 
-export async function requireObserveRole(ctx: AuthContext): Promise<void> {
+export async function requireTraceFlowRole(ctx: AuthContext): Promise<void> {
   const identity = await ctx.auth.getUserIdentity();
 
   if (!identity) {
@@ -12,12 +12,12 @@ export async function requireObserveRole(ctx: AuthContext): Promise<void> {
 
   const roles = ((identity as Record<string, unknown>)['neuron/roles'] as string[]) || [];
 
-  if (!roles.includes('Observe')) {
+  if (!roles.includes('Trace Flow')) {
     throw new Error('Access denied');
   }
 }
 
-export const hasObserveRole = query({
+export const hasTraceFlowRole = query({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
 
@@ -26,6 +26,6 @@ export const hasObserveRole = query({
     }
 
     const roles = ((identity as Record<string, unknown>)['neuron/roles'] as string[]) || [];
-    return roles.includes('Observe');
+    return roles.includes('Trace Flow');
   },
 });

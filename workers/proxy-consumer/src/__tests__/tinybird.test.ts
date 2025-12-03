@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { insertIntoTinybird, insertIntoTinybirdWithRetry } from '../tinybird';
-import type { TinybirdTrace } from '@observe/types';
+import type { TinybirdTrace } from '@trace-flow/types';
 
 describe('insertIntoTinybird', () => {
   const mockTrace: TinybirdTrace = {

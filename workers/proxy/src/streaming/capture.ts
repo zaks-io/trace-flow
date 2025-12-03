@@ -1,4 +1,4 @@
-import { getCurrentTimestamp } from '@observe/utils';
+import { getCurrentTimestamp } from '@trace-flow/utils';
 
 /**
  * Consumes a ReadableStream and returns its entire contents as a string.

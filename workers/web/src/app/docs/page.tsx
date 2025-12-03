@@ -42,7 +42,7 @@ const GUIDES: DocCard[] = [
 const COMING_SOON: DocCard[] = [
   {
     title: 'API Keys',
-    description: 'Create and manage API keys for authenticating with the Observe proxy.',
+    description: 'Create and manage API keys for authenticating with the Trace Flow proxy.',
     href: '#',
     icon: Key,
   },
@@ -134,7 +134,7 @@ export default function DocsPage() {
             className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
-            <span>Back to Observe</span>
+            <span>Back to Trace Flow</span>
           </Link>
           <div className="flex items-center gap-2">
             <BookOpen className="h-4 w-4 text-primary" />
@@ -152,11 +152,11 @@ export default function DocsPage() {
             <span className="font-mono text-xs text-primary">Developer Documentation</span>
           </div>
           <h1 className="mb-4 text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-            Observe Docs
+            Trace Flow Docs
           </h1>
           <p className="max-w-2xl text-lg text-muted-foreground">
-            Learn how to integrate Observe into your applications. Send traces, monitor LLM usage,
-            and gain insights into your AI workflows.
+            Learn how to integrate Trace Flow into your applications. Send traces, monitor LLM
+            usage, and gain insights into your AI workflows.
           </p>
         </div>
 
@@ -219,7 +219,7 @@ export default function DocsPage() {
         {/* Footer */}
         <footer className="mt-20 border-t border-border/50 pt-8">
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>Observe — LLM Analytics Platform</span>
+            <span>Trace Flow — LLM Analytics Platform</span>
             <Link href="/app" className="text-primary transition-colors hover:text-primary/80">
               Open Dashboard →
             </Link>

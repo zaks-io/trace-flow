@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { env, runInDurableObject, runDurableObjectAlarm } from 'cloudflare:test';
-import type { TinybirdTrace } from '@observe/types';
+import type { TinybirdTrace } from '@trace-flow/types';
 import { type TraceBatcher } from '../batcher';
 
 describe('TraceBatcher Integration', () => {

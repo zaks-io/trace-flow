@@ -1,4 +1,4 @@
-import type { QueueMessageUnion, TinybirdTrace } from '@observe/types';
+import type { QueueMessageUnion, TinybirdTrace } from '@trace-flow/types';
 import { TraceBatcher } from './batcher';
 import { buildTraces } from './traces';
 import { calculateShardId } from './sharding';

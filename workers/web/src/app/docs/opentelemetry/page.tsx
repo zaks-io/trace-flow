@@ -105,8 +105,8 @@ import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
 // Initialize once at module level
 const exporter = new OTLPTraceExporter({
-  url: "https://your-observe-proxy.workers.dev/v1/traces",
-  headers: { "X-Observe-Api-Key": process.env.OBSERVE_API_KEY! },
+  url: "https://gateway.trace-flow.dev/v1/traces",
+  headers: { "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY! },
 });
 
 const provider = new BasicTracerProvider({
@@ -197,7 +197,7 @@ export default function OpenTelemetryDocsPage() {
             <span className="font-mono text-xs text-primary">OpenTelemetry Integration</span>
           </div>
           <h1 className="mb-4 text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-            Integrate with Observe
+            Integrate with Trace Flow
           </h1>
           <p className="max-w-2xl text-lg text-muted-foreground">
             Send hierarchical traces from your application using the official OpenTelemetry SDK.
@@ -368,7 +368,7 @@ export default function OpenTelemetryDocsPage() {
         {/* Footer */}
         <footer className="mt-20 border-t border-border/50 pt-8">
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>Observe — LLM Analytics Platform</span>
+            <span>Trace Flow — LLM Analytics Platform</span>
             <Link href="/app" className="text-primary transition-colors hover:text-primary/80">
               Open Dashboard →
             </Link>

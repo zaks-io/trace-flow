@@ -1,4 +1,4 @@
-import type { LLMResponseMetadata } from '@observe/types';
+import type { LLMResponseMetadata } from '@trace-flow/types';
 
 /**
  * Regex patterns for extracting metadata from SSE event data strings.

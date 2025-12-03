@@ -1,7 +1,7 @@
 import { action } from './_generated/server';
 import { v } from 'convex/values';
 import { SignJWT } from 'jose';
-import { requireObserveRole } from './auth';
+import { requireTraceFlowRole } from './auth';
 
 export const generateToken = action({
   args: {
@@ -16,7 +16,7 @@ export const generateToken = action({
     name: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireObserveRole(ctx);
+    await requireTraceFlowRole(ctx);
     const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
     const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
 

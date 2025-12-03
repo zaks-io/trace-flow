@@ -1,4 +1,4 @@
-name = "observe-proxy-dev"
+name = "trace-flow-proxy-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
 
@@ -8,21 +8,20 @@ enabled = true
 # KV Namespace for API key validation (dev)
 [[kv_namespaces]]
 binding = "API_KEYS"
-id = "86d6aaf858e747e4bd9aa0a51216570d"
-# preview_id = "86d6aaf858e747e4bd9aa0a51216570d"
+id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 
 # Queue for async processing
 [[queues.producers]]
-queue = "observe-requests-dev"
+queue = "trace-flow-requests-dev"
 binding = "REQUEST_QUEUE"
 
 # R2 bucket for storing request/response bodies
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-dev"
+bucket_name = "trace-flow-storage-dev"
 
 [env.production]
-name = "observe-proxy"
+name = "trace-flow-proxy"
 workers_dev = false
 
 [[env.production.routes]]
@@ -31,27 +30,27 @@ zone_name = "trace-flow.dev"
 
 [[env.production.kv_namespaces]]
 binding = "API_KEYS"
-id = "6d74d697f808470bbb678eda3c52bef3"
+id = "f004c21e2b8c4754af5947c08069bd00"
 
 [[env.production.queues.producers]]
-queue = "observe-requests-prod"
+queue = "trace-flow-requests-prod"
 binding = "REQUEST_QUEUE"
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-prod"
+bucket_name = "trace-flow-storage-prod"
 
 [env.preview]
-name = "observe-proxy-preview"
+name = "trace-flow-proxy-preview"
 
 [[env.preview.kv_namespaces]]
 binding = "API_KEYS"
-id = "86d6aaf858e747e4bd9aa0a51216570d"
+id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 
 [[env.preview.queues.producers]]
-queue = "observe-requests-preview"
+queue = "trace-flow-requests-preview"
 binding = "REQUEST_QUEUE"
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-dev"
+bucket_name = "trace-flow-storage-dev"

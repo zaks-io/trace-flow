@@ -53,7 +53,7 @@ jobs:
         run: pnpm run test
 
       - name: Build (non-web workers)
-        run: pnpm turbo run build --filter='!@observe/web'
+        run: pnpm turbo run build --filter='!@trace-flow/web'
 
   deploy-convex:
     name: Deploy Convex
@@ -76,7 +76,7 @@ jobs:
       - name: Deploy Convex and build web
         run: |
           npx convex deploy \
-            --cmd 'pnpm turbo run build --filter=@observe/web' \
+            --cmd 'pnpm turbo run build --filter=@trace-flow/web' \
             --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
@@ -203,7 +203,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/web
-          command: pages deploy ./out --project-name=observe-web --branch=main
+          command: pages deploy ./out --project-name=trace-flow-web --branch=main
           packageManager: pnpm
 
   deploy-status:

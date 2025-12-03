@@ -1,5 +1,5 @@
 {
-  "name": "@observe/utils",
+  "name": "@trace-flow/utils",
   "version": "0.0.1",
   "private": true,
   "type": "module",

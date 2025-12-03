@@ -32,7 +32,7 @@ jobs:
 
       # Deploy workers to preview environment
       - name: Deploy Preview Workers
-        run: pnpm turbo run deploy:preview --filter='./workers/*' --filter='!@observe/web' --env-mode=loose
+        run: pnpm turbo run deploy:preview --filter='./workers/*' --filter='!@trace-flow/web' --env-mode=loose
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -41,12 +41,12 @@ jobs:
       - name: Deploy Convex Preview and Build Web
         run: |
           npx convex deploy --preview-create "$BRANCH_NAME" \
-            --cmd 'pnpm turbo run build --filter=@observe/web' \
+            --cmd 'pnpm turbo run build --filter=@trace-flow/web' \
             --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
         env:
           BRANCH_NAME: ${{ github.head_ref }}
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
-          NEXT_PUBLIC_API_URL: https://observe-api-preview.isaac-a46.workers.dev
+          NEXT_PUBLIC_API_URL: https://trace-flow-api-preview.isaac-a46.workers.dev
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
@@ -58,7 +58,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/web
-          command: pages deploy ./out --project-name=observe-web --branch="${{ github.head_ref }}"
+          command: pages deploy ./out --project-name=trace-flow-web --branch="${{ github.head_ref }}"
           packageManager: pnpm
 
       # Post/update comment with preview URLs
@@ -74,9 +74,9 @@ jobs:
 
             | Service | URL |
             |---------|-----|
-            | Web | https://${branchName}.observe-web.pages.dev |
-            | API | https://observe-api-preview.isaac-a46.workers.dev |
-            | Proxy | https://observe-proxy-preview.isaac-a46.workers.dev |
+            | Web | https://${branchName}.trace-flow-web.pages.dev |
+            | API | https://trace-flow-api-preview.isaac-a46.workers.dev |
+            | Proxy | https://trace-flow-proxy-preview.isaac-a46.workers.dev |
             `;
 
             // Find existing comment

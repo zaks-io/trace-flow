@@ -1,4 +1,4 @@
-# Observe
+# Trace Flow
 
 LLM request proxy and analytics platform built on Cloudflare Workers.
 
@@ -39,7 +39,7 @@ The platform includes several production-ready capabilities:
 ## Structure
 
 ```
-observe/
+trace-flow/
 ├── packages/
 │   ├── types/               # Shared TypeScript types
 │   └── utils/               # Shared utilities
@@ -66,7 +66,7 @@ pnpm run prepare
 
 ## Using the Proxy
 
-The Observe proxy can be integrated with any LLM client, including the popular [Vercel AI SDK](https://sdk.vercel.ai/).
+The Trace Flow proxy can be integrated with any LLM client, including the popular [Vercel AI SDK](https://sdk.vercel.ai/).
 
 ### Quick Start
 
@@ -74,7 +74,7 @@ The Observe proxy can be integrated with any LLM client, including the popular [
 
 The proxy requires three headers:
 
-- `X-Observe-Api-Key`: Your Observe API key for authentication
+- `X-Trace-Flow-Api-Key`: Your Trace Flow API key for authentication
 - `X-Proxy-Target`: The target LLM provider URL (e.g., `https://api.openai.com/v1/chat/completions`)
 - `X-Provider-Api-Key`: Your LLM provider API key (optional, will be injected into provider-specific auth headers)
 
@@ -92,7 +92,7 @@ const openaiClient = openai({
       method: options?.method || 'POST',
       headers: {
         ...options?.headers,
-        'X-Observe-Api-Key': process.env.OBSERVE_API_KEY!,
+        'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY!,
         'X-Proxy-Target': url, // Original provider URL intercepted here
         'X-Provider-Api-Key': process.env.OPENAI_API_KEY!,
         Authorization: undefined,
@@ -116,7 +116,7 @@ The proxy automatically captures:
 - Errors and status codes
 - Streaming events
 
-View all captured data in the Observe dashboard.
+View all captured data in the Trace Flow dashboard.
 
 ## Development
 
@@ -233,9 +233,9 @@ Before deploying, you need to create Cloudflare resources.
 
 Quick overview:
 
-1. **Queues** - `observe-requests-dev`/`observe-requests-prod` and DLQ queues
-2. **R2 Bucket** - `observe-storage-dev`/`observe-storage-prod` for storing request/response bodies
-3. **KV Namespace** - `observe-api-keys-dev`/`observe-api-keys-prod` for API key validation
+1. **Queues** - `trace-flow-requests-dev`/`trace-flow-requests-prod` and DLQ queues
+2. **R2 Bucket** - `trace-flow-storage-dev`/`trace-flow-storage-prod` for storing request/response bodies
+3. **KV Namespace** - `trace-flow-api-keys-dev`/`trace-flow-api-keys-prod` for API key validation
 4. **Tinybird** - Configure token and datasource for trace storage
 
 ## Tech Stack

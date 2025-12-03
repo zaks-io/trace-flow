@@ -17,11 +17,11 @@ export default defineWorkersConfig({
         },
         miniflare: {
           queueConsumers: {
-            'observe-requests-dev': {
+            'trace-flow-requests-dev': {
               maxBatchSize: 100,
               maxBatchTimeout: 5,
               maxRetries: 5,
-              deadLetterQueue: 'observe-requests-dlq-dev',
+              deadLetterQueue: 'trace-flow-requests-dlq-dev',
             },
           },
         },

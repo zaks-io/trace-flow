@@ -43,7 +43,9 @@ export function AppSidebar() {
             <Zap className="h-5 w-5 text-primary" />
           </div>
           <div className="flex flex-col">
-            <span className="text-base font-semibold tracking-tight text-foreground">Observe</span>
+            <span className="text-base font-semibold tracking-tight text-foreground">
+              Trace Flow
+            </span>
             <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
               LLM Analytics
             </span>

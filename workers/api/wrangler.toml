@@ -1,4 +1,4 @@
-name = "observe-api-dev"
+name = "trace-flow-api-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
 
@@ -11,10 +11,10 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-dev"
+bucket_name = "trace-flow-storage-dev"
 
 [env.production]
-name = "observe-api"
+name = "trace-flow-api"
 workers_dev = false
 
 [env.production.vars]
@@ -27,10 +27,10 @@ zone_name = "trace-flow.dev"
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-prod"
+bucket_name = "trace-flow-storage-prod"
 
 [env.preview]
-name = "observe-api-preview"
+name = "trace-flow-api-preview"
 
 [env.preview.vars]
 AUTH0_DOMAIN = "auth0.zaks.io"
@@ -38,4 +38,4 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
-bucket_name = "observe-storage-dev"
+bucket_name = "trace-flow-storage-dev"

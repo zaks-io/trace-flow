@@ -20,7 +20,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 
 const PROXY_URL = 'https://your-proxy.workers.dev';
-const proxyHeaders = { 'X-Observe-Api-Key': 'your-observe-key' };
+const proxyHeaders = { 'X-Trace-Flow-Api-Key': 'your-trace-flow-key' };
 
 // OpenAI
 const openai = createOpenAI({
@@ -78,7 +78,7 @@ pnpm run dev:all
 
 | Variable             | Required             | Description                                  |
 | -------------------- | -------------------- | -------------------------------------------- |
-| `OBSERVE_API_KEY`    | Yes                  | Your proxy gateway API key                   |
+| `TRACE_FLOW_API_KEY` | Yes                  | Your proxy gateway API key                   |
 | `OPENAI_API_KEY`     | For OpenAI tests     | OpenAI API key                               |
 | `ANTHROPIC_API_KEY`  | For Anthropic tests  | Anthropic API key                            |
 | `OPENROUTER_API_KEY` | For OpenRouter tests | OpenRouter API key                           |

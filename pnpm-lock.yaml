@@ -135,10 +135,10 @@ importers:
       '@hono/zod-openapi':
         specifier: ^1.1.5
         version: 1.1.5(hono@4.10.2)(zod@4.1.13)
-      '@observe/types':
+      '@trace-flow/types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@observe/utils':
+      '@trace-flow/utils':
         specifier: workspace:*
         version: link:../../packages/utils
       eventsource-parser:
@@ -172,10 +172,10 @@ importers:
 
   workers/proxy-consumer:
     dependencies:
-      '@observe/types':
+      '@trace-flow/types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@observe/utils':
+      '@trace-flow/utils':
         specifier: workspace:*
         version: link:../../packages/utils
     devDependencies:
@@ -203,9 +203,6 @@ importers:
       '@auth0/auth0-react':
         specifier: ^2.6.0
         version: 2.8.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
-      '@observe/utils':
-        specifier: workspace:*
-        version: link:../../packages/utils
       '@radix-ui/react-collapsible':
         specifier: ^1.1.12
         version: 1.1.12(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -233,6 +230,9 @@ importers:
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@trace-flow/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
