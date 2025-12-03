@@ -1,4 +1,4 @@
-name = "observe-proxy-consumer"
+name = "observe-proxy-consumer-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
 
@@ -38,7 +38,7 @@ bucket_name = "observe-storage-dev"
 
 [env.production]
 name = "observe-proxy-consumer"
-workers_dev = true
+workers_dev = false
 
 [[env.production.durable_objects.bindings]]
 name = "TRACE_BATCHER"

@@ -13,19 +13,32 @@ LLM observability platform built on Cloudflare Workers. Four workers form the sy
 
 ## DEPLOYMENT
 
-Production deployments are automated via GitHub Actions. When code is merged to `main`, the deploy workflow automatically:
+### Production (Automated via GitHub Actions)
 
-1. Runs CI checks (format, lint, type-check, test, build)
-2. Deploys Convex backend
-3. Deploys all Cloudflare Workers in parallel (proxy, proxy-consumer, api, web)
+**Do NOT run manual production deployment commands.** Production deployments are automated via GitHub Actions when code is merged to `main`:
 
-**Do NOT run manual production deployment commands.** Use the GitHub Actions workflow instead.
+1. CI checks run (format, lint, type-check, test, build)
+2. Convex backend deploys first (workers may depend on schema)
+3. Workers deploy in parallel (proxy, proxy-consumer, api)
+4. Web deploys after Convex (needs NEXT_PUBLIC_CONVEX_URL from Convex deploy)
 
-**Development Commands (use these for local dev and testing):**
+### PR Preview Environments
 
-- Convex watch mode: `pnpm dlx convex dev` (continuous development server)
-- Convex deploy to dev: `pnpm dlx convex@latest dev --once` (deploy to dev environment once, not a watch command)
-- Cloudflare Workers dev (with queues): `wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state`
+Pull requests automatically get preview deployments via `.github/workflows/preview.yml`:
+
+- **Convex**: Creates isolated preview backend per branch
+- **Workers**: Deploy to `-preview` suffixed workers (observe-proxy-preview, observe-api-preview)
+- **Web**: Deploys to branch-specific Pages URL (`{branch}.observe-web.pages.dev`)
+
+A comment with preview URLs is posted to each PR.
+
+### Development Commands
+
+Use these for local dev and testing only:
+
+- Convex watch mode: `pnpm dlx convex dev`
+- Convex deploy once: `pnpm dlx convex@latest dev --once`
+- All workers together: `pnpm run dev:all` (proxy + consumer + api with shared R2)
 - Tinybird dev: `tb dev` (auto-reload, local only)
 
 ## Architecture
@@ -54,17 +67,17 @@ Production deployments are automated via GitHub Actions. When code is merged to 
 
 **IMPORTANT**: Use globally installed `wrangler` command directly, not `pnpm dlx wrangler` or `npx wrangler`. The global install ensures consistent behavior and avoids potential compatibility issues. Install wrangler globally: `npm install -g wrangler`
 
-### Running Proxy + Consumer Together (Recommended)
+### Running All Workers Together (Recommended)
 
-To test the complete message flow from proxy → queue → consumer locally:
+To test the complete message flow from proxy → queue → consumer → api locally:
 
 ```bash
-wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+pnpm run dev:all
+# Or manually:
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml -c workers/api/wrangler.toml --persist-to .wrangler/state
 ```
 
-This runs both workers in a single process with shared local R2 bucket and queue. The `--persist-to` flag ensures state is shared between workers.
-
-**Note**: This multi-worker feature is experimental (requires Wrangler v3.1.0+).
+This runs all three workers in a single process with shared local R2 bucket and queue. The `--persist-to` flag ensures state is shared between workers.
 
 ### Running Web Worker
 
@@ -89,43 +102,35 @@ NEXT_PUBLIC_AUTH0_CLIENT_ID=your-auth0-client-id
 
 ### Full Local Stack (Recommended)
 
-**Single Command (Recommended):**
-
 ```bash
-# Terminal 1: All workers with shared R2
+# Terminal 1: All workers with shared R2 (proxy + consumer + api)
 pnpm run dev:all
 
-# Terminal 2: API worker (MUST use same persist path)
-cd workers/api && wrangler dev --persist-to ../../.wrangler/state
-
-# Terminal 3: Convex backend (watch mode)
+# Terminal 2: Convex backend (watch mode)
 pnpm dlx convex dev
 
-# Terminal 4: Web UI
+# Terminal 3: Web UI
 cd workers/web && pnpm run dev
 ```
 
-The `dev:all` script runs proxy, consumer, and API workers together with shared R2 storage, solving storage isolation issues.
+The `dev:all` script runs proxy, consumer, and API workers together with shared R2 storage.
 
 **Multi-Terminal Setup (For Debugging):**
 
-If you need to run workers separately for debugging:
+If you need to run workers separately for debugging, ensure all use the same `--persist-to` path:
 
 ```bash
-# Terminal 1: Proxy + Consumer workers
-wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+# Terminal 1: Proxy + Consumer + API workers
+wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml -c workers/api/wrangler.toml --persist-to .wrangler/state
 
-# Terminal 2: API worker (MUST use same persist path)
-cd workers/api && wrangler dev --persist-to ../../.wrangler/state
-
-# Terminal 3: Convex backend (watch mode)
+# Terminal 2: Convex backend (watch mode)
 pnpm dlx convex dev
 
-# Terminal 4: Web UI
+# Terminal 3: Web UI
 cd workers/web && pnpm run dev
 ```
 
-**IMPORTANT**: When running workers separately, all workers MUST use the same `--persist-to` path or R2 storage will be isolated and bodies won't be accessible.
+**IMPORTANT**: All workers MUST use the same `--persist-to` path or R2 storage will be isolated.
 
 ### Running Workers Individually
 
@@ -308,11 +313,8 @@ curl -X POST http://localhost:8787/openai/v1/chat/completions \
 # Ensure Tinybird Local is running
 tb local start
 
-# Start both workers together (required for queue consumer to process messages)
-wrangler dev \
-  -c ./workers/proxy/wrangler.toml \
-  -c ./workers/proxy-consumer/wrangler.toml \
-  --persist-to .wrangler/state
+# Start all workers together
+pnpm run dev:all
 
 # Send test request (example with OpenAI)
 curl -X POST http://localhost:8787/openai/v1/chat/completions \
@@ -325,7 +327,7 @@ curl -X POST http://localhost:8787/openai/v1/chat/completions \
 tb datasource data otel_traces --limit 10
 ```
 
-**Important:** Queue consumers only work in local development when both producer and consumer workers are started together using multiple `-c` flags in a single `wrangler dev` command. Running them separately will not connect the queue.
+**Important:** Queue consumers only work when workers are started together using `pnpm run dev:all` or multiple `-c` flags. Running them separately will not connect the queue.
 
 ## Monorepo Structure
 
@@ -616,20 +618,9 @@ Tinybird automatically transforms data from live schema to new schema during dep
 - Use `tb build` to validate before deployment
 - Use `--allow-destructive-operations` flag when deleting datasources
 
-## Deployment
+## Manual Development Deployment
 
-### GitHub Actions (Production)
-
-Production deployments are automated via `.github/workflows/deploy.yml`. On push to `main`:
-
-1. **CI job** - Runs format, lint, type-check, test, build
-2. **Convex** - Deploys backend first (workers may depend on schema)
-3. **Workers** - Deploys proxy, proxy-consumer, api, web in parallel
-4. **Status** - Verifies all deployments succeeded
-
-The workflow uses the `Production` GitHub environment for secrets.
-
-### Manual Development Deployment
+For manual deploys to dev environment (not for production):
 
 ```bash
 # Deploy all workers to development
@@ -638,6 +629,8 @@ pnpm run deploy:dev
 # Deploy individual workers to dev
 cd workers/proxy && pnpm run deploy:dev
 ```
+
+See [DEPLOYMENT section](#deployment) above for production deployment details.
 
 ## Creating Pull Requests
 
