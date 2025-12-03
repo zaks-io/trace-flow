@@ -85,8 +85,12 @@ export class TraceBatcher extends DurableObject<Env> {
 
     if (this.traceCount >= BATCH_SIZE) {
       await this.flush();
-    } else if (!this.flushAlarmScheduled) {
-      await this.scheduleFlush();
+    } else {
+      // Check storage for existing alarm (in-memory flag resets on hibernation)
+      const currentAlarm = await this.durableState.storage.getAlarm();
+      if (!currentAlarm) {
+        await this.scheduleFlush();
+      }
     }
   }
 

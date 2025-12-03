@@ -6,6 +6,7 @@ import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { TraceDetailPanel } from '@/components/TraceDetailPanel';
 
 interface RequestRow {
+  ReceivedAt: number;
   Timestamp: number;
   TraceId: string;
   SpanId: string;
@@ -28,28 +29,28 @@ export default function Requests() {
   const [mergedRequests, setMergedRequests] = useState<RequestRow[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoStoppedLiveMode, setAutoStoppedLiveMode] = useState(false);
-  const [latestTimestamp, setLatestTimestamp] = useState<number | null>(null);
+  const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
 
-  const latestTimestampRef = useRef<number | null>(null);
+  const latestReceivedAtRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
   const prevLiveModeRef = useRef(false);
 
   const sqlQuery = useMemo(() => {
-    if (isLiveMode && latestTimestamp !== null) {
-      return `SELECT Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
+    if (isLiveMode && latestReceivedAt !== null) {
+      return `SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
         FROM otel_traces
-        WHERE ParentSpanId = '' AND Timestamp > ${latestTimestamp}
-        ORDER BY Timestamp DESC
+        WHERE ParentSpanId = '' AND ReceivedAt > ${latestReceivedAt}
+        ORDER BY ReceivedAt DESC
         LIMIT 100
         FORMAT JSON`;
     }
-    return `SELECT Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
+    return `SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode
       FROM otel_traces
       WHERE ParentSpanId = ''
-      ORDER BY Timestamp DESC
+      ORDER BY ReceivedAt DESC
       LIMIT 100
       FORMAT JSON`;
-  }, [isLiveMode, latestTimestamp]);
+  }, [isLiveMode, latestReceivedAt]);
 
   const {
     data,
@@ -146,19 +147,24 @@ export default function Requests() {
     if (!initialLoadComplete && data?.data && data.data.length > 0) {
       const requests = data.data;
       setMergedRequests(requests);
-      const newestTimestamp = requests[0]!.Timestamp;
-      latestTimestampRef.current = newestTimestamp;
-      setLatestTimestamp(newestTimestamp);
+      const newestReceivedAt = requests[0]!.ReceivedAt;
+      latestReceivedAtRef.current = newestReceivedAt;
+      setLatestReceivedAt(newestReceivedAt);
       setInitialLoadComplete(true);
     }
   }, [data, initialLoadComplete]);
 
   useEffect(() => {
-    if (isLiveMode && !prevLiveModeRef.current && latestTimestamp !== null && initialLoadComplete) {
+    if (
+      isLiveMode &&
+      !prevLiveModeRef.current &&
+      latestReceivedAt !== null &&
+      initialLoadComplete
+    ) {
       void refetch();
     }
     prevLiveModeRef.current = isLiveMode;
-  }, [isLiveMode, latestTimestamp, initialLoadComplete, refetch]);
+  }, [isLiveMode, latestReceivedAt, initialLoadComplete, refetch]);
 
   useEffect(() => {
     if (!isLiveMode || !data?.data || !initialLoadComplete) {
@@ -180,12 +186,12 @@ export default function Requests() {
         return prev;
       }
 
-      const merged = [...uniqueNewRequests, ...prev].sort((a, b) => b.Timestamp - a.Timestamp);
+      const merged = [...uniqueNewRequests, ...prev].sort((a, b) => b.ReceivedAt - a.ReceivedAt);
 
       if (merged.length > 0) {
-        const newestTimestamp = merged[0]!.Timestamp;
-        latestTimestampRef.current = newestTimestamp;
-        setLatestTimestamp(newestTimestamp);
+        const newestReceivedAt = merged[0]!.ReceivedAt;
+        latestReceivedAtRef.current = newestReceivedAt;
+        setLatestReceivedAt(newestReceivedAt);
       }
 
       return merged.slice(0, 100);
@@ -197,9 +203,9 @@ export default function Requests() {
       const requests = data.data;
       setMergedRequests(requests);
       if (requests.length > 0) {
-        const newestTimestamp = requests[0]!.Timestamp;
-        latestTimestampRef.current = newestTimestamp;
-        setLatestTimestamp(newestTimestamp);
+        const newestReceivedAt = requests[0]!.ReceivedAt;
+        latestReceivedAtRef.current = newestReceivedAt;
+        setLatestReceivedAt(newestReceivedAt);
       }
     }
   }, [isLiveMode, data, initialLoadComplete]);
@@ -230,9 +236,9 @@ export default function Requests() {
     <div className="animate-fade-in">
       <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">LLM Requests</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Requests</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Root traces from your LLM requests. Click a row to view details in sidebar, or
+            Root traces from your requests. Click a row to view details in sidebar, or
             Cmd/Ctrl+click to open in a new tab.
           </p>
         </div>
@@ -282,7 +288,7 @@ export default function Requests() {
         <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
           <p className="text-muted-foreground">No requests found</p>
           <p className="mt-1 text-sm text-muted-foreground/70">
-            Requests will appear here once your LLM proxy receives traffic
+            Requests will appear here once your proxy receives traffic
           </p>
         </div>
       ) : (

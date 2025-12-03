@@ -3,6 +3,7 @@
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 
 interface TraceRow {
+  ReceivedAt: number;
   Timestamp: number;
   TraceId: string;
   SpanId: string;
@@ -23,7 +24,7 @@ export default function Traces() {
     error,
   }: { data: TinybirdResponse | null; loading: boolean; error: Error | null } =
     useTinybirdQuery<TinybirdResponse>({
-      sql: 'SELECT Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode FROM otel_traces ORDER BY Timestamp DESC LIMIT 100 FORMAT JSON',
+      sql: 'SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode FROM otel_traces ORDER BY ReceivedAt DESC LIMIT 100 FORMAT JSON',
       scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
     });
 
@@ -68,7 +69,7 @@ export default function Traces() {
       <div className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Traces</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Recent OpenTelemetry traces from your LLM requests
+          Recent OpenTelemetry traces from your requests
         </p>
       </div>
 
@@ -76,7 +77,7 @@ export default function Traces() {
         <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
           <p className="text-muted-foreground">No traces found</p>
           <p className="mt-1 text-sm text-muted-foreground/70">
-            Traces will appear here once your LLM proxy receives traffic
+            Traces will appear here once your proxy receives traffic
           </p>
         </div>
       ) : (
@@ -85,6 +86,9 @@ export default function Traces() {
             <table className="min-w-full divide-y divide-border">
               <thead className="bg-muted/30">
                 <tr>
+                  <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Received At
+                  </th>
                   <th className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     Timestamp
                   </th>
@@ -109,6 +113,9 @@ export default function Traces() {
                 {traces.map((trace) => (
                   <tr key={`${trace.TraceId}-${trace.SpanId}`} className="table-row-interactive">
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
+                      {formatTimestamp(trace.ReceivedAt)}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-muted-foreground">
                       {formatTimestamp(trace.Timestamp)}
                     </td>
                     <td

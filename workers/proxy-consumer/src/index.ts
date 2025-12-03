@@ -1,4 +1,4 @@
-import type { QueueMessage, TinybirdTrace } from '@observe/types';
+import type { QueueMessageUnion, TinybirdTrace } from '@observe/types';
 import { TraceBatcher } from './batcher';
 import { buildTraces } from './traces';
 import { calculateShardId } from './sharding';
@@ -15,7 +15,7 @@ export interface Env {
 }
 
 export default {
-  async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<QueueMessageUnion>, env: Env): Promise<void> {
     const NUM_SHARDS = env.NUM_SHARDS ?? 10;
     const startTime = Date.now();
     console.log(`Processing queue batch: ${batch.messages.length} messages`);
@@ -24,16 +24,28 @@ export default {
       number,
       {
         traces: TinybirdTrace[];
-        messages: Message<QueueMessage>[];
+        messages: Message<QueueMessageUnion>[];
       }
     >();
 
-    const failedMessages: Message<QueueMessage>[] = [];
+    const failedMessages: Message<QueueMessageUnion>[] = [];
 
     for (const message of batch.messages) {
       try {
-        const traces = buildTraces(message.body);
-        const shardId = calculateShardId(message.body.apiKey, NUM_SHARDS);
+        let traces: TinybirdTrace[];
+        let apiKey: string;
+
+        if (message.body.type === 'otlp') {
+          // OTLP messages contain pre-transformed traces
+          traces = message.body.traces;
+          apiKey = message.body.apiKey;
+        } else {
+          // LLM messages need transformation (type is 'llm' or undefined for backward compatibility)
+          traces = buildTraces(message.body);
+          apiKey = message.body.apiKey;
+        }
+
+        const shardId = calculateShardId(apiKey, NUM_SHARDS);
 
         if (!shardedMessages.has(shardId)) {
           shardedMessages.set(shardId, { traces: [], messages: [] });
@@ -43,8 +55,11 @@ export default {
         shard.traces.push(...traces);
         shard.messages.push(message);
       } catch (error) {
-        console.error('Failed to build traces for message:', {
-          requestId: message.body.requestId,
+        const messageId =
+          message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : message.body.requestId;
+        console.error('Failed to process message:', {
+          messageId,
+          type: message.body.type ?? 'llm',
           error: error instanceof Error ? error.message : String(error),
         });
         failedMessages.push(message);

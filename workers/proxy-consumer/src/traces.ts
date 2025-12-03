@@ -20,7 +20,8 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
   const serviceName = 'llm-observability';
 
   const rootSpan: TinybirdTrace = {
-    Timestamp: data.timing.requestStart * 1000000,
+    ReceivedAt: data.receivedAt,
+    Timestamp: data.timing.requestStart * 1_000_000,
     TraceId: traceId,
     SpanId: generateSpanId(),
     ParentSpanId: '',
@@ -38,7 +39,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       'llm.target_url': data.targetUrl,
       'http.status_code': String(data.response.status),
     },
-    Duration: (data.timing.responseComplete - data.timing.requestStart) * 1000000,
+    Duration: (data.timing.responseComplete - data.timing.requestStart) * 1_000_000,
     StatusCode: data.error ? 'STATUS_CODE_ERROR' : 'STATUS_CODE_OK',
     StatusMessage: data.error?.message ?? '',
     ApiKey: data.apiKey,
@@ -136,7 +137,8 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     // Create TTFT span measuring total time to first token from user perspective
     if (firstContentDelta) {
       const ttftSpan: TinybirdTrace = {
-        Timestamp: data.timing.requestStart * 1000000,
+        ReceivedAt: data.receivedAt,
+        Timestamp: data.timing.requestStart * 1_000_000,
         TraceId: traceId,
         SpanId: generateSpanId(),
         ParentSpanId: rootSpan.SpanId,
@@ -152,7 +154,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
             firstContentDelta.timestamp - data.timing.requestStart,
           ),
         },
-        Duration: (firstContentDelta.timestamp - data.timing.requestStart) * 1000000,
+        Duration: (firstContentDelta.timestamp - data.timing.requestStart) * 1_000_000,
         StatusCode: 'STATUS_CODE_OK',
         StatusMessage: '',
         ApiKey: data.apiKey,
@@ -178,7 +180,8 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       }
 
       const messageSpan: TinybirdTrace = {
-        Timestamp: message.messageStart * 1000000,
+        ReceivedAt: data.receivedAt,
+        Timestamp: message.messageStart * 1_000_000,
         TraceId: traceId,
         SpanId: generateSpanId(),
         ParentSpanId: rootSpan.SpanId,
@@ -193,11 +196,11 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
           'service.name': serviceName,
         },
         SpanAttributes: {},
-        Duration: (message.messageStop - message.messageStart) * 1000000,
+        Duration: (message.messageStop - message.messageStart) * 1_000_000,
         StatusCode: 'STATUS_CODE_OK',
         StatusMessage: '',
         ApiKey: data.apiKey,
-        'Events.Timestamp': message.events.map((e) => e.timestamp * 1000000),
+        'Events.Timestamp': message.events.map((e) => e.timestamp * 1_000_000),
         'Events.Name': message.events.map((e) => e.type),
         'Events.Attributes': message.events.map(() => '{}'),
         'Links.TraceId': [],

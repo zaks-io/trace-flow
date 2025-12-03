@@ -21,6 +21,7 @@ describe('createQueueMessage', () => {
       totalTokens: 150,
     },
     error: undefined,
+    receivedAt: 1000000000000000, // Nanoseconds
   };
 
   it('should create queue message with all required fields', () => {
@@ -39,6 +40,7 @@ describe('createQueueMessage', () => {
         totalTokens: 150,
       },
       error: undefined,
+      receivedAt: 1000000000000000,
     });
   });
 
