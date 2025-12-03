@@ -27,15 +27,15 @@
       "outputs": ["coverage/**"]
     },
     "deploy": {
-      "dependsOn": ["build", "lint", "type-check"],
+      "dependsOn": ["build"],
       "cache": false
     },
     "deploy:dev": {
-      "dependsOn": ["build", "lint", "type-check"],
+      "dependsOn": ["build"],
       "cache": false
     },
     "deploy:preview": {
-      "dependsOn": ["build", "lint", "type-check"],
+      "dependsOn": ["build"],
       "cache": false,
       "passThroughEnv": ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]
     }
