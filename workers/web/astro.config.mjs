@@ -70,6 +70,11 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': '/src',
+        // Use react-dom/server.edge for Cloudflare Workers compatibility (React 19)
+        // The .browser version uses MessageChannel which isn't available in workerd
+        ...(process.env.NODE_ENV === 'production' && {
+          'react-dom/server': 'react-dom/server.edge',
+        }),
       },
     },
   },
