@@ -333,3 +333,103 @@
 ::selection {
   background: oklch(0.65 0.2 262 / 0.3);
 }
+
+/* Homepage hero animations */
+@keyframes trace-flow {
+  0% {
+    stroke-dashoffset: 1500;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes pulse-slow {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.5);
+  }
+}
+
+@keyframes hero-fade {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-trace-1 {
+  stroke-dasharray: 20 30;
+  animation: trace-flow 8s linear infinite;
+}
+
+.animate-trace-2 {
+  stroke-dasharray: 15 25;
+  animation: trace-flow 10s linear infinite;
+  animation-delay: -2s;
+}
+
+.animate-trace-3 {
+  stroke-dasharray: 25 35;
+  animation: trace-flow 12s linear infinite;
+  animation-delay: -4s;
+}
+
+.animate-trace-4 {
+  stroke-dasharray: 10 20;
+  animation: trace-flow 9s linear infinite;
+  animation-delay: -6s;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 4s ease-in-out infinite;
+}
+
+.animate-pulse-slow.delay-1s {
+  animation-delay: 1s;
+}
+
+.animate-pulse-slow.delay-2s {
+  animation-delay: 2s;
+}
+
+.animate-pulse-slow.delay-3s {
+  animation-delay: 3s;
+}
+
+.animate-hero-fade {
+  opacity: 0;
+  animation: hero-fade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-hero-fade.delay-150 {
+  animation-delay: 150ms;
+}
+
+.animate-hero-fade.delay-300 {
+  animation-delay: 300ms;
+}
+
+.animate-hero-fade.delay-450 {
+  animation-delay: 450ms;
+}
+
+.bg-grid-pattern {
+  background-image:
+    linear-gradient(oklch(0.95 0.01 260) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.95 0.01 260) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+.bg-radial-fade {
+  background: radial-gradient(ellipse at center, transparent 0%, oklch(0.12 0.015 260) 70%);
+}
