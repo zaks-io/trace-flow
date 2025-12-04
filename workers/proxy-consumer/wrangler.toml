@@ -69,6 +69,7 @@ max_batch_size = 100
 max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5
+dead_letter_queue = "trace-flow-requests-dlq-preview"
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
