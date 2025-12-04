@@ -54,7 +54,7 @@ export function useTinybirdQuery<T = unknown>(
 
   const fetchData = useCallback(
     async (token: string) => {
-      const apiUrl = process.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
+      const apiUrl = import.meta.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
       const url = new URL(`${apiUrl}/v0/sql`);
 
       url.searchParams.set('q', options.sql);

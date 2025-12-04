@@ -1,0 +1,8 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { App } from '@/components/App';
+---
+
+<BaseLayout title="Trace Flow">
+  <App client:only="react" />
+</BaseLayout>

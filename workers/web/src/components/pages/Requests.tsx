@@ -1,7 +1,5 @@
-'use client';
-
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { TraceDetailPanel } from '@/components/TraceDetailPanel';
@@ -17,8 +15,8 @@ interface TinybirdResponse {
 }
 
 export default function Requests() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const { traceId: traceIdParam } = useParams<{ traceId?: string }>();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -69,51 +67,45 @@ export default function Requests() {
   const handleRowClick = useCallback(
     (row: RequestRow, event: React.MouseEvent) => {
       if (event.metaKey || event.ctrlKey) {
-        window.open(`/app/request?id=${row.TraceId}`, '_blank');
+        window.open(`/app/trace/${row.TraceId}`, '_blank');
       } else {
         isClosingRef.current = false;
         setSelectedTraceId(row.TraceId);
         setIsPanelOpen(true);
-        const params = new URLSearchParams(searchParams.toString());
-        params.set('id', row.TraceId);
-        router.replace(`/app/requests?${params.toString()}`, { scroll: false });
+        void navigate(`/requests/${row.TraceId}`, { replace: true });
       }
     },
-    [searchParams, router],
+    [navigate],
   );
 
   const handleClosePanel = useCallback(() => {
     isClosingRef.current = true;
     setIsPanelOpen(false);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete('id');
-    const newUrl = params.toString() ? `/app/requests?${params.toString()}` : '/app/requests';
-    router.replace(newUrl, { scroll: false });
+    void navigate('/requests', { replace: true });
     setTimeout(() => {
       setSelectedTraceId(null);
       setTimeout(() => {
         isClosingRef.current = false;
       }, 100);
     }, 300);
-  }, [searchParams, router]);
+  }, [navigate]);
 
   useEffect(() => {
     if (isClosingRef.current) {
       return;
     }
 
-    const traceIdFromUrl = searchParams.get('id');
-    if (traceIdFromUrl) {
-      if (traceIdFromUrl !== selectedTraceId) {
+    if (traceIdParam) {
+      if (traceIdParam !== selectedTraceId) {
         isClosingRef.current = false;
-        setSelectedTraceId(traceIdFromUrl);
+        setSelectedTraceId(traceIdParam);
         setIsPanelOpen(true);
       }
     } else if (selectedTraceId && isPanelOpen) {
       setIsPanelOpen(false);
       setTimeout(() => setSelectedTraceId(null), 300);
     }
-  }, [searchParams, selectedTraceId, isPanelOpen]);
+  }, [traceIdParam, selectedTraceId, isPanelOpen]);
 
   useEffect(() => {
     if (!isPanelOpen) return;

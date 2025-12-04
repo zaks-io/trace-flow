@@ -1,9 +1,7 @@
-'use client';
-
 import { useQuery, useMutation, useAction } from 'convex/react';
-import { api } from '../../../../../../convex/_generated/api';
+import { api } from '../../../../../convex/_generated/api';
 import { useState } from 'react';
-import type { Id } from '../../../../../../convex/_generated/dataModel';
+import type { Id } from '../../../../../convex/_generated/dataModel';
 
 export default function ApiKeys() {
   const apiKeys = useQuery(api.apiKeys.list);

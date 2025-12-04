@@ -133,7 +133,7 @@ function SidebarProvider({
             } as React.CSSProperties
           }
           className={cn(
-            'group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full',
+            'group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex h-full w-full',
             className,
           )}
           {...props}
@@ -487,7 +487,7 @@ function SidebarMenuButton({
 }: React.ComponentProps<'button'> & {
   asChild?: boolean;
   isActive?: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- Radix UI types contain `any`
   tooltip?: string | React.ComponentProps<typeof TooltipContent>;
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const Comp = asChild ? Slot : 'button';

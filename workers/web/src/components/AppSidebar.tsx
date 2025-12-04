@@ -1,7 +1,4 @@
-'use client';
-
-import { usePathname } from 'next/navigation';
-import Link from 'next/link';
+import { useLocation, Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 import { LayoutDashboard, Activity, GitBranch, Key, LogOut, LogIn, User, Zap } from 'lucide-react';
 import {
@@ -18,27 +15,28 @@ import {
 } from '@/components/ui/sidebar';
 
 const navItems = [
-  { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
-  { title: 'Requests', href: '/app/requests', icon: Activity },
-  { title: 'Traces', href: '/app/traces', icon: GitBranch },
-  { title: 'API Keys', href: '/app/api-keys', icon: Key },
+  { title: 'Dashboard', to: '/', icon: LayoutDashboard },
+  { title: 'Requests', to: '/requests', icon: Activity },
+  { title: 'Traces', to: '/traces', icon: GitBranch },
+  { title: 'API Keys', to: '/api-keys', icon: Key },
 ];
 
 export function AppSidebar() {
-  const pathname = usePathname();
+  const location = useLocation();
+  const pathname = location.pathname;
   const { isAuthenticated, isLoading, loginWithRedirect, logout, user } = useAuth0();
 
-  const isActive = (href: string) => {
-    if (href === '/app') {
-      return pathname === '/app';
+  const isActive = (to: string) => {
+    if (to === '/') {
+      return pathname === '/';
     }
-    return pathname.startsWith(href);
+    return pathname.startsWith(to);
   };
 
   return (
     <Sidebar className="border-r border-sidebar-border/50">
       <SidebarHeader className="border-b border-sidebar-border/50 px-4 py-4">
-        <Link href="/app" className="flex items-center gap-3 transition-opacity hover:opacity-80">
+        <Link to="/" className="flex items-center gap-3 transition-opacity hover:opacity-80">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 ring-1 ring-primary/20">
             <Zap className="h-5 w-5 text-primary" />
           </div>
@@ -59,22 +57,22 @@ export function AppSidebar() {
             <SidebarMenu className="space-y-1">
               {navItems.map((item, index) => (
                 <SidebarMenuItem
-                  key={item.href}
+                  key={item.to}
                   className="animate-fade-in"
                   style={{ animationDelay: `${index * 50}ms` }}
                 >
                   <SidebarMenuButton
                     asChild
-                    isActive={isActive(item.href)}
+                    isActive={isActive(item.to)}
                     tooltip={item.title}
                     className="h-10 gap-3 rounded-lg px-3 transition-all duration-200 hover:bg-sidebar-accent data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                   >
-                    <Link href={item.href}>
+                    <Link to={item.to}>
                       <item.icon
-                        className={`h-4 w-4 transition-colors ${isActive(item.href) ? 'text-primary' : 'text-muted-foreground'}`}
+                        className={`h-4 w-4 transition-colors ${isActive(item.to) ? 'text-primary' : 'text-muted-foreground'}`}
                       />
                       <span
-                        className={`font-medium ${isActive(item.href) ? 'text-primary' : 'text-foreground'}`}
+                        className={`font-medium ${isActive(item.to) ? 'text-primary' : 'text-foreground'}`}
                       >
                         {item.title}
                       </span>

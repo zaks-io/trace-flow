@@ -1,6 +1,5 @@
-'use client';
-
 import { useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import {
@@ -17,6 +16,8 @@ interface TinybirdResponse {
 const STORAGE_KEY = 'trace-flow-traces-columns';
 
 export default function Traces() {
+  const navigate = useNavigate();
+
   const {
     data,
     loading,
@@ -36,6 +37,17 @@ export default function Traces() {
   const traces = data?.data ?? [];
 
   const getRowId = useCallback((row: TraceRow) => `${row.TraceId}-${row.SpanId}`, []);
+
+  const handleRowClick = useCallback(
+    (row: TraceRow, event: React.MouseEvent) => {
+      if (event.metaKey || event.ctrlKey) {
+        window.open(`/app/trace/${row.TraceId}`, '_blank');
+      } else {
+        void navigate(`/trace/${row.TraceId}`);
+      }
+    },
+    [navigate],
+  );
 
   if (loading) {
     return (
@@ -80,6 +92,7 @@ export default function Traces() {
           columnVisibility={visibility}
           onColumnVisibilityChange={setVisibility}
           getRowId={getRowId}
+          onRowClick={handleRowClick}
         />
       )}
     </div>
