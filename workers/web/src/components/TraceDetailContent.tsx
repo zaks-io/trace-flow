@@ -10,7 +10,7 @@ import {
   mergeSSEEvents,
   type FormattedBody,
   type ParsedSSEEvent,
-} from '@observe/utils';
+} from '@trace-flow/utils';
 
 export interface TraceSpan {
   Timestamp: number;

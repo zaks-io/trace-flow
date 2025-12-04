@@ -14,7 +14,7 @@ interface TinybirdResponse {
   data: TraceRow[];
 }
 
-const STORAGE_KEY = 'observe-traces-columns';
+const STORAGE_KEY = 'trace-flow-traces-columns';
 
 export default function Traces() {
   const {

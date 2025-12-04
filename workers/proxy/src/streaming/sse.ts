@@ -1,6 +1,6 @@
 import { createParser, type EventSourceParser } from 'eventsource-parser';
-import type { SSEStreamData, SSEMessage, SSEEvent } from '@observe/types';
-import { getCurrentTimestamp } from '@observe/utils';
+import type { SSEStreamData, SSEMessage, SSEEvent } from '@trace-flow/types';
+import { getCurrentTimestamp } from '@trace-flow/utils';
 import {
   extractMetadataFromSSEData,
   extractTokenUsageFromSSEData,

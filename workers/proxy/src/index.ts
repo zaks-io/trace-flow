@@ -17,8 +17,8 @@
  */
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
-import { generateId, generateTraceId, getCurrentTimestamp } from '@observe/utils';
-import type { SSEStreamData, QueueMessageUnion, LLMResponseMetadata } from '@observe/types';
+import { generateId, generateTraceId, getCurrentTimestamp } from '@trace-flow/utils';
+import type { SSEStreamData, QueueMessageUnion, LLMResponseMetadata } from '@trace-flow/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
@@ -45,15 +45,15 @@ app.use('*', cors());
 app.openAPIRegistry.registerComponent('securitySchemes', 'apiKey', {
   type: 'apiKey',
   in: 'header',
-  name: 'X-Observe-Api-Key',
-  description: 'API key for authentication. Obtain from your Observe dashboard.',
+  name: 'X-Trace-Flow-Api-Key',
+  description: 'API key for authentication. Obtain from your Trace Flow dashboard.',
 });
 
 // OpenAPI spec endpoint
 app.doc('/openapi.json', {
   openapi: '3.0.0',
   info: {
-    title: 'Observe Traces API',
+    title: 'Trace Flow API',
     version: '1.0.0',
     description: 'OpenTelemetry trace ingestion API for observability and analytics.',
   },
@@ -79,7 +79,7 @@ app.all('*', async (c) => {
     return authError;
   }
 
-  const apiKey = c.req.header('X-Observe-Api-Key') ?? '';
+  const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';
   const requestId = generateId();
   const traceId = generateTraceId();
   const requestStart = getCurrentTimestamp();
@@ -115,10 +115,10 @@ app.all('*', async (c) => {
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
 
   // Forward all headers except proxy-specific ones
-  // Strip X-Observe-Api-Key (proxy auth) and host header
+  // Strip X-Trace-Flow-Api-Key (proxy auth) and host header
   // All other headers (including Authorization, x-api-key) pass through to provider
   const headers = new Headers(c.req.raw.headers);
-  headers.delete('X-Observe-Api-Key');
+  headers.delete('X-Trace-Flow-Api-Key');
   headers.delete('host');
 
   const response = await fetch(targetUrl, {

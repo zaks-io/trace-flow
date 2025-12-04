@@ -98,13 +98,13 @@ jobs:
         run: pnpm prettier --check "packages/utils/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm turbo run lint --filter=@observe/utils
+        run: pnpm turbo run lint --filter=@trace-flow/utils
 
       - name: Type check
-        run: pnpm turbo run type-check --filter=@observe/utils
+        run: pnpm turbo run type-check --filter=@trace-flow/utils
 
       - name: Test
-        run: pnpm turbo run test --filter=@observe/utils
+        run: pnpm turbo run test --filter=@trace-flow/utils
 
   types:
     name: Types Package
@@ -136,10 +136,10 @@ jobs:
         run: pnpm prettier --check "packages/types/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm turbo run lint --filter=@observe/types
+        run: pnpm turbo run lint --filter=@trace-flow/types
 
       - name: Type check
-        run: pnpm turbo run type-check --filter=@observe/types
+        run: pnpm turbo run type-check --filter=@trace-flow/types
 
   proxy:
     name: Proxy Worker
@@ -174,13 +174,13 @@ jobs:
         run: pnpm prettier --check "workers/proxy/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm turbo run lint --filter=@observe/proxy
+        run: pnpm turbo run lint --filter=@trace-flow/proxy
 
       - name: Type check
-        run: pnpm turbo run type-check --filter=@observe/proxy
+        run: pnpm turbo run type-check --filter=@trace-flow/proxy
 
       - name: Test with coverage
-        run: pnpm turbo run test:coverage --filter=@observe/proxy
+        run: pnpm turbo run test:coverage --filter=@trace-flow/proxy
 
       - name: Report coverage
         if: github.event_name == 'pull_request'
@@ -192,7 +192,7 @@ jobs:
           file-coverage-mode: changes
 
       - name: Build
-        run: pnpm turbo run build --filter=@observe/proxy
+        run: pnpm turbo run build --filter=@trace-flow/proxy
 
   proxy-consumer:
     name: Proxy Consumer Worker
@@ -227,13 +227,13 @@ jobs:
         run: pnpm prettier --check "workers/proxy-consumer/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: pnpm turbo run lint --filter=@observe/proxy-consumer
+        run: pnpm turbo run lint --filter=@trace-flow/proxy-consumer
 
       - name: Type check
-        run: pnpm turbo run type-check --filter=@observe/proxy-consumer
+        run: pnpm turbo run type-check --filter=@trace-flow/proxy-consumer
 
       - name: Test with coverage
-        run: pnpm turbo run test:coverage --filter=@observe/proxy-consumer
+        run: pnpm turbo run test:coverage --filter=@trace-flow/proxy-consumer
 
       - name: Report coverage
         if: github.event_name == 'pull_request'
@@ -245,7 +245,7 @@ jobs:
           file-coverage-mode: changes
 
       - name: Build
-        run: pnpm turbo run build --filter=@observe/proxy-consumer
+        run: pnpm turbo run build --filter=@trace-flow/proxy-consumer
 
   web:
     name: Web Worker
@@ -285,13 +285,13 @@ jobs:
         run: pnpm prettier --check "workers/web/**/*.{ts,tsx,js,jsx,json,css}"
 
       - name: Lint
-        run: pnpm turbo run lint --filter=@observe/web
+        run: pnpm turbo run lint --filter=@trace-flow/web
 
       - name: Type check
-        run: pnpm turbo run type-check --filter=@observe/web
+        run: pnpm turbo run type-check --filter=@trace-flow/web
 
       - name: Test
-        run: pnpm turbo run test --filter=@observe/web
+        run: pnpm turbo run test --filter=@trace-flow/web
 
       - name: Build
         env:
@@ -299,7 +299,7 @@ jobs:
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
-        run: pnpm turbo run build --filter=@observe/web
+        run: pnpm turbo run build --filter=@trace-flow/web
 
   status:
     name: CI Status

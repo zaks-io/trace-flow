@@ -20,16 +20,16 @@ Run these commands to create the required queues for all environments:
 
 ```bash
 # Development
-wrangler queues create observe-requests-dev
-wrangler queues create observe-requests-dlq-dev
+wrangler queues create trace-flow-requests-dev
+wrangler queues create trace-flow-requests-dlq-dev
 
 # Staging
-wrangler queues create observe-requests-staging
-wrangler queues create observe-requests-dlq-staging
+wrangler queues create trace-flow-requests-staging
+wrangler queues create trace-flow-requests-dlq-staging
 
 # Production
-wrangler queues create observe-requests-prod
-wrangler queues create observe-requests-dlq-prod
+wrangler queues create trace-flow-requests-prod
+wrangler queues create trace-flow-requests-dlq-prod
 ```
 
 ## 3. Configure Tinybird Secrets
@@ -58,7 +58,7 @@ wrangler secret put TINYBIRD_HOST --env production
 Get your Tinybird token with `DATASOURCE:APPEND` scope:
 
 ```bash
-tb token create --name observe-dev --scopes DATASOURCES:APPEND
+tb token create --name trace-flow-dev --scopes DATASOURCES:APPEND
 ```
 
 ## 4. Deploy the Workers
@@ -96,7 +96,7 @@ Custom domains are configured in `wrangler.toml` and connected through the Cloud
 1. **Routes are already configured** in `wrangler.toml` for production environments
 
 2. **Connect domains via Cloudflare Dashboard:**
-   - Navigate to **Workers & Pages** → Select your worker (e.g., `observe-api-production`)
+   - Navigate to **Workers & Pages** → Select your worker (e.g., `trace-flow-api-production`)
    - Go to **Settings** → **Domains**
    - Click **Add Custom Domain**
    - Enter the subdomain (e.g., `api.trace-flow.dev`)
@@ -171,7 +171,7 @@ The system works as follows:
 
 1. **Proxy Worker** receives LLM requests and streams responses back to clients
 2. Request/response bodies are stored in R2 asynchronously
-3. Metadata is sent to Cloudflare Queue (`observe-requests-{env}`)
+3. Metadata is sent to Cloudflare Queue (`trace-flow-requests-{env}`)
 4. **Proxy Consumer Worker** processes queue messages
 5. Consumer builds OpenTelemetry-compatible trace spans
 6. Traces are inserted into Tinybird (managed ClickHouse) via HTTP interface

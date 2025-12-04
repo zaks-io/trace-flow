@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
-import type { QueueMessage } from '@observe/types';
+import type { QueueMessage } from '@trace-flow/types';
 import type { TraceBatcher } from '../batcher';
 import worker from '../index';
 

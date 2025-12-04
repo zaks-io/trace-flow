@@ -36,7 +36,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'invalid-key',
+          'X-Trace-Flow-Api-Key': 'invalid-key',
         },
       });
 
@@ -57,7 +57,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': expiredKey,
+          'X-Trace-Flow-Api-Key': expiredKey,
         },
       });
 
@@ -75,7 +75,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
         },
       });
 
@@ -91,7 +91,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
         },
       });
 
@@ -139,7 +139,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
           Authorization: 'Bearer openai-key',
         },
         body: JSON.stringify({ model: 'gpt-4', messages: [] }),
@@ -180,7 +180,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
           'x-api-key': 'anthropic-key',
         },
         body: JSON.stringify({ model: 'claude-3-sonnet', messages: [] }),
@@ -212,7 +212,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
           Authorization: 'Bearer openrouter-key',
         },
         body: JSON.stringify({ model: 'openai/gpt-4', messages: [] }),
@@ -244,7 +244,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
           Authorization: 'Bearer groq-key',
         },
         body: JSON.stringify({ model: 'llama-3.1-70b', messages: [] }),
@@ -278,7 +278,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
         },
         body: JSON.stringify({ invalid: 'data' }),
       });
@@ -309,7 +309,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
         },
         body: JSON.stringify({ model: 'gpt-4' }),
       });
@@ -336,7 +336,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
           'x-api-key': 'anthropic-key',
         },
         body: JSON.stringify({ model: 'claude-3', messages: [], stream: true }),
@@ -377,7 +377,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
           Authorization: 'Bearer provider-auth-token',
           'x-api-key': 'provider-api-key',
           'Custom-Header': 'custom-value',
@@ -390,7 +390,7 @@ describe('Proxy Worker Integration', () => {
       expect(capturedHeaders).not.toBeNull();
       const headers = capturedHeaders!;
       expect(headers.has('host')).toBe(false);
-      expect(headers.has('X-Observe-Api-Key')).toBe(false);
+      expect(headers.has('X-Trace-Flow-Api-Key')).toBe(false);
       // Provider auth headers should pass through unchanged
       expect(headers.get('Authorization')).toBe('Bearer provider-auth-token');
       expect(headers.get('x-api-key')).toBe('provider-api-key');
@@ -413,7 +413,7 @@ describe('Proxy Worker Integration', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Observe-Api-Key': 'test-key',
+          'X-Trace-Flow-Api-Key': 'test-key',
         },
         body: JSON.stringify(largeBody),
       });

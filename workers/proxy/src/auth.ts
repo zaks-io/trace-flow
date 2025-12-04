@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 
 /**
- * Validates API keys from KV namespace using the X-Observe-Api-Key header.
+ * Validates API keys from KV namespace using the X-Trace-Flow-Api-Key header.
  *
  * This header is used exclusively for proxy authentication, allowing Authorization
  * and X-API-Key headers to pass through to LLM providers unchanged.
@@ -12,13 +12,13 @@ import type { Context } from 'hono';
 export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   c: Context<{ Bindings: E }>,
 ): Promise<Response | null> {
-  const apiKey = c.req.header('X-Observe-Api-Key');
+  const apiKey = c.req.header('X-Trace-Flow-Api-Key');
 
   if (!apiKey) {
     return c.json(
       {
         error: 'Missing API key',
-        message: 'Please provide an API key via X-Observe-Api-Key header',
+        message: 'Please provide an API key via X-Trace-Flow-Api-Key header',
       },
       401,
     );

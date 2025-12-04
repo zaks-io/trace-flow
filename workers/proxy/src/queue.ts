@@ -5,8 +5,8 @@ import type {
   LLMError,
   SSEStreamData,
   LLMResponseMetadata,
-} from '@observe/types';
-import { extractProviderFromUrl } from '@observe/utils';
+} from '@trace-flow/types';
+import { extractProviderFromUrl } from '@trace-flow/utils';
 
 /**
  * Constructs a queue message for async processing by the consumer worker.

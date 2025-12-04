@@ -1,4 +1,4 @@
-import { hashString } from '@observe/utils';
+import { hashString } from '@trace-flow/utils';
 
 /**
  * Calculates the shard ID for a given API key using consistent hashing.

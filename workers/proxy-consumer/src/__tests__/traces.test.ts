@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildTraces } from '../traces';
-import type { QueueMessage } from '@observe/types';
+import type { QueueMessage } from '@trace-flow/types';
 
 describe('buildTraces', () => {
   const baseQueueMessage: QueueMessage = {

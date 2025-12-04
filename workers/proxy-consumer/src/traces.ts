@@ -1,5 +1,5 @@
-import type { QueueMessage, TinybirdTrace } from '@observe/types';
-import { generateSpanId } from '@observe/utils';
+import type { QueueMessage, TinybirdTrace } from '@trace-flow/types';
+import { generateSpanId } from '@trace-flow/utils';
 
 /**
  * Transforms queue messages into OpenTelemetry traces for Tinybird storage.

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { VisibilityState } from '@tanstack/react-table';
 
-const DEFAULT_STORAGE_KEY = 'observe-requests-columns';
+const DEFAULT_STORAGE_KEY = 'trace-flow-requests-columns';
 
 export function useColumnVisibility(
   defaultVisibility: VisibilityState,

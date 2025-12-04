@@ -10,7 +10,7 @@ import { AppSidebar } from '@/components/AppSidebar';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 
 function AppContent({ children }: { children: React.ReactNode }) {
-  const hasRole = useQuery(api.auth.hasObserveRole);
+  const hasRole = useQuery(api.auth.hasTraceFlowRole);
 
   return (
     <>
@@ -25,7 +25,7 @@ function AppContent({ children }: { children: React.ReactNode }) {
           <SidebarInset>
             <header className="flex h-14 items-center gap-4 border-b border-border px-6">
               <SidebarTrigger className="-ml-2" />
-              <h1 className="text-sm font-medium text-foreground">Observe</h1>
+              <h1 className="text-sm font-medium text-foreground">Trace Flow</h1>
             </header>
             <main className="flex-1 p-6">
               <div className="rounded-lg border border-border bg-card p-8 text-center">
@@ -54,7 +54,7 @@ function AppContent({ children }: { children: React.ReactNode }) {
                 <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-8 text-center">
                   <h2 className="mb-2 text-xl font-semibold text-destructive">Access Denied</h2>
                   <p className="text-destructive/80">
-                    You need the &quot;Observe&quot; role to access this dashboard.
+                    You need the &quot;TraceFlow&quot; role to access this dashboard.
                   </p>
                 </div>
               ) : (

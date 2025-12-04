@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { TinybirdTrace } from '@observe/types';
+import type { TinybirdTrace } from '@trace-flow/types';
 import type { Env } from './index';
 import { insertIntoTinybirdWithRetry } from './tinybird';
 

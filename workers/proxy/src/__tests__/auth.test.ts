@@ -39,11 +39,11 @@ describe('validateApiKey', () => {
     const body = await result?.json();
     expect(body).toEqual({
       error: 'Missing API key',
-      message: 'Please provide an API key via X-Observe-Api-Key header',
+      message: 'Please provide an API key via X-Trace-Flow-Api-Key header',
     });
   });
 
-  it('should accept API key from X-Observe-Api-Key header', async () => {
+  it('should accept API key from X-Trace-Flow-Api-Key header', async () => {
     const validKeyData = JSON.stringify({
       expiresAt: Date.now() + 100000,
       createdAt: Date.now(),
@@ -51,7 +51,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        'x-observe-api-key': 'valid-api-key',
+        'x-trace-flow-api-key': 'valid-api-key',
       },
       validKeyData,
     );
@@ -66,7 +66,7 @@ describe('validateApiKey', () => {
   it('should return error when API key is not found in KV', async () => {
     const context = createMockContext(
       {
-        'x-observe-api-key': 'invalid-key',
+        'x-trace-flow-api-key': 'invalid-key',
       },
       null,
     );
@@ -91,7 +91,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        'x-observe-api-key': 'expired-key',
+        'x-trace-flow-api-key': 'expired-key',
       },
       expiredKeyData,
     );
@@ -111,7 +111,7 @@ describe('validateApiKey', () => {
   it('should return error when API key data is corrupted', async () => {
     const context = createMockContext(
       {
-        'x-observe-api-key': 'corrupt-key',
+        'x-trace-flow-api-key': 'corrupt-key',
       },
       'not valid json',
     );
@@ -136,7 +136,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        'x-observe-api-key': 'valid-key',
+        'x-trace-flow-api-key': 'valid-key',
       },
       validKeyData,
     );
@@ -155,7 +155,7 @@ describe('validateApiKey', () => {
 
     const context = createMockContext(
       {
-        'x-observe-api-key': 'edge-case-key',
+        'x-trace-flow-api-key': 'edge-case-key',
       },
       edgeCaseKeyData,
     );

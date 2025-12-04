@@ -1,11 +1,11 @@
 import { action, mutation, query } from './_generated/server';
 import { v } from 'convex/values';
-import { requireObserveRole } from './auth';
+import { requireTraceFlowRole } from './auth';
 import { api, internal } from './_generated/api';
 
 export const list = query({
   handler: async (ctx) => {
-    await requireObserveRole(ctx);
+    await requireTraceFlowRole(ctx);
     return await ctx.db.query('apiKeys').collect();
   },
 });
@@ -13,7 +13,7 @@ export const list = query({
 export const getByKey = query({
   args: { key: v.string() },
   handler: async (ctx, args) => {
-    await requireObserveRole(ctx);
+    await requireTraceFlowRole(ctx);
     return await ctx.db
       .query('apiKeys')
       .filter((q) => q.eq(q.field('key'), args.key))
@@ -26,7 +26,7 @@ export const create = mutation({
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
-    await requireObserveRole(ctx);
+    await requireTraceFlowRole(ctx);
     const key = crypto.randomUUID();
 
     const id = await ctx.db.insert('apiKeys', {
@@ -46,7 +46,7 @@ export const create = mutation({
 export const remove = mutation({
   args: { id: v.id('apiKeys') },
   handler: async (ctx, args) => {
-    await requireObserveRole(ctx);
+    await requireTraceFlowRole(ctx);
 
     const apiKey = await ctx.db.get(args.id);
     if (!apiKey) {
@@ -64,7 +64,7 @@ export const remove = mutation({
 export const syncToKV = action({
   args: { id: v.id('apiKeys') },
   handler: async (ctx, args): Promise<{ synced: boolean; existed: boolean }> => {
-    await requireObserveRole(ctx);
+    await requireTraceFlowRole(ctx);
 
     const apiKey = await ctx.runQuery(api.apiKeys.getByIdInternal, { id: args.id });
     if (!apiKey) {

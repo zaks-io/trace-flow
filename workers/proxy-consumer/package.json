@@ -1,5 +1,5 @@
 {
-  "name": "@observe/proxy-consumer",
+  "name": "@trace-flow/proxy-consumer",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -16,8 +16,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@observe/types": "workspace:*",
-    "@observe/utils": "workspace:*"
+    "@trace-flow/types": "workspace:*",
+    "@trace-flow/utils": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.9.12",

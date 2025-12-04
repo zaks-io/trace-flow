@@ -98,7 +98,7 @@ const openai = createOpenAI({
   baseURL: "https://your-proxy.workers.dev/openai/v1",
   apiKey: process.env.OPENAI_API_KEY,
   headers: {
-    "X-Observe-Api-Key": process.env.OBSERVE_API_KEY,
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
   },
 });
 
@@ -114,7 +114,7 @@ const anthropic = createAnthropic({
   baseURL: "https://your-proxy.workers.dev/anthropic/v1",
   apiKey: process.env.ANTHROPIC_API_KEY,
   headers: {
-    "X-Observe-Api-Key": process.env.OBSERVE_API_KEY,
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
   },
 });
 
@@ -131,7 +131,7 @@ const openrouter = createOpenAI({
   baseURL: "https://your-proxy.workers.dev/openrouter/v1",
   apiKey: process.env.OPENROUTER_API_KEY,
   headers: {
-    "X-Observe-Api-Key": process.env.OBSERVE_API_KEY,
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
   },
 });
 
@@ -148,7 +148,7 @@ const groq = createOpenAI({
   baseURL: "https://your-proxy.workers.dev/groq/v1",
   apiKey: process.env.GROQ_API_KEY,
   headers: {
-    "X-Observe-Api-Key": process.env.OBSERVE_API_KEY,
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
   },
 });
 
@@ -164,7 +164,7 @@ const openai = new OpenAI({
   baseURL: "https://your-proxy.workers.dev/openai/v1",
   apiKey: process.env.OPENAI_API_KEY,
   defaultHeaders: {
-    "X-Observe-Api-Key": process.env.OBSERVE_API_KEY,
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
   },
 });
 
@@ -178,7 +178,7 @@ console.log(completion.choices[0].message.content);`;
 const CURL_CODE = `curl -X POST https://your-proxy.workers.dev/openai/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $OPENAI_API_KEY" \\
-  -H "X-Observe-Api-Key: $OBSERVE_API_KEY" \\
+  -H "X-Trace-Flow-Api-Key: $TRACE_FLOW_API_KEY" \\
   -d '{
     "model": "gpt-4o",
     "messages": [{"role": "user", "content": "Hello!"}]
@@ -249,8 +249,8 @@ export default function LLMProxyDocsPage() {
             LLM Proxy Gateway
           </h1>
           <p className="max-w-2xl text-lg text-muted-foreground">
-            Route LLM requests through the Observe proxy for automatic tracing and analytics. Works
-            with any OpenAI-compatible client or the Vercel AI SDK.
+            Route LLM requests through the Trace Flow proxy for automatic tracing and analytics.
+            Works with any OpenAI-compatible client or the Vercel AI SDK.
           </p>
         </div>
 
@@ -295,9 +295,9 @@ export default function LLMProxyDocsPage() {
                 <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                 <span>
                   <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                    X-Observe-Api-Key
+                    X-Trace-Flow-Api-Key
                   </code>{' '}
-                  — Your Observe API key for tracing
+                  — Your Trace Flow API key for tracing
                 </span>
               </li>
               <li className="flex items-start gap-3">
@@ -420,7 +420,7 @@ export default function LLMProxyDocsPage() {
         {/* Footer */}
         <footer className="mt-20 border-t border-border/50 pt-8">
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>Observe — LLM Analytics Platform</span>
+            <span>Trace Flow — LLM Analytics Platform</span>
             <Link href="/app" className="text-primary transition-colors hover:text-primary/80">
               Open Dashboard →
             </Link>

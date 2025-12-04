@@ -16,7 +16,7 @@ const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
  * Architecture:
  * - Fetches public keys from Auth0's JWKS endpoint for RS256 signature verification
  * - Validates iss (issuer) and aud (audience) claims to prevent token reuse attacks
- * - Checks for 'Observe' role in neuron/roles claim (matches Convex pattern)
+ * - Checks for 'Trace Flow' role in neuron/roles claim (matches Convex pattern)
  * - Caches JWKS instances per domain to avoid repeated network calls (200-400ms savings)
  * - Uses jose library's createRemoteJWKSet which handles key rotation automatically
  *
@@ -79,11 +79,11 @@ export async function validateAuth0JWT<E extends { AUTH0_DOMAIN: string; AUTH0_C
 
     const roles = (payload as JWTPayload)['neuron/roles'] ?? [];
 
-    if (!roles.includes('Observe')) {
+    if (!roles.includes('Trace Flow')) {
       return c.json(
         {
           error: 'Insufficient permissions',
-          message: 'The Observe role is required to access this resource',
+          message: 'The Trace Flow role is required to access this resource',
         },
         403,
       );

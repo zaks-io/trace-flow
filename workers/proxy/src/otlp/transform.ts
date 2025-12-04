@@ -1,4 +1,4 @@
-import type { TinybirdTrace } from '@observe/types';
+import type { TinybirdTrace } from '@trace-flow/types';
 import type {
   OTLPExportTraceServiceRequest,
   OTLPKeyValue,
