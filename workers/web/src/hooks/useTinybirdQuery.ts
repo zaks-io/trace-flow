@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAction } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 
+class TinybirdAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TinybirdAuthError';
+  }
+}
+
 interface TinybirdScope {
   type: string;
   resource: string;
@@ -67,9 +74,12 @@ export function useTinybirdQuery<T = unknown>(
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(
-          `Tinybird query failed: ${response.status} ${response.statusText} - ${errorText}`,
-        );
+        const message = `Tinybird query failed: ${response.status} - ${errorText}`;
+
+        if (response.status === 403) {
+          throw new TinybirdAuthError(message);
+        }
+        throw new Error(message);
       }
 
       return response.json();
@@ -89,6 +99,22 @@ export function useTinybirdQuery<T = unknown>(
       setData(result as T);
       setError(null);
     } catch (err) {
+      // On auth error, clear token and retry once with fresh token
+      if (err instanceof TinybirdAuthError && jwt !== null) {
+        setJwt(null);
+        try {
+          const freshToken = await fetchToken();
+          const result = await fetchData(freshToken);
+          setData(result as T);
+          setError(null);
+          return;
+        } catch (retryErr) {
+          setError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)));
+          setData(null);
+          return;
+        }
+      }
+
       setError(err instanceof Error ? err : new Error(String(err)));
       setData(null);
     } finally {
