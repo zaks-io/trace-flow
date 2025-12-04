@@ -1,5 +1,3 @@
-'use client';
-
 import { useState, useEffect } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -103,7 +101,7 @@ export function TraceDetailContent({
       const fetchRequestBody = async () => {
         try {
           const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+          const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
           const res = await fetch(`${apiUrl}/bodies/${traceId}/request`, {
             headers: {
@@ -145,7 +143,7 @@ export function TraceDetailContent({
       const fetchResponseBody = async () => {
         try {
           const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+          const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
           const res = await fetch(`${apiUrl}/bodies/${traceId}/response`, {
             headers: {

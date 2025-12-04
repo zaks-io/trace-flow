@@ -1,15 +1,14 @@
-'use client';
-
-import { ConvexReactClient, useQuery } from 'convex/react';
-import { ConvexProviderWithAuth0 } from 'convex/react-auth0';
-import { Auth0Provider } from '@auth0/auth0-react';
+import { useQuery } from 'convex/react';
 import { Authenticated, Unauthenticated, AuthLoading } from 'convex/react';
-import { useMemo } from 'react';
-import { api } from '../../../../../convex/_generated/api';
+import { api } from '../../../../convex/_generated/api';
 import { AppSidebar } from '@/components/AppSidebar';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 
-function AppContent({ children }: { children: React.ReactNode }) {
+interface AppLayoutProps {
+  children: React.ReactNode;
+}
+
+function AppContent({ children }: AppLayoutProps) {
   const hasRole = useQuery(api.auth.hasTraceFlowRole);
 
   return (
@@ -68,26 +67,6 @@ function AppContent({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const convex = useMemo(() => {
-    const url = process.env.NEXT_PUBLIC_CONVEX_URL ?? '';
-    return new ConvexReactClient(url);
-  }, []);
-
-  return (
-    <Auth0Provider
-      domain={process.env.NEXT_PUBLIC_AUTH0_DOMAIN ?? ''}
-      clientId={process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID ?? ''}
-      authorizationParams={{
-        redirect_uri: typeof window !== 'undefined' ? window.location.origin : '',
-        scope: 'openid profile email offline_access',
-      }}
-      useRefreshTokens={true}
-      cacheLocation="localstorage"
-    >
-      <ConvexProviderWithAuth0 client={convex}>
-        <AppContent>{children}</AppContent>
-      </ConvexProviderWithAuth0>
-    </Auth0Provider>
-  );
+export function AppLayout({ children }: AppLayoutProps) {
+  return <AppContent>{children}</AppContent>;
 }

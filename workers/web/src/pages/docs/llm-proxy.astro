@@ -1,0 +1,311 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro';
+import CodeBlock from '@/components/docs/CodeBlock.astro';
+
+const VERCEL_AI_OPENAI_CODE = `import { generateText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({
+  baseURL: "https://your-proxy.workers.dev/openai/v1",
+  apiKey: process.env.OPENAI_API_KEY,
+  headers: {
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
+  },
+});
+
+const result = await generateText({
+  model: openai("gpt-4o"),
+  prompt: "Hello, world!",
+});`;
+
+const VERCEL_AI_ANTHROPIC_CODE = `import { generateText } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const anthropic = createAnthropic({
+  baseURL: "https://your-proxy.workers.dev/anthropic/v1",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  headers: {
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
+  },
+});
+
+const result = await generateText({
+  model: anthropic("claude-sonnet-4-20250514"),
+  prompt: "Hello, world!",
+});`;
+
+const VERCEL_AI_OPENROUTER_CODE = `import { generateText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+// OpenRouter uses the OpenAI-compatible provider
+const openrouter = createOpenAI({
+  baseURL: "https://your-proxy.workers.dev/openrouter/v1",
+  apiKey: process.env.OPENROUTER_API_KEY,
+  headers: {
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
+  },
+});
+
+const result = await generateText({
+  model: openrouter("anthropic/claude-sonnet-4"),
+  prompt: "Hello, world!",
+});`;
+
+const VERCEL_AI_GROQ_CODE = `import { generateText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+// Groq uses the OpenAI-compatible provider
+const groq = createOpenAI({
+  baseURL: "https://your-proxy.workers.dev/groq/v1",
+  apiKey: process.env.GROQ_API_KEY,
+  headers: {
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
+  },
+});
+
+const result = await generateText({
+  model: groq("llama-3.3-70b-versatile"),
+  prompt: "Hello, world!",
+});`;
+
+const OPENAI_SDK_CODE = `import OpenAI from "openai";
+
+const openai = new OpenAI({
+  baseURL: "https://your-proxy.workers.dev/openai/v1",
+  apiKey: process.env.OPENAI_API_KEY,
+  defaultHeaders: {
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
+  },
+});
+
+const completion = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "Hello, world!" }],
+});
+
+console.log(completion.choices[0].message.content);`;
+
+const CURL_CODE = `curl -X POST https://your-proxy.workers.dev/openai/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer $OPENAI_API_KEY" \\
+  -H "X-Trace-Flow-Api-Key: $TRACE_FLOW_API_KEY" \\
+  -d '{
+    "model": "gpt-4o",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'`;
+
+const ROUTES = [
+  { provider: 'OpenAI', path: '/openai/v1/chat/completions', target: 'https://api.openai.com/v1/chat/completions' },
+  { provider: 'Anthropic', path: '/anthropic/v1/messages', target: 'https://api.anthropic.com/v1/messages' },
+  { provider: 'OpenRouter', path: '/openrouter/v1/chat/completions', target: 'https://openrouter.ai/api/v1/chat/completions' },
+  { provider: 'Groq', path: '/groq/v1/chat/completions', target: 'https://api.groq.com/openai/v1/chat/completions' },
+];
+---
+
+<DocsLayout title="LLM Proxy - Trace Flow Docs">
+  <!-- Hero -->
+  <div class="mb-16 animate-fade-in">
+    <div class="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1">
+      <svg class="h-3.5 w-3.5 text-primary" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        <polyline points="15 3 21 3 21 9" />
+        <line x1="10" x2="21" y1="14" y2="3" />
+      </svg>
+      <span class="font-mono text-xs text-primary">LLM Proxy</span>
+    </div>
+    <h1 class="mb-4 text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
+      LLM Proxy Gateway
+    </h1>
+    <p class="max-w-2xl text-lg text-muted-foreground">
+      Route LLM requests through the Trace Flow proxy for automatic tracing and analytics.
+      Works with any OpenAI-compatible client or the Vercel AI SDK.
+    </p>
+  </div>
+
+  <!-- Route table -->
+  <div class="mb-16 animate-fade-in" style="animation-delay: 100ms;">
+    <div class="rounded-xl border border-border/50 bg-card/50 p-6">
+      <h3 class="mb-4 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        Proxy Routes
+      </h3>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-border/50 text-left">
+              <th class="pb-3 font-medium text-muted-foreground">Provider</th>
+              <th class="pb-3 font-medium text-muted-foreground">Gateway Path</th>
+              <th class="pb-3 font-medium text-muted-foreground">Target URL</th>
+            </tr>
+          </thead>
+          <tbody class="font-mono text-xs">
+            {ROUTES.map((route) => (
+              <tr class="border-b border-border/30 last:border-0">
+                <td class="py-3 text-foreground">{route.provider}</td>
+                <td class="py-3 text-primary">{route.path}</td>
+                <td class="py-3 text-muted-foreground">{route.target}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authentication -->
+  <div class="mb-16 animate-fade-in" style="animation-delay: 150ms;">
+    <div class="rounded-xl border border-primary/20 bg-primary/5 p-6">
+      <h3 class="mb-4 text-sm font-medium uppercase tracking-wider text-primary">
+        Authentication
+      </h3>
+      <p class="mb-4 text-sm text-foreground">All requests require two headers:</p>
+      <ul class="space-y-2 text-sm text-foreground">
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>
+            <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">X-Trace-Flow-Api-Key</code>
+            — Your Trace Flow API key for tracing
+          </span>
+        </li>
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>
+            <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">Authorization</code>
+            — Your provider API key (passed through to the upstream)
+          </span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- OpenAI SDK Section -->
+  <div class="mb-16 animate-fade-in" style="animation-delay: 200ms;">
+    <h2 class="mb-6 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+      OpenAI SDK
+    </h2>
+    <p class="mb-6 text-muted-foreground">
+      Use the official <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground">openai</code> npm package with a custom base URL. This works with any OpenAI-compatible provider.
+    </p>
+    <CodeBlock code={OPENAI_SDK_CODE} lang="typescript" />
+  </div>
+
+  <!-- Vercel AI SDK Section -->
+  <div class="space-y-16">
+    <div>
+      <h2 class="mb-6 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        Vercel AI SDK
+      </h2>
+      <p class="mb-6 text-muted-foreground">
+        The <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground">ai</code> package from Vercel provides a unified interface for multiple providers. Each provider has its own SDK package.
+      </p>
+    </div>
+
+    <!-- OpenAI with Vercel AI -->
+    <section class="animate-fade-in">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight text-foreground">OpenAI (@ai-sdk/openai)</h2>
+      </div>
+      <CodeBlock code={VERCEL_AI_OPENAI_CODE} lang="typescript" />
+    </section>
+
+    <!-- Anthropic with Vercel AI -->
+    <section class="animate-fade-in">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight text-foreground">Anthropic (@ai-sdk/anthropic)</h2>
+      </div>
+      <CodeBlock code={VERCEL_AI_ANTHROPIC_CODE} lang="typescript" />
+    </section>
+
+    <!-- OpenRouter with Vercel AI -->
+    <section class="animate-fade-in">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight text-foreground">OpenRouter (@ai-sdk/openai)</h2>
+      </div>
+      <p class="mb-4 text-muted-foreground">
+        OpenRouter uses an OpenAI-compatible API, so use the <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground">@ai-sdk/openai</code> package with a different base URL.
+      </p>
+      <CodeBlock code={VERCEL_AI_OPENROUTER_CODE} lang="typescript" />
+    </section>
+
+    <!-- Groq with Vercel AI -->
+    <section class="animate-fade-in">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight text-foreground">Groq (@ai-sdk/openai)</h2>
+      </div>
+      <p class="mb-4 text-muted-foreground">Groq also uses an OpenAI-compatible API.</p>
+      <CodeBlock code={VERCEL_AI_GROQ_CODE} lang="typescript" />
+    </section>
+  </div>
+
+  <!-- cURL Section -->
+  <div class="mt-16 animate-fade-in">
+    <h2 class="mb-6 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+      Direct HTTP
+    </h2>
+    <section class="animate-fade-in">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5" />
+            <line x1="12" x2="20" y1="19" y2="19" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight text-foreground">cURL Example</h2>
+      </div>
+      <p class="mb-4 text-muted-foreground">
+        You can also use the proxy directly with cURL or any HTTP client:
+      </p>
+      <CodeBlock code={CURL_CODE} lang="bash" />
+    </section>
+  </div>
+
+  <!-- What gets tracked -->
+  <div class="mt-20 animate-fade-in">
+    <div class="rounded-xl border border-border/50 bg-card/50 p-6">
+      <h3 class="mb-4 text-sm font-medium uppercase tracking-wider text-muted-foreground">
+        What Gets Tracked
+      </h3>
+      <ul class="space-y-3 text-sm text-foreground">
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>Request and response bodies stored in R2</span>
+        </li>
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>Token usage (input, output, cached, reasoning)</span>
+        </li>
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>Timing metrics (total latency, time to first token for streams)</span>
+        </li>
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>Model, provider, and finish reason</span>
+        </li>
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>Error details when requests fail</span>
+        </li>
+      </ul>
+    </div>
+  </div>
+</DocsLayout>

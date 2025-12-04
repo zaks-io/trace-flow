@@ -1,9 +1,7 @@
-'use client';
-
 import { useQuery } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
 
-export default function AppPage() {
+export default function Dashboard() {
   const apiKeys = useQuery(api.apiKeys.list);
 
   return (

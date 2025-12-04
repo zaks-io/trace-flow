@@ -7,6 +7,8 @@ node_modules/
 dist/
 .wrangler/
 .turbo/
+.astro/
+.playwright-mcp/
 
 # Environment variables
 .env

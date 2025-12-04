@@ -1,0 +1,59 @@
+---
+import BaseLayout from './BaseLayout.astro';
+
+interface Props {
+  title: string;
+  backHref?: string;
+  backText?: string;
+}
+
+const { title, backHref = '/docs', backText = 'Back to Docs' } = Astro.props;
+---
+
+<BaseLayout title={title}>
+  <div class="min-h-screen bg-background">
+    <!-- Subtle grid background -->
+    <div
+      class="fixed inset-0 opacity-[0.02]"
+      style="background-image: linear-gradient(oklch(0.95 0.01 260) 1px, transparent 1px), linear-gradient(90deg, oklch(0.95 0.01 260) 1px, transparent 1px); background-size: 64px 64px;"
+    ></div>
+
+    <!-- Header -->
+    <header class="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
+      <div class="mx-auto flex h-16 max-w-4xl items-center justify-between px-6">
+        <a
+          href={backHref}
+          class="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m12 19-7-7 7-7" />
+            <path d="M19 12H5" />
+          </svg>
+          <span>{backText}</span>
+        </a>
+        <div class="flex items-center gap-2">
+          <svg class="h-4 w-4 text-primary" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 7v14" />
+            <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+          </svg>
+          <span class="font-mono text-sm text-muted-foreground">v1.0</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main content -->
+    <main class="relative mx-auto max-w-4xl px-6 py-16">
+      <slot />
+
+      <!-- Footer -->
+      <footer class="mt-20 border-t border-border/50 pt-8">
+        <div class="flex items-center justify-between text-sm text-muted-foreground">
+          <span>Trace Flow — LLM Analytics Platform</span>
+          <a href="/app" class="text-primary transition-colors hover:text-primary/80">
+            Open Dashboard →
+          </a>
+        </div>
+      </footer>
+    </main>
+  </div>
+</BaseLayout>

@@ -203,7 +203,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: workers/web
-          command: pages deploy ./out --project-name=trace-flow-web --branch=main
+          command: pages deploy ./dist --project-name=trace-flow-web --branch=main
           packageManager: pnpm
 
   deploy-status:

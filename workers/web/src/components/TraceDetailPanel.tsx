@@ -1,6 +1,4 @@
-'use client';
-
-import Link from 'next/link';
+import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import {
   Dialog,
@@ -87,10 +85,10 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
                 </>
               )}
               <Link
-                href={`/app/request?id=${traceId}`}
+                to={`/trace/${traceId}`}
                 className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                <span>Full Page</span>
+                <span>View Trace</span>
                 <ExternalLink className="h-3 w-3" />
               </Link>
             </div>
