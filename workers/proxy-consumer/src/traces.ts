@@ -24,7 +24,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     Timestamp: data.timing.requestStart * 1_000_000,
     TraceId: traceId,
     SpanId: generateSpanId(),
-    ParentSpanId: '',
+    ParentSpanId: data.parentSpanId ?? '',
     TraceState: '',
     SpanName: 'llm.request',
     SpanKind: 'SPAN_KIND_CLIENT',

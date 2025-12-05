@@ -29,6 +29,7 @@ import { extractProviderFromUrl } from '@trace-flow/utils';
 export function createQueueMessage(params: {
   requestId: string;
   traceId: string;
+  parentSpanId?: string;
   apiKey: string;
   targetUrl: string;
   responseStatus: number;
@@ -49,6 +50,7 @@ export function createQueueMessage(params: {
   const {
     requestId,
     traceId,
+    parentSpanId,
     apiKey,
     targetUrl,
     responseStatus,
@@ -122,6 +124,10 @@ export function createQueueMessage(params: {
 
   if (responseMetadata) {
     queueMessage.responseMetadata = responseMetadata;
+  }
+
+  if (parentSpanId) {
+    queueMessage.parentSpanId = parentSpanId;
   }
 
   return queueMessage;
