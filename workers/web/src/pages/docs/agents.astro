@@ -1,12 +1,6 @@
 ---
 import DocsLayout from '@/layouts/DocsLayout.astro';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
-
-const agentsContent = readFileSync(
-  resolve(process.cwd(), 'public/agents.md'),
-  'utf-8'
-);
+import agentsContent from '../../../public/agents.md?raw';
 
 const estimatedTokens = Math.ceil(agentsContent.length / 4);
 ---
