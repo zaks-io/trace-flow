@@ -40,6 +40,18 @@ export function generateTraceId(): string {
     .join('');
 }
 
+export function validateTraceId(traceId: string | null | undefined): string | null {
+  if (!traceId) return null;
+  const normalized = traceId.toLowerCase();
+  return /^[0-9a-f]{32}$/.test(normalized) ? normalized : null;
+}
+
+export function validateSpanId(spanId: string | null | undefined): string | null {
+  if (!spanId) return null;
+  const normalized = spanId.toLowerCase();
+  return /^[0-9a-f]{16}$/.test(normalized) ? normalized : null;
+}
+
 export function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
