@@ -17,7 +17,13 @@
  */
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
-import { generateId, generateTraceId, getCurrentTimestamp } from '@trace-flow/utils';
+import {
+  generateId,
+  generateTraceId,
+  getCurrentTimestamp,
+  validateTraceId,
+  validateSpanId,
+} from '@trace-flow/utils';
 import type { SSEStreamData, QueueMessageUnion, LLMResponseMetadata } from '@trace-flow/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
@@ -81,8 +87,17 @@ app.all('*', async (c) => {
 
   const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';
   const requestId = generateId();
-  const traceId = generateTraceId();
   const requestStart = getCurrentTimestamp();
+
+  // Extract and validate trace context headers
+  // Use provided trace ID if valid, otherwise generate a new one
+  const providedTraceId = validateTraceId(c.req.header('X-Trace-Flow-Trace-Id'));
+  const traceId = providedTraceId ?? generateTraceId();
+
+  // Parent span ID is only used when a valid trace ID was provided
+  const parentSpanId = providedTraceId
+    ? validateSpanId(c.req.header('X-Trace-Flow-Parent-Span-Id'))
+    : null;
 
   const route = resolveRoute(c.req.path);
   if (!route) {
@@ -115,10 +130,12 @@ app.all('*', async (c) => {
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
 
   // Forward all headers except proxy-specific ones
-  // Strip X-Trace-Flow-Api-Key (proxy auth) and host header
+  // Strip X-Trace-Flow-* headers (proxy auth and trace context) and host header
   // All other headers (including Authorization, x-api-key) pass through to provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Trace-Flow-Api-Key');
+  headers.delete('X-Trace-Flow-Trace-Id');
+  headers.delete('X-Trace-Flow-Parent-Span-Id');
   headers.delete('host');
 
   const response = await fetch(targetUrl, {
@@ -205,6 +222,7 @@ app.all('*', async (c) => {
         const queueMessage = createQueueMessage({
           requestId,
           traceId,
+          parentSpanId: parentSpanId ?? undefined,
           apiKey,
           targetUrl,
           responseStatus: response.status,
