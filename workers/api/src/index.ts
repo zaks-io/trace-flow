@@ -28,24 +28,24 @@ app.use(
   }),
 );
 
-app.get('/bodies/:traceId/:type', async (c) => {
+app.get('/bodies/:requestId/:type', async (c) => {
   const authError = await validateAuth0JWT(c);
   if (authError) {
     return authError;
   }
 
-  const traceId = c.req.param('traceId');
+  const requestId = c.req.param('requestId');
   const type = c.req.param('type');
 
-  if (!traceId) {
-    return c.json({ error: 'Missing traceId' }, 400);
+  if (!requestId) {
+    return c.json({ error: 'Missing requestId' }, 400);
   }
 
   if (type !== 'request' && type !== 'response') {
     return c.json({ error: 'Invalid type. Must be "request" or "response"' }, 400);
   }
 
-  const key = `${type}s/${traceId}`;
+  const key = `${type}s/${requestId}`;
   const object = await c.env.STORAGE.get(key);
 
   if (!object) {

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
-import { ChevronDown, Globe, Clock, Hash, Server, Link2, FileJson } from 'lucide-react';
+import { ChevronDown, Globe, Clock, Hash, Server, Link2, FileJson, GitBranch } from 'lucide-react';
 import {
   formatBodyForDisplay,
   mergeSSEEvents,
@@ -80,7 +81,18 @@ export function TraceDetailContent({
   const [isMoreAttributesOpen, setIsMoreAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
 
-  const rootSpan = spans.find((s) => s.ParentSpanId === '');
+  const rootSpan = spans.find((s) => s.SpanName === 'llm.request');
+
+  // Extract requestId from root span attributes - bodies are stored by requestId not traceId
+  const rootSpanAttributes = (() => {
+    if (!rootSpan?.SpanAttributes) return {};
+    try {
+      return JSON.parse(rootSpan.SpanAttributes) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  })();
+  const requestId = rootSpanAttributes['llm.request_id'];
 
   useEffect(() => {
     setRequestBody(null);
@@ -94,7 +106,10 @@ export function TraceDetailContent({
   }, [traceId]);
 
   useEffect(() => {
-    if (enabled && traceId && !requestBodyFetched && !requestBodyLoading) {
+    // Bodies are stored by requestId, not traceId
+    if (!requestId) return;
+
+    if (enabled && !requestBodyFetched && !requestBodyLoading) {
       setRequestBodyLoading(true);
       setRequestBodyError(null);
 
@@ -103,7 +118,7 @@ export function TraceDetailContent({
           const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
           const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
-          const res = await fetch(`${apiUrl}/bodies/${traceId}/request`, {
+          const res = await fetch(`${apiUrl}/bodies/${requestId}/request`, {
             headers: {
               Authorization: `Bearer ${id_token}`,
             },
@@ -133,10 +148,13 @@ export function TraceDetailContent({
 
       void fetchRequestBody();
     }
-  }, [enabled, traceId, requestBodyFetched, requestBodyLoading, getAccessTokenSilently]);
+  }, [enabled, requestId, requestBodyFetched, requestBodyLoading, getAccessTokenSilently]);
 
   useEffect(() => {
-    if (enabled && traceId && !responseBodyFetched && !responseBodyLoading) {
+    // Bodies are stored by requestId, not traceId
+    if (!requestId) return;
+
+    if (enabled && !responseBodyFetched && !responseBodyLoading) {
       setResponseBodyLoading(true);
       setResponseBodyError(null);
 
@@ -145,7 +163,7 @@ export function TraceDetailContent({
           const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
           const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
-          const res = await fetch(`${apiUrl}/bodies/${traceId}/response`, {
+          const res = await fetch(`${apiUrl}/bodies/${requestId}/response`, {
             headers: {
               Authorization: `Bearer ${id_token}`,
             },
@@ -177,7 +195,7 @@ export function TraceDetailContent({
 
       void fetchResponseBody();
     }
-  }, [enabled, traceId, responseBodyFetched, responseBodyLoading, getAccessTokenSilently]);
+  }, [enabled, requestId, responseBodyFetched, responseBodyLoading, getAccessTokenSilently]);
 
   const formatTimestamp = (nanoseconds: number) => {
     const milliseconds = nanoseconds / 1_000_000;
@@ -382,6 +400,20 @@ export function TraceDetailContent({
               />
             )}
           </div>
+
+          {/* Parent Span row */}
+          {rootSpan.ParentSpanId && rootSpan.ParentSpanId !== '' && (
+            <div className="grid grid-cols-1 gap-2">
+              <Link to={`/trace/${rootSpan.ParentSpanId}`}>
+                <AttributeCard
+                  icon={<GitBranch className="h-3.5 w-3.5" />}
+                  label="Parent Span"
+                  value={rootSpan.ParentSpanId}
+                  mono
+                />
+              </Link>
+            </div>
+          )}
 
           {/* More attributes - collapsed */}
           {remainingAttributes.length > 0 && (

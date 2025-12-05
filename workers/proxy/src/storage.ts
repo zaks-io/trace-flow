@@ -1,6 +1,9 @@
 /**
- * Stores request and response bodies in R2 for later processing by the queue consumer.
- * Uses a consistent key naming convention (`requests/{id}`, `responses/{id}`) that the consumer relies on.
+ * Stores request and response bodies in R2 for later retrieval via the API worker.
+ * Uses a consistent key naming convention (`requests/{requestId}`, `responses/{requestId}`).
+ *
+ * Each request gets a unique requestId, ensuring bodies are never overwritten even when
+ * multiple requests share the same parent trace ID for grouping.
  *
  * Uploads both bodies in parallel to minimize latency, since they're independent operations.
  * This function is called within `waitUntil()` to avoid blocking the client response.
@@ -10,12 +13,12 @@
  */
 export async function storeRequestResponse(
   storage: R2Bucket,
-  traceId: string,
+  requestId: string,
   requestBody: string,
   responseBody: string,
 ): Promise<{ requestBodyKey: string; responseBodyKey: string; stored: boolean }> {
-  const requestBodyKey = `requests/${traceId}`;
-  const responseBodyKey = `responses/${traceId}`;
+  const requestBodyKey = `requests/${requestId}`;
+  const responseBodyKey = `responses/${requestId}`;
 
   try {
     await Promise.all([
@@ -26,7 +29,7 @@ export async function storeRequestResponse(
     return { requestBodyKey, responseBodyKey, stored: true };
   } catch (error) {
     console.error('Failed to store in R2:', {
-      traceId,
+      requestId,
       error: error instanceof Error ? error.message : String(error),
     });
 
