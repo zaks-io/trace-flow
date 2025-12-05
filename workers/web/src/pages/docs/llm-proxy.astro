@@ -97,19 +97,19 @@ const CURL_CODE = `curl -X POST https://your-proxy.workers.dev/openai/v1/chat/co
 const TRACE_GROUPING_CODE = `import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 
-// Generate a trace ID for this agent session (32 hex characters)
-const agentTraceId = crypto.randomUUID().replace(/-/g, "");
+// Generate a span ID for this agent session (32 hex characters)
+const sessionSpanId = crypto.randomUUID().replace(/-/g, "");
 
 const openai = createOpenAI({
   baseURL: "https://your-proxy.workers.dev/openai/v1",
   apiKey: process.env.OPENAI_API_KEY,
   headers: {
     "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY,
-    "X-Trace-Flow-Trace-Id": agentTraceId,
+    "X-Trace-Flow-Span-Id": sessionSpanId,
   },
 });
 
-// All requests with the same trace ID are grouped together
+// All requests with the same span ID share a parent and are grouped together
 const result1 = await generateText({
   model: openai("gpt-5.1-2025-11-13"),
   prompt: "What is the capital of France?",
@@ -133,18 +133,18 @@ const openai = createOpenAI({
   },
 });
 
-// Set a different trace ID per request
-const conversationTraceId = crypto.randomUUID().replace(/-/g, "");
+// Set a different span ID per request to group related calls
+const conversationSpanId = crypto.randomUUID().replace(/-/g, "");
 
 const result = await generateText({
   model: openai("gpt-5.1-2025-11-13"),
   prompt: "Hello!",
   headers: {
-    "X-Trace-Flow-Trace-Id": conversationTraceId,
+    "X-Trace-Flow-Span-Id": conversationSpanId,
   },
 });
 
-// Each generateText call can have its own trace ID`;
+// Each generateText call can have its own span ID for grouping`;
 
 const ROUTES = [
   { provider: 'OpenAI', path: '/openai/v1/chat/completions', target: 'https://api.openai.com/v1/chat/completions' },
@@ -236,8 +236,8 @@ const ROUTES = [
     </h2>
     <p class="mb-6 text-muted-foreground">
       Group multiple LLM requests together (e.g., all requests from one agent session) using the optional
-      <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground">X-Trace-Flow-Trace-Id</code> header.
-      All requests with the same trace ID appear together in the Gantt chart view.
+      <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground">X-Trace-Flow-Span-Id</code> header.
+      All requests with the same span ID share a parent and appear together in the Gantt chart view.
     </p>
     <div class="mb-6 rounded-xl border border-border/50 bg-card/50 p-6">
       <h3 class="mb-4 text-sm font-medium uppercase tracking-wider text-muted-foreground">
@@ -247,15 +247,8 @@ const ROUTES = [
         <li class="flex items-start gap-3">
           <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
           <span>
-            <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">X-Trace-Flow-Trace-Id</code>
-            — A 32-character hex string to group related requests together
-          </span>
-        </li>
-        <li class="flex items-start gap-3">
-          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
-          <span>
-            <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">X-Trace-Flow-Parent-Span-Id</code>
-            — A 16-character hex string to create parent-child hierarchy (optional)
+            <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">X-Trace-Flow-Span-Id</code>
+            — A 32-character hex string to group related requests together under a shared parent
           </span>
         </li>
       </ul>

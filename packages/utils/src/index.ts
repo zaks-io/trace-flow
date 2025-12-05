@@ -1,3 +1,5 @@
+import { createParser } from 'eventsource-parser';
+
 export function generateId(): string {
   return crypto.randomUUID();
 }
@@ -103,46 +105,16 @@ function detectBodyFormat(body: string): BodyFormat {
 
 function parseSSE(body: string): ParsedSSEEvent[] {
   const events: ParsedSSEEvent[] = [];
-  let currentEvent: Partial<ParsedSSEEvent> = {};
-
-  const lines = body.split('\n');
-
-  for (const line of lines) {
-    if (line.trim() === '') {
-      if (currentEvent.data !== undefined) {
-        events.push({
-          event: currentEvent.event ?? null,
-          data: currentEvent.data,
-          id: currentEvent.id,
-        });
-        currentEvent = {};
-      }
-      continue;
-    }
-
-    const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) continue;
-
-    const field = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim();
-
-    if (field === 'event') {
-      currentEvent.event = value;
-    } else if (field === 'data') {
-      currentEvent.data = value;
-    } else if (field === 'id') {
-      currentEvent.id = value;
-    }
-  }
-
-  if (currentEvent.data !== undefined) {
-    events.push({
-      event: currentEvent.event ?? null,
-      data: currentEvent.data,
-      id: currentEvent.id,
-    });
-  }
-
+  const parser = createParser({
+    onEvent(event) {
+      events.push({
+        event: event.event ?? null,
+        data: event.data,
+        id: event.id,
+      });
+    },
+  });
+  parser.feed(body);
   return events;
 }
 
@@ -218,9 +190,13 @@ export interface MergedSSEResponse {
     finish_reason: string | null;
   }[];
   usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
   };
 }
 
@@ -263,19 +239,55 @@ export function mergeSSEEvents(events: ParsedSSEEvent[]): MergedSSEResponse {
       continue;
     }
 
+    // Extract metadata from top-level (OpenAI) or message object (Anthropic)
+    const message = parsed.message as Record<string, unknown> | undefined;
     if (parsed.id && !result.id) {
       result.id = parsed.id as string;
+    } else if (message?.id && !result.id) {
+      result.id = message.id as string;
     }
     if (parsed.created && !result.created) {
       result.created = parsed.created as number;
     }
     if (parsed.model && !result.model) {
       result.model = parsed.model as string;
-    }
-    if (parsed.usage) {
-      result.usage = parsed.usage as MergedSSEResponse['usage'];
+    } else if (message?.model && !result.model) {
+      result.model = message.model as string;
     }
 
+    // Merge usage from any event that has it
+    if (parsed.usage) {
+      result.usage = { ...result.usage, ...(parsed.usage as MergedSSEResponse['usage']) };
+    }
+    if (message?.usage) {
+      result.usage = { ...result.usage, ...(message.usage as MergedSSEResponse['usage']) };
+    }
+
+    // Extract stop_reason from delta (Anthropic message_delta)
+    const delta = parsed.delta as Record<string, unknown> | undefined;
+    if (delta?.stop_reason && choicesMap.size > 0) {
+      const firstChoice = choicesMap.get(0);
+      if (firstChoice) {
+        firstChoice.finish_reason = delta.stop_reason as string;
+      }
+    }
+
+    // Handle Anthropic content_block_delta: delta.text
+    if (delta?.text) {
+      const index = (parsed.index as number) ?? 0;
+      if (!choicesMap.has(index)) {
+        choicesMap.set(index, {
+          index,
+          role: 'assistant',
+          content: '',
+          tool_calls: new Map(),
+          finish_reason: null,
+        });
+      }
+      choicesMap.get(index)!.content += delta.text as string;
+    }
+
+    // Handle OpenAI format: choices[].delta
     const choices = parsed.choices as
       | {
           index?: number;
@@ -293,50 +305,50 @@ export function mergeSSEEvents(events: ParsedSSEEvent[]): MergedSSEResponse {
         }[]
       | undefined;
 
-    if (!choices) continue;
+    if (choices) {
+      for (const choice of choices) {
+        const index = choice.index ?? 0;
+        const choiceDelta = choice.delta;
 
-    for (const choice of choices) {
-      const index = choice.index ?? 0;
-      const delta = choice.delta;
+        if (!choicesMap.has(index)) {
+          choicesMap.set(index, {
+            index,
+            role: '',
+            content: '',
+            tool_calls: new Map(),
+            finish_reason: null,
+          });
+        }
 
-      if (!choicesMap.has(index)) {
-        choicesMap.set(index, {
-          index,
-          role: '',
-          content: '',
-          tool_calls: new Map(),
-          finish_reason: null,
-        });
-      }
+        const choiceData = choicesMap.get(index)!;
 
-      const choiceData = choicesMap.get(index)!;
+        if (choiceDelta?.role) {
+          choiceData.role = choiceDelta.role;
+        }
+        if (choiceDelta?.content) {
+          choiceData.content += choiceDelta.content;
+        }
+        if (choice.finish_reason) {
+          choiceData.finish_reason = choice.finish_reason;
+        }
 
-      if (delta?.role) {
-        choiceData.role = delta.role;
-      }
-      if (delta?.content) {
-        choiceData.content += delta.content;
-      }
-      if (choice.finish_reason) {
-        choiceData.finish_reason = choice.finish_reason;
-      }
-
-      if (delta?.tool_calls) {
-        for (const toolCall of delta.tool_calls) {
-          const toolIndex = toolCall.index ?? 0;
-          if (!choiceData.tool_calls.has(toolIndex)) {
-            choiceData.tool_calls.set(toolIndex, {
-              id: '',
-              type: 'function',
-              function: { name: '', arguments: '' },
-            });
+        if (choiceDelta?.tool_calls) {
+          for (const toolCall of choiceDelta.tool_calls) {
+            const toolIndex = toolCall.index ?? 0;
+            if (!choiceData.tool_calls.has(toolIndex)) {
+              choiceData.tool_calls.set(toolIndex, {
+                id: '',
+                type: 'function',
+                function: { name: '', arguments: '' },
+              });
+            }
+            const existingTool = choiceData.tool_calls.get(toolIndex)!;
+            if (toolCall.id) existingTool.id = toolCall.id;
+            if (toolCall.type) existingTool.type = toolCall.type;
+            if (toolCall.function?.name) existingTool.function.name += toolCall.function.name;
+            if (toolCall.function?.arguments)
+              existingTool.function.arguments += toolCall.function.arguments;
           }
-          const existingTool = choiceData.tool_calls.get(toolIndex)!;
-          if (toolCall.id) existingTool.id = toolCall.id;
-          if (toolCall.type) existingTool.type = toolCall.type;
-          if (toolCall.function?.name) existingTool.function.name += toolCall.function.name;
-          if (toolCall.function?.arguments)
-            existingTool.function.arguments += toolCall.function.arguments;
         }
       }
     }

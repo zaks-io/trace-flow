@@ -22,7 +22,6 @@ import {
   generateTraceId,
   getCurrentTimestamp,
   validateTraceId,
-  validateSpanId,
 } from '@trace-flow/utils';
 import type { SSEStreamData, QueueMessageUnion, LLMResponseMetadata } from '@trace-flow/types';
 import { validateApiKey } from './auth';
@@ -84,34 +83,6 @@ app.all('*', async (c) => {
   if (authError) {
     return authError;
   }
-
-  const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';
-  const requestId = generateId();
-  const requestStart = getCurrentTimestamp();
-
-  // Extract and validate trace context headers
-  // Use provided trace ID if valid, otherwise generate a new one
-  const providedTraceId = validateTraceId(c.req.header('X-Trace-Flow-Trace-Id'));
-  const traceId = providedTraceId ?? generateTraceId();
-
-  // Parent span ID is only used when a valid trace ID was provided
-  const parentSpanId = providedTraceId
-    ? validateSpanId(c.req.header('X-Trace-Flow-Parent-Span-Id'))
-    : null;
-
-  const route = resolveRoute(c.req.path);
-  if (!route) {
-    return c.json(
-      {
-        error: 'Invalid route',
-        message: `Use /{provider}/... where provider is one of: ${Object.keys(PROVIDERS).join(', ')}`,
-      },
-      404,
-    );
-  }
-
-  const { targetUrl } = route;
-
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
 
@@ -125,6 +96,28 @@ app.all('*', async (c) => {
     );
   }
 
+  const route = resolveRoute(c.req.path);
+  if (!route) {
+    return c.json(
+      {
+        error: 'Invalid route',
+        message: `Use /{provider}/... where provider is one of: ${Object.keys(PROVIDERS).join(', ')}`,
+      },
+      404,
+    );
+  }
+
+  const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';
+  const requestId = generateId();
+  const requestStart = getCurrentTimestamp();
+
+  // System always generates unique TraceId
+  // User's X-Trace-Flow-Span-Id becomes ParentSpanId for grouping related requests
+  const traceId = generateTraceId();
+  const parentSpanId = validateTraceId(c.req.header('X-Trace-Flow-Span-Id'));
+
+  const { targetUrl } = route;
+
   // Duplicate request body stream: one for proxying to provider, one for capture
   // tee() creates two independent readers from the same source without buffering the entire body
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
@@ -134,8 +127,7 @@ app.all('*', async (c) => {
   // All other headers (including Authorization, x-api-key) pass through to provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Trace-Flow-Api-Key');
-  headers.delete('X-Trace-Flow-Trace-Id');
-  headers.delete('X-Trace-Flow-Parent-Span-Id');
+  headers.delete('X-Trace-Flow-Span-Id');
   headers.delete('host');
 
   const response = await fetch(targetUrl, {
@@ -210,7 +202,7 @@ app.all('*', async (c) => {
 
         const { requestBodyKey, responseBodyKey, stored } = await storeRequestResponse(
           c.env.STORAGE,
-          traceId,
+          requestId,
           requestBody,
           responseBody,
         );
