@@ -105,7 +105,7 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
   const [responseBodyLoading, setResponseBodyLoading] = useState(false);
   const [isRequestOpen, setIsRequestOpen] = useState(true);
   const [isResponseOpen, setIsResponseOpen] = useState(true);
-  const [isEventsOpen, setIsEventsOpen] = useState(false);
+  const [isEventsOpen, setIsEventsOpen] = useState(true);
   const [isAttributesOpen, setIsAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
 
@@ -430,18 +430,36 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     <div className="mt-2 space-y-1.5 rounded-lg border border-border/30 bg-muted/10 p-2">
-                      {span['Events.Name'].map((name, index) => (
-                        <div key={index} className="border-l-2 border-primary/50 py-1 pl-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-foreground">{name}</span>
-                            {span['Events.Timestamp'][index] && (
-                              <span className="text-[10px] text-muted-foreground">
-                                {formatTimestamp(span['Events.Timestamp'][index])}
-                              </span>
+                      {span['Events.Name'].map((name, index) => {
+                        const attrsJson = span['Events.Attributes'][index];
+                        const attrs = attrsJson ? parseAttributes(attrsJson) : {};
+                        const hasAttrs = Object.keys(attrs).length > 0;
+
+                        return (
+                          <div key={index} className="border-l-2 border-primary/50 py-1 pl-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-foreground">{name}</span>
+                              {span['Events.Timestamp'][index] && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  {formatTimestamp(span['Events.Timestamp'][index])}
+                                </span>
+                              )}
+                            </div>
+                            {hasAttrs && (
+                              <div className="mt-1 flex flex-wrap gap-1.5">
+                                {Object.entries(attrs).map(([key, value]) => (
+                                  <span
+                                    key={key}
+                                    className="rounded bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                  >
+                                    {key}: {value}
+                                  </span>
+                                ))}
+                              </div>
                             )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </CollapsibleContent>
                 </Collapsible>

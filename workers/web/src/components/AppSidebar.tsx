@@ -10,6 +10,7 @@ import {
   LogIn,
   User,
   Zap,
+  BookOpen,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -30,6 +31,7 @@ const navItems = [
   { title: 'Traces', to: '/traces', icon: GitBranch },
   { title: 'Spans', to: '/spans', icon: Layers },
   { title: 'API Keys', to: '/api-keys', icon: Key },
+  { title: 'Docs', to: '/docs', icon: BookOpen, external: true },
 ];
 
 export function AppSidebar() {
@@ -78,16 +80,29 @@ export function AppSidebar() {
                     tooltip={item.title}
                     className="h-10 gap-3 rounded-lg px-3 transition-all duration-200 hover:bg-sidebar-accent data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
                   >
-                    <Link to={item.to}>
-                      <item.icon
-                        className={`h-4 w-4 transition-colors ${isActive(item.to) ? 'text-primary' : 'text-muted-foreground'}`}
-                      />
-                      <span
-                        className={`font-medium ${isActive(item.to) ? 'text-primary' : 'text-foreground'}`}
-                      >
-                        {item.title}
-                      </span>
-                    </Link>
+                    {item.external ? (
+                      <a href={item.to}>
+                        <item.icon
+                          className={`h-4 w-4 transition-colors ${isActive(item.to) ? 'text-primary' : 'text-muted-foreground'}`}
+                        />
+                        <span
+                          className={`font-medium ${isActive(item.to) ? 'text-primary' : 'text-foreground'}`}
+                        >
+                          {item.title}
+                        </span>
+                      </a>
+                    ) : (
+                      <Link to={item.to}>
+                        <item.icon
+                          className={`h-4 w-4 transition-colors ${isActive(item.to) ? 'text-primary' : 'text-muted-foreground'}`}
+                        />
+                        <span
+                          className={`font-medium ${isActive(item.to) ? 'text-primary' : 'text-foreground'}`}
+                        >
+                          {item.title}
+                        </span>
+                      </Link>
+                    )}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

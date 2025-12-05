@@ -22,6 +22,7 @@ import {
   generateTraceId,
   getCurrentTimestamp,
   validateTraceId,
+  validateSpanId,
 } from '@trace-flow/utils';
 import type { SSEStreamData, QueueMessageUnion, LLMResponseMetadata } from '@trace-flow/types';
 import { validateApiKey } from './auth';
@@ -111,10 +112,12 @@ app.all('*', async (c) => {
   const requestId = generateId();
   const requestStart = getCurrentTimestamp();
 
-  // System always generates unique TraceId
-  // User's X-Trace-Flow-Span-Id becomes ParentSpanId for grouping related requests
-  const traceId = generateTraceId();
-  const parentSpanId = validateTraceId(c.req.header('X-Trace-Flow-Span-Id'));
+  // Allow user to provide trace context to join existing OTEL traces
+  // X-Trace-Flow-Trace-Id: 32 hex chars - joins proxy request to existing trace
+  // X-Trace-Flow-Parent-Span-Id: 16 hex chars - sets parent span for hierarchy
+  const providedTraceId = validateTraceId(c.req.header('X-Trace-Flow-Trace-Id'));
+  const traceId = providedTraceId ?? generateTraceId();
+  const parentSpanId = validateSpanId(c.req.header('X-Trace-Flow-Parent-Span-Id'));
 
   const { targetUrl } = route;
 
@@ -127,7 +130,8 @@ app.all('*', async (c) => {
   // All other headers (including Authorization, x-api-key) pass through to provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Trace-Flow-Api-Key');
-  headers.delete('X-Trace-Flow-Span-Id');
+  headers.delete('X-Trace-Flow-Trace-Id');
+  headers.delete('X-Trace-Flow-Parent-Span-Id');
   headers.delete('host');
 
   const response = await fetch(targetUrl, {

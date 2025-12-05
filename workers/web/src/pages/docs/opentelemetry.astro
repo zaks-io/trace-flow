@@ -69,24 +69,84 @@ const FLUSH_CODE = `export default {
     return response;
   },
 };`;
+
+const LINK_PROXY_CODE = `import { trace, context } from "@opentelemetry/api";
+import { generateText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({
+  baseURL: "https://gateway.trace-flow.dev/openai/v1",
+  apiKey: process.env.OPENAI_API_KEY,
+  headers: {
+    "X-Trace-Flow-Api-Key": process.env.TRACE_FLOW_API_KEY!,
+  },
+});
+
+async function handleUserRequest(userMessage: string) {
+  const parentSpan = tracer.startSpan("handle-user-request");
+
+  return context.with(trace.setSpan(context.active(), parentSpan), async () => {
+    // Get span context to link LLM proxy requests
+    const ctx = parentSpan.spanContext();
+
+    // Track events before LLM call
+    parentSpan.addEvent("message.received", {
+      "message.length": userMessage.length,
+    });
+
+    // LLM call becomes part of this trace
+    const result = await generateText({
+      model: openai("gpt-4o"),
+      prompt: userMessage,
+      headers: {
+        "X-Trace-Flow-Trace-Id": ctx.traceId,      // 32 hex chars
+        "X-Trace-Flow-Parent-Span-Id": ctx.spanId, // 16 hex chars
+      },
+    });
+
+    parentSpan.end();
+    return result.text;
+  });
+}`;
+
+const ENDPOINT_EXAMPLE = `curl -X POST https://gateway.trace-flow.dev/v1/traces \\
+  -H "X-Trace-Flow-Api-Key: your-api-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "resourceSpans": [{
+      "resource": {
+        "attributes": [{"key": "service.name", "value": {"stringValue": "my-service"}}]
+      },
+      "scopeSpans": [{
+        "spans": [{
+          "traceId": "abc123...",
+          "spanId": "def456...",
+          "name": "my-operation",
+          "startTimeUnixNano": "1234567890000000000",
+          "endTimeUnixNano": "1234567891000000000"
+        }]
+      }]
+    }]
+  }'`;
 ---
 
-<DocsLayout title="OpenTelemetry Integration - Trace Flow Docs">
+<DocsLayout title="OpenTelemetry - Trace Flow Docs">
   <!-- Hero -->
-  <div class="mb-20 animate-fade-in">
+  <div class="mb-16 animate-fade-in">
     <div class="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1">
       <svg class="h-3.5 w-3.5 text-primary" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="4 17 10 11 4 5" />
-        <line x1="12" x2="20" y1="19" y2="19" />
+        <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" />
+        <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
+        <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
       </svg>
-      <span class="font-mono text-xs text-primary">OpenTelemetry Integration</span>
+      <span class="font-mono text-xs text-primary">OpenTelemetry</span>
     </div>
     <h1 class="mb-4 text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-      Integrate with Trace Flow
+      Custom Traces & Events
     </h1>
     <p class="max-w-2xl text-lg text-muted-foreground">
-      Send hierarchical traces from your application using the official OpenTelemetry SDK.
-      Track LLM calls, HTTP requests, and custom events with parent-child relationships.
+      Set up your own OpenTelemetry tracer to add custom spans, events, and attributes.
+      Create rich traces that show your entire application flow alongside LLM calls.
     </p>
   </div>
 
@@ -106,7 +166,7 @@ const FLUSH_CODE = `export default {
             <div class="absolute -left-[17px] top-3 h-px w-3 bg-border/50"></div>
             <div class="text-foreground">
               Root Span
-              <span class="text-muted-foreground text-xs"> (parentSpanId = "")</span>
+              <span class="text-muted-foreground text-xs"> (no parent)</span>
             </div>
           </div>
           <div class="ml-4 border-l border-border/50 pl-4">
@@ -114,22 +174,22 @@ const FLUSH_CODE = `export default {
               <div class="absolute -left-[17px] top-3 h-px w-3 bg-border/50"></div>
               <div class="text-[oklch(0.7_0.18_145)]">
                 HTTP Call
-                <span class="text-muted-foreground text-xs"> (parentSpanId = root.spanId)</span>
+                <span class="text-muted-foreground text-xs"> (child of root)</span>
               </div>
             </div>
             <div class="relative">
               <div class="absolute -left-[17px] top-3 h-px w-3 bg-border/50"></div>
               <div class="text-[oklch(0.7_0.15_262)]">
                 LLM Call
-                <span class="text-muted-foreground text-xs"> (parentSpanId = root.spanId)</span>
+                <span class="text-muted-foreground text-xs"> (child of root)</span>
               </div>
             </div>
             <div class="ml-4 border-l border-border/50 pl-4">
               <div class="relative">
                 <div class="absolute -left-[17px] top-3 h-px w-3 bg-border/50"></div>
                 <div class="text-[oklch(0.75_0.12_50)]">
-                  Nested Span
-                  <span class="text-muted-foreground text-xs"> (parentSpanId = llm.spanId)</span>
+                  Tool Call
+                  <span class="text-muted-foreground text-xs"> (child of LLM Call)</span>
                 </div>
               </div>
             </div>
@@ -142,13 +202,10 @@ const FLUSH_CODE = `export default {
   <!-- Sections -->
   <div class="space-y-16">
     <!-- Install -->
-    <section class="animate-fade-in">
+    <section class="animate-fade-in" style="animation-delay: 150ms;">
       <div class="mb-6 flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="4 17 10 11 4 5" />
-            <line x1="12" x2="20" y1="19" y2="19" />
-          </svg>
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
+          1
         </div>
         <h2 class="text-xl font-semibold tracking-tight text-foreground">Install Dependencies</h2>
       </div>
@@ -156,12 +213,10 @@ const FLUSH_CODE = `export default {
     </section>
 
     <!-- Setup -->
-    <section class="animate-fade-in">
+    <section class="animate-fade-in" style="animation-delay: 200ms;">
       <div class="mb-6 flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
-          </svg>
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
+          2
         </div>
         <h2 class="text-xl font-semibold tracking-tight text-foreground">Initialize the Tracer</h2>
       </div>
@@ -174,14 +229,10 @@ const FLUSH_CODE = `export default {
     </section>
 
     <!-- Spans -->
-    <section class="animate-fade-in">
+    <section class="animate-fade-in" style="animation-delay: 250ms;">
       <div class="mb-6 flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" />
-            <path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" />
-            <path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" />
-          </svg>
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
+          3
         </div>
         <h2 class="text-xl font-semibold tracking-tight text-foreground">Create Hierarchical Spans</h2>
       </div>
@@ -194,13 +245,49 @@ const FLUSH_CODE = `export default {
       <CodeBlock code={SPANS_CODE} lang="typescript" />
     </section>
 
-    <!-- Flush -->
-    <section class="animate-fade-in">
+    <!-- Link Proxy Requests -->
+    <section class="animate-fade-in" style="animation-delay: 300ms;">
       <div class="mb-6 flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
-          </svg>
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
+          4
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight text-foreground">Link LLM Proxy Requests</h2>
+      </div>
+      <p class="mb-4 text-muted-foreground">
+        Connect LLM proxy requests to your traces by passing trace context headers.
+        This creates a unified view where custom spans and LLM requests appear together.
+      </p>
+      <div class="mb-6 overflow-hidden rounded-lg border border-border/50">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-border/50 bg-card/30 text-left">
+              <th class="px-4 py-2 font-medium text-muted-foreground">Header</th>
+              <th class="px-4 py-2 font-medium text-muted-foreground">Format</th>
+              <th class="px-4 py-2 font-medium text-muted-foreground">Purpose</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-border/50">
+            <tr>
+              <td class="px-4 py-2 font-mono text-foreground">X-Trace-Flow-Trace-Id</td>
+              <td class="px-4 py-2 font-mono text-muted-foreground">32 hex chars</td>
+              <td class="px-4 py-2 text-muted-foreground">Join proxy request to existing trace</td>
+            </tr>
+            <tr class="bg-card/30">
+              <td class="px-4 py-2 font-mono text-foreground">X-Trace-Flow-Parent-Span-Id</td>
+              <td class="px-4 py-2 font-mono text-muted-foreground">16 hex chars</td>
+              <td class="px-4 py-2 text-muted-foreground">Set parent span for hierarchy</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <CodeBlock code={LINK_PROXY_CODE} lang="typescript" />
+    </section>
+
+    <!-- Flush -->
+    <section class="animate-fade-in" style="animation-delay: 350ms;">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
+          5
         </div>
         <h2 class="text-xl font-semibold tracking-tight text-foreground">Serverless Flush Pattern</h2>
       </div>
@@ -212,10 +299,53 @@ const FLUSH_CODE = `export default {
       </p>
       <CodeBlock code={FLUSH_CODE} lang="typescript" />
     </section>
+
+    <!-- Endpoint Reference -->
+    <section class="animate-fade-in" style="animation-delay: 400ms;">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-semibold tracking-tight text-foreground">Endpoint Reference</h2>
+      </div>
+      <p class="mb-4 text-muted-foreground">
+        Send traces directly to the OTLP/HTTP JSON endpoint.
+      </p>
+      <div class="mb-6 overflow-hidden rounded-lg border border-border/50">
+        <table class="w-full text-sm">
+          <tbody class="divide-y divide-border/50">
+            <tr class="bg-card/30">
+              <td class="px-4 py-2 font-medium text-muted-foreground">Method</td>
+              <td class="px-4 py-2 font-mono text-foreground">POST</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2 font-medium text-muted-foreground">URL</td>
+              <td class="px-4 py-2 font-mono text-foreground">https://gateway.trace-flow.dev/v1/traces</td>
+            </tr>
+            <tr class="bg-card/30">
+              <td class="px-4 py-2 font-medium text-muted-foreground">Auth Header</td>
+              <td class="px-4 py-2 font-mono text-foreground">X-Trace-Flow-Api-Key: &lt;your-key&gt;</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2 font-medium text-muted-foreground">Content-Type</td>
+              <td class="px-4 py-2 font-mono text-foreground">application/json</td>
+            </tr>
+            <tr class="bg-card/30">
+              <td class="px-4 py-2 font-medium text-muted-foreground">Max Size</td>
+              <td class="px-4 py-2 font-mono text-foreground">10MB</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <CodeBlock code={ENDPOINT_EXAMPLE} lang="bash" />
+    </section>
   </div>
 
   <!-- Key points -->
-  <div class="mt-20 animate-fade-in">
+  <div class="mt-16 animate-fade-in">
     <div class="rounded-xl border border-primary/20 bg-primary/5 p-6">
       <h3 class="mb-4 text-sm font-medium uppercase tracking-wider text-primary">
         Key Points
@@ -234,7 +364,7 @@ const FLUSH_CODE = `export default {
           <span>
             <strong>Events are supported</strong> —
             <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">span.addEvent()</code>
-            maps to the Events columns in Tinybird
+            for tracking user actions and milestones
           </span>
         </li>
         <li class="flex items-start gap-3">
@@ -242,7 +372,7 @@ const FLUSH_CODE = `export default {
           <span>
             <strong>Attributes work</strong> —
             <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">span.setAttribute()</code>
-            maps to the SpanAttributes JSON column
+            for custom metadata
           </span>
         </li>
         <li class="flex items-start gap-3">
