@@ -1,6 +1,16 @@
 import { useLocation, Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
-import { LayoutDashboard, Activity, GitBranch, Key, LogOut, LogIn, User, Zap } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Activity,
+  GitBranch,
+  Layers,
+  Key,
+  LogOut,
+  LogIn,
+  User,
+  Zap,
+} from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -18,6 +28,7 @@ const navItems = [
   { title: 'Dashboard', to: '/', icon: LayoutDashboard },
   { title: 'Requests', to: '/requests', icon: Activity },
   { title: 'Traces', to: '/traces', icon: GitBranch },
+  { title: 'Spans', to: '/spans', icon: Layers },
   { title: 'API Keys', to: '/api-keys', icon: Key },
 ];
 

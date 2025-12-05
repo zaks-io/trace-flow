@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatBodyForDisplay } from '../index';
+import { formatBodyForDisplay, mergeSSEEvents, type ParsedSSEEvent } from '../index';
 
 describe('formatBodyForDisplay', () => {
   describe('null/empty handling', () => {
@@ -141,9 +141,21 @@ data: test data
       expect(events[0]?.data).toBe('test data');
     });
 
-    it('should handle malformed SSE as text', () => {
+    it('should handle SSE without trailing newline', () => {
+      // Per SSE spec, events are only dispatched after a blank line
+      // So incomplete SSE without trailing \n\n produces no events
       const malformed = 'event: test\ndata:';
       const result = formatBodyForDisplay(malformed);
+      expect(result?.format).toBe('sse');
+
+      const events = result?.content as { event: string | null; data: string }[];
+      expect(events).toBeDefined();
+      expect(events.length).toBe(0);
+    });
+
+    it('should parse SSE with empty data field', () => {
+      const sse = 'event: test\ndata:\n\n';
+      const result = formatBodyForDisplay(sse);
       expect(result?.format).toBe('sse');
 
       const events = result?.content as { event: string | null; data: string }[];
@@ -204,6 +216,183 @@ data: test data
       const result = formatBodyForDisplay(json);
       expect(result?.format).toBe('json');
       expect(result?.content).toEqual(largeObj);
+    });
+  });
+});
+
+describe('mergeSSEEvents', () => {
+  describe('OpenAI format', () => {
+    it('should merge OpenAI streaming response', () => {
+      const events: ParsedSSEEvent[] = [
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}',
+        },
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}',
+        },
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","choices":[{"index":0,"delta":{"content":" world!"},"finish_reason":null}]}',
+        },
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
+        },
+        { event: null, data: '[DONE]' },
+      ];
+
+      const result = mergeSSEEvents(events);
+
+      expect(result.id).toBe('chatcmpl-123');
+      expect(result.model).toBe('gpt-4');
+      expect(result.created).toBe(1234567890);
+      expect(result.choices.length).toBe(1);
+      expect(result.choices[0]!.message.role).toBe('assistant');
+      expect(result.choices[0]!.message.content).toBe('Hello world!');
+      expect(result.choices[0]!.finish_reason).toBe('stop');
+      expect(result.usage?.prompt_tokens).toBe(10);
+      expect(result.usage?.completion_tokens).toBe(5);
+    });
+
+    it('should handle OpenAI tool calls', () => {
+      const events: ParsedSSEEvent[] = [
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}',
+        },
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"city\\":"}}]}}]}',
+        },
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"NYC\\"}"}}]}}]}',
+        },
+        {
+          event: null,
+          data: '{"id":"chatcmpl-123","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+        },
+      ];
+
+      const result = mergeSSEEvents(events);
+
+      expect(result.choices[0]!.message.tool_calls).toBeDefined();
+      expect(result.choices[0]!.message.tool_calls?.length).toBe(1);
+      expect(result.choices[0]!.message.tool_calls?.[0]!.id).toBe('call_123');
+      expect(result.choices[0]!.message.tool_calls?.[0]!.function.name).toBe('get_weather');
+      expect(result.choices[0]!.message.tool_calls?.[0]!.function.arguments).toBe('{"city":"NYC"}');
+      expect(result.choices[0]!.finish_reason).toBe('tool_calls');
+    });
+  });
+
+  describe('Anthropic format', () => {
+    it('should merge Anthropic streaming response', () => {
+      const events: ParsedSSEEvent[] = [
+        {
+          event: 'message_start',
+          data: '{"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}',
+        },
+        {
+          event: 'content_block_start',
+          data: '{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        },
+        {
+          event: 'content_block_delta',
+          data: '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}',
+        },
+        {
+          event: 'content_block_delta',
+          data: '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world!"}}',
+        },
+        {
+          event: 'content_block_stop',
+          data: '{"type":"content_block_stop","index":0}',
+        },
+        {
+          event: 'message_delta',
+          data: '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}',
+        },
+        {
+          event: 'message_stop',
+          data: '{"type":"message_stop"}',
+        },
+      ];
+
+      const result = mergeSSEEvents(events);
+
+      expect(result.id).toBe('msg_123');
+      expect(result.model).toBe('claude-sonnet-4-5-20250929');
+      expect(result.choices.length).toBe(1);
+      expect(result.choices[0]!.message.role).toBe('assistant');
+      expect(result.choices[0]!.message.content).toBe('Hello world!');
+      expect(result.choices[0]!.finish_reason).toBe('end_turn');
+      expect(result.usage?.input_tokens).toBe(10);
+      expect(result.usage?.output_tokens).toBe(5);
+    });
+
+    it('should handle Anthropic usage with cache tokens', () => {
+      const events: ParsedSSEEvent[] = [
+        {
+          event: 'message_start',
+          data: '{"type":"message_start","message":{"id":"msg_123","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":50,"output_tokens":1}}}',
+        },
+        {
+          event: 'content_block_delta',
+          data: '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Test"}}',
+        },
+        {
+          event: 'message_delta',
+          data: '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}',
+        },
+      ];
+
+      const result = mergeSSEEvents(events);
+
+      expect(result.usage?.input_tokens).toBe(10);
+      expect(result.usage?.cache_creation_input_tokens).toBe(100);
+      expect(result.usage?.cache_read_input_tokens).toBe(50);
+      expect(result.usage?.output_tokens).toBe(10);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should handle empty events array', () => {
+      const result = mergeSSEEvents([]);
+
+      expect(result.choices.length).toBe(1);
+      expect(result.choices[0]!.message.content).toBe('');
+      expect(result.choices[0]!.message.role).toBe('assistant');
+    });
+
+    it('should skip non-JSON data', () => {
+      const events: ParsedSSEEvent[] = [
+        { event: null, data: 'not json' },
+        {
+          event: null,
+          data: '{"choices":[{"index":0,"delta":{"content":"Hello"}}]}',
+        },
+      ];
+
+      const result = mergeSSEEvents(events);
+
+      expect(result.choices[0]!.message.content).toBe('Hello');
+    });
+
+    it('should handle done events', () => {
+      const events: ParsedSSEEvent[] = [
+        {
+          event: null,
+          data: '{"choices":[{"index":0,"delta":{"content":"Hello"}}]}',
+        },
+        { event: 'done', data: '' },
+        { event: null, data: '[DONE]' },
+      ];
+
+      const result = mergeSSEEvents(events);
+
+      expect(result.choices[0]!.message.content).toBe('Hello');
     });
   });
 });

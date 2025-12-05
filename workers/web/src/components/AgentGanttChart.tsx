@@ -17,6 +17,7 @@ interface AgentGanttChartProps {
   spans: TraceSpan[];
   selectedSpanId?: string;
   onSpanSelect?: (spanId: string) => void;
+  parentSpanId?: string;
 }
 
 type SpanType = 'llm' | 'ttft' | 'message' | 'tool' | 'internal';
@@ -125,12 +126,104 @@ function formatNumber(num: number): string {
   return num.toString();
 }
 
-export function AgentGanttChart({ spans, selectedSpanId, onSpanSelect }: AgentGanttChartProps) {
+export function AgentGanttChart({
+  spans,
+  selectedSpanId,
+  onSpanSelect,
+  parentSpanId,
+}: AgentGanttChartProps) {
   const { spanRows, totalDuration } = useMemo(() => {
     if (spans.length === 0) return { spanRows: [], totalDuration: 0, traceStartTime: 0 };
 
-    const rootSpan = spans.find((s) => s.ParentSpanId === '');
-    if (!rootSpan) return { spanRows: [], totalDuration: 0, traceStartTime: 0 };
+    // Check if this is a span group (multiple traces without a true root span)
+    const uniqueTraceIds = [...new Set(spans.map((s) => s.TraceId))];
+    const hasRootSpan = spans.some((s) => s.ParentSpanId === '');
+    const isSpanGroup = uniqueTraceIds.length > 1 || (!hasRootSpan && spans.length > 0);
+
+    if (isSpanGroup) {
+      // Multi-trace mode: group by TraceId and render each trace's root span at depth 0
+      const traceGroups = new Map<string, TraceSpan[]>();
+      for (const span of spans) {
+        const group = traceGroups.get(span.TraceId) ?? [];
+        group.push(span);
+        traceGroups.set(span.TraceId, group);
+      }
+
+      const traceStart = Math.min(...spans.map((s) => s.Timestamp));
+      const traceEndTime = Math.max(...spans.map((s) => s.Timestamp + s.Duration));
+      const total = traceEndTime - traceStart;
+
+      const allRows: SpanRow[] = [];
+
+      // Sort trace groups by their earliest timestamp
+      const sortedTraceGroups = [...traceGroups.entries()].sort((a, b) => {
+        const aMin = Math.min(...a[1].map((s) => s.Timestamp));
+        const bMin = Math.min(...b[1].map((s) => s.Timestamp));
+        return aMin - bMin;
+      });
+
+      for (const [, traceSpans] of sortedTraceGroups) {
+        // Find root of this trace (span whose parent is not in this trace's span set)
+        const traceSpanIds = new Set(traceSpans.map((s) => s.SpanId));
+        const traceRoot = traceSpans.find((s) => !traceSpanIds.has(s.ParentSpanId));
+        if (!traceRoot) continue;
+
+        const rootType = getSpanType(traceRoot);
+        const rootTokens = getSpanTokens(traceRoot);
+        const startOffset = ((traceRoot.Timestamp - traceStart) / total) * 100;
+        const width = (traceRoot.Duration / total) * 100;
+
+        allRows.push({
+          span: traceRoot,
+          depth: 0,
+          startOffset,
+          width: Math.max(width, 0.5),
+          type: rootType,
+          tokens: rootTokens,
+        });
+
+        // Build children for this trace's root
+        const buildSpanTree = (parentId: string, depth: number): SpanRow[] => {
+          const children = traceSpans
+            .filter((s) => s.ParentSpanId === parentId)
+            .sort((a, b) => a.Timestamp - b.Timestamp);
+
+          const rows: SpanRow[] = [];
+          for (const span of children) {
+            const childStartOffset = ((span.Timestamp - traceStart) / total) * 100;
+            const childWidth = (span.Duration / total) * 100;
+            const type = getSpanType(span);
+            const tokens = getSpanTokens(span);
+
+            rows.push({
+              span,
+              depth,
+              startOffset: childStartOffset,
+              width: Math.max(childWidth, 0.5),
+              type,
+              tokens,
+            });
+
+            rows.push(...buildSpanTree(span.SpanId, depth + 1));
+          }
+          return rows;
+        };
+
+        allRows.push(...buildSpanTree(traceRoot.SpanId, 1));
+      }
+
+      return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
+    }
+
+    // Single trace mode: original logic
+    let rootSpan = spans.find((s) => s.ParentSpanId === '');
+
+    if (!rootSpan) {
+      const spanIds = new Set(spans.map((s) => s.SpanId));
+      rootSpan = spans.find((s) => !spanIds.has(s.ParentSpanId));
+    }
+
+    rootSpan ??= spans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b));
 
     const traceStart = rootSpan.Timestamp;
     const traceEndTime = Math.max(...spans.map((s) => s.Timestamp + s.Duration));
@@ -215,7 +308,18 @@ export function AgentGanttChart({ spans, selectedSpanId, onSpanSelect }: AgentGa
         </div>
       </div>
 
-      <div className="max-h-[500px] overflow-y-auto">
+      {parentSpanId && (
+        <div className="flex border-b border-border/30 bg-muted/30">
+          <div className="w-56 shrink-0 border-r border-border/30 px-4 py-2">
+            <span className="text-xs text-muted-foreground">Parent Span</span>
+          </div>
+          <div className="relative flex-1 px-4 py-2">
+            <div className="h-5 w-full rounded border border-dashed border-zinc-500/50 bg-zinc-600/50" />
+          </div>
+        </div>
+      )}
+
+      <div>
         {spanRows.map((row) => (
           <div
             key={row.span.SpanId}
@@ -281,7 +385,7 @@ export function AgentGanttChart({ spans, selectedSpanId, onSpanSelect }: AgentGa
 
       <div className="flex border-t border-border/30 bg-muted/10">
         <div className="w-56 shrink-0 border-r border-border/30" />
-        <div className="relative flex flex-1 justify-between px-4 h-8 py-3">
+        <div className="relative flex h-8 flex-1 justify-between px-4 py-3">
           {timeMarkers.map((marker, i) => (
             <span
               key={i}

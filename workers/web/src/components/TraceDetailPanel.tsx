@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
+import { validateTraceId } from '@trace-flow/utils';
 import {
   Dialog,
   DialogContent,
@@ -21,21 +22,25 @@ interface TinybirdResponse {
 }
 
 export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelProps) {
+  const validatedTraceId = validateTraceId(traceId);
+
   const { data } = useTinybirdQuery<TinybirdResponse>({
-    sql: `SELECT
+    sql: validatedTraceId
+      ? `SELECT
       Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName,
       Duration, StatusCode, StatusMessage, SpanAttributes, ResourceAttributes,
       Events.Timestamp, Events.Name, Events.Attributes
     FROM otel_traces
-    WHERE TraceId = '${traceId}'
+    WHERE TraceId = '${validatedTraceId}'
     ORDER BY Timestamp ASC
-    FORMAT JSON`,
+    FORMAT JSON`
+      : '',
     scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
-    enabled: isOpen && !!traceId,
+    enabled: isOpen && !!validatedTraceId,
   });
 
   const spans = data?.data ?? [];
-  const rootSpan = spans.find((s) => s.ParentSpanId === '');
+  const rootSpan = spans.find((s) => s.SpanName === 'llm.request');
 
   const formatDuration = (nanoseconds: number) => {
     const milliseconds = nanoseconds / 1_000_000;

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
-import { X, Clock, Hash, Globe, Server, Cpu, MessageSquare, Zap } from 'lucide-react';
+import { Clock, Hash, Globe, Server, Cpu, MessageSquare, Zap, GitBranch } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ChevronDown } from 'lucide-react';
 import {
@@ -10,6 +11,13 @@ import {
   type ParsedSSEEvent,
 } from '@trace-flow/utils';
 import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 
 interface TraceSpan {
   Timestamp: number;
@@ -29,8 +37,9 @@ interface TraceSpan {
 }
 
 interface SpanDetailPanelProps {
-  span: TraceSpan;
+  span: TraceSpan | null;
   isRootSpan: boolean;
+  isOpen: boolean;
   onClose: () => void;
 }
 
@@ -88,7 +97,7 @@ function AttributeCard({ icon, label, value, mono = false }: AttributeCardProps)
   );
 }
 
-export function SpanDetailPanel({ span, isRootSpan, onClose }: SpanDetailPanelProps) {
+export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetailPanelProps) {
   const { getAccessTokenSilently } = useAuth0();
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
@@ -100,8 +109,8 @@ export function SpanDetailPanel({ span, isRootSpan, onClose }: SpanDetailPanelPr
   const [isAttributesOpen, setIsAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
 
-  const spanAttributes = parseAttributes(span.SpanAttributes);
-  const resourceAttributes = parseAttributes(span.ResourceAttributes);
+  const spanAttributes = span ? parseAttributes(span.SpanAttributes) : {};
+  const resourceAttributes = span ? parseAttributes(span.ResourceAttributes) : {};
   const allAttributes = { ...spanAttributes, ...resourceAttributes };
 
   const provider = allAttributes['llm.provider'] ?? allAttributes['gen_ai.system'] ?? '';
@@ -138,7 +147,15 @@ export function SpanDetailPanel({ span, isRootSpan, onClose }: SpanDetailPanelPr
   );
 
   useEffect(() => {
-    if (!isRootSpan) return;
+    if (!isRootSpan || !span) return;
+
+    // Extract requestId from span attributes - bodies are stored by requestId not traceId
+    const attrs = parseAttributes(span.SpanAttributes);
+    const requestId = attrs['llm.request_id'];
+    if (!requestId) {
+      // No requestId means body not available (e.g., OTLP traces from external systems)
+      return;
+    }
 
     const fetchBodies = async () => {
       try {
@@ -149,10 +166,10 @@ export function SpanDetailPanel({ span, isRootSpan, onClose }: SpanDetailPanelPr
         setResponseBodyLoading(true);
 
         const [reqRes, resRes] = await Promise.all([
-          fetch(`${apiUrl}/bodies/${span.TraceId}/request`, {
+          fetch(`${apiUrl}/bodies/${requestId}/request`, {
             headers: { Authorization: `Bearer ${id_token}` },
           }),
-          fetch(`${apiUrl}/bodies/${span.TraceId}/response`, {
+          fetch(`${apiUrl}/bodies/${requestId}/response`, {
             headers: { Authorization: `Bearer ${id_token}` },
           }),
         ]);
@@ -174,7 +191,7 @@ export function SpanDetailPanel({ span, isRootSpan, onClose }: SpanDetailPanelPr
     };
 
     void fetchBodies();
-  }, [isRootSpan, span.TraceId, getAccessTokenSilently]);
+  }, [isRootSpan, span, getAccessTokenSilently]);
 
   const renderBodyContent = (formattedBody: FormattedBody | null, isResponse = false) => {
     if (!formattedBody) {
@@ -239,206 +256,226 @@ export function SpanDetailPanel({ span, isRootSpan, onClose }: SpanDetailPanelPr
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/50 bg-card">
-      <div className="flex items-center justify-between border-b border-border/30 bg-muted/20 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold text-foreground">{span.SpanName}</h3>
-          <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="tabular-nums">{formatDuration(span.Duration)}</span>
-            <span>·</span>
-            <span className={span.StatusCode === 'ERROR' ? 'text-red-400' : 'text-emerald-400'}>
-              {span.StatusCode}
-            </span>
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        <div className="grid grid-cols-2 gap-2">
-          {provider && (
-            <AttributeCard
-              icon={<Globe className="h-3.5 w-3.5" />}
-              label="Provider"
-              value={provider}
-            />
-          )}
-          {model && (
-            <AttributeCard
-              icon={<Server className="h-3.5 w-3.5" />}
-              label="Model"
-              value={model}
-              mono
-            />
-          )}
-          <AttributeCard
-            icon={<Clock className="h-3.5 w-3.5" />}
-            label="Timestamp"
-            value={formatTimestamp(span.Timestamp)}
-          />
-          <AttributeCard
-            icon={<Hash className="h-3.5 w-3.5" />}
-            label="Span ID"
-            value={span.SpanId}
-            mono
-          />
-        </div>
-
-        {(promptTokens > 0 || completionTokens > 0 || ttftMs !== null) && (
-          <div className="rounded-lg border border-border/40 bg-muted/10 p-3">
-            <h4 className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Token Breakdown
-            </h4>
-            <div className="grid grid-cols-3 gap-2">
-              {promptTokens > 0 && (
-                <div className="rounded-md bg-purple-500/10 p-2 text-center">
-                  <Cpu className="mx-auto h-4 w-4 text-purple-400" />
-                  <p className="mt-1 font-mono text-sm font-medium text-foreground">
-                    {formatNumber(promptTokens)}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">Input</p>
-                </div>
-              )}
-              {completionTokens > 0 && (
-                <div className="rounded-md bg-blue-500/10 p-2 text-center">
-                  <MessageSquare className="mx-auto h-4 w-4 text-blue-400" />
-                  <p className="mt-1 font-mono text-sm font-medium text-foreground">
-                    {formatNumber(completionTokens)}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">Output</p>
-                </div>
-              )}
-              {ttftMs !== null && (
-                <div className="rounded-md bg-amber-500/10 p-2 text-center">
-                  <Zap className="mx-auto h-4 w-4 text-amber-400" />
-                  <p className="mt-1 font-mono text-sm font-medium text-foreground">
-                    {ttftMs.toFixed(0)}ms
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">TTFT</p>
-                </div>
-              )}
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="flex max-h-[90vh] flex-col overflow-hidden p-0">
+        <DialogHeader className="flex-shrink-0 border-b border-border/50 px-6 py-4">
+          <div className="flex items-center justify-between pr-8">
+            <div>
+              <DialogTitle className="text-base font-medium text-foreground">
+                {span?.SpanName ?? 'Span Details'}
+              </DialogTitle>
+              <DialogDescription className="mt-0.5 flex items-center gap-2 text-xs">
+                {span && (
+                  <>
+                    <span className="tabular-nums">{formatDuration(span.Duration)}</span>
+                    <span>·</span>
+                    <span
+                      className={span.StatusCode === 'ERROR' ? 'text-red-400' : 'text-emerald-400'}
+                    >
+                      {span.StatusCode}
+                    </span>
+                  </>
+                )}
+              </DialogDescription>
             </div>
           </div>
-        )}
+        </DialogHeader>
 
-        {isRootSpan && (
-          <>
-            <Collapsible open={isResponseOpen} onOpenChange={setIsResponseOpen}>
-              <div className="flex items-center justify-between">
-                <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
-                  <ChevronDown
-                    className={`h-4 w-4 text-muted-foreground transition-transform ${isResponseOpen ? 'rotate-0' : '-rotate-90'}`}
+        <div className="flex-1 space-y-4 overflow-y-auto p-4">
+          {span && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                {provider && (
+                  <AttributeCard
+                    icon={<Globe className="h-3.5 w-3.5" />}
+                    label="Provider"
+                    value={provider}
                   />
-                  <span className="text-sm font-medium text-foreground">Response</span>
-                  {responseBody?.format === 'sse' && (
-                    <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-[10px] font-medium text-purple-400">
-                      SSE
-                    </span>
-                  )}
-                </CollapsibleTrigger>
-                {responseBody?.format === 'sse' && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">Merge</span>
-                    <Switch checked={isMergedView} onCheckedChange={setIsMergedView} />
-                  </div>
+                )}
+                {model && (
+                  <AttributeCard
+                    icon={<Server className="h-3.5 w-3.5" />}
+                    label="Model"
+                    value={model}
+                    mono
+                  />
+                )}
+                <AttributeCard
+                  icon={<Clock className="h-3.5 w-3.5" />}
+                  label="Timestamp"
+                  value={formatTimestamp(span.Timestamp)}
+                />
+                <AttributeCard
+                  icon={<Hash className="h-3.5 w-3.5" />}
+                  label="Span ID"
+                  value={span.SpanId}
+                  mono
+                />
+                {span.ParentSpanId && span.ParentSpanId !== '' && (
+                  <Link to={`/trace/${span.ParentSpanId}`}>
+                    <AttributeCard
+                      icon={<GitBranch className="h-3.5 w-3.5" />}
+                      label="Parent Span"
+                      value={span.ParentSpanId}
+                      mono
+                    />
+                  </Link>
                 )}
               </div>
-              <CollapsibleContent>
-                <div className="mt-2">
-                  {responseBodyLoading ? (
-                    <div className="flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 py-6">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-                    </div>
-                  ) : (
-                    renderBodyContent(responseBody, true)
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
 
-            <Collapsible open={isRequestOpen} onOpenChange={setIsRequestOpen}>
-              <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
-                <ChevronDown
-                  className={`h-4 w-4 text-muted-foreground transition-transform ${isRequestOpen ? 'rotate-0' : '-rotate-90'}`}
-                />
-                <span className="text-sm font-medium text-foreground">Request</span>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="mt-2">
-                  {requestBodyLoading ? (
-                    <div className="flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 py-6">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-                    </div>
-                  ) : (
-                    renderBodyContent(requestBody)
-                  )}
+              {(promptTokens > 0 || completionTokens > 0 || ttftMs !== null) && (
+                <div className="rounded-lg border border-border/40 bg-muted/10 p-3">
+                  <h4 className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Token Breakdown
+                  </h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    {promptTokens > 0 && (
+                      <div className="rounded-md bg-purple-500/10 p-2 text-center">
+                        <Cpu className="mx-auto h-4 w-4 text-purple-400" />
+                        <p className="mt-1 font-mono text-sm font-medium text-foreground">
+                          {formatNumber(promptTokens)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">Input</p>
+                      </div>
+                    )}
+                    {completionTokens > 0 && (
+                      <div className="rounded-md bg-blue-500/10 p-2 text-center">
+                        <MessageSquare className="mx-auto h-4 w-4 text-blue-400" />
+                        <p className="mt-1 font-mono text-sm font-medium text-foreground">
+                          {formatNumber(completionTokens)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">Output</p>
+                      </div>
+                    )}
+                    {ttftMs !== null && (
+                      <div className="rounded-md bg-amber-500/10 p-2 text-center">
+                        <Zap className="mx-auto h-4 w-4 text-amber-400" />
+                        <p className="mt-1 font-mono text-sm font-medium text-foreground">
+                          {ttftMs.toFixed(0)}ms
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">TTFT</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </>
-        )}
+              )}
 
-        {span['Events.Name'] && span['Events.Name'].length > 0 && (
-          <Collapsible open={isEventsOpen} onOpenChange={setIsEventsOpen}>
-            <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground transition-transform ${isEventsOpen ? 'rotate-0' : '-rotate-90'}`}
-              />
-              <span className="text-sm font-medium text-foreground">Events</span>
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                {span['Events.Name'].length}
-              </span>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-2 space-y-1.5 rounded-lg border border-border/30 bg-muted/10 p-2">
-                {span['Events.Name'].map((name, index) => (
-                  <div key={index} className="border-l-2 border-primary/50 py-1 pl-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-foreground">{name}</span>
-                      {span['Events.Timestamp'][index] && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {formatTimestamp(span['Events.Timestamp'][index])}
-                        </span>
+              {isRootSpan && (
+                <>
+                  <Collapsible open={isResponseOpen} onOpenChange={setIsResponseOpen}>
+                    <div className="flex items-center justify-between">
+                      <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
+                        <ChevronDown
+                          className={`h-4 w-4 text-muted-foreground transition-transform ${isResponseOpen ? 'rotate-0' : '-rotate-90'}`}
+                        />
+                        <span className="text-sm font-medium text-foreground">Response</span>
+                        {responseBody?.format === 'sse' && (
+                          <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-[10px] font-medium text-purple-400">
+                            SSE
+                          </span>
+                        )}
+                      </CollapsibleTrigger>
+                      {responseBody?.format === 'sse' && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Merge</span>
+                          <Switch checked={isMergedView} onCheckedChange={setIsMergedView} />
+                        </div>
                       )}
                     </div>
-                  </div>
-                ))}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
+                    <CollapsibleContent>
+                      <div className="mt-2">
+                        {responseBodyLoading ? (
+                          <div className="flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 py-6">
+                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+                          </div>
+                        ) : (
+                          renderBodyContent(responseBody, true)
+                        )}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
 
-        {remainingAttributes.length > 0 && (
-          <Collapsible open={isAttributesOpen} onOpenChange={setIsAttributesOpen}>
-            <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground transition-transform ${isAttributesOpen ? 'rotate-0' : '-rotate-90'}`}
-              />
-              <span className="text-sm font-medium text-foreground">More Attributes</span>
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                {remainingAttributes.length}
-              </span>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-2 space-y-1 rounded-lg border border-border/30 bg-muted/10 p-2">
-                {remainingAttributes.map(([key, value]) => (
-                  <div key={key} className="flex items-start gap-2 text-xs">
-                    <span className="shrink-0 font-mono text-muted-foreground/70">{key}</span>
-                    <span className="truncate text-foreground" title={value}>
-                      {value}
+                  <Collapsible open={isRequestOpen} onOpenChange={setIsRequestOpen}>
+                    <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
+                      <ChevronDown
+                        className={`h-4 w-4 text-muted-foreground transition-transform ${isRequestOpen ? 'rotate-0' : '-rotate-90'}`}
+                      />
+                      <span className="text-sm font-medium text-foreground">Request</span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="mt-2">
+                        {requestBodyLoading ? (
+                          <div className="flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 py-6">
+                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+                          </div>
+                        ) : (
+                          renderBodyContent(requestBody)
+                        )}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </>
+              )}
+
+              {span['Events.Name'] && span['Events.Name'].length > 0 && (
+                <Collapsible open={isEventsOpen} onOpenChange={setIsEventsOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
+                    <ChevronDown
+                      className={`h-4 w-4 text-muted-foreground transition-transform ${isEventsOpen ? 'rotate-0' : '-rotate-90'}`}
+                    />
+                    <span className="text-sm font-medium text-foreground">Events</span>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {span['Events.Name'].length}
                     </span>
-                  </div>
-                ))}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-      </div>
-    </div>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="mt-2 space-y-1.5 rounded-lg border border-border/30 bg-muted/10 p-2">
+                      {span['Events.Name'].map((name, index) => (
+                        <div key={index} className="border-l-2 border-primary/50 py-1 pl-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-foreground">{name}</span>
+                            {span['Events.Timestamp'][index] && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {formatTimestamp(span['Events.Timestamp'][index])}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+
+              {remainingAttributes.length > 0 && (
+                <Collapsible open={isAttributesOpen} onOpenChange={setIsAttributesOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
+                    <ChevronDown
+                      className={`h-4 w-4 text-muted-foreground transition-transform ${isAttributesOpen ? 'rotate-0' : '-rotate-90'}`}
+                    />
+                    <span className="text-sm font-medium text-foreground">More Attributes</span>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {remainingAttributes.length}
+                    </span>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="mt-2 space-y-1 rounded-lg border border-border/30 bg-muted/10 p-2">
+                      {remainingAttributes.map(([key, value]) => (
+                        <div key={key} className="flex items-start gap-2 text-xs">
+                          <span className="shrink-0 font-mono text-muted-foreground/70">{key}</span>
+                          <span className="truncate text-foreground" title={value}>
+                            {value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
