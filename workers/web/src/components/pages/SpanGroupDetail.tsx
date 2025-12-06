@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, Copy, Check } from 'lucide-react';
 import { validateTraceId } from '@trace-flow/utils';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
@@ -34,6 +35,7 @@ function truncateId(id: string) {
 }
 
 export default function SpanGroupDetail() {
+  usePageHeader('Span Group');
   const { parentSpanId } = useParams<{ parentSpanId: string }>();
   const [copied, setCopied] = useState(false);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
@@ -179,8 +181,7 @@ export default function SpanGroupDetail() {
       </div>
 
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Span Group</h1>
-        <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{parentSpanId}</p>
+        <p className="break-all font-mono text-xs text-muted-foreground">{parentSpanId}</p>
         <div className="mt-2 flex items-center gap-4 text-sm text-muted-foreground">
           <span>
             {llmRequestCount} {llmRequestCount === 1 ? 'request' : 'requests'}

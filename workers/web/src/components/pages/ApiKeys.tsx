@@ -2,8 +2,10 @@ import { useQuery, useMutation, useAction } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
 import { useState } from 'react';
 import type { Id } from '../../../../../convex/_generated/dataModel';
+import { usePageHeader } from '@/components/PageHeaderContext';
 
 export default function ApiKeys() {
+  usePageHeader('API Keys');
   const apiKeys = useQuery(api.apiKeys.list);
   const createApiKey = useMutation(api.apiKeys.create);
   const deleteApiKey = useMutation(api.apiKeys.remove);
@@ -70,13 +72,10 @@ export default function ApiKeys() {
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">API Keys</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Manage your API keys for accessing the proxy service
-          </p>
-        </div>
+      <div className="mb-6 flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Manage your API keys for accessing the proxy service
+        </p>
         <button
           onClick={() => void handleCreateKey()}
           disabled={isCreating}

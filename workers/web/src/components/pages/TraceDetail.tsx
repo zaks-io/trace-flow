@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, Copy, Check, ExternalLink } from 'lucide-react';
 import { validateTraceId } from '@trace-flow/utils';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
@@ -30,6 +31,7 @@ interface TinybirdResponse {
 }
 
 export default function TraceDetail() {
+  usePageHeader('Trace Details');
   const { traceId } = useParams<{ traceId: string }>();
   const [copied, setCopied] = useState(false);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
@@ -171,10 +173,7 @@ export default function TraceDetail() {
         </div>
       </div>
 
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Trace Details</h1>
-        <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{traceId}</p>
-      </div>
+      <p className="break-all font-mono text-xs text-muted-foreground">{traceId}</p>
 
       <TokenSummaryCards spans={spans} />
 
