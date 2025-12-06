@@ -491,4 +491,269 @@ describe('buildTraces', () => {
       });
     });
   });
+
+  describe('content block spans', () => {
+    it('should create spans for text content blocks', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'message_stop', timestamp: 1480, data: '{}' },
+              ],
+              contentBlocks: [
+                { index: 0, type: 'text', startTimestamp: 1200, stopTimestamp: 1400 },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const contentBlockSpan = traces.find((t) => t.SpanName === 'llm.content_block.text');
+      expect(contentBlockSpan).toBeDefined();
+      expect(contentBlockSpan?.Timestamp).toBe(1200 * 1000000);
+      expect(contentBlockSpan?.Duration).toBe((1400 - 1200) * 1000000);
+      expect(contentBlockSpan?.SpanAttributes['llm.content_block.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['llm.content_block.type']).toBe('text');
+    });
+
+    it('should create spans for tool_use content blocks', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'message_stop', timestamp: 1480, data: '{}' },
+              ],
+              contentBlocks: [
+                {
+                  index: 0,
+                  type: 'tool_use',
+                  startTimestamp: 1200,
+                  stopTimestamp: 1400,
+                  toolUseId: 'toolu_01abc123',
+                  toolName: 'get_weather',
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const contentBlockSpan = traces.find((t) => t.SpanName === 'llm.content_block.tool_use');
+      expect(contentBlockSpan).toBeDefined();
+      expect(contentBlockSpan?.SpanAttributes['llm.content_block.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['llm.content_block.type']).toBe('tool_use');
+      expect(contentBlockSpan?.SpanAttributes['llm.tool_use.id']).toBe('toolu_01abc123');
+      expect(contentBlockSpan?.SpanAttributes['llm.tool_use.name']).toBe('get_weather');
+    });
+
+    it('should skip incomplete content blocks', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'message_start', timestamp: 1150, data: '{}' },
+                { type: 'message_stop', timestamp: 1480, data: '{}' },
+              ],
+              contentBlocks: [
+                { index: 0, type: 'text', startTimestamp: 1200 }, // missing stopTimestamp
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const contentBlockSpan = traces.find((t) => t.SpanName.includes('content_block'));
+      expect(contentBlockSpan).toBeUndefined();
+    });
+
+    it('should create multiple content block spans', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+              contentBlocks: [
+                { index: 0, type: 'text', startTimestamp: 1200, stopTimestamp: 1250 },
+                {
+                  index: 1,
+                  type: 'tool_use',
+                  startTimestamp: 1260,
+                  stopTimestamp: 1350,
+                  toolUseId: 'toolu_abc',
+                  toolName: 'search',
+                },
+                { index: 2, type: 'text', startTimestamp: 1360, stopTimestamp: 1400 },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const textSpans = traces.filter((t) => t.SpanName === 'llm.content_block.text');
+      const toolUseSpans = traces.filter((t) => t.SpanName === 'llm.content_block.tool_use');
+
+      expect(textSpans.length).toBe(2);
+      expect(toolUseSpans.length).toBe(1);
+    });
+  });
+
+  describe('input message spans', () => {
+    it('should create spans for system messages', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        inputMessages: [
+          {
+            role: 'system',
+            index: 0,
+            contentBlocks: [{ index: 0, type: 'text' }],
+          },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const systemSpan = traces.find((t) => t.SpanName === 'llm.input.system');
+      expect(systemSpan).toBeDefined();
+      expect(systemSpan?.Duration).toBe(0);
+      expect(systemSpan?.SpanAttributes['llm.input.role']).toBe('system');
+      expect(systemSpan?.SpanAttributes['llm.input.index']).toBe('0');
+    });
+
+    it('should create spans for user messages', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        inputMessages: [
+          {
+            role: 'user',
+            index: 0,
+            contentBlocks: [{ index: 0, type: 'text' }],
+          },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const userSpan = traces.find((t) => t.SpanName === 'llm.input.user');
+      expect(userSpan).toBeDefined();
+      expect(userSpan?.Duration).toBe(0);
+      expect(userSpan?.SpanAttributes['llm.input.role']).toBe('user');
+    });
+
+    it('should create spans for tool_result messages', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        inputMessages: [
+          {
+            role: 'user',
+            index: 0,
+            contentBlocks: [{ index: 0, type: 'tool_result', toolResultId: 'toolu_abc123' }],
+          },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const toolResultSpan = traces.find((t) => t.SpanName === 'llm.input.tool_result');
+      expect(toolResultSpan).toBeDefined();
+      expect(toolResultSpan?.SpanAttributes['llm.input.role']).toBe('user');
+      expect(toolResultSpan?.SpanAttributes['llm.tool_use_id']).toBe('toolu_abc123');
+    });
+
+    it('should create multiple input message spans', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        inputMessages: [
+          { role: 'system', index: 0, contentBlocks: [{ index: 0, type: 'text' }] },
+          { role: 'user', index: 1, contentBlocks: [{ index: 0, type: 'text' }] },
+          { role: 'assistant', index: 2, contentBlocks: [{ index: 0, type: 'text' }] },
+          { role: 'user', index: 3, contentBlocks: [{ index: 0, type: 'text' }] },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const inputSpans = traces.filter((t) => t.SpanName.startsWith('llm.input.'));
+      expect(inputSpans.length).toBe(4);
+    });
+  });
+
+  describe('tool execution spans', () => {
+    it('should create spans for tool executions', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        toolExecutions: [
+          {
+            toolUseId: 'toolu_abc123',
+            toolName: 'get_weather',
+            startTimestamp: 500,
+            endTimestamp: 1000,
+            originalTraceId: 'original-trace-id',
+          },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const toolExecSpan = traces.find((t) => t.SpanName === 'llm.tool_execution');
+      expect(toolExecSpan).toBeDefined();
+      expect(toolExecSpan?.Timestamp).toBe(500 * 1000000);
+      expect(toolExecSpan?.Duration).toBe((1000 - 500) * 1000000);
+      expect(toolExecSpan?.SpanAttributes['llm.tool_use.id']).toBe('toolu_abc123');
+      expect(toolExecSpan?.SpanAttributes['llm.tool_use.name']).toBe('get_weather');
+      expect(toolExecSpan?.SpanAttributes['llm.original_trace_id']).toBe('original-trace-id');
+      expect(toolExecSpan?.['Links.TraceId']).toContain('original-trace-id');
+    });
+
+    it('should create multiple tool execution spans', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        toolExecutions: [
+          {
+            toolUseId: 'toolu_1',
+            toolName: 'search',
+            startTimestamp: 500,
+            endTimestamp: 800,
+            originalTraceId: 'trace-1',
+          },
+          {
+            toolUseId: 'toolu_2',
+            toolName: 'calculate',
+            startTimestamp: 900,
+            endTimestamp: 950,
+            originalTraceId: 'trace-1',
+          },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const toolExecSpans = traces.filter((t) => t.SpanName === 'llm.tool_execution');
+      expect(toolExecSpans.length).toBe(2);
+    });
+  });
 });

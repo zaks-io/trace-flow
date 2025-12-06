@@ -215,17 +215,21 @@ export function AgentGanttChart({
       return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
     }
 
-    // Single trace mode: original logic
-    let rootSpan = spans.find((s) => s.ParentSpanId === '');
+    // Single trace mode: handle multiple root spans within the same TraceId
+    const spanIds = new Set(spans.map((s) => s.SpanId));
 
-    if (!rootSpan) {
-      const spanIds = new Set(spans.map((s) => s.SpanId));
-      rootSpan = spans.find((s) => !spanIds.has(s.ParentSpanId));
-    }
+    // Find ALL root spans (spans whose parent is not in the span set or is empty)
+    const rootSpans = spans
+      .filter((s) => s.ParentSpanId === '' || !spanIds.has(s.ParentSpanId))
+      .sort((a, b) => a.Timestamp - b.Timestamp);
 
-    rootSpan ??= spans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b));
+    // Fallback to earliest span if no roots found
+    const effectiveRoots =
+      rootSpans.length > 0
+        ? rootSpans
+        : [spans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
 
-    const traceStart = rootSpan.Timestamp;
+    const traceStart = Math.min(...effectiveRoots.map((s) => s.Timestamp));
     const traceEndTime = Math.max(...spans.map((s) => s.Timestamp + s.Duration));
     const total = traceEndTime - traceStart;
 
@@ -257,20 +261,24 @@ export function AgentGanttChart({
       return rows;
     };
 
-    const rootType = getSpanType(rootSpan);
-    const rootTokens = getSpanTokens(rootSpan);
+    // Build rows for ALL root spans and their children
+    const allRows: SpanRow[] = [];
+    for (const rootSpan of effectiveRoots) {
+      const rootType = getSpanType(rootSpan);
+      const rootTokens = getSpanTokens(rootSpan);
+      const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
 
-    const allRows = [
-      {
+      allRows.push({
         span: rootSpan,
         depth: 0,
-        startOffset: 0,
+        startOffset,
         width: Math.max((rootSpan.Duration / total) * 100, 0.5),
         type: rootType,
         tokens: rootTokens,
-      },
-      ...buildSpanTree(rootSpan.SpanId, 1),
-    ];
+      });
+
+      allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
+    }
 
     return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
   }, [spans]);

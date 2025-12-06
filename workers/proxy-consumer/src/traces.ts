@@ -1,4 +1,10 @@
-import type { QueueMessage, TinybirdTrace } from '@trace-flow/types';
+import type {
+  QueueMessage,
+  TinybirdTrace,
+  InputMessage,
+  AnthropicContentBlock,
+  ToolExecution,
+} from '@trace-flow/types';
 import { generateSpanId } from '@trace-flow/utils';
 
 /**
@@ -229,8 +235,262 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       }
 
       traces.push(messageSpan);
+
+      // Create content block spans for this message (Anthropic-specific)
+      if (message.contentBlocks && message.contentBlocks.length > 0) {
+        const contentBlockSpans = buildContentBlockSpans(
+          message.contentBlocks,
+          data,
+          rootSpan.SpanId,
+          traceId,
+          serviceName,
+        );
+        traces.push(...contentBlockSpans);
+      }
     }
+  } else if (data.response.status < 400) {
+    // Create fallback response message span for non-streaming responses
+    const responseMessageSpan: TinybirdTrace = {
+      ReceivedAt: data.receivedAt,
+      Timestamp: data.timing.requestSent * 1_000_000,
+      TraceId: traceId,
+      SpanId: generateSpanId(),
+      ParentSpanId: rootSpan.SpanId,
+      TraceState: '',
+      SpanName: 'llm.response.message',
+      SpanKind: 'SPAN_KIND_INTERNAL',
+      ServiceName: serviceName,
+      ResourceAttributes: {
+        'service.name': serviceName,
+      },
+      SpanAttributes: {
+        'llm.response.streaming': 'false',
+      },
+      Duration: (data.timing.responseComplete - data.timing.requestSent) * 1_000_000,
+      StatusCode: 'STATUS_CODE_OK',
+      StatusMessage: '',
+      ApiKey: data.apiKey,
+      'Events.Timestamp': [],
+      'Events.Name': [],
+      'Events.Attributes': [],
+      'Links.TraceId': [],
+      'Links.SpanId': [],
+      'Links.TraceState': [],
+      'Links.Attributes': [],
+    };
+    traces.push(responseMessageSpan);
+  }
+
+  // Create input message spans
+  if (data.inputMessages && data.inputMessages.length > 0) {
+    const inputSpans = buildInputMessageSpans(
+      data.inputMessages,
+      data,
+      rootSpan.SpanId,
+      traceId,
+      serviceName,
+    );
+    traces.push(...inputSpans);
+  }
+
+  // Create tool execution spans (cross-request tool durations)
+  if (data.toolExecutions && data.toolExecutions.length > 0) {
+    const toolSpans = buildToolExecutionSpans(
+      data.toolExecutions,
+      data,
+      rootSpan.SpanId,
+      traceId,
+      serviceName,
+    );
+    traces.push(...toolSpans);
   }
 
   return traces;
+}
+
+/**
+ * Creates spans for input messages from the request body.
+ * These are marker spans (duration: 0) at the request start time.
+ */
+function buildInputMessageSpans(
+  inputMessages: InputMessage[],
+  data: QueueMessage,
+  parentSpanId: string,
+  traceId: string,
+  serviceName: string,
+): TinybirdTrace[] {
+  const spans: TinybirdTrace[] = [];
+
+  for (const message of inputMessages) {
+    // Determine span name based on role and content
+    let spanName: string;
+    const attributes: Record<string, string> = {
+      'llm.input.role': message.role,
+      'llm.input.index': String(message.index),
+    };
+
+    if (message.role === 'system') {
+      spanName = 'llm.input.system';
+    } else if (message.role === 'user') {
+      // Check if this is a tool result message
+      const hasToolResult = message.contentBlocks.some((b) => b.type === 'tool_result');
+      if (hasToolResult) {
+        spanName = 'llm.input.tool_result';
+        const toolResultBlock = message.contentBlocks.find((b) => b.type === 'tool_result');
+        if (toolResultBlock?.toolResultId) {
+          attributes['llm.tool_use_id'] = toolResultBlock.toolResultId;
+        }
+      } else {
+        spanName = 'llm.input.user';
+      }
+    } else {
+      spanName = `llm.input.${message.role}`;
+    }
+
+    const span: TinybirdTrace = {
+      ReceivedAt: data.receivedAt,
+      Timestamp: data.timing.requestStart * 1_000_000,
+      TraceId: traceId,
+      SpanId: generateSpanId(),
+      ParentSpanId: parentSpanId,
+      TraceState: '',
+      SpanName: spanName,
+      SpanKind: 'SPAN_KIND_INTERNAL',
+      ServiceName: serviceName,
+      ResourceAttributes: { 'service.name': serviceName },
+      SpanAttributes: attributes,
+      Duration: 0, // Input spans are instantaneous markers
+      StatusCode: 'STATUS_CODE_OK',
+      StatusMessage: '',
+      ApiKey: data.apiKey,
+      'Events.Timestamp': [],
+      'Events.Name': [],
+      'Events.Attributes': [],
+      'Links.TraceId': [],
+      'Links.SpanId': [],
+      'Links.TraceState': [],
+      'Links.Attributes': [],
+    };
+
+    spans.push(span);
+  }
+
+  return spans;
+}
+
+/**
+ * Creates spans for content blocks from SSE streaming responses.
+ * These capture timing for individual text and tool_use blocks.
+ */
+function buildContentBlockSpans(
+  contentBlocks: AnthropicContentBlock[],
+  data: QueueMessage,
+  parentSpanId: string,
+  traceId: string,
+  serviceName: string,
+): TinybirdTrace[] {
+  const spans: TinybirdTrace[] = [];
+
+  for (const block of contentBlocks) {
+    // Skip incomplete blocks
+    if (!block.stopTimestamp) {
+      continue;
+    }
+
+    const spanName = `llm.content_block.${block.type}`;
+
+    const attributes: Record<string, string> = {
+      'llm.content_block.index': String(block.index),
+      'llm.content_block.type': block.type,
+    };
+
+    if (block.type === 'tool_use') {
+      if (block.toolUseId) {
+        attributes['llm.tool_use.id'] = block.toolUseId;
+      }
+      if (block.toolName) {
+        attributes['llm.tool_use.name'] = block.toolName;
+      }
+    }
+
+    const span: TinybirdTrace = {
+      ReceivedAt: data.receivedAt,
+      Timestamp: block.startTimestamp * 1_000_000,
+      TraceId: traceId,
+      SpanId: generateSpanId(),
+      ParentSpanId: parentSpanId,
+      TraceState: '',
+      SpanName: spanName,
+      SpanKind: 'SPAN_KIND_INTERNAL',
+      ServiceName: serviceName,
+      ResourceAttributes: { 'service.name': serviceName },
+      SpanAttributes: attributes,
+      Duration: (block.stopTimestamp - block.startTimestamp) * 1_000_000,
+      StatusCode: 'STATUS_CODE_OK',
+      StatusMessage: '',
+      ApiKey: data.apiKey,
+      'Events.Timestamp': [],
+      'Events.Name': [],
+      'Events.Attributes': [],
+      'Links.TraceId': [],
+      'Links.SpanId': [],
+      'Links.TraceState': [],
+      'Links.Attributes': [],
+    };
+
+    spans.push(span);
+  }
+
+  return spans;
+}
+
+/**
+ * Creates spans for tool executions that span multiple requests.
+ * These capture the full duration from tool_use output to tool_result input.
+ */
+function buildToolExecutionSpans(
+  toolExecutions: ToolExecution[],
+  data: QueueMessage,
+  parentSpanId: string,
+  traceId: string,
+  serviceName: string,
+): TinybirdTrace[] {
+  const spans: TinybirdTrace[] = [];
+
+  for (const execution of toolExecutions) {
+    const attributes: Record<string, string> = {
+      'llm.tool_use.id': execution.toolUseId,
+      'llm.tool_use.name': execution.toolName,
+      'llm.original_trace_id': execution.originalTraceId,
+    };
+
+    const span: TinybirdTrace = {
+      ReceivedAt: data.receivedAt,
+      Timestamp: execution.startTimestamp * 1_000_000,
+      TraceId: traceId, // Use current trace ID (where tool_result was received)
+      SpanId: generateSpanId(),
+      ParentSpanId: parentSpanId,
+      TraceState: '',
+      SpanName: 'llm.tool_execution',
+      SpanKind: 'SPAN_KIND_INTERNAL',
+      ServiceName: serviceName,
+      ResourceAttributes: { 'service.name': serviceName },
+      SpanAttributes: attributes,
+      Duration: (execution.endTimestamp - execution.startTimestamp) * 1_000_000,
+      StatusCode: 'STATUS_CODE_OK',
+      StatusMessage: '',
+      ApiKey: data.apiKey,
+      'Events.Timestamp': [],
+      'Events.Name': [],
+      'Events.Attributes': [],
+      'Links.TraceId': [execution.originalTraceId], // Link to the trace where tool_use was emitted
+      'Links.SpanId': [],
+      'Links.TraceState': [],
+      'Links.Attributes': [],
+    };
+
+    spans.push(span);
+  }
+
+  return spans;
 }

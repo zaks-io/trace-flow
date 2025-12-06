@@ -1,12 +1,12 @@
 import { generateText, streamText } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
+import { createGroq } from '@ai-sdk/groq';
 import { PROXY_URL, proxyHeaders, requireEnv, log, success, error } from './config';
 
 const apiKey = requireEnv('GROQ_API_KEY');
 
 // Groq uses OpenAI-compatible API
 // Their baseURL is https://api.groq.com/openai/v1
-const groq = createOpenAI({
+const groq = createGroq({
   baseURL: `${PROXY_URL}/groq/v1`,
   apiKey,
   headers: proxyHeaders,

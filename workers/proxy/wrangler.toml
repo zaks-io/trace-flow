@@ -20,6 +20,11 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
 
+# Migration to delete ToolCallTracker DO class
+[[migrations]]
+tag = "v2"
+deleted_classes = ["ToolCallTracker"]
+
 [env.production]
 name = "trace-flow-proxy"
 workers_dev = false

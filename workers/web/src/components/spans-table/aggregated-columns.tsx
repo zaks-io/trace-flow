@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import { Layers } from 'lucide-react';
 
 export interface SpanGroupRow {
-  ParentSpanId: string;
+  TraceId: string;
   ChildSpanCount: number;
   FirstTimestamp: number;
   LastTimestamp: number;
@@ -49,9 +49,9 @@ export const spanGroupColumns: ColumnDef<SpanGroupRow>[] = [
     meta: { category: 'standard', label: 'Latest Activity' },
   },
   {
-    id: 'parentSpanId',
-    accessorKey: 'ParentSpanId',
-    header: 'Parent Span ID',
+    id: 'traceId',
+    accessorKey: 'TraceId',
+    header: 'Trace ID',
     cell: ({ getValue }) => {
       const value = getValue<string>();
       return (
@@ -63,7 +63,7 @@ export const spanGroupColumns: ColumnDef<SpanGroupRow>[] = [
         </div>
       );
     },
-    meta: { category: 'standard', label: 'Parent Span ID' },
+    meta: { category: 'standard', label: 'Trace ID' },
   },
   {
     id: 'childSpanCount',
@@ -148,7 +148,7 @@ export const spanGroupColumns: ColumnDef<SpanGroupRow>[] = [
 
 export const defaultSpanGroupColumnVisibility: VisibilityState = {
   latestReceivedAt: true,
-  parentSpanId: true,
+  traceId: true,
   childSpanCount: true,
   models: true,
   avgDuration: true,

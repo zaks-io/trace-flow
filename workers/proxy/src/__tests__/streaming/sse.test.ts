@@ -153,14 +153,218 @@ describe('processSSEEvent', () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it('should handle event without event type', () => {
+  it('should handle OpenAI-style event without event type', () => {
     const streamData: SSEStreamData = { messages: [] };
-    const event = { data: '{}' };
+    const event = { data: '{"id":"chatcmpl-123","choices":[{"delta":{"content":"Hello"}}]}' };
+    const timestamp = 1900;
+
+    processSSEEvent(event, timestamp, streamData);
+
+    // OpenAI-style events (no event type) should create a message
+    expect(streamData.messages.length).toBe(1);
+    expect(streamData.messages[0]?.messageStart).toBe(1900);
+    expect(streamData.messages[0]?.events.length).toBe(1);
+    expect(streamData.messages[0]?.events[0]?.type).toBe('content_block_delta');
+  });
+
+  it('should handle [DONE] event for OpenAI-style streaming', () => {
+    const streamData: SSEStreamData = {
+      messages: [{ messageStart: 1000, events: [] }],
+    };
+    const event = { data: '[DONE]' };
+    const timestamp = 2000;
+
+    processSSEEvent(event, timestamp, streamData);
+
+    expect(streamData.messages[0]?.messageStop).toBe(2000);
+  });
+
+  it('should skip empty data for OpenAI-style events', () => {
+    const streamData: SSEStreamData = { messages: [] };
+    const event = { data: '' };
     const timestamp = 1900;
 
     processSSEEvent(event, timestamp, streamData);
 
     expect(streamData.messages.length).toBe(0);
+  });
+});
+
+describe('content block tracking', () => {
+  it('should parse content_block_start for text block', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        { messageStart: 1000, events: [{ type: 'message_start', timestamp: 1000, data: '{}' }] },
+      ],
+    };
+    const event = {
+      event: 'content_block_start',
+      data: JSON.stringify({
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' },
+      }),
+    };
+    const timestamp = 1100;
+
+    processSSEEvent(event, timestamp, streamData);
+
+    expect(streamData.messages[0]?.contentBlocks).toBeDefined();
+    expect(streamData.messages[0]?.contentBlocks?.length).toBe(1);
+    expect(streamData.messages[0]?.contentBlocks?.[0]).toEqual({
+      index: 0,
+      type: 'text',
+      startTimestamp: 1100,
+    });
+  });
+
+  it('should parse content_block_start for tool_use block', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        { messageStart: 1000, events: [{ type: 'message_start', timestamp: 1000, data: '{}' }] },
+      ],
+    };
+    const event = {
+      event: 'content_block_start',
+      data: JSON.stringify({
+        type: 'content_block_start',
+        index: 1,
+        content_block: {
+          type: 'tool_use',
+          id: 'toolu_01abc123',
+          name: 'get_weather',
+          input: {},
+        },
+      }),
+    };
+    const timestamp = 1200;
+
+    processSSEEvent(event, timestamp, streamData);
+
+    expect(streamData.messages[0]?.contentBlocks).toBeDefined();
+    expect(streamData.messages[0]?.contentBlocks?.length).toBe(1);
+    expect(streamData.messages[0]?.contentBlocks?.[0]).toEqual({
+      index: 1,
+      type: 'tool_use',
+      toolUseId: 'toolu_01abc123',
+      toolName: 'get_weather',
+      startTimestamp: 1200,
+    });
+  });
+
+  it('should set stopTimestamp on content_block_stop', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [{ type: 'message_start', timestamp: 1000, data: '{}' }],
+          contentBlocks: [{ index: 0, type: 'text', startTimestamp: 1100 }],
+        },
+      ],
+    };
+    const event = {
+      event: 'content_block_stop',
+      data: JSON.stringify({ type: 'content_block_stop', index: 0 }),
+    };
+    const timestamp = 1500;
+
+    processSSEEvent(event, timestamp, streamData);
+
+    expect(streamData.messages[0]?.contentBlocks?.[0]?.stopTimestamp).toBe(1500);
+  });
+
+  it('should track multiple content blocks in sequence', () => {
+    const streamData: SSEStreamData = { messages: [] };
+
+    // message_start
+    processSSEEvent({ event: 'message_start', data: '{}' }, 1000, streamData);
+
+    // First text block
+    processSSEEvent(
+      {
+        event: 'content_block_start',
+        data: JSON.stringify({ index: 0, content_block: { type: 'text', text: '' } }),
+      },
+      1100,
+      streamData,
+    );
+    processSSEEvent(
+      { event: 'content_block_stop', data: JSON.stringify({ index: 0 }) },
+      1200,
+      streamData,
+    );
+
+    // Tool use block
+    processSSEEvent(
+      {
+        event: 'content_block_start',
+        data: JSON.stringify({
+          index: 1,
+          content_block: { type: 'tool_use', id: 'toolu_xyz', name: 'search', input: {} },
+        }),
+      },
+      1300,
+      streamData,
+    );
+    processSSEEvent(
+      { event: 'content_block_stop', data: JSON.stringify({ index: 1 }) },
+      1400,
+      streamData,
+    );
+
+    // Second text block
+    processSSEEvent(
+      {
+        event: 'content_block_start',
+        data: JSON.stringify({ index: 2, content_block: { type: 'text', text: '' } }),
+      },
+      1500,
+      streamData,
+    );
+    processSSEEvent(
+      { event: 'content_block_stop', data: JSON.stringify({ index: 2 }) },
+      1600,
+      streamData,
+    );
+
+    expect(streamData.messages[0]?.contentBlocks?.length).toBe(3);
+    expect(streamData.messages[0]?.contentBlocks?.[0]).toEqual({
+      index: 0,
+      type: 'text',
+      startTimestamp: 1100,
+      stopTimestamp: 1200,
+    });
+    expect(streamData.messages[0]?.contentBlocks?.[1]).toEqual({
+      index: 1,
+      type: 'tool_use',
+      toolUseId: 'toolu_xyz',
+      toolName: 'search',
+      startTimestamp: 1300,
+      stopTimestamp: 1400,
+    });
+    expect(streamData.messages[0]?.contentBlocks?.[2]).toEqual({
+      index: 2,
+      type: 'text',
+      startTimestamp: 1500,
+      stopTimestamp: 1600,
+    });
+  });
+
+  it('should not create content block when data is missing required fields', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        { messageStart: 1000, events: [{ type: 'message_start', timestamp: 1000, data: '{}' }] },
+      ],
+    };
+    // Missing index
+    const event = {
+      event: 'content_block_start',
+      data: JSON.stringify({ content_block: { type: 'text' } }),
+    };
+
+    processSSEEvent(event, 1100, streamData);
+
+    expect(streamData.messages[0]?.contentBlocks).toBeUndefined();
   });
 });
 

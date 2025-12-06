@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Activity,
   GitBranch,
-  Layers,
   Key,
   LogOut,
   LogIn,
@@ -29,7 +28,6 @@ const navItems = [
   { title: 'Dashboard', to: '/', icon: LayoutDashboard },
   { title: 'Requests', to: '/requests', icon: Activity },
   { title: 'Traces', to: '/traces', icon: GitBranch },
-  { title: 'Spans', to: '/spans', icon: Layers },
   { title: 'API Keys', to: '/api-keys', icon: Key },
   { title: 'Docs', to: '/docs', icon: BookOpen, external: true },
 ];

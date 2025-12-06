@@ -61,9 +61,10 @@ export async function insertIntoTinybird(
     signal: AbortSignal.timeout(60000),
   });
 
+  const responseText = await response.text();
+
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Tinybird insert failed: ${response.status} ${errorText}`);
+    throw new Error(`Tinybird insert failed: ${response.status} ${responseText}`);
   }
 }
 
