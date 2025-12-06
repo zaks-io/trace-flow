@@ -41,6 +41,25 @@ function DropdownMenuContent({
   );
 }
 
+function DropdownMenuItem({
+  className,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Item>) {
+  return (
+    <DropdownMenuPrimitive.Item
+      data-slot="dropdown-menu-item"
+      className={cn(
+        'relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors',
+        'focus:bg-accent focus:text-accent-foreground',
+        'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+        '[&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground',
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 function DropdownMenuCheckboxItem({
   className,
   children,
@@ -99,6 +118,7 @@ export {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
