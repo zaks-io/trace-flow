@@ -29,6 +29,7 @@ interface SpanRow {
   width: number;
   type: SpanType;
   tokens: number | null;
+  tokensPerSecond: number | null;
 }
 
 function parseAttributes(attributesJson: string): Record<string, string> {
@@ -59,6 +60,17 @@ function getSpanTokens(span: TraceSpan): number | null {
       parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
   return total > 0 ? total : null;
+}
+
+function getSpanTokensPerSecond(span: TraceSpan): number | null {
+  const attrs = parseAttributes(span.SpanAttributes);
+  const completion =
+    parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
+    parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
+    parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+
+  const durationSeconds = span.Duration / 1_000_000_000;
+  return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
 }
 
 function getTypeColor(type: SpanType, status: string): string {
@@ -170,6 +182,7 @@ export function AgentGanttChart({
 
         const rootType = getSpanType(traceRoot);
         const rootTokens = getSpanTokens(traceRoot);
+        const rootTps = getSpanTokensPerSecond(traceRoot);
         const startOffset = ((traceRoot.Timestamp - traceStart) / total) * 100;
         const width = (traceRoot.Duration / total) * 100;
 
@@ -180,6 +193,7 @@ export function AgentGanttChart({
           width: Math.max(width, 0.5),
           type: rootType,
           tokens: rootTokens,
+          tokensPerSecond: rootTps,
         });
 
         // Build children for this trace's root
@@ -194,6 +208,7 @@ export function AgentGanttChart({
             const childWidth = (span.Duration / total) * 100;
             const type = getSpanType(span);
             const tokens = getSpanTokens(span);
+            const tps = getSpanTokensPerSecond(span);
 
             rows.push({
               span,
@@ -202,6 +217,7 @@ export function AgentGanttChart({
               width: Math.max(childWidth, 0.5),
               type,
               tokens,
+              tokensPerSecond: tps,
             });
 
             rows.push(...buildSpanTree(span.SpanId, depth + 1));
@@ -245,6 +261,7 @@ export function AgentGanttChart({
         const width = (span.Duration / total) * 100;
         const type = getSpanType(span);
         const tokens = getSpanTokens(span);
+        const tps = getSpanTokensPerSecond(span);
 
         rows.push({
           span,
@@ -253,6 +270,7 @@ export function AgentGanttChart({
           width: Math.max(width, 0.5),
           type,
           tokens,
+          tokensPerSecond: tps,
         });
 
         rows.push(...buildSpanTree(span.SpanId, depth + 1));
@@ -266,6 +284,7 @@ export function AgentGanttChart({
     for (const rootSpan of effectiveRoots) {
       const rootType = getSpanType(rootSpan);
       const rootTokens = getSpanTokens(rootSpan);
+      const rootTps = getSpanTokensPerSecond(rootSpan);
       const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
 
       allRows.push({
@@ -275,6 +294,7 @@ export function AgentGanttChart({
         width: Math.max((rootSpan.Duration / total) * 100, 0.5),
         type: rootType,
         tokens: rootTokens,
+        tokensPerSecond: rootTps,
       });
 
       allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
@@ -380,6 +400,14 @@ export function AgentGanttChart({
                         <span className="text-muted-foreground">·</span>
                         <span className="tabular-nums text-muted-foreground">
                           {formatNumber(row.tokens)} tokens
+                        </span>
+                      </>
+                    )}
+                    {row.tokensPerSecond !== null && (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {row.tokensPerSecond.toFixed(1)} tok/s
                         </span>
                       </>
                     )}
