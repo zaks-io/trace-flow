@@ -45,7 +45,7 @@ export default function Traces() {
         countIf(StatusCode = 'ERROR') as ErrorCount,
         groupArray(DISTINCT JSONExtractString(SpanAttributes, 'llm.model')) as Models
       FROM otel_traces
-      WHERE  SpanName = 'llm.request'`;
+      WHERE  SpanName = 'ai.request'`;
 
     if (isLiveMode && latestReceivedAt !== null) {
       return `${baseQuery} AND ReceivedAt > ${latestReceivedAt}

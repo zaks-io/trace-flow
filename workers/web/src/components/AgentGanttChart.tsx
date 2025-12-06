@@ -42,9 +42,9 @@ function parseAttributes(attributesJson: string): Record<string, string> {
 function getSpanType(span: TraceSpan): SpanType {
   const name = span.SpanName.toLowerCase();
 
-  if (name === 'llm.request' || name.includes('chat/completions')) return 'llm';
-  if (name === 'llm.request.ttft' || name.includes('ttft')) return 'ttft';
-  if (name.startsWith('llm.stream.message') || name.includes('message')) return 'message';
+  if (name === 'ai.request' || name.includes('chat/completions')) return 'llm';
+  if (name === 'ai.request.ttft' || name.includes('ttft')) return 'ttft';
+  if (name.startsWith('ai.assistant.') || name.includes('message')) return 'message';
   if (name.includes('tool')) return 'tool';
 
   return 'internal';
@@ -53,8 +53,8 @@ function getSpanType(span: TraceSpan): SpanType {
 function getSpanTokens(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
   const total =
-    parseInt(attrs['llm.tokens.total'] ?? '0', 10) ||
-    parseInt(attrs['llm.usage.total_tokens'] ?? '0', 10) ||
+    parseInt(attrs['ai.tokens.total'] ?? '0', 10) ||
+    parseInt(attrs['ai.usage.total_tokens'] ?? '0', 10) ||
     parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) +
       parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 

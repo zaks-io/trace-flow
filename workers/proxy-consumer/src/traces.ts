@@ -11,11 +11,11 @@ import { generateSpanId } from '@trace-flow/utils';
  * Transforms queue messages into OpenTelemetry traces for Tinybird storage.
  *
  * Creates a trace hierarchy:
- * - Root span: Overall LLM request with status, model, provider metadata
+ * - Root span: Overall AI request with status, model, provider metadata
  *
  * For SSE streaming responses:
  * - TTFT span: Total time to first token from user perspective (requestStart → first content_block_delta)
- * - Message spans: Individual SSE messages with events and token usage
+ * - Content block spans: Individual thinking, text, tool_use spans as siblings
  *
  * For non-streaming responses:
  * - Root span only (no additional timing spans)
@@ -32,17 +32,17 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     SpanId: generateSpanId(),
     ParentSpanId: data.parentSpanId ?? '',
     TraceState: '',
-    SpanName: 'llm.request',
+    SpanName: 'ai.request',
     SpanKind: 'SPAN_KIND_CLIENT',
     ServiceName: serviceName,
     ResourceAttributes: {
       'service.name': serviceName,
     },
     SpanAttributes: {
-      'llm.request_id': data.requestId,
-      'llm.provider': data.request.provider,
-      'llm.model': data.request.model,
-      'llm.target_url': data.targetUrl,
+      'ai.request_id': data.requestId,
+      'ai.provider': data.request.provider,
+      'ai.model': data.request.model,
+      'ai.target_url': data.targetUrl,
       'http.status_code': String(data.response.status),
     },
     Duration: (data.timing.responseComplete - data.timing.requestStart) * 1_000_000,
@@ -60,19 +60,19 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
 
   if (data.tokens) {
     if (data.tokens.promptTokens) {
-      rootSpan.SpanAttributes['llm.tokens.prompt'] = String(data.tokens.promptTokens);
+      rootSpan.SpanAttributes['ai.tokens.prompt'] = String(data.tokens.promptTokens);
     }
     if (data.tokens.completionTokens) {
-      rootSpan.SpanAttributes['llm.tokens.completion'] = String(data.tokens.completionTokens);
+      rootSpan.SpanAttributes['ai.tokens.completion'] = String(data.tokens.completionTokens);
     }
     if (data.tokens.totalTokens) {
-      rootSpan.SpanAttributes['llm.tokens.total'] = String(data.tokens.totalTokens);
+      rootSpan.SpanAttributes['ai.tokens.total'] = String(data.tokens.totalTokens);
     }
     if (data.tokens.cached !== undefined) {
-      rootSpan.SpanAttributes['llm.cached'] = String(data.tokens.cached);
+      rootSpan.SpanAttributes['ai.cached'] = String(data.tokens.cached);
     }
     if (data.tokens.reasoningTokens !== undefined) {
-      rootSpan.SpanAttributes['llm.reasoning_tokens'] = String(data.tokens.reasoningTokens);
+      rootSpan.SpanAttributes['ai.reasoning_tokens'] = String(data.tokens.reasoningTokens);
     }
   }
 
@@ -89,45 +89,48 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
   if (data.responseMetadata) {
     const meta = data.responseMetadata;
     if (meta.id) {
-      rootSpan.SpanAttributes['llm.response_id'] = meta.id;
+      rootSpan.SpanAttributes['ai.response_id'] = meta.id;
     }
     if (meta.model) {
       // Update model from response if available (overrides request model)
-      rootSpan.SpanAttributes['llm.model'] = meta.model;
+      rootSpan.SpanAttributes['ai.model'] = meta.model;
     }
     if (meta.object) {
-      rootSpan.SpanAttributes['llm.response_object'] = meta.object;
+      rootSpan.SpanAttributes['ai.response_object'] = meta.object;
     }
     if (meta.created !== undefined) {
-      rootSpan.SpanAttributes['llm.response_created'] = String(meta.created);
+      rootSpan.SpanAttributes['ai.response_created'] = String(meta.created);
     }
     if (meta.finishReason) {
-      rootSpan.SpanAttributes['llm.finish_reason'] = meta.finishReason;
+      rootSpan.SpanAttributes['ai.finish_reason'] = meta.finishReason;
     }
     if (meta.nativeFinishReason) {
-      rootSpan.SpanAttributes['llm.native_finish_reason'] = meta.nativeFinishReason;
+      rootSpan.SpanAttributes['ai.native_finish_reason'] = meta.nativeFinishReason;
     }
     if (meta.stopReason) {
-      rootSpan.SpanAttributes['llm.stop_reason'] = meta.stopReason;
+      rootSpan.SpanAttributes['ai.stop_reason'] = meta.stopReason;
     }
     if (meta.stopSequence) {
-      rootSpan.SpanAttributes['llm.stop_sequence'] = meta.stopSequence;
+      rootSpan.SpanAttributes['ai.stop_sequence'] = meta.stopSequence;
     }
     if (meta.hasLogprobs !== undefined) {
-      rootSpan.SpanAttributes['llm.has_logprobs'] = String(meta.hasLogprobs);
+      rootSpan.SpanAttributes['ai.has_logprobs'] = String(meta.hasLogprobs);
     }
     if (meta.reasoningTokens !== undefined) {
-      rootSpan.SpanAttributes['llm.reasoning_tokens'] = String(meta.reasoningTokens);
+      rootSpan.SpanAttributes['ai.reasoning_tokens'] = String(meta.reasoningTokens);
     }
     if (meta.refusal !== undefined) {
-      rootSpan.SpanAttributes['llm.has_refusal'] = String(meta.refusal !== null);
+      rootSpan.SpanAttributes['ai.has_refusal'] = String(meta.refusal !== null);
     }
     if (meta.reasoning !== undefined) {
-      rootSpan.SpanAttributes['llm.has_reasoning'] = String(meta.reasoning !== null);
+      rootSpan.SpanAttributes['ai.has_reasoning'] = String(meta.reasoning !== null);
     }
   }
 
   traces.push(rootSpan);
+
+  // Collect all content blocks from all messages for numbering
+  const allContentBlocks: { block: AnthropicContentBlock; messageIndex: number }[] = [];
 
   if (data.sseStreamData?.messages && data.sseStreamData.messages.length > 0) {
     // Find first content_block_delta across ALL messages for TTFT tracking
@@ -149,14 +152,14 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
         SpanId: generateSpanId(),
         ParentSpanId: rootSpan.SpanId,
         TraceState: '',
-        SpanName: 'llm.request.ttft',
+        SpanName: 'ai.request.ttft',
         SpanKind: 'SPAN_KIND_INTERNAL',
         ServiceName: serviceName,
         ResourceAttributes: {
           'service.name': serviceName,
         },
         SpanAttributes: {
-          'llm.time_to_first_token_ms': String(
+          'ai.time_to_first_token_ms': String(
             firstContentDelta.timestamp - data.timing.requestStart,
           ),
         },
@@ -176,95 +179,51 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       traces.push(ttftSpan);
     }
 
-    for (const [index, message] of data.sseStreamData.messages.entries()) {
+    // Collect content blocks from all messages
+    for (const [messageIndex, message] of data.sseStreamData.messages.entries()) {
       if (!message.messageStop) {
         console.warn('Incomplete message detected (no messageStop):', {
-          messageIndex: index,
+          messageIndex,
           traceId,
         });
         continue;
       }
 
-      const messageSpan: TinybirdTrace = {
-        ReceivedAt: data.receivedAt,
-        Timestamp: message.messageStart * 1_000_000,
-        TraceId: traceId,
-        SpanId: generateSpanId(),
-        ParentSpanId: rootSpan.SpanId,
-        TraceState: '',
-        SpanName:
-          data.sseStreamData.messages.length > 1
-            ? `llm.stream.message.${index + 1}`
-            : 'llm.stream.message',
-        SpanKind: 'SPAN_KIND_INTERNAL',
-        ServiceName: serviceName,
-        ResourceAttributes: {
-          'service.name': serviceName,
-        },
-        SpanAttributes: {},
-        Duration: (message.messageStop - message.messageStart) * 1_000_000,
-        StatusCode: 'STATUS_CODE_OK',
-        StatusMessage: '',
-        ApiKey: data.apiKey,
-        'Events.Timestamp': message.events.map((e) => e.timestamp * 1_000_000),
-        'Events.Name': message.events.map((e) => e.type),
-        'Events.Attributes': message.events.map(() => '{}'),
-        'Links.TraceId': [],
-        'Links.SpanId': [],
-        'Links.TraceState': [],
-        'Links.Attributes': [],
-      };
-
-      if (message.usage) {
-        if (typeof message.usage.input_tokens === 'number') {
-          messageSpan.SpanAttributes['llm.tokens.input'] = String(message.usage.input_tokens);
-        }
-        if (typeof message.usage.output_tokens === 'number') {
-          messageSpan.SpanAttributes['llm.tokens.output'] = String(message.usage.output_tokens);
-        }
-        if (typeof message.usage.cache_creation_input_tokens === 'number') {
-          messageSpan.SpanAttributes['llm.tokens.cache_creation'] = String(
-            message.usage.cache_creation_input_tokens,
-          );
-        }
-        if (typeof message.usage.cache_read_input_tokens === 'number') {
-          messageSpan.SpanAttributes['llm.tokens.cache_read'] = String(
-            message.usage.cache_read_input_tokens,
-          );
-        }
-      }
-
-      traces.push(messageSpan);
-
-      // Create content block spans for this message (Anthropic-specific)
       if (message.contentBlocks && message.contentBlocks.length > 0) {
-        const contentBlockSpans = buildContentBlockSpans(
-          message.contentBlocks,
-          data,
-          rootSpan.SpanId,
-          traceId,
-          serviceName,
-        );
-        traces.push(...contentBlockSpans);
+        for (const block of message.contentBlocks) {
+          allContentBlocks.push({ block, messageIndex });
+        }
       }
     }
+
+    // Create content block spans as direct children of root span
+    if (allContentBlocks.length > 0) {
+      const contentBlockSpans = buildContentBlockSpans(
+        allContentBlocks,
+        data,
+        rootSpan.SpanId,
+        traceId,
+        serviceName,
+      );
+      traces.push(...contentBlockSpans);
+    }
   } else if (data.response.status < 400) {
-    // Create fallback response message span for non-streaming responses
-    const responseMessageSpan: TinybirdTrace = {
+    // Create fallback response span for non-streaming responses
+    const responseSpan: TinybirdTrace = {
       ReceivedAt: data.receivedAt,
       Timestamp: data.timing.requestSent * 1_000_000,
       TraceId: traceId,
       SpanId: generateSpanId(),
       ParentSpanId: rootSpan.SpanId,
       TraceState: '',
-      SpanName: 'llm.response.message',
+      SpanName: 'ai.assistant.response',
       SpanKind: 'SPAN_KIND_INTERNAL',
       ServiceName: serviceName,
       ResourceAttributes: {
         'service.name': serviceName,
       },
       SpanAttributes: {
-        'llm.response.streaming': 'false',
+        'ai.response.streaming': 'false',
       },
       Duration: (data.timing.responseComplete - data.timing.requestSent) * 1_000_000,
       StatusCode: 'STATUS_CODE_OK',
@@ -278,7 +237,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       'Links.TraceState': [],
       'Links.Attributes': [],
     };
-    traces.push(responseMessageSpan);
+    traces.push(responseSpan);
   }
 
   // Create input message spans
@@ -325,26 +284,28 @@ function buildInputMessageSpans(
     // Determine span name based on role and content
     let spanName: string;
     const attributes: Record<string, string> = {
-      'llm.input.role': message.role,
-      'llm.input.index': String(message.index),
+      'ai.message.role': message.role,
+      'ai.message.index': String(message.index),
     };
 
     if (message.role === 'system') {
-      spanName = 'llm.input.system';
+      spanName = 'ai.system.message';
     } else if (message.role === 'user') {
       // Check if this is a tool result message
       const hasToolResult = message.contentBlocks.some((b) => b.type === 'tool_result');
       if (hasToolResult) {
-        spanName = 'llm.input.tool_result';
+        spanName = 'ai.tool.result';
         const toolResultBlock = message.contentBlocks.find((b) => b.type === 'tool_result');
         if (toolResultBlock?.toolResultId) {
-          attributes['llm.tool_use_id'] = toolResultBlock.toolResultId;
+          attributes['ai.tool.id'] = toolResultBlock.toolResultId;
         }
       } else {
-        spanName = 'llm.input.user';
+        spanName = 'ai.user.message';
       }
+    } else if (message.role === 'assistant') {
+      spanName = 'ai.assistant.message';
     } else {
-      spanName = `llm.input.${message.role}`;
+      spanName = `ai.${message.role}.message`;
     }
 
     const span: TinybirdTrace = {
@@ -380,10 +341,11 @@ function buildInputMessageSpans(
 
 /**
  * Creates spans for content blocks from SSE streaming responses.
- * These capture timing for individual text and tool_use blocks.
+ * These capture timing for individual thinking, text, and tool_use blocks.
+ * Spans are numbered when there are multiple of the same type.
  */
 function buildContentBlockSpans(
-  contentBlocks: AnthropicContentBlock[],
+  contentBlocks: { block: AnthropicContentBlock; messageIndex: number }[],
   data: QueueMessage,
   parentSpanId: string,
   traceId: string,
@@ -391,25 +353,47 @@ function buildContentBlockSpans(
 ): TinybirdTrace[] {
   const spans: TinybirdTrace[] = [];
 
-  for (const block of contentBlocks) {
+  // Count occurrences of each type for numbering
+  const typeCounts: Record<string, number> = {};
+  const typeOccurrences: Record<string, number> = {};
+
+  // First pass: count total occurrences of each type
+  for (const { block } of contentBlocks) {
+    if (block.stopTimestamp) {
+      typeCounts[block.type] = (typeCounts[block.type] ?? 0) + 1;
+    }
+  }
+
+  // Second pass: create spans with numbering
+  for (const { block, messageIndex } of contentBlocks) {
     // Skip incomplete blocks
     if (!block.stopTimestamp) {
       continue;
     }
 
-    const spanName = `llm.content_block.${block.type}`;
+    // Track occurrence number for this type
+    typeOccurrences[block.type] = (typeOccurrences[block.type] ?? 0) + 1;
+    const occurrenceNum = typeOccurrences[block.type];
+    const totalOfType = typeCounts[block.type] ?? 1;
+
+    // Build span name: ai.assistant.{type} or ai.assistant.{type}.{N} if multiple
+    let spanName = `ai.assistant.${block.type}`;
+    if (totalOfType > 1) {
+      spanName = `${spanName}.${occurrenceNum}`;
+    }
 
     const attributes: Record<string, string> = {
-      'llm.content_block.index': String(block.index),
-      'llm.content_block.type': block.type,
+      'ai.content.index': String(block.index),
+      'ai.content.type': block.type,
+      'ai.content.message_index': String(messageIndex),
     };
 
     if (block.type === 'tool_use') {
       if (block.toolUseId) {
-        attributes['llm.tool_use.id'] = block.toolUseId;
+        attributes['ai.tool.id'] = block.toolUseId;
       }
       if (block.toolName) {
-        attributes['llm.tool_use.name'] = block.toolName;
+        attributes['ai.tool.name'] = block.toolName;
       }
     }
 
@@ -459,9 +443,9 @@ function buildToolExecutionSpans(
 
   for (const execution of toolExecutions) {
     const attributes: Record<string, string> = {
-      'llm.tool_use.id': execution.toolUseId,
-      'llm.tool_use.name': execution.toolName,
-      'llm.original_trace_id': execution.originalTraceId,
+      'ai.tool.id': execution.toolUseId,
+      'ai.tool.name': execution.toolName,
+      'ai.original_trace_id': execution.originalTraceId,
     };
 
     const span: TinybirdTrace = {
@@ -471,7 +455,7 @@ function buildToolExecutionSpans(
       SpanId: generateSpanId(),
       ParentSpanId: parentSpanId,
       TraceState: '',
-      SpanName: 'llm.tool_execution',
+      SpanName: 'ai.tool.execution',
       SpanKind: 'SPAN_KIND_INTERNAL',
       ServiceName: serviceName,
       ResourceAttributes: { 'service.name': serviceName },

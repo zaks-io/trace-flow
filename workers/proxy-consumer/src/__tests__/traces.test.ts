@@ -39,7 +39,7 @@ describe('buildTraces', () => {
       expect(traces.length).toBeGreaterThanOrEqual(1);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanName).toBe('llm.request');
+      expect(rootSpan.SpanName).toBe('ai.request');
       expect(rootSpan.SpanKind).toBe('SPAN_KIND_CLIENT');
       expect(rootSpan.TraceId).toBe('test-request-123');
       expect(rootSpan.ParentSpanId).toBe('');
@@ -53,10 +53,10 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes).toMatchObject({
-        'llm.request_id': 'test-request-123',
-        'llm.provider': 'openai',
-        'llm.model': 'gpt-4',
-        'llm.target_url': 'https://api.openai.com/v1/chat/completions',
+        'ai.request_id': 'test-request-123',
+        'ai.provider': 'openai',
+        'ai.model': 'gpt-4',
+        'ai.target_url': 'https://api.openai.com/v1/chat/completions',
         'http.status_code': '200',
       });
     });
@@ -84,9 +84,9 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['llm.tokens.prompt']).toBe('100');
-      expect(rootSpan.SpanAttributes['llm.tokens.completion']).toBe('50');
-      expect(rootSpan.SpanAttributes['llm.tokens.total']).toBe('150');
+      expect(rootSpan.SpanAttributes['ai.tokens.prompt']).toBe('100');
+      expect(rootSpan.SpanAttributes['ai.tokens.completion']).toBe('50');
+      expect(rootSpan.SpanAttributes['ai.tokens.total']).toBe('150');
     });
 
     it('should include cached token indicator when present', () => {
@@ -103,7 +103,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['llm.cached']).toBe('true');
+      expect(rootSpan.SpanAttributes['ai.cached']).toBe('true');
     });
 
     it('should handle partial token usage', () => {
@@ -117,18 +117,18 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['llm.tokens.prompt']).toBe('100');
-      expect(rootSpan.SpanAttributes['llm.tokens.completion']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['llm.tokens.total']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.tokens.prompt']).toBe('100');
+      expect(rootSpan.SpanAttributes['ai.tokens.completion']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.tokens.total']).toBeUndefined();
     });
 
     it('should handle no token usage', () => {
       const traces = buildTraces(baseQueueMessage);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['llm.tokens.prompt']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['llm.tokens.completion']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['llm.tokens.total']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.tokens.prompt']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.tokens.completion']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.tokens.total']).toBeUndefined();
     });
   });
 
@@ -180,8 +180,8 @@ describe('buildTraces', () => {
     });
   });
 
-  describe('SSE spans', () => {
-    it('should generate SSE message span with events when SSE stream data is present', () => {
+  describe('SSE streaming responses', () => {
+    it('should generate TTFT span when content_block_delta is present', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         sseStreamData: {
@@ -201,95 +201,14 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      expect(messageSpan).toBeDefined();
-      expect(messageSpan?.Timestamp).toBe(1150 * 1000000);
-      expect(messageSpan?.Duration).toBe((1480 - 1150) * 1000000);
-      expect(messageSpan?.['Events.Name']).toEqual([
-        'message_start',
-        'content_block_delta',
-        'message_stop',
-      ]);
-      expect(messageSpan?.['Events.Timestamp'].length).toBe(3);
-      expect(messageSpan?.['Events.Attributes'].length).toBe(3);
-      expect(messageSpan?.['Events.Attributes']).toEqual(['{}', '{}', '{}']);
+      const ttftSpan = traces.find((t) => t.SpanName === 'ai.request.ttft');
+      expect(ttftSpan).toBeDefined();
+      expect(ttftSpan?.SpanAttributes['ai.time_to_first_token_ms']).toBe(
+        String(1250 - baseQueueMessage.timing.requestStart),
+      );
     });
 
-    it('should include SSE token usage from message', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        sseStreamData: {
-          messages: [
-            {
-              messageStart: 1150,
-              messageStop: 1480,
-              events: [
-                { type: 'message_start', timestamp: 1150, data: '{}' },
-                { type: 'message_stop', timestamp: 1480, data: '{}' },
-              ],
-              usage: {
-                input_tokens: 120,
-                output_tokens: 80,
-              },
-            },
-          ],
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      expect(messageSpan?.SpanAttributes['llm.tokens.input']).toBe('120');
-      expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBe('80');
-    });
-
-    it('should handle SSE message with invalid input_tokens type', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        sseStreamData: {
-          messages: [
-            {
-              messageStart: 1150,
-              messageStop: 1480,
-              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
-              usage: {
-                input_tokens: '120' as unknown as number,
-                output_tokens: 80,
-              },
-            },
-          ],
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      expect(messageSpan?.SpanAttributes['llm.tokens.input']).toBeUndefined();
-      expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBe('80');
-    });
-
-    it('should handle SSE message without usage', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        sseStreamData: {
-          messages: [
-            {
-              messageStart: 1150,
-              messageStop: 1480,
-              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
-            },
-          ],
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      expect(messageSpan?.SpanAttributes['llm.tokens.input']).toBeUndefined();
-      expect(messageSpan?.SpanAttributes['llm.tokens.output']).toBeUndefined();
-    });
-
-    it('should handle SSE events without first delta', () => {
+    it('should not generate TTFT span when no content_block_delta present', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         sseStreamData: {
@@ -308,84 +227,30 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      expect(messageSpan).toBeDefined();
-      expect(messageSpan?.SpanAttributes['llm.time_to_first_token_ms']).toBeUndefined();
-    });
-
-    it('should not generate SSE span when message is incomplete', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        sseStreamData: {
-          messages: [
-            {
-              messageStart: 1150,
-              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
-            },
-          ],
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      expect(messageSpan).toBeUndefined();
-    });
-
-    it('should generate multiple spans for multiple messages', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        sseStreamData: {
-          messages: [
-            {
-              messageStart: 1150,
-              messageStop: 1200,
-              events: [
-                { type: 'message_start', timestamp: 1150, data: '{}' },
-                { type: 'message_stop', timestamp: 1200, data: '{}' },
-              ],
-            },
-            {
-              messageStart: 1300,
-              messageStop: 1350,
-              events: [
-                { type: 'message_start', timestamp: 1300, data: '{}' },
-                { type: 'message_stop', timestamp: 1350, data: '{}' },
-              ],
-            },
-          ],
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const messageSpans = traces.filter((t) => t.SpanName.startsWith('llm.stream.message'));
-      expect(messageSpans.length).toBe(2);
-      expect(messageSpans[0]?.SpanName).toBe('llm.stream.message.1');
-      expect(messageSpans[1]?.SpanName).toBe('llm.stream.message.2');
-    });
-
-    it('should prefer SSE spans over TTFT spans when both are available', () => {
-      const message: QueueMessage = {
-        ...baseQueueMessage,
-        sseStreamData: {
-          messages: [
-            {
-              messageStart: 1150,
-              messageStop: 1480,
-              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
-            },
-          ],
-        },
-      };
-
-      const traces = buildTraces(message);
-
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message');
-      const ttftSpan = traces.find((t) => t.SpanName === 'llm.request.ttft');
-
-      expect(messageSpan).toBeDefined();
+      const ttftSpan = traces.find((t) => t.SpanName === 'ai.request.ttft');
       expect(ttftSpan).toBeUndefined();
+    });
+
+    it('should not generate content block spans when message is incomplete', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+              contentBlocks: [
+                { index: 0, type: 'text', startTimestamp: 1200, stopTimestamp: 1400 },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const textSpan = traces.find((t) => t.SpanName === 'ai.assistant.text');
+      expect(textSpan).toBeUndefined();
     });
   });
 
@@ -403,6 +268,9 @@ describe('buildTraces', () => {
                 { type: 'content_block_delta', timestamp: 1250, data: '{}' },
                 { type: 'message_stop', timestamp: 1480, data: '{}' },
               ],
+              contentBlocks: [
+                { index: 0, type: 'text', startTimestamp: 1200, stopTimestamp: 1400 },
+              ],
             },
           ],
         },
@@ -410,13 +278,13 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'llm.request')!;
-      const ttftSpan = traces.find((t) => t.SpanName === 'llm.request.ttft')!;
-      const messageSpan = traces.find((t) => t.SpanName === 'llm.stream.message')!;
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request')!;
+      const ttftSpan = traces.find((t) => t.SpanName === 'ai.request.ttft')!;
+      const textSpan = traces.find((t) => t.SpanName === 'ai.assistant.text')!;
 
       expect(rootSpan.ParentSpanId).toBe('');
       expect(ttftSpan.ParentSpanId).toBe(rootSpan.SpanId);
-      expect(messageSpan.ParentSpanId).toBe(rootSpan.SpanId);
+      expect(textSpan.ParentSpanId).toBe(rootSpan.SpanId);
     });
 
     it('should generate unique span IDs', () => {
@@ -455,8 +323,8 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['llm.provider']).toBe('anthropic');
-      expect(rootSpan.SpanAttributes['llm.target_url']).toBe(
+      expect(rootSpan.SpanAttributes['ai.provider']).toBe('anthropic');
+      expect(rootSpan.SpanAttributes['ai.target_url']).toBe(
         'https://api.anthropic.com/v1/messages',
       );
     });
@@ -478,7 +346,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['llm.provider']).toBe('google');
+      expect(rootSpan.SpanAttributes['ai.provider']).toBe('google');
     });
   });
 
@@ -515,12 +383,12 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const contentBlockSpan = traces.find((t) => t.SpanName === 'llm.content_block.text');
+      const contentBlockSpan = traces.find((t) => t.SpanName === 'ai.assistant.text');
       expect(contentBlockSpan).toBeDefined();
       expect(contentBlockSpan?.Timestamp).toBe(1200 * 1000000);
       expect(contentBlockSpan?.Duration).toBe((1400 - 1200) * 1000000);
-      expect(contentBlockSpan?.SpanAttributes['llm.content_block.index']).toBe('0');
-      expect(contentBlockSpan?.SpanAttributes['llm.content_block.type']).toBe('text');
+      expect(contentBlockSpan?.SpanAttributes['ai.content.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['ai.content.type']).toBe('text');
     });
 
     it('should create spans for tool_use content blocks', () => {
@@ -552,12 +420,12 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const contentBlockSpan = traces.find((t) => t.SpanName === 'llm.content_block.tool_use');
+      const contentBlockSpan = traces.find((t) => t.SpanName === 'ai.assistant.tool_use');
       expect(contentBlockSpan).toBeDefined();
-      expect(contentBlockSpan?.SpanAttributes['llm.content_block.index']).toBe('0');
-      expect(contentBlockSpan?.SpanAttributes['llm.content_block.type']).toBe('tool_use');
-      expect(contentBlockSpan?.SpanAttributes['llm.tool_use.id']).toBe('toolu_01abc123');
-      expect(contentBlockSpan?.SpanAttributes['llm.tool_use.name']).toBe('get_weather');
+      expect(contentBlockSpan?.SpanAttributes['ai.content.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['ai.content.type']).toBe('tool_use');
+      expect(contentBlockSpan?.SpanAttributes['ai.tool.id']).toBe('toolu_01abc123');
+      expect(contentBlockSpan?.SpanAttributes['ai.tool.name']).toBe('get_weather');
     });
 
     it('should skip incomplete content blocks', () => {
@@ -582,11 +450,11 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const contentBlockSpan = traces.find((t) => t.SpanName.includes('content_block'));
+      const contentBlockSpan = traces.find((t) => t.SpanName.includes('ai.assistant.'));
       expect(contentBlockSpan).toBeUndefined();
     });
 
-    it('should create multiple content block spans', () => {
+    it('should create multiple content block spans with numbering', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         sseStreamData: {
@@ -614,11 +482,47 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const textSpans = traces.filter((t) => t.SpanName === 'llm.content_block.text');
-      const toolUseSpans = traces.filter((t) => t.SpanName === 'llm.content_block.tool_use');
+      // When there are multiple of the same type, they should be numbered
+      const textSpans = traces.filter((t) => t.SpanName.startsWith('ai.assistant.text'));
+      const toolUseSpans = traces.filter((t) => t.SpanName.startsWith('ai.assistant.tool_use'));
 
       expect(textSpans.length).toBe(2);
       expect(toolUseSpans.length).toBe(1);
+
+      // Text spans should be numbered since there are 2
+      expect(textSpans[0]?.SpanName).toBe('ai.assistant.text.1');
+      expect(textSpans[1]?.SpanName).toBe('ai.assistant.text.2');
+
+      // Tool use span should not be numbered since there's only 1
+      expect(toolUseSpans[0]?.SpanName).toBe('ai.assistant.tool_use');
+    });
+
+    it('should create thinking spans', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [{ type: 'message_start', timestamp: 1150, data: '{}' }],
+              contentBlocks: [
+                { index: 0, type: 'thinking', startTimestamp: 1160, stopTimestamp: 1200 },
+                { index: 1, type: 'text', startTimestamp: 1200, stopTimestamp: 1400 },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const thinkingSpan = traces.find((t) => t.SpanName === 'ai.assistant.thinking');
+      const textSpan = traces.find((t) => t.SpanName === 'ai.assistant.text');
+
+      expect(thinkingSpan).toBeDefined();
+      expect(textSpan).toBeDefined();
+      expect(thinkingSpan?.SpanAttributes['ai.content.type']).toBe('thinking');
     });
   });
 
@@ -637,11 +541,11 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const systemSpan = traces.find((t) => t.SpanName === 'llm.input.system');
+      const systemSpan = traces.find((t) => t.SpanName === 'ai.system.message');
       expect(systemSpan).toBeDefined();
       expect(systemSpan?.Duration).toBe(0);
-      expect(systemSpan?.SpanAttributes['llm.input.role']).toBe('system');
-      expect(systemSpan?.SpanAttributes['llm.input.index']).toBe('0');
+      expect(systemSpan?.SpanAttributes['ai.message.role']).toBe('system');
+      expect(systemSpan?.SpanAttributes['ai.message.index']).toBe('0');
     });
 
     it('should create spans for user messages', () => {
@@ -658,10 +562,29 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const userSpan = traces.find((t) => t.SpanName === 'llm.input.user');
+      const userSpan = traces.find((t) => t.SpanName === 'ai.user.message');
       expect(userSpan).toBeDefined();
       expect(userSpan?.Duration).toBe(0);
-      expect(userSpan?.SpanAttributes['llm.input.role']).toBe('user');
+      expect(userSpan?.SpanAttributes['ai.message.role']).toBe('user');
+    });
+
+    it('should create spans for assistant messages in history', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        inputMessages: [
+          {
+            role: 'assistant',
+            index: 0,
+            contentBlocks: [{ index: 0, type: 'text' }],
+          },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const assistantSpan = traces.find((t) => t.SpanName === 'ai.assistant.message');
+      expect(assistantSpan).toBeDefined();
+      expect(assistantSpan?.SpanAttributes['ai.message.role']).toBe('assistant');
     });
 
     it('should create spans for tool_result messages', () => {
@@ -678,10 +601,10 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const toolResultSpan = traces.find((t) => t.SpanName === 'llm.input.tool_result');
+      const toolResultSpan = traces.find((t) => t.SpanName === 'ai.tool.result');
       expect(toolResultSpan).toBeDefined();
-      expect(toolResultSpan?.SpanAttributes['llm.input.role']).toBe('user');
-      expect(toolResultSpan?.SpanAttributes['llm.tool_use_id']).toBe('toolu_abc123');
+      expect(toolResultSpan?.SpanAttributes['ai.message.role']).toBe('user');
+      expect(toolResultSpan?.SpanAttributes['ai.tool.id']).toBe('toolu_abc123');
     });
 
     it('should create multiple input message spans', () => {
@@ -697,7 +620,12 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const inputSpans = traces.filter((t) => t.SpanName.startsWith('llm.input.'));
+      const inputSpans = traces.filter(
+        (t) =>
+          t.SpanName === 'ai.system.message' ||
+          t.SpanName === 'ai.user.message' ||
+          t.SpanName === 'ai.assistant.message',
+      );
       expect(inputSpans.length).toBe(4);
     });
   });
@@ -719,13 +647,13 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const toolExecSpan = traces.find((t) => t.SpanName === 'llm.tool_execution');
+      const toolExecSpan = traces.find((t) => t.SpanName === 'ai.tool.execution');
       expect(toolExecSpan).toBeDefined();
       expect(toolExecSpan?.Timestamp).toBe(500 * 1000000);
       expect(toolExecSpan?.Duration).toBe((1000 - 500) * 1000000);
-      expect(toolExecSpan?.SpanAttributes['llm.tool_use.id']).toBe('toolu_abc123');
-      expect(toolExecSpan?.SpanAttributes['llm.tool_use.name']).toBe('get_weather');
-      expect(toolExecSpan?.SpanAttributes['llm.original_trace_id']).toBe('original-trace-id');
+      expect(toolExecSpan?.SpanAttributes['ai.tool.id']).toBe('toolu_abc123');
+      expect(toolExecSpan?.SpanAttributes['ai.tool.name']).toBe('get_weather');
+      expect(toolExecSpan?.SpanAttributes['ai.original_trace_id']).toBe('original-trace-id');
       expect(toolExecSpan?.['Links.TraceId']).toContain('original-trace-id');
     });
 
@@ -752,8 +680,33 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const toolExecSpans = traces.filter((t) => t.SpanName === 'llm.tool_execution');
+      const toolExecSpans = traces.filter((t) => t.SpanName === 'ai.tool.execution');
       expect(toolExecSpans.length).toBe(2);
+    });
+  });
+
+  describe('non-streaming responses', () => {
+    it('should create assistant response span for non-streaming responses', () => {
+      const traces = buildTraces(baseQueueMessage);
+
+      const responseSpan = traces.find((t) => t.SpanName === 'ai.assistant.response');
+      expect(responseSpan).toBeDefined();
+      expect(responseSpan?.SpanAttributes['ai.response.streaming']).toBe('false');
+    });
+
+    it('should not create assistant response span for error responses', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        response: {
+          ...baseQueueMessage.response,
+          status: 500,
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const responseSpan = traces.find((t) => t.SpanName === 'ai.assistant.response');
+      expect(responseSpan).toBeUndefined();
     });
   });
 });

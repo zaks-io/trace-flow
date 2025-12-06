@@ -113,31 +113,31 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
   const resourceAttributes = span ? parseAttributes(span.ResourceAttributes) : {};
   const allAttributes = { ...spanAttributes, ...resourceAttributes };
 
-  const provider = allAttributes['llm.provider'] ?? allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['llm.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
+  const provider = allAttributes['ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
+  const model = allAttributes['ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
   const promptTokens =
-    parseInt(allAttributes['llm.tokens.prompt'] ?? '0', 10) ||
-    parseInt(allAttributes['llm.tokens.input'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.prompt'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.input'] ?? '0', 10) ||
     parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
   const completionTokens =
-    parseInt(allAttributes['llm.tokens.completion'] ?? '0', 10) ||
-    parseInt(allAttributes['llm.tokens.output'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.completion'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.output'] ?? '0', 10) ||
     parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
-  const ttftMs = allAttributes['llm.time_to_first_token_ms']
-    ? parseFloat(allAttributes['llm.time_to_first_token_ms'])
+  const ttftMs = allAttributes['ai.time_to_first_token_ms']
+    ? parseFloat(allAttributes['ai.time_to_first_token_ms'])
     : null;
 
   const displayedKeys = new Set([
-    'llm.provider',
+    'ai.provider',
     'gen_ai.system',
-    'llm.model',
+    'ai.model',
     'gen_ai.request.model',
-    'llm.tokens.prompt',
-    'llm.tokens.input',
-    'llm.tokens.completion',
-    'llm.tokens.output',
-    'llm.tokens.total',
-    'llm.time_to_first_token_ms',
+    'ai.tokens.prompt',
+    'ai.tokens.input',
+    'ai.tokens.completion',
+    'ai.tokens.output',
+    'ai.tokens.total',
+    'ai.time_to_first_token_ms',
     'gen_ai.usage.input_tokens',
     'gen_ai.usage.output_tokens',
     'service.name',
@@ -151,7 +151,7 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
 
     // Extract requestId from span attributes - bodies are stored by requestId not traceId
     const attrs = parseAttributes(span.SpanAttributes);
-    const requestId = attrs['llm.request_id'];
+    const requestId = attrs['ai.request_id'];
     if (!requestId) {
       // No requestId means body not available (e.g., OTLP traces from external systems)
       return;

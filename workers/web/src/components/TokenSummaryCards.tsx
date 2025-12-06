@@ -36,20 +36,20 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
     const attrs = parseAttributes(span.SpanAttributes);
 
     const prompt =
-      parseInt(attrs['llm.tokens.prompt'] ?? '0', 10) ||
-      parseInt(attrs['llm.tokens.input'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.prompt'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.input'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
 
     const completion =
-      parseInt(attrs['llm.tokens.completion'] ?? '0', 10) ||
-      parseInt(attrs['llm.tokens.output'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
     promptTokens += prompt;
     completionTokens += completion;
 
-    if (attrs['llm.time_to_first_token_ms'] && ttftMs === null) {
-      ttftMs = parseFloat(attrs['llm.time_to_first_token_ms']);
+    if (attrs['ai.time_to_first_token_ms'] && ttftMs === null) {
+      ttftMs = parseFloat(attrs['ai.time_to_first_token_ms']);
     }
 
     if (span.Duration > totalDuration) {
