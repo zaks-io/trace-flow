@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import {
@@ -19,6 +20,7 @@ const STORAGE_KEY = 'trace-flow-traces-columns';
 export default function Traces() {
   usePageHeader('Traces');
   const navigate = useNavigate();
+  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
 
   const {
     data,
@@ -32,6 +34,7 @@ export default function Traces() {
         LIMIT 100
         FORMAT JSON`,
       scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+      apiKeys: userApiKeys,
     });
 
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility, STORAGE_KEY);
@@ -51,7 +54,7 @@ export default function Traces() {
     [navigate],
   );
 
-  if (loading) {
+  if (loading || keysLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
