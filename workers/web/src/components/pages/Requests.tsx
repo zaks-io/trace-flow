@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
+import { usePageHeader } from '@/components/PageHeaderContext';
 import { TraceDetailPanel } from '@/components/TraceDetailPanel';
 import {
   DataTable,
@@ -15,6 +16,7 @@ interface TinybirdResponse {
 }
 
 export default function Requests() {
+  usePageHeader('Requests');
   const navigate = useNavigate();
   const { traceId: traceIdParam } = useParams<{ traceId?: string }>();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
@@ -226,14 +228,6 @@ export default function Requests() {
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Requests</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Root traces from your requests. Click a row to view details in sidebar, or Cmd/Ctrl+click
-          to open in a new tab.
-        </p>
-      </div>
-
       {error && (
         <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
           <div className="flex items-start justify-between">

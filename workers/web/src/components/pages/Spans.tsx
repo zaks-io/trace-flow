@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
+import { usePageHeader } from '@/components/PageHeaderContext';
 import { DataTable } from '@/components/requests-table';
 import {
   spanGroupColumns,
@@ -14,6 +15,7 @@ interface TinybirdResponse {
 }
 
 export default function Spans() {
+  usePageHeader('Spans');
   const navigate = useNavigate();
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [mergedSpanGroups, setMergedSpanGroups] = useState<SpanGroupRow[]>([]);
@@ -204,13 +206,6 @@ export default function Spans() {
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Spans</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Grouped requests by parent span ID. Click a row to view all requests in the group.
-        </p>
-      </div>
-
       {error && (
         <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
           <div className="flex items-start justify-between">

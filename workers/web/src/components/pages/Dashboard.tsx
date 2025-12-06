@@ -11,6 +11,7 @@ import {
   Server,
 } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { usePageHeader } from '@/components/PageHeaderContext';
 
 type TimeRange = '24h' | '7d' | '30d';
 
@@ -115,6 +116,7 @@ function formatPercent(value: number | null): string {
 }
 
 export default function Dashboard() {
+  usePageHeader('Dashboard');
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -219,11 +221,8 @@ export default function Dashboard() {
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">LLM Request Analytics Overview</p>
-        </div>
+      <div className="mb-6 flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">LLM Request Analytics Overview</p>
         <div className="relative">
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
