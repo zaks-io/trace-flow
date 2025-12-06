@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { TraceDetailPanel } from '@/components/TraceDetailPanel';
@@ -31,6 +32,7 @@ export default function Requests() {
   const isClosingRef = useRef(false);
   const prevLiveModeRef = useRef(false);
 
+  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
 
   const sqlQuery = useMemo(() => {
@@ -64,6 +66,7 @@ export default function Requests() {
     sql: sqlQuery,
     scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
     pollInterval: isLiveMode ? 3000 : undefined,
+    apiKeys: userApiKeys,
   });
 
   const handleRowClick = useCallback(
@@ -215,7 +218,7 @@ export default function Requests() {
     return row ? `${row.TraceId}-${row.SpanId}` : null;
   }, [selectedTraceId, requests]);
 
-  if (loading && !initialLoadComplete) {
+  if ((loading || keysLoading) && !initialLoadComplete) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
