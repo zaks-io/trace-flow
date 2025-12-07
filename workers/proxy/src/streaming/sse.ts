@@ -1,5 +1,11 @@
 import { createParser, type EventSourceParser } from 'eventsource-parser';
-import type { SSEStreamData, SSEMessage, SSEEvent, AnthropicContentBlock } from '@trace-flow/types';
+import type {
+  SSEStreamData,
+  SSEMessage,
+  SSEEvent,
+  AnthropicContentBlock,
+  LLMTokenUsage,
+} from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
 import {
   extractMetadataFromSSEData,
@@ -243,4 +249,70 @@ export function createSSEParser(streamData: SSEStreamData): EventSourceParser {
       processSSEEvent(event, timestamp, streamData);
     },
   });
+}
+
+/**
+ * Aggregates token usage from all SSE messages into a unified LLMTokenUsage format.
+ * Handles both OpenAI-style (input_tokens/output_tokens in streaming chunks)
+ * and Anthropic-style (input_tokens, output_tokens, cache tokens in message_start/message_delta).
+ *
+ * For multi-message streams, sums token counts across all messages.
+ */
+export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | undefined {
+  if (!streamData.messages || streamData.messages.length === 0) {
+    return undefined;
+  }
+
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCacheCreationTokens = 0;
+  let hasAnyTokens = false;
+
+  for (const message of streamData.messages) {
+    if (!message.usage) continue;
+
+    if (message.usage.input_tokens !== undefined) {
+      totalPromptTokens += message.usage.input_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.output_tokens !== undefined) {
+      totalCompletionTokens += message.usage.output_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.cache_read_input_tokens !== undefined) {
+      totalCacheReadTokens += message.usage.cache_read_input_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.cache_creation_input_tokens !== undefined) {
+      totalCacheCreationTokens += message.usage.cache_creation_input_tokens;
+      hasAnyTokens = true;
+    }
+  }
+
+  if (!hasAnyTokens) {
+    return undefined;
+  }
+
+  const result: LLMTokenUsage = {};
+
+  if (totalPromptTokens > 0) {
+    result.promptTokens = totalPromptTokens;
+  }
+  if (totalCompletionTokens > 0) {
+    result.completionTokens = totalCompletionTokens;
+  }
+  if (totalCacheReadTokens > 0) {
+    result.cacheReadTokens = totalCacheReadTokens;
+  }
+  if (totalCacheCreationTokens > 0) {
+    result.cacheCreationTokens = totalCacheCreationTokens;
+  }
+
+  // Calculate total if we have both prompt and completion tokens
+  if (result.promptTokens !== undefined && result.completionTokens !== undefined) {
+    result.totalTokens = result.promptTokens + result.completionTokens;
+  }
+
+  return result;
 }

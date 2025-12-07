@@ -36,7 +36,7 @@ import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
 import { parseAnthropicRequestBody, parseOpenAIStyleRequestBody } from './parsers/request-body';
 import { captureStream, createResponseCapture, chunksToString } from './streaming/capture';
-import { createSSEParser } from './streaming/sse';
+import { createSSEParser, aggregateSSETokens } from './streaming/sse';
 import { storeRequestResponse } from './storage';
 import { createQueueMessage } from './queue';
 import { resolveRoute, PROVIDERS } from './providers';
@@ -197,7 +197,16 @@ app.all('*', async (c) => {
           });
         }
 
-        const tokens = response.status >= 400 ? undefined : parseTokenUsage(responseBody);
+        // Extract tokens from response body (non-streaming) or SSE stream data (streaming)
+        // SSE tokens take precedence as they're accumulated throughout the stream
+        const parsedTokens = response.status >= 400 ? undefined : parseTokenUsage(responseBody);
+        const sseTokens =
+          isSSE && sseStreamData.messages.length > 0
+            ? aggregateSSETokens(sseStreamData)
+            : undefined;
+        // Merge tokens: prefer SSE tokens for prompt/completion, but also include any
+        // additional fields from parsed tokens (like reasoningTokens, cachedTokens)
+        const tokens = sseTokens ? { ...parsedTokens, ...sseTokens } : parsedTokens;
         const error =
           response.status >= 400 ? parseError(responseBody, response.status) : undefined;
 

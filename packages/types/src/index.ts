@@ -25,8 +25,10 @@ export interface LLMTokenUsage {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
-  cached?: boolean;
   reasoningTokens?: number;
+  cachedTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 }
 
 export interface LLMResponseMetadata {

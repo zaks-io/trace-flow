@@ -1,7 +1,9 @@
-import type { QueueMessageUnion, TinybirdTrace } from '@trace-flow/types';
+import type { QueueMessageUnion, TinybirdTrace, QueueMessage } from '@trace-flow/types';
 import { TraceBatcher } from './batcher';
 import { buildTraces } from './traces';
 import { calculateShardId } from './sharding';
+import { getPricing, type ModelPricing } from './pricing';
+import { fetchOpenRouterPricing } from './openrouter-pricing';
 
 export { TraceBatcher };
 
@@ -12,6 +14,28 @@ export interface Env {
   TINYBIRD_HOST?: string;
   TRACE_BATCHER: DurableObjectNamespace<TraceBatcher>;
   NUM_SHARDS?: number;
+  MODEL_PRICING: KVNamespace;
+}
+
+async function getPricingForMessage(
+  data: QueueMessage,
+  kv: KVNamespace,
+): Promise<ModelPricing | null> {
+  const provider = data.request.provider;
+  const model = data.responseMetadata?.model ?? data.request.model;
+
+  // Try KV first
+  let pricing = await getPricing(kv, provider, model);
+  if (pricing) return pricing;
+
+  // For OpenRouter, auto-fetch pricing if not in KV
+  if (provider === 'openrouter') {
+    pricing = await fetchOpenRouterPricing(model, kv);
+    if (pricing) return pricing;
+  }
+
+  // For other providers, skip cost if not in KV
+  return null;
 }
 
 export default {
@@ -37,7 +61,8 @@ export default {
           traces = message.body.traces;
           apiKey = message.body.apiKey;
         } else {
-          traces = buildTraces(message.body);
+          const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
+          traces = buildTraces(message.body, pricing);
           apiKey = message.body.apiKey;
         }
 

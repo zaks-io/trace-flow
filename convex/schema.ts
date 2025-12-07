@@ -15,4 +15,18 @@ export default defineSchema({
     expiresAt: v.number(),
     userId: v.optional(v.id('users')),
   }).index('by_user_id', ['userId']),
+
+  modelPricing: defineTable({
+    provider: v.string(),
+    model: v.string(),
+    promptCostPerMillion: v.number(),
+    completionCostPerMillion: v.number(),
+    cacheReadCostPerMillion: v.optional(v.number()),
+    cacheWriteCostPerMillion: v.optional(v.number()),
+    reasoningCostPerMillion: v.optional(v.number()),
+    source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
+    updatedAt: v.number(),
+  })
+    .index('by_provider', ['provider'])
+    .index('by_provider_model', ['provider', 'model']),
 });
