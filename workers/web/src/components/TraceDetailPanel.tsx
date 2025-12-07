@@ -1,5 +1,8 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
+import { useQuery } from 'convex/react';
+import { api } from '../../../../convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
 import {
   Dialog,
@@ -10,6 +13,10 @@ import {
 } from '@/components/ui/dialog';
 import { TraceDetailContent, type TraceSpan } from './TraceDetailContent';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { useUserApiKeys } from '@/hooks/useUserApiKeys';
+import { AlertBadge, AlertList } from '@/components/alerts';
+import { evaluateAlertsForTraces, traceSpanToRequestRow, getHighestSeverity } from '@/lib/alerts';
+import type { AlertSeverity } from '@/types/alerts';
 
 interface TraceDetailPanelProps {
   traceId: string;
@@ -23,6 +30,8 @@ interface TinybirdResponse {
 
 export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelProps) {
   const validatedTraceId = validateTraceId(traceId);
+  const alerts = useQuery(api.alerts.listEnabled);
+  const { keys: userApiKeys } = useUserApiKeys();
 
   const { data } = useTinybirdQuery<TinybirdResponse>({
     sql: validatedTraceId
@@ -37,10 +46,26 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
       : '',
     scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
     enabled: isOpen && !!validatedTraceId,
+    apiKeys: userApiKeys,
   });
 
   const spans = data?.data ?? [];
-  const rootSpan = spans.find((s) => s.SpanName === 'ai.request');
+  const requestSpans = spans.filter((s) => s.SpanName === 'ai.request');
+  const rootSpan = requestSpans[0];
+
+  const triggeredAlerts = useMemo(() => {
+    if (!alerts || alerts.length === 0 || requestSpans.length === 0 || !validatedTraceId) {
+      return [];
+    }
+    const requestRows = requestSpans.map(traceSpanToRequestRow);
+    const alertSummary = evaluateAlertsForTraces(requestRows, alerts);
+    return alertSummary.get(validatedTraceId)?.triggeredAlerts ?? [];
+  }, [alerts, requestSpans, validatedTraceId]);
+
+  const highestSeverity = useMemo(() => {
+    if (triggeredAlerts.length === 0) return null;
+    return getHighestSeverity(triggeredAlerts.map((t) => t.alert.severity as AlertSeverity));
+  }, [triggeredAlerts]);
 
   const formatDuration = (nanoseconds: number) => {
     const milliseconds = nanoseconds / 1_000_000;
@@ -69,6 +94,9 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
               </div>
             </div>
             <div className="flex items-center gap-4">
+              {highestSeverity && (
+                <AlertBadge severity={highestSeverity} count={triggeredAlerts.length} size="md" />
+              )}
               {rootSpan && (
                 <>
                   <div className="flex items-center gap-2">
@@ -102,6 +130,12 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
 
         <div className="flex-1 overflow-y-auto">
           <div className="space-y-4 p-6">
+            {triggeredAlerts.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium text-foreground">Triggered Alerts</h3>
+                <AlertList triggeredAlerts={triggeredAlerts} />
+              </div>
+            )}
             <TraceDetailContent traceId={traceId} enabled={isOpen} spans={spans} />
           </div>
         </div>

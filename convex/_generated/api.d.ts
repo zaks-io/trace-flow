@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as alerts from "../alerts.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as auth from "../auth.js";
 import type * as cloudflare from "../cloudflare.js";
@@ -32,6 +33,7 @@ import type {
  * ```
  */
 declare const fullApi: ApiFromModules<{
+  alerts: typeof alerts;
   apiKeys: typeof apiKeys;
   auth: typeof auth;
   cloudflare: typeof cloudflare;

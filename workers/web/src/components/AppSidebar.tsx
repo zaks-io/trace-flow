@@ -5,6 +5,7 @@ import {
   Activity,
   GitBranch,
   Key,
+  Bell,
   LogOut,
   LogIn,
   User,
@@ -29,6 +30,7 @@ const navItems = [
   { title: 'Requests', to: '/requests', icon: Activity },
   { title: 'Traces', to: '/traces', icon: GitBranch },
   { title: 'API Keys', to: '/api-keys', icon: Key },
+  { title: 'Alerts', to: '/alerts', icon: Bell },
   { title: 'Docs', to: '/docs', icon: BookOpen, external: true },
 ];
 

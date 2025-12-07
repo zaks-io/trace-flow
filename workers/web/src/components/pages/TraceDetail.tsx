@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, Copy, Check, ExternalLink } from 'lucide-react';
+import { useQuery } from 'convex/react';
+import { api } from '../../../../../convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useUserApiKeys } from '@/hooks/useUserApiKeys';
@@ -8,6 +10,9 @@ import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
+import { AlertBadge, AlertList } from '@/components/alerts';
+import { evaluateAlertsForTraces, traceSpanToRequestRow, getHighestSeverity } from '@/lib/alerts';
+import type { AlertSeverity } from '@/types/alerts';
 
 interface TraceSpan {
   ReceivedAt: number;
@@ -39,6 +44,7 @@ export default function TraceDetail() {
 
   const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const validatedTraceId = validateTraceId(traceId);
+  const alerts = useQuery(api.alerts.listEnabled);
 
   const { data, loading, error } = useTinybirdQuery<TinybirdResponse>({
     sql: validatedTraceId
@@ -58,7 +64,22 @@ export default function TraceDetail() {
 
   const spans = data?.data ?? [];
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
+  const requestSpans = spans.filter((s) => s.SpanName === 'ai.request');
   const selectedSpan = spans.find((s) => s.SpanId === selectedSpanId);
+
+  const triggeredAlerts = useMemo(() => {
+    if (!alerts || alerts.length === 0 || requestSpans.length === 0 || !validatedTraceId) {
+      return [];
+    }
+    const requestRows = requestSpans.map(traceSpanToRequestRow);
+    const alertSummary = evaluateAlertsForTraces(requestRows, alerts);
+    return alertSummary.get(validatedTraceId)?.triggeredAlerts ?? [];
+  }, [alerts, requestSpans, validatedTraceId]);
+
+  const highestSeverity = useMemo(() => {
+    if (triggeredAlerts.length === 0) return null;
+    return getHighestSeverity(triggeredAlerts.map((t) => t.alert.severity as AlertSeverity));
+  }, [triggeredAlerts]);
 
   const handleCopyLink = async () => {
     try {
@@ -144,6 +165,9 @@ export default function TraceDetail() {
           <span className="font-medium text-foreground">
             {rootSpan?.SpanName ?? 'Trace Details'}
           </span>
+          {highestSeverity && (
+            <AlertBadge severity={highestSeverity} count={triggeredAlerts.length} size="md" />
+          )}
         </nav>
 
         <div className="flex items-center gap-2">
@@ -177,6 +201,13 @@ export default function TraceDetail() {
       </div>
 
       <p className="break-all font-mono text-xs text-muted-foreground">{traceId}</p>
+
+      {triggeredAlerts.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-lg font-semibold text-foreground">Triggered Alerts</h2>
+          <AlertList triggeredAlerts={triggeredAlerts} />
+        </div>
+      )}
 
       <TokenSummaryCards spans={spans} />
 

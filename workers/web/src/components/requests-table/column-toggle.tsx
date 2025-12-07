@@ -14,11 +14,11 @@ import type { Table } from '@tanstack/react-table';
 
 const categoryLabels: Record<string, string> = {
   standard: 'Standard',
-  llm: 'LLM',
+  ai: 'AI',
   http: 'HTTP',
 };
 
-const categoryOrder = ['standard', 'llm', 'http'];
+const categoryOrder = ['standard', 'ai', 'http'];
 
 interface ColumnToggleProps<TData> {
   table: Table<TData>;
