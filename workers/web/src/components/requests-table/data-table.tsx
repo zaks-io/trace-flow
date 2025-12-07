@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -7,8 +8,12 @@ import {
   type ColumnDef,
   type VisibilityState,
 } from '@tanstack/react-table';
+import { Filter, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ColumnToggle } from './column-toggle';
+import type { TraceAlertSummary, Alert } from '@/types/alerts';
+
+export type AlertFilterValue = string;
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
@@ -22,6 +27,10 @@ interface DataTableProps<TData> {
   getRowId: (row: TData) => string;
   isLiveMode?: boolean;
   onLiveModeToggle?: () => void;
+  alertSummary?: Map<string, TraceAlertSummary>;
+  alerts?: Alert[];
+  alertFilter?: AlertFilterValue;
+  onAlertFilterChange?: (filter: AlertFilterValue) => void;
 }
 
 export function DataTable<TData>({
@@ -34,9 +43,35 @@ export function DataTable<TData>({
   getRowId,
   isLiveMode,
   onLiveModeToggle,
+  alertSummary,
+  alerts,
+  alertFilter = 'all',
+  onAlertFilterChange,
 }: DataTableProps<TData>) {
+  const filteredData = useMemo(() => {
+    if (!alertSummary || alertFilter === 'all') {
+      return data;
+    }
+
+    return data.filter((row) => {
+      const rowData = row as { TraceId?: string };
+      const traceId = rowData.TraceId ?? '';
+      const summary = alertSummary.get(traceId);
+
+      if (alertFilter === 'has-alerts') {
+        return summary && summary.triggeredAlerts.length > 0;
+      }
+
+      // Filter by specific alert ID
+      if (summary) {
+        return summary.triggeredAlerts.some((t) => t.alert._id === alertFilter);
+      }
+      return false;
+    });
+  }, [data, alertSummary, alertFilter, getRowId]);
+
   const table = useReactTable({
-    data,
+    data: filteredData,
     columns,
     getCoreRowModel: getCoreRowModel(),
     state: {
@@ -46,11 +81,39 @@ export function DataTable<TData>({
       onColumnVisibilityChange(updater);
     },
     getRowId,
+    meta: {
+      alertSummary,
+    },
   });
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end gap-2">
+        {onAlertFilterChange && alerts && alerts.length > 0 && (
+          <div className="relative">
+            <select
+              value={alertFilter}
+              onChange={(e) => onAlertFilterChange(e.target.value)}
+              className={cn(
+                'appearance-none rounded-lg border bg-card pl-9 pr-8 py-2 text-sm font-medium transition-colors',
+                'focus:outline-none focus:ring-2 focus:ring-primary/20',
+                alertFilter !== 'all'
+                  ? 'border-primary/50 text-primary'
+                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+            >
+              <option value="all">All Requests</option>
+              <option value="has-alerts">Has Alerts</option>
+              {alerts.map((alert) => (
+                <option key={alert._id} value={alert._id}>
+                  {alert.name}
+                </option>
+              ))}
+            </select>
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          </div>
+        )}
         <ColumnToggle table={table} />
         {onLiveModeToggle && (
           <button
@@ -84,7 +147,15 @@ export function DataTable<TData>({
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                      className={cn(
+                        'px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground',
+                        header.id === 'alerts' && 'w-10 px-2',
+                      )}
+                      style={
+                        header.column.columnDef.size
+                          ? { width: header.column.columnDef.size }
+                          : undefined
+                      }
                     >
                       {header.isPlaceholder
                         ? null
@@ -117,7 +188,15 @@ export function DataTable<TData>({
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="whitespace-nowrap px-6 py-4 text-sm text-foreground"
+                        className={cn(
+                          'whitespace-nowrap px-6 py-4 text-sm text-foreground',
+                          cell.column.id === 'alerts' && 'w-10 px-2',
+                        )}
+                        style={
+                          cell.column.columnDef.size
+                            ? { width: cell.column.columnDef.size }
+                            : undefined
+                        }
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

@@ -28,6 +28,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { AlertList } from '@/components/alerts';
+import type { TriggeredAlert } from '@/types/alerts';
 
 interface TraceSpan {
   Timestamp: number;
@@ -52,6 +54,7 @@ interface SpanDetailPanelProps {
   isRootSpan: boolean;
   isOpen: boolean;
   onClose: () => void;
+  triggeredAlerts?: TriggeredAlert[];
 }
 
 function parseAttributes(attributesJson: string): Record<string, string> {
@@ -359,6 +362,7 @@ export function SpanDetailPanel({
   isRootSpan,
   isOpen,
   onClose,
+  triggeredAlerts = [],
 }: SpanDetailPanelProps) {
   const { getAccessTokenSilently } = useAuth0();
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
@@ -665,6 +669,13 @@ export function SpanDetailPanel({
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           {span && (
             <>
+              {triggeredAlerts.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-foreground">Triggered Alerts</h4>
+                  <AlertList triggeredAlerts={triggeredAlerts} />
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
                 {provider && (
                   <AttributeCard

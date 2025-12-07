@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useQuery } from 'convex/react';
+import { api } from '../../../../../convex/_generated/api';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
@@ -10,7 +12,9 @@ import {
   allColumns,
   defaultColumnVisibility,
   type RequestRow,
+  type AlertFilterValue,
 } from '@/components/requests-table';
+import { evaluateAlertsForTraces } from '@/lib/alerts';
 
 interface TinybirdResponse {
   data: RequestRow[];
@@ -27,6 +31,7 @@ export default function Requests() {
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoStoppedLiveMode, setAutoStoppedLiveMode] = useState(false);
   const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
+  const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
 
   const latestReceivedAtRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
@@ -34,6 +39,7 @@ export default function Requests() {
 
   const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
+  const alerts = useQuery(api.alerts.listEnabled);
 
   const sqlQuery = useMemo(() => {
     if (isLiveMode && latestReceivedAt !== null) {
@@ -201,6 +207,13 @@ export default function Requests() {
     [isLiveMode, initialLoadComplete, mergedRequests, data?.data],
   );
 
+  const alertSummary = useMemo(() => {
+    if (!alerts || alerts.length === 0 || requests.length === 0) {
+      return new Map();
+    }
+    return evaluateAlertsForTraces(requests, alerts);
+  }, [requests, alerts]);
+
   useEffect(() => {
     if (error && isLiveMode) {
       setAutoStoppedLiveMode(true);
@@ -271,6 +284,10 @@ export default function Requests() {
           getRowId={getRowId}
           isLiveMode={isLiveMode}
           onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+          alertSummary={alertSummary}
+          alerts={alerts ?? []}
+          alertFilter={alertFilter}
+          onAlertFilterChange={setAlertFilter}
         />
       )}
 

@@ -140,7 +140,7 @@ export const spanColumns: ColumnDef<SpanRow>[] = [
         <span className="text-muted-foreground/40">—</span>
       );
     },
-    meta: { category: 'llm', label: 'Provider' },
+    meta: { category: 'ai', label: 'Provider' },
   },
   {
     id: 'aiModel',
@@ -154,7 +154,7 @@ export const spanColumns: ColumnDef<SpanRow>[] = [
         <span className="text-muted-foreground/40">—</span>
       );
     },
-    meta: { category: 'llm', label: 'Model' },
+    meta: { category: 'ai', label: 'Model' },
   },
   {
     id: 'duration',

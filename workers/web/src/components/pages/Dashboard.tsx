@@ -140,15 +140,11 @@ export default function Dashboard() {
         countIf(StatusCode = 'STATUS_CODE_ERROR' AND ParentSpanId = '') * 100.0 /
           nullIf(countIf(ParentSpanId = ''), 0) as error_rate_percent,
         sumIf(
-          coalesce(JSONExtractInt(SpanAttributes, 'llm.tokens.prompt'), 0) +
-          coalesce(JSONExtractInt(SpanAttributes, 'llm.tokens.input'), 0) +
-          coalesce(JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens'), 0),
+          JSONExtractInt(SpanAttributes, 'ai.tokens.prompt'),
           ParentSpanId = ''
         ) as total_input_tokens,
         sumIf(
-          coalesce(JSONExtractInt(SpanAttributes, 'llm.tokens.completion'), 0) +
-          coalesce(JSONExtractInt(SpanAttributes, 'llm.tokens.output'), 0) +
-          coalesce(JSONExtractInt(SpanAttributes, 'gen_ai.usage.output_tokens'), 0),
+          JSONExtractInt(SpanAttributes, 'ai.tokens.completion'),
           ParentSpanId = ''
         ) as total_output_tokens
       FROM otel_traces
@@ -162,12 +158,12 @@ export default function Dashboard() {
   const modelsQuery = useTinybirdQuery<ModelData>({
     sql: `
       SELECT
-        JSONExtractString(SpanAttributes, 'llm.model') as model,
+        JSONExtractString(SpanAttributes, 'ai.model') as model,
         count() as request_count
       FROM otel_traces
       WHERE ParentSpanId = ''
         AND ReceivedAt >= ${startTimeNs}
-        AND JSONExtractString(SpanAttributes, 'llm.model') != ''
+        AND JSONExtractString(SpanAttributes, 'ai.model') != ''
       GROUP BY model
       ORDER BY request_count DESC
       LIMIT 10
@@ -180,12 +176,12 @@ export default function Dashboard() {
   const providersQuery = useTinybirdQuery<ProviderData>({
     sql: `
       SELECT
-        JSONExtractString(SpanAttributes, 'llm.provider') as provider,
+        JSONExtractString(SpanAttributes, 'ai.provider') as provider,
         count() as request_count
       FROM otel_traces
       WHERE ParentSpanId = ''
         AND ReceivedAt >= ${startTimeNs}
-        AND JSONExtractString(SpanAttributes, 'llm.provider') != ''
+        AND JSONExtractString(SpanAttributes, 'ai.provider') != ''
       GROUP BY provider
       ORDER BY request_count DESC
       FORMAT JSON

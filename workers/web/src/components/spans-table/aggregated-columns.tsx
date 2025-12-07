@@ -3,6 +3,7 @@
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
 import { Layers } from 'lucide-react';
+import { AlertIndicator } from '@/components/alerts';
 
 export interface SpanGroupRow {
   TraceId: string;
@@ -12,8 +13,14 @@ export interface SpanGroupRow {
   LatestReceivedAt: number;
   TotalDuration: number;
   AvgDuration: number;
+  MaxDuration: number;
   ErrorCount: number;
   Models: string[];
+  TotalTokens: number;
+  PromptTokens: number;
+  CompletionTokens: number;
+  MaxTTFT: number;
+  TotalCost: number;
 }
 
 function formatTimestamp(nanoseconds: number) {
@@ -37,6 +44,27 @@ function truncateId(id: string) {
 }
 
 export const spanGroupColumns: ColumnDef<SpanGroupRow>[] = [
+  {
+    id: 'alerts',
+    header: '',
+    size: 40,
+    minSize: 40,
+    maxSize: 40,
+    cell: ({ row, table }) => {
+      const alertSummary = table.options.meta?.alertSummary;
+      const key = row.original.TraceId;
+      const summary = alertSummary?.get(key);
+      const hasAlerts = summary && summary.triggeredAlerts.length > 0;
+      // Always render container to prevent layout reflow when alerts load
+      return (
+        <div className="flex h-5 w-8 items-center justify-center">
+          {hasAlerts && <AlertIndicator triggeredAlerts={summary.triggeredAlerts} />}
+        </div>
+      );
+    },
+    meta: { category: 'alerts' as const, label: 'Alerts' },
+    enableHiding: false,
+  },
   {
     id: 'latestReceivedAt',
     accessorKey: 'LatestReceivedAt',
@@ -100,7 +128,7 @@ export const spanGroupColumns: ColumnDef<SpanGroupRow>[] = [
         </div>
       );
     },
-    meta: { category: 'llm', label: 'Models' },
+    meta: { category: 'ai', label: 'Models' },
   },
   {
     id: 'avgDuration',

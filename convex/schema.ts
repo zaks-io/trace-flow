@@ -29,4 +29,16 @@ export default defineSchema({
   })
     .index('by_provider', ['provider'])
     .index('by_provider_model', ['provider', 'model']),
+
+  alerts: defineTable({
+    name: v.string(),
+    field: v.string(),
+    operator: v.string(),
+    value: v.union(v.number(), v.string(), v.boolean()),
+    severity: v.string(),
+    enabled: v.boolean(),
+    userId: v.id('users'),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_user_id', ['userId']),
 });

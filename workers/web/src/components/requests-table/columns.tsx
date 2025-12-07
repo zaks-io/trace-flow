@@ -2,6 +2,8 @@
 
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
 import { cn } from '@/lib/utils';
+import { AlertIndicator } from '@/components/alerts';
+import type { TraceAlertSummary } from '@/types/alerts';
 
 export interface RequestRow {
   ReceivedAt: number;
@@ -18,8 +20,13 @@ export interface RequestRow {
 declare module '@tanstack/react-table' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface ColumnMeta<TData, TValue> {
-    category: 'standard' | 'llm' | 'http';
+    category: 'standard' | 'ai' | 'http' | 'alerts';
     label: string;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface TableMeta<TData> {
+    alertSummary?: Map<string, TraceAlertSummary>;
   }
 }
 
@@ -47,6 +54,27 @@ function truncateId(id: string) {
 }
 
 export const allColumns: ColumnDef<RequestRow>[] = [
+  {
+    id: 'alerts',
+    header: '',
+    size: 40,
+    minSize: 40,
+    maxSize: 40,
+    cell: ({ row, table }) => {
+      const alertSummary = table.options.meta?.alertSummary;
+      const key = row.original.TraceId;
+      const summary = alertSummary?.get(key);
+      const hasAlerts = summary && summary.triggeredAlerts.length > 0;
+      // Always render container to prevent layout reflow when alerts load
+      return (
+        <div className="flex h-5 w-8 items-center justify-center">
+          {hasAlerts && <AlertIndicator triggeredAlerts={summary.triggeredAlerts} />}
+        </div>
+      );
+    },
+    meta: { category: 'alerts', label: 'Alerts' },
+    enableHiding: false,
+  },
   {
     id: 'receivedAt',
     accessorKey: 'ReceivedAt',
@@ -76,8 +104,8 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     meta: { category: 'standard', label: 'Request Name' },
   },
   {
-    id: 'llmProvider',
-    accessorFn: (row) => getSpanAttribute(row, 'llm.provider'),
+    id: 'aiProvider',
+    accessorFn: (row) => getSpanAttribute(row, 'ai.provider'),
     header: 'Provider',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -87,11 +115,11 @@ export const allColumns: ColumnDef<RequestRow>[] = [
         <span className="text-muted-foreground/50">-</span>
       );
     },
-    meta: { category: 'llm', label: 'Provider' },
+    meta: { category: 'ai', label: 'Provider' },
   },
   {
-    id: 'llmModel',
-    accessorFn: (row) => getSpanAttribute(row, 'llm.model'),
+    id: 'aiModel',
+    accessorFn: (row) => getSpanAttribute(row, 'ai.model'),
     header: 'Model',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -101,7 +129,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
         <span className="text-muted-foreground/50">-</span>
       );
     },
-    meta: { category: 'llm', label: 'Model' },
+    meta: { category: 'ai', label: 'Model' },
   },
   {
     id: 'httpStatusCode',
@@ -168,7 +196,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'totalTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'llm.usage.total_tokens'),
+    accessorFn: (row) => getSpanAttribute(row, 'ai.tokens.total'),
     header: 'Tokens',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -178,11 +206,11 @@ export const allColumns: ColumnDef<RequestRow>[] = [
         <span className="text-muted-foreground/50">-</span>
       );
     },
-    meta: { category: 'llm', label: 'Total Tokens' },
+    meta: { category: 'ai', label: 'Total Tokens' },
   },
   {
     id: 'promptTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'llm.usage.prompt_tokens'),
+    accessorFn: (row) => getSpanAttribute(row, 'ai.tokens.prompt'),
     header: 'Prompt',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -192,11 +220,11 @@ export const allColumns: ColumnDef<RequestRow>[] = [
         <span className="text-muted-foreground/50">-</span>
       );
     },
-    meta: { category: 'llm', label: 'Prompt Tokens' },
+    meta: { category: 'ai', label: 'Prompt Tokens' },
   },
   {
     id: 'completionTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'llm.usage.completion_tokens'),
+    accessorFn: (row) => getSpanAttribute(row, 'ai.tokens.completion'),
     header: 'Completion',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -206,7 +234,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
         <span className="text-muted-foreground/50">-</span>
       );
     },
-    meta: { category: 'llm', label: 'Completion Tokens' },
+    meta: { category: 'ai', label: 'Completion Tokens' },
   },
 ];
 
@@ -214,8 +242,8 @@ export const defaultColumnVisibility: VisibilityState = {
   receivedAt: true,
   traceId: true,
   spanName: true,
-  llmProvider: true,
-  llmModel: true,
+  aiProvider: true,
+  aiModel: true,
   httpStatusCode: true,
   duration: true,
   statusCode: true,

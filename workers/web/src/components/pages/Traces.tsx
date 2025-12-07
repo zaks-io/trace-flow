@@ -1,18 +1,26 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from 'convex/react';
+import { api } from '../../../../../convex/_generated/api';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { usePageHeader } from '@/components/PageHeaderContext';
-import { DataTable } from '@/components/requests-table';
+import { DataTable, type AlertFilterValue } from '@/components/requests-table';
 import {
   spanGroupColumns,
   defaultSpanGroupColumnVisibility,
   type SpanGroupRow,
 } from '@/components/spans-table';
+import { evaluateAlertsForTraces } from '@/lib/alerts';
+import type { RequestRow } from '@/components/requests-table/columns';
 
 interface TinybirdResponse {
   data: SpanGroupRow[];
+}
+
+interface AlertSpansResponse {
+  data: RequestRow[];
 }
 
 export default function Traces() {
@@ -23,12 +31,14 @@ export default function Traces() {
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoStoppedLiveMode, setAutoStoppedLiveMode] = useState(false);
   const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
+  const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
 
   const latestReceivedAtRef = useRef<number | null>(null);
   const prevLiveModeRef = useRef(false);
   const lastProcessedDataRef = useRef<SpanGroupRow[] | null>(null);
 
   const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
+  const alerts = useQuery(api.alerts.listEnabled);
   const { visibility, setVisibility } = useColumnVisibility(
     defaultSpanGroupColumnVisibility,
     'trace-flow-traces-columns',
@@ -44,10 +54,16 @@ export default function Traces() {
         max(ReceivedAt) as LatestReceivedAt,
         sum(Duration) as TotalDuration,
         avg(Duration) as AvgDuration,
+        max(Duration) as MaxDuration,
         countIf(StatusCode = 'ERROR') as ErrorCount,
-        groupArray(DISTINCT JSONExtractString(SpanAttributes, 'llm.model')) as Models
+        groupArray(DISTINCT JSONExtractString(SpanAttributes, 'ai.model')) as Models,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.total'))) as TotalTokens,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.prompt'))) as PromptTokens,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.completion'))) as CompletionTokens,
+        max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.time_to_first_token_ms'))) as MaxTTFT,
+        sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.cost.total'))) as TotalCost
       FROM otel_traces
-      WHERE  SpanName = 'ai.request'`;
+      WHERE SpanName = 'ai.request'`;
 
     if (isLiveMode && latestReceivedAt !== null) {
       return `${baseQuery} AND ReceivedAt > ${latestReceivedAt}
@@ -77,6 +93,27 @@ export default function Traces() {
     sql: sqlQuery,
     scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
     pollInterval: isLiveMode ? 3000 : undefined,
+    apiKeys: userApiKeys,
+  });
+
+  const traceIds = useMemo(() => {
+    const groups = isLiveMode && initialLoadComplete ? mergedSpanGroups : (data?.data ?? []);
+    return groups.map((g) => g.TraceId);
+  }, [isLiveMode, initialLoadComplete, mergedSpanGroups, data?.data]);
+
+  const alertsQuery = useMemo(() => {
+    if (traceIds.length === 0 || !alerts || alerts.length === 0) return '';
+    const traceIdList = traceIds.map((id) => `'${id}'`).join(',');
+    return `SELECT TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode, SpanAttributes, Timestamp as ReceivedAt
+      FROM otel_traces
+      WHERE SpanName = 'ai.request' AND TraceId IN (${traceIdList})
+      FORMAT JSON`;
+  }, [traceIds, alerts]);
+
+  const { data: alertSpansData } = useTinybirdQuery<AlertSpansResponse>({
+    sql: alertsQuery,
+    scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+    enabled: alertsQuery !== '',
     apiKeys: userApiKeys,
   });
 
@@ -147,6 +184,7 @@ export default function Traces() {
               (existing.ChildSpanCount + newGroup.ChildSpanCount),
             ErrorCount: existing.ErrorCount + newGroup.ErrorCount,
             Models: [...new Set([...existing.Models, ...newGroup.Models])],
+            TotalCost: existing.TotalCost + newGroup.TotalCost,
           });
         } else {
           existingMap.set(newGroup.TraceId, newGroup);
@@ -184,6 +222,13 @@ export default function Traces() {
       isLiveMode && initialLoadComplete ? mergedSpanGroups : (data?.data ?? []),
     [isLiveMode, initialLoadComplete, mergedSpanGroups, data?.data],
   );
+
+  const alertSummary = useMemo(() => {
+    if (!alerts || alerts.length === 0 || !alertSpansData?.data?.length) {
+      return new Map();
+    }
+    return evaluateAlertsForTraces(alertSpansData.data, alerts);
+  }, [alertSpansData, alerts]);
 
   useEffect(() => {
     if (error && isLiveMode) {
@@ -248,6 +293,10 @@ export default function Traces() {
           getRowId={getRowId}
           isLiveMode={isLiveMode}
           onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+          alertSummary={alertSummary}
+          alerts={alerts ?? []}
+          alertFilter={alertFilter}
+          onAlertFilterChange={setAlertFilter}
         />
       )}
     </div>
