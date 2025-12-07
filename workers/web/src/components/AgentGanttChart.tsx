@@ -101,6 +101,13 @@ function getSpanTokens(span: TraceSpan): number | null {
 
 function getSpanTokensPerSecond(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
+
+  // Use pre-calculated TPS if available
+  if (attrs['ai.tokens_per_second']) {
+    return parseFloat(attrs['ai.tokens_per_second']);
+  }
+
+  // Fallback for older spans without pre-calculated TPS
   const completion =
     parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
     parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||

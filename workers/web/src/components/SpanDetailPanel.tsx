@@ -1,7 +1,17 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
-import { Clock, Hash, Globe, Server, Cpu, MessageSquare, Zap, GitBranch } from 'lucide-react';
+import {
+  Clock,
+  Hash,
+  Globe,
+  Server,
+  Cpu,
+  MessageSquare,
+  Zap,
+  GitBranch,
+  DollarSign,
+} from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ChevronDown } from 'lucide-react';
 import {
@@ -385,6 +395,9 @@ export function SpanDetailPanel({
   const ttftMs = allAttributes['ai.time_to_first_token_ms']
     ? parseFloat(allAttributes['ai.time_to_first_token_ms'])
     : null;
+  const totalCost = allAttributes['ai.cost.total']
+    ? parseFloat(allAttributes['ai.cost.total'])
+    : null;
 
   const displayedKeys = new Set([
     'ai.provider',
@@ -400,6 +413,12 @@ export function SpanDetailPanel({
     'gen_ai.usage.input_tokens',
     'gen_ai.usage.output_tokens',
     'service.name',
+    'ai.cost.input',
+    'ai.cost.output',
+    'ai.cost.total',
+    'ai.cost.cache_read',
+    'ai.cost.cache_creation',
+    'ai.cost.reasoning',
   ]);
   const remainingAttributes = Object.entries(allAttributes).filter(
     ([key]) => !displayedKeys.has(key),
@@ -685,12 +704,15 @@ export function SpanDetailPanel({
                 )}
               </div>
 
-              {(promptTokens > 0 || completionTokens > 0 || ttftMs !== null) && (
+              {(promptTokens > 0 ||
+                completionTokens > 0 ||
+                ttftMs !== null ||
+                totalCost !== null) && (
                 <div className="rounded-lg border border-border/40 bg-muted/10 p-3">
                   <h4 className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                     Token Breakdown
                   </h4>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-4 gap-2">
                     {promptTokens > 0 && (
                       <div className="rounded-md bg-purple-500/10 p-2 text-center">
                         <Cpu className="mx-auto h-4 w-4 text-purple-400" />
@@ -716,6 +738,15 @@ export function SpanDetailPanel({
                           {ttftMs.toFixed(0)}ms
                         </p>
                         <p className="text-[10px] text-muted-foreground">TTFT</p>
+                      </div>
+                    )}
+                    {totalCost !== null && (
+                      <div className="rounded-md bg-green-500/10 p-2 text-center">
+                        <DollarSign className="mx-auto h-4 w-4 text-green-400" />
+                        <p className="mt-1 font-mono text-sm font-medium text-foreground">
+                          ${totalCost.toFixed(6)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">Cost</p>
                       </div>
                     )}
                   </div>

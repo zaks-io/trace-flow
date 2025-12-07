@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Cpu, MessageSquare, Hash, Zap, Clock, Activity } from 'lucide-react';
+import { Cpu, MessageSquare, Hash, Zap, Clock, Activity, DollarSign } from 'lucide-react';
 
 interface TraceSpan {
   SpanAttributes: string;
@@ -18,6 +18,7 @@ interface TokenSummary {
   ttftMs: number | null;
   totalDuration: number;
   tokensPerSecond: number | null;
+  totalCost: number;
 }
 
 function parseAttributes(attributesJson: string): Record<string, string> {
@@ -31,7 +32,9 @@ function parseAttributes(attributesJson: string): Record<string, string> {
 function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   let promptTokens = 0;
   let completionTokens = 0;
+  let totalCost = 0;
   let ttftMs: number | null = null;
+  let tokensPerSecond: number | null = null;
   let minTimestamp = Infinity;
   let maxEndTimestamp = 0;
 
@@ -51,6 +54,15 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
     promptTokens += prompt;
     completionTokens += completion;
 
+    if (attrs['ai.cost.total']) {
+      totalCost += parseFloat(attrs['ai.cost.total']);
+    }
+
+    // Use pre-calculated TPS from span attribute (first one found)
+    if (attrs['ai.tokens_per_second'] && tokensPerSecond === null) {
+      tokensPerSecond = parseFloat(attrs['ai.tokens_per_second']);
+    }
+
     if (attrs['ai.time_to_first_token_ms'] && ttftMs === null) {
       ttftMs = parseFloat(attrs['ai.time_to_first_token_ms']);
     }
@@ -60,9 +72,6 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   }
 
   const totalDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
-  const durationSeconds = totalDuration / 1_000_000_000;
-  const tokensPerSecond =
-    durationSeconds > 0 && completionTokens > 0 ? completionTokens / durationSeconds : null;
 
   return {
     promptTokens,
@@ -71,6 +80,7 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
     ttftMs,
     totalDuration,
     tokensPerSecond,
+    totalCost,
   };
 }
 
@@ -100,11 +110,21 @@ function formatTokensPerSecond(tokensPerSec: number): string {
   return `${tokensPerSec.toFixed(1)}/s`;
 }
 
+function formatCost(dollars: number): string {
+  if (dollars < 0.01) {
+    return `$${dollars.toFixed(4)}`;
+  }
+  if (dollars < 1) {
+    return `$${dollars.toFixed(3)}`;
+  }
+  return `$${dollars.toFixed(2)}`;
+}
+
 interface SummaryCardProps {
   icon: React.ReactNode;
   label: string;
   value: string;
-  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc';
+  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'green';
 }
 
 function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) {
@@ -114,6 +134,7 @@ function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) 
     emerald: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
     amber: 'from-amber-500/20 to-amber-500/5 border-amber-500/30',
     zinc: 'from-zinc-500/20 to-zinc-500/5 border-zinc-500/30',
+    green: 'from-green-500/20 to-green-500/5 border-green-500/30',
   };
 
   const iconColors = {
@@ -122,6 +143,7 @@ function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) 
     emerald: 'text-emerald-400',
     amber: 'text-amber-400',
     zinc: 'text-zinc-400',
+    green: 'text-green-400',
   };
 
   return (
@@ -185,6 +207,12 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
           summary.tokensPerSecond !== null ? formatTokensPerSecond(summary.tokensPerSecond) : '-'
         }
         accent="blue"
+      />
+      <SummaryCard
+        icon={<DollarSign className="h-4 w-4" />}
+        label="Cost"
+        value={summary.totalCost > 0 ? formatCost(summary.totalCost) : '-'}
+        accent="green"
       />
     </div>
   );
