@@ -387,7 +387,7 @@ describe('buildTraces', () => {
       expect(contentBlockSpan).toBeDefined();
       expect(contentBlockSpan?.Timestamp).toBe(1200 * 1000000);
       expect(contentBlockSpan?.Duration).toBe((1400 - 1200) * 1000000);
-      expect(contentBlockSpan?.SpanAttributes['ai.content.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['ai.message.index']).toBe('0');
       expect(contentBlockSpan?.SpanAttributes['ai.content.type']).toBe('text');
     });
 
@@ -422,7 +422,7 @@ describe('buildTraces', () => {
 
       const contentBlockSpan = traces.find((t) => t.SpanName === 'ai.assistant.tool_use');
       expect(contentBlockSpan).toBeDefined();
-      expect(contentBlockSpan?.SpanAttributes['ai.content.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['ai.message.index']).toBe('0');
       expect(contentBlockSpan?.SpanAttributes['ai.content.type']).toBe('tool_use');
       expect(contentBlockSpan?.SpanAttributes['ai.tool.id']).toBe('toolu_01abc123');
       expect(contentBlockSpan?.SpanAttributes['ai.tool.name']).toBe('get_weather');

@@ -198,12 +198,14 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
 
     // Create content block spans as direct children of root span
     if (allContentBlocks.length > 0) {
+      const inputMessageCount = data.inputMessages?.length ?? 0;
       const contentBlockSpans = buildContentBlockSpans(
         allContentBlocks,
         data,
         rootSpan.SpanId,
         traceId,
         serviceName,
+        inputMessageCount,
       );
       traces.push(...contentBlockSpans);
     }
@@ -224,6 +226,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       },
       SpanAttributes: {
         'ai.response.streaming': 'false',
+        'ai.message.index': String(data.inputMessages?.length ?? 0),
       },
       Duration: (data.timing.responseComplete - data.timing.requestSent) * 1_000_000,
       StatusCode: 'STATUS_CODE_OK',
@@ -350,6 +353,7 @@ function buildContentBlockSpans(
   parentSpanId: string,
   traceId: string,
   serviceName: string,
+  inputMessageCount: number,
 ): TinybirdTrace[] {
   const spans: TinybirdTrace[] = [];
 
@@ -383,9 +387,10 @@ function buildContentBlockSpans(
     }
 
     const attributes: Record<string, string> = {
-      'ai.content.index': String(block.index),
+      // Unified message index: inputMessages come first, then content blocks
+      // Content blocks use: inputMessageCount + (messageIndex * 100) + blockIndex
+      'ai.message.index': String(inputMessageCount + messageIndex * 100 + block.index),
       'ai.content.type': block.type,
-      'ai.content.message_index': String(messageIndex),
     };
 
     if (block.type === 'tool_use') {
