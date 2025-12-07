@@ -70,7 +70,7 @@ const FLUSH_CODE = `export default {
   },
 };`;
 
-const LINK_PROXY_CODE = `import { trace, context } from "@opentelemetry/api";
+const LINK_PROXY_CODE = `import { trace, context, propagation } from "@opentelemetry/api";
 import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 
@@ -86,21 +86,23 @@ async function handleUserRequest(userMessage: string) {
   const parentSpan = tracer.startSpan("handle-user-request");
 
   return context.with(trace.setSpan(context.active(), parentSpan), async () => {
-    // Get span context to link LLM proxy requests
-    const ctx = parentSpan.spanContext();
-
     // Track events before LLM call
     parentSpan.addEvent("message.received", {
       "message.length": userMessage.length,
     });
+
+    // Inject W3C trace context headers automatically
+    const traceHeaders: Record<string, string> = {};
+    propagation.inject(context.active(), traceHeaders);
+    // traceHeaders now contains { traceparent: "00-...", tracestate: "..." }
 
     // LLM call becomes part of this trace
     const result = await generateText({
       model: openai("gpt-4o"),
       prompt: userMessage,
       headers: {
-        "X-Trace-Flow-Trace-Id": ctx.traceId,      // 32 hex chars
-        "X-Trace-Flow-Parent-Span-Id": ctx.spanId, // 16 hex chars
+        ...traceHeaders,  // W3C traceparent & tracestate
+        baggage: "session_id=abc123,user_id=user-456",  // optional context
       },
     });
 
@@ -254,8 +256,8 @@ const ENDPOINT_EXAMPLE = `curl -X POST https://gateway.trace-flow.dev/v1/traces 
         <h2 class="text-xl font-semibold tracking-tight text-foreground">Link LLM Proxy Requests</h2>
       </div>
       <p class="mb-4 text-muted-foreground">
-        Connect LLM proxy requests to your traces by passing trace context headers.
-        This creates a unified view where custom spans and LLM requests appear together.
+        Connect LLM proxy requests to your traces using W3C Trace Context headers.
+        The OTEL SDK injects these automatically via <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground">propagation.inject()</code>.
       </p>
       <div class="mb-6 overflow-hidden rounded-lg border border-border/50">
         <table class="w-full text-sm">
@@ -268,14 +270,19 @@ const ENDPOINT_EXAMPLE = `curl -X POST https://gateway.trace-flow.dev/v1/traces 
           </thead>
           <tbody class="divide-y divide-border/50">
             <tr>
-              <td class="px-4 py-2 font-mono text-foreground">X-Trace-Flow-Trace-Id</td>
-              <td class="px-4 py-2 font-mono text-muted-foreground">32 hex chars</td>
-              <td class="px-4 py-2 text-muted-foreground">Join proxy request to existing trace</td>
+              <td class="px-4 py-2 font-mono text-foreground">traceparent</td>
+              <td class="px-4 py-2 font-mono text-muted-foreground">00-{traceId}-{spanId}-{flags}</td>
+              <td class="px-4 py-2 text-muted-foreground">W3C trace context with parent span ID</td>
             </tr>
             <tr class="bg-card/30">
-              <td class="px-4 py-2 font-mono text-foreground">X-Trace-Flow-Parent-Span-Id</td>
-              <td class="px-4 py-2 font-mono text-muted-foreground">16 hex chars</td>
-              <td class="px-4 py-2 text-muted-foreground">Set parent span for hierarchy</td>
+              <td class="px-4 py-2 font-mono text-foreground">tracestate</td>
+              <td class="px-4 py-2 font-mono text-muted-foreground">vendor=value,...</td>
+              <td class="px-4 py-2 text-muted-foreground">Vendor-specific trace context (optional)</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2 font-mono text-foreground">baggage</td>
+              <td class="px-4 py-2 font-mono text-muted-foreground">key=value,...</td>
+              <td class="px-4 py-2 text-muted-foreground">Custom context propagated as span attributes</td>
             </tr>
           </tbody>
         </table>
@@ -354,25 +361,24 @@ const ENDPOINT_EXAMPLE = `curl -X POST https://gateway.trace-flow.dev/v1/traces 
         <li class="flex items-start gap-3">
           <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
           <span>
+            <strong>W3C Trace Context compliant</strong> — uses standard
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">traceparent</code> and
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">baggage</code> headers
+          </span>
+        </li>
+        <li class="flex items-start gap-3">
+          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
+          <span>
             <strong>Parent spans work automatically</strong> — OTEL SDK's
-            <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">context.with()</code>
-            links child spans
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">propagation.inject()</code>
+            adds trace context headers
           </span>
         </li>
         <li class="flex items-start gap-3">
           <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
           <span>
-            <strong>Events are supported</strong> —
-            <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">span.addEvent()</code>
-            for tracking user actions and milestones
-          </span>
-        </li>
-        <li class="flex items-start gap-3">
-          <div class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"></div>
-          <span>
-            <strong>Attributes work</strong> —
-            <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">span.setAttribute()</code>
-            for custom metadata
+            <strong>Baggage propagates context</strong> — custom key-value pairs appear as
+            <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">baggage.*</code> span attributes
           </span>
         </li>
         <li class="flex items-start gap-3">

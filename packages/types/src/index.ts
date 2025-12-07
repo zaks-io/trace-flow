@@ -143,6 +143,9 @@ export interface QueueMessage {
   truncated?: boolean;
   traceId?: string;
   parentSpanId?: string;
+  traceFlags?: number;
+  traceState?: string;
+  baggage?: Record<string, string>;
   sseStreamData?: SSEStreamData;
   responseMetadata?: Partial<LLMResponseMetadata>;
   receivedAt: number;

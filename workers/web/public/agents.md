@@ -44,29 +44,37 @@ const result = await generateText({
 
 ### 4. Link to OpenTelemetry Traces (Recommended)
 
-Connect LLM calls to existing traces for full observability:
+Connect LLM calls to existing traces using W3C Trace Context headers:
 
 ```typescript
-const parentSpan = tracer.startSpan('user-request');
-const ctx = parentSpan.spanContext();
+import { context, propagation } from '@opentelemetry/api';
 
-const result = await generateText({
-  model: openai('gpt-4o'),
-  prompt: userMessage,
-  headers: {
-    'X-Trace-Flow-Trace-Id': ctx.traceId,
-    'X-Trace-Flow-Parent-Span-Id': ctx.spanId,
-  },
+const parentSpan = tracer.startSpan('user-request');
+
+const result = await context.with(trace.setSpan(context.active(), parentSpan), async () => {
+  // Inject W3C trace context headers automatically
+  const traceHeaders: Record<string, string> = {};
+  propagation.inject(context.active(), traceHeaders);
+
+  return generateText({
+    model: openai('gpt-4o'),
+    prompt: userMessage,
+    headers: {
+      ...traceHeaders, // Contains traceparent and tracestate
+      baggage: 'session_id=abc123', // Optional: custom context
+    },
+  });
 });
 ```
 
 ## Headers Reference
 
-| Header                      | Required | Format       | Purpose                |
-| --------------------------- | -------- | ------------ | ---------------------- |
-| X-Trace-Flow-Api-Key        | Yes      | string       | Authentication         |
-| X-Trace-Flow-Trace-Id       | No       | 32 hex chars | Link to existing trace |
-| X-Trace-Flow-Parent-Span-Id | No       | 16 hex chars | Set parent span        |
+| Header               | Required | Format                        | Purpose                            |
+| -------------------- | -------- | ----------------------------- | ---------------------------------- |
+| X-Trace-Flow-Api-Key | Yes      | string                        | Authentication                     |
+| traceparent          | No       | 00-{traceId}-{spanId}-{flags} | W3C trace context with parent span |
+| tracestate           | No       | vendor=value,...              | Vendor-specific trace context      |
+| baggage              | No       | key=value,...                 | Custom context as span attributes  |
 
 ## Proxy Routes
 
