@@ -26,26 +26,36 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   const traceId = data.traceId ?? data.requestId;
   const serviceName = 'llm-observability';
 
+  // Build span attributes starting with base AI attributes
+  const spanAttributes: Record<string, string> = {
+    'ai.request_id': data.requestId,
+    'ai.provider': data.request.provider,
+    'ai.model': data.request.model,
+    'ai.target_url': data.targetUrl,
+    'http.status_code': String(data.response.status),
+  };
+
+  // Add W3C baggage entries as span attributes with baggage. prefix
+  if (data.baggage) {
+    for (const [key, value] of Object.entries(data.baggage)) {
+      spanAttributes[`baggage.${key}`] = value;
+    }
+  }
+
   const rootSpan: TinybirdTrace = {
     ReceivedAt: data.receivedAt,
     Timestamp: data.timing.requestStart * 1_000_000,
     TraceId: traceId,
     SpanId: generateSpanId(),
     ParentSpanId: data.parentSpanId ?? '',
-    TraceState: '',
+    TraceState: data.traceState ?? '',
     SpanName: 'ai.request',
     SpanKind: 'SPAN_KIND_CLIENT',
     ServiceName: serviceName,
     ResourceAttributes: {
       'service.name': serviceName,
     },
-    SpanAttributes: {
-      'ai.request_id': data.requestId,
-      'ai.provider': data.request.provider,
-      'ai.model': data.request.model,
-      'ai.target_url': data.targetUrl,
-      'http.status_code': String(data.response.status),
-    },
+    SpanAttributes: spanAttributes,
     Duration: (data.timing.responseComplete - data.timing.requestStart) * 1_000_000,
     StatusCode: data.error ? 'STATUS_CODE_ERROR' : 'STATUS_CODE_OK',
     StatusMessage: data.error?.message ?? '',
