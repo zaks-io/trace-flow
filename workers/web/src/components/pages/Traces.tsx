@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { DataTable } from '@/components/requests-table';
@@ -27,6 +28,7 @@ export default function Traces() {
   const prevLiveModeRef = useRef(false);
   const lastProcessedDataRef = useRef<SpanGroupRow[] | null>(null);
 
+  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const { visibility, setVisibility } = useColumnVisibility(
     defaultSpanGroupColumnVisibility,
     'trace-flow-traces-columns',
@@ -75,6 +77,7 @@ export default function Traces() {
     sql: sqlQuery,
     scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
     pollInterval: isLiveMode ? 3000 : undefined,
+    apiKeys: userApiKeys,
   });
 
   const handleRowClick = useCallback(
@@ -95,7 +98,7 @@ export default function Traces() {
       const newestReceivedAt = groups[0]!.LatestReceivedAt;
       latestReceivedAtRef.current = newestReceivedAt;
       setLatestReceivedAt(newestReceivedAt);
-      lastProcessedDataRef.current = groups; // Mark this data as processed
+      lastProcessedDataRef.current = groups;
       setInitialLoadComplete(true);
     }
   }, [data, initialLoadComplete]);
@@ -121,7 +124,6 @@ export default function Traces() {
       return;
     }
 
-    // Skip if this is the same data we already processed (prevents double-counting on initial load)
     if (lastProcessedDataRef.current === data.data) {
       return;
     }
@@ -193,7 +195,7 @@ export default function Traces() {
 
   const getRowId = useCallback((row: SpanGroupRow): string => row.TraceId as string, []);
 
-  if (loading && !initialLoadComplete) {
+  if ((loading || keysLoading) && !initialLoadComplete) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

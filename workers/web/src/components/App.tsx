@@ -5,8 +5,10 @@ import { ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithAuth0 } from 'convex/react-auth0';
 import { AppLayout } from './AppLayout';
 import { routes } from './routes';
+import { useInitializeUser } from '../hooks/useInitializeUser';
 
 function AppRoutes() {
+  useInitializeUser();
   const element = useRoutes(routes);
   return <AppLayout>{element}</AppLayout>;
 }

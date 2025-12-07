@@ -22,6 +22,48 @@ interface UseTinybirdQueryOptions {
   ttl?: number;
   enabled?: boolean;
   pollInterval?: number;
+  apiKeys?: string[];
+}
+
+function buildApiKeyFilter(apiKeys: string[]): string {
+  if (apiKeys.length === 0) return '';
+  const escaped = apiKeys.map((k) => `'${k.replace(/'/g, "''")}'`).join(', ');
+  return `ApiKey IN (${escaped})`;
+}
+
+function injectApiKeyFilter(sql: string, apiKeys: string[] | undefined): string {
+  if (!apiKeys || apiKeys.length === 0) return sql;
+
+  const filter = buildApiKeyFilter(apiKeys);
+  const upperSql = sql.toUpperCase();
+
+  const whereIndex = upperSql.indexOf('WHERE');
+  const fromIndex = upperSql.indexOf('FROM');
+  const orderByIndex = upperSql.indexOf('ORDER BY');
+  const groupByIndex = upperSql.indexOf('GROUP BY');
+  const limitIndex = upperSql.indexOf('LIMIT');
+  const formatIndex = upperSql.indexOf('FORMAT');
+
+  if (whereIndex !== -1) {
+    const insertPos = whereIndex + 6;
+    return `${sql.slice(0, insertPos)}${filter} AND ${sql.slice(insertPos)}`;
+  }
+
+  let insertPos = sql.length;
+  if (formatIndex !== -1) insertPos = Math.min(insertPos, formatIndex);
+  if (limitIndex !== -1) insertPos = Math.min(insertPos, limitIndex);
+  if (orderByIndex !== -1) insertPos = Math.min(insertPos, orderByIndex);
+  if (groupByIndex !== -1) insertPos = Math.min(insertPos, groupByIndex);
+
+  if (insertPos === sql.length && fromIndex !== -1) {
+    const afterFrom = sql.slice(fromIndex + 4);
+    const tableMatch = /^\s+\S+/.exec(afterFrom);
+    if (tableMatch) {
+      insertPos = fromIndex + 4 + tableMatch[0].length;
+    }
+  }
+
+  return `${sql.slice(0, insertPos)} WHERE ${filter}${sql.slice(insertPos)}`;
 }
 
 interface TinybirdQueryResult<T = unknown> {
@@ -34,14 +76,19 @@ interface TinybirdQueryResult<T = unknown> {
 export function useTinybirdQuery<T = unknown>(
   options: UseTinybirdQueryOptions,
 ): TinybirdQueryResult<T> {
+  // Only run query when we have API keys to filter by
+  const apiKeysLoading = options.apiKeys === undefined;
+  const hasApiKeys = Array.isArray(options.apiKeys) && options.apiKeys.length > 0;
+  const noApiKeys = !apiKeysLoading && !hasApiKeys;
+
   const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!noApiKeys);
   const [error, setError] = useState<Error | null>(null);
   const [jwt, setJwt] = useState<string | null>(null);
   const hasFetchedRef = useRef(false);
 
   const generateToken = useAction(api.tinybird.generateToken);
-  const enabled = options.enabled ?? true;
+  const enabled = (options.enabled ?? true) && hasApiKeys;
 
   const fetchToken = useCallback(async () => {
     const result = await generateToken({
@@ -57,7 +104,8 @@ export function useTinybirdQuery<T = unknown>(
       const apiUrl = import.meta.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
       const url = new URL(`${apiUrl}/v0/sql`);
 
-      url.searchParams.set('q', options.sql);
+      const filteredSql = injectApiKeyFilter(options.sql, options.apiKeys);
+      url.searchParams.set('q', filteredSql);
 
       if (options.params) {
         Object.entries(options.params).forEach(([key, value]) => {
@@ -84,7 +132,7 @@ export function useTinybirdQuery<T = unknown>(
 
       return response.json();
     },
-    [options.sql, options.params],
+    [options.sql, options.params, options.apiKeys],
   );
 
   const refetch = useCallback(async () => {
@@ -128,6 +176,13 @@ export function useTinybirdQuery<T = unknown>(
       void refetch();
     }
   }, [enabled, refetch]);
+
+  // When API keys load as empty, set loading to false immediately
+  useEffect(() => {
+    if (noApiKeys) {
+      setLoading(false);
+    }
+  }, [noApiKeys]);
 
   // Set up polling when pollInterval is provided
   // Stop polling if there's an error
