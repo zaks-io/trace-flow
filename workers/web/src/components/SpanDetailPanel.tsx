@@ -38,6 +38,7 @@ interface TraceSpan {
 
 interface SpanDetailPanelProps {
   span: TraceSpan | null;
+  rootSpan: TraceSpan | null;
   isRootSpan: boolean;
   isOpen: boolean;
   onClose: () => void;
@@ -71,6 +72,251 @@ function formatNumber(num: number): string {
   return new Intl.NumberFormat().format(num);
 }
 
+/**
+ * Formats message content for display. Handles various message content formats:
+ * - Simple strings
+ * - Arrays of content blocks (multimodal: text, images, tool_use, tool_result)
+ * - Objects with nested content
+ */
+function formatMessageForDisplay(content: unknown): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    // Handle array of content blocks (e.g., Anthropic multimodal format)
+    return content
+      .map((block) => {
+        if (typeof block === 'string') return block;
+        if (typeof block !== 'object' || block === null) return JSON.stringify(block);
+
+        const typedBlock = block as { type?: string; text?: string; [key: string]: unknown };
+        if (typedBlock.type === 'text' && typeof typedBlock.text === 'string') {
+          return typedBlock.text;
+        }
+        if (typedBlock.type === 'image' || typedBlock.type === 'image_url') {
+          return '[Image]';
+        }
+        if (typedBlock.type === 'tool_use') {
+          return `[Tool Call: ${(typedBlock as { name?: string }).name ?? 'unknown'}]`;
+        }
+        if (typedBlock.type === 'tool_result') {
+          const result = (typedBlock as { content?: unknown }).content;
+          if (typeof result === 'string') return result;
+          return JSON.stringify(result, null, 2);
+        }
+        return JSON.stringify(block, null, 2);
+      })
+      .join('\n\n');
+  }
+
+  // For objects or other types, stringify
+  return JSON.stringify(content, null, 2);
+}
+
+/**
+ * Extracts a message from the request body using provider-aware logic.
+ * - Anthropic: system prompt is in separate `system` field, messages array starts after that
+ * - OpenAI/Groq/OpenRouter: all messages in `messages[]` array with direct index mapping
+ */
+function extractMessageFromBody(
+  body: object,
+  messageIndex: number,
+  provider: string,
+): { formatted: string; raw: object } | null {
+  // Anthropic: system is separate, messages array starts at index 1 (if system exists)
+  if (provider === 'anthropic') {
+    const anthropicBody = body as {
+      system?: string | { type: string; text?: string }[];
+      messages?: { role: string; content: unknown }[];
+    };
+
+    if (messageIndex === 0 && anthropicBody.system) {
+      // Index 0 = system prompt (separate field in Anthropic)
+      const systemContent =
+        typeof anthropicBody.system === 'string'
+          ? anthropicBody.system
+          : anthropicBody.system.map((b) => b.text ?? '').join('\n');
+      return {
+        formatted: systemContent,
+        raw: { role: 'system', content: anthropicBody.system },
+      };
+    }
+
+    // For non-zero indices, offset by 1 if system exists
+    const offset = anthropicBody.system ? 1 : 0;
+    const messages = anthropicBody.messages ?? [];
+    const actualIndex = messageIndex - offset;
+
+    if (actualIndex < 0 || actualIndex >= messages.length) {
+      return null;
+    }
+    const msg = messages[actualIndex];
+    return {
+      formatted: formatMessageForDisplay(msg.content),
+      raw: msg,
+    };
+  }
+
+  // OpenAI/Groq/OpenRouter: direct index mapping
+  const openaiBody = body as {
+    messages?: { role: string; content: unknown }[];
+  };
+  const messages = openaiBody.messages ?? [];
+
+  if (messageIndex >= messages.length) {
+    return null;
+  }
+  const msg = messages[messageIndex];
+  return {
+    formatted: formatMessageForDisplay(msg.content),
+    raw: msg,
+  };
+}
+
+/**
+ * Extracts content from response body for output spans (assistant text, thinking, tool_use).
+ * Handles both JSON (non-streaming) and SSE (streaming) responses.
+ */
+function extractOutputContent(
+  body: FormattedBody,
+  contentType: string,
+  spanName: string,
+): { formatted: string; raw: object } | null {
+  // Parse the occurrence number from span name (e.g., "ai.assistant.text.2" → 2)
+  const match = /\.(\d+)$/.exec(spanName);
+  const occurrenceNum = match ? parseInt(match[1], 10) : 1;
+
+  let contentBlocks: {
+    type: string;
+    text?: string;
+    thinking?: string;
+    name?: string;
+    input?: unknown;
+  }[] = [];
+
+  if (body.format === 'sse') {
+    // For SSE responses, parse Anthropic content blocks from events
+    const events = body.content as ParsedSSEEvent[];
+    const blocks = new Map<number, { type: string; text: string; name?: string; input?: string }>();
+
+    for (const event of events) {
+      if (!event.data || event.data === '[DONE]') continue;
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(event.data) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+
+      // Handle content_block_start - defines block type
+      if (parsed.type === 'content_block_start') {
+        const contentBlock = parsed.content_block as { type?: string; name?: string } | undefined;
+        const index = parsed.index as number;
+        if (contentBlock?.type !== undefined && index !== undefined) {
+          blocks.set(index, {
+            type: contentBlock.type,
+            text: '',
+            name: contentBlock.name,
+          });
+        }
+      }
+
+      // Handle content_block_delta - accumulate content
+      if (parsed.type === 'content_block_delta') {
+        const index = parsed.index as number;
+        const delta = parsed.delta as
+          | { type?: string; text?: string; thinking?: string; partial_json?: string }
+          | undefined;
+        if (delta && index !== undefined && blocks.has(index)) {
+          const block = blocks.get(index)!;
+          if (delta.text) block.text += delta.text;
+          if (delta.thinking) block.text += delta.thinking;
+          if (delta.partial_json) block.input = (block.input ?? '') + delta.partial_json;
+        }
+      }
+
+      // Handle OpenAI format: choices[].delta.content
+      const choices = parsed.choices as { delta?: { content?: string } }[] | undefined;
+      if (choices?.[0]?.delta?.content) {
+        if (!blocks.has(0)) {
+          blocks.set(0, { type: 'text', text: '' });
+        }
+        blocks.get(0)!.text += choices[0].delta.content;
+      }
+    }
+
+    // Convert map to array
+    contentBlocks = Array.from(blocks.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([, block]) => {
+        const result: (typeof contentBlocks)[0] = { type: block.type };
+        if (block.type === 'text') result.text = block.text;
+        if (block.type === 'thinking') result.thinking = block.text;
+        if (block.name) result.name = block.name;
+        if (block.input) {
+          try {
+            result.input = JSON.parse(block.input);
+          } catch {
+            result.input = block.input;
+          }
+        }
+        return result;
+      });
+  } else if (body.format === 'json') {
+    // For JSON responses, extract content directly
+    const jsonBody = body.content as {
+      content?: unknown[];
+      choices?: { message?: { content?: unknown } }[];
+    };
+
+    // Try Anthropic format first
+    if (jsonBody.content && Array.isArray(jsonBody.content)) {
+      contentBlocks = jsonBody.content as typeof contentBlocks;
+    } else {
+      // Try OpenAI format
+      const openaiContent = jsonBody.choices?.[0]?.message?.content;
+      if (typeof openaiContent === 'string') {
+        return {
+          formatted: openaiContent,
+          raw: { type: 'text', text: openaiContent },
+        };
+      }
+    }
+  }
+
+  if (contentBlocks.length === 0) {
+    return null;
+  }
+
+  // Find blocks of the matching type
+  const matchingBlocks = contentBlocks.filter((block) => block.type === contentType);
+
+  if (occurrenceNum > matchingBlocks.length) {
+    return null;
+  }
+
+  const block = matchingBlocks[occurrenceNum - 1];
+  if (!block) {
+    return null;
+  }
+
+  // Format the content based on type
+  let formatted: string;
+  if (block.type === 'text') {
+    formatted = block.text ?? '';
+  } else if (block.type === 'thinking') {
+    formatted = block.thinking ?? '';
+  } else if (block.type === 'tool_use') {
+    formatted = `Tool: ${block.name ?? 'unknown'}\n${JSON.stringify(block.input ?? {}, null, 2)}`;
+  } else {
+    formatted = JSON.stringify(block, null, 2);
+  }
+
+  return { formatted, raw: block };
+}
+
 interface AttributeCardProps {
   icon: React.ReactNode;
   label: string;
@@ -97,7 +343,13 @@ function AttributeCard({ icon, label, value, mono = false }: AttributeCardProps)
   );
 }
 
-export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetailPanelProps) {
+export function SpanDetailPanel({
+  span,
+  rootSpan,
+  isRootSpan,
+  isOpen,
+  onClose,
+}: SpanDetailPanelProps) {
   const { getAccessTokenSilently } = useAuth0();
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
@@ -108,36 +360,43 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
   const [isEventsOpen, setIsEventsOpen] = useState(true);
   const [isAttributesOpen, setIsAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
+  const [messageContent, setMessageContent] = useState<{
+    formatted: string;
+    raw: object;
+  } | null>(null);
+  const [messageContentLoading, setMessageContentLoading] = useState(false);
+  const [messageTab, setMessageTab] = useState<'formatted' | 'raw'>('formatted');
+  const [isMessageOpen, setIsMessageOpen] = useState(true);
 
   const spanAttributes = span ? parseAttributes(span.SpanAttributes) : {};
   const resourceAttributes = span ? parseAttributes(span.ResourceAttributes) : {};
   const allAttributes = { ...spanAttributes, ...resourceAttributes };
 
-  const provider = allAttributes['llm.provider'] ?? allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['llm.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
+  const provider = allAttributes['ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
+  const model = allAttributes['ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
   const promptTokens =
-    parseInt(allAttributes['llm.tokens.prompt'] ?? '0', 10) ||
-    parseInt(allAttributes['llm.tokens.input'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.prompt'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.input'] ?? '0', 10) ||
     parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
   const completionTokens =
-    parseInt(allAttributes['llm.tokens.completion'] ?? '0', 10) ||
-    parseInt(allAttributes['llm.tokens.output'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.completion'] ?? '0', 10) ||
+    parseInt(allAttributes['ai.tokens.output'] ?? '0', 10) ||
     parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
-  const ttftMs = allAttributes['llm.time_to_first_token_ms']
-    ? parseFloat(allAttributes['llm.time_to_first_token_ms'])
+  const ttftMs = allAttributes['ai.time_to_first_token_ms']
+    ? parseFloat(allAttributes['ai.time_to_first_token_ms'])
     : null;
 
   const displayedKeys = new Set([
-    'llm.provider',
+    'ai.provider',
     'gen_ai.system',
-    'llm.model',
+    'ai.model',
     'gen_ai.request.model',
-    'llm.tokens.prompt',
-    'llm.tokens.input',
-    'llm.tokens.completion',
-    'llm.tokens.output',
-    'llm.tokens.total',
-    'llm.time_to_first_token_ms',
+    'ai.tokens.prompt',
+    'ai.tokens.input',
+    'ai.tokens.completion',
+    'ai.tokens.output',
+    'ai.tokens.total',
+    'ai.time_to_first_token_ms',
     'gen_ai.usage.input_tokens',
     'gen_ai.usage.output_tokens',
     'service.name',
@@ -151,7 +410,7 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
 
     // Extract requestId from span attributes - bodies are stored by requestId not traceId
     const attrs = parseAttributes(span.SpanAttributes);
-    const requestId = attrs['llm.request_id'];
+    const requestId = attrs['ai.request_id'];
     if (!requestId) {
       // No requestId means body not available (e.g., OTLP traces from external systems)
       return;
@@ -192,6 +451,109 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
 
     void fetchBodies();
   }, [isRootSpan, span, getAccessTokenSilently]);
+
+  // Check if this is an input message span (from request)
+  // Matches: ai.request.system, ai.request.user, ai.request.assistant, ai.request.tool_result
+  const isInputMessageSpan =
+    span?.SpanName.match(/^ai\.request\.(system|user|assistant|tool_result)/i) !== null;
+
+  // Check if this is an output span (from response)
+  // Matches: ai.response.text, ai.response.thinking, ai.response.tool_use (with optional numeric suffix)
+  const isOutputSpan = span?.SpanName.match(/^ai\.response\.(text|thinking|tool_use)/i) !== null;
+
+  const messageIndex = spanAttributes['ai.message.index']
+    ? parseInt(spanAttributes['ai.message.index'], 10)
+    : null;
+
+  // Get content type from attribute, or infer from span name
+  const contentType = (() => {
+    const attrType = spanAttributes['ai.content.type'];
+    if (attrType) return attrType;
+    // Infer from span name (e.g., "ai.response.text.2" → "text")
+    const spanMatch = span?.SpanName.match(/^ai\.response\.(text|thinking|tool_use)/i);
+    return spanMatch?.[1]?.toLowerCase() ?? '';
+  })();
+
+  // Fetch message content for non-root spans (both input and output)
+  useEffect(() => {
+    const isContentSpan = isInputMessageSpan || isOutputSpan;
+    // For input spans, we need messageIndex. For output spans, we use occurrence from span name.
+    if (isRootSpan || !isContentSpan || !span || !rootSpan) {
+      setMessageContent(null);
+      return;
+    }
+    if (isInputMessageSpan && messageIndex === null) {
+      setMessageContent(null);
+      return;
+    }
+
+    // Get requestId from the span's own attributes (each span has its own request_id)
+    // Get provider from root span (only stored there)
+    const requestId = spanAttributes['ai.request_id'];
+    const rootAttrs = parseAttributes(rootSpan.SpanAttributes);
+    const provider = rootAttrs['ai.provider'] ?? rootAttrs['gen_ai.system'] ?? '';
+    if (!requestId) {
+      return;
+    }
+
+    const fetchMessageContent = async () => {
+      setMessageContentLoading(true);
+      try {
+        const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
+        const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+
+        // For output spans, fetch response body; for input spans, fetch request body
+        const bodyType = isOutputSpan ? 'response' : 'request';
+        const res = await fetch(`${apiUrl}/bodies/${requestId}/${bodyType}`, {
+          headers: { Authorization: `Bearer ${id_token}` },
+        });
+
+        if (!res.ok) {
+          setMessageContent(null);
+          return;
+        }
+
+        const text = await res.text();
+        const body = formatBodyForDisplay(text);
+
+        if (!body) {
+          setMessageContent(null);
+          return;
+        }
+
+        let extracted: { formatted: string; raw: object } | null = null;
+
+        if (isOutputSpan) {
+          // Extract content from response body
+          extracted = extractOutputContent(body, contentType, span.SpanName);
+        } else if (messageIndex !== null) {
+          // Extract message from request body (provider-aware)
+          if (body.format !== 'json') {
+            setMessageContent(null);
+            return;
+          }
+          extracted = extractMessageFromBody(body.content as object, messageIndex, provider);
+        }
+
+        setMessageContent(extracted);
+      } catch {
+        setMessageContent(null);
+      } finally {
+        setMessageContentLoading(false);
+      }
+    };
+
+    void fetchMessageContent();
+  }, [
+    isRootSpan,
+    isInputMessageSpan,
+    isOutputSpan,
+    span,
+    rootSpan,
+    messageIndex,
+    contentType,
+    getAccessTokenSilently,
+  ]);
 
   const renderBodyContent = (formattedBody: FormattedBody | null, isResponse = false) => {
     if (!formattedBody) {
@@ -358,6 +720,75 @@ export function SpanDetailPanel({ span, isRootSpan, isOpen, onClose }: SpanDetai
                     )}
                   </div>
                 </div>
+              )}
+
+              {((isInputMessageSpan && messageIndex !== null) || isOutputSpan) && !isRootSpan && (
+                <Collapsible open={isMessageOpen} onOpenChange={setIsMessageOpen}>
+                  <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
+                    <ChevronDown
+                      className={`h-4 w-4 text-muted-foreground transition-transform ${isMessageOpen ? 'rotate-0' : '-rotate-90'}`}
+                    />
+                    <span className="text-sm font-medium text-foreground">
+                      {isOutputSpan ? 'Output Content' : 'Message Content'}
+                    </span>
+                    {messageIndex !== null && (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        #{messageIndex}
+                      </span>
+                    )}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="mt-2">
+                      {messageContentLoading ? (
+                        <div className="flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 py-6">
+                          <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+                        </div>
+                      ) : messageContent ? (
+                        <div className="space-y-2">
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => setMessageTab('formatted')}
+                              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                                messageTab === 'formatted'
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                              }`}
+                            >
+                              Formatted
+                            </button>
+                            <button
+                              onClick={() => setMessageTab('raw')}
+                              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                                messageTab === 'raw'
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                              }`}
+                            >
+                              Raw JSON
+                            </button>
+                          </div>
+                          {messageTab === 'formatted' ? (
+                            <pre className="max-h-[300px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border/30 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-300">
+                              {messageContent.formatted}
+                            </pre>
+                          ) : (
+                            <pre className="max-h-[300px] overflow-auto rounded-lg border border-border/30 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-300">
+                              {JSON.stringify(messageContent.raw, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-border/50 bg-muted/10 p-4 text-center">
+                          <p className="text-sm text-muted-foreground">Content not available</p>
+                          <p className="mt-1 text-xs text-muted-foreground/70">
+                            This may occur in multi-turn conversations where this message belongs to
+                            a different request cycle.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
 
               {isRootSpan && (

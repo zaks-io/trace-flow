@@ -181,23 +181,21 @@ The system works as follows:
 
 Each queue message creates multiple spans in ClickHouse:
 
-- **`llm.request`** - Root span for the entire LLM request
-  - `llm.request_id` - Unique request identifier
-  - `llm.provider` - LLM provider (openai, anthropic, etc.)
-  - `llm.model` - Model name
-  - `llm.target_url` - Original target URL
+- **`ai.request`** - Root span for the entire LLM request
+  - `ai.request_id` - Unique request identifier
+  - `ai.provider` - LLM provider (openai, anthropic, etc.)
+  - `ai.model` - Model name
+  - `ai.target_url` - Original target URL
   - `http.status_code` - HTTP response status
-  - `llm.tokens.prompt` - Prompt token count
-  - `llm.tokens.completion` - Completion token count
-  - `llm.tokens.total` - Total token count
-  - `llm.cached` - Whether response was cached
+  - `ai.tokens.prompt` - Prompt token count
+  - `ai.tokens.completion` - Completion token count
+  - `ai.tokens.total` - Total token count
+  - `ai.cached` - Whether response was cached
 
-- **`llm.request.send`** - Time spent sending request to LLM provider
+- **`ai.request.ttft`** - Time to first token (if streaming)
+  - `ai.time_to_first_token_ms` - TTFT in milliseconds
 
-- **`llm.request.ttft`** - Time to first token (if streaming)
-  - `llm.time_to_first_token_ms` - TTFT in milliseconds
-
-- **`llm.response.streaming`** - Time spent streaming response (if streaming)
+- **`ai.assistant.*`** - Content block spans (text, thinking, tool_use)
 
 All spans use the same `TraceId` for correlation and form a parent-child relationship.
 
@@ -208,12 +206,12 @@ All spans use the same `TraceId` for correlation and form a parent-child relatio
 ```sql
 SELECT
     Timestamp,
-    SpanAttributes['llm.provider'] as Provider,
-    SpanAttributes['llm.model'] as Model,
+    SpanAttributes['ai.provider'] as Provider,
+    SpanAttributes['ai.model'] as Model,
     Duration / 1000000 as DurationMs,
-    SpanAttributes['llm.tokens.total'] as TotalTokens
+    SpanAttributes['ai.tokens.total'] as TotalTokens
 FROM otel_traces
-WHERE SpanName = 'llm.request'
+WHERE SpanName = 'ai.request'
 ORDER BY Timestamp DESC
 LIMIT 10;
 ```
@@ -222,11 +220,11 @@ LIMIT 10;
 
 ```sql
 SELECT
-    SpanAttributes['llm.provider'] as Provider,
+    SpanAttributes['ai.provider'] as Provider,
     avg(Duration / 1000000) as AvgLatencyMs,
     count() as RequestCount
 FROM otel_traces
-WHERE SpanName = 'llm.request'
+WHERE SpanName = 'ai.request'
   AND Timestamp > now() - INTERVAL 1 HOUR
 GROUP BY Provider;
 ```
@@ -237,11 +235,11 @@ GROUP BY Provider;
 SELECT
     Timestamp,
     TraceId,
-    SpanAttributes['llm.provider'] as Provider,
-    SpanAttributes['llm.model'] as Model,
+    SpanAttributes['ai.provider'] as Provider,
+    SpanAttributes['ai.model'] as Model,
     Duration / 1000000 as DurationMs
 FROM otel_traces
-WHERE SpanName = 'llm.request'
+WHERE SpanName = 'ai.request'
   AND Duration > 5000000000
 ORDER BY Duration DESC
 LIMIT 10;

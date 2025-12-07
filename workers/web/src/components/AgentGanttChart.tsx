@@ -1,5 +1,16 @@
 import { useMemo } from 'react';
-import { Bot, Zap, MessageSquare, Wrench, Activity } from 'lucide-react';
+import {
+  Bot,
+  Activity,
+  Settings2,
+  User,
+  MessageCircle,
+  ArrowLeftRight,
+  FileText,
+  Brain,
+  Send,
+  Play,
+} from 'lucide-react';
 
 interface TraceSpan {
   Timestamp: number;
@@ -20,7 +31,17 @@ interface AgentGanttChartProps {
   parentSpanId?: string;
 }
 
-type SpanType = 'llm' | 'ttft' | 'message' | 'tool' | 'internal';
+type SpanType =
+  | 'llm' // AI request (infrastructure - muted)
+  | 'system' // System message (input)
+  | 'user' // User message (input)
+  | 'assistant_input' // Prior assistant message (input)
+  | 'tool_result' // Tool result (input)
+  | 'assistant_text' // Assistant text output
+  | 'assistant_thinking' // Thinking/reasoning output
+  | 'assistant_tool_use' // Tool use request (output)
+  | 'tool_execution' // Cross-request tool execution
+  | 'internal'; // Fallback
 
 interface SpanRow {
   span: TraceSpan;
@@ -29,6 +50,8 @@ interface SpanRow {
   width: number;
   type: SpanType;
   tokens: number | null;
+  tokensPerSecond: number | null;
+  messageIndex: number | null;
 }
 
 function parseAttributes(attributesJson: string): Record<string, string> {
@@ -42,10 +65,25 @@ function parseAttributes(attributesJson: string): Record<string, string> {
 function getSpanType(span: TraceSpan): SpanType {
   const name = span.SpanName.toLowerCase();
 
-  if (name === 'llm.request' || name.includes('chat/completions')) return 'llm';
-  if (name === 'llm.request.ttft' || name.includes('ttft')) return 'ttft';
-  if (name.startsWith('llm.stream.message') || name.includes('message')) return 'message';
-  if (name.includes('tool')) return 'tool';
+  // Infrastructure spans (muted)
+  if (name === 'ai.request' || name.includes('chat/completions')) return 'llm';
+
+  // Input message spans (warm tones) - ai.request.{role} pattern
+  if (name === 'ai.request.system') return 'system';
+  if (name === 'ai.request.user') return 'user';
+  if (name === 'ai.request.assistant') return 'assistant_input';
+  if (name === 'ai.request.tool_result') return 'tool_result';
+
+  // Output spans (cool/vibrant tones) - ai.response.{type} pattern
+  if (name.startsWith('ai.response.text')) return 'assistant_text';
+  if (name.startsWith('ai.response.thinking')) return 'assistant_thinking';
+  if (name.startsWith('ai.response.tool_use')) return 'assistant_tool_use';
+
+  // Tool execution
+  if (name === 'ai.tool.execution') return 'tool_execution';
+
+  // Fallback for other response outputs (numbered variants like ai.response.text.2)
+  if (name.startsWith('ai.response.')) return 'assistant_text';
 
   return 'internal';
 }
@@ -53,26 +91,65 @@ function getSpanType(span: TraceSpan): SpanType {
 function getSpanTokens(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
   const total =
-    parseInt(attrs['llm.tokens.total'] ?? '0', 10) ||
-    parseInt(attrs['llm.usage.total_tokens'] ?? '0', 10) ||
+    parseInt(attrs['ai.tokens.total'] ?? '0', 10) ||
+    parseInt(attrs['ai.usage.total_tokens'] ?? '0', 10) ||
     parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) +
       parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
   return total > 0 ? total : null;
 }
 
+function getSpanTokensPerSecond(span: TraceSpan): number | null {
+  const attrs = parseAttributes(span.SpanAttributes);
+  const completion =
+    parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
+    parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
+    parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+
+  const durationSeconds = span.Duration / 1_000_000_000;
+  return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
+}
+
+function getMessageIndex(span: TraceSpan): number | null {
+  const attrs = parseAttributes(span.SpanAttributes);
+  const index = attrs['ai.message.index'];
+  return index !== undefined ? parseInt(index, 10) : null;
+}
+
+function isHollowType(type: SpanType): boolean {
+  return type === 'llm';
+}
+
 function getTypeColor(type: SpanType, status: string): string {
   if (status === 'ERROR') return 'bg-red-500';
 
   switch (type) {
+    // Infrastructure - hollow style (handled separately in JSX)
     case 'llm':
-      return 'bg-purple-500';
-    case 'ttft':
+      return 'border-violet-400 bg-violet-500/10';
+
+    // Input messages - warm/earth tones
+    case 'system':
+      return 'bg-slate-500';
+    case 'user':
+      return 'bg-emerald-500';
+    case 'assistant_input':
+      return 'bg-sky-400';
+    case 'tool_result':
       return 'bg-amber-500';
-    case 'message':
-      return 'bg-blue-500';
-    case 'tool':
+
+    // Output spans - cool/vibrant tones
+    case 'assistant_text':
+      return 'bg-indigo-500';
+    case 'assistant_thinking':
+      return 'bg-violet-500';
+    case 'assistant_tool_use':
+      return 'bg-cyan-500';
+
+    // Tool execution - accent
+    case 'tool_execution':
       return 'bg-orange-500';
+
     default:
       return 'bg-zinc-500';
   }
@@ -80,14 +157,32 @@ function getTypeColor(type: SpanType, status: string): string {
 
 function getTypeIcon(type: SpanType) {
   switch (type) {
+    // Infrastructure
     case 'llm':
       return <Bot className="h-3.5 w-3.5" />;
-    case 'ttft':
-      return <Zap className="h-3.5 w-3.5" />;
-    case 'message':
-      return <MessageSquare className="h-3.5 w-3.5" />;
-    case 'tool':
-      return <Wrench className="h-3.5 w-3.5" />;
+
+    // Input messages
+    case 'system':
+      return <Settings2 className="h-3.5 w-3.5" />;
+    case 'user':
+      return <User className="h-3.5 w-3.5" />;
+    case 'assistant_input':
+      return <MessageCircle className="h-3.5 w-3.5" />;
+    case 'tool_result':
+      return <ArrowLeftRight className="h-3.5 w-3.5" />;
+
+    // Output spans
+    case 'assistant_text':
+      return <FileText className="h-3.5 w-3.5" />;
+    case 'assistant_thinking':
+      return <Brain className="h-3.5 w-3.5" />;
+    case 'assistant_tool_use':
+      return <Send className="h-3.5 w-3.5" />;
+
+    // Tool execution
+    case 'tool_execution':
+      return <Play className="h-3.5 w-3.5" />;
+
     default:
       return <Activity className="h-3.5 w-3.5" />;
   }
@@ -95,14 +190,32 @@ function getTypeIcon(type: SpanType) {
 
 function getTypeIconColor(type: SpanType): string {
   switch (type) {
+    // Infrastructure - colored to match hollow bars
     case 'llm':
-      return 'text-purple-400';
-    case 'ttft':
+      return 'text-violet-400';
+
+    // Input messages - warm tones
+    case 'system':
+      return 'text-slate-400';
+    case 'user':
+      return 'text-emerald-400';
+    case 'assistant_input':
+      return 'text-sky-400';
+    case 'tool_result':
       return 'text-amber-400';
-    case 'message':
-      return 'text-blue-400';
-    case 'tool':
+
+    // Output spans - cool/vibrant
+    case 'assistant_text':
+      return 'text-indigo-400';
+    case 'assistant_thinking':
+      return 'text-violet-400';
+    case 'assistant_tool_use':
+      return 'text-cyan-400';
+
+    // Tool execution
+    case 'tool_execution':
       return 'text-orange-400';
+
     default:
       return 'text-zinc-400';
   }
@@ -170,6 +283,7 @@ export function AgentGanttChart({
 
         const rootType = getSpanType(traceRoot);
         const rootTokens = getSpanTokens(traceRoot);
+        const rootTps = getSpanTokensPerSecond(traceRoot);
         const startOffset = ((traceRoot.Timestamp - traceStart) / total) * 100;
         const width = (traceRoot.Duration / total) * 100;
 
@@ -180,13 +294,26 @@ export function AgentGanttChart({
           width: Math.max(width, 0.5),
           type: rootType,
           tokens: rootTokens,
+          tokensPerSecond: rootTps,
+          messageIndex: getMessageIndex(traceRoot),
         });
 
         // Build children for this trace's root
         const buildSpanTree = (parentId: string, depth: number): SpanRow[] => {
           const children = traceSpans
             .filter((s) => s.ParentSpanId === parentId)
-            .sort((a, b) => a.Timestamp - b.Timestamp);
+            .sort((a, b) => {
+              // Primary: sort by timestamp
+              const timeDiff = a.Timestamp - b.Timestamp;
+              if (timeDiff !== 0) return timeDiff;
+              // Secondary: sort by ai.message.index for spans with same timestamp
+              const aIndex = getMessageIndex(a);
+              const bIndex = getMessageIndex(b);
+              if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
+              if (aIndex !== null) return -1;
+              if (bIndex !== null) return 1;
+              return 0;
+            });
 
           const rows: SpanRow[] = [];
           for (const span of children) {
@@ -194,6 +321,7 @@ export function AgentGanttChart({
             const childWidth = (span.Duration / total) * 100;
             const type = getSpanType(span);
             const tokens = getSpanTokens(span);
+            const tps = getSpanTokensPerSecond(span);
 
             rows.push({
               span,
@@ -202,6 +330,8 @@ export function AgentGanttChart({
               width: Math.max(childWidth, 0.5),
               type,
               tokens,
+              tokensPerSecond: tps,
+              messageIndex: getMessageIndex(span),
             });
 
             rows.push(...buildSpanTree(span.SpanId, depth + 1));
@@ -215,24 +345,39 @@ export function AgentGanttChart({
       return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
     }
 
-    // Single trace mode: original logic
-    let rootSpan = spans.find((s) => s.ParentSpanId === '');
+    // Single trace mode: handle multiple root spans within the same TraceId
+    const spanIds = new Set(spans.map((s) => s.SpanId));
 
-    if (!rootSpan) {
-      const spanIds = new Set(spans.map((s) => s.SpanId));
-      rootSpan = spans.find((s) => !spanIds.has(s.ParentSpanId));
-    }
+    // Find ALL root spans (spans whose parent is not in the span set or is empty)
+    const rootSpans = spans
+      .filter((s) => s.ParentSpanId === '' || !spanIds.has(s.ParentSpanId))
+      .sort((a, b) => a.Timestamp - b.Timestamp);
 
-    rootSpan ??= spans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b));
+    // Fallback to earliest span if no roots found
+    const effectiveRoots =
+      rootSpans.length > 0
+        ? rootSpans
+        : [spans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
 
-    const traceStart = rootSpan.Timestamp;
+    const traceStart = Math.min(...effectiveRoots.map((s) => s.Timestamp));
     const traceEndTime = Math.max(...spans.map((s) => s.Timestamp + s.Duration));
     const total = traceEndTime - traceStart;
 
     const buildSpanTree = (parentId: string, depth = 0): SpanRow[] => {
       const children = spans
         .filter((s) => s.ParentSpanId === parentId)
-        .sort((a, b) => a.Timestamp - b.Timestamp);
+        .sort((a, b) => {
+          // Primary: sort by timestamp
+          const timeDiff = a.Timestamp - b.Timestamp;
+          if (timeDiff !== 0) return timeDiff;
+          // Secondary: sort by ai.message.index for spans with same timestamp
+          const aIndex = getMessageIndex(a);
+          const bIndex = getMessageIndex(b);
+          if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
+          if (aIndex !== null) return -1;
+          if (bIndex !== null) return 1;
+          return 0;
+        });
 
       const rows: SpanRow[] = [];
 
@@ -241,6 +386,7 @@ export function AgentGanttChart({
         const width = (span.Duration / total) * 100;
         const type = getSpanType(span);
         const tokens = getSpanTokens(span);
+        const tps = getSpanTokensPerSecond(span);
 
         rows.push({
           span,
@@ -249,6 +395,8 @@ export function AgentGanttChart({
           width: Math.max(width, 0.5),
           type,
           tokens,
+          tokensPerSecond: tps,
+          messageIndex: getMessageIndex(span),
         });
 
         rows.push(...buildSpanTree(span.SpanId, depth + 1));
@@ -257,20 +405,27 @@ export function AgentGanttChart({
       return rows;
     };
 
-    const rootType = getSpanType(rootSpan);
-    const rootTokens = getSpanTokens(rootSpan);
+    // Build rows for ALL root spans and their children
+    const allRows: SpanRow[] = [];
+    for (const rootSpan of effectiveRoots) {
+      const rootType = getSpanType(rootSpan);
+      const rootTokens = getSpanTokens(rootSpan);
+      const rootTps = getSpanTokensPerSecond(rootSpan);
+      const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
 
-    const allRows = [
-      {
+      allRows.push({
         span: rootSpan,
         depth: 0,
-        startOffset: 0,
+        startOffset,
         width: Math.max((rootSpan.Duration / total) * 100, 0.5),
         type: rootType,
         tokens: rootTokens,
-      },
-      ...buildSpanTree(rootSpan.SpanId, 1),
-    ];
+        tokensPerSecond: rootTps,
+        messageIndex: getMessageIndex(rootSpan),
+      });
+
+      allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
+    }
 
     return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
   }, [spans]);
@@ -319,7 +474,7 @@ export function AgentGanttChart({
         </div>
       )}
 
-      <div>
+      <div className="relative">
         {spanRows.map((row) => (
           <div
             key={row.span.SpanId}
@@ -341,7 +496,7 @@ export function AgentGanttChart({
             <div className="relative flex-1 px-4 py-2">
               <div className="relative h-5">
                 <div
-                  className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${getTypeColor(row.type, row.span.StatusCode)}`}
+                  className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)}`}
                   style={{
                     left: `${row.startOffset}%`,
                     width: `${row.width}%`,
@@ -372,6 +527,14 @@ export function AgentGanttChart({
                         <span className="text-muted-foreground">·</span>
                         <span className="tabular-nums text-muted-foreground">
                           {formatNumber(row.tokens)} tokens
+                        </span>
+                      </>
+                    )}
+                    {row.tokensPerSecond !== null && (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {row.tokensPerSecond.toFixed(1)} tok/s
                         </span>
                       </>
                     )}

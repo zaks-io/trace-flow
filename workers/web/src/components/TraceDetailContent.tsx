@@ -81,7 +81,7 @@ export function TraceDetailContent({
   const [isMoreAttributesOpen, setIsMoreAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
 
-  const rootSpan = spans.find((s) => s.SpanName === 'llm.request');
+  const rootSpan = spans.find((s) => s.SpanName === 'ai.request');
 
   // Extract requestId from root span attributes - bodies are stored by requestId not traceId
   const rootSpanAttributes = (() => {
@@ -92,7 +92,7 @@ export function TraceDetailContent({
       return {};
     }
   })();
-  const requestId = rootSpanAttributes['llm.request_id'];
+  const requestId = rootSpanAttributes['ai.request_id'];
 
   useEffect(() => {
     setRequestBody(null);
@@ -321,22 +321,22 @@ export function TraceDetailContent({
   const allAttributes = { ...spanAttributes, ...resourceAttributes };
 
   // Extract key attributes for the card display
-  const provider = allAttributes['llm.provider'] ?? allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['llm.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
-  const targetUrl = allAttributes['llm.target_url'] ?? allAttributes['http.url'] ?? '';
+  const provider = allAttributes['ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
+  const model = allAttributes['ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
+  const targetUrl = allAttributes['ai.target_url'] ?? allAttributes['http.url'] ?? '';
   const statusCode = allAttributes['http.status_code'] ?? '';
-  const responseId = allAttributes['llm.response_id'] ?? allAttributes['gen_ai.response.id'] ?? '';
+  const responseId = allAttributes['ai.response_id'] ?? allAttributes['gen_ai.response.id'] ?? '';
 
   // Get remaining attributes (not shown in cards)
   const displayedKeys = new Set([
-    'llm.provider',
+    'ai.provider',
     'gen_ai.system',
-    'llm.model',
+    'ai.model',
     'gen_ai.request.model',
-    'llm.target_url',
+    'ai.target_url',
     'http.url',
     'http.status_code',
-    'llm.response_id',
+    'ai.response_id',
     'gen_ai.response.id',
     'service.name',
   ]);

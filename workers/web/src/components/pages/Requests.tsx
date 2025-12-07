@@ -39,14 +39,14 @@ export default function Requests() {
     if (isLiveMode && latestReceivedAt !== null) {
       return `SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode, SpanAttributes
         FROM otel_traces
-        WHERE SpanName = 'llm.request' AND ReceivedAt > ${latestReceivedAt}
+        WHERE SpanName = 'ai.request' AND ReceivedAt > ${latestReceivedAt}
         ORDER BY ReceivedAt DESC
         LIMIT 100
         FORMAT JSON`;
     }
     return `SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode, SpanAttributes
       FROM otel_traces
-      WHERE SpanName = 'llm.request'
+      WHERE SpanName = 'ai.request'
       ORDER BY ReceivedAt DESC
       LIMIT 100
       FORMAT JSON`;

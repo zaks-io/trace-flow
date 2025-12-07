@@ -1,12 +1,12 @@
 import { generateText, streamText } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { PROXY_URL, proxyHeaders, requireEnv, log, success, error } from './config';
 
 const apiKey = requireEnv('OPENROUTER_API_KEY');
 
 // OpenRouter uses OpenAI-compatible API
 // Their baseURL is https://openrouter.ai/api/v1
-const openrouter = createOpenAI({
+const openrouter = createOpenRouter({
   baseURL: `${PROXY_URL}/openrouter/v1`,
   apiKey,
   headers: proxyHeaders,

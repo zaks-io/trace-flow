@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import { Cpu, MessageSquare, Hash, Zap, Clock } from 'lucide-react';
+import { Cpu, MessageSquare, Hash, Zap, Clock, Activity } from 'lucide-react';
 
 interface TraceSpan {
   SpanAttributes: string;
   Duration: number;
+  Timestamp: number;
 }
 
 interface TokenSummaryCardsProps {
@@ -16,6 +17,7 @@ interface TokenSummary {
   totalTokens: number;
   ttftMs: number | null;
   totalDuration: number;
+  tokensPerSecond: number | null;
 }
 
 function parseAttributes(attributesJson: string): Record<string, string> {
@@ -30,32 +32,37 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   let promptTokens = 0;
   let completionTokens = 0;
   let ttftMs: number | null = null;
-  let totalDuration = 0;
+  let minTimestamp = Infinity;
+  let maxEndTimestamp = 0;
 
   for (const span of spans) {
     const attrs = parseAttributes(span.SpanAttributes);
 
     const prompt =
-      parseInt(attrs['llm.tokens.prompt'] ?? '0', 10) ||
-      parseInt(attrs['llm.tokens.input'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.prompt'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.input'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
 
     const completion =
-      parseInt(attrs['llm.tokens.completion'] ?? '0', 10) ||
-      parseInt(attrs['llm.tokens.output'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
+      parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
     promptTokens += prompt;
     completionTokens += completion;
 
-    if (attrs['llm.time_to_first_token_ms'] && ttftMs === null) {
-      ttftMs = parseFloat(attrs['llm.time_to_first_token_ms']);
+    if (attrs['ai.time_to_first_token_ms'] && ttftMs === null) {
+      ttftMs = parseFloat(attrs['ai.time_to_first_token_ms']);
     }
 
-    if (span.Duration > totalDuration) {
-      totalDuration = span.Duration;
-    }
+    minTimestamp = Math.min(minTimestamp, span.Timestamp);
+    maxEndTimestamp = Math.max(maxEndTimestamp, span.Timestamp + span.Duration);
   }
+
+  const totalDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
+  const durationSeconds = totalDuration / 1_000_000_000;
+  const tokensPerSecond =
+    durationSeconds > 0 && completionTokens > 0 ? completionTokens / durationSeconds : null;
 
   return {
     promptTokens,
@@ -63,6 +70,7 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
     totalTokens: promptTokens + completionTokens,
     ttftMs,
     totalDuration,
+    tokensPerSecond,
   };
 }
 
@@ -83,6 +91,13 @@ function formatMilliseconds(ms: number): string {
     return `${ms.toFixed(0)}ms`;
   }
   return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function formatTokensPerSecond(tokensPerSec: number): string {
+  if (tokensPerSec >= 1000) {
+    return `${(tokensPerSec / 1000).toFixed(1)}k/s`;
+  }
+  return `${tokensPerSec.toFixed(1)}/s`;
 }
 
 interface SummaryCardProps {
@@ -132,7 +147,7 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
   const summary = useMemo(() => aggregateTokens(spans), [spans]);
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <SummaryCard
         icon={<Cpu className="h-4 w-4" />}
         label="Prompt Tokens"
@@ -162,6 +177,14 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
         label="Duration"
         value={summary.totalDuration > 0 ? formatDuration(summary.totalDuration) : '-'}
         accent="zinc"
+      />
+      <SummaryCard
+        icon={<Activity className="h-4 w-4" />}
+        label="Tokens/sec"
+        value={
+          summary.tokensPerSecond !== null ? formatTokensPerSecond(summary.tokensPerSecond) : '-'
+        }
+        accent="blue"
       />
     </div>
   );

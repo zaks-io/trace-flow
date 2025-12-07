@@ -133,8 +133,8 @@ export default function Dashboard() {
         countIf(ParentSpanId = '') as total_requests,
         count() as total_traces,
         avgIf(
-          JSONExtractFloat(SpanAttributes, 'llm.time_to_first_token_ms'),
-          SpanName = 'llm.request.ttft'
+          JSONExtractFloat(SpanAttributes, 'ai.time_to_first_token_ms'),
+          SpanName = 'ai.request' AND JSONHas(SpanAttributes, 'ai.time_to_first_token_ms')
         ) as avg_ttft_ms,
         avgIf(Duration, ParentSpanId = '') / 1000000 as avg_duration_ms,
         countIf(StatusCode = 'STATUS_CODE_ERROR' AND ParentSpanId = '') * 100.0 /

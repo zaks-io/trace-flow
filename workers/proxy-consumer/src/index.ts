@@ -17,8 +17,6 @@ export interface Env {
 export default {
   async queue(batch: MessageBatch<QueueMessageUnion>, env: Env): Promise<void> {
     const NUM_SHARDS = env.NUM_SHARDS ?? 10;
-    const startTime = Date.now();
-    console.log(`Processing queue batch: ${batch.messages.length} messages`);
 
     const shardedMessages = new Map<
       number,
@@ -36,11 +34,9 @@ export default {
         let apiKey: string;
 
         if (message.body.type === 'otlp') {
-          // OTLP messages contain pre-transformed traces
           traces = message.body.traces;
           apiKey = message.body.apiKey;
         } else {
-          // LLM messages need transformation (type is 'llm' or undefined for backward compatibility)
           traces = buildTraces(message.body);
           apiKey = message.body.apiKey;
         }
@@ -59,7 +55,6 @@ export default {
           message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : message.body.requestId;
         console.error('Failed to process message:', {
           messageId,
-          type: message.body.type ?? 'llm',
           error: error instanceof Error ? error.message : String(error),
         });
         failedMessages.push(message);
@@ -76,10 +71,6 @@ export default {
         for (const message of shard.messages) {
           message.ack();
         }
-
-        console.log(
-          `Shard ${shardId}: Successfully processed ${shard.messages.length} messages (${shard.traces.length} traces)`,
-        );
       } catch (error) {
         console.error(`Shard ${shardId}: Failed to add traces to batcher:`, {
           error: error instanceof Error ? error.message : String(error),
@@ -96,9 +87,5 @@ export default {
     for (const message of failedMessages) {
       message.retry();
     }
-
-    console.log(
-      `Processed ${batch.messages.length} messages across ${shardedMessages.size} shards in ${Date.now() - startTime}ms`,
-    );
   },
 };

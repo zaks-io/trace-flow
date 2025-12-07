@@ -1,10 +1,53 @@
 import { createParser, type EventSourceParser } from 'eventsource-parser';
-import type { SSEStreamData, SSEMessage, SSEEvent } from '@trace-flow/types';
+import type { SSEStreamData, SSEMessage, SSEEvent, AnthropicContentBlock } from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
 import {
   extractMetadataFromSSEData,
   extractTokenUsageFromSSEData,
 } from '../parsers/metadata-regex';
+
+// Regex patterns for content block parsing (performance-optimized, consistent with metadata-regex.ts)
+const CONTENT_BLOCK_INDEX_PATTERN = /"index"\s*:\s*(\d+)/;
+const CONTENT_BLOCK_TYPE_PATTERN =
+  /"content_block"\s*:\s*\{[^}]*"type"\s*:\s*"(text|tool_use|thinking)"/;
+const TOOL_USE_ID_PATTERN = /"content_block"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]+)"/;
+const TOOL_USE_NAME_PATTERN = /"content_block"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/;
+
+/**
+ * Parses content_block_start event data to extract block info.
+ */
+function parseContentBlockStart(
+  data: string,
+): Omit<AnthropicContentBlock, 'startTimestamp'> | null {
+  const indexMatch = CONTENT_BLOCK_INDEX_PATTERN.exec(data);
+  const typeMatch = CONTENT_BLOCK_TYPE_PATTERN.exec(data);
+
+  if (!indexMatch?.[1] || !typeMatch?.[1]) {
+    return null;
+  }
+
+  const result: Omit<AnthropicContentBlock, 'startTimestamp'> = {
+    index: parseInt(indexMatch[1], 10),
+    type: typeMatch[1] as 'text' | 'tool_use' | 'thinking',
+  };
+
+  if (result.type === 'tool_use') {
+    const idMatch = TOOL_USE_ID_PATTERN.exec(data);
+    const nameMatch = TOOL_USE_NAME_PATTERN.exec(data);
+    if (idMatch?.[1]) result.toolUseId = idMatch[1];
+    if (nameMatch?.[1]) result.toolName = nameMatch[1];
+  }
+
+  return result;
+}
+
+/**
+ * Parses content_block_stop event data to extract the block index.
+ */
+function parseContentBlockStopIndex(data: string): number | null {
+  const match = CONTENT_BLOCK_INDEX_PATTERN.exec(data);
+  return match?.[1] ? parseInt(match[1], 10) : null;
+}
 
 /**
  * Processes SSE events to track multiple messages and record all events as OpenTelemetry events.
@@ -21,15 +64,70 @@ export function processSSEEvent(
 ): void {
   try {
     const eventType = event.event;
-    if (!eventType) return;
 
-    // Validate JSON structure for event data (regex parsing won't catch malformed JSON)
-    // This helps catch errors that would have been caught by JSON.parse in the old implementation
-    // SSE event data should be valid JSON, so validate it
+    // Handle OpenAI-style streaming (no event type, just data lines)
+    if (!eventType) {
+      // [DONE] marks stream completion
+      if (event.data === '[DONE]') {
+        const currentMessage = streamData.messages[streamData.messages.length - 1];
+        if (currentMessage && !currentMessage.messageStop) {
+          currentMessage.messageStop = timestamp;
+        }
+        return;
+      }
+
+      // Skip empty data
+      if (!event.data || event.data.trim().length === 0) {
+        return;
+      }
+
+      // Validate JSON
+      try {
+        JSON.parse(event.data);
+      } catch {
+        return; // Skip non-JSON data
+      }
+
+      // Create message on first chunk if none exists
+      if (streamData.messages.length === 0) {
+        const metadata = extractMetadataFromSSEData(event.data);
+        streamData.messages.push({
+          messageStart: timestamp,
+          events: [],
+          metadata,
+        });
+      }
+
+      const currentMessage = streamData.messages[streamData.messages.length - 1];
+      if (!currentMessage) return;
+
+      // Track as content_block_delta event for TTFT detection
+      currentMessage.events.push({
+        type: 'content_block_delta',
+        timestamp,
+        data: event.data,
+      });
+
+      // Extract and accumulate metadata (finish_reason, usage, etc.)
+      const eventMetadata = extractMetadataFromSSEData(event.data, currentMessage.metadata);
+      currentMessage.metadata = { ...currentMessage.metadata, ...eventMetadata };
+
+      // Extract usage from OpenAI streaming chunks
+      const extractedUsage = extractTokenUsageFromSSEData(event.data);
+      if (extractedUsage) {
+        const mergedUsage = { ...currentMessage.usage, ...extractedUsage };
+        const hasUsageData =
+          mergedUsage.input_tokens !== undefined || mergedUsage.output_tokens !== undefined;
+        if (hasUsageData) currentMessage.usage = mergedUsage;
+      }
+
+      return;
+    }
+
+    // Anthropic-style streaming (has event types)
+    // Validate JSON structure for event data
     if (event.data && event.data.trim().length > 0) {
       try {
-        // Quick validation: try parsing to detect malformed JSON
-        // This matches the old behavior where JSON.parse would throw on invalid JSON
         JSON.parse(event.data);
       } catch (parseError) {
         console.error('Error parsing SSE event:', {
@@ -76,6 +174,29 @@ export function processSSEEvent(
     if (event.data) {
       const eventMetadata = extractMetadataFromSSEData(event.data, currentMessage.metadata);
       currentMessage.metadata = { ...currentMessage.metadata, ...eventMetadata };
+    }
+
+    // Track content block start (Anthropic-specific)
+    if (eventType === 'content_block_start' && event.data) {
+      const blockInfo = parseContentBlockStart(event.data);
+      if (blockInfo) {
+        currentMessage.contentBlocks ??= [];
+        currentMessage.contentBlocks.push({
+          ...blockInfo,
+          startTimestamp: timestamp,
+        });
+      }
+    }
+
+    // Track content block stop (Anthropic-specific)
+    if (eventType === 'content_block_stop' && event.data) {
+      const blockIndex = parseContentBlockStopIndex(event.data);
+      if (blockIndex !== null && currentMessage.contentBlocks) {
+        const block = currentMessage.contentBlocks.find((b) => b.index === blockIndex);
+        if (block) {
+          block.stopTimestamp = timestamp;
+        }
+      }
     }
 
     if (eventType === 'message_stop' || eventType === 'message_delta') {
