@@ -12,6 +12,7 @@ import type * as apiKeys from "../apiKeys.js";
 import type * as auth from "../auth.js";
 import type * as cloudflare from "../cloudflare.js";
 import type * as tinybird from "../tinybird.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -32,6 +33,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   cloudflare: typeof cloudflare;
   tinybird: typeof tinybird;
+  users: typeof users;
 }>;
 declare const fullApiWithMounts: typeof fullApi;
 
