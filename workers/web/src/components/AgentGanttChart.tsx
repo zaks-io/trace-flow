@@ -1,5 +1,16 @@
 import { useMemo } from 'react';
-import { Bot, Zap, MessageSquare, Wrench, Activity } from 'lucide-react';
+import {
+  Bot,
+  Activity,
+  Settings2,
+  User,
+  MessageCircle,
+  ArrowLeftRight,
+  FileText,
+  Brain,
+  Send,
+  Play,
+} from 'lucide-react';
 
 interface TraceSpan {
   Timestamp: number;
@@ -20,7 +31,17 @@ interface AgentGanttChartProps {
   parentSpanId?: string;
 }
 
-type SpanType = 'llm' | 'ttft' | 'message' | 'tool' | 'internal';
+type SpanType =
+  | 'llm' // AI request (infrastructure - muted)
+  | 'system' // System message (input)
+  | 'user' // User message (input)
+  | 'assistant_input' // Prior assistant message (input)
+  | 'tool_result' // Tool result (input)
+  | 'assistant_text' // Assistant text output
+  | 'assistant_thinking' // Thinking/reasoning output
+  | 'assistant_tool_use' // Tool use request (output)
+  | 'tool_execution' // Cross-request tool execution
+  | 'internal'; // Fallback
 
 interface SpanRow {
   span: TraceSpan;
@@ -30,6 +51,7 @@ interface SpanRow {
   type: SpanType;
   tokens: number | null;
   tokensPerSecond: number | null;
+  messageIndex: number | null;
 }
 
 function parseAttributes(attributesJson: string): Record<string, string> {
@@ -43,10 +65,25 @@ function parseAttributes(attributesJson: string): Record<string, string> {
 function getSpanType(span: TraceSpan): SpanType {
   const name = span.SpanName.toLowerCase();
 
+  // Infrastructure spans (muted)
   if (name === 'ai.request' || name.includes('chat/completions')) return 'llm';
-  if (name === 'ai.request.ttft' || name.includes('ttft')) return 'ttft';
-  if (name.startsWith('ai.assistant.') || name.includes('message')) return 'message';
-  if (name.includes('tool')) return 'tool';
+
+  // Input message spans (warm tones) - ai.request.{role} pattern
+  if (name === 'ai.request.system') return 'system';
+  if (name === 'ai.request.user') return 'user';
+  if (name === 'ai.request.assistant') return 'assistant_input';
+  if (name === 'ai.request.tool_result') return 'tool_result';
+
+  // Output spans (cool/vibrant tones) - ai.response.{type} pattern
+  if (name.startsWith('ai.response.text')) return 'assistant_text';
+  if (name.startsWith('ai.response.thinking')) return 'assistant_thinking';
+  if (name.startsWith('ai.response.tool_use')) return 'assistant_tool_use';
+
+  // Tool execution
+  if (name === 'ai.tool.execution') return 'tool_execution';
+
+  // Fallback for other response outputs (numbered variants like ai.response.text.2)
+  if (name.startsWith('ai.response.')) return 'assistant_text';
 
   return 'internal';
 }
@@ -73,18 +110,46 @@ function getSpanTokensPerSecond(span: TraceSpan): number | null {
   return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
 }
 
+function getMessageIndex(span: TraceSpan): number | null {
+  const attrs = parseAttributes(span.SpanAttributes);
+  const index = attrs['ai.message.index'];
+  return index !== undefined ? parseInt(index, 10) : null;
+}
+
+function isHollowType(type: SpanType): boolean {
+  return type === 'llm';
+}
+
 function getTypeColor(type: SpanType, status: string): string {
   if (status === 'ERROR') return 'bg-red-500';
 
   switch (type) {
+    // Infrastructure - hollow style (handled separately in JSX)
     case 'llm':
-      return 'bg-purple-500';
-    case 'ttft':
+      return 'border-violet-400 bg-violet-500/10';
+
+    // Input messages - warm/earth tones
+    case 'system':
+      return 'bg-slate-500';
+    case 'user':
+      return 'bg-emerald-500';
+    case 'assistant_input':
+      return 'bg-sky-400';
+    case 'tool_result':
       return 'bg-amber-500';
-    case 'message':
-      return 'bg-blue-500';
-    case 'tool':
+
+    // Output spans - cool/vibrant tones
+    case 'assistant_text':
+      return 'bg-indigo-500';
+    case 'assistant_thinking':
+      return 'bg-violet-500';
+    case 'assistant_tool_use':
+      return 'bg-cyan-500';
+
+    // Tool execution - accent
+    case 'tool_execution':
       return 'bg-orange-500';
+
     default:
       return 'bg-zinc-500';
   }
@@ -92,14 +157,32 @@ function getTypeColor(type: SpanType, status: string): string {
 
 function getTypeIcon(type: SpanType) {
   switch (type) {
+    // Infrastructure
     case 'llm':
       return <Bot className="h-3.5 w-3.5" />;
-    case 'ttft':
-      return <Zap className="h-3.5 w-3.5" />;
-    case 'message':
-      return <MessageSquare className="h-3.5 w-3.5" />;
-    case 'tool':
-      return <Wrench className="h-3.5 w-3.5" />;
+
+    // Input messages
+    case 'system':
+      return <Settings2 className="h-3.5 w-3.5" />;
+    case 'user':
+      return <User className="h-3.5 w-3.5" />;
+    case 'assistant_input':
+      return <MessageCircle className="h-3.5 w-3.5" />;
+    case 'tool_result':
+      return <ArrowLeftRight className="h-3.5 w-3.5" />;
+
+    // Output spans
+    case 'assistant_text':
+      return <FileText className="h-3.5 w-3.5" />;
+    case 'assistant_thinking':
+      return <Brain className="h-3.5 w-3.5" />;
+    case 'assistant_tool_use':
+      return <Send className="h-3.5 w-3.5" />;
+
+    // Tool execution
+    case 'tool_execution':
+      return <Play className="h-3.5 w-3.5" />;
+
     default:
       return <Activity className="h-3.5 w-3.5" />;
   }
@@ -107,14 +190,32 @@ function getTypeIcon(type: SpanType) {
 
 function getTypeIconColor(type: SpanType): string {
   switch (type) {
+    // Infrastructure - colored to match hollow bars
     case 'llm':
-      return 'text-purple-400';
-    case 'ttft':
+      return 'text-violet-400';
+
+    // Input messages - warm tones
+    case 'system':
+      return 'text-slate-400';
+    case 'user':
+      return 'text-emerald-400';
+    case 'assistant_input':
+      return 'text-sky-400';
+    case 'tool_result':
       return 'text-amber-400';
-    case 'message':
-      return 'text-blue-400';
-    case 'tool':
+
+    // Output spans - cool/vibrant
+    case 'assistant_text':
+      return 'text-indigo-400';
+    case 'assistant_thinking':
+      return 'text-violet-400';
+    case 'assistant_tool_use':
+      return 'text-cyan-400';
+
+    // Tool execution
+    case 'tool_execution':
       return 'text-orange-400';
+
     default:
       return 'text-zinc-400';
   }
@@ -194,13 +295,25 @@ export function AgentGanttChart({
           type: rootType,
           tokens: rootTokens,
           tokensPerSecond: rootTps,
+          messageIndex: getMessageIndex(traceRoot),
         });
 
         // Build children for this trace's root
         const buildSpanTree = (parentId: string, depth: number): SpanRow[] => {
           const children = traceSpans
             .filter((s) => s.ParentSpanId === parentId)
-            .sort((a, b) => a.Timestamp - b.Timestamp);
+            .sort((a, b) => {
+              // Primary: sort by timestamp
+              const timeDiff = a.Timestamp - b.Timestamp;
+              if (timeDiff !== 0) return timeDiff;
+              // Secondary: sort by ai.message.index for spans with same timestamp
+              const aIndex = getMessageIndex(a);
+              const bIndex = getMessageIndex(b);
+              if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
+              if (aIndex !== null) return -1;
+              if (bIndex !== null) return 1;
+              return 0;
+            });
 
           const rows: SpanRow[] = [];
           for (const span of children) {
@@ -218,6 +331,7 @@ export function AgentGanttChart({
               type,
               tokens,
               tokensPerSecond: tps,
+              messageIndex: getMessageIndex(span),
             });
 
             rows.push(...buildSpanTree(span.SpanId, depth + 1));
@@ -252,7 +366,18 @@ export function AgentGanttChart({
     const buildSpanTree = (parentId: string, depth = 0): SpanRow[] => {
       const children = spans
         .filter((s) => s.ParentSpanId === parentId)
-        .sort((a, b) => a.Timestamp - b.Timestamp);
+        .sort((a, b) => {
+          // Primary: sort by timestamp
+          const timeDiff = a.Timestamp - b.Timestamp;
+          if (timeDiff !== 0) return timeDiff;
+          // Secondary: sort by ai.message.index for spans with same timestamp
+          const aIndex = getMessageIndex(a);
+          const bIndex = getMessageIndex(b);
+          if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
+          if (aIndex !== null) return -1;
+          if (bIndex !== null) return 1;
+          return 0;
+        });
 
       const rows: SpanRow[] = [];
 
@@ -271,6 +396,7 @@ export function AgentGanttChart({
           type,
           tokens,
           tokensPerSecond: tps,
+          messageIndex: getMessageIndex(span),
         });
 
         rows.push(...buildSpanTree(span.SpanId, depth + 1));
@@ -295,6 +421,7 @@ export function AgentGanttChart({
         type: rootType,
         tokens: rootTokens,
         tokensPerSecond: rootTps,
+        messageIndex: getMessageIndex(rootSpan),
       });
 
       allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
@@ -347,7 +474,7 @@ export function AgentGanttChart({
         </div>
       )}
 
-      <div>
+      <div className="relative">
         {spanRows.map((row) => (
           <div
             key={row.span.SpanId}
@@ -369,7 +496,7 @@ export function AgentGanttChart({
             <div className="relative flex-1 px-4 py-2">
               <div className="relative h-5">
                 <div
-                  className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${getTypeColor(row.type, row.span.StatusCode)}`}
+                  className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)}`}
                   style={{
                     left: `${row.startOffset}%`,
                     width: `${row.width}%`,

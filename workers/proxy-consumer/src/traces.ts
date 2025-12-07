@@ -12,9 +12,9 @@ import { generateSpanId } from '@trace-flow/utils';
  *
  * Creates a trace hierarchy:
  * - Root span: Overall AI request with status, model, provider metadata
+ *   - For streaming: includes ai.time_to_first_token_ms attribute
  *
  * For SSE streaming responses:
- * - TTFT span: Total time to first token from user perspective (requestStart → first content_block_delta)
  * - Content block spans: Individual thinking, text, tool_use spans as siblings
  *
  * For non-streaming responses:
@@ -68,11 +68,29 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     if (data.tokens.totalTokens) {
       rootSpan.SpanAttributes['ai.tokens.total'] = String(data.tokens.totalTokens);
     }
-    if (data.tokens.cached !== undefined) {
-      rootSpan.SpanAttributes['ai.cached'] = String(data.tokens.cached);
-    }
     if (data.tokens.reasoningTokens !== undefined) {
-      rootSpan.SpanAttributes['ai.reasoning_tokens'] = String(data.tokens.reasoningTokens);
+      rootSpan.SpanAttributes['ai.tokens.reasoning'] = String(data.tokens.reasoningTokens);
+    }
+    if (data.tokens.cachedTokens !== undefined) {
+      rootSpan.SpanAttributes['ai.tokens.cached'] = String(data.tokens.cachedTokens);
+    }
+    if (data.tokens.cacheReadTokens !== undefined) {
+      rootSpan.SpanAttributes['ai.tokens.cache_read'] = String(data.tokens.cacheReadTokens);
+    }
+    if (data.tokens.cacheCreationTokens !== undefined) {
+      rootSpan.SpanAttributes['ai.tokens.cache_creation'] = String(data.tokens.cacheCreationTokens);
+    }
+  }
+
+  // Calculate TPS using generation duration (first token → complete)
+  // This excludes network latency and provider processing time
+  if (data.tokens?.completionTokens && data.tokens.completionTokens > 0) {
+    const generationStartMs = data.timing.firstTokenReceived ?? data.timing.requestSent;
+    const generationDurationMs = data.timing.responseComplete - generationStartMs;
+
+    if (generationDurationMs > 0) {
+      const tokensPerSecond = data.tokens.completionTokens / (generationDurationMs / 1000);
+      rootSpan.SpanAttributes['ai.tokens_per_second'] = String(tokensPerSecond.toFixed(2));
     }
   }
 
@@ -143,40 +161,11 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       }
     }
 
-    // Create TTFT span measuring total time to first token from user perspective
+    // Add TTFT attribute to root span (measures user-perceived time to first content)
     if (firstContentDelta) {
-      const ttftSpan: TinybirdTrace = {
-        ReceivedAt: data.receivedAt,
-        Timestamp: data.timing.requestStart * 1_000_000,
-        TraceId: traceId,
-        SpanId: generateSpanId(),
-        ParentSpanId: rootSpan.SpanId,
-        TraceState: '',
-        SpanName: 'ai.request.ttft',
-        SpanKind: 'SPAN_KIND_INTERNAL',
-        ServiceName: serviceName,
-        ResourceAttributes: {
-          'service.name': serviceName,
-        },
-        SpanAttributes: {
-          'ai.time_to_first_token_ms': String(
-            firstContentDelta.timestamp - data.timing.requestStart,
-          ),
-        },
-        Duration: (firstContentDelta.timestamp - data.timing.requestStart) * 1_000_000,
-        StatusCode: 'STATUS_CODE_OK',
-        StatusMessage: '',
-        ApiKey: data.apiKey,
-        'Events.Timestamp': [],
-        'Events.Name': [],
-        'Events.Attributes': [],
-        'Links.TraceId': [],
-        'Links.SpanId': [],
-        'Links.TraceState': [],
-        'Links.Attributes': [],
-      };
-
-      traces.push(ttftSpan);
+      rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(
+        firstContentDelta.timestamp - data.timing.requestStart,
+      );
     }
 
     // Collect content blocks from all messages
@@ -198,17 +187,26 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
 
     // Create content block spans as direct children of root span
     if (allContentBlocks.length > 0) {
+      const inputMessageCount = data.inputMessages?.length ?? 0;
       const contentBlockSpans = buildContentBlockSpans(
         allContentBlocks,
         data,
         rootSpan.SpanId,
         traceId,
         serviceName,
+        inputMessageCount,
       );
       traces.push(...contentBlockSpans);
     }
   } else if (data.response.status < 400) {
-    // Create fallback response span for non-streaming responses
+    // Add TTFT for non-SSE responses using firstTokenReceived
+    if (data.timing.firstTokenReceived) {
+      const ttftMs = data.timing.firstTokenReceived - data.timing.requestStart;
+      rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(ttftMs);
+    }
+
+    // Create response span for non-streaming responses
+    // Uses same ai.response.text name as streaming for consistency
     const responseSpan: TinybirdTrace = {
       ReceivedAt: data.receivedAt,
       Timestamp: data.timing.requestSent * 1_000_000,
@@ -216,14 +214,17 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       SpanId: generateSpanId(),
       ParentSpanId: rootSpan.SpanId,
       TraceState: '',
-      SpanName: 'ai.assistant.response',
+      SpanName: 'ai.response.text',
       SpanKind: 'SPAN_KIND_INTERNAL',
       ServiceName: serviceName,
       ResourceAttributes: {
         'service.name': serviceName,
       },
       SpanAttributes: {
+        'ai.request_id': data.requestId,
         'ai.response.streaming': 'false',
+        'ai.content.type': 'text',
+        'ai.message.index': String(data.inputMessages?.length ?? 0),
       },
       Duration: (data.timing.responseComplete - data.timing.requestSent) * 1_000_000,
       StatusCode: 'STATUS_CODE_OK',
@@ -282,30 +283,32 @@ function buildInputMessageSpans(
 
   for (const message of inputMessages) {
     // Determine span name based on role and content
+    // Use ai.request.{role} pattern to clearly indicate these are INPUT spans
     let spanName: string;
     const attributes: Record<string, string> = {
+      'ai.request_id': data.requestId,
       'ai.message.role': message.role,
       'ai.message.index': String(message.index),
     };
 
     if (message.role === 'system') {
-      spanName = 'ai.system.message';
+      spanName = 'ai.request.system';
     } else if (message.role === 'user') {
       // Check if this is a tool result message
       const hasToolResult = message.contentBlocks.some((b) => b.type === 'tool_result');
       if (hasToolResult) {
-        spanName = 'ai.tool.result';
+        spanName = 'ai.request.tool_result';
         const toolResultBlock = message.contentBlocks.find((b) => b.type === 'tool_result');
         if (toolResultBlock?.toolResultId) {
           attributes['ai.tool.id'] = toolResultBlock.toolResultId;
         }
       } else {
-        spanName = 'ai.user.message';
+        spanName = 'ai.request.user';
       }
     } else if (message.role === 'assistant') {
-      spanName = 'ai.assistant.message';
+      spanName = 'ai.request.assistant';
     } else {
-      spanName = `ai.${message.role}.message`;
+      spanName = `ai.request.${message.role}`;
     }
 
     const span: TinybirdTrace = {
@@ -343,6 +346,7 @@ function buildInputMessageSpans(
  * Creates spans for content blocks from SSE streaming responses.
  * These capture timing for individual thinking, text, and tool_use blocks.
  * Spans are numbered when there are multiple of the same type.
+ * Uses ai.response.{type} pattern to clearly indicate these are OUTPUT spans.
  */
 function buildContentBlockSpans(
   contentBlocks: { block: AnthropicContentBlock; messageIndex: number }[],
@@ -350,6 +354,7 @@ function buildContentBlockSpans(
   parentSpanId: string,
   traceId: string,
   serviceName: string,
+  inputMessageCount: number,
 ): TinybirdTrace[] {
   const spans: TinybirdTrace[] = [];
 
@@ -376,16 +381,18 @@ function buildContentBlockSpans(
     const occurrenceNum = typeOccurrences[block.type];
     const totalOfType = typeCounts[block.type] ?? 1;
 
-    // Build span name: ai.assistant.{type} or ai.assistant.{type}.{N} if multiple
-    let spanName = `ai.assistant.${block.type}`;
+    // Build span name: ai.response.{type} or ai.response.{type}.{N} if multiple
+    let spanName = `ai.response.${block.type}`;
     if (totalOfType > 1) {
       spanName = `${spanName}.${occurrenceNum}`;
     }
 
     const attributes: Record<string, string> = {
-      'ai.content.index': String(block.index),
+      'ai.request_id': data.requestId,
+      // Unified message index: inputMessages come first, then content blocks
+      // Content blocks use: inputMessageCount + (messageIndex * 100) + blockIndex
+      'ai.message.index': String(inputMessageCount + messageIndex * 100 + block.index),
       'ai.content.type': block.type,
-      'ai.content.message_index': String(messageIndex),
     };
 
     if (block.type === 'tool_use') {
@@ -443,6 +450,7 @@ function buildToolExecutionSpans(
 
   for (const execution of toolExecutions) {
     const attributes: Record<string, string> = {
+      'ai.request_id': data.requestId,
       'ai.tool.id': execution.toolUseId,
       'ai.tool.name': execution.toolName,
       'ai.original_trace_id': execution.originalTraceId,

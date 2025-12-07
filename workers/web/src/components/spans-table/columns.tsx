@@ -50,12 +50,9 @@ function getSpanTypeColor(spanName: string): string {
   const name = spanName.toLowerCase();
   if (name === 'ai.request' || name.includes('chat/completions'))
     return 'bg-purple-500/20 text-purple-400';
-  if (name === 'ai.request.ttft' || name.includes('ttft')) return 'bg-amber-500/20 text-amber-400';
-  if (name.startsWith('ai.assistant.') || name.includes('message'))
-    return 'bg-blue-500/20 text-blue-400';
+  if (name.startsWith('ai.response.')) return 'bg-blue-500/20 text-blue-400';
   if (name.includes('tool')) return 'bg-orange-500/20 text-orange-400';
-  if (name.startsWith('ai.system.') || name.startsWith('ai.user.'))
-    return 'bg-emerald-500/20 text-emerald-400';
+  if (name.startsWith('ai.request.')) return 'bg-emerald-500/20 text-emerald-400';
   return 'bg-zinc-500/20 text-zinc-400';
 }
 

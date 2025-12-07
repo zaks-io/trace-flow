@@ -98,7 +98,7 @@ export default function Traces() {
       const newestReceivedAt = groups[0]!.LatestReceivedAt;
       latestReceivedAtRef.current = newestReceivedAt;
       setLatestReceivedAt(newestReceivedAt);
-      lastProcessedDataRef.current = groups;
+      lastProcessedDataRef.current = groups; // Mark this data as processed
       setInitialLoadComplete(true);
     }
   }, [data, initialLoadComplete]);
@@ -124,6 +124,7 @@ export default function Traces() {
       return;
     }
 
+    // Skip if this is the same data we already processed (prevents double-counting on initial load)
     if (lastProcessedDataRef.current === data.data) {
       return;
     }
