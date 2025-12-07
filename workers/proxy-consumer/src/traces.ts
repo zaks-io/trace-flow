@@ -6,6 +6,7 @@ import type {
   ToolExecution,
 } from '@trace-flow/types';
 import { generateSpanId } from '@trace-flow/utils';
+import { type ModelPricing, calculateCost, formatCostAsString } from './pricing';
 
 /**
  * Transforms queue messages into OpenTelemetry traces for Tinybird storage.
@@ -20,7 +21,7 @@ import { generateSpanId } from '@trace-flow/utils';
  * For non-streaming responses:
  * - Root span only (no additional timing spans)
  */
-export function buildTraces(data: QueueMessage): TinybirdTrace[] {
+export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): TinybirdTrace[] {
   const traces: TinybirdTrace[] = [];
   const traceId = data.traceId ?? data.requestId;
   const serviceName = 'llm-observability';
@@ -79,6 +80,31 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     }
     if (data.tokens.cacheCreationTokens !== undefined) {
       rootSpan.SpanAttributes['ai.tokens.cache_creation'] = String(data.tokens.cacheCreationTokens);
+    }
+
+    // Calculate cost if pricing is available
+    if (pricing) {
+      const cost = calculateCost(data.tokens, pricing);
+
+      rootSpan.SpanAttributes['ai.cost.input'] = formatCostAsString(cost.inputCostMicrodollars);
+      rootSpan.SpanAttributes['ai.cost.output'] = formatCostAsString(cost.outputCostMicrodollars);
+      rootSpan.SpanAttributes['ai.cost.total'] = formatCostAsString(cost.totalCostMicrodollars);
+
+      if (cost.cacheReadCostMicrodollars > 0) {
+        rootSpan.SpanAttributes['ai.cost.cache_read'] = formatCostAsString(
+          cost.cacheReadCostMicrodollars,
+        );
+      }
+      if (cost.cacheWriteCostMicrodollars > 0) {
+        rootSpan.SpanAttributes['ai.cost.cache_creation'] = formatCostAsString(
+          cost.cacheWriteCostMicrodollars,
+        );
+      }
+      if (cost.reasoningCostMicrodollars > 0) {
+        rootSpan.SpanAttributes['ai.cost.reasoning'] = formatCostAsString(
+          cost.reasoningCostMicrodollars,
+        );
+      }
     }
   }
 

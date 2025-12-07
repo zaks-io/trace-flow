@@ -11,6 +11,9 @@
 import type * as apiKeys from "../apiKeys.js";
 import type * as auth from "../auth.js";
 import type * as cloudflare from "../cloudflare.js";
+import type * as defaultPricing from "../defaultPricing.js";
+import type * as modelPricing from "../modelPricing.js";
+import type * as pricingSync from "../pricingSync.js";
 import type * as tinybird from "../tinybird.js";
 import type * as users from "../users.js";
 
@@ -32,6 +35,9 @@ declare const fullApi: ApiFromModules<{
   apiKeys: typeof apiKeys;
   auth: typeof auth;
   cloudflare: typeof cloudflare;
+  defaultPricing: typeof defaultPricing;
+  modelPricing: typeof modelPricing;
+  pricingSync: typeof pricingSync;
   tinybird: typeof tinybird;
   users: typeof users;
 }>;
