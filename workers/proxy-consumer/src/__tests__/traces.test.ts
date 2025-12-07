@@ -89,21 +89,56 @@ describe('buildTraces', () => {
       expect(rootSpan.SpanAttributes['ai.tokens.total']).toBe('150');
     });
 
-    it('should include cached token indicator when present', () => {
+    it('should include cached tokens count when present (OpenAI)', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         tokens: {
           promptTokens: 100,
           completionTokens: 50,
           totalTokens: 150,
-          cached: true,
+          cachedTokens: 25,
         },
       };
 
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.cached']).toBe('true');
+      expect(rootSpan.SpanAttributes['ai.tokens.cached']).toBe('25');
+    });
+
+    it('should include reasoning tokens when present', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          reasoningTokens: 20,
+        },
+      };
+
+      const traces = buildTraces(message);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['ai.tokens.reasoning']).toBe('20');
+    });
+
+    it('should include Anthropic cache tokens when present', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 100,
+          completionTokens: 50,
+          cacheReadTokens: 30,
+          cacheCreationTokens: 10,
+        },
+      };
+
+      const traces = buildTraces(message);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['ai.tokens.cache_read']).toBe('30');
+      expect(rootSpan.SpanAttributes['ai.tokens.cache_creation']).toBe('10');
     });
 
     it('should handle partial token usage', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { processSSEEvent, createSSEParser } from '../../streaming/sse';
+import { processSSEEvent, createSSEParser, aggregateSSETokens } from '../../streaming/sse';
 import type { SSEStreamData } from '@trace-flow/types';
 
 describe('processSSEEvent', () => {
@@ -398,5 +398,168 @@ describe('createSSEParser', () => {
     expect(streamData.messages[0]?.events[0]?.type).toBe('message_start');
     expect(streamData.messages[0]?.events[1]?.type).toBe('content_block_start');
     expect(streamData.messages[0]?.events[2]?.type).toBe('content_block_delta');
+  });
+});
+
+describe('aggregateSSETokens', () => {
+  it('should return undefined for empty stream data', () => {
+    const streamData: SSEStreamData = { messages: [] };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('should return undefined when no messages have usage', () => {
+    const streamData: SSEStreamData = {
+      messages: [{ messageStart: 1000, events: [] }],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result).toBeUndefined();
+  });
+
+  it('should aggregate tokens from single message', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result).toEqual({
+      promptTokens: 100,
+      completionTokens: 50,
+      totalTokens: 150,
+    });
+  });
+
+  it('should aggregate tokens with cache fields', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 30,
+            cache_creation_input_tokens: 10,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result).toEqual({
+      promptTokens: 100,
+      completionTokens: 50,
+      totalTokens: 150,
+      cacheReadTokens: 30,
+      cacheCreationTokens: 10,
+    });
+  });
+
+  it('should sum tokens from multiple messages', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+          },
+        },
+        {
+          messageStart: 2000,
+          events: [],
+          usage: {
+            input_tokens: 200,
+            output_tokens: 100,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result).toEqual({
+      promptTokens: 300,
+      completionTokens: 150,
+      totalTokens: 450,
+    });
+  });
+
+  it('should handle messages with partial usage data', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+          },
+        },
+        {
+          messageStart: 2000,
+          events: [],
+          usage: {
+            output_tokens: 50,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result?.promptTokens).toBe(100);
+    expect(result?.completionTokens).toBe(50);
+  });
+
+  it('should skip messages without usage when aggregating', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+          },
+        },
+        {
+          messageStart: 2000,
+          events: [],
+          // No usage
+        },
+        {
+          messageStart: 3000,
+          events: [],
+          usage: {
+            input_tokens: 50,
+            output_tokens: 25,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result).toEqual({
+      promptTokens: 150,
+      completionTokens: 75,
+      totalTokens: 225,
+    });
   });
 });
