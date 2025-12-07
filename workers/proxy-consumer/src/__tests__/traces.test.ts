@@ -745,4 +745,186 @@ describe('buildTraces', () => {
       expect(responseSpan).toBeUndefined();
     });
   });
+
+  describe('cost attributes', () => {
+    const samplePricing = {
+      promptCostPerMillion: 3000000, // $3 per million tokens
+      completionCostPerMillion: 15000000, // $15 per million tokens
+      cacheReadCostPerMillion: 300000, // $0.30 per million
+      cacheWriteCostPerMillion: 3750000, // $3.75 per million
+      reasoningCostPerMillion: 15000000, // $15 per million
+      updatedAt: Date.now(),
+      source: 'openrouter' as const,
+    };
+
+    it('should add cost attributes when pricing is provided', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      // 1000 * 3M / 1M = 3000 microdollars = $0.003
+      expect(rootSpan.SpanAttributes['ai.cost.input']).toBe('0.003');
+      // 500 * 15M / 1M = 7500 microdollars = $0.0075
+      expect(rootSpan.SpanAttributes['ai.cost.output']).toBe('0.0075');
+      // Total = 10500 microdollars = $0.0105
+      expect(rootSpan.SpanAttributes['ai.cost.total']).toBe('0.0105');
+    });
+
+    it('should not add cost attributes when pricing is not provided', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+        },
+      };
+
+      const traces = buildTraces(message);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['ai.cost.input']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.cost.output']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.cost.total']).toBeUndefined();
+    });
+
+    it('should not add cost attributes when pricing is null', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+        },
+      };
+
+      const traces = buildTraces(message, null);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['ai.cost.input']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.cost.output']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['ai.cost.total']).toBeUndefined();
+    });
+
+    it('should add cache_read cost when > 0', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+          cacheReadTokens: 2000,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      // 2000 * 300K / 1M = 600 microdollars = $0.0006
+      expect(rootSpan.SpanAttributes['ai.cost.cache_read']).toBe('0.0006');
+    });
+
+    it('should add cache_creation cost when > 0', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+          cacheCreationTokens: 1000,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      // 1000 * 3.75M / 1M = 3750 microdollars = $0.00375
+      expect(rootSpan.SpanAttributes['ai.cost.cache_creation']).toBe('0.00375');
+    });
+
+    it('should add reasoning cost when > 0', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+          reasoningTokens: 200,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      // 200 * 15M / 1M = 3000 microdollars = $0.003
+      expect(rootSpan.SpanAttributes['ai.cost.reasoning']).toBe('0.003');
+    });
+
+    it('should not include cache_read when cost is 0', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+          cacheReadTokens: 0,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['ai.cost.cache_read']).toBeUndefined();
+    });
+
+    it('should not include cache_creation when cost is 0', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+          cacheCreationTokens: 0,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['ai.cost.cache_creation']).toBeUndefined();
+    });
+
+    it('should not include reasoning when cost is 0', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000,
+          completionTokens: 500,
+          reasoningTokens: 0,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['ai.cost.reasoning']).toBeUndefined();
+    });
+
+    it('should format costs as dollar strings not microdollars', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 1000000, // 1 million tokens
+          completionTokens: 0,
+        },
+      };
+
+      const traces = buildTraces(message, samplePricing);
+      const rootSpan = traces[0]!;
+
+      // 1M * 3M / 1M = 3M microdollars = $3
+      expect(rootSpan.SpanAttributes['ai.cost.input']).toBe('3');
+      expect(rootSpan.SpanAttributes['ai.cost.total']).toBe('3');
+    });
+  });
 });

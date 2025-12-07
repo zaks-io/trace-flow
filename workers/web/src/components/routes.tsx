@@ -6,6 +6,7 @@ const Requests = lazy(() => import('./pages/Requests'));
 const Traces = lazy(() => import('./pages/Traces'));
 const TraceDetail = lazy(() => import('./pages/TraceDetail'));
 const ApiKeys = lazy(() => import('./pages/ApiKeys'));
+const Pricing = lazy(() => import('./pages/Pricing'));
 
 function PageLoader() {
   return (
@@ -47,6 +48,10 @@ export const routes: RouteObject[] = [
     path: '/api-keys',
     element: withSuspense(ApiKeys),
   },
+  {
+    path: '/pricing',
+    element: withSuspense(Pricing),
+  },
 ];
 
 export const navItems = [
@@ -54,4 +59,5 @@ export const navItems = [
   { title: 'Requests', path: '/requests', fullPath: '/app/requests' },
   { title: 'Traces', path: '/traces', fullPath: '/app/traces' },
   { title: 'API Keys', path: '/api-keys', fullPath: '/app/api-keys' },
+  { title: 'Pricing', path: '/pricing', fullPath: '/app/pricing' },
 ];
