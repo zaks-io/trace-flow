@@ -188,6 +188,7 @@ export default function TraceDetail() {
 
       <SpanDetailPanel
         span={selectedSpan ?? null}
+        rootSpan={rootSpan ?? null}
         isRootSpan={selectedSpan ? selectedSpan.ParentSpanId === '' : false}
         isOpen={!!selectedSpan}
         onClose={() => setSelectedSpanId(null)}

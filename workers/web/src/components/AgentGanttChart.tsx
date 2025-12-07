@@ -1,7 +1,6 @@
-import { useMemo, useRef, useState, useLayoutEffect } from 'react';
+import { useMemo } from 'react';
 import {
   Bot,
-  Zap,
   Activity,
   Settings2,
   User,
@@ -34,7 +33,6 @@ interface AgentGanttChartProps {
 
 type SpanType =
   | 'llm' // AI request (infrastructure - muted)
-  | 'ttft' // Time to first token (infrastructure - muted)
   | 'system' // System message (input)
   | 'user' // User message (input)
   | 'assistant_input' // Prior assistant message (input)
@@ -69,24 +67,23 @@ function getSpanType(span: TraceSpan): SpanType {
 
   // Infrastructure spans (muted)
   if (name === 'ai.request' || name.includes('chat/completions')) return 'llm';
-  if (name === 'ai.request.ttft' || name.includes('ttft')) return 'ttft';
 
-  // Input message spans (warm tones)
-  if (name === 'ai.system.message') return 'system';
-  if (name === 'ai.user.message') return 'user';
-  if (name === 'ai.assistant.message') return 'assistant_input';
-  if (name === 'ai.tool.result') return 'tool_result';
+  // Input message spans (warm tones) - ai.request.{role} pattern
+  if (name === 'ai.request.system') return 'system';
+  if (name === 'ai.request.user') return 'user';
+  if (name === 'ai.request.assistant') return 'assistant_input';
+  if (name === 'ai.request.tool_result') return 'tool_result';
 
-  // Output spans (cool/vibrant tones)
-  if (name.startsWith('ai.assistant.text')) return 'assistant_text';
-  if (name.startsWith('ai.assistant.thinking')) return 'assistant_thinking';
-  if (name.startsWith('ai.assistant.tool_use')) return 'assistant_tool_use';
+  // Output spans (cool/vibrant tones) - ai.response.{type} pattern
+  if (name.startsWith('ai.response.text')) return 'assistant_text';
+  if (name.startsWith('ai.response.thinking')) return 'assistant_thinking';
+  if (name.startsWith('ai.response.tool_use')) return 'assistant_tool_use';
 
   // Tool execution
   if (name === 'ai.tool.execution') return 'tool_execution';
 
-  // Fallback for other assistant outputs (numbered variants like ai.assistant.text.2)
-  if (name.startsWith('ai.assistant.')) return 'assistant_text';
+  // Fallback for other response outputs (numbered variants like ai.response.text.2)
+  if (name.startsWith('ai.response.')) return 'assistant_text';
 
   return 'internal';
 }
@@ -120,7 +117,7 @@ function getMessageIndex(span: TraceSpan): number | null {
 }
 
 function isHollowType(type: SpanType): boolean {
-  return type === 'llm' || type === 'ttft';
+  return type === 'llm';
 }
 
 function getTypeColor(type: SpanType, status: string): string {
@@ -130,8 +127,6 @@ function getTypeColor(type: SpanType, status: string): string {
     // Infrastructure - hollow style (handled separately in JSX)
     case 'llm':
       return 'border-violet-400 bg-violet-500/10';
-    case 'ttft':
-      return 'border-rose-400 bg-rose-500/10';
 
     // Input messages - warm/earth tones
     case 'system':
@@ -165,8 +160,6 @@ function getTypeIcon(type: SpanType) {
     // Infrastructure
     case 'llm':
       return <Bot className="h-3.5 w-3.5" />;
-    case 'ttft':
-      return <Zap className="h-3.5 w-3.5" />;
 
     // Input messages
     case 'system':
@@ -200,8 +193,6 @@ function getTypeIconColor(type: SpanType): string {
     // Infrastructure - colored to match hollow bars
     case 'llm':
       return 'text-violet-400';
-    case 'ttft':
-      return 'text-rose-400';
 
     // Input messages - warm tones
     case 'system':
@@ -439,98 +430,6 @@ export function AgentGanttChart({
     return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
   }, [spans]);
 
-  // Refs for measuring bar positions
-  const containerRef = useRef<HTMLDivElement>(null);
-  const barRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-
-  // Flow paths calculated from measured bar positions
-  const [flowPaths, setFlowPaths] = useState<string[]>([]);
-
-  // Measure bar positions after render and generate flow paths
-  useLayoutEffect(() => {
-    if (!containerRef.current || spanRows.length < 2) {
-      setFlowPaths([]);
-      return;
-    }
-
-    const containerRect = containerRef.current.getBoundingClientRect();
-
-    // Group spans by parent ai.request (index resets per request)
-    const spansByParent = new Map<string, SpanRow[]>();
-    for (const row of spanRows) {
-      if (row.messageIndex !== null) {
-        const parent = row.span.ParentSpanId;
-        const group = spansByParent.get(parent) ?? [];
-        group.push(row);
-        spansByParent.set(parent, group);
-      }
-    }
-
-    // Sort each group by messageIndex
-    for (const group of spansByParent.values()) {
-      group.sort((a, b) => a.messageIndex! - b.messageIndex!);
-    }
-
-    // Sort groups by the timestamp of their first span
-    const sortedGroups = [...spansByParent.values()].sort(
-      (a, b) => a[0].span.Timestamp - b[0].span.Timestamp,
-    );
-
-    // Helper to create bezier path between two bars
-    const createPath = (current: SpanRow, next: SpanRow): string | null => {
-      const currentBar = barRefs.current.get(current.span.SpanId);
-      const nextBar = barRefs.current.get(next.span.SpanId);
-
-      if (!currentBar || !nextBar) return null;
-
-      const currentRect = currentBar.getBoundingClientRect();
-      const nextRect = nextBar.getBoundingClientRect();
-
-      const fromX = currentRect.right - containerRect.left;
-      const toX = nextRect.left - containerRect.left;
-      // Connect from bottom of source to top of target
-      const fromY = currentRect.bottom - containerRect.top;
-      const toY = nextRect.top - containerRect.top;
-
-      const horizontalDist = Math.abs(toX - fromX);
-      const verticalDist = Math.abs(toY - fromY);
-
-      // For stacked spans (close horizontally), just draw a straight line
-      if (horizontalDist < 50) {
-        return `M ${fromX} ${fromY} L ${toX} ${toY}`;
-      }
-
-      // For horizontally spread spans, use smooth S-curve
-      const controlX1 = fromX + horizontalDist * 0.3;
-      const controlX2 = toX - horizontalDist * 0.3;
-      const curveStrength = Math.max(verticalDist * 0.4, 30);
-
-      return `M ${fromX} ${fromY} C ${controlX1} ${fromY + curveStrength}, ${controlX2} ${toY - curveStrength}, ${toX} ${toY}`;
-    };
-
-    const paths: string[] = [];
-
-    // Connect spans within each group, then between groups
-    for (let g = 0; g < sortedGroups.length; g++) {
-      const group = sortedGroups[g];
-
-      // Connect within group
-      for (let i = 0; i < group.length - 1; i++) {
-        const path = createPath(group[i], group[i + 1]);
-        if (path) paths.push(path);
-      }
-
-      // Connect to next group (last of this group to first of next)
-      if (g < sortedGroups.length - 1) {
-        const nextGroup = sortedGroups[g + 1];
-        const path = createPath(group[group.length - 1], nextGroup[0]);
-        if (path) paths.push(path);
-      }
-    }
-
-    setFlowPaths(paths);
-  }, [spanRows]);
-
   if (spanRows.length === 0) {
     return null;
   }
@@ -575,22 +474,7 @@ export function AgentGanttChart({
         </div>
       )}
 
-      <div ref={containerRef} className="relative">
-        {/* Flow lines SVG overlay - behind spans with muted gray */}
-        {flowPaths.length > 0 && (
-          <svg className="pointer-events-none absolute inset-0 z-10 overflow-visible">
-            {flowPaths.map((path, i) => (
-              <path
-                key={i}
-                d={path}
-                fill="none"
-                stroke="rgb(82 82 91 / 0.7)"
-                strokeWidth={1.5}
-                strokeLinecap="round"
-              />
-            ))}
-          </svg>
-        )}
+      <div className="relative">
         {spanRows.map((row) => (
           <div
             key={row.span.SpanId}
@@ -612,11 +496,6 @@ export function AgentGanttChart({
             <div className="relative flex-1 px-4 py-2">
               <div className="relative h-5">
                 <div
-                  ref={(el) => {
-                    if (el && row.messageIndex !== null) {
-                      barRefs.current.set(row.span.SpanId, el);
-                    }
-                  }}
                   className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)}`}
                   style={{
                     left: `${row.startOffset}%`,
