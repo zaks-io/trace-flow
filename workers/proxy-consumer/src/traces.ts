@@ -68,11 +68,29 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
     if (data.tokens.totalTokens) {
       rootSpan.SpanAttributes['ai.tokens.total'] = String(data.tokens.totalTokens);
     }
-    if (data.tokens.cached !== undefined) {
-      rootSpan.SpanAttributes['ai.cached'] = String(data.tokens.cached);
-    }
     if (data.tokens.reasoningTokens !== undefined) {
-      rootSpan.SpanAttributes['ai.reasoning_tokens'] = String(data.tokens.reasoningTokens);
+      rootSpan.SpanAttributes['ai.tokens.reasoning'] = String(data.tokens.reasoningTokens);
+    }
+    if (data.tokens.cachedTokens !== undefined) {
+      rootSpan.SpanAttributes['ai.tokens.cached'] = String(data.tokens.cachedTokens);
+    }
+    if (data.tokens.cacheReadTokens !== undefined) {
+      rootSpan.SpanAttributes['ai.tokens.cache_read'] = String(data.tokens.cacheReadTokens);
+    }
+    if (data.tokens.cacheCreationTokens !== undefined) {
+      rootSpan.SpanAttributes['ai.tokens.cache_creation'] = String(data.tokens.cacheCreationTokens);
+    }
+  }
+
+  // Calculate TPS using generation duration (first token → complete)
+  // This excludes network latency and provider processing time
+  if (data.tokens?.completionTokens && data.tokens.completionTokens > 0) {
+    const generationStartMs = data.timing.firstTokenReceived ?? data.timing.requestSent;
+    const generationDurationMs = data.timing.responseComplete - generationStartMs;
+
+    if (generationDurationMs > 0) {
+      const tokensPerSecond = data.tokens.completionTokens / (generationDurationMs / 1000);
+      rootSpan.SpanAttributes['ai.tokens_per_second'] = String(tokensPerSecond.toFixed(2));
     }
   }
 
@@ -143,7 +161,7 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       }
     }
 
-    // Add TTFT attribute to root span (measures user-perceived time to first token)
+    // Add TTFT attribute to root span (measures user-perceived time to first content)
     if (firstContentDelta) {
       rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(
         firstContentDelta.timestamp - data.timing.requestStart,
@@ -181,6 +199,12 @@ export function buildTraces(data: QueueMessage): TinybirdTrace[] {
       traces.push(...contentBlockSpans);
     }
   } else if (data.response.status < 400) {
+    // Add TTFT for non-SSE responses using firstTokenReceived
+    if (data.timing.firstTokenReceived) {
+      const ttftMs = data.timing.firstTokenReceived - data.timing.requestStart;
+      rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(ttftMs);
+    }
+
     // Create response span for non-streaming responses
     // Uses same ai.response.text name as streaming for consistency
     const responseSpan: TinybirdTrace = {
