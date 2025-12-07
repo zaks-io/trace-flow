@@ -12,6 +12,14 @@ on:
   pull_request:
     types: [opened, ready_for_review]
 
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: write
+  actions: read
+  id-token: write
+
 jobs:
   # General Claude assistant for comments (excludes /review and issues)
   claude:
@@ -21,7 +29,6 @@ jobs:
     uses: zaks-io/claude-code-action/.github/workflows/claude.yml@main
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # Issue triage with Linear integration
   triage:
@@ -31,7 +38,6 @@ jobs:
       linear_team_prefix: 'ZAK'
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}
       linear_api_token: ${{ secrets.LINEAR_API_KEY }}
 
   # Code review via /review comment or PR open/ready
@@ -55,4 +61,3 @@ jobs:
       trigger_type: ${{ github.event_name == 'issue_comment' && 'comment' || 'auto' }}
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      github_token: ${{ secrets.GITHUB_TOKEN }}

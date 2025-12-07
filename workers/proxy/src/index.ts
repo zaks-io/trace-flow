@@ -21,8 +21,8 @@ import {
   generateId,
   generateTraceId,
   getCurrentTimestamp,
-  validateTraceId,
-  validateSpanId,
+  parseTraceparent,
+  parseBaggage,
 } from '@trace-flow/utils';
 import type {
   SSEStreamData,
@@ -117,12 +117,16 @@ app.all('*', async (c) => {
   const requestId = generateId();
   const requestStart = getCurrentTimestamp();
 
-  // Allow user to provide trace context to join existing OTEL traces
-  // X-Trace-Flow-Trace-Id: 32 hex chars - joins proxy request to existing trace
-  // X-Trace-Flow-Parent-Span-Id: 16 hex chars - sets parent span for hierarchy
-  const providedTraceId = validateTraceId(c.req.header('X-Trace-Flow-Trace-Id'));
-  const traceId = providedTraceId ?? generateTraceId();
-  const parentSpanId = validateSpanId(c.req.header('X-Trace-Flow-Parent-Span-Id'));
+  // Parse W3C Trace Context headers
+  // traceparent: 00-{trace-id}-{parent-id}-{flags}
+  // tracestate: vendor-specific key-value pairs
+  // baggage: user-defined context propagated across services
+  const traceparent = parseTraceparent(c.req.header('traceparent'));
+  const traceId = traceparent?.traceId ?? generateTraceId();
+  const parentSpanId = traceparent?.parentId ?? undefined;
+  const traceFlags = traceparent?.flags ?? 0x01;
+  const traceState = c.req.header('tracestate') ?? '';
+  const baggage = parseBaggage(c.req.header('baggage'));
 
   const { targetUrl } = route;
 
@@ -130,13 +134,14 @@ app.all('*', async (c) => {
   // tee() creates two independent readers from the same source without buffering the entire body
   const [streamToProxy, streamToCapture] = c.req.raw.body?.tee() ?? [null, null];
 
-  // Forward all headers except proxy-specific ones
-  // Strip X-Trace-Flow-* headers (proxy auth and trace context) and host header
+  // Forward all headers except proxy-specific and trace context ones
+  // Strip X-Trace-Flow-Api-Key (proxy auth), W3C trace headers, and host header
   // All other headers (including Authorization, x-api-key) pass through to provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Trace-Flow-Api-Key');
-  headers.delete('X-Trace-Flow-Trace-Id');
-  headers.delete('X-Trace-Flow-Parent-Span-Id');
+  headers.delete('traceparent');
+  headers.delete('tracestate');
+  headers.delete('baggage');
   headers.delete('host');
 
   const requestSent = getCurrentTimestamp();
@@ -257,6 +262,9 @@ app.all('*', async (c) => {
           requestId,
           traceId,
           parentSpanId: parentSpanId ?? undefined,
+          traceFlags,
+          traceState: traceState || undefined,
+          baggage: Object.keys(baggage).length > 0 ? baggage : undefined,
           apiKey,
           targetUrl,
           responseStatus: response.status,

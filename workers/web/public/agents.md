@@ -44,29 +44,72 @@ const result = await generateText({
 
 ### 4. Link to OpenTelemetry Traces (Recommended)
 
-Connect LLM calls to existing traces for full observability:
+Connect LLM calls to existing traces using W3C Trace Context headers:
 
 ```typescript
+import { context, propagation } from '@opentelemetry/api';
+
 const parentSpan = tracer.startSpan('user-request');
-const ctx = parentSpan.spanContext();
+
+const result = await context.with(trace.setSpan(context.active(), parentSpan), async () => {
+  // Inject W3C trace context headers automatically
+  const traceHeaders: Record<string, string> = {};
+  propagation.inject(context.active(), traceHeaders);
+
+  return generateText({
+    model: openai('gpt-4o'),
+    prompt: userMessage,
+    headers: {
+      ...traceHeaders, // Contains traceparent and tracestate
+      baggage: 'session_id=abc123', // Optional: custom context
+    },
+  });
+});
+```
+
+### 5. Manual Trace Headers (Without OpenTelemetry)
+
+If you're not using OpenTelemetry, generate trace headers manually:
+
+```typescript
+function generateTraceId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function generateSpanId(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+const traceId = generateTraceId();
+const spanId = generateSpanId();
+const traceparent = `00-${traceId}-${spanId}-01`;
 
 const result = await generateText({
   model: openai('gpt-4o'),
   prompt: userMessage,
   headers: {
-    'X-Trace-Flow-Trace-Id': ctx.traceId,
-    'X-Trace-Flow-Parent-Span-Id': ctx.spanId,
+    traceparent,
+    baggage: 'session_id=abc123,user_id=user456',
   },
 });
 ```
 
 ## Headers Reference
 
-| Header                      | Required | Format       | Purpose                |
-| --------------------------- | -------- | ------------ | ---------------------- |
-| X-Trace-Flow-Api-Key        | Yes      | string       | Authentication         |
-| X-Trace-Flow-Trace-Id       | No       | 32 hex chars | Link to existing trace |
-| X-Trace-Flow-Parent-Span-Id | No       | 16 hex chars | Set parent span        |
+| Header               | Required | Format                        | Purpose                            |
+| -------------------- | -------- | ----------------------------- | ---------------------------------- |
+| X-Trace-Flow-Api-Key | Yes      | string                        | Authentication                     |
+| traceparent          | No       | 00-{traceId}-{spanId}-{flags} | W3C trace context with parent span |
+| tracestate           | No       | vendor=value,...              | Vendor-specific trace context      |
+| baggage              | No       | key=value,...                 | Custom context as span attributes  |
 
 ## Proxy Routes
 

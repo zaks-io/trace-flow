@@ -32,6 +32,9 @@ export function createQueueMessage(params: {
   requestId: string;
   traceId: string;
   parentSpanId?: string;
+  traceFlags?: number;
+  traceState?: string;
+  baggage?: Record<string, string>;
   apiKey: string;
   targetUrl: string;
   responseStatus: number;
@@ -55,6 +58,9 @@ export function createQueueMessage(params: {
     requestId,
     traceId,
     parentSpanId,
+    traceFlags,
+    traceState,
+    baggage,
     apiKey,
     targetUrl,
     responseStatus,
@@ -134,6 +140,18 @@ export function createQueueMessage(params: {
 
   if (parentSpanId) {
     queueMessage.parentSpanId = parentSpanId;
+  }
+
+  if (traceFlags !== undefined) {
+    queueMessage.traceFlags = traceFlags;
+  }
+
+  if (traceState) {
+    queueMessage.traceState = traceState;
+  }
+
+  if (baggage && Object.keys(baggage).length > 0) {
+    queueMessage.baggage = baggage;
   }
 
   if (inputMessages && inputMessages.length > 0) {
