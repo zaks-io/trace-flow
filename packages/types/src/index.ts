@@ -56,6 +56,61 @@ export interface SSEEvent {
   data?: string;
 }
 
+/**
+ * Content block tracking for Anthropic streaming responses.
+ * Tracks individual text and tool_use blocks with timing information.
+ */
+export interface AnthropicContentBlock {
+  index: number;
+  type: 'text' | 'tool_use' | 'thinking';
+  startTimestamp: number;
+  stopTimestamp?: number;
+  toolUseId?: string;
+  toolName?: string;
+}
+
+/**
+ * Content block from request body (input messages).
+ */
+export interface InputContentBlock {
+  index: number;
+  type: 'text' | 'tool_use' | 'tool_result' | 'tool_call' | 'image';
+  toolUseId?: string;
+  toolName?: string;
+  toolResultId?: string;
+  toolCallId?: string;
+}
+
+/**
+ * Input message parsed from request body.
+ */
+export interface InputMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  index: number;
+  contentBlocks: InputContentBlock[];
+}
+
+/**
+ * Tool call start info returned from ToolCallTracker DO.
+ */
+export interface ToolCallStart {
+  toolName: string;
+  startTimestamp: number;
+  traceId: string;
+}
+
+/**
+ * Tool execution info for cross-request tool duration tracking.
+ * Created when a tool_result is received that matches a previous tool_use.
+ */
+export interface ToolExecution {
+  toolUseId: string;
+  toolName: string;
+  startTimestamp: number;
+  endTimestamp: number;
+  originalTraceId: string;
+}
+
 export interface SSEMessage {
   messageStart: number;
   messageStop?: number;
@@ -67,6 +122,7 @@ export interface SSEMessage {
     output_tokens?: number;
   };
   metadata?: Partial<LLMResponseMetadata>;
+  contentBlocks?: AnthropicContentBlock[];
 }
 
 export interface SSEStreamData {
@@ -90,6 +146,8 @@ export interface QueueMessage {
   sseStreamData?: SSEStreamData;
   responseMetadata?: Partial<LLMResponseMetadata>;
   receivedAt: number;
+  inputMessages?: InputMessage[];
+  toolExecutions?: ToolExecution[];
 }
 
 export interface TinybirdTrace {

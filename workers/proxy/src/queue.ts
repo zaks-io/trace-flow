@@ -5,6 +5,8 @@ import type {
   LLMError,
   SSEStreamData,
   LLMResponseMetadata,
+  InputMessage,
+  ToolExecution,
 } from '@trace-flow/types';
 import { extractProviderFromUrl } from '@trace-flow/utils';
 
@@ -46,6 +48,8 @@ export function createQueueMessage(params: {
   sseStreamData?: SSEStreamData;
   responseMetadata?: Partial<LLMResponseMetadata>;
   receivedAt: number;
+  inputMessages?: InputMessage[];
+  toolExecutions?: ToolExecution[];
 }): QueueMessage {
   const {
     requestId,
@@ -67,6 +71,8 @@ export function createQueueMessage(params: {
     sseStreamData,
     responseMetadata,
     receivedAt,
+    inputMessages,
+    toolExecutions,
   } = params;
 
   const provider = extractProviderFromUrl(targetUrl);
@@ -128,6 +134,14 @@ export function createQueueMessage(params: {
 
   if (parentSpanId) {
     queueMessage.parentSpanId = parentSpanId;
+  }
+
+  if (inputMessages && inputMessages.length > 0) {
+    queueMessage.inputMessages = inputMessages;
+  }
+
+  if (toolExecutions && toolExecutions.length > 0) {
+    queueMessage.toolExecutions = toolExecutions;
   }
 
   return queueMessage;

@@ -24,11 +24,17 @@ import {
   validateTraceId,
   validateSpanId,
 } from '@trace-flow/utils';
-import type { SSEStreamData, QueueMessageUnion, LLMResponseMetadata } from '@trace-flow/types';
+import type {
+  SSEStreamData,
+  QueueMessageUnion,
+  LLMResponseMetadata,
+  InputMessage,
+} from '@trace-flow/types';
 import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
+import { parseAnthropicRequestBody, parseOpenAIStyleRequestBody } from './parsers/request-body';
 import { captureStream, createResponseCapture, chunksToString } from './streaming/capture';
 import { createSSEParser } from './streaming/sse';
 import { storeRequestResponse } from './storage';
@@ -36,7 +42,6 @@ import { createQueueMessage } from './queue';
 import { resolveRoute, PROVIDERS } from './providers';
 import { handleOTLPTraces } from './otlp';
 import { otlpTracesRoute } from './otlp/routes';
-
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
   STORAGE: R2Bucket;
@@ -134,13 +139,13 @@ app.all('*', async (c) => {
   headers.delete('X-Trace-Flow-Parent-Span-Id');
   headers.delete('host');
 
+  const requestSent = getCurrentTimestamp();
+
   const response = await fetch(targetUrl, {
     method: c.req.method,
     headers,
     body: streamToProxy,
   });
-
-  const requestSent = getCurrentTimestamp();
 
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
@@ -204,6 +209,30 @@ app.all('*', async (c) => {
           }
         }
 
+        // Parse input messages based on provider
+        const isAnthropic = targetUrl.includes('anthropic.com');
+        const isOpenAIStyle =
+          targetUrl.includes('openai.com') ||
+          targetUrl.includes('groq.com') ||
+          targetUrl.includes('openrouter.ai');
+
+        let inputMessages: InputMessage[] | undefined;
+
+        if (requestBody) {
+          try {
+            if (isAnthropic) {
+              inputMessages = parseAnthropicRequestBody(requestBody) ?? undefined;
+            } else if (isOpenAIStyle) {
+              inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
+            }
+          } catch (error) {
+            console.error('Failed to parse request body:', {
+              requestId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         const { requestBodyKey, responseBodyKey, stored } = await storeRequestResponse(
           c.env.STORAGE,
           requestId,
@@ -235,6 +264,7 @@ app.all('*', async (c) => {
           sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
           responseMetadata,
           receivedAt: requestStart * 1_000_000,
+          inputMessages,
         });
 
         await c.env.REQUEST_QUEUE.send(queueMessage);

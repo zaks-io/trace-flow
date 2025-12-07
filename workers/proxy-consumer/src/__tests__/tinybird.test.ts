@@ -36,6 +36,7 @@ describe('insertIntoTinybird', () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      text: () => Promise.resolve(''),
     });
     global.fetch = mockFetch;
 
@@ -58,6 +59,7 @@ describe('insertIntoTinybird', () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      text: () => Promise.resolve(''),
     });
     global.fetch = mockFetch;
 
@@ -83,6 +85,7 @@ describe('insertIntoTinybird', () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      text: () => Promise.resolve(''),
     });
     global.fetch = mockFetch;
 
@@ -141,6 +144,7 @@ describe('insertIntoTinybird', () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      text: () => Promise.resolve(''),
     });
     global.fetch = mockFetch;
 
@@ -155,6 +159,7 @@ describe('insertIntoTinybird', () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      text: () => Promise.resolve(''),
     });
     global.fetch = mockFetch;
 
@@ -216,6 +221,7 @@ describe('insertIntoTinybirdWithRetry', () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      text: () => Promise.resolve(''),
     });
     global.fetch = mockFetch;
 
@@ -240,6 +246,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
+        text: () => Promise.resolve(''),
       });
     global.fetch = mockFetch;
 
@@ -297,6 +304,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
+        text: () => Promise.resolve(''),
       });
     global.fetch = mockFetch;
 
@@ -344,6 +352,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
+        text: () => Promise.resolve(''),
       });
     global.fetch = mockFetch;
 

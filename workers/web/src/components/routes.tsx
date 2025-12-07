@@ -4,8 +4,6 @@ import type { RouteObject } from 'react-router-dom';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Requests = lazy(() => import('./pages/Requests'));
 const Traces = lazy(() => import('./pages/Traces'));
-const Spans = lazy(() => import('./pages/Spans'));
-const SpanGroupDetail = lazy(() => import('./pages/SpanGroupDetail'));
 const TraceDetail = lazy(() => import('./pages/TraceDetail'));
 const ApiKeys = lazy(() => import('./pages/ApiKeys'));
 
@@ -42,14 +40,6 @@ export const routes: RouteObject[] = [
     element: withSuspense(Traces),
   },
   {
-    path: '/spans',
-    element: withSuspense(Spans),
-  },
-  {
-    path: '/spans/:parentSpanId',
-    element: withSuspense(SpanGroupDetail),
-  },
-  {
     path: '/trace/:traceId',
     element: withSuspense(TraceDetail),
   },
@@ -63,6 +53,5 @@ export const navItems = [
   { title: 'Dashboard', path: '/', fullPath: '/app' },
   { title: 'Requests', path: '/requests', fullPath: '/app/requests' },
   { title: 'Traces', path: '/traces', fullPath: '/app/traces' },
-  { title: 'Spans', path: '/spans', fullPath: '/app/spans' },
   { title: 'API Keys', path: '/api-keys', fullPath: '/app/api-keys' },
 ];

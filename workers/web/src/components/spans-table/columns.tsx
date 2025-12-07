@@ -48,12 +48,11 @@ function truncateId(id: string) {
 
 function getSpanTypeColor(spanName: string): string {
   const name = spanName.toLowerCase();
-  if (name === 'llm.request' || name.includes('chat/completions'))
+  if (name === 'ai.request' || name.includes('chat/completions'))
     return 'bg-purple-500/20 text-purple-400';
-  if (name === 'llm.request.ttft' || name.includes('ttft')) return 'bg-amber-500/20 text-amber-400';
-  if (name.startsWith('llm.stream.message') || name.includes('message'))
-    return 'bg-blue-500/20 text-blue-400';
+  if (name.startsWith('ai.response.')) return 'bg-blue-500/20 text-blue-400';
   if (name.includes('tool')) return 'bg-orange-500/20 text-orange-400';
+  if (name.startsWith('ai.request.')) return 'bg-emerald-500/20 text-emerald-400';
   return 'bg-zinc-500/20 text-zinc-400';
 }
 
@@ -130,8 +129,8 @@ export const spanColumns: ColumnDef<SpanRow>[] = [
     meta: { category: 'standard', label: 'Parent Span' },
   },
   {
-    id: 'llmProvider',
-    accessorFn: (row) => getSpanAttribute(row, 'llm.provider'),
+    id: 'aiProvider',
+    accessorFn: (row) => getSpanAttribute(row, 'ai.provider'),
     header: 'Provider',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -144,8 +143,8 @@ export const spanColumns: ColumnDef<SpanRow>[] = [
     meta: { category: 'llm', label: 'Provider' },
   },
   {
-    id: 'llmModel',
-    accessorFn: (row) => getSpanAttribute(row, 'llm.model'),
+    id: 'aiModel',
+    accessorFn: (row) => getSpanAttribute(row, 'ai.model'),
     header: 'Model',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -203,8 +202,8 @@ export const defaultSpanColumnVisibility: VisibilityState = {
   spanName: true,
   traceId: true,
   parentSpanId: false,
-  llmProvider: true,
-  llmModel: true,
+  aiProvider: true,
+  aiModel: true,
   duration: true,
   statusCode: true,
   serviceName: false,

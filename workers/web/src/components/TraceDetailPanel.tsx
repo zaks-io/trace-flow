@@ -40,7 +40,7 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
   });
 
   const spans = data?.data ?? [];
-  const rootSpan = spans.find((s) => s.SpanName === 'llm.request');
+  const rootSpan = spans.find((s) => s.SpanName === 'ai.request');
 
   const formatDuration = (nanoseconds: number) => {
     const milliseconds = nanoseconds / 1_000_000;

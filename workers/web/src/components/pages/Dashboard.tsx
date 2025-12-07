@@ -11,6 +11,7 @@ import {
   Server,
 } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { usePageHeader } from '@/components/PageHeaderContext';
 
 type TimeRange = '24h' | '7d' | '30d';
@@ -119,6 +120,7 @@ export default function Dashboard() {
   usePageHeader('Dashboard');
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
 
   const startTimeNs = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
@@ -131,8 +133,8 @@ export default function Dashboard() {
         countIf(ParentSpanId = '') as total_requests,
         count() as total_traces,
         avgIf(
-          JSONExtractFloat(SpanAttributes, 'llm.time_to_first_token_ms'),
-          SpanName = 'llm.request.ttft'
+          JSONExtractFloat(SpanAttributes, 'ai.time_to_first_token_ms'),
+          SpanName = 'ai.request' AND JSONHas(SpanAttributes, 'ai.time_to_first_token_ms')
         ) as avg_ttft_ms,
         avgIf(Duration, ParentSpanId = '') / 1000000 as avg_duration_ms,
         countIf(StatusCode = 'STATUS_CODE_ERROR' AND ParentSpanId = '') * 100.0 /
@@ -154,6 +156,7 @@ export default function Dashboard() {
       FORMAT JSON
     `,
     scopes: [{ type: 'DATASOURCES:READ', resource: 'otel_traces' }],
+    apiKeys: userApiKeys,
   });
 
   const modelsQuery = useTinybirdQuery<ModelData>({
@@ -171,6 +174,7 @@ export default function Dashboard() {
       FORMAT JSON
     `,
     scopes: [{ type: 'DATASOURCES:READ', resource: 'otel_traces' }],
+    apiKeys: userApiKeys,
   });
 
   const providersQuery = useTinybirdQuery<ProviderData>({
@@ -187,6 +191,7 @@ export default function Dashboard() {
       FORMAT JSON
     `,
     scopes: [{ type: 'DATASOURCES:READ', resource: 'otel_traces' }],
+    apiKeys: userApiKeys,
   });
 
   // Track if this is the initial render to avoid double-fetching
@@ -212,6 +217,7 @@ export default function Dashboard() {
   );
 
   const isLoading =
+    keysLoading === true ||
     summaryQuery.loading === true ||
     modelsQuery.loading === true ||
     providersQuery.loading === true;

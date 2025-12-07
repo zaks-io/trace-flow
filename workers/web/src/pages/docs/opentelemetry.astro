@@ -47,8 +47,8 @@ const SPANS_CODE = `async function handleRequest(request: Request) {
 
     // Another child span for LLM call
     const llmSpan = tracer.startSpan("llm-call");
-    llmSpan.setAttribute("llm.model", "gpt-4");
-    llmSpan.setAttribute("llm.provider", "openai");
+    llmSpan.setAttribute("ai.model", "gpt-4");
+    llmSpan.setAttribute("ai.provider", "openai");
     // ... make LLM call
     llmSpan.end();
 

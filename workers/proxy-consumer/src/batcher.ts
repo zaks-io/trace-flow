@@ -86,7 +86,6 @@ export class TraceBatcher extends DurableObject<Env> {
     if (this.traceCount >= BATCH_SIZE) {
       await this.flush();
     } else {
-      // Check storage for existing alarm (in-memory flag resets on hibernation)
       const currentAlarm = await this.durableState.storage.getAlarm();
       if (!currentAlarm) {
         await this.scheduleFlush();
@@ -116,8 +115,9 @@ export class TraceBatcher extends DurableObject<Env> {
     const jitter = Math.floor(Math.random() * MAX_JITTER_MS);
     const nextFlushTime = this.lastFlushTime + FLUSH_INTERVAL_MS + jitter;
     const delay = Math.max(0, nextFlushTime - Date.now());
+    const alarmTime = Date.now() + delay;
 
-    await this.durableState.storage.setAlarm(Date.now() + delay);
+    await this.durableState.storage.setAlarm(alarmTime);
     this.flushAlarmScheduled = true;
   }
 
@@ -127,9 +127,7 @@ export class TraceBatcher extends DurableObject<Env> {
     }
 
     const batchCount = Math.ceil(this.traceCount / BATCH_SIZE);
-    console.log(`Flushing ${this.traceCount} traces in ${batchCount} batch(es)`);
-
-    let totalFlushed = 0;
+    let _totalFlushed = 0;
 
     for (let i = 0; i < batchCount; i++) {
       const rows = [
@@ -157,17 +155,15 @@ export class TraceBatcher extends DurableObject<Env> {
         );
 
         this.traceCount -= traces.length;
-        totalFlushed += traces.length;
+        _totalFlushed += traces.length;
       } catch (error) {
-        console.error('Failed to insert batch after retries:', {
+        console.error('Failed to flush traces to Tinybird:', {
           batchSize: traces.length,
           error: error instanceof Error ? error.message : String(error),
         });
         break;
       }
     }
-
-    console.log(`Total flushed: ${totalFlushed} traces (remaining: ${this.traceCount})`);
 
     this.lastFlushTime = Date.now();
     this.updateLastFlushTime();
