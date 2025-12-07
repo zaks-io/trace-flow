@@ -250,3 +250,24 @@ export function formatAlertValue(
 
   return String(value);
 }
+
+export function evaluateAlertsForSpans(
+  rows: RequestRow[],
+  alerts: Alert[],
+): Map<string, TraceAlertSummary> {
+  const summaryMap = new Map<string, TraceAlertSummary>();
+
+  for (const row of rows) {
+    const triggered = evaluateAlerts(row, alerts);
+    if (triggered.length === 0) continue;
+
+    summaryMap.set(row.SpanId, {
+      traceId: row.TraceId,
+      spanId: row.SpanId,
+      triggeredAlerts: triggered,
+      highestSeverity: getHighestSeverity(triggered.map((t) => t.alert.severity as AlertSeverity)),
+    });
+  }
+
+  return summaryMap;
+}

@@ -147,7 +147,15 @@ export function DataTable<TData>({
                   {headerGroup.headers.map((header) => (
                     <th
                       key={header.id}
-                      className="px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                      className={cn(
+                        'px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground',
+                        header.id === 'alerts' && 'w-10 px-2',
+                      )}
+                      style={
+                        header.column.columnDef.size
+                          ? { width: header.column.columnDef.size }
+                          : undefined
+                      }
                     >
                       {header.isPlaceholder
                         ? null
@@ -180,7 +188,15 @@ export function DataTable<TData>({
                     {row.getVisibleCells().map((cell) => (
                       <td
                         key={cell.id}
-                        className="whitespace-nowrap px-6 py-4 text-sm text-foreground"
+                        className={cn(
+                          'whitespace-nowrap px-6 py-4 text-sm text-foreground',
+                          cell.column.id === 'alerts' && 'w-10 px-2',
+                        )}
+                        style={
+                          cell.column.columnDef.size
+                            ? { width: cell.column.columnDef.size }
+                            : undefined
+                        }
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>

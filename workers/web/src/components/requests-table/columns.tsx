@@ -57,13 +57,20 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   {
     id: 'alerts',
     header: '',
+    size: 40,
+    minSize: 40,
+    maxSize: 40,
     cell: ({ row, table }) => {
       const alertSummary = table.options.meta?.alertSummary;
-      if (!alertSummary) return null;
       const key = row.original.TraceId;
-      const summary = alertSummary.get(key);
-      if (!summary || summary.triggeredAlerts.length === 0) return null;
-      return <AlertIndicator triggeredAlerts={summary.triggeredAlerts} />;
+      const summary = alertSummary?.get(key);
+      const hasAlerts = summary && summary.triggeredAlerts.length > 0;
+      // Always render container to prevent layout reflow when alerts load
+      return (
+        <div className="flex h-5 w-8 items-center justify-center">
+          {hasAlerts && <AlertIndicator triggeredAlerts={summary.triggeredAlerts} />}
+        </div>
+      );
     },
     meta: { category: 'alerts', label: 'Alerts' },
     enableHiding: false,

@@ -11,6 +11,7 @@ import {
   Send,
   Play,
 } from 'lucide-react';
+import type { TraceAlertSummary, AlertSeverity } from '@/types/alerts';
 
 interface TraceSpan {
   Timestamp: number;
@@ -29,7 +30,23 @@ interface AgentGanttChartProps {
   selectedSpanId?: string;
   onSpanSelect?: (spanId: string) => void;
   parentSpanId?: string;
+  spanAlertSummary?: Map<string, TraceAlertSummary>;
 }
+
+const alertSeverityStyles: Record<AlertSeverity, { edge: string; glow: string }> = {
+  info: {
+    edge: 'bg-blue-500',
+    glow: 'shadow-[0_0_8px_rgba(59,130,246,0.4)]',
+  },
+  warning: {
+    edge: 'bg-amber-500',
+    glow: 'shadow-[0_0_10px_rgba(245,158,11,0.5)]',
+  },
+  error: {
+    edge: 'bg-red-500',
+    glow: 'shadow-[0_0_12px_rgba(239,68,68,0.6)]',
+  },
+};
 
 type SpanType =
   | 'llm' // AI request (infrastructure - muted)
@@ -251,108 +268,11 @@ export function AgentGanttChart({
   selectedSpanId,
   onSpanSelect,
   parentSpanId,
+  spanAlertSummary,
 }: AgentGanttChartProps) {
   const { spanRows, totalDuration } = useMemo(() => {
-    if (spans.length === 0) return { spanRows: [], totalDuration: 0, traceStartTime: 0 };
+    if (spans.length === 0) return { spanRows: [], totalDuration: 0 };
 
-    // Check if this is a span group (multiple traces without a true root span)
-    const uniqueTraceIds = [...new Set(spans.map((s) => s.TraceId))];
-    const hasRootSpan = spans.some((s) => s.ParentSpanId === '');
-    const isSpanGroup = uniqueTraceIds.length > 1 || (!hasRootSpan && spans.length > 0);
-
-    if (isSpanGroup) {
-      // Multi-trace mode: group by TraceId and render each trace's root span at depth 0
-      const traceGroups = new Map<string, TraceSpan[]>();
-      for (const span of spans) {
-        const group = traceGroups.get(span.TraceId) ?? [];
-        group.push(span);
-        traceGroups.set(span.TraceId, group);
-      }
-
-      const traceStart = Math.min(...spans.map((s) => s.Timestamp));
-      const traceEndTime = Math.max(...spans.map((s) => s.Timestamp + s.Duration));
-      const total = traceEndTime - traceStart;
-
-      const allRows: SpanRow[] = [];
-
-      // Sort trace groups by their earliest timestamp
-      const sortedTraceGroups = [...traceGroups.entries()].sort((a, b) => {
-        const aMin = Math.min(...a[1].map((s) => s.Timestamp));
-        const bMin = Math.min(...b[1].map((s) => s.Timestamp));
-        return aMin - bMin;
-      });
-
-      for (const [, traceSpans] of sortedTraceGroups) {
-        // Find root of this trace (span whose parent is not in this trace's span set)
-        const traceSpanIds = new Set(traceSpans.map((s) => s.SpanId));
-        const traceRoot = traceSpans.find((s) => !traceSpanIds.has(s.ParentSpanId));
-        if (!traceRoot) continue;
-
-        const rootType = getSpanType(traceRoot);
-        const rootTokens = getSpanTokens(traceRoot);
-        const rootTps = getSpanTokensPerSecond(traceRoot);
-        const startOffset = ((traceRoot.Timestamp - traceStart) / total) * 100;
-        const width = (traceRoot.Duration / total) * 100;
-
-        allRows.push({
-          span: traceRoot,
-          depth: 0,
-          startOffset,
-          width: Math.max(width, 0.5),
-          type: rootType,
-          tokens: rootTokens,
-          tokensPerSecond: rootTps,
-          messageIndex: getMessageIndex(traceRoot),
-        });
-
-        // Build children for this trace's root
-        const buildSpanTree = (parentId: string, depth: number): SpanRow[] => {
-          const children = traceSpans
-            .filter((s) => s.ParentSpanId === parentId)
-            .sort((a, b) => {
-              // Primary: sort by timestamp
-              const timeDiff = a.Timestamp - b.Timestamp;
-              if (timeDiff !== 0) return timeDiff;
-              // Secondary: sort by ai.message.index for spans with same timestamp
-              const aIndex = getMessageIndex(a);
-              const bIndex = getMessageIndex(b);
-              if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
-              if (aIndex !== null) return -1;
-              if (bIndex !== null) return 1;
-              return 0;
-            });
-
-          const rows: SpanRow[] = [];
-          for (const span of children) {
-            const childStartOffset = ((span.Timestamp - traceStart) / total) * 100;
-            const childWidth = (span.Duration / total) * 100;
-            const type = getSpanType(span);
-            const tokens = getSpanTokens(span);
-            const tps = getSpanTokensPerSecond(span);
-
-            rows.push({
-              span,
-              depth,
-              startOffset: childStartOffset,
-              width: Math.max(childWidth, 0.5),
-              type,
-              tokens,
-              tokensPerSecond: tps,
-              messageIndex: getMessageIndex(span),
-            });
-
-            rows.push(...buildSpanTree(span.SpanId, depth + 1));
-          }
-          return rows;
-        };
-
-        allRows.push(...buildSpanTree(traceRoot.SpanId, 1));
-      }
-
-      return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
-    }
-
-    // Single trace mode: handle multiple root spans within the same TraceId
     const spanIds = new Set(spans.map((s) => s.SpanId));
 
     // Find ALL root spans (spans whose parent is not in the span set or is empty)
@@ -374,10 +294,8 @@ export function AgentGanttChart({
       const children = spans
         .filter((s) => s.ParentSpanId === parentId)
         .sort((a, b) => {
-          // Primary: sort by timestamp
           const timeDiff = a.Timestamp - b.Timestamp;
           if (timeDiff !== 0) return timeDiff;
-          // Secondary: sort by ai.message.index for spans with same timestamp
           const aIndex = getMessageIndex(a);
           const bIndex = getMessageIndex(b);
           if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
@@ -387,54 +305,41 @@ export function AgentGanttChart({
         });
 
       const rows: SpanRow[] = [];
-
       for (const span of children) {
         const startOffset = ((span.Timestamp - traceStart) / total) * 100;
         const width = (span.Duration / total) * 100;
-        const type = getSpanType(span);
-        const tokens = getSpanTokens(span);
-        const tps = getSpanTokensPerSecond(span);
-
         rows.push({
           span,
           depth,
           startOffset,
           width: Math.max(width, 0.5),
-          type,
-          tokens,
-          tokensPerSecond: tps,
+          type: getSpanType(span),
+          tokens: getSpanTokens(span),
+          tokensPerSecond: getSpanTokensPerSecond(span),
           messageIndex: getMessageIndex(span),
         });
-
         rows.push(...buildSpanTree(span.SpanId, depth + 1));
       }
-
       return rows;
     };
 
-    // Build rows for ALL root spans and their children
     const allRows: SpanRow[] = [];
     for (const rootSpan of effectiveRoots) {
-      const rootType = getSpanType(rootSpan);
-      const rootTokens = getSpanTokens(rootSpan);
-      const rootTps = getSpanTokensPerSecond(rootSpan);
       const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
-
       allRows.push({
         span: rootSpan,
         depth: 0,
         startOffset,
         width: Math.max((rootSpan.Duration / total) * 100, 0.5),
-        type: rootType,
-        tokens: rootTokens,
-        tokensPerSecond: rootTps,
+        type: getSpanType(rootSpan),
+        tokens: getSpanTokens(rootSpan),
+        tokensPerSecond: getSpanTokensPerSecond(rootSpan),
         messageIndex: getMessageIndex(rootSpan),
       });
-
       allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
     }
 
-    return { spanRows: allRows, totalDuration: total, traceStartTime: traceStart };
+    return { spanRows: allRows, totalDuration: total };
   }, [spans]);
 
   if (spanRows.length === 0) {
@@ -502,20 +407,33 @@ export function AgentGanttChart({
 
             <div className="relative flex-1 px-4 py-2">
               <div className="relative h-5">
-                <div
-                  className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)}`}
-                  style={{
-                    left: `${row.startOffset}%`,
-                    width: `${row.width}%`,
-                    minWidth: '4px',
-                  }}
-                >
-                  {row.tokens !== null && row.width > 8 && (
-                    <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-white/90">
-                      {formatNumber(row.tokens)}
-                    </span>
-                  )}
-                </div>
+                {(() => {
+                  const alertSummary = spanAlertSummary?.get(row.span.SpanId);
+                  const alertStyles = alertSummary?.highestSeverity
+                    ? alertSeverityStyles[alertSummary.highestSeverity]
+                    : null;
+                  return (
+                    <div
+                      className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)} ${alertStyles?.glow ?? ''}`}
+                      style={{
+                        left: `${row.startOffset}%`,
+                        width: `${row.width}%`,
+                        minWidth: '4px',
+                      }}
+                    >
+                      {alertStyles && (
+                        <div
+                          className={`absolute left-0 top-0 h-full w-[3px] rounded-l ${alertStyles.edge}`}
+                        />
+                      )}
+                      {row.tokens !== null && row.width > 8 && (
+                        <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-white/90">
+                          {formatNumber(row.tokens)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">

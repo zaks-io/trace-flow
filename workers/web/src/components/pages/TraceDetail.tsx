@@ -11,7 +11,12 @@ import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
 import { AlertBadge, AlertList } from '@/components/alerts';
-import { evaluateAlertsForTraces, traceSpanToRequestRow, getHighestSeverity } from '@/lib/alerts';
+import {
+  evaluateAlertsForTraces,
+  evaluateAlertsForSpans,
+  traceSpanToRequestRow,
+  getHighestSeverity,
+} from '@/lib/alerts';
 import type { AlertSeverity } from '@/types/alerts';
 
 interface TraceSpan {
@@ -67,13 +72,17 @@ export default function TraceDetail() {
   const requestSpans = spans.filter((s) => s.SpanName === 'ai.request');
   const selectedSpan = spans.find((s) => s.SpanId === selectedSpanId);
 
-  const triggeredAlerts = useMemo(() => {
+  const { triggeredAlerts, spanAlertSummary } = useMemo(() => {
     if (!alerts || alerts.length === 0 || requestSpans.length === 0 || !validatedTraceId) {
-      return [];
+      return { triggeredAlerts: [], spanAlertSummary: new Map() };
     }
     const requestRows = requestSpans.map(traceSpanToRequestRow);
-    const alertSummary = evaluateAlertsForTraces(requestRows, alerts);
-    return alertSummary.get(validatedTraceId)?.triggeredAlerts ?? [];
+    const traceAlertSummary = evaluateAlertsForTraces(requestRows, alerts);
+    const spanSummary = evaluateAlertsForSpans(requestRows, alerts);
+    return {
+      triggeredAlerts: traceAlertSummary.get(validatedTraceId)?.triggeredAlerts ?? [],
+      spanAlertSummary: spanSummary,
+    };
   }, [alerts, requestSpans, validatedTraceId]);
 
   const highestSeverity = useMemo(() => {
@@ -150,7 +159,7 @@ export default function TraceDetail() {
       </div>
     );
   }
-
+  console.log(spans);
   return (
     <div className="animate-fade-in space-y-6">
       <div className="flex items-center justify-between">
@@ -217,6 +226,7 @@ export default function TraceDetail() {
           spans={spans}
           selectedSpanId={selectedSpanId ?? undefined}
           onSpanSelect={handleSpanSelect}
+          spanAlertSummary={spanAlertSummary}
         />
       </div>
 
@@ -226,6 +236,9 @@ export default function TraceDetail() {
         isRootSpan={selectedSpan ? selectedSpan.ParentSpanId === '' : false}
         isOpen={!!selectedSpan}
         onClose={() => setSelectedSpanId(null)}
+        triggeredAlerts={
+          selectedSpanId ? spanAlertSummary.get(selectedSpanId)?.triggeredAlerts : undefined
+        }
       />
     </div>
   );
