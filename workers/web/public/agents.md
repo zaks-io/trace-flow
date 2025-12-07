@@ -67,6 +67,41 @@ const result = await context.with(trace.setSpan(context.active(), parentSpan), a
 });
 ```
 
+### 5. Manual Trace Headers (Without OpenTelemetry)
+
+If you're not using OpenTelemetry, generate trace headers manually:
+
+```typescript
+function generateTraceId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function generateSpanId(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+const traceId = generateTraceId();
+const spanId = generateSpanId();
+const traceparent = `00-${traceId}-${spanId}-01`;
+
+const result = await generateText({
+  model: openai('gpt-4o'),
+  prompt: userMessage,
+  headers: {
+    traceparent,
+    baggage: 'session_id=abc123,user_id=user456',
+  },
+});
+```
+
 ## Headers Reference
 
 | Header               | Required | Format                        | Purpose                            |
