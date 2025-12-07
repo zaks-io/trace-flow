@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, Copy, Check, ExternalLink } from 'lucide-react';
 import { validateTraceId } from '@trace-flow/utils';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
@@ -36,6 +37,7 @@ export default function TraceDetail() {
   const [copied, setCopied] = useState(false);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
+  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const validatedTraceId = validateTraceId(traceId);
 
   const { data, loading, error } = useTinybirdQuery<TinybirdResponse>({
@@ -51,6 +53,7 @@ export default function TraceDetail() {
       : '',
     scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
     enabled: !!validatedTraceId,
+    apiKeys: userApiKeys,
   });
 
   const spans = data?.data ?? [];
@@ -91,7 +94,7 @@ export default function TraceDetail() {
     );
   }
 
-  if (loading) {
+  if (loading || keysLoading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
