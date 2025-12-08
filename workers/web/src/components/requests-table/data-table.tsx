@@ -11,7 +11,10 @@ import {
 import { Filter, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ColumnToggle } from './column-toggle';
+import { FilterBar } from './filter-bar';
 import type { TraceAlertSummary, Alert } from '@/types/alerts';
+import type { TableFilters } from '@/hooks/useTableFilters';
+import type { FilterOptions } from '@/hooks/useFilterOptions';
 
 export type AlertFilterValue = string;
 
@@ -31,6 +34,13 @@ interface DataTableProps<TData> {
   alerts?: Alert[];
   alertFilter?: AlertFilterValue;
   onAlertFilterChange?: (filter: AlertFilterValue) => void;
+  filters?: TableFilters;
+  filterOptions?: FilterOptions;
+  filterOptionsLoading?: boolean;
+  onFilterChange?: (key: keyof TableFilters, value: string | null) => void;
+  onClearFilters?: () => void;
+  hasActiveFilters?: boolean;
+  loading?: boolean;
 }
 
 export function DataTable<TData>({
@@ -47,6 +57,13 @@ export function DataTable<TData>({
   alerts,
   alertFilter = 'all',
   onAlertFilterChange,
+  filters,
+  filterOptions,
+  filterOptionsLoading,
+  onFilterChange,
+  onClearFilters,
+  hasActiveFilters,
+  loading,
 }: DataTableProps<TData>) {
   const filteredData = useMemo(() => {
     if (!alertSummary || alertFilter === 'all') {
@@ -88,6 +105,19 @@ export function DataTable<TData>({
 
   return (
     <div className="space-y-4">
+      {/* Filter Bar */}
+      {onFilterChange && filters && filterOptions && onClearFilters && (
+        <FilterBar
+          filters={filters}
+          options={filterOptions}
+          optionsLoading={filterOptionsLoading ?? false}
+          onFilterChange={onFilterChange}
+          onClearFilters={onClearFilters}
+          hasActiveFilters={hasActiveFilters ?? false}
+        />
+      )}
+
+      {/* Table Controls */}
       <div className="flex items-center justify-end gap-2">
         {onAlertFilterChange && alerts && alerts.length > 0 && (
           <div className="relative">
@@ -138,7 +168,16 @@ export function DataTable<TData>({
         )}
       </div>
 
-      <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card">
+      <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card relative">
+        {/* Loading overlay */}
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/80 backdrop-blur-[1px]">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              Loading...
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-border">
             <thead className="bg-muted/30">
