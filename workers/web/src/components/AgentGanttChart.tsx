@@ -13,6 +13,9 @@ import {
   ChevronRight,
   ChevronDown,
   ChevronsUpDown,
+  AlertTriangle,
+  AlertCircle,
+  Info,
 } from 'lucide-react';
 import type { TraceAlertSummary, AlertSeverity } from '@/types/alerts';
 
@@ -36,18 +39,27 @@ interface AgentGanttChartProps {
   spanAlertSummary?: Map<string, TraceAlertSummary>;
 }
 
-const alertSeverityStyles: Record<AlertSeverity, { edge: string; glow: string }> = {
+const alertSeverityStyles: Record<
+  AlertSeverity,
+  { edge: string; glow: string; icon: React.ElementType; text: string }
+> = {
   info: {
     edge: 'bg-blue-500',
     glow: 'shadow-[0_0_8px_rgba(59,130,246,0.4)]',
+    icon: Info,
+    text: 'text-blue-400',
   },
   warning: {
     edge: 'bg-amber-500',
     glow: 'shadow-[0_0_10px_rgba(245,158,11,0.5)]',
+    icon: AlertTriangle,
+    text: 'text-amber-400',
   },
   error: {
     edge: 'bg-red-500',
     glow: 'shadow-[0_0_12px_rgba(239,68,68,0.6)]',
+    icon: AlertCircle,
+    text: 'text-red-400',
   },
 };
 
@@ -480,14 +492,16 @@ export function AgentGanttChart({
                 </span>
               </div>
 
-              <div className="relative flex-1 px-4 py-2">
-                <div className="relative h-5">
-                  {(() => {
-                    const alertSummary = spanAlertSummary?.get(row.span.SpanId);
-                    const alertStyles = alertSummary?.highestSeverity
-                      ? alertSeverityStyles[alertSummary.highestSeverity]
-                      : null;
-                    return (
+              {(() => {
+                const alertSummary = spanAlertSummary?.get(row.span.SpanId);
+                const alertStyles = alertSummary?.highestSeverity
+                  ? alertSeverityStyles[alertSummary.highestSeverity]
+                  : null;
+                const triggeredAlerts = alertSummary?.triggeredAlerts ?? [];
+
+                return (
+                  <div className="relative flex-1 px-4 py-2">
+                    <div className="relative h-5">
                       <div
                         className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)} ${alertStyles?.glow ?? ''}`}
                         style={{
@@ -507,41 +521,59 @@ export function AgentGanttChart({
                           </span>
                         )}
                       </div>
-                    );
-                  })()}
-                </div>
+                    </div>
 
-                <div className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
-                  <div
-                    className="whitespace-nowrap rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
-                    style={{ marginLeft: `${row.startOffset}%` }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-foreground">{row.span.SpanName}</span>
-                      <span className="text-muted-foreground">·</span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {formatDuration(row.span.Duration)}
-                      </span>
-                      {row.tokens !== null && (
-                        <>
+                    <div className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+                      <div
+                        className="rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
+                        style={{ marginLeft: `${row.startOffset}%` }}
+                      >
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          <span className="font-medium text-foreground">{row.span.SpanName}</span>
                           <span className="text-muted-foreground">·</span>
                           <span className="tabular-nums text-muted-foreground">
-                            {formatNumber(row.tokens)} tokens
+                            {formatDuration(row.span.Duration)}
                           </span>
-                        </>
-                      )}
-                      {row.tokensPerSecond !== null && (
-                        <>
-                          <span className="text-muted-foreground">·</span>
-                          <span className="tabular-nums text-muted-foreground">
-                            {row.tokensPerSecond.toFixed(1)} tok/s
-                          </span>
-                        </>
-                      )}
+                          {row.tokens !== null && (
+                            <>
+                              <span className="text-muted-foreground">·</span>
+                              <span className="tabular-nums text-muted-foreground">
+                                {formatNumber(row.tokens)} tokens
+                              </span>
+                            </>
+                          )}
+                          {row.tokensPerSecond !== null && (
+                            <>
+                              <span className="text-muted-foreground">·</span>
+                              <span className="tabular-nums text-muted-foreground">
+                                {row.tokensPerSecond.toFixed(1)} tok/s
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        {row.type === 'llm' && triggeredAlerts.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1.5 border-t border-border/30 pt-1.5">
+                            {triggeredAlerts.map((ta, idx) => {
+                              const severity = ta.alert.severity as AlertSeverity;
+                              const style = alertSeverityStyles[severity];
+                              const Icon = style.icon;
+                              return (
+                                <span
+                                  key={idx}
+                                  className={`inline-flex items-center gap-1 whitespace-nowrap ${style.text}`}
+                                >
+                                  <Icon className="h-3 w-3" />
+                                  <span>{ta.alert.name}</span>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           );
         })}

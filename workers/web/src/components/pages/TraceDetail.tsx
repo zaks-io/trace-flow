@@ -10,7 +10,7 @@ import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
-import { AlertBadge, AlertList } from '@/components/alerts';
+import { AlertBadge } from '@/components/alerts';
 import {
   evaluateAlertsForTraces,
   evaluateAlertsForSpans,
@@ -215,33 +215,16 @@ export default function TraceDetail() {
         <TokenSummaryCards spans={spans} />
       </div>
 
-      {/* Span Timeline and Alerts side by side with independent scrolling */}
-      <div className="mt-4 flex min-h-0 flex-1 gap-6">
-        {/* Span Timeline */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <h2 className="mb-3 shrink-0 text-lg font-semibold text-foreground">Span Timeline</h2>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <AgentGanttChart
-              spans={spans}
-              selectedSpanId={selectedSpanId ?? undefined}
-              onSpanSelect={handleSpanSelect}
-              spanAlertSummary={spanAlertSummary}
-            />
-          </div>
-        </div>
-
-        {/* Alerts */}
-        <div className="flex w-[250px] shrink-0 flex-col">
-          <h2 className="mb-3 shrink-0 text-lg font-semibold text-foreground">Alerts</h2>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {triggeredAlerts.length > 0 ? (
-              <AlertList triggeredAlerts={triggeredAlerts} />
-            ) : (
-              <div className="rounded-lg border border-border/50 bg-muted/10 p-4 text-center text-sm text-muted-foreground">
-                No alerts triggered
-              </div>
-            )}
-          </div>
+      {/* Span Timeline */}
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <h2 className="mb-3 shrink-0 text-lg font-semibold text-foreground">Span Timeline</h2>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <AgentGanttChart
+            spans={spans}
+            selectedSpanId={selectedSpanId ?? undefined}
+            onSpanSelect={handleSpanSelect}
+            spanAlertSummary={spanAlertSummary}
+          />
         </div>
       </div>
 
