@@ -260,6 +260,15 @@
   .table-row-interactive:hover {
     background: oklch(0.65 0.2 262 / 0.05);
   }
+
+  /* Subtle highlight for new rows (received within last 60 seconds) */
+  .table-row-new {
+    background: oklch(0.65 0.2 262 / 0.08);
+  }
+
+  .table-row-new:hover {
+    background: oklch(0.65 0.2 262 / 0.12);
+  }
 }
 
 @keyframes fadeIn {

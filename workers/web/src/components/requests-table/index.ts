@@ -1,3 +1,3 @@
 export { DataTable, type AlertFilterValue } from './data-table';
-export { ColumnToggle } from './column-toggle';
+export { TableToolbar } from './table-toolbar';
 export { allColumns, defaultColumnVisibility, type RequestRow } from './columns';

@@ -170,12 +170,23 @@ export function useTinybirdQuery<T = unknown>(
     }
   }, [enabled, jwt, fetchToken, fetchData]);
 
+  // Track SQL to detect changes
+  const prevSqlRef = useRef(options.sql);
+
   useEffect(() => {
     if (!hasFetchedRef.current && enabled) {
       hasFetchedRef.current = true;
       void refetch();
     }
   }, [enabled, refetch]);
+
+  // Refetch when SQL changes
+  useEffect(() => {
+    if (prevSqlRef.current !== options.sql && enabled && hasFetchedRef.current) {
+      prevSqlRef.current = options.sql;
+      void refetch();
+    }
+  }, [options.sql, enabled, refetch]);
 
   // When API keys load as empty, set loading to false immediately
   useEffect(() => {
