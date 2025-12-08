@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 import {
@@ -51,6 +51,7 @@ interface TraceSpan {
 interface SpanDetailPanelProps {
   span: TraceSpan | null;
   rootSpan: TraceSpan | null;
+  allSpans?: TraceSpan[];
   isRootSpan: boolean;
   isOpen: boolean;
   onClose: () => void;
@@ -359,6 +360,7 @@ function AttributeCard({ icon, label, value, mono = false }: AttributeCardProps)
 export function SpanDetailPanel({
   span,
   rootSpan,
+  allSpans = [],
   isRootSpan,
   isOpen,
   onClose,
@@ -382,9 +384,15 @@ export function SpanDetailPanel({
   const [messageTab, setMessageTab] = useState<'formatted' | 'raw'>('formatted');
   const [isMessageOpen, setIsMessageOpen] = useState(true);
 
-  const spanAttributes = span ? parseAttributes(span.SpanAttributes) : {};
-  const resourceAttributes = span ? parseAttributes(span.ResourceAttributes) : {};
-  const allAttributes = { ...spanAttributes, ...resourceAttributes };
+  const spanAttributes = useMemo(() => (span ? parseAttributes(span.SpanAttributes) : {}), [span]);
+  const resourceAttributes = useMemo(
+    () => (span ? parseAttributes(span.ResourceAttributes) : {}),
+    [span],
+  );
+  const allAttributes = useMemo(
+    () => ({ ...spanAttributes, ...resourceAttributes }),
+    [spanAttributes, resourceAttributes],
+  );
 
   const provider = allAttributes['ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
   const model = allAttributes['ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
@@ -497,11 +505,29 @@ export function SpanDetailPanel({
     return spanMatch?.[1]?.toLowerCase() ?? '';
   })();
 
+  // Find the parent ai.request span for this span (used for requestId and provider lookup)
+  const parentRequestSpan = (() => {
+    if (!span || allSpans.length === 0) return null;
+    // If this span is itself an ai.request, use it
+    if (span.SpanName === 'ai.request') return span;
+    // Otherwise walk up to find the parent ai.request
+    let currentSpanId = span.ParentSpanId;
+    while (currentSpanId) {
+      const parentSpan = allSpans.find((s) => s.SpanId === currentSpanId);
+      if (!parentSpan) break;
+      if (parentSpan.SpanName === 'ai.request') return parentSpan;
+      currentSpanId = parentSpan.ParentSpanId;
+    }
+    return null;
+  })();
+
   // Fetch message content for non-root spans (both input and output)
   useEffect(() => {
     const isContentSpan = isInputMessageSpan || isOutputSpan;
     // For input spans, we need messageIndex. For output spans, we use occurrence from span name.
-    if (isRootSpan || !isContentSpan || !span || !rootSpan) {
+    const isTraceRoot = span?.ParentSpanId === '';
+
+    if (isTraceRoot || !isContentSpan || !span) {
       setMessageContent(null);
       return;
     }
@@ -510,11 +536,21 @@ export function SpanDetailPanel({
       return;
     }
 
-    // Get requestId from the span's own attributes (each span has its own request_id)
-    // Get provider from root span (only stored there)
+    // Get requestId from the span's own attributes
     const requestId = spanAttributes['ai.request_id'];
-    const rootAttrs = parseAttributes(rootSpan.SpanAttributes);
-    const provider = rootAttrs['ai.provider'] ?? rootAttrs['gen_ai.system'] ?? '';
+
+    // Get provider from parent ai.request span, root span, or current span's attributes
+    const parentAttrs = parentRequestSpan ? parseAttributes(parentRequestSpan.SpanAttributes) : {};
+    const rootAttrs = rootSpan ? parseAttributes(rootSpan.SpanAttributes) : {};
+    const provider =
+      spanAttributes['ai.provider'] ??
+      spanAttributes['gen_ai.system'] ??
+      parentAttrs['ai.provider'] ??
+      parentAttrs['gen_ai.system'] ??
+      rootAttrs['ai.provider'] ??
+      rootAttrs['gen_ai.system'] ??
+      '';
+
     if (!requestId) {
       return;
     }
@@ -568,11 +604,12 @@ export function SpanDetailPanel({
 
     void fetchMessageContent();
   }, [
-    isRootSpan,
     isInputMessageSpan,
     isOutputSpan,
     span,
+    parentRequestSpan,
     rootSpan,
+    spanAttributes,
     messageIndex,
     contentType,
     getAccessTokenSilently,

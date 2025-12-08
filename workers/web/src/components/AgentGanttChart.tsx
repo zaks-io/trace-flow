@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Bot,
   Activity,
@@ -10,6 +10,9 @@ import {
   Brain,
   Send,
   Play,
+  ChevronRight,
+  ChevronDown,
+  ChevronsUpDown,
 } from 'lucide-react';
 import type { TraceAlertSummary, AlertSeverity } from '@/types/alerts';
 
@@ -270,8 +273,18 @@ export function AgentGanttChart({
   parentSpanId,
   spanAlertSummary,
 }: AgentGanttChartProps) {
-  const { spanRows, totalDuration } = useMemo(() => {
-    if (spans.length === 0) return { spanRows: [], totalDuration: 0 };
+  const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
+
+  const { spanRows, totalDuration, childrenMap } = useMemo(() => {
+    if (spans.length === 0) return { spanRows: [], totalDuration: 0, childrenMap: new Map() };
+
+    // Build a map of spans that have children
+    const childrenMap = new Map<string, boolean>();
+    for (const span of spans) {
+      if (span.ParentSpanId) {
+        childrenMap.set(span.ParentSpanId, true);
+      }
+    }
 
     const spanIds = new Set(spans.map((s) => s.SpanId));
 
@@ -339,8 +352,42 @@ export function AgentGanttChart({
       allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
     }
 
-    return { spanRows: allRows, totalDuration: total };
+    return { spanRows: allRows, totalDuration: total, childrenMap };
   }, [spans]);
+
+  // Filter to visible rows based on expansion state
+  const visibleRows = useMemo(() => {
+    return spanRows.filter((row) => {
+      if (row.depth === 0) return true; // Always show root spans
+      // For non-root spans, check if immediate parent is expanded
+      return expandedSpans.has(row.span.ParentSpanId);
+    });
+  }, [spanRows, expandedSpans]);
+
+  const toggleExpand = (spanId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedSpans((prev) => {
+      const next = new Set(prev);
+      if (next.has(spanId)) {
+        next.delete(spanId);
+      } else {
+        next.add(spanId);
+      }
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    const allSpansWithChildren = new Set<string>();
+    for (const [spanId] of childrenMap) {
+      allSpansWithChildren.add(spanId);
+    }
+    setExpandedSpans(allSpansWithChildren);
+  };
+
+  const collapseAll = () => {
+    setExpandedSpans(new Set());
+  };
 
   if (spanRows.length === 0) {
     return null;
@@ -354,10 +401,19 @@ export function AgentGanttChart({
   return (
     <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
       <div className="flex border-b border-border/30 bg-muted/20">
-        <div className="w-56 shrink-0 border-r border-border/30 px-4 py-2">
+        <div className="flex w-56 shrink-0 items-center justify-between border-r border-border/30 px-4 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             Span
           </span>
+          {childrenMap.size > 0 && (
+            <button
+              onClick={expandedSpans.size > 0 ? collapseAll : expandAll}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title={expandedSpans.size > 0 ? 'Collapse all' : 'Expand all'}
+            >
+              <ChevronsUpDown className="h-3 w-3" />
+            </button>
+          )}
         </div>
         <div className="relative flex-1 px-4 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -387,88 +443,108 @@ export function AgentGanttChart({
       )}
 
       <div className="relative">
-        {spanRows.map((row) => (
-          <div
-            key={row.span.SpanId}
-            className={`group flex border-b border-border/20 transition-colors hover:bg-muted/30 ${
-              selectedSpanId === row.span.SpanId ? 'bg-primary/5' : ''
-            } ${onSpanSelect ? 'cursor-pointer' : ''}`}
-            onClick={() => onSpanSelect?.(row.span.SpanId)}
-          >
+        {visibleRows.map((row) => {
+          const hasChildren = childrenMap.has(row.span.SpanId);
+          const isExpanded = expandedSpans.has(row.span.SpanId);
+          return (
             <div
-              className="flex w-56 shrink-0 items-center gap-2 border-r border-border/30 py-2 pr-2"
-              style={{ paddingLeft: `${12 + row.depth * 16}px` }}
+              key={row.span.SpanId}
+              className={`group flex border-b border-border/20 transition-colors hover:bg-muted/30 ${
+                selectedSpanId === row.span.SpanId ? 'bg-primary/5' : ''
+              } ${onSpanSelect ? 'cursor-pointer' : ''}`}
+              onClick={() => onSpanSelect?.(row.span.SpanId)}
             >
-              <span className={getTypeIconColor(row.type)}>{getTypeIcon(row.type)}</span>
-              <span className="truncate text-xs text-foreground" title={row.span.SpanName}>
-                {row.span.SpanName}
-              </span>
-            </div>
-
-            <div className="relative flex-1 px-4 py-2">
-              <div className="relative h-5">
-                {(() => {
-                  const alertSummary = spanAlertSummary?.get(row.span.SpanId);
-                  const alertStyles = alertSummary?.highestSeverity
-                    ? alertSeverityStyles[alertSummary.highestSeverity]
-                    : null;
-                  return (
-                    <div
-                      className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)} ${alertStyles?.glow ?? ''}`}
-                      style={{
-                        left: `${row.startOffset}%`,
-                        width: `${row.width}%`,
-                        minWidth: '4px',
-                      }}
-                    >
-                      {alertStyles && (
-                        <div
-                          className={`absolute left-0 top-0 h-full w-[3px] rounded-l ${alertStyles.edge}`}
-                        />
-                      )}
-                      {row.tokens !== null && row.width > 8 && (
-                        <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-white/90">
-                          {formatNumber(row.tokens)}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })()}
+              <div
+                className="flex w-56 shrink-0 items-center gap-1 border-r border-border/30 py-2 pr-2"
+                style={{ paddingLeft: `${8 + row.depth * 16}px` }}
+              >
+                {hasChildren ? (
+                  <button
+                    onClick={(e) => toggleExpand(row.span.SpanId, e)}
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    {isExpanded ? (
+                      <ChevronDown className="h-3 w-3" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3" />
+                    )}
+                  </button>
+                ) : (
+                  <div className="h-4 w-4 shrink-0" />
+                )}
+                <span className={`shrink-0 ${getTypeIconColor(row.type)}`}>
+                  {getTypeIcon(row.type)}
+                </span>
+                <span className="truncate text-xs text-foreground" title={row.span.SpanName}>
+                  {row.span.SpanName}
+                </span>
               </div>
 
-              <div className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
-                <div
-                  className="whitespace-nowrap rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
-                  style={{ marginLeft: `${row.startOffset}%` }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-foreground">{row.span.SpanName}</span>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {formatDuration(row.span.Duration)}
-                    </span>
-                    {row.tokens !== null && (
-                      <>
-                        <span className="text-muted-foreground">·</span>
-                        <span className="tabular-nums text-muted-foreground">
-                          {formatNumber(row.tokens)} tokens
-                        </span>
-                      </>
-                    )}
-                    {row.tokensPerSecond !== null && (
-                      <>
-                        <span className="text-muted-foreground">·</span>
-                        <span className="tabular-nums text-muted-foreground">
-                          {row.tokensPerSecond.toFixed(1)} tok/s
-                        </span>
-                      </>
-                    )}
+              <div className="relative flex-1 px-4 py-2">
+                <div className="relative h-5">
+                  {(() => {
+                    const alertSummary = spanAlertSummary?.get(row.span.SpanId);
+                    const alertStyles = alertSummary?.highestSeverity
+                      ? alertSeverityStyles[alertSummary.highestSeverity]
+                      : null;
+                    return (
+                      <div
+                        className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)} ${alertStyles?.glow ?? ''}`}
+                        style={{
+                          left: `${row.startOffset}%`,
+                          width: `${row.width}%`,
+                          minWidth: '4px',
+                        }}
+                      >
+                        {alertStyles && (
+                          <div
+                            className={`absolute left-0 top-0 h-full w-[3px] rounded-l ${alertStyles.edge}`}
+                          />
+                        )}
+                        {row.tokens !== null && row.width > 8 && (
+                          <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-white/90">
+                            {formatNumber(row.tokens)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+                  <div
+                    className="whitespace-nowrap rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
+                    style={{ marginLeft: `${row.startOffset}%` }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-foreground">{row.span.SpanName}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {formatDuration(row.span.Duration)}
+                      </span>
+                      {row.tokens !== null && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {formatNumber(row.tokens)} tokens
+                          </span>
+                        </>
+                      )}
+                      {row.tokensPerSecond !== null && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="tabular-nums text-muted-foreground">
+                            {row.tokensPerSecond.toFixed(1)} tok/s
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex border-t border-border/30 bg-muted/10">
