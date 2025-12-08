@@ -8,6 +8,12 @@ function escapeSQL(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+const TRACE_ID_PATTERN = /^[a-f0-9]+$/i;
+
+function isValidTraceIdSearch(value: string): boolean {
+  return TRACE_ID_PATTERN.test(value);
+}
+
 function buildApiKeyFilter(apiKeys: string[]): string {
   if (apiKeys.length === 0) return '';
   const escaped = apiKeys.map((k) => `'${k.replace(/'/g, "''")}'`).join(', ');
@@ -33,9 +39,8 @@ function buildSQL(filters: TableFilters, apiKeys: string[]): string {
   if (filters.status) {
     conditions.push(`StatusCode = '${escapeSQL(filters.status)}'`);
   }
-  if (filters.search) {
-    const escaped = escapeSQL(filters.search);
-    conditions.push(`(TraceId LIKE '%${escaped}%' OR ServiceName LIKE '%${escaped}%')`);
+  if (filters.search && isValidTraceIdSearch(filters.search)) {
+    conditions.push(`TraceId LIKE '%${filters.search}%'`);
   }
 
   return `SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode, SpanAttributes
