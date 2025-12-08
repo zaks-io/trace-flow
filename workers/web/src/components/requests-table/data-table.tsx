@@ -8,15 +8,13 @@ import {
   type ColumnDef,
   type VisibilityState,
 } from '@tanstack/react-table';
-import { Filter, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ColumnToggle } from './column-toggle';
-import { FilterBar } from './filter-bar';
+import { TableToolbar, type AlertFilterValue } from './table-toolbar';
 import type { TraceAlertSummary, Alert } from '@/types/alerts';
 import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
 
-export type AlertFilterValue = string;
+export type { AlertFilterValue };
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
@@ -105,68 +103,21 @@ export function DataTable<TData>({
 
   return (
     <div className="space-y-4">
-      {/* Filter Bar */}
-      {onFilterChange && filters && filterOptions && onClearFilters && (
-        <FilterBar
-          filters={filters}
-          options={filterOptions}
-          optionsLoading={filterOptionsLoading ?? false}
-          onFilterChange={onFilterChange}
-          onClearFilters={onClearFilters}
-          hasActiveFilters={hasActiveFilters ?? false}
-        />
-      )}
-
-      {/* Table Controls */}
-      <div className="flex items-center justify-end gap-2">
-        {onAlertFilterChange && alerts && alerts.length > 0 && (
-          <div className="relative">
-            <select
-              value={alertFilter}
-              onChange={(e) => onAlertFilterChange(e.target.value)}
-              className={cn(
-                'appearance-none rounded-lg border bg-card pl-9 pr-8 py-2 text-sm font-medium transition-colors',
-                'focus:outline-none focus:ring-2 focus:ring-primary/20',
-                alertFilter !== 'all'
-                  ? 'border-primary/50 text-primary'
-                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              <option value="all">All Requests</option>
-              <option value="has-alerts">Has Alerts</option>
-              {alerts.map((alert) => (
-                <option key={alert._id} value={alert._id}>
-                  {alert.name}
-                </option>
-              ))}
-            </select>
-            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          </div>
-        )}
-        <ColumnToggle table={table} />
-        {onLiveModeToggle && (
-          <button
-            onClick={onLiveModeToggle}
-            className={cn(
-              'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
-              isLiveMode
-                ? 'border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20'
-                : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            <div className="flex items-center gap-2">
-              {isLiveMode && (
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75"></span>
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-destructive"></span>
-                </span>
-              )}
-              <span>{isLiveMode ? 'LIVE' : 'Live Mode'}</span>
-            </div>
-          </button>
-        )}
-      </div>
+      {/* Unified Toolbar */}
+      <TableToolbar
+        table={table}
+        filters={filters}
+        filterOptions={filterOptions}
+        filterOptionsLoading={filterOptionsLoading}
+        onFilterChange={onFilterChange}
+        onClearFilters={onClearFilters}
+        hasActiveFilters={hasActiveFilters}
+        alerts={alerts}
+        alertFilter={alertFilter}
+        onAlertFilterChange={onAlertFilterChange}
+        isLiveMode={isLiveMode}
+        onLiveModeToggle={onLiveModeToggle}
+      />
 
       <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card relative">
         {/* Loading overlay */}
