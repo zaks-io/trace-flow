@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -15,6 +15,22 @@ import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
 
 export type { AlertFilterValue };
+
+const NEW_ROW_THRESHOLD_MS = 30_000; // 30 seconds for testing (change to 60_000 for production)
+
+function isNewRow(row: unknown): boolean {
+  const data = row as { ReceivedAt?: number };
+  if (typeof data.ReceivedAt !== 'number') return false;
+  const receivedAt = new Date(data.ReceivedAt / 1_000_000);
+  const now = new Date();
+  const ageMs = now.getTime() - receivedAt.getTime();
+  return ageMs < NEW_ROW_THRESHOLD_MS;
+}
+
+function getReceivedAt(row: unknown): number | null {
+  const data = row as { ReceivedAt?: number };
+  return typeof data.ReceivedAt === 'number' ? data.ReceivedAt : null;
+}
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
@@ -84,6 +100,32 @@ export function DataTable<TData>({
       return false;
     });
   }, [data, alertSummary, alertFilter, getRowId]);
+
+  // Force re-render when "new" rows age out
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const now = new Date();
+    const newRowTimestamps = filteredData
+      .map((row) => getReceivedAt(row))
+      .filter((ts): ts is number => {
+        if (ts === null) return false;
+        const receivedAt = new Date(ts / 1_000_000);
+        return now.getTime() - receivedAt.getTime() < NEW_ROW_THRESHOLD_MS;
+      });
+
+    if (newRowTimestamps.length === 0) return;
+
+    // Find the oldest "new" row and set timer for when it ages out
+    const oldestTimestamp = Math.min(...newRowTimestamps);
+    const oldestReceivedAt = new Date(oldestTimestamp / 1_000_000);
+    const ageMs = now.getTime() - oldestReceivedAt.getTime();
+    const remainingMs = NEW_ROW_THRESHOLD_MS - ageMs + 100;
+
+    if (remainingMs > 0) {
+      const timer = setTimeout(() => forceUpdate((n) => n + 1), remainingMs);
+      return () => clearTimeout(timer);
+    }
+  }, [filteredData]);
 
   const table = useReactTable({
     data: filteredData,
@@ -172,6 +214,7 @@ export function DataTable<TData>({
                     className={cn(
                       'table-row-interactive cursor-pointer',
                       selectedRowId === row.id && 'bg-primary/5',
+                      isNewRow(row.original) && 'table-row-new',
                     )}
                     onClick={(e) => onRowClick?.(row.original, e)}
                   >
