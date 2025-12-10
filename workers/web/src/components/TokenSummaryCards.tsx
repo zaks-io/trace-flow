@@ -169,7 +169,7 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
   const summary = useMemo(() => aggregateTokens(spans), [spans]);
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
       <SummaryCard
         icon={<Cpu className="h-4 w-4" />}
         label="Prompt Tokens"
