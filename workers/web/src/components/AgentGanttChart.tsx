@@ -358,157 +358,194 @@ export function AgentGanttChart({
   spanAlertSummary,
 }: AgentGanttChartProps) {
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [mousePos, setMousePos] = useState<{
+    x: number;
+    y: number;
+    containerWidth: number;
+    containerHeight: number;
+  } | null>(null);
   const [hoveredSpanId, setHoveredSpanId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { spanRows, totalDuration, childrenMap, syntheticSpanIds } = useMemo(() => {
-    if (spans.length === 0)
-      return {
-        spanRows: [],
-        totalDuration: 0,
-        childrenMap: new Map(),
-        syntheticSpanIds: new Set<string>(),
+  const { spanRows, totalDuration, childrenMap, syntheticSpanIds, syntheticChildrenMap } =
+    useMemo(() => {
+      if (spans.length === 0)
+        return {
+          spanRows: [],
+          totalDuration: 0,
+          childrenMap: new Map(),
+          syntheticSpanIds: new Set<string>(),
+          syntheticChildrenMap: new Map<string, TraceSpan[]>(),
+        };
+
+      const spanIds = new Set(spans.map((s) => s.SpanId));
+
+      // Find orphan parent IDs (ParentSpanIds that don't exist in our span set)
+      const orphanParentIds = new Map<string, TraceSpan[]>();
+      for (const span of spans) {
+        if (span.ParentSpanId && !spanIds.has(span.ParentSpanId)) {
+          const group = orphanParentIds.get(span.ParentSpanId) ?? [];
+          group.push(span);
+          orphanParentIds.set(span.ParentSpanId, group);
+        }
+      }
+
+      // Create synthetic parent spans for orphan groups
+      const syntheticSpans: TraceSpan[] = [];
+      for (const [parentId, childSpans] of orphanParentIds) {
+        if (childSpans.length > 0) {
+          const earliestStart = Math.min(...childSpans.map((s) => s.Timestamp));
+          const latestEnd = Math.max(...childSpans.map((s) => s.Timestamp + s.Duration));
+
+          // Get operation from first child's baggage for labeling
+          const firstChildAttrs = parseAttributes(childSpans[0].SpanAttributes);
+          const operation = firstChildAttrs['baggage.operation'] ?? 'group';
+
+          syntheticSpans.push({
+            Timestamp: earliestStart,
+            TraceId: childSpans[0].TraceId,
+            SpanId: parentId,
+            ParentSpanId: '',
+            SpanName: operation,
+            ServiceName: childSpans[0].ServiceName,
+            Duration: latestEnd - earliestStart,
+            StatusCode: 'OK',
+            SpanAttributes: JSON.stringify({ synthetic: 'true', 'baggage.operation': operation }),
+          });
+        }
+      }
+
+      // Establish hierarchy among synthetic spans:
+      // The earliest one becomes the root, others become its children
+      if (syntheticSpans.length > 1) {
+        syntheticSpans.sort((a, b) => a.Timestamp - b.Timestamp);
+        const rootSynthetic = syntheticSpans[0];
+
+        // Make other synthetic spans children of the root
+        for (let i = 1; i < syntheticSpans.length; i++) {
+          syntheticSpans[i].ParentSpanId = rootSynthetic.SpanId;
+        }
+
+        // Extend root's duration to cover all synthetic spans
+        const latestEnd = Math.max(...syntheticSpans.map((s) => s.Timestamp + s.Duration));
+        rootSynthetic.Duration = latestEnd - rootSynthetic.Timestamp;
+      }
+
+      // Combine synthetic and real spans
+      const allSpans = [...syntheticSpans, ...spans];
+      const allSpanIds = new Set(allSpans.map((s) => s.SpanId));
+
+      // Build a map of spans that have children (using combined spans)
+      const childrenMap = new Map<string, boolean>();
+      for (const span of allSpans) {
+        if (span.ParentSpanId) {
+          childrenMap.set(span.ParentSpanId, true);
+        }
+      }
+
+      // Find ALL root spans (spans whose parent is not in the span set or is empty)
+      const rootSpans = allSpans
+        .filter((s) => s.ParentSpanId === '' || !allSpanIds.has(s.ParentSpanId))
+        .sort((a, b) => a.Timestamp - b.Timestamp);
+
+      // Fallback to earliest span if no roots found
+      const effectiveRoots =
+        rootSpans.length > 0
+          ? rootSpans
+          : [allSpans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
+
+      const traceStart = Math.min(...effectiveRoots.map((s) => s.Timestamp));
+      const traceEndTime = Math.max(...allSpans.map((s) => s.Timestamp + s.Duration));
+      const total = traceEndTime - traceStart;
+
+      const buildSpanTree = (parentId: string, depth = 0): SpanRow[] => {
+        const children = allSpans.filter((s) => s.ParentSpanId === parentId);
+
+        // Group children by type:
+        // - ai.* spans group by their exact name (e.g., all ai.request together)
+        // - Other spans (named agents) are their own group
+        const groups = new Map<string, TraceSpan[]>();
+        for (const child of children) {
+          const name = child.SpanName.toLowerCase();
+          const groupKey = name.startsWith('ai.') ? child.SpanName : child.SpanId;
+          if (!groups.has(groupKey)) {
+            groups.set(groupKey, []);
+          }
+          groups.get(groupKey)!.push(child);
+        }
+
+        // Sort spans within each group by timestamp, then message index
+        for (const groupSpans of groups.values()) {
+          groupSpans.sort((a, b) => {
+            const timeDiff = a.Timestamp - b.Timestamp;
+            if (timeDiff !== 0) return timeDiff;
+            const aIndex = getMessageIndex(a);
+            const bIndex = getMessageIndex(b);
+            if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
+            if (aIndex !== null) return -1;
+            if (bIndex !== null) return 1;
+            return 0;
+          });
+        }
+
+        // Order groups by when their first span occurred
+        const sortedGroups = [...groups.entries()].sort(([, spansA], [, spansB]) => {
+          return spansA[0].Timestamp - spansB[0].Timestamp;
+        });
+
+        // Flatten groups into rows
+        const rows: SpanRow[] = [];
+        for (const [, groupSpans] of sortedGroups) {
+          for (const span of groupSpans) {
+            const startOffset = ((span.Timestamp - traceStart) / total) * 100;
+            const width = (span.Duration / total) * 100;
+            rows.push({
+              span,
+              depth,
+              startOffset,
+              width: Math.max(width, 0.5),
+              type: getSpanType(span),
+              tokens: getSpanTokens(span),
+              tokensPerSecond: getSpanTokensPerSecond(span),
+              messageIndex: getMessageIndex(span),
+              cost: getSpanCost(span),
+              baggage: getBaggageAttributes(span),
+            });
+            rows.push(...buildSpanTree(span.SpanId, depth + 1));
+          }
+        }
+        return rows;
       };
 
-    const spanIds = new Set(spans.map((s) => s.SpanId));
-
-    // Find orphan parent IDs (ParentSpanIds that don't exist in our span set)
-    const orphanParentIds = new Map<string, TraceSpan[]>();
-    for (const span of spans) {
-      if (span.ParentSpanId && !spanIds.has(span.ParentSpanId)) {
-        const group = orphanParentIds.get(span.ParentSpanId) ?? [];
-        group.push(span);
-        orphanParentIds.set(span.ParentSpanId, group);
-      }
-    }
-
-    // Create synthetic parent spans for orphan groups
-    const syntheticSpans: TraceSpan[] = [];
-    for (const [parentId, childSpans] of orphanParentIds) {
-      if (childSpans.length > 0) {
-        const earliestStart = Math.min(...childSpans.map((s) => s.Timestamp));
-        const latestEnd = Math.max(...childSpans.map((s) => s.Timestamp + s.Duration));
-
-        // Get operation from first child's baggage for labeling
-        const firstChildAttrs = parseAttributes(childSpans[0].SpanAttributes);
-        const operation = firstChildAttrs['baggage.operation'] ?? 'group';
-
-        syntheticSpans.push({
-          Timestamp: earliestStart,
-          TraceId: childSpans[0].TraceId,
-          SpanId: parentId,
-          ParentSpanId: '',
-          SpanName: operation,
-          ServiceName: childSpans[0].ServiceName,
-          Duration: latestEnd - earliestStart,
-          StatusCode: 'OK',
-          SpanAttributes: JSON.stringify({ synthetic: 'true', 'baggage.operation': operation }),
-        });
-      }
-    }
-
-    // Establish hierarchy among synthetic spans:
-    // The earliest one becomes the root, others become its children
-    if (syntheticSpans.length > 1) {
-      syntheticSpans.sort((a, b) => a.Timestamp - b.Timestamp);
-      const rootSynthetic = syntheticSpans[0];
-
-      // Make other synthetic spans children of the root
-      for (let i = 1; i < syntheticSpans.length; i++) {
-        syntheticSpans[i].ParentSpanId = rootSynthetic.SpanId;
-      }
-
-      // Extend root's duration to cover all synthetic spans
-      const latestEnd = Math.max(...syntheticSpans.map((s) => s.Timestamp + s.Duration));
-      rootSynthetic.Duration = latestEnd - rootSynthetic.Timestamp;
-    }
-
-    // Combine synthetic and real spans
-    const allSpans = [...syntheticSpans, ...spans];
-    const allSpanIds = new Set(allSpans.map((s) => s.SpanId));
-
-    // Build a map of spans that have children (using combined spans)
-    const childrenMap = new Map<string, boolean>();
-    for (const span of allSpans) {
-      if (span.ParentSpanId) {
-        childrenMap.set(span.ParentSpanId, true);
-      }
-    }
-
-    // Find ALL root spans (spans whose parent is not in the span set or is empty)
-    const rootSpans = allSpans
-      .filter((s) => s.ParentSpanId === '' || !allSpanIds.has(s.ParentSpanId))
-      .sort((a, b) => a.Timestamp - b.Timestamp);
-
-    // Fallback to earliest span if no roots found
-    const effectiveRoots =
-      rootSpans.length > 0
-        ? rootSpans
-        : [allSpans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
-
-    const traceStart = Math.min(...effectiveRoots.map((s) => s.Timestamp));
-    const traceEndTime = Math.max(...allSpans.map((s) => s.Timestamp + s.Duration));
-    const total = traceEndTime - traceStart;
-
-    const buildSpanTree = (parentId: string, depth = 0): SpanRow[] => {
-      const children = allSpans
-        .filter((s) => s.ParentSpanId === parentId)
-        .sort((a, b) => {
-          const timeDiff = a.Timestamp - b.Timestamp;
-          if (timeDiff !== 0) return timeDiff;
-          const aIndex = getMessageIndex(a);
-          const bIndex = getMessageIndex(b);
-          if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
-          if (aIndex !== null) return -1;
-          if (bIndex !== null) return 1;
-          return 0;
-        });
-
-      const rows: SpanRow[] = [];
-      for (const span of children) {
-        const startOffset = ((span.Timestamp - traceStart) / total) * 100;
-        const width = (span.Duration / total) * 100;
-        rows.push({
-          span,
-          depth,
+      const allRows: SpanRow[] = [];
+      for (const rootSpan of effectiveRoots) {
+        const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
+        allRows.push({
+          span: rootSpan,
+          depth: 0,
           startOffset,
-          width: Math.max(width, 0.5),
-          type: getSpanType(span),
-          tokens: getSpanTokens(span),
-          tokensPerSecond: getSpanTokensPerSecond(span),
-          messageIndex: getMessageIndex(span),
-          cost: getSpanCost(span),
-          baggage: getBaggageAttributes(span),
+          width: Math.max((rootSpan.Duration / total) * 100, 0.5),
+          type: getSpanType(rootSpan),
+          tokens: getSpanTokens(rootSpan),
+          tokensPerSecond: getSpanTokensPerSecond(rootSpan),
+          messageIndex: getMessageIndex(rootSpan),
+          cost: getSpanCost(rootSpan),
+          baggage: getBaggageAttributes(rootSpan),
         });
-        rows.push(...buildSpanTree(span.SpanId, depth + 1));
+        allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
       }
-      return rows;
-    };
 
-    const allRows: SpanRow[] = [];
-    for (const rootSpan of effectiveRoots) {
-      const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
-      allRows.push({
-        span: rootSpan,
-        depth: 0,
-        startOffset,
-        width: Math.max((rootSpan.Duration / total) * 100, 0.5),
-        type: getSpanType(rootSpan),
-        tokens: getSpanTokens(rootSpan),
-        tokensPerSecond: getSpanTokensPerSecond(rootSpan),
-        messageIndex: getMessageIndex(rootSpan),
-        cost: getSpanCost(rootSpan),
-        baggage: getBaggageAttributes(rootSpan),
-      });
-      allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
-    }
+      // Collect synthetic span IDs for auto-expansion
+      const syntheticSpanIds = new Set(syntheticSpans.map((s) => s.SpanId));
 
-    // Collect synthetic span IDs for auto-expansion
-    const syntheticSpanIds = new Set(syntheticSpans.map((s) => s.SpanId));
-
-    return { spanRows: allRows, totalDuration: total, childrenMap, syntheticSpanIds };
-  }, [spans]);
+      return {
+        spanRows: allRows,
+        totalDuration: total,
+        childrenMap,
+        syntheticSpanIds,
+        syntheticChildrenMap: orphanParentIds,
+      };
+    }, [spans]);
 
   // Auto-expand synthetic spans by default
   useEffect(() => {
@@ -557,6 +594,23 @@ export function AgentGanttChart({
     setExpandedSpans(new Set());
   };
 
+  const hoveredRow = hoveredSpanId
+    ? visibleRows.find((r) => r.span.SpanId === hoveredSpanId)
+    : null;
+
+  // Compute aggregated metrics for synthetic spans
+  const syntheticAggregates = useMemo(() => {
+    if (hoveredRow?.type !== 'synthetic') return { tokens: 0, cost: 0, count: 0 };
+    const children = syntheticChildrenMap.get(hoveredRow.span.SpanId) ?? [];
+    let tokens = 0;
+    let cost = 0;
+    for (const child of children) {
+      tokens += getSpanTokens(child) ?? 0;
+      cost += getSpanCost(child) ?? 0;
+    }
+    return { tokens, cost, count: children.length };
+  }, [hoveredRow, syntheticChildrenMap]);
+
   if (spanRows.length === 0) {
     return null;
   }
@@ -569,7 +623,12 @@ export function AgentGanttChart({
   const handleMouseMove = (e: React.MouseEvent, spanId: string) => {
     if (containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      setMousePos({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+        containerWidth: rect.width,
+        containerHeight: rect.height,
+      });
       setHoveredSpanId(spanId);
     }
   };
@@ -579,9 +638,6 @@ export function AgentGanttChart({
     setHoveredSpanId(null);
   };
 
-  const hoveredRow = hoveredSpanId
-    ? visibleRows.find((r) => r.span.SpanId === hoveredSpanId)
-    : null;
   const hoveredAlertSummary = hoveredSpanId ? spanAlertSummary?.get(hoveredSpanId) : null;
   const hoveredTriggeredAlerts = hoveredAlertSummary?.triggeredAlerts ?? [];
 
@@ -726,13 +782,17 @@ export function AgentGanttChart({
 
       {mousePos && hoveredRow && (
         <div
-          className="pointer-events-none absolute z-50 rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
+          className="pointer-events-none absolute z-50 max-w-lg rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
           style={{
-            left: mousePos.x + 12,
-            top: mousePos.y + 12,
+            ...(mousePos.x > mousePos.containerWidth * 0.6
+              ? { right: mousePos.containerWidth - mousePos.x + 12 }
+              : { left: mousePos.x + 12 }),
+            ...(mousePos.y > mousePos.containerHeight * 0.7
+              ? { bottom: mousePos.containerHeight - mousePos.y + 12 }
+              : { top: mousePos.y + 12 }),
           }}
         >
-          <div className="flex items-center gap-2 whitespace-nowrap">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-foreground">{hoveredRow.span.SpanName}</span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums text-muted-foreground">
@@ -800,6 +860,27 @@ export function AgentGanttChart({
                   </span>
                 );
               })}
+            </div>
+          )}
+          {hoveredRow.type === 'synthetic' && syntheticAggregates.count > 0 && (
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              <span>{syntheticAggregates.count} spans</span>
+              {syntheticAggregates.tokens > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="tabular-nums">
+                    {formatNumber(syntheticAggregates.tokens)} tokens
+                  </span>
+                </>
+              )}
+              {syntheticAggregates.cost > 0 && (
+                <>
+                  <span>·</span>
+                  <span className="tabular-nums text-emerald-400">
+                    ${syntheticAggregates.cost.toFixed(6)}
+                  </span>
+                </>
+              )}
             </div>
           )}
         </div>
