@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import {
   Bot,
   Activity,
@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   AlertCircle,
   Info,
+  Layers,
 } from 'lucide-react';
 import type { TraceAlertSummary, AlertSeverity } from '@/types/alerts';
 
@@ -73,6 +74,7 @@ type SpanType =
   | 'assistant_thinking' // Thinking/reasoning output
   | 'assistant_tool_use' // Tool use request (output)
   | 'tool_execution' // Cross-request tool execution
+  | 'synthetic' // Synthetic grouping span for orphan parents
   | 'internal'; // Fallback
 
 interface SpanRow {
@@ -84,6 +86,8 @@ interface SpanRow {
   tokens: number | null;
   tokensPerSecond: number | null;
   messageIndex: number | null;
+  cost: number | null;
+  baggage: Record<string, string>;
 }
 
 function parseAttributes(attributesJson: string): Record<string, string> {
@@ -95,6 +99,11 @@ function parseAttributes(attributesJson: string): Record<string, string> {
 }
 
 function getSpanType(span: TraceSpan): SpanType {
+  const attrs = parseAttributes(span.SpanAttributes);
+
+  // Synthetic grouping spans
+  if (attrs.synthetic === 'true') return 'synthetic';
+
   const name = span.SpanName.toLowerCase();
 
   // Infrastructure spans (muted)
@@ -149,6 +158,23 @@ function getSpanTokensPerSecond(span: TraceSpan): number | null {
   return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
 }
 
+function getSpanCost(span: TraceSpan): number | null {
+  const attrs = parseAttributes(span.SpanAttributes);
+  const cost = attrs['ai.cost.total'];
+  return cost ? parseFloat(cost) : null;
+}
+
+function getBaggageAttributes(span: TraceSpan): Record<string, string> {
+  const attrs = parseAttributes(span.SpanAttributes);
+  const baggage: Record<string, string> = {};
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key.startsWith('baggage.')) {
+      baggage[key.replace('baggage.', '')] = value;
+    }
+  }
+  return baggage;
+}
+
 function getMessageIndex(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
   const index = attrs['ai.message.index'];
@@ -156,16 +182,51 @@ function getMessageIndex(span: TraceSpan): number | null {
 }
 
 function isHollowType(type: SpanType): boolean {
-  return type === 'llm';
+  return type === 'llm' || type === 'synthetic';
 }
 
-function getTypeColor(type: SpanType, status: string): string {
+// Color palette for synthetic spans based on operation name
+const syntheticColorPalette = [
+  { border: 'border-teal-400', bg: 'bg-teal-500/15', text: 'text-teal-400' },
+  { border: 'border-rose-400', bg: 'bg-rose-500/15', text: 'text-rose-400' },
+  { border: 'border-amber-400', bg: 'bg-amber-500/15', text: 'text-amber-400' },
+  { border: 'border-sky-400', bg: 'bg-sky-500/15', text: 'text-sky-400' },
+  { border: 'border-purple-400', bg: 'bg-purple-500/15', text: 'text-purple-400' },
+  { border: 'border-lime-400', bg: 'bg-lime-500/15', text: 'text-lime-400' },
+  { border: 'border-pink-400', bg: 'bg-pink-500/15', text: 'text-pink-400' },
+  { border: 'border-cyan-400', bg: 'bg-cyan-500/15', text: 'text-cyan-400' },
+];
+
+function getSyntheticColorIndex(spanName: string): number {
+  let hash = 0;
+  for (let i = 0; i < spanName.length; i++) {
+    hash = (hash << 5) - hash + spanName.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return Math.abs(hash) % syntheticColorPalette.length;
+}
+
+function getSyntheticColor(span: TraceSpan): { border: string; bg: string; text: string } {
+  const index = getSyntheticColorIndex(span.SpanName);
+  return syntheticColorPalette[index];
+}
+
+function getTypeColor(type: SpanType, status: string, span?: TraceSpan): string {
   if (status === 'ERROR') return 'bg-red-500';
 
   switch (type) {
     // Infrastructure - hollow style (handled separately in JSX)
     case 'llm':
       return 'border-violet-400 bg-violet-500/10';
+
+    // Synthetic grouping spans - hollow style with dynamic colors
+    case 'synthetic': {
+      if (span) {
+        const colors = getSyntheticColor(span);
+        return `${colors.border} ${colors.bg}`;
+      }
+      return 'border-zinc-500/70 bg-zinc-500/5';
+    }
 
     // Input messages - warm/earth tones
     case 'system':
@@ -200,6 +261,10 @@ function getTypeIcon(type: SpanType) {
     case 'llm':
       return <Bot className="h-3.5 w-3.5" />;
 
+    // Synthetic grouping spans
+    case 'synthetic':
+      return <Layers className="h-3.5 w-3.5" />;
+
     // Input messages
     case 'system':
       return <Settings2 className="h-3.5 w-3.5" />;
@@ -227,11 +292,18 @@ function getTypeIcon(type: SpanType) {
   }
 }
 
-function getTypeIconColor(type: SpanType): string {
+function getTypeIconColor(type: SpanType, span?: TraceSpan): string {
   switch (type) {
     // Infrastructure - colored to match hollow bars
     case 'llm':
       return 'text-violet-400';
+
+    // Synthetic grouping spans - dynamic colors
+    case 'synthetic':
+      if (span) {
+        return getSyntheticColor(span).text;
+      }
+      return 'text-zinc-400';
 
     // Input messages - warm tones
     case 'system':
@@ -286,37 +358,101 @@ export function AgentGanttChart({
   spanAlertSummary,
 }: AgentGanttChartProps) {
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredSpanId, setHoveredSpanId] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const { spanRows, totalDuration, childrenMap } = useMemo(() => {
-    if (spans.length === 0) return { spanRows: [], totalDuration: 0, childrenMap: new Map() };
+  const { spanRows, totalDuration, childrenMap, syntheticSpanIds } = useMemo(() => {
+    if (spans.length === 0)
+      return {
+        spanRows: [],
+        totalDuration: 0,
+        childrenMap: new Map(),
+        syntheticSpanIds: new Set<string>(),
+      };
 
-    // Build a map of spans that have children
-    const childrenMap = new Map<string, boolean>();
+    const spanIds = new Set(spans.map((s) => s.SpanId));
+
+    // Find orphan parent IDs (ParentSpanIds that don't exist in our span set)
+    const orphanParentIds = new Map<string, TraceSpan[]>();
     for (const span of spans) {
+      if (span.ParentSpanId && !spanIds.has(span.ParentSpanId)) {
+        const group = orphanParentIds.get(span.ParentSpanId) ?? [];
+        group.push(span);
+        orphanParentIds.set(span.ParentSpanId, group);
+      }
+    }
+
+    // Create synthetic parent spans for orphan groups
+    const syntheticSpans: TraceSpan[] = [];
+    for (const [parentId, childSpans] of orphanParentIds) {
+      if (childSpans.length > 0) {
+        const earliestStart = Math.min(...childSpans.map((s) => s.Timestamp));
+        const latestEnd = Math.max(...childSpans.map((s) => s.Timestamp + s.Duration));
+
+        // Get operation from first child's baggage for labeling
+        const firstChildAttrs = parseAttributes(childSpans[0].SpanAttributes);
+        const operation = firstChildAttrs['baggage.operation'] ?? 'group';
+
+        syntheticSpans.push({
+          Timestamp: earliestStart,
+          TraceId: childSpans[0].TraceId,
+          SpanId: parentId,
+          ParentSpanId: '',
+          SpanName: operation,
+          ServiceName: childSpans[0].ServiceName,
+          Duration: latestEnd - earliestStart,
+          StatusCode: 'OK',
+          SpanAttributes: JSON.stringify({ synthetic: 'true', 'baggage.operation': operation }),
+        });
+      }
+    }
+
+    // Establish hierarchy among synthetic spans:
+    // The earliest one becomes the root, others become its children
+    if (syntheticSpans.length > 1) {
+      syntheticSpans.sort((a, b) => a.Timestamp - b.Timestamp);
+      const rootSynthetic = syntheticSpans[0];
+
+      // Make other synthetic spans children of the root
+      for (let i = 1; i < syntheticSpans.length; i++) {
+        syntheticSpans[i].ParentSpanId = rootSynthetic.SpanId;
+      }
+
+      // Extend root's duration to cover all synthetic spans
+      const latestEnd = Math.max(...syntheticSpans.map((s) => s.Timestamp + s.Duration));
+      rootSynthetic.Duration = latestEnd - rootSynthetic.Timestamp;
+    }
+
+    // Combine synthetic and real spans
+    const allSpans = [...syntheticSpans, ...spans];
+    const allSpanIds = new Set(allSpans.map((s) => s.SpanId));
+
+    // Build a map of spans that have children (using combined spans)
+    const childrenMap = new Map<string, boolean>();
+    for (const span of allSpans) {
       if (span.ParentSpanId) {
         childrenMap.set(span.ParentSpanId, true);
       }
     }
 
-    const spanIds = new Set(spans.map((s) => s.SpanId));
-
     // Find ALL root spans (spans whose parent is not in the span set or is empty)
-    const rootSpans = spans
-      .filter((s) => s.ParentSpanId === '' || !spanIds.has(s.ParentSpanId))
+    const rootSpans = allSpans
+      .filter((s) => s.ParentSpanId === '' || !allSpanIds.has(s.ParentSpanId))
       .sort((a, b) => a.Timestamp - b.Timestamp);
 
     // Fallback to earliest span if no roots found
     const effectiveRoots =
       rootSpans.length > 0
         ? rootSpans
-        : [spans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
+        : [allSpans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
 
     const traceStart = Math.min(...effectiveRoots.map((s) => s.Timestamp));
-    const traceEndTime = Math.max(...spans.map((s) => s.Timestamp + s.Duration));
+    const traceEndTime = Math.max(...allSpans.map((s) => s.Timestamp + s.Duration));
     const total = traceEndTime - traceStart;
 
     const buildSpanTree = (parentId: string, depth = 0): SpanRow[] => {
-      const children = spans
+      const children = allSpans
         .filter((s) => s.ParentSpanId === parentId)
         .sort((a, b) => {
           const timeDiff = a.Timestamp - b.Timestamp;
@@ -342,6 +478,8 @@ export function AgentGanttChart({
           tokens: getSpanTokens(span),
           tokensPerSecond: getSpanTokensPerSecond(span),
           messageIndex: getMessageIndex(span),
+          cost: getSpanCost(span),
+          baggage: getBaggageAttributes(span),
         });
         rows.push(...buildSpanTree(span.SpanId, depth + 1));
       }
@@ -360,12 +498,30 @@ export function AgentGanttChart({
         tokens: getSpanTokens(rootSpan),
         tokensPerSecond: getSpanTokensPerSecond(rootSpan),
         messageIndex: getMessageIndex(rootSpan),
+        cost: getSpanCost(rootSpan),
+        baggage: getBaggageAttributes(rootSpan),
       });
       allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
     }
 
-    return { spanRows: allRows, totalDuration: total, childrenMap };
+    // Collect synthetic span IDs for auto-expansion
+    const syntheticSpanIds = new Set(syntheticSpans.map((s) => s.SpanId));
+
+    return { spanRows: allRows, totalDuration: total, childrenMap, syntheticSpanIds };
   }, [spans]);
+
+  // Auto-expand synthetic spans by default
+  useEffect(() => {
+    if (syntheticSpanIds.size > 0) {
+      setExpandedSpans((prev) => {
+        const next = new Set(prev);
+        for (const id of syntheticSpanIds) {
+          next.add(id);
+        }
+        return next;
+      });
+    }
+  }, [syntheticSpanIds]);
 
   // Filter to visible rows based on expansion state
   const visibleRows = useMemo(() => {
@@ -410,8 +566,31 @@ export function AgentGanttChart({
     label: formatDuration(totalDuration * pct),
   }));
 
+  const handleMouseMove = (e: React.MouseEvent, spanId: string) => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      setHoveredSpanId(spanId);
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setMousePos(null);
+    setHoveredSpanId(null);
+  };
+
+  const hoveredRow = hoveredSpanId
+    ? visibleRows.find((r) => r.span.SpanId === hoveredSpanId)
+    : null;
+  const hoveredAlertSummary = hoveredSpanId ? spanAlertSummary?.get(hoveredSpanId) : null;
+  const hoveredTriggeredAlerts = hoveredAlertSummary?.triggeredAlerts ?? [];
+
   return (
-    <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
+    <div
+      ref={containerRef}
+      className="relative overflow-hidden rounded-xl border border-border/50 bg-card"
+      onMouseLeave={handleMouseLeave}
+    >
       <div className="flex border-b border-border/30 bg-muted/20">
         <div className="flex w-56 shrink-0 items-center justify-between border-r border-border/30 px-4 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -458,6 +637,11 @@ export function AgentGanttChart({
         {visibleRows.map((row) => {
           const hasChildren = childrenMap.has(row.span.SpanId);
           const isExpanded = expandedSpans.has(row.span.SpanId);
+          const alertSummary = spanAlertSummary?.get(row.span.SpanId);
+          const alertStyles = alertSummary?.highestSeverity
+            ? alertSeverityStyles[alertSummary.highestSeverity]
+            : null;
+
           return (
             <div
               key={row.span.SpanId}
@@ -465,6 +649,7 @@ export function AgentGanttChart({
                 selectedSpanId === row.span.SpanId ? 'bg-primary/5' : ''
               } ${onSpanSelect ? 'cursor-pointer' : ''}`}
               onClick={() => onSpanSelect?.(row.span.SpanId)}
+              onMouseMove={(e) => handleMouseMove(e, row.span.SpanId)}
             >
               <div
                 className="flex w-56 shrink-0 items-center gap-1 border-r border-border/30 py-2 pr-2"
@@ -484,7 +669,7 @@ export function AgentGanttChart({
                 ) : (
                   <div className="h-4 w-4 shrink-0" />
                 )}
-                <span className={`shrink-0 ${getTypeIconColor(row.type)}`}>
+                <span className={`shrink-0 ${getTypeIconColor(row.type, row.span)}`}>
                   {getTypeIcon(row.type)}
                 </span>
                 <span className="truncate text-xs text-foreground" title={row.span.SpanName}>
@@ -492,88 +677,29 @@ export function AgentGanttChart({
                 </span>
               </div>
 
-              {(() => {
-                const alertSummary = spanAlertSummary?.get(row.span.SpanId);
-                const alertStyles = alertSummary?.highestSeverity
-                  ? alertSeverityStyles[alertSummary.highestSeverity]
-                  : null;
-                const triggeredAlerts = alertSummary?.triggeredAlerts ?? [];
-
-                return (
-                  <div className="relative flex-1 px-4 py-2">
-                    <div className="relative h-5">
+              <div className="relative flex-1 px-4 py-2">
+                <div className="relative h-5">
+                  <div
+                    className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode, row.span)} ${alertStyles?.glow ?? ''}`}
+                    style={{
+                      left: `${row.startOffset}%`,
+                      width: `${row.width}%`,
+                      minWidth: '4px',
+                    }}
+                  >
+                    {alertStyles && (
                       <div
-                        className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode)} ${alertStyles?.glow ?? ''}`}
-                        style={{
-                          left: `${row.startOffset}%`,
-                          width: `${row.width}%`,
-                          minWidth: '4px',
-                        }}
-                      >
-                        {alertStyles && (
-                          <div
-                            className={`absolute left-0 top-0 h-full w-[3px] rounded-l ${alertStyles.edge}`}
-                          />
-                        )}
-                        {row.tokens !== null && row.width > 8 && (
-                          <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-white/90">
-                            {formatNumber(row.tokens)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="pointer-events-none absolute left-4 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
-                      <div
-                        className="rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
-                        style={{ marginLeft: `${row.startOffset}%` }}
-                      >
-                        <div className="flex items-center gap-2 whitespace-nowrap">
-                          <span className="font-medium text-foreground">{row.span.SpanName}</span>
-                          <span className="text-muted-foreground">·</span>
-                          <span className="tabular-nums text-muted-foreground">
-                            {formatDuration(row.span.Duration)}
-                          </span>
-                          {row.tokens !== null && (
-                            <>
-                              <span className="text-muted-foreground">·</span>
-                              <span className="tabular-nums text-muted-foreground">
-                                {formatNumber(row.tokens)} tokens
-                              </span>
-                            </>
-                          )}
-                          {row.tokensPerSecond !== null && (
-                            <>
-                              <span className="text-muted-foreground">·</span>
-                              <span className="tabular-nums text-muted-foreground">
-                                {row.tokensPerSecond.toFixed(1)} tok/s
-                              </span>
-                            </>
-                          )}
-                        </div>
-                        {row.type === 'llm' && triggeredAlerts.length > 0 && (
-                          <div className="mt-1.5 flex flex-wrap gap-1.5 border-t border-border/30 pt-1.5">
-                            {triggeredAlerts.map((ta, idx) => {
-                              const severity = ta.alert.severity as AlertSeverity;
-                              const style = alertSeverityStyles[severity];
-                              const Icon = style.icon;
-                              return (
-                                <span
-                                  key={idx}
-                                  className={`inline-flex items-center gap-1 whitespace-nowrap ${style.text}`}
-                                >
-                                  <Icon className="h-3 w-3" />
-                                  <span>{ta.alert.name}</span>
-                                </span>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                        className={`absolute left-0 top-0 h-full w-[3px] rounded-l ${alertStyles.edge}`}
+                      />
+                    )}
+                    {row.tokens !== null && row.width > 8 && (
+                      <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-white/90">
+                        {formatNumber(row.tokens)}
+                      </span>
+                    )}
                   </div>
-                );
-              })()}
+                </div>
+              </div>
             </div>
           );
         })}
@@ -597,6 +723,87 @@ export function AgentGanttChart({
           ))}
         </div>
       </div>
+
+      {mousePos && hoveredRow && (
+        <div
+          className="pointer-events-none absolute z-50 rounded-md bg-popover px-2.5 py-1.5 text-xs shadow-lg ring-1 ring-border/50"
+          style={{
+            left: mousePos.x + 12,
+            top: mousePos.y + 12,
+          }}
+        >
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <span className="font-medium text-foreground">{hoveredRow.span.SpanName}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="tabular-nums text-muted-foreground">
+              {formatDuration(hoveredRow.span.Duration)}
+            </span>
+            {hoveredRow.tokens !== null && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {formatNumber(hoveredRow.tokens)} tokens
+                </span>
+              </>
+            )}
+            {hoveredRow.tokensPerSecond !== null && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span className="tabular-nums text-muted-foreground">
+                  {hoveredRow.tokensPerSecond.toFixed(1)} tok/s
+                </span>
+              </>
+            )}
+            {hoveredRow.type === 'llm' && hoveredRow.cost !== null && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span className="tabular-nums text-emerald-400">${hoveredRow.cost.toFixed(6)}</span>
+              </>
+            )}
+            {hoveredRow.type === 'llm' && hoveredRow.baggage.operation && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-medium text-teal-400">
+                  {hoveredRow.baggage.operation}
+                </span>
+              </>
+            )}
+          </div>
+          {hoveredRow.type === 'llm' &&
+            Object.keys(hoveredRow.baggage).filter((k) => k !== 'operation').length > 0 && (
+              <div className="mt-1.5 border-t border-border/30 pt-1.5">
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                  {Object.entries(hoveredRow.baggage)
+                    .filter(([k]) => k !== 'operation')
+                    .map(([key, value]) => (
+                      <span key={key} className="whitespace-nowrap text-[10px]">
+                        <span className="text-muted-foreground/70">{key}:</span>{' '}
+                        <span className="text-foreground/80">{value}</span>
+                      </span>
+                    ))}
+                </div>
+              </div>
+            )}
+          {hoveredRow.type === 'llm' && hoveredTriggeredAlerts.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1.5 border-t border-border/30 pt-1.5">
+              {hoveredTriggeredAlerts.map((ta, idx) => {
+                const severity = ta.alert.severity as AlertSeverity;
+                const style = alertSeverityStyles[severity];
+                const Icon = style.icon;
+                return (
+                  <span
+                    key={idx}
+                    className={`inline-flex items-center gap-1 whitespace-nowrap ${style.text}`}
+                  >
+                    <Icon className="h-3 w-3" />
+                    <span>{ta.alert.name}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
