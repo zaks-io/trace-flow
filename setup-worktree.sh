@@ -50,4 +50,12 @@ else
   echo "⚠ Warning: $MAIN_WORKTREE/workers/web/.env.local not found, skipping copy"
 fi
 
+if [ -f "$MAIN_WORKTREE/packages/sdk-tests/.env" ]; then
+  echo "Copying packages/sdk-tests/.env from main worktree..."
+  cp "$MAIN_WORKTREE/packages/sdk-tests/.env" packages/sdk-tests/.env
+  echo "✓ packages/sdk-tests/.env file copied"
+else
+  echo "⚠ Warning: $MAIN_WORKTREE/workers/web/.env.local not found, skipping copy"
+fi
+
 echo "✓ Worktree setup complete!"

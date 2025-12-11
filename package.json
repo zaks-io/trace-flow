@@ -37,7 +37,7 @@
     "typescript-eslint": "^8.46.1"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx}": [
+    "!(packages/sdk-tests/**)*.{ts,tsx,js,jsx}": [
       "eslint --fix",
       "prettier --write"
     ],

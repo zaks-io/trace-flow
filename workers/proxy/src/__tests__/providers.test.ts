@@ -31,6 +31,24 @@ describe('Provider Routing', () => {
       expect(result!.targetUrl).toBe('https://api.groq.com/openai/v1/chat/completions');
     });
 
+    it('should resolve Google route with generateContent path', () => {
+      const result = resolveRoute('/google/v1beta/models/gemini-pro:generateContent');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('google');
+      expect(result!.targetUrl).toBe(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
+      );
+    });
+
+    it('should resolve Google route with streamGenerateContent path', () => {
+      const result = resolveRoute('/google/v1beta/models/gemini-2.0-flash:streamGenerateContent');
+      expect(result).not.toBeNull();
+      expect(result!.provider.id).toBe('google');
+      expect(result!.targetUrl).toBe(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent',
+      );
+    });
+
     it('should handle provider path with no sub-path', () => {
       const result = resolveRoute('/openai');
       expect(result).not.toBeNull();
@@ -67,6 +85,7 @@ describe('Provider Routing', () => {
       expect(PROVIDERS['anthropic']!.baseUrl).toBe('https://api.anthropic.com');
       expect(PROVIDERS['openrouter']!.baseUrl).toBe('https://openrouter.ai/api');
       expect(PROVIDERS['groq']!.baseUrl).toBe('https://api.groq.com/openai');
+      expect(PROVIDERS['google']!.baseUrl).toBe('https://generativelanguage.googleapis.com');
       /* eslint-enable @typescript-eslint/dot-notation */
     });
   });

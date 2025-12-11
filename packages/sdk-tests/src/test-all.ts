@@ -1,6 +1,7 @@
 import { generateText, streamText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { PROXY_URL, proxyHeaders, log, success, error } from './config';
 
 interface ProviderConfig {
@@ -8,7 +9,10 @@ interface ProviderConfig {
   envKey: string;
   createClient: (
     apiKey: string,
-  ) => ReturnType<typeof createOpenAI> | ReturnType<typeof createAnthropic>;
+  ) =>
+    | ReturnType<typeof createOpenAI>
+    | ReturnType<typeof createAnthropic>
+    | ReturnType<typeof createGoogleGenerativeAI>;
   model: string;
 }
 
@@ -26,6 +30,17 @@ const providers: ProviderConfig[] = [
     createClient: (apiKey) =>
       createAnthropic({ baseURL: `${PROXY_URL}/anthropic/v1`, apiKey, headers: proxyHeaders }),
     model: 'claude-3-5-haiku-latest',
+  },
+  {
+    name: 'Google',
+    envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
+    createClient: (apiKey) =>
+      createGoogleGenerativeAI({
+        baseURL: `${PROXY_URL}/google/v1beta`,
+        apiKey,
+        headers: proxyHeaders,
+      }),
+    model: 'gemini-2.0-flash',
   },
   {
     name: 'OpenRouter',

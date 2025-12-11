@@ -4,9 +4,10 @@ import type { LLMTokenUsage } from '@trace-flow/types';
  * Extracts token usage from LLM response bodies using regex.
  * Avoids parsing large JSON objects by using regex patterns to extract only the fields we need.
  *
- * Supports both OpenAI-style and Anthropic-style token formats:
+ * Supports OpenAI-style, Anthropic-style, and Google-style token formats:
  * - OpenAI: prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens
  * - Anthropic: input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens
+ * - Google: promptTokenCount, candidatesTokenCount, cachedContentTokenCount, totalTokenCount
  *
  * Returns undefined if the response doesn't contain valid usage data.
  */
@@ -24,17 +25,28 @@ export function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined
   const cacheCreationTokensMatch = /"cache_creation_input_tokens"\s*:\s*(\d+)/.exec(responseBody);
   const cacheReadTokensMatch = /"cache_read_input_tokens"\s*:\s*(\d+)/.exec(responseBody);
 
+  // Google-style patterns (usageMetadata)
+  const promptTokenCountMatch = /"promptTokenCount"\s*:\s*(\d+)/.exec(responseBody);
+  const candidatesTokenCountMatch = /"candidatesTokenCount"\s*:\s*(\d+)/.exec(responseBody);
+  const cachedContentTokenCountMatch = /"cachedContentTokenCount"\s*:\s*(\d+)/.exec(responseBody);
+  const totalTokenCountMatch = /"totalTokenCount"\s*:\s*(\d+)/.exec(responseBody);
+
   // Check if any token fields were found
   const hasOpenAITokens =
     promptTokensMatch !== null || completionTokensMatch !== null || totalTokensMatch !== null;
   const hasAnthropicTokens = inputTokensMatch !== null || outputTokensMatch !== null;
+  const hasGoogleTokens =
+    promptTokenCountMatch !== null ||
+    candidatesTokenCountMatch !== null ||
+    totalTokenCountMatch !== null;
   const hasCacheTokens =
     cachedTokensMatch !== null ||
     cacheCreationTokensMatch !== null ||
     cacheReadTokensMatch !== null ||
-    reasoningTokensMatch !== null;
+    reasoningTokensMatch !== null ||
+    cachedContentTokenCountMatch !== null;
 
-  if (!hasOpenAITokens && !hasAnthropicTokens && !hasCacheTokens) {
+  if (!hasOpenAITokens && !hasAnthropicTokens && !hasGoogleTokens && !hasCacheTokens) {
     return undefined;
   }
 
@@ -59,13 +71,27 @@ export function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined
     ? parseInt(cacheReadTokensMatch[1], 10)
     : undefined;
 
-  // Normalize to unified format - prefer OpenAI-style if both present
+  // Extract Google-style tokens
+  const googlePromptTokens = promptTokenCountMatch?.[1]
+    ? parseInt(promptTokenCountMatch[1], 10)
+    : undefined;
+  const googleCandidatesTokens = candidatesTokenCountMatch?.[1]
+    ? parseInt(candidatesTokenCountMatch[1], 10)
+    : undefined;
+  const googleCachedTokens = cachedContentTokenCountMatch?.[1]
+    ? parseInt(cachedContentTokenCountMatch[1], 10)
+    : undefined;
+  const googleTotalTokens = totalTokenCountMatch?.[1]
+    ? parseInt(totalTokenCountMatch[1], 10)
+    : undefined;
+
+  // Normalize to unified format - prefer OpenAI-style, then Anthropic, then Google
   return {
-    promptTokens: promptTokens ?? inputTokens,
-    completionTokens: completionTokens ?? outputTokens,
-    totalTokens,
+    promptTokens: promptTokens ?? inputTokens ?? googlePromptTokens,
+    completionTokens: completionTokens ?? outputTokens ?? googleCandidatesTokens,
+    totalTokens: totalTokens ?? googleTotalTokens,
     reasoningTokens,
-    cachedTokens,
+    cachedTokens: cachedTokens ?? googleCachedTokens,
     cacheReadTokens,
     cacheCreationTokens,
   };

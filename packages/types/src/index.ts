@@ -122,6 +122,11 @@ export interface SSEMessage {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     output_tokens?: number;
+    // Google-style token fields (usageMetadata)
+    prompt_token_count?: number;
+    candidates_token_count?: number;
+    cached_content_token_count?: number;
+    total_token_count?: number;
   };
   metadata?: Partial<LLMResponseMetadata>;
   contentBlocks?: AnthropicContentBlock[];
