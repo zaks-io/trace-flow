@@ -427,4 +427,131 @@ describe('Proxy Worker Integration', () => {
       expect(requestKeys.objects.length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  describe('Body Omission', () => {
+    it("should not store bodies when X-Trace-Flow-Omit-Body is 'true'", async () => {
+      await setupValidApiKey('test-key');
+
+      // Clear any existing storage
+      const existingObjects = await env.STORAGE.list();
+      for (const obj of existingObjects.objects) {
+        await env.STORAGE.delete(obj.key);
+      }
+
+      const mockResponse = {
+        id: 'chatcmpl-123',
+        choices: [{ message: { content: 'Hello!' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'test-key',
+          'X-Trace-Flow-Omit-Body': 'true',
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+      // Verify NO bodies were stored
+      const stored = await env.STORAGE.list();
+      expect(stored.objects.length).toBe(0);
+    });
+
+    it('should store bodies when X-Trace-Flow-Omit-Body header is absent', async () => {
+      await setupValidApiKey('test-key');
+
+      // Clear any existing storage
+      const existingObjects = await env.STORAGE.list();
+      for (const obj of existingObjects.objects) {
+        await env.STORAGE.delete(obj.key);
+      }
+
+      const mockResponse = {
+        id: 'chatcmpl-123',
+        choices: [{ message: { content: 'Hello!' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'test-key',
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+      // Verify bodies WERE stored
+      const stored = await env.STORAGE.list();
+      expect(stored.objects.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should strip X-Trace-Flow-Omit-Body header before forwarding to provider', async () => {
+      await setupValidApiKey('test-key');
+
+      let capturedHeaders: Headers | null = null;
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({
+          path: '/v1/chat/completions',
+          method: 'POST',
+        })
+        .reply(
+          200,
+          (opts: { headers?: Record<string, string> }) => {
+            capturedHeaders = new Headers(opts.headers as HeadersInit);
+            return JSON.stringify({ ok: true });
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+
+      await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'test-key',
+          'X-Trace-Flow-Omit-Body': 'true',
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4' }),
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+      expect(capturedHeaders).not.toBeNull();
+      const headers = capturedHeaders!;
+      expect(headers.has('X-Trace-Flow-Omit-Body')).toBe(false);
+      // Verify other headers still pass through
+      expect(headers.get('Authorization')).toBe('Bearer openai-key');
+    });
+  });
 });

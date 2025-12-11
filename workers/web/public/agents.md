@@ -104,12 +104,12 @@ const result = await generateText({
 
 ## Headers Reference
 
-| Header               | Required | Format                        | Purpose                            |
-| -------------------- | -------- | ----------------------------- | ---------------------------------- |
-| X-Trace-Flow-Api-Key | Yes      | string                        | Authentication                     |
-| traceparent          | No       | 00-{traceId}-{spanId}-{flags} | W3C trace context with parent span |
-| tracestate           | No       | vendor=value,...              | Vendor-specific trace context      |
-| baggage              | No       | key=value,...                 | Custom context as span attributes  |
+| Header                 | Required | Format                        | Purpose                                   |
+| ---------------------- | -------- | ----------------------------- | ----------------------------------------- |
+| X-Trace-Flow-Api-Key   | Yes      | string                        | Authentication                            |
+| X-Trace-Flow-Omit-Body | No       | 'true'                        | Skip storing request/response bodies.     |
+| traceparent            | No       | 00-{traceId}-{spanId}-{flags} | W3C trace context with span per operation |
+| baggage                | No       | key=value,...                 | Custom context as span attributes         |
 
 ## Proxy Routes
 
