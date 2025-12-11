@@ -11,6 +11,12 @@ LLM observability platform built on Cloudflare Workers. Four workers form the sy
 - **API** - Provides R2 access for fetching request/response bodies
 - **Web** - Static dashboard (Cloudflare Pages) displaying analytics via Tinybird
 
+## Documentation
+
+- **[README.md](./README.md)** - Project overview and quick start
+- **[SETUP.md](./SETUP.md)** - Cloudflare resources setup instructions
+- **[workers/web/public/agents.md](./workers/web/public/agents.md)** - Integration guide for AI agents (served at `/agents.md`)
+
 ## DEPLOYMENT
 
 ### Production (Automated via GitHub Actions)
@@ -56,7 +62,7 @@ Use these for local dev and testing only:
 
 **Key Implementation Details:**
 
-- Route-based proxy: `/openai/*`, `/anthropic/*`, `/openrouter/*`, `/groq/*`
+- Route-based proxy: `/openai/*`, `/anthropic/*`, `/openrouter/*`, `/groq/*`, `/google/*`
 - Uses `ReadableStream.tee()` to duplicate request body for both proxying and capture
 - Uses `TransformStream` to capture response chunks while streaming to client
 - All storage/queue operations happen in `c.executionCtx.waitUntil()` to avoid blocking response
@@ -322,6 +328,13 @@ curl -X POST http://localhost:8787/openai/v1/chat/completions \
   -H "Authorization: Bearer your-openai-key" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"test"}]}'
+
+# Send test request (example with Google Gemini)
+curl -X POST http://localhost:8787/google/v1beta/models/gemini-pro:generateContent \
+  -H "X-Trace-Flow-Api-Key: your-api-key" \
+  -H "x-goog-api-key: your-google-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"test"}]}]}'
 
 # Verify traces in Tinybird Local
 tb datasource data otel_traces --limit 10

@@ -15,6 +15,8 @@ This monorepo contains four Cloudflare Workers:
 
 When a client sends a request to your LLM API endpoint, the Cloudflare Worker acts as an edge proxy. The Worker receives the call, extracts any tracing headers (such as those for distributed tracing or observability), and immediately begins streaming the response from the upstream LLM provider back to the user. This streaming approach supports low-latency, token-by-token delivery as responses are generated.
 
+**Supported Providers**: OpenAI, Anthropic, Google Gemini, OpenRouter, and Groq.
+
 While streaming the response, the Worker accumulates the necessary observability metadata, such as timing, request/response bodies, and trace context. Once the response is fully streamed, the Worker asynchronously sends this metadata and trace data to a Cloudflare Queue. This ensures that the user-facing proxy remains fast and that any downstream processing does not block the user experience.
 
 The Cloudflare Queue acts as a buffer and decouples the ingestion workload from the rest of the pipeline. A consumer Worker processes messages from the queue, handling retries and error cases as needed. This consumer is responsible for writing the finalized trace, request, and response metadata into ClickHouse for long-term storage and analytics.
@@ -66,57 +68,41 @@ pnpm run prepare
 
 ## Using the Proxy
 
-The Trace Flow proxy can be integrated with any LLM client, including the popular [Vercel AI SDK](https://sdk.vercel.ai/).
+The Trace Flow proxy uses route-based paths to forward requests to LLM providers. Simply point your SDK to the gateway URL with the appropriate provider path.
+
+**Gateway**: `https://gateway.trace-flow.dev`
+
+| Provider   | Gateway Path       | Proxies To                            |
+| ---------- | ------------------ | ------------------------------------- |
+| OpenAI     | `/openai/v1/*`     | `api.openai.com/v1/*`                 |
+| Anthropic  | `/anthropic/v1/*`  | `api.anthropic.com/v1/*`              |
+| Google     | `/google/v1beta/*` | `generativelanguage.googleapis.com/*` |
+| OpenRouter | `/openrouter/v1/*` | `openrouter.ai/api/v1/*`              |
+| Groq       | `/groq/v1/*`       | `api.groq.com/openai/v1/*`            |
 
 ### Quick Start
 
-**For complete integration guide, see [USAGE.md](./USAGE.md).**
-
-The proxy requires three headers:
-
-- `X-Trace-Flow-Api-Key`: Your Trace Flow API key for authentication
-- `X-Proxy-Target`: The target LLM provider URL (e.g., `https://api.openai.com/v1/chat/completions`)
-- `X-Provider-Api-Key`: Your LLM provider API key (optional, will be injected into provider-specific auth headers)
-
-### Example: Using with Vercel AI SDK
-
 ```typescript
-import { openai } from '@ai-sdk/openai';
+import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 
-const openaiClient = openai({
+const openai = createOpenAI({
+  baseURL: 'https://gateway.trace-flow.dev/openai/v1',
   apiKey: process.env.OPENAI_API_KEY,
-  // baseURL omitted - SDK uses OpenAI's default URL, custom fetch routes through proxy
-  fetch: async (url, options) => {
-    return fetch(process.env.PROXY_URL!, {
-      method: options?.method || 'POST',
-      headers: {
-        ...options?.headers,
-        'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY!,
-        'X-Proxy-Target': url, // Original provider URL intercepted here
-        'X-Provider-Api-Key': process.env.OPENAI_API_KEY!,
-        Authorization: undefined,
-      } as HeadersInit,
-      body: options?.body,
-    });
+  headers: {
+    'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
   },
 });
 
 const { text } = await generateText({
-  model: openaiClient('gpt-4'),
+  model: openai('gpt-5'),
   prompt: 'Hello, world!',
 });
 ```
 
-The proxy automatically captures:
+The proxy automatically captures request/response bodies, token usage, performance metrics, errors, and streaming events.
 
-- Request/response bodies
-- Token usage
-- Performance metrics (latency, time to first token)
-- Errors and status codes
-- Streaming events
-
-View all captured data in the Trace Flow dashboard.
+**For complete integration guide, see [agents.md](./workers/web/public/agents.md).**
 
 ## Development
 

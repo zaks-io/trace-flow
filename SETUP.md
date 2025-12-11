@@ -132,11 +132,11 @@ wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.t
 
 ## Verifying the Setup
 
-1. Send a test request to your proxy worker with the `X-Proxy-Target` header:
+1. Send a test request to your proxy worker using route-based paths:
 
 ```bash
-curl -X POST https://your-proxy.workers.dev \
-  -H "X-Proxy-Target: https://api.openai.com/v1/chat/completions" \
+curl -X POST https://your-proxy.workers.dev/openai/v1/chat/completions \
+  -H "X-Trace-Flow-Api-Key: YOUR_TRACE_FLOW_API_KEY" \
   -H "Authorization: Bearer YOUR_OPENAI_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello!"}]}'

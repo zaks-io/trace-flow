@@ -6,18 +6,20 @@ Test scripts for verifying AI SDK compatibility with the proxy gateway.
 
 The proxy uses `/{provider}/...` paths that forward to the provider's API:
 
-| Gateway Path                      | Target URL                                        |
-| --------------------------------- | ------------------------------------------------- |
-| `/openai/v1/chat/completions`     | `https://api.openai.com/v1/chat/completions`      |
-| `/anthropic/v1/messages`          | `https://api.anthropic.com/v1/messages`           |
-| `/openrouter/v1/chat/completions` | `https://openrouter.ai/api/v1/chat/completions`   |
-| `/groq/v1/chat/completions`       | `https://api.groq.com/openai/v1/chat/completions` |
+| Gateway Path                      | Target URL                                                    |
+| --------------------------------- | ------------------------------------------------------------- |
+| `/openai/v1/chat/completions`     | `https://api.openai.com/v1/chat/completions`                  |
+| `/anthropic/v1/messages`          | `https://api.anthropic.com/v1/messages`                       |
+| `/google/v1beta/models/...`       | `https://generativelanguage.googleapis.com/v1beta/models/...` |
+| `/openrouter/v1/chat/completions` | `https://openrouter.ai/api/v1/chat/completions`               |
+| `/groq/v1/chat/completions`       | `https://api.groq.com/openai/v1/chat/completions`             |
 
 ## AI SDK Usage
 
 ```typescript
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 
 const PROXY_URL = 'https://your-proxy.workers.dev';
 const proxyHeaders = { 'X-Trace-Flow-Api-Key': 'your-trace-flow-key' };
@@ -33,6 +35,13 @@ const openai = createOpenAI({
 const anthropic = createAnthropic({
   baseURL: `${PROXY_URL}/anthropic/v1`,
   apiKey: 'your-anthropic-key',
+  headers: proxyHeaders,
+});
+
+// Google Gemini
+const google = createGoogleGenerativeAI({
+  baseURL: `${PROXY_URL}/google/v1beta`,
+  apiKey: 'your-google-key',
   headers: proxyHeaders,
 });
 
@@ -76,14 +85,15 @@ pnpm run dev:all
 
 ## Environment Variables
 
-| Variable             | Required             | Description                                  |
-| -------------------- | -------------------- | -------------------------------------------- |
-| `TRACE_FLOW_API_KEY` | Yes                  | Your proxy gateway API key                   |
-| `OPENAI_API_KEY`     | For OpenAI tests     | OpenAI API key                               |
-| `ANTHROPIC_API_KEY`  | For Anthropic tests  | Anthropic API key                            |
-| `OPENROUTER_API_KEY` | For OpenRouter tests | OpenRouter API key                           |
-| `GROQ_API_KEY`       | For Groq tests       | Groq API key                                 |
-| `PROXY_URL`          | No                   | Proxy URL (default: `http://localhost:8787`) |
+| Variable                       | Required             | Description                                  |
+| ------------------------------ | -------------------- | -------------------------------------------- |
+| `TRACE_FLOW_API_KEY`           | Yes                  | Your proxy gateway API key                   |
+| `OPENAI_API_KEY`               | For OpenAI tests     | OpenAI API key                               |
+| `ANTHROPIC_API_KEY`            | For Anthropic tests  | Anthropic API key                            |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | For Google tests     | Google Gemini API key                        |
+| `OPENROUTER_API_KEY`           | For OpenRouter tests | OpenRouter API key                           |
+| `GROQ_API_KEY`                 | For Groq tests       | Groq API key                                 |
+| `PROXY_URL`                    | No                   | Proxy URL (default: `http://localhost:8787`) |
 
 ## Running Tests
 
@@ -92,6 +102,7 @@ Test individual providers:
 ```bash
 pnpm run test:openai
 pnpm run test:anthropic
+pnpm run test:google
 pnpm run test:openrouter
 pnpm run test:groq
 ```
