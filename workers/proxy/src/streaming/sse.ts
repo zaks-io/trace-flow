@@ -267,11 +267,13 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   let totalCompletionTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
+  let totalCachedTokens = 0;
   let hasAnyTokens = false;
 
   for (const message of streamData.messages) {
     if (!message.usage) continue;
 
+    // OpenAI/Anthropic style
     if (message.usage.input_tokens !== undefined) {
       totalPromptTokens += message.usage.input_tokens;
       hasAnyTokens = true;
@@ -286,6 +288,20 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
     }
     if (message.usage.cache_creation_input_tokens !== undefined) {
       totalCacheCreationTokens += message.usage.cache_creation_input_tokens;
+      hasAnyTokens = true;
+    }
+
+    // Google style (usageMetadata)
+    if (message.usage.prompt_token_count !== undefined) {
+      totalPromptTokens += message.usage.prompt_token_count;
+      hasAnyTokens = true;
+    }
+    if (message.usage.candidates_token_count !== undefined) {
+      totalCompletionTokens += message.usage.candidates_token_count;
+      hasAnyTokens = true;
+    }
+    if (message.usage.cached_content_token_count !== undefined) {
+      totalCachedTokens += message.usage.cached_content_token_count;
       hasAnyTokens = true;
     }
   }
@@ -307,6 +323,9 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   }
   if (totalCacheCreationTokens > 0) {
     result.cacheCreationTokens = totalCacheCreationTokens;
+  }
+  if (totalCachedTokens > 0) {
+    result.cachedTokens = totalCachedTokens;
   }
 
   // Calculate total if we have both prompt and completion tokens

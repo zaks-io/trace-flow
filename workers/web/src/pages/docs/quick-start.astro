@@ -23,7 +23,7 @@ const ctx = parentSpan.spanContext();
 
 // Pass trace context to link this LLM call to your trace
 const result = await generateText({
-  model: openai("gpt-4o"),
+  model: openai("gpt-5"),
   prompt: userMessage,
   headers: {
     "X-Trace-Flow-Trace-Id": ctx.traceId,

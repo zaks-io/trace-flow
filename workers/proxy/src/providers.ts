@@ -8,6 +8,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
   anthropic: { id: 'anthropic', baseUrl: 'https://api.anthropic.com' },
   openrouter: { id: 'openrouter', baseUrl: 'https://openrouter.ai/api' },
   groq: { id: 'groq', baseUrl: 'https://api.groq.com/openai' },
+  google: { id: 'google', baseUrl: 'https://generativelanguage.googleapis.com' },
 };
 
 export interface ResolvedRoute {

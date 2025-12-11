@@ -14,7 +14,7 @@ const openai = createOpenAI({
 });
 
 const result = await generateText({
-  model: openai("gpt-4o"),
+  model: openai("gpt-5"),
   prompt: "Hello, world!",
 });`;
 
@@ -79,7 +79,7 @@ const openai = new OpenAI({
 });
 
 const completion = await openai.chat.completions.create({
-  model: "gpt-4o",
+  model: "gpt-5",
   messages: [{ role: "user", content: "Hello, world!" }],
 });
 
@@ -90,12 +90,12 @@ const CURL_CODE = `curl -X POST https://gateway.trace-flow.dev/openai/v1/chat/co
   -H "Authorization: Bearer $OPENAI_API_KEY" \\
   -H "X-Trace-Flow-Api-Key: $TRACE_FLOW_API_KEY" \\
   -d '{
-    "model": "gpt-4o",
+    "model": "gpt-5",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'`;
 
 const WITH_TRACE_CONTEXT_CODE = `const result = await generateText({
-  model: openai("gpt-4o"),
+  model: openai("gpt-5"),
   prompt: "Hello!",
   headers: {
     "X-Trace-Flow-Trace-Id": traceId,      // 32 hex chars

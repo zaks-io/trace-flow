@@ -1,26 +1,19 @@
-# Trace Flow Integration Guide
+# Trace Flow Gateway
 
-## What is Trace Flow?
+LLM observability: user events → API calls → LLM requests → tool calls → final response.
 
-Trace Flow is an LLM observability platform. See your entire AI workflow in one trace:
-user events → API calls → LLM requests → tool calls → final response.
-
-Gateway: `https://gateway.trace-flow.dev`
-
-Get your API key: https://trace-flow.dev/app/api-keys
+**Gateway:** `https://gateway.trace-flow.dev`
+**API Keys:** https://trace-flow.dev/app/api-keys
 
 ## Quick Start
 
-### 1. Install
-
-```bash
-npm install ai @ai-sdk/openai
-```
-
-### 2. Configure Provider
+1. Add header: `X-Trace-Flow-Api-Key: {your-api-key}`
+2. Change base URL to `gateway.trace-flow.dev/{provider}`
+3. Pass your provider API key as normal
 
 ```typescript
 import { createOpenAI } from '@ai-sdk/openai';
+import { generateText } from 'ai';
 
 const openai = createOpenAI({
   baseURL: 'https://gateway.trace-flow.dev/openai/v1',
@@ -29,152 +22,104 @@ const openai = createOpenAI({
     'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
   },
 });
-```
-
-### 3. Make Requests
-
-```typescript
-import { generateText } from 'ai';
 
 const result = await generateText({
-  model: openai('gpt-4o'),
-  prompt: 'Hello!',
+  model: openai('gpt-5'),
+  prompt: 'Hello ',
 });
 ```
 
-### 4. Link to OpenTelemetry Traces (Recommended)
+## Providers
 
-Connect LLM calls to existing traces using W3C Trace Context headers:
+| Provider   | Path           |
+| ---------- | -------------- |
+| OpenAI     | /openai/v1     |
+| Anthropic  | /anthropic/v1  |
+| Google     | /google/v1beta |
+| OpenRouter | /openrouter/v1 |
+| Groq       | /groq/v1       |
 
-```typescript
-import { context, propagation } from '@opentelemetry/api';
+Adapt the example above: change `baseURL` path and use the appropriate SDK/API key for each provider.
 
-const parentSpan = tracer.startSpan('user-request');
+## Gantt Chart Hierarchy
 
-const result = await context.with(trace.setSpan(context.active(), parentSpan), async () => {
-  // Inject W3C trace context headers automatically
-  const traceHeaders: Record<string, string> = {};
-  propagation.inject(context.active(), traceHeaders);
+Trace Flow displays a Gantt chart of your LLM calls. Use the `traceparent` header to group related calls:
 
-  return generateText({
-    model: openai('gpt-4o'),
-    prompt: userMessage,
-    headers: {
-      ...traceHeaders, // Contains traceparent and tracestate
-      baggage: 'session_id=abc123', // Optional: custom context
-    },
-  });
-});
-```
+**Format:** `traceparent: 00-{traceId}-{spanId}-01`
 
-### 5. Manual Trace Headers (Without OpenTelemetry)
-
-If you're not using OpenTelemetry, generate trace headers manually:
+- **traceId** (32 hex chars): Same for all calls in a workflow → groups them in one trace
+- **spanId** (16 hex chars): Different per call → creates timeline entries
 
 ```typescript
 function generateTraceId(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
 
 function generateSpanId(): string {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
+  return Array.from(crypto.getRandomValues(new Uint8Array(8)))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
 
+// Generate once per user request
 const traceId = generateTraceId();
-const spanId = generateSpanId();
-const traceparent = `00-${traceId}-${spanId}-01`;
 
-const result = await generateText({
-  model: openai('gpt-4o'),
-  prompt: userMessage,
-  headers: {
-    traceparent,
-    baggage: 'session_id=abc123,user_id=user456',
-  },
+// Call 1: Planning
+await generateText({
+  model: openai('gpt-5'),
+  prompt: 'Plan: ' + task,
+  headers: { traceparent: `00-${traceId}-${generateSpanId()}-01` },
+});
+
+// Call 2: Execution (same traceId = same Gantt chart)
+await generateText({
+  model: openai('gpt-5'),
+  prompt: 'Execute: ' + plan,
+  headers: { traceparent: `00-${traceId}-${generateSpanId()}-01` },
 });
 ```
 
-## Headers Reference
+## Operation Labels
 
-| Header               | Required | Format                        | Purpose                            |
-| -------------------- | -------- | ----------------------------- | ---------------------------------- |
-| X-Trace-Flow-Api-Key | Yes      | string                        | Authentication                     |
-| traceparent          | No       | 00-{traceId}-{spanId}-{flags} | W3C trace context with parent span |
-| tracestate           | No       | vendor=value,...              | Vendor-specific trace context      |
-| baggage              | No       | key=value,...                 | Custom context as span attributes  |
-
-## Proxy Routes
-
-| Provider   | Gateway Path      | Proxies To                |
-| ---------- | ----------------- | ------------------------- |
-| OpenAI     | /openai/v1/\*     | api.openai.com/v1/\*      |
-| Anthropic  | /anthropic/v1/\*  | api.anthropic.com/v1/\*   |
-| OpenRouter | /openrouter/v1/\* | openrouter.ai/api/v1/\*   |
-| Groq       | /groq/v1/\*       | api.groq.com/openai/v1/\* |
-
-## Other Providers
-
-### Anthropic
+Use `baggage` header to label phases in the UI. Stored as `baggage.operation` attribute for filtering:
 
 ```typescript
-import { createAnthropic } from '@ai-sdk/anthropic';
+headers: {
+  traceparent: `00-${traceId}-${generateSpanId()}-01`,
+  baggage: 'operation=planning',
+}
 
-const anthropic = createAnthropic({
-  baseURL: 'https://gateway.trace-flow.dev/anthropic/v1',
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  headers: {
-    'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
-  },
-});
+// Example operation values:
+// operation=planning, operation=execution, operation=summarization
+// operation=tool-search, operation=tool-calculator, operation=rag-retrieval
 ```
 
-### OpenRouter
+Add custom context: `baggage: 'operation=planning,user_id=123,session_id=abc'`
+
+## OpenTelemetry Integration
+
+If using OpenTelemetry, inject trace context automatically:
 
 ```typescript
-import { createOpenAI } from '@ai-sdk/openai';
+import { context, propagation } from '@opentelemetry/api';
 
-const openrouter = createOpenAI({
-  baseURL: 'https://gateway.trace-flow.dev/openrouter/v1',
-  apiKey: process.env.OPENROUTER_API_KEY,
-  headers: {
-    'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
-  },
-});
-```
+const traceHeaders: Record<string, string> = {};
+propagation.inject(context.active(), traceHeaders);
 
-### Groq
-
-```typescript
-import { createOpenAI } from '@ai-sdk/openai';
-
-const groq = createOpenAI({
-  baseURL: 'https://gateway.trace-flow.dev/groq/v1',
-  apiKey: process.env.GROQ_API_KEY,
-  headers: {
-    'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
-  },
+await generateText({
+  model: openai('gpt-5'),
+  prompt: message,
+  headers: traceHeaders, // Contains traceparent and tracestate
 });
 ```
 
 ## What Gets Tracked
 
-- Request and response bodies
-- Token usage (input, output, cached, reasoning)
-- Timing metrics (latency, time to first token)
-- Model, provider, and finish reason
-- Error details when requests fail
-
-## More Documentation
-
-- Quick Start: https://trace-flow.dev/docs/quick-start
-- SDK Reference: https://trace-flow.dev/docs/sdk-reference
-- OpenTelemetry Setup: https://trace-flow.dev/docs/opentelemetry
-- AI Agents Guide: https://trace-flow.dev/docs/agents
+- Token usage (prompt, completion, cached, reasoning)
+- Latency and time to first token
+- Model, provider, finish reason
+- Request/response bodies
+- Errors and status codes
+- Cost estimates

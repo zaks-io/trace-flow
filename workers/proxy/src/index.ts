@@ -34,7 +34,11 @@ import { validateApiKey } from './auth';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
-import { parseAnthropicRequestBody, parseOpenAIStyleRequestBody } from './parsers/request-body';
+import {
+  parseAnthropicRequestBody,
+  parseOpenAIStyleRequestBody,
+  parseGoogleRequestBody,
+} from './parsers/request-body';
 import { captureStream, createResponseCapture, chunksToString } from './streaming/capture';
 import { createSSEParser, aggregateSSETokens } from './streaming/sse';
 import { storeRequestResponse } from './storage';
@@ -225,6 +229,7 @@ app.all('*', async (c) => {
 
         // Parse input messages based on provider
         const isAnthropic = targetUrl.includes('anthropic.com');
+        const isGoogle = targetUrl.includes('generativelanguage.googleapis.com');
         const isOpenAIStyle =
           targetUrl.includes('openai.com') ||
           targetUrl.includes('groq.com') ||
@@ -236,6 +241,8 @@ app.all('*', async (c) => {
           try {
             if (isAnthropic) {
               inputMessages = parseAnthropicRequestBody(requestBody) ?? undefined;
+            } else if (isGoogle) {
+              inputMessages = parseGoogleRequestBody(requestBody) ?? undefined;
             } else if (isOpenAIStyle) {
               inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
             }

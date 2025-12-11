@@ -235,3 +235,93 @@ export function extractToolUseFromContentBlocks(
 
   return toolUses;
 }
+
+/**
+ * Google request body structure for Gemini API.
+ */
+interface GoogleRequestBody {
+  contents?: {
+    role?: 'user' | 'model';
+    parts: {
+      text?: string;
+      inlineData?: unknown;
+      functionCall?: { name: string; args: unknown };
+      functionResponse?: { name: string; response: unknown };
+    }[];
+  }[];
+  systemInstruction?: {
+    parts: { text: string }[];
+  };
+  tools?: unknown[];
+}
+
+/**
+ * Parses a Google Gemini request body to extract input messages.
+ * Google uses 'contents' array with 'user'/'model' roles and 'parts' for content.
+ * Returns null if the body is not a valid Google messages API request.
+ */
+export function parseGoogleRequestBody(body: string): InputMessage[] | null {
+  try {
+    const parsed = JSON.parse(body) as GoogleRequestBody;
+
+    // Must have contents array to be a valid Google request
+    if (!parsed.contents || !Array.isArray(parsed.contents)) {
+      return null;
+    }
+
+    const inputMessages: InputMessage[] = [];
+    let messageIndex = 0;
+
+    // Handle system instruction if present
+    if (parsed.systemInstruction?.parts) {
+      inputMessages.push({
+        role: 'system',
+        index: messageIndex++,
+        contentBlocks: [{ index: 0, type: 'text' }],
+      });
+    }
+
+    // Parse each content entry
+    for (const content of parsed.contents) {
+      const contentBlocks: InputContentBlock[] = [];
+
+      // Map Google roles to standard roles ('model' -> 'assistant')
+      const role = content.role === 'model' ? 'assistant' : 'user';
+
+      for (let partIndex = 0; partIndex < content.parts.length; partIndex++) {
+        const part = content.parts[partIndex];
+        if (!part) continue;
+
+        if (part.text !== undefined) {
+          contentBlocks.push({ index: partIndex, type: 'text' });
+        } else if (part.inlineData) {
+          contentBlocks.push({ index: partIndex, type: 'image' });
+        } else if (part.functionCall) {
+          contentBlocks.push({
+            index: partIndex,
+            type: 'tool_call',
+            toolName: part.functionCall.name,
+          });
+        } else if (part.functionResponse) {
+          contentBlocks.push({
+            index: partIndex,
+            type: 'tool_result',
+            toolResultId: part.functionResponse.name,
+          });
+        }
+      }
+
+      if (contentBlocks.length > 0) {
+        inputMessages.push({
+          role,
+          index: messageIndex++,
+          contentBlocks,
+        });
+      }
+    }
+
+    return inputMessages.length > 0 ? inputMessages : null;
+  } catch {
+    return null;
+  }
+}

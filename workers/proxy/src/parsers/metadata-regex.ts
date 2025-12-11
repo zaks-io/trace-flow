@@ -24,6 +24,16 @@ const ANTHROPIC_MODEL_PATTERN = /"model"\s*:\s*"([^"]+)"/;
 const ANTHROPIC_STOP_REASON_PATTERN = /"stop_reason"\s*:\s*(?:null|"([^"]+)")/;
 const ANTHROPIC_STOP_SEQUENCE_PATTERN = /"stop_sequence"\s*:\s*(?:null|"([^"]+)")/;
 
+// Google patterns (Gemini API)
+const GOOGLE_FINISH_REASON_PATTERN = /"finishReason"\s*:\s*"([^"]+)"/;
+const GOOGLE_MODEL_VERSION_PATTERN = /"modelVersion"\s*:\s*"([^"]+)"/;
+const GOOGLE_RESPONSE_ID_PATTERN = /"responseId"\s*:\s*"([^"]+)"/;
+// Google token patterns for usageMetadata
+const GOOGLE_PROMPT_TOKEN_COUNT_PATTERN = /"promptTokenCount"\s*:\s*(\d+)/;
+const GOOGLE_CANDIDATES_TOKEN_COUNT_PATTERN = /"candidatesTokenCount"\s*:\s*(\d+)/;
+const GOOGLE_CACHED_TOKEN_COUNT_PATTERN = /"cachedContentTokenCount"\s*:\s*(\d+)/;
+const GOOGLE_TOTAL_TOKEN_COUNT_PATTERN = /"totalTokenCount"\s*:\s*(\d+)/;
+
 // Token usage patterns (used by both OpenAI and Anthropic)
 const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
 const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
@@ -143,6 +153,35 @@ export function extractAnthropicMetadata(
 }
 
 /**
+ * Extracts Google Gemini metadata from SSE event data or response body.
+ * Designed to work incrementally - can be called multiple times with different event data
+ * to accumulate metadata across the stream.
+ */
+export function extractGoogleMetadata(
+  data: string,
+  existing: Partial<LLMResponseMetadata> = {},
+): Partial<LLMResponseMetadata> {
+  const metadata: Partial<LLMResponseMetadata> = { ...existing };
+
+  const responseIdMatch = GOOGLE_RESPONSE_ID_PATTERN.exec(data);
+  if (responseIdMatch && !metadata.id) {
+    metadata.id = responseIdMatch[1];
+  }
+
+  const modelVersionMatch = GOOGLE_MODEL_VERSION_PATTERN.exec(data);
+  if (modelVersionMatch && !metadata.model) {
+    metadata.model = modelVersionMatch[1];
+  }
+
+  const finishReasonMatch = GOOGLE_FINISH_REASON_PATTERN.exec(data);
+  if (finishReasonMatch && !metadata.finishReason) {
+    metadata.finishReason = finishReasonMatch[1];
+  }
+
+  return metadata;
+}
+
+/**
  * Extracts metadata from SSE event data string, detecting provider automatically.
  * Checks for provider-specific patterns and applies appropriate extraction.
  */
@@ -157,6 +196,12 @@ export function extractMetadataFromSSEData(
   // We check these instead of just 'id' because both providers use 'id'
   if (openaiMetadata.object || openaiMetadata.finishReason || openaiMetadata.nativeFinishReason) {
     return openaiMetadata;
+  }
+
+  // Try Google patterns (check for finishReason with camelCase - Google's format)
+  const googleMetadata = extractGoogleMetadata(data, existing);
+  if (googleMetadata.finishReason || googleMetadata.model) {
+    return { ...openaiMetadata, ...googleMetadata };
   }
 
   // Otherwise try Anthropic patterns
@@ -175,21 +220,30 @@ export function extractMetadataFromSSEData(
 
 /**
  * Extracts token usage from SSE event data string using regex.
- * Returns token counts for input_tokens, output_tokens, and cache-related tokens.
+ * Returns token counts for input_tokens, output_tokens, cache-related tokens, and Google-style tokens.
  */
 export function extractTokenUsageFromSSEData(data: string): {
   input_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
   output_tokens?: number;
+  prompt_token_count?: number;
+  candidates_token_count?: number;
+  cached_content_token_count?: number;
+  total_token_count?: number;
 } {
   const usage: {
     input_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     output_tokens?: number;
+    prompt_token_count?: number;
+    candidates_token_count?: number;
+    cached_content_token_count?: number;
+    total_token_count?: number;
   } = {};
 
+  // OpenAI/Anthropic patterns
   const inputTokensMatch = INPUT_TOKENS_PATTERN.exec(data);
   if (inputTokensMatch?.[1]) {
     usage.input_tokens = parseInt(inputTokensMatch[1], 10);
@@ -208,6 +262,27 @@ export function extractTokenUsageFromSSEData(data: string): {
   const cacheReadMatch = CACHE_READ_INPUT_TOKENS_PATTERN.exec(data);
   if (cacheReadMatch?.[1]) {
     usage.cache_read_input_tokens = parseInt(cacheReadMatch[1], 10);
+  }
+
+  // Google patterns
+  const promptTokenCountMatch = GOOGLE_PROMPT_TOKEN_COUNT_PATTERN.exec(data);
+  if (promptTokenCountMatch?.[1]) {
+    usage.prompt_token_count = parseInt(promptTokenCountMatch[1], 10);
+  }
+
+  const candidatesTokenCountMatch = GOOGLE_CANDIDATES_TOKEN_COUNT_PATTERN.exec(data);
+  if (candidatesTokenCountMatch?.[1]) {
+    usage.candidates_token_count = parseInt(candidatesTokenCountMatch[1], 10);
+  }
+
+  const cachedContentTokenCountMatch = GOOGLE_CACHED_TOKEN_COUNT_PATTERN.exec(data);
+  if (cachedContentTokenCountMatch?.[1]) {
+    usage.cached_content_token_count = parseInt(cachedContentTokenCountMatch[1], 10);
+  }
+
+  const totalTokenCountMatch = GOOGLE_TOTAL_TOKEN_COUNT_PATTERN.exec(data);
+  if (totalTokenCountMatch?.[1]) {
+    usage.total_token_count = parseInt(totalTokenCountMatch[1], 10);
   }
 
   return usage;
