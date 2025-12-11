@@ -65,7 +65,7 @@ importers:
         version: 2.0.33(zod@4.1.13)
       '@ai-sdk/openai':
         specifier: latest
-        version: 2.0.81(zod@4.1.13)
+        version: 2.0.82(zod@4.1.13)
       '@openrouter/ai-sdk-provider':
         specifier: latest
         version: 1.5.3(ai@5.0.111(zod@4.1.13))(zod@4.1.13)
@@ -245,6 +245,9 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.1.17
         version: 4.1.17(vite@7.1.11(@types/node@20.19.23)(jiti@2.6.1)(lightningcss@1.30.2)(yaml@2.8.1))
+      '@tanstack/react-query':
+        specifier: ^5.90.12
+        version: 5.90.12(react@19.2.1)
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
@@ -357,8 +360,8 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@2.0.81':
-    resolution: {integrity: sha512-fgy5vUMF0WwrPZhxkvMYVFD9dIdIoQBQ6b/XMkwcnUcSE0bUaxKHwgl9UC6da6fb1SpNxzcXu/Y3/7CnyX3TFg==}
+  '@ai-sdk/openai@2.0.82':
+    resolution: {integrity: sha512-eUWyHVZsI9XXw58faPsO8wkwkkhildsdrTdAwVN83qAmT+VVslboHKjtFJAHMlWiCzhvkPLmTx3HPLF7TM8D8w==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2273,6 +2276,14 @@ packages:
     resolution: {integrity: sha512-4+9w8ZHOiGnpcGI6z1TVVfWaX/koK7fKeSYF3qlYg2xpBtbteP2ddBxiarL+HVgfSJGeK5RIxRQmKm4rTJJAwA==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
+
+  '@tanstack/query-core@5.90.12':
+    resolution: {integrity: sha512-T1/8t5DhV/SisWjDnaiU2drl6ySvsHj1bHBCWNXd+/T+Hh1cf6JodyEYMd5sgwm+b/mETT4EV3H+zCVczCU5hg==}
+
+  '@tanstack/react-query@5.90.12':
+    resolution: {integrity: sha512-graRZspg7EoEaw0a8faiUASCyJrqjKPdqJ9EwuDRUF9mEYJ1YPczI9H+/agJ0mOJkPCJDk0lsz5QTrLZ/jQ2rg==}
+    peerDependencies:
+      react: ^18 || ^19
 
   '@tanstack/react-table@8.21.3':
     resolution: {integrity: sha512-5nNMTSETP4ykGegmVkhjcS8tTLW6Vl4axfEGQN3v0zdHYbK4UfoqfPChclTrJ4EoK9QynqAu9oUf8VEmrpZ5Ww==}
@@ -4905,7 +4916,7 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.19(zod@4.1.13)
       zod: 4.1.13
 
-  '@ai-sdk/openai@2.0.81(zod@4.1.13)':
+  '@ai-sdk/openai@2.0.82(zod@4.1.13)':
     dependencies:
       '@ai-sdk/provider': 2.0.0
       '@ai-sdk/provider-utils': 3.0.19(zod@4.1.13)
@@ -6535,6 +6546,13 @@ snapshots:
       '@tailwindcss/oxide': 4.1.17
       tailwindcss: 4.1.17
       vite: 7.1.11(@types/node@20.19.23)(jiti@2.6.1)(lightningcss@1.30.2)(yaml@2.8.1)
+
+  '@tanstack/query-core@5.90.12': {}
+
+  '@tanstack/react-query@5.90.12(react@19.2.1)':
+    dependencies:
+      '@tanstack/query-core': 5.90.12
+      react: 19.2.1
 
   '@tanstack/react-table@8.21.3(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:

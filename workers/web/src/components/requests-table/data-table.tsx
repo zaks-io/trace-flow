@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -8,12 +8,29 @@ import {
   type ColumnDef,
   type VisibilityState,
 } from '@tanstack/react-table';
-import { Filter, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { ColumnToggle } from './column-toggle';
+import { TableToolbar, type AlertFilterValue } from './table-toolbar';
 import type { TraceAlertSummary, Alert } from '@/types/alerts';
+import type { TableFilters } from '@/hooks/useTableFilters';
+import type { FilterOptions } from '@/hooks/useFilterOptions';
 
-export type AlertFilterValue = string;
+export type { AlertFilterValue };
+
+const NEW_ROW_THRESHOLD_MS = 30_000; // 30 seconds for testing (change to 60_000 for production)
+
+function isNewRow(row: unknown): boolean {
+  const data = row as { ReceivedAt?: number };
+  if (typeof data.ReceivedAt !== 'number') return false;
+  const receivedAt = new Date(data.ReceivedAt / 1_000_000);
+  const now = new Date();
+  const ageMs = now.getTime() - receivedAt.getTime();
+  return ageMs < NEW_ROW_THRESHOLD_MS;
+}
+
+function getReceivedAt(row: unknown): number | null {
+  const data = row as { ReceivedAt?: number };
+  return typeof data.ReceivedAt === 'number' ? data.ReceivedAt : null;
+}
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData>[];
@@ -31,6 +48,13 @@ interface DataTableProps<TData> {
   alerts?: Alert[];
   alertFilter?: AlertFilterValue;
   onAlertFilterChange?: (filter: AlertFilterValue) => void;
+  filters?: TableFilters;
+  filterOptions?: FilterOptions;
+  filterOptionsLoading?: boolean;
+  onFilterChange?: (key: keyof TableFilters, value: string | null) => void;
+  onClearFilters?: () => void;
+  hasActiveFilters?: boolean;
+  loading?: boolean;
 }
 
 export function DataTable<TData>({
@@ -47,6 +71,13 @@ export function DataTable<TData>({
   alerts,
   alertFilter = 'all',
   onAlertFilterChange,
+  filters,
+  filterOptions,
+  filterOptionsLoading,
+  onFilterChange,
+  onClearFilters,
+  hasActiveFilters,
+  loading,
 }: DataTableProps<TData>) {
   const filteredData = useMemo(() => {
     if (!alertSummary || alertFilter === 'all') {
@@ -70,6 +101,32 @@ export function DataTable<TData>({
     });
   }, [data, alertSummary, alertFilter, getRowId]);
 
+  // Force re-render when "new" rows age out
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const now = new Date();
+    const newRowTimestamps = filteredData
+      .map((row) => getReceivedAt(row))
+      .filter((ts): ts is number => {
+        if (ts === null) return false;
+        const receivedAt = new Date(ts / 1_000_000);
+        return now.getTime() - receivedAt.getTime() < NEW_ROW_THRESHOLD_MS;
+      });
+
+    if (newRowTimestamps.length === 0) return;
+
+    // Find the oldest "new" row and set timer for when it ages out
+    const oldestTimestamp = Math.min(...newRowTimestamps);
+    const oldestReceivedAt = new Date(oldestTimestamp / 1_000_000);
+    const ageMs = now.getTime() - oldestReceivedAt.getTime();
+    const remainingMs = NEW_ROW_THRESHOLD_MS - ageMs + 100;
+
+    if (remainingMs > 0) {
+      const timer = setTimeout(() => forceUpdate((n) => n + 1), remainingMs);
+      return () => clearTimeout(timer);
+    }
+  }, [filteredData]);
+
   const table = useReactTable({
     data: filteredData,
     columns,
@@ -88,57 +145,32 @@ export function DataTable<TData>({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end gap-2">
-        {onAlertFilterChange && alerts && alerts.length > 0 && (
-          <div className="relative">
-            <select
-              value={alertFilter}
-              onChange={(e) => onAlertFilterChange(e.target.value)}
-              className={cn(
-                'appearance-none rounded-lg border bg-card pl-9 pr-8 py-2 text-sm font-medium transition-colors',
-                'focus:outline-none focus:ring-2 focus:ring-primary/20',
-                alertFilter !== 'all'
-                  ? 'border-primary/50 text-primary'
-                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              <option value="all">All Requests</option>
-              <option value="has-alerts">Has Alerts</option>
-              {alerts.map((alert) => (
-                <option key={alert._id} value={alert._id}>
-                  {alert.name}
-                </option>
-              ))}
-            </select>
-            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      {/* Unified Toolbar */}
+      <TableToolbar
+        table={table}
+        filters={filters}
+        filterOptions={filterOptions}
+        filterOptionsLoading={filterOptionsLoading}
+        onFilterChange={onFilterChange}
+        onClearFilters={onClearFilters}
+        hasActiveFilters={hasActiveFilters}
+        alerts={alerts}
+        alertFilter={alertFilter}
+        onAlertFilterChange={onAlertFilterChange}
+        isLiveMode={isLiveMode}
+        onLiveModeToggle={onLiveModeToggle}
+      />
+
+      <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card relative">
+        {/* Loading overlay */}
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/80 backdrop-blur-[1px]">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              Loading...
+            </div>
           </div>
         )}
-        <ColumnToggle table={table} />
-        {onLiveModeToggle && (
-          <button
-            onClick={onLiveModeToggle}
-            className={cn(
-              'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
-              isLiveMode
-                ? 'border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive/20'
-                : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            <div className="flex items-center gap-2">
-              {isLiveMode && (
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75"></span>
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-destructive"></span>
-                </span>
-              )}
-              <span>{isLiveMode ? 'LIVE' : 'Live Mode'}</span>
-            </div>
-          </button>
-        )}
-      </div>
-
-      <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-border">
             <thead className="bg-muted/30">
@@ -182,6 +214,7 @@ export function DataTable<TData>({
                     className={cn(
                       'table-row-interactive cursor-pointer',
                       selectedRowId === row.id && 'bg-primary/5',
+                      isNewRow(row.original) && 'table-row-new',
                     )}
                     onClick={(e) => onRowClick?.(row.original, e)}
                   >

@@ -3,9 +3,19 @@ import { BrowserRouter, useRoutes } from 'react-router-dom';
 import { Auth0Provider } from '@auth0/auth0-react';
 import { ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithAuth0 } from 'convex/react-auth0';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppLayout } from './AppLayout';
 import { routes } from './routes';
 import { useInitializeUser } from '../hooks/useInitializeUser';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 function AppRoutes() {
   useInitializeUser();
@@ -34,7 +44,9 @@ export function App() {
         cacheLocation="localstorage"
       >
         <ConvexProviderWithAuth0 client={convex}>
-          <AppRoutes />
+          <QueryClientProvider client={queryClient}>
+            <AppRoutes />
+          </QueryClientProvider>
         </ConvexProviderWithAuth0>
       </Auth0Provider>
     </BrowserRouter>

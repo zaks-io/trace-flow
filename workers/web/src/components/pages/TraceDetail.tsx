@@ -10,7 +10,7 @@ import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
-import { AlertBadge, AlertList } from '@/components/alerts';
+import { AlertBadge } from '@/components/alerts';
 import {
   evaluateAlertsForTraces,
   evaluateAlertsForSpans,
@@ -159,10 +159,10 @@ export default function TraceDetail() {
       </div>
     );
   }
-  console.log(spans);
   return (
-    <div className="animate-fade-in space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="animate-fade-in flex h-[calc(100vh-120px)] flex-col">
+      {/* Header section */}
+      <div className="flex shrink-0 items-center justify-between">
         <nav className="flex items-center space-x-2 text-sm">
           <Link
             to="/traces"
@@ -209,31 +209,34 @@ export default function TraceDetail() {
         </div>
       </div>
 
-      <p className="break-all font-mono text-xs text-muted-foreground">{traceId}</p>
+      <p className="mt-4 shrink-0 break-all font-mono text-xs text-muted-foreground">{traceId}</p>
 
-      {triggeredAlerts.length > 0 && (
-        <div className="space-y-2">
-          <h2 className="text-lg font-semibold text-foreground">Triggered Alerts</h2>
-          <AlertList triggeredAlerts={triggeredAlerts} />
+      <div className="mt-4 shrink-0">
+        <TokenSummaryCards spans={spans} />
+      </div>
+
+      {/* Span Timeline */}
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <h2 className="mb-3 shrink-0 text-lg font-semibold text-foreground">Span Timeline</h2>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <AgentGanttChart
+            spans={spans}
+            selectedSpanId={selectedSpanId ?? undefined}
+            onSpanSelect={handleSpanSelect}
+            spanAlertSummary={spanAlertSummary}
+          />
         </div>
-      )}
-
-      <TokenSummaryCards spans={spans} />
-
-      <div>
-        <h2 className="mb-3 text-lg font-semibold text-foreground">Span Timeline</h2>
-        <AgentGanttChart
-          spans={spans}
-          selectedSpanId={selectedSpanId ?? undefined}
-          onSpanSelect={handleSpanSelect}
-          spanAlertSummary={spanAlertSummary}
-        />
       </div>
 
       <SpanDetailPanel
         span={selectedSpan ?? null}
         rootSpan={rootSpan ?? null}
-        isRootSpan={selectedSpan ? selectedSpan.ParentSpanId === '' : false}
+        allSpans={spans}
+        isRootSpan={
+          selectedSpan
+            ? selectedSpan.ParentSpanId === '' || selectedSpan.SpanName === 'ai.request'
+            : false
+        }
         isOpen={!!selectedSpan}
         onClose={() => setSelectedSpanId(null)}
         triggeredAlerts={

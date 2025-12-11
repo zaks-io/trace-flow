@@ -2,9 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
-import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { useRequestsQuery } from '@/hooks/useRequestsQuery';
 import { useUserApiKeys } from '@/hooks/useUserApiKeys';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
+import { useTableFilters } from '@/hooks/useTableFilters';
+import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { TraceDetailPanel } from '@/components/TraceDetailPanel';
 import {
@@ -16,10 +18,6 @@ import {
 } from '@/components/requests-table';
 import { evaluateAlertsForTraces } from '@/lib/alerts';
 
-interface TinybirdResponse {
-  data: RequestRow[];
-}
-
 export default function Requests() {
   usePageHeader('Requests');
   const navigate = useNavigate();
@@ -27,52 +25,24 @@ export default function Requests() {
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
-  const [mergedRequests, setMergedRequests] = useState<RequestRow[]>([]);
-  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
-  const [autoStoppedLiveMode, setAutoStoppedLiveMode] = useState(false);
-  const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
 
-  const latestReceivedAtRef = useRef<number | null>(null);
   const isClosingRef = useRef(false);
-  const prevLiveModeRef = useRef(false);
 
   const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
+  const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
+  const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions(userApiKeys);
   const alerts = useQuery(api.alerts.listEnabled);
 
-  const sqlQuery = useMemo(() => {
-    if (isLiveMode && latestReceivedAt !== null) {
-      return `SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode, SpanAttributes
-        FROM otel_traces
-        WHERE SpanName = 'ai.request' AND ReceivedAt > ${latestReceivedAt}
-        ORDER BY ReceivedAt DESC
-        LIMIT 100
-        FORMAT JSON`;
-    }
-    return `SELECT ReceivedAt, Timestamp, TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode, SpanAttributes
-      FROM otel_traces
-      WHERE SpanName = 'ai.request'
-      ORDER BY ReceivedAt DESC
-      LIMIT 100
-      FORMAT JSON`;
-  }, [isLiveMode, latestReceivedAt]);
-
   const {
-    data,
-    loading,
+    data: requests = [],
+    isLoading,
     error,
-    refetch,
-  }: {
-    data: TinybirdResponse | null;
-    loading: boolean;
-    error: Error | null;
-    refetch: () => Promise<void>;
-  } = useTinybirdQuery<TinybirdResponse>({
-    sql: sqlQuery,
-    scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
-    pollInterval: isLiveMode ? 3000 : undefined,
-    apiKeys: userApiKeys,
+  } = useRequestsQuery({
+    filters,
+    apiKeys: userApiKeys ?? [],
+    isLiveMode,
   });
 
   const handleRowClick = useCallback(
@@ -133,95 +103,12 @@ export default function Requests() {
     };
   }, [isPanelOpen, handleClosePanel]);
 
-  useEffect(() => {
-    if (!initialLoadComplete && data?.data && data.data.length > 0) {
-      const requests = data.data;
-      setMergedRequests(requests);
-      const newestReceivedAt = requests[0]!.ReceivedAt;
-      latestReceivedAtRef.current = newestReceivedAt;
-      setLatestReceivedAt(newestReceivedAt);
-      setInitialLoadComplete(true);
-    }
-  }, [data, initialLoadComplete]);
-
-  useEffect(() => {
-    if (
-      isLiveMode &&
-      !prevLiveModeRef.current &&
-      latestReceivedAt !== null &&
-      initialLoadComplete
-    ) {
-      void refetch();
-    }
-    prevLiveModeRef.current = isLiveMode;
-  }, [isLiveMode, latestReceivedAt, initialLoadComplete, refetch]);
-
-  useEffect(() => {
-    if (!isLiveMode || !data?.data || !initialLoadComplete) {
-      return;
-    }
-
-    if (data.data.length === 0) {
-      return;
-    }
-
-    setMergedRequests((prev): RequestRow[] => {
-      const existingKeys = new Set(prev.map((r) => `${r.TraceId}-${r.SpanId}`));
-
-      const uniqueNewRequests = data.data.filter(
-        (r) => !existingKeys.has(`${r.TraceId}-${r.SpanId}`),
-      );
-
-      if (uniqueNewRequests.length === 0) {
-        return prev;
-      }
-
-      const merged: RequestRow[] = [...uniqueNewRequests, ...prev].sort(
-        (a, b) => b.ReceivedAt - a.ReceivedAt,
-      );
-
-      if (merged.length > 0) {
-        const newestReceivedAt = merged[0]!.ReceivedAt;
-        latestReceivedAtRef.current = newestReceivedAt;
-        setLatestReceivedAt(newestReceivedAt);
-      }
-
-      return merged.slice(0, 100);
-    });
-  }, [data, isLiveMode, initialLoadComplete]);
-
-  useEffect(() => {
-    if (!isLiveMode && initialLoadComplete && data?.data) {
-      const requests = data.data;
-      setMergedRequests(requests);
-      if (requests.length > 0) {
-        const newestReceivedAt = requests[0]!.ReceivedAt;
-        latestReceivedAtRef.current = newestReceivedAt;
-        setLatestReceivedAt(newestReceivedAt);
-      }
-    }
-  }, [isLiveMode, data, initialLoadComplete]);
-
-  const requests = useMemo(
-    (): RequestRow[] => (isLiveMode && initialLoadComplete ? mergedRequests : (data?.data ?? [])),
-    [isLiveMode, initialLoadComplete, mergedRequests, data?.data],
-  );
-
   const alertSummary = useMemo(() => {
     if (!alerts || alerts.length === 0 || requests.length === 0) {
       return new Map();
     }
     return evaluateAlertsForTraces(requests, alerts);
   }, [requests, alerts]);
-
-  useEffect(() => {
-    if (error && isLiveMode) {
-      setAutoStoppedLiveMode(true);
-      setIsLiveMode(false);
-    } else if (!error) {
-      setAutoStoppedLiveMode(false);
-    }
-  }, [error, isLiveMode]);
 
   const getRowId = useCallback((row: RequestRow) => `${row.TraceId}-${row.SpanId}`, []);
 
@@ -231,7 +118,7 @@ export default function Requests() {
     return row ? `${row.TraceId}-${row.SpanId}` : null;
   }, [selectedTraceId, requests]);
 
-  if ((loading || keysLoading) && !initialLoadComplete) {
+  if ((isLoading || keysLoading) && requests.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -250,46 +137,33 @@ export default function Requests() {
             <div>
               <h3 className="mb-2 font-semibold text-destructive">Error loading requests</h3>
               <p className="text-sm text-destructive/80">{error.message}</p>
-              {autoStoppedLiveMode && (
-                <p className="mt-2 text-sm text-destructive/80">
-                  Live mode has been stopped due to the error.
-                </p>
-              )}
             </div>
-            <button
-              onClick={() => void refetch()}
-              className="ml-4 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
-            >
-              Retry
-            </button>
           </div>
         </div>
       )}
 
-      {requests.length === 0 && !error ? (
-        <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
-          <p className="text-muted-foreground">No requests found</p>
-          <p className="mt-1 text-sm text-muted-foreground/70">
-            Requests will appear here once your proxy receives traffic
-          </p>
-        </div>
-      ) : (
-        <DataTable
-          columns={allColumns}
-          data={requests}
-          columnVisibility={visibility}
-          onColumnVisibilityChange={setVisibility}
-          onRowClick={handleRowClick}
-          selectedRowId={selectedRowId}
-          getRowId={getRowId}
-          isLiveMode={isLiveMode}
-          onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
-          alertSummary={alertSummary}
-          alerts={alerts ?? []}
-          alertFilter={alertFilter}
-          onAlertFilterChange={setAlertFilter}
-        />
-      )}
+      <DataTable
+        columns={allColumns}
+        data={requests}
+        columnVisibility={visibility}
+        onColumnVisibilityChange={setVisibility}
+        onRowClick={handleRowClick}
+        selectedRowId={selectedRowId}
+        getRowId={getRowId}
+        isLiveMode={isLiveMode}
+        onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+        alertSummary={alertSummary}
+        alerts={alerts ?? []}
+        alertFilter={alertFilter}
+        onAlertFilterChange={setAlertFilter}
+        filters={filters}
+        filterOptions={filterOptions}
+        filterOptionsLoading={filterOptionsLoading}
+        onFilterChange={setFilter}
+        onClearFilters={clearFilters}
+        hasActiveFilters={hasActiveFilters}
+        loading={isLoading}
+      />
 
       {selectedTraceId && (
         <TraceDetailPanel

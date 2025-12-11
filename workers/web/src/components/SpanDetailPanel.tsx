@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 import {
@@ -11,14 +11,20 @@ import {
   Zap,
   GitBranch,
   DollarSign,
+  AlertTriangle,
+  ChevronRight,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ChevronDown } from 'lucide-react';
 import {
   formatBodyForDisplay,
   mergeSSEEvents,
+  parseMessagesFromBody,
+  parseResponseBody,
   type FormattedBody,
   type ParsedSSEEvent,
+  type ParsedMessage,
+  type MessageBreakdownData,
 } from '@trace-flow/utils';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -51,6 +57,7 @@ interface TraceSpan {
 interface SpanDetailPanelProps {
   span: TraceSpan | null;
   rootSpan: TraceSpan | null;
+  allSpans?: TraceSpan[];
   isRootSpan: boolean;
   isOpen: boolean;
   onClose: () => void;
@@ -356,9 +363,256 @@ function AttributeCard({ icon, label, value, mono = false }: AttributeCardProps)
   );
 }
 
+// Role badge colors for message breakdown
+const roleBadgeColors: Record<string, string> = {
+  system: 'bg-purple-500/15 text-purple-400',
+  user: 'bg-blue-500/15 text-blue-400',
+  assistant: 'bg-green-500/15 text-green-400',
+  tool: 'bg-amber-500/15 text-amber-400',
+  tool_result: 'bg-amber-500/15 text-amber-400',
+};
+
+function RoleBadge({ role }: { role: string }) {
+  const colorClass = roleBadgeColors[role] ?? 'bg-muted text-muted-foreground';
+  return (
+    <span
+      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${colorClass}`}
+    >
+      {role}
+    </span>
+  );
+}
+
+interface MessageRowProps {
+  message: ParsedMessage;
+  totalTokens: number;
+  maxTokens: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+}
+
+function MessageRow({ message, totalTokens, maxTokens, isExpanded, onToggle }: MessageRowProps) {
+  const percentage = totalTokens > 0 ? (message.estimatedTokens / totalTokens) * 100 : 0;
+  const barWidth = maxTokens > 0 ? (message.estimatedTokens / maxTokens) * 100 : 0;
+
+  // Color based on % of total
+  const barColor =
+    percentage > 75
+      ? 'bg-red-500'
+      : percentage > 50
+        ? 'bg-orange-500'
+        : percentage > 25
+          ? 'bg-yellow-500'
+          : 'bg-emerald-500';
+
+  const showWarning = percentage > 50;
+
+  return (
+    <div className="space-y-1 rounded-lg border border-border/30 bg-muted/10 p-2">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 text-left transition-opacity hover:opacity-80"
+      >
+        <ChevronRight
+          className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+        />
+        <RoleBadge role={message.role} />
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+          {message.contentPreview}
+        </span>
+        {showWarning && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />}
+        <span className="shrink-0 text-xs text-muted-foreground">
+          ~{message.estimatedTokens.toLocaleString()} ({percentage.toFixed(0)}%)
+        </span>
+      </button>
+      <div className="ml-5 h-1 overflow-hidden rounded-full bg-muted">
+        <div className={`h-full ${barColor} rounded-full`} style={{ width: `${barWidth}%` }} />
+      </div>
+      {isExpanded && (
+        <pre className="ml-5 mt-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-words rounded border border-border/20 bg-zinc-950 p-2 text-xs text-zinc-300">
+          {message.content}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+interface BodySectionProps {
+  title: 'Request' | 'Response';
+  data: MessageBreakdownData | null;
+  rawBody: FormattedBody | null;
+  loading: boolean;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  isSse?: boolean;
+}
+
+function BodySection({
+  title,
+  data,
+  rawBody,
+  loading,
+  isOpen,
+  onOpenChange,
+  isSse,
+}: BodySectionProps) {
+  const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set());
+  const [viewMode, setViewMode] = useState<'breakdown' | 'raw'>('breakdown');
+
+  const toggleExpanded = (index: number) => {
+    setExpandedMessages((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const maxTokens = data ? Math.max(...data.messages.map((m) => m.estimatedTokens), 0) : 0;
+  const highTokenMessages = data
+    ? data.messages.filter(
+        (m) => data.totalEstimatedTokens > 0 && m.estimatedTokens / data.totalEstimatedTokens > 0.5,
+      ).length
+    : 0;
+
+  const renderRawContent = () => {
+    if (!rawBody) {
+      return (
+        <div className="rounded-lg border border-dashed border-border/50 bg-muted/10 p-4 text-center">
+          <p className="text-sm text-muted-foreground">Content not available</p>
+        </div>
+      );
+    }
+
+    if (rawBody.format === 'json') {
+      return (
+        <pre className="max-h-[400px] overflow-auto rounded-lg border border-border/30 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-300">
+          {JSON.stringify(rawBody.content, null, 2)}
+        </pre>
+      );
+    }
+
+    if (rawBody.format === 'sse') {
+      return (
+        <pre className="max-h-[400px] overflow-auto rounded-lg border border-border/30 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-300">
+          {rawBody.raw}
+        </pre>
+      );
+    }
+
+    return (
+      <pre className="max-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border/30 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-300">
+        {typeof rawBody.content === 'object'
+          ? JSON.stringify(rawBody.content, null, 2)
+          : String(rawBody.content)}
+      </pre>
+    );
+  };
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`}
+        />
+        <span className="text-sm font-medium text-foreground">{title}</span>
+        {isSse && (
+          <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-[10px] font-medium text-purple-400">
+            SSE
+          </span>
+        )}
+        {data && (
+          <>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {data.messages.length} {data.messages.length === 1 ? 'message' : 'messages'}
+            </span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              ~{data.totalEstimatedTokens.toLocaleString()} tokens
+            </span>
+            {highTokenMessages > 0 && (
+              <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-500">
+                <AlertTriangle className="h-3 w-3" />
+                {highTokenMessages} high
+              </span>
+            )}
+          </>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-2 space-y-2">
+          {loading ? (
+            <div className="flex items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 py-6">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setViewMode('breakdown');
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    viewMode === 'breakdown'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  Breakdown
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setViewMode('raw');
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    viewMode === 'raw'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted/50 text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  Raw JSON
+                </button>
+              </div>
+              {viewMode === 'breakdown' ? (
+                data ? (
+                  <div className="space-y-1.5">
+                    {data.messages.map((msg) => (
+                      <MessageRow
+                        key={msg.index}
+                        message={msg}
+                        totalTokens={data.totalEstimatedTokens}
+                        maxTokens={maxTokens}
+                        isExpanded={expandedMessages.has(msg.index)}
+                        onToggle={() => toggleExpanded(msg.index)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border/50 bg-muted/10 p-4 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Unable to parse {title.toLowerCase()} content
+                    </p>
+                  </div>
+                )
+              ) : (
+                renderRawContent()
+              )}
+            </>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function SpanDetailPanel({
   span,
   rootSpan,
+  allSpans = [],
   isRootSpan,
   isOpen,
   onClose,
@@ -382,9 +636,15 @@ export function SpanDetailPanel({
   const [messageTab, setMessageTab] = useState<'formatted' | 'raw'>('formatted');
   const [isMessageOpen, setIsMessageOpen] = useState(true);
 
-  const spanAttributes = span ? parseAttributes(span.SpanAttributes) : {};
-  const resourceAttributes = span ? parseAttributes(span.ResourceAttributes) : {};
-  const allAttributes = { ...spanAttributes, ...resourceAttributes };
+  const spanAttributes = useMemo(() => (span ? parseAttributes(span.SpanAttributes) : {}), [span]);
+  const resourceAttributes = useMemo(
+    () => (span ? parseAttributes(span.ResourceAttributes) : {}),
+    [span],
+  );
+  const allAttributes = useMemo(
+    () => ({ ...spanAttributes, ...resourceAttributes }),
+    [spanAttributes, resourceAttributes],
+  );
 
   const provider = allAttributes['ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
   const model = allAttributes['ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
@@ -497,11 +757,29 @@ export function SpanDetailPanel({
     return spanMatch?.[1]?.toLowerCase() ?? '';
   })();
 
+  // Find the parent ai.request span for this span (used for requestId and provider lookup)
+  const parentRequestSpan = (() => {
+    if (!span || allSpans.length === 0) return null;
+    // If this span is itself an ai.request, use it
+    if (span.SpanName === 'ai.request') return span;
+    // Otherwise walk up to find the parent ai.request
+    let currentSpanId = span.ParentSpanId;
+    while (currentSpanId) {
+      const parentSpan = allSpans.find((s) => s.SpanId === currentSpanId);
+      if (!parentSpan) break;
+      if (parentSpan.SpanName === 'ai.request') return parentSpan;
+      currentSpanId = parentSpan.ParentSpanId;
+    }
+    return null;
+  })();
+
   // Fetch message content for non-root spans (both input and output)
   useEffect(() => {
     const isContentSpan = isInputMessageSpan || isOutputSpan;
     // For input spans, we need messageIndex. For output spans, we use occurrence from span name.
-    if (isRootSpan || !isContentSpan || !span || !rootSpan) {
+    const isTraceRoot = span?.ParentSpanId === '';
+
+    if (isTraceRoot || !isContentSpan || !span) {
       setMessageContent(null);
       return;
     }
@@ -510,11 +788,21 @@ export function SpanDetailPanel({
       return;
     }
 
-    // Get requestId from the span's own attributes (each span has its own request_id)
-    // Get provider from root span (only stored there)
+    // Get requestId from the span's own attributes
     const requestId = spanAttributes['ai.request_id'];
-    const rootAttrs = parseAttributes(rootSpan.SpanAttributes);
-    const provider = rootAttrs['ai.provider'] ?? rootAttrs['gen_ai.system'] ?? '';
+
+    // Get provider from parent ai.request span, root span, or current span's attributes
+    const parentAttrs = parentRequestSpan ? parseAttributes(parentRequestSpan.SpanAttributes) : {};
+    const rootAttrs = rootSpan ? parseAttributes(rootSpan.SpanAttributes) : {};
+    const provider =
+      spanAttributes['ai.provider'] ??
+      spanAttributes['gen_ai.system'] ??
+      parentAttrs['ai.provider'] ??
+      parentAttrs['gen_ai.system'] ??
+      rootAttrs['ai.provider'] ??
+      rootAttrs['gen_ai.system'] ??
+      '';
+
     if (!requestId) {
       return;
     }
@@ -568,11 +856,12 @@ export function SpanDetailPanel({
 
     void fetchMessageContent();
   }, [
-    isRootSpan,
     isInputMessageSpan,
     isOutputSpan,
     span,
+    parentRequestSpan,
     rootSpan,
+    spanAttributes,
     messageIndex,
     contentType,
     getAccessTokenSilently,
@@ -764,6 +1053,43 @@ export function SpanDetailPanel({
                 </div>
               )}
 
+              {/* Request/Response sections for ai.request spans */}
+              {isRootSpan && span?.SpanName === 'ai.request' && (
+                <>
+                  <BodySection
+                    title="Request"
+                    data={
+                      requestBody?.format === 'json'
+                        ? parseMessagesFromBody(requestBody.content, provider)
+                        : null
+                    }
+                    rawBody={requestBody}
+                    loading={requestBodyLoading}
+                    isOpen={isRequestOpen}
+                    onOpenChange={setIsRequestOpen}
+                  />
+                  <BodySection
+                    title="Response"
+                    data={(() => {
+                      if (!responseBody) return null;
+                      if (responseBody.format === 'json') {
+                        return parseResponseBody(responseBody.content, provider);
+                      }
+                      if (responseBody.format === 'sse') {
+                        const merged = mergeSSEEvents(responseBody.content as ParsedSSEEvent[]);
+                        return parseResponseBody(merged, provider);
+                      }
+                      return null;
+                    })()}
+                    rawBody={responseBody}
+                    loading={responseBodyLoading}
+                    isOpen={isResponseOpen}
+                    onOpenChange={setIsResponseOpen}
+                    isSse={responseBody?.format === 'sse'}
+                  />
+                </>
+              )}
+
               {((isInputMessageSpan && messageIndex !== null) || isOutputSpan) && !isRootSpan && (
                 <Collapsible open={isMessageOpen} onOpenChange={setIsMessageOpen}>
                   <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
@@ -833,7 +1159,8 @@ export function SpanDetailPanel({
                 </Collapsible>
               )}
 
-              {isRootSpan && (
+              {/* Legacy Request/Response for non-ai.request root spans */}
+              {isRootSpan && span?.SpanName !== 'ai.request' && (
                 <>
                   <Collapsible open={isResponseOpen} onOpenChange={setIsResponseOpen}>
                     <div className="flex items-center justify-between">
