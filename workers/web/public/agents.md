@@ -123,3 +123,15 @@ await generateText({
 - Request/response bodies
 - Errors and status codes
 - Cost estimates
+
+## Privacy: Skip Body Storage
+
+To capture metrics without storing request/response bodies, add:
+
+```typescript
+headers: {
+  'X-Trace-Flow-Omit-Body': 'true',
+}
+```
+
+All timing, tokens, and costs are still tracked—only body content is omitted.

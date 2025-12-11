@@ -131,6 +131,7 @@ app.all('*', async (c) => {
   const traceFlags = traceparent?.flags ?? 0x01;
   const traceState = c.req.header('tracestate') ?? '';
   const baggage = parseBaggage(c.req.header('baggage'));
+  const omitBody = c.req.header('X-Trace-Flow-Omit-Body') === 'true';
 
   const { targetUrl } = route;
 
@@ -143,6 +144,7 @@ app.all('*', async (c) => {
   // All other headers (including Authorization, x-api-key) pass through to provider
   const headers = new Headers(c.req.raw.headers);
   headers.delete('X-Trace-Flow-Api-Key');
+  headers.delete('X-Trace-Flow-Omit-Body');
   headers.delete('traceparent');
   headers.delete('tracestate');
   headers.delete('baggage');
@@ -254,15 +256,24 @@ app.all('*', async (c) => {
           }
         }
 
-        const { requestBodyKey, responseBodyKey, stored } = await storeRequestResponse(
-          c.env.STORAGE,
-          requestId,
-          requestBody,
-          responseBody,
-        );
+        let requestBodyKey: string | undefined;
+        let responseBodyKey: string | undefined;
+        let stored = false;
 
-        if (!stored) {
-          console.warn('R2 storage failed, queuing message without body keys:', { requestId });
+        if (!omitBody) {
+          const result = await storeRequestResponse(
+            c.env.STORAGE,
+            requestId,
+            requestBody,
+            responseBody,
+          );
+          requestBodyKey = result.requestBodyKey;
+          responseBodyKey = result.responseBodyKey;
+          stored = result.stored;
+
+          if (!stored) {
+            console.warn('R2 storage failed, queuing message without body keys:', { requestId });
+          }
         }
 
         const queueMessage = createQueueMessage({
