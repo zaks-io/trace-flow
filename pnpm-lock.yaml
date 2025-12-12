@@ -8,9 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@toon-format/toon':
+        specifier: ^2.1.0
+        version: 2.1.0
       convex:
         specifier: ^1.27.5
         version: 1.28.0(@auth0/auth0-react@2.8.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1))(react@19.2.1)
+      convex-helpers:
+        specifier: ^0.1.107
+        version: 0.1.107(@standard-schema/spec@1.0.0)(convex@1.28.0(@auth0/auth0-react@2.8.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1))(react@19.2.1))(hono@4.10.2)(react@19.2.1)(typescript@5.9.3)(zod@4.1.13)
+      hono:
+        specifier: ^4.10.2
+        version: 4.10.2
       jose:
         specifier: ^6.1.0
         version: 6.1.0
@@ -65,13 +74,13 @@ importers:
         version: 2.0.33(zod@4.1.13)
       '@ai-sdk/openai':
         specifier: latest
-        version: 2.0.82(zod@4.1.13)
+        version: 2.0.84(zod@4.1.13)
       '@openrouter/ai-sdk-provider':
         specifier: latest
-        version: 1.5.3(ai@5.0.111(zod@4.1.13))(zod@4.1.13)
+        version: 1.5.3(@toon-format/toon@2.1.0)(ai@5.0.112(zod@4.1.13))(zod@4.1.13)
       ai:
         specifier: latest
-        version: 5.0.111(zod@4.1.13)
+        version: 5.0.112(zod@4.1.13)
     devDependencies:
       '@types/node':
         specifier: ^22
@@ -342,8 +351,8 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/gateway@2.0.20':
-    resolution: {integrity: sha512-0DKAZP9SiphUHuT/HmCYrv0uNyHfqn4gT3e5LsL+y1n3mMhWrrKNS2QYn+ysVd7yOmrLyv30gzrCCdbjnN+vtw==}
+  '@ai-sdk/gateway@2.0.21':
+    resolution: {integrity: sha512-BwV7DU/lAm3Xn6iyyvZdWgVxgLu3SNXzl5y57gMvkW4nGhAOV5269IrJzQwGt03bb107sa6H6uJwWxc77zXoGA==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -360,8 +369,8 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@2.0.82':
-    resolution: {integrity: sha512-eUWyHVZsI9XXw58faPsO8wkwkkhildsdrTdAwVN83qAmT+VVslboHKjtFJAHMlWiCzhvkPLmTx3HPLF7TM8D8w==}
+  '@ai-sdk/openai@2.0.84':
+    resolution: {integrity: sha512-IPiavfcpB1lwf19HJmiipwwbPP5Y8+VIvBcqawIU7d4Fh9Rf3K/plhe+Xqg5zI4sRZfpXwHmSbAPoiXkdfdg7g==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2296,6 +2305,9 @@ packages:
     resolution: {integrity: sha512-ldZXEhOBb8Is7xLs01fR3YEc3DERiz5silj8tnGkFZytt1abEvl/GhUmCE0PMLaMPTa3Jk4HbKmRlHmu+gCftg==}
     engines: {node: '>=12'}
 
+  '@toon-format/toon@2.1.0':
+    resolution: {integrity: sha512-JwWptdF5eOA0HaQxbKAzkpQtR4wSWTEfDlEy/y3/4okmOAX1qwnpLZMmtEWr+ncAhTTY1raCKH0kteHhSXnQqg==}
+
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
 
@@ -2518,8 +2530,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  ai@5.0.111:
-    resolution: {integrity: sha512-kD1eBl3ZbSYIz9lZe0HvQpO23HruBFfqxUl0S/MtoDF4DCmfCtKhsGGGIvoIcMpjiLlJjtF//ZWcYu+v/3YRzg==}
+  ai@5.0.112:
+    resolution: {integrity: sha512-Y0dluYpe5wn81UkfHbZL78mH6CsceUfMiu4oPRaWZvjlmcoXSPdEAsPcYbOjvX8ZPvQc6m4kNZhkcEXmT2ln4w==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2765,6 +2777,28 @@ packages:
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
+
+  convex-helpers@0.1.107:
+    resolution: {integrity: sha512-TTyUbLygtPRpZRCPl+WIFJ8joGljIVuZ5r8MgyjPT0kNglWc/Tnvb2Apl3pNp7/1PNuzTtaoX/zU+7ImSQkMdA==}
+    hasBin: true
+    peerDependencies:
+      '@standard-schema/spec': ^1.0.0
+      convex: ^1.25.4
+      hono: ^4.0.5
+      react: ^17.0.2 || ^18.0.0 || ^19.0.0
+      typescript: ^5.5
+      zod: ^3.25.0 || ^4.0.0
+    peerDependenciesMeta:
+      '@standard-schema/spec':
+        optional: true
+      hono:
+        optional: true
+      react:
+        optional: true
+      typescript:
+        optional: true
+      zod:
+        optional: true
 
   convex@1.28.0:
     resolution: {integrity: sha512-40FgeJ/LxP9TxnkDDztU/A5gcGTdq1klcTT5mM0Ak+kSlQiDktMpjNX1TfkWLxXaE3lI4qvawKH95v2RiYgFxA==}
@@ -4897,7 +4931,7 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.19(zod@4.1.13)
       zod: 4.1.13
 
-  '@ai-sdk/gateway@2.0.20(zod@4.1.13)':
+  '@ai-sdk/gateway@2.0.21(zod@4.1.13)':
     dependencies:
       '@ai-sdk/provider': 2.0.0
       '@ai-sdk/provider-utils': 3.0.19(zod@4.1.13)
@@ -4916,7 +4950,7 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.19(zod@4.1.13)
       zod: 4.1.13
 
-  '@ai-sdk/openai@2.0.82(zod@4.1.13)':
+  '@ai-sdk/openai@2.0.84(zod@4.1.13)':
     dependencies:
       '@ai-sdk/provider': 2.0.0
       '@ai-sdk/provider-utils': 3.0.19(zod@4.1.13)
@@ -5909,11 +5943,13 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.19.1
 
-  '@openrouter/ai-sdk-provider@1.5.3(ai@5.0.111(zod@4.1.13))(zod@4.1.13)':
+  '@openrouter/ai-sdk-provider@1.5.3(@toon-format/toon@2.1.0)(ai@5.0.112(zod@4.1.13))(zod@4.1.13)':
     dependencies:
       '@openrouter/sdk': 0.1.27
-      ai: 5.0.111(zod@4.1.13)
+      ai: 5.0.112(zod@4.1.13)
       zod: 4.1.13
+    optionalDependencies:
+      '@toon-format/toon': 2.1.0
 
   '@openrouter/sdk@0.1.27':
     dependencies:
@@ -6562,6 +6598,8 @@ snapshots:
 
   '@tanstack/table-core@8.21.3': {}
 
+  '@toon-format/toon@2.1.0': {}
+
   '@types/babel__core@7.20.5':
     dependencies:
       '@babel/parser': 7.28.4
@@ -6938,9 +6976,9 @@ snapshots:
 
   acorn@8.15.0: {}
 
-  ai@5.0.111(zod@4.1.13):
+  ai@5.0.112(zod@4.1.13):
     dependencies:
-      '@ai-sdk/gateway': 2.0.20(zod@4.1.13)
+      '@ai-sdk/gateway': 2.0.21(zod@4.1.13)
       '@ai-sdk/provider': 2.0.0
       '@ai-sdk/provider-utils': 3.0.19(zod@4.1.13)
       '@opentelemetry/api': 1.9.0
@@ -7264,6 +7302,16 @@ snapshots:
   concat-map@0.0.1: {}
 
   convert-source-map@2.0.0: {}
+
+  convex-helpers@0.1.107(@standard-schema/spec@1.0.0)(convex@1.28.0(@auth0/auth0-react@2.8.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1))(react@19.2.1))(hono@4.10.2)(react@19.2.1)(typescript@5.9.3)(zod@4.1.13):
+    dependencies:
+      convex: 1.28.0(@auth0/auth0-react@2.8.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1))(react@19.2.1)
+    optionalDependencies:
+      '@standard-schema/spec': 1.0.0
+      hono: 4.10.2
+      react: 19.2.1
+      typescript: 5.9.3
+      zod: 4.1.13
 
   convex@1.28.0(@auth0/auth0-react@2.8.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1))(react@19.2.1):
     dependencies:

@@ -41,4 +41,41 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user_id', ['userId']),
+
+  mcpSessions: defineTable({
+    sessionId: v.string(),
+    userId: v.id('users'),
+    protocolVersion: v.string(),
+    state: v.union(v.literal('initializing'), v.literal('ready'), v.literal('shutdown')),
+    expiresAt: v.number(),
+  })
+    .index('by_session_id', ['sessionId'])
+    .index('by_user_id', ['userId']),
+
+  mcpRefreshTokens: defineTable({
+    tokenId: v.string(),
+    userId: v.id('users'),
+    auth0RefreshToken: v.string(),
+    expiresAt: v.number(),
+  })
+    .index('by_token_id', ['tokenId'])
+    .index('by_user_id', ['userId']),
+
+  mcpClients: defineTable({
+    clientId: v.string(),
+    redirectUris: v.array(v.string()),
+    clientName: v.optional(v.string()),
+  }).index('by_client_id', ['clientId']),
+
+  mcpAuthCodes: defineTable({
+    code: v.string(),
+    userId: v.id('users'),
+    clientId: v.optional(v.string()),
+    redirectUri: v.string(),
+    codeChallenge: v.optional(v.string()),
+    codeChallengeMethod: v.optional(v.string()),
+    auth0RefreshToken: v.string(),
+    expiresAt: v.number(),
+    used: v.boolean(),
+  }).index('by_code', ['code']),
 });

@@ -34,8 +34,6 @@ jobs:
   triage:
     if: github.event_name == 'issues' && github.event.action == 'opened'
     uses: zaks-io/claude-code-action/.github/workflows/issue-triage.yml@main
-    with:
-      linear_team_prefix: 'ZAK'
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       linear_api_token: ${{ secrets.LINEAR_API_KEY }}

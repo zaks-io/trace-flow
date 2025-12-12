@@ -1,4 +1,4 @@
-import { action, mutation, query } from './_generated/server';
+import { action, mutation, query, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
 import { api, internal } from './_generated/api';
@@ -111,5 +111,16 @@ export const getByIdInternal = query({
   args: { id: v.id('apiKeys') },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+// Internal query for MCP - bypasses Convex auth, uses userId directly
+export const listByUserId = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('apiKeys')
+      .withIndex('by_user_id', (q) => q.eq('userId', args.userId))
+      .collect();
   },
 });

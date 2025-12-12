@@ -4,6 +4,7 @@ LLM observability: user events → API calls → LLM requests → tool calls →
 
 **Gateway:** `https://gateway.trace-flow.dev`
 **API Keys:** https://trace-flow.dev/app/api-keys
+**MCP Server:** `https://mcp.trace-flow.dev/mcp` ([docs](https://trace-flow.dev/docs/mcp))
 
 ## Quick Start
 

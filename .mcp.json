@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "trace-flow-dev": {
+      "type": "http",
+      "url": "https://hardy-iguana-812.convex.site/mcp"
+    },
+    "trace-flow-prod": {
+      "type": "http",
+      "url": "https://mcp.trace-flow.app/mcp"
+    }
+  }
+}
