@@ -1,4 +1,4 @@
-import { mutation, query } from './_generated/server';
+import { mutation, query, internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { type QueryCtx, type MutationCtx } from './_generated/server';
 import { type Doc, type Id } from './_generated/dataModel';
@@ -96,6 +96,51 @@ export const getCurrentUserQuery = query({
 });
 
 export const getUser = query({
+  args: { id: v.id('users') },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});
+
+export const findOrCreateUser = internalMutation({
+  args: {
+    tokenIdentifier: v.string(),
+    email: v.string(),
+    name: v.optional(v.string()),
+    picture: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<Id<'users'>> => {
+    const existingUser = await ctx.db
+      .query('users')
+      .withIndex('by_token_identifier', (q) => q.eq('tokenIdentifier', args.tokenIdentifier))
+      .first();
+
+    if (existingUser) {
+      if (
+        existingUser.email !== args.email ||
+        existingUser.name !== args.name ||
+        existingUser.picture !== args.picture
+      ) {
+        await ctx.db.patch(existingUser._id, {
+          email: args.email,
+          name: args.name,
+          picture: args.picture,
+        });
+      }
+      return existingUser._id;
+    }
+
+    return await ctx.db.insert('users', {
+      tokenIdentifier: args.tokenIdentifier,
+      email: args.email,
+      name: args.name,
+      picture: args.picture,
+      enabled: false,
+    });
+  },
+});
+
+export const getUserById = internalQuery({
   args: { id: v.id('users') },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
