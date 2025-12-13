@@ -63,10 +63,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               'http',
               'status_message',
               'baggage',
+              'events',
             ],
           },
           description:
-            'Fields to include in spans beyond base fields. Options: provider, model, tokens, costs, ttft (time to first token), parent (parent_span_id), url (target_url), http (http_status), status_message, baggage (user context).',
+            'Fields to include in spans beyond base fields. Options: provider, model, tokens, costs, ttft (time to first token), parent (parent_span_id), url (target_url), http (http_status), status_message, baggage (user context), events (input/output events like input.text, output.text).',
         },
         limit: {
           type: 'number',

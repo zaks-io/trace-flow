@@ -30,6 +30,12 @@ export interface SpanRow {
   EventAttributes: unknown;
 }
 
+export interface ParsedEvent {
+  name: string;
+  timestamp: string;
+  attributes: Record<string, string>;
+}
+
 export interface ParsedSpan {
   span_id: string;
   parent_span_id: string | undefined;
@@ -60,6 +66,7 @@ export interface ParsedSpan {
     | undefined;
   time_to_first_token_ms: number | undefined;
   baggage: Record<string, string> | undefined;
+  events: ParsedEvent[] | undefined;
 }
 
 export interface SpanSummary {
@@ -113,6 +120,44 @@ export function extractBaggage(attrs: Record<string, unknown>): Record<string, s
   return Object.keys(baggage).length > 0 ? baggage : undefined;
 }
 
+export function parseEvents(
+  timestamps: unknown,
+  names: unknown,
+  attributes: unknown,
+): ParsedEvent[] | undefined {
+  if (!Array.isArray(names) || names.length === 0) {
+    return undefined;
+  }
+
+  const tsArray = Array.isArray(timestamps) ? timestamps : [];
+  const attrArray = Array.isArray(attributes) ? attributes : [];
+
+  const events: ParsedEvent[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    if (typeof name !== 'string') continue;
+
+    const tsNanos = typeof tsArray[i] === 'bigint' ? Number(tsArray[i]) : Number(tsArray[i] ?? 0);
+    const timestamp = new Date(tsNanos / 1_000_000).toISOString();
+
+    let attrs: Record<string, string> = {};
+    const rawAttr = attrArray[i];
+    if (typeof rawAttr === 'string') {
+      try {
+        attrs = JSON.parse(rawAttr) as Record<string, string>;
+      } catch {
+        attrs = {};
+      }
+    } else if (rawAttr && typeof rawAttr === 'object') {
+      attrs = rawAttr as Record<string, string>;
+    }
+
+    events.push({ name, timestamp, attributes: attrs });
+  }
+
+  return events.length > 0 ? events : undefined;
+}
+
 export function parseSpanRow(row: SpanRow): ParsedSpan {
   const attrs = parseSpanAttributes(row.SpanAttributes);
 
@@ -154,6 +199,7 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
         : undefined,
     time_to_first_token_ms: Number(attrs['ai.time_to_first_token_ms']) || undefined,
     baggage: extractBaggage(attrs),
+    events: parseEvents(row.EventTimestamps, row.EventNames, row.EventAttributes),
   };
 }
 
@@ -286,6 +332,7 @@ export function buildOutputSpan(span: ParsedSpan, expand: Set<string>): Record<s
   if (expand.has('ttft') && span.time_to_first_token_ms)
     output.time_to_first_token_ms = span.time_to_first_token_ms;
   if (expand.has('baggage') && span.baggage) output.baggage = span.baggage;
+  if (expand.has('events') && span.events) output.events = span.events;
 
   return output;
 }

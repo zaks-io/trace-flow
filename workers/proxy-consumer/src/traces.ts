@@ -13,18 +13,24 @@ import { type ModelPricing, calculateCost, formatCostAsString } from './pricing'
  *
  * Creates a trace hierarchy:
  * - Root span: Overall AI request with status, model, provider metadata
- *   - For streaming: includes ai.time_to_first_token_ms attribute
+ *   - ai.streaming attribute indicates streaming vs non-streaming
+ *   - For streaming: ai.time_to_first_token_ms attribute and output.time_to_first_token event
  *
  * For SSE streaming responses:
  * - Content block spans: Individual thinking, text, tool_use spans as siblings
  *
  * For non-streaming responses:
- * - Root span only (no additional timing spans)
+ * - Root span with response span child (no TTFT - not applicable)
  */
 export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): TinybirdTrace[] {
   const traces: TinybirdTrace[] = [];
   const traceId = data.traceId ?? data.requestId;
   const serviceName = 'llm-observability';
+
+  // Determine if this is a streaming response
+  const isStreaming = Boolean(
+    data.sseStreamData?.messages && data.sseStreamData.messages.length > 0,
+  );
 
   // Build span attributes starting with base AI attributes
   const spanAttributes: Record<string, string> = {
@@ -33,6 +39,7 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     'ai.model': data.request.model,
     'ai.target_url': data.targetUrl,
     'http.status_code': String(data.response.status),
+    'ai.streaming': String(isStreaming),
   };
 
   // Add W3C baggage entries as span attributes with baggage. prefix
@@ -197,10 +204,18 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       }
     }
 
-    // Add TTFT attribute to root span (measures user-perceived time to first content)
+    // Add TTFT attribute and event to root span (measures user-perceived time to first content)
     if (firstContentDelta) {
-      rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(
-        firstContentDelta.timestamp - data.timing.requestStart,
+      const ttftMs = firstContentDelta.timestamp - data.timing.requestStart;
+      rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(ttftMs);
+
+      // Add TTFT event for timeline visualization
+      rootSpan['Events.Timestamp'].push(firstContentDelta.timestamp * 1_000_000);
+      rootSpan['Events.Name'].push('output.time_to_first_token');
+      rootSpan['Events.Attributes'].push(
+        JSON.stringify({
+          'ai.time_to_first_token_ms': String(ttftMs),
+        }),
       );
     }
 
@@ -242,12 +257,6 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       addNonStreamingOutputEvent(rootSpan, data);
     }
   } else if (data.response.status < 400) {
-    // Add TTFT for non-SSE responses using firstTokenReceived
-    if (data.timing.firstTokenReceived) {
-      const ttftMs = data.timing.firstTokenReceived - data.timing.requestStart;
-      rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(ttftMs);
-    }
-
     // Create response span for non-streaming responses
     // Uses same ai.response.text name as streaming for consistency
     const responseSpan: TinybirdTrace = {
