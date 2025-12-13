@@ -80,7 +80,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Filter to only include spans matching these names. Supports wildcard suffix (e.g., "ai.*" matches ai.request, ai.embedding). Multiple patterns are OR\'d together.',
+            'Filter to only include spans matching these names. Supports wildcard suffix (e.g., "ai.*" matches ai.request, ai.embedding). Multiple patterns are OR\'d together. Use "ai.request" to filter to just Trace Flow\'s main LLM request spans.',
         },
         top_n: {
           type: 'number',

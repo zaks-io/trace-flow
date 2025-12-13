@@ -23,12 +23,12 @@ import type * as mcp_oauth from "../mcp/oauth.js";
 import type * as mcp_protocol from "../mcp/protocol.js";
 import type * as mcp_session from "../mcp/session.js";
 import type * as mcp_tokens from "../mcp/tokens.js";
-import type * as mcp_tools from "../mcp/tools.js";
 import type * as mcp_tools_definitions from "../mcp/tools/definitions.js";
 import type * as mcp_tools_getTrace from "../mcp/tools/getTrace.js";
 import type * as mcp_tools_index from "../mcp/tools/index.js";
 import type * as mcp_tools_listTraces from "../mcp/tools/listTraces.js";
 import type * as mcp_tools_shared from "../mcp/tools/shared.js";
+import type * as mcp_tools from "../mcp/tools.js";
 import type * as mcp_utils from "../mcp/utils.js";
 import type * as modelPricing from "../modelPricing.js";
 import type * as pricingSync from "../pricingSync.js";
@@ -41,6 +41,14 @@ import type {
   FunctionReference,
 } from "convex/server";
 
+/**
+ * A utility for referencing Convex functions in your app's API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
 declare const fullApi: ApiFromModules<{
   alerts: typeof alerts;
   apiKeys: typeof apiKeys;
@@ -57,42 +65,26 @@ declare const fullApi: ApiFromModules<{
   "mcp/protocol": typeof mcp_protocol;
   "mcp/session": typeof mcp_session;
   "mcp/tokens": typeof mcp_tokens;
-  "mcp/tools": typeof mcp_tools;
   "mcp/tools/definitions": typeof mcp_tools_definitions;
   "mcp/tools/getTrace": typeof mcp_tools_getTrace;
   "mcp/tools/index": typeof mcp_tools_index;
   "mcp/tools/listTraces": typeof mcp_tools_listTraces;
   "mcp/tools/shared": typeof mcp_tools_shared;
+  "mcp/tools": typeof mcp_tools;
   "mcp/utils": typeof mcp_utils;
   modelPricing: typeof modelPricing;
   pricingSync: typeof pricingSync;
   tinybird: typeof tinybird;
   users: typeof users;
 }>;
+declare const fullApiWithMounts: typeof fullApi;
 
-/**
- * A utility for referencing Convex functions in your app's public API.
- *
- * Usage:
- * ```js
- * const myFunctionReference = api.myModule.myFunction;
- * ```
- */
 export declare const api: FilterApi<
-  typeof fullApi,
+  typeof fullApiWithMounts,
   FunctionReference<any, "public">
 >;
-
-/**
- * A utility for referencing Convex functions in your app's internal API.
- *
- * Usage:
- * ```js
- * const myFunctionReference = internal.myModule.myFunction;
- * ```
- */
 export declare const internal: FilterApi<
-  typeof fullApi,
+  typeof fullApiWithMounts,
   FunctionReference<any, "internal">
 >;
 

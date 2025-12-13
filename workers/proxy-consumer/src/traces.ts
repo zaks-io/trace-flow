@@ -233,6 +233,13 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
         inputMessageCount,
       );
       traces.push(...contentBlockSpans);
+
+      // Add output events to root span for SSE responses
+      const fallbackTimestamp = data.timing.responseComplete * 1_000_000;
+      addOutputEvents(rootSpan, allContentBlocks, fallbackTimestamp);
+    } else {
+      // SSE data exists but no content blocks were parsed - add generic output event
+      addNonStreamingOutputEvent(rootSpan, data);
     }
   } else if (data.response.status < 400) {
     // Add TTFT for non-SSE responses using firstTokenReceived
@@ -275,18 +282,14 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       'Links.Attributes': [],
     };
     traces.push(responseSpan);
+
+    // Add output event for non-streaming response
+    addNonStreamingOutputEvent(rootSpan, data);
   }
 
-  // Create input message spans
+  // Add input message events to root span
   if (data.inputMessages && data.inputMessages.length > 0) {
-    const inputSpans = buildInputMessageSpans(
-      data.inputMessages,
-      data,
-      rootSpan.SpanId,
-      traceId,
-      serviceName,
-    );
-    traces.push(...inputSpans);
+    addInputMessageEvents(rootSpan, data.inputMessages);
   }
 
   // Create tool execution spans (cross-request tool durations)
@@ -305,77 +308,106 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
 }
 
 /**
- * Creates spans for input messages from the request body.
- * These are marker spans (duration: 0) at the request start time.
+ * Adds input message events to the root span.
+ * Events are based on content type for consistency with output events:
+ * - input.system - system prompt
+ * - input.text - text content from user or assistant
+ * - input.tool_result - tool result content
+ * - input.tool_use - tool use content (from assistant in history)
  */
-function buildInputMessageSpans(
-  inputMessages: InputMessage[],
-  data: QueueMessage,
-  parentSpanId: string,
-  traceId: string,
-  serviceName: string,
-): TinybirdTrace[] {
-  const spans: TinybirdTrace[] = [];
+function addInputMessageEvents(rootSpan: TinybirdTrace, inputMessages: InputMessage[]): void {
+  const requestTimestamp = rootSpan.Timestamp;
 
   for (const message of inputMessages) {
-    // Determine span name based on role and content
-    // Use ai.request.{role} pattern to clearly indicate these are INPUT spans
-    let spanName: string;
-    const attributes: Record<string, string> = {
-      'ai.request_id': data.requestId,
-      'ai.message.role': message.role,
-      'ai.message.index': String(message.index),
-    };
-
+    // System messages are treated as a special content type
     if (message.role === 'system') {
-      spanName = 'ai.request.system';
-    } else if (message.role === 'user') {
-      // Check if this is a tool result message
-      const hasToolResult = message.contentBlocks.some((b) => b.type === 'tool_result');
-      if (hasToolResult) {
-        spanName = 'ai.request.tool_result';
-        const toolResultBlock = message.contentBlocks.find((b) => b.type === 'tool_result');
-        if (toolResultBlock?.toolResultId) {
-          attributes['ai.tool.id'] = toolResultBlock.toolResultId;
-        }
-      } else {
-        spanName = 'ai.request.user';
-      }
-    } else if (message.role === 'assistant') {
-      spanName = 'ai.request.assistant';
-    } else {
-      spanName = `ai.request.${message.role}`;
+      rootSpan['Events.Timestamp'].push(requestTimestamp);
+      rootSpan['Events.Name'].push('input.system');
+      rootSpan['Events.Attributes'].push(
+        JSON.stringify({
+          'ai.message.role': message.role,
+          'ai.message.index': String(message.index),
+        }),
+      );
+      continue;
     }
 
-    const span: TinybirdTrace = {
-      ReceivedAt: data.receivedAt,
-      Timestamp: data.timing.requestStart * 1_000_000,
-      TraceId: traceId,
-      SpanId: generateSpanId(),
-      ParentSpanId: parentSpanId,
-      TraceState: '',
-      SpanName: spanName,
-      SpanKind: 'SPAN_KIND_INTERNAL',
-      ServiceName: serviceName,
-      ResourceAttributes: { 'service.name': serviceName },
-      SpanAttributes: attributes,
-      Duration: 0, // Input spans are instantaneous markers
-      StatusCode: 'STATUS_CODE_OK',
-      StatusMessage: '',
-      ApiKey: data.apiKey,
-      'Events.Timestamp': [],
-      'Events.Name': [],
-      'Events.Attributes': [],
-      'Links.TraceId': [],
-      'Links.SpanId': [],
-      'Links.TraceState': [],
-      'Links.Attributes': [],
+    // For user/assistant messages, create events based on content block types
+    for (const block of message.contentBlocks) {
+      const attributes: Record<string, string> = {
+        'ai.message.role': message.role,
+        'ai.message.index': String(message.index),
+        'ai.content.type': block.type,
+      };
+
+      let eventName: string;
+
+      if (block.type === 'tool_result') {
+        eventName = 'input.tool_result';
+        if (block.toolResultId) {
+          attributes['ai.tool.id'] = block.toolResultId;
+        }
+      } else if (block.type === 'tool_use' || block.type === 'tool_call') {
+        eventName = 'input.tool_use';
+        if (block.toolUseId) {
+          attributes['ai.tool.id'] = block.toolUseId;
+        }
+        if (block.toolName) {
+          attributes['ai.tool.name'] = block.toolName;
+        }
+      } else {
+        // text, image, or other content types
+        eventName = `input.${block.type}`;
+      }
+
+      rootSpan['Events.Timestamp'].push(requestTimestamp);
+      rootSpan['Events.Name'].push(eventName);
+      rootSpan['Events.Attributes'].push(JSON.stringify(attributes));
+    }
+  }
+}
+
+/**
+ * Adds output events to the root span for SSE streaming responses.
+ * Events capture each content block type (text, thinking, tool_use).
+ */
+function addOutputEvents(
+  rootSpan: TinybirdTrace,
+  contentBlocks: { block: AnthropicContentBlock; messageIndex: number }[],
+  fallbackTimestamp: number,
+): void {
+  for (const { block } of contentBlocks) {
+    const eventName = `output.${block.type}`;
+    const attributes: Record<string, string> = {
+      'ai.content.type': block.type,
+      'ai.message.index': String(block.index),
     };
 
-    spans.push(span);
-  }
+    if (block.type === 'tool_use') {
+      if (block.toolUseId) attributes['ai.tool.id'] = block.toolUseId;
+      if (block.toolName) attributes['ai.tool.name'] = block.toolName;
+    }
 
-  return spans;
+    // Use block's stop timestamp if available, otherwise use fallback (response complete time)
+    const timestamp = block.stopTimestamp ? block.stopTimestamp * 1_000_000 : fallbackTimestamp;
+    rootSpan['Events.Timestamp'].push(timestamp);
+    rootSpan['Events.Name'].push(eventName);
+    rootSpan['Events.Attributes'].push(JSON.stringify(attributes));
+  }
+}
+
+/**
+ * Adds output event to the root span for non-streaming responses.
+ */
+function addNonStreamingOutputEvent(rootSpan: TinybirdTrace, data: QueueMessage): void {
+  const attributes: Record<string, string> = {
+    'ai.content.type': 'text',
+    'ai.response.streaming': 'false',
+  };
+
+  rootSpan['Events.Timestamp'].push(data.timing.responseComplete * 1_000_000);
+  rootSpan['Events.Name'].push('output.text');
+  rootSpan['Events.Attributes'].push(JSON.stringify(attributes));
 }
 
 /**
@@ -464,6 +496,32 @@ function buildContentBlockSpans(
       'Links.TraceState': [],
       'Links.Attributes': [],
     };
+
+    // Add start/end events for tool_use blocks to track tool call timing
+    if (block.type === 'tool_use') {
+      const toolId = block.toolUseId ?? '';
+      const toolName = block.toolName ?? '';
+
+      // Add start event
+      span['Events.Timestamp'].push(block.startTimestamp * 1_000_000);
+      span['Events.Name'].push('tool_call.start');
+      span['Events.Attributes'].push(
+        JSON.stringify({
+          'ai.tool.id': toolId,
+          'ai.tool.name': toolName,
+        }),
+      );
+
+      // Add end event
+      span['Events.Timestamp'].push(block.stopTimestamp * 1_000_000);
+      span['Events.Name'].push('tool_call.end');
+      span['Events.Attributes'].push(
+        JSON.stringify({
+          'ai.tool.id': toolId,
+          'ai.tool.name': toolName,
+        }),
+      );
+    }
 
     spans.push(span);
   }
