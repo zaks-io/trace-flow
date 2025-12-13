@@ -130,22 +130,22 @@ export default function Dashboard() {
   const summaryQuery = useTinybirdQuery<SummaryData>({
     sql: `
       SELECT
-        countIf(ParentSpanId = '') as total_requests,
+        countIf(SpanName = 'ai.request') as total_requests,
         count() as total_traces,
         avgIf(
           JSONExtractFloat(SpanAttributes, 'ai.time_to_first_token_ms'),
           SpanName = 'ai.request' AND JSONHas(SpanAttributes, 'ai.time_to_first_token_ms')
         ) as avg_ttft_ms,
-        avgIf(Duration, ParentSpanId = '') / 1000000 as avg_duration_ms,
-        countIf(StatusCode = 'STATUS_CODE_ERROR' AND ParentSpanId = '') * 100.0 /
-          nullIf(countIf(ParentSpanId = ''), 0) as error_rate_percent,
+        avgIf(Duration, SpanName = 'ai.request') / 1000000 as avg_duration_ms,
+        countIf(StatusCode = 'STATUS_CODE_ERROR' AND SpanName = 'ai.request') * 100.0 /
+          nullIf(countIf(SpanName = 'ai.request'), 0) as error_rate_percent,
         sumIf(
           JSONExtractInt(SpanAttributes, 'ai.tokens.prompt'),
-          ParentSpanId = ''
+          SpanName = 'ai.request'
         ) as total_input_tokens,
         sumIf(
           JSONExtractInt(SpanAttributes, 'ai.tokens.completion'),
-          ParentSpanId = ''
+          SpanName = 'ai.request'
         ) as total_output_tokens
       FROM otel_traces
       WHERE ReceivedAt >= ${startTimeNs}
@@ -161,7 +161,7 @@ export default function Dashboard() {
         JSONExtractString(SpanAttributes, 'ai.model') as model,
         count() as request_count
       FROM otel_traces
-      WHERE ParentSpanId = ''
+      WHERE SpanName = 'ai.request'
         AND ReceivedAt >= ${startTimeNs}
         AND JSONExtractString(SpanAttributes, 'ai.model') != ''
       GROUP BY model
@@ -179,7 +179,7 @@ export default function Dashboard() {
         JSONExtractString(SpanAttributes, 'ai.provider') as provider,
         count() as request_count
       FROM otel_traces
-      WHERE ParentSpanId = ''
+      WHERE SpanName = 'ai.request'
         AND ReceivedAt >= ${startTimeNs}
         AND JSONExtractString(SpanAttributes, 'ai.provider') != ''
       GROUP BY provider
