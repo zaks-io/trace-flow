@@ -49,7 +49,7 @@ export default function Requests() {
     if (filters.model) params.model = filters.model;
     if (filters.status) params.status = filters.status;
     if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
-      params.search = `%${filters.search}%`;
+      params.search = filters.search; // Raw value, Pipe handles wildcards
     }
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;

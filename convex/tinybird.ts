@@ -50,11 +50,12 @@ export const generateToken = action({
     const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
 
     // Add api_keys to fixed_params for row-level security
+    // Use sentinel value when user has no keys to prevent matching empty strings
     const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
       ...scope,
       fixed_params: {
         ...scope.fixed_params,
-        api_keys: apiKeyString,
+        api_keys: apiKeyString || '__NO_KEYS__',
       },
     }));
 
@@ -95,7 +96,8 @@ export const generateTokenInternal = internalAction({
     ttl: v.optional(v.number()),
   },
   handler: async (_, args) => {
-    const apiKeyString = args.apiKeys.join(',');
+    // Use sentinel value when no keys to prevent matching empty strings
+    const apiKeyString = args.apiKeys.join(',') || '__NO_KEYS__';
 
     // Add api_keys to fixed_params for row-level security
     const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
