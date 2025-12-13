@@ -562,8 +562,8 @@ describe('buildTraces', () => {
     });
   });
 
-  describe('input message spans', () => {
-    it('should create spans for system messages', () => {
+  describe('input message events', () => {
+    it('should add event for system messages', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         inputMessages: [
@@ -577,14 +577,16 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const systemSpan = traces.find((t) => t.SpanName === 'ai.request.system');
-      expect(systemSpan).toBeDefined();
-      expect(systemSpan?.Duration).toBe(0);
-      expect(systemSpan?.SpanAttributes['ai.message.role']).toBe('system');
-      expect(systemSpan?.SpanAttributes['ai.message.index']).toBe('0');
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('input.system');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('input.system');
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
+      expect(eventAttrs['ai.message.role']).toBe('system');
+      expect(eventAttrs['ai.message.index']).toBe('0');
     });
 
-    it('should create spans for user messages', () => {
+    it('should add input.text event for user text messages', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         inputMessages: [
@@ -598,13 +600,16 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const userSpan = traces.find((t) => t.SpanName === 'ai.request.user');
-      expect(userSpan).toBeDefined();
-      expect(userSpan?.Duration).toBe(0);
-      expect(userSpan?.SpanAttributes['ai.message.role']).toBe('user');
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('input.text');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('input.text');
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
+      expect(eventAttrs['ai.message.role']).toBe('user');
+      expect(eventAttrs['ai.content.type']).toBe('text');
     });
 
-    it('should create spans for assistant messages in history', () => {
+    it('should add input.text event for assistant messages in history', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         inputMessages: [
@@ -618,12 +623,16 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const assistantSpan = traces.find((t) => t.SpanName === 'ai.request.assistant');
-      expect(assistantSpan).toBeDefined();
-      expect(assistantSpan?.SpanAttributes['ai.message.role']).toBe('assistant');
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('input.text');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('input.text');
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
+      expect(eventAttrs['ai.message.role']).toBe('assistant');
+      expect(eventAttrs['ai.content.type']).toBe('text');
     });
 
-    it('should create spans for tool_result messages', () => {
+    it('should add input.tool_result event for tool results', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         inputMessages: [
@@ -637,13 +646,16 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const toolResultSpan = traces.find((t) => t.SpanName === 'ai.request.tool_result');
-      expect(toolResultSpan).toBeDefined();
-      expect(toolResultSpan?.SpanAttributes['ai.message.role']).toBe('user');
-      expect(toolResultSpan?.SpanAttributes['ai.tool.id']).toBe('toolu_abc123');
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('input.tool_result');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('input.tool_result');
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
+      expect(eventAttrs['ai.message.role']).toBe('user');
+      expect(eventAttrs['ai.tool.id']).toBe('toolu_abc123');
     });
 
-    it('should create multiple input message spans', () => {
+    it('should add multiple input events based on content types', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,
         inputMessages: [
@@ -656,13 +668,158 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const inputSpans = traces.filter(
-        (t) =>
-          t.SpanName === 'ai.request.system' ||
-          t.SpanName === 'ai.request.user' ||
-          t.SpanName === 'ai.request.assistant',
-      );
-      expect(inputSpans.length).toBe(4);
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('input.system');
+      // 3 text blocks from user and assistant messages
+      expect(rootSpan?.['Events.Name'].filter((n) => n === 'input.text').length).toBe(3);
+    });
+
+    it('should add input.tool_use events for assistant tool calls in history', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        inputMessages: [
+          {
+            role: 'assistant',
+            index: 0,
+            contentBlocks: [
+              { index: 0, type: 'text' },
+              { index: 1, type: 'tool_use', toolUseId: 'toolu_abc', toolName: 'get_weather' },
+              { index: 2, type: 'tool_use', toolUseId: 'toolu_def', toolName: 'get_time' },
+            ],
+          },
+        ],
+      };
+
+      const traces = buildTraces(message);
+
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      // Should have 1 text event and 2 tool_use events
+      expect(rootSpan?.['Events.Name']).toContain('input.text');
+      expect(rootSpan?.['Events.Name'].filter((n) => n === 'input.tool_use').length).toBe(2);
+
+      // Check first tool_use event
+      const toolUseIndex = rootSpan?.['Events.Name'].indexOf('input.tool_use');
+      expect(toolUseIndex).toBeGreaterThanOrEqual(0);
+      const firstToolAttrs = JSON.parse(rootSpan?.['Events.Attributes'][toolUseIndex!] ?? '{}');
+      expect(firstToolAttrs['ai.tool.id']).toBe('toolu_abc');
+      expect(firstToolAttrs['ai.tool.name']).toBe('get_weather');
+    });
+  });
+
+  describe('output message events', () => {
+    it('should add output events for SSE streaming text content', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1100,
+              messageStop: 1500,
+              contentBlocks: [
+                {
+                  type: 'text',
+                  index: 0,
+                  startTimestamp: 1150,
+                  stopTimestamp: 1450,
+                },
+              ],
+              events: [],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('output.text');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('output.text');
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
+      expect(eventAttrs['ai.content.type']).toBe('text');
+    });
+
+    it('should add output events for tool_use with tool info', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1100,
+              messageStop: 1500,
+              contentBlocks: [
+                {
+                  type: 'tool_use',
+                  index: 0,
+                  startTimestamp: 1150,
+                  stopTimestamp: 1450,
+                  toolUseId: 'toolu_abc',
+                  toolName: 'get_weather',
+                },
+              ],
+              events: [],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('output.tool_use');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('output.tool_use');
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
+      expect(eventAttrs['ai.tool.id']).toBe('toolu_abc');
+      expect(eventAttrs['ai.tool.name']).toBe('get_weather');
+    });
+
+    it('should add output event for non-streaming responses', () => {
+      const traces = buildTraces(baseQueueMessage);
+
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('output.text');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('output.text');
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
+      expect(eventAttrs['ai.response.streaming']).toBe('false');
+    });
+
+    it('should add multiple output events for multiple content blocks', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1100,
+              messageStop: 1500,
+              contentBlocks: [
+                { type: 'thinking', index: 0, startTimestamp: 1100, stopTimestamp: 1200 },
+                { type: 'text', index: 1, startTimestamp: 1200, stopTimestamp: 1400 },
+                {
+                  type: 'tool_use',
+                  index: 2,
+                  startTimestamp: 1400,
+                  stopTimestamp: 1450,
+                  toolUseId: 'toolu_1',
+                  toolName: 'search',
+                },
+              ],
+              events: [],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.['Events.Name']).toContain('output.thinking');
+      expect(rootSpan?.['Events.Name']).toContain('output.text');
+      expect(rootSpan?.['Events.Name']).toContain('output.tool_use');
     });
   });
 

@@ -63,10 +63,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               'http',
               'status_message',
               'baggage',
+              'events',
             ],
           },
           description:
-            'Fields to include in spans beyond base fields. Options: provider, model, tokens, costs, ttft (time to first token), parent (parent_span_id), url (target_url), http (http_status), status_message, baggage (user context).',
+            'Fields to include in spans beyond base fields. Options: provider, model, tokens, costs, ttft (time to first token), parent (parent_span_id), url (target_url), http (http_status), status_message, baggage (user context), events (input/output events like input.text, output.text).',
         },
         limit: {
           type: 'number',
@@ -80,7 +81,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Filter to only include spans matching these names. Supports wildcard suffix (e.g., "ai.*" matches ai.request, ai.embedding). Multiple patterns are OR\'d together.',
+            'Filter to only include spans matching these names. Supports wildcard suffix (e.g., "ai.*" matches ai.request, ai.embedding). Multiple patterns are OR\'d together. Use "ai.request" to filter to just Trace Flow\'s main LLM request spans.',
         },
         top_n: {
           type: 'number',
