@@ -266,7 +266,18 @@ async function handleToolsCall(
       params: listArgs,
     });
   } else if (params.name === 'get_trace') {
-    const getArgs = (params.arguments ?? {}) as { trace_id: string };
+    const getArgs = (params.arguments ?? {}) as {
+      trace_id: string;
+      expand?: string[];
+      limit?: number;
+      cursor?: string;
+      span_names?: string[];
+      top_n?: number;
+      sort_by?: string;
+      min_duration_ms?: number;
+      exclude_span_names?: string[];
+      include_summary?: boolean;
+    };
     result = await ctx.runAction(internal.mcp.tools.getTrace, {
       apiKeys: apiKeyStrings,
       params: getArgs,
