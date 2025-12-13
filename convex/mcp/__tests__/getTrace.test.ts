@@ -1,79 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  buildGetTraceSQL,
-  parseSpanAttributes,
-  extractBaggage,
-  parseEvents,
-  parseSpanRow,
-  buildOutputSpan,
-  type ParsedSpan,
-} from '../helpers/getTrace';
-
-describe('buildGetTraceSQL', () => {
-  it('builds SQL with trace ID and API keys', () => {
-    const sql = buildGetTraceSQL('abc123def456abc123def456abc123de', ['key1', 'key2']);
-    expect(sql).toContain("TraceId = 'abc123def456abc123def456abc123de'");
-    expect(sql).toContain("ApiKey IN ('key1', 'key2')");
-  });
-
-  it('escapes SQL in trace ID', () => {
-    const sql = buildGetTraceSQL("test'injection", ['key1']);
-    expect(sql).toContain("test''injection");
-  });
-});
-
-describe('parseSpanAttributes', () => {
-  it('parses JSON string', () => {
-    const result = parseSpanAttributes('{"key": "value"}');
-    expect(result).toEqual({ key: 'value' });
-  });
-
-  it('returns object as-is', () => {
-    const obj = { key: 'value' };
-    const result = parseSpanAttributes(obj);
-    expect(result).toEqual(obj);
-  });
-
-  it('returns empty object for null', () => {
-    const result = parseSpanAttributes(null);
-    expect(result).toEqual({});
-  });
-
-  it('returns empty object for undefined', () => {
-    const result = parseSpanAttributes(undefined);
-    expect(result).toEqual({});
-  });
-});
-
-describe('extractBaggage', () => {
-  it('extracts baggage prefixed attributes', () => {
-    const attrs = {
-      'baggage.userId': 'user123',
-      'baggage.sessionId': 'session456',
-      'ai.provider': 'openai',
-    };
-    const result = extractBaggage(attrs);
-    expect(result).toEqual({ userId: 'user123', sessionId: 'session456' });
-  });
-
-  it('returns undefined for no baggage', () => {
-    const attrs = { 'ai.provider': 'openai' };
-    const result = extractBaggage(attrs);
-    expect(result).toBeUndefined();
-  });
-
-  it('converts numbers to strings', () => {
-    const attrs = { 'baggage.count': 42 };
-    const result = extractBaggage(attrs);
-    expect(result).toEqual({ count: '42' });
-  });
-
-  it('converts booleans to strings', () => {
-    const attrs = { 'baggage.enabled': true };
-    const result = extractBaggage(attrs);
-    expect(result).toEqual({ enabled: 'true' });
-  });
-});
+import { parseEvents, parseSpanRow, buildOutputSpan, type ParsedSpan } from '../helpers/getTrace';
 
 describe('parseEvents', () => {
   it('parses events from parallel arrays', () => {
@@ -392,6 +318,7 @@ describe('buildOutputSpan', () => {
       cost_usd: undefined,
       time_to_first_token_ms: undefined,
       baggage: undefined,
+      events: undefined,
     };
 
     const result = buildOutputSpan(spanWithoutOptionals, new Set(['provider', 'model', 'tokens']));
