@@ -1,0 +1,35 @@
+DESCRIPTION >
+    Grouped traces view with aggregated statistics, filtered by API keys.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+    Supports incremental loading by filtering on ReceivedAt for live mode.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        TraceId,
+        count() as ChildSpanCount,
+        min(Timestamp) as FirstTimestamp,
+        max(Timestamp) as LastTimestamp,
+        max(ReceivedAt) as LatestReceivedAt,
+        sum(Duration) as TotalDuration,
+        avg(Duration) as AvgDuration,
+        max(Duration) as MaxDuration,
+        countIf(StatusCode = 'ERROR') as ErrorCount,
+        groupArray(DISTINCT JSONExtractString(SpanAttributes, 'ai.model')) as Models,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.total'))) as TotalTokens,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.prompt'))) as PromptTokens,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.completion'))) as CompletionTokens,
+        max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.time_to_first_token_ms'))) as MaxTTFT,
+        sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.cost.total'))) as TotalCost
+    FROM otel_traces
+    WHERE SpanName = 'ai.request'
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        {% if defined(after_received_at) %}
+        AND ReceivedAt > {{ Int64(after_received_at) }}
+        {% end %}
+    GROUP BY TraceId
+    ORDER BY LatestReceivedAt DESC
+    LIMIT {{ Int32(limit, 100) }}
+
+TYPE ENDPOINT

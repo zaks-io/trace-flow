@@ -1,0 +1,39 @@
+DESCRIPTION >
+    List traces filtered by API keys with optional filtering by provider, model, and status.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        ReceivedAt,
+        Timestamp,
+        TraceId,
+        SpanId,
+        SpanName,
+        ServiceName,
+        Duration,
+        StatusCode,
+        SpanAttributes
+    FROM otel_traces
+    WHERE SpanName = 'ai.request'
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        {% if defined(after_received_at) %}
+        AND ReceivedAt > {{ Int64(after_received_at) }}
+        {% end %}
+        {% if defined(provider) %}
+        AND JSONExtractString(SpanAttributes, 'ai.provider') = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND JSONExtractString(SpanAttributes, 'ai.model') = {{ String(model) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+        {% if defined(search) %}
+        AND TraceId LIKE concat('%', {{ String(search) }}, '%')
+        {% end %}
+    ORDER BY ReceivedAt DESC
+    LIMIT {{ Int32(limit, 100) }}
+
+TYPE ENDPOINT

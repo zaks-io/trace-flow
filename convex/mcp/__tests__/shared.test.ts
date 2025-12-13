@@ -2,10 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   TRACE_ID_PATTERN,
   queryTinybird,
+  queryTinybirdPipe,
   generateTinybirdToken,
   noApiKeysError,
   invalidTraceIdError,
   traceNotFoundError,
+  jsonReplacer,
+  stripNulls,
 } from '../tools/shared';
 
 describe('TRACE_ID_PATTERN', () => {
@@ -163,6 +166,8 @@ describe('queryTinybird', () => {
 });
 
 describe('generateTinybirdToken', () => {
+  const testApiKeys = ['api-key-1', 'api-key-2'];
+
   beforeEach(() => {
     vi.stubEnv('TINYBIRD_ADMIN_TOKEN', 'admin-token-secret');
     vi.stubEnv('TINYBIRD_WORKSPACE_ID', 'workspace-123');
@@ -175,19 +180,22 @@ describe('generateTinybirdToken', () => {
   it('throws error when admin token is missing', async () => {
     vi.stubEnv('TINYBIRD_ADMIN_TOKEN', '');
     await expect(
-      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }]),
+      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }], testApiKeys),
     ).rejects.toThrow('Tinybird credentials not configured');
   });
 
   it('throws error when workspace ID is missing', async () => {
     vi.stubEnv('TINYBIRD_WORKSPACE_ID', '');
     await expect(
-      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }]),
+      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }], testApiKeys),
     ).rejects.toThrow('Tinybird credentials not configured');
   });
 
   it('generates a valid JWT string', async () => {
-    const token = await generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }]);
+    const token = await generateTinybirdToken(
+      [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+      testApiKeys,
+    );
     expect(typeof token).toBe('string');
     expect(token.split('.')).toHaveLength(3);
   });
@@ -195,8 +203,210 @@ describe('generateTinybirdToken', () => {
   it('accepts custom TTL', async () => {
     const token = await generateTinybirdToken(
       [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+      testApiKeys,
       300,
     );
     expect(typeof token).toBe('string');
+  });
+
+  it('works with empty api keys array', async () => {
+    const token = await generateTinybirdToken(
+      [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+      [],
+    );
+    expect(typeof token).toBe('string');
+    expect(token.split('.')).toHaveLength(3);
+  });
+});
+
+describe('queryTinybirdPipe', () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.stubEnv('TINYBIRD_API_URL', 'https://api.tinybird.co');
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
+  });
+
+  it('returns data from successful response', async () => {
+    const mockData = [{ TraceId: 'abc123', Duration: 100 }];
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: mockData }),
+    });
+
+    const result = await queryTinybirdPipe('token', 'mcp_traces_list');
+    expect(result).toEqual(mockData);
+  });
+
+  it('returns empty array when data is undefined', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({}),
+    });
+
+    const result = await queryTinybirdPipe('token', 'mcp_traces_list');
+    expect(result).toEqual([]);
+  });
+
+  it('throws error for non-200 response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve('Unauthorized'),
+    });
+
+    await expect(queryTinybirdPipe('invalid-token', 'mcp_traces_list')).rejects.toThrow(
+      'TinyBird pipe query failed: 401',
+    );
+  });
+
+  it('includes pipe name in URL path', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [] }),
+    });
+
+    await queryTinybirdPipe('token', 'mcp_traces_list');
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/v0/pipes/mcp_traces_list.json'),
+      expect.any(Object),
+    );
+  });
+
+  it('includes parameters in URL query string', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [] }),
+    });
+
+    await queryTinybirdPipe('token', 'mcp_traces_list', {
+      limit: 10,
+      provider: 'openai',
+    });
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(call).toContain('limit=10');
+    expect(call).toContain('provider=openai');
+  });
+
+  it('excludes undefined parameters', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [] }),
+    });
+
+    await queryTinybirdPipe('token', 'mcp_traces_list', {
+      limit: 10,
+      provider: undefined,
+    });
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(call).toContain('limit=10');
+    expect(call).not.toContain('provider=');
+  });
+
+  it('uses custom API URL from environment', async () => {
+    vi.stubEnv('TINYBIRD_API_URL', 'https://custom.tinybird.co');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: [] }),
+    });
+
+    await queryTinybirdPipe('token', 'test_pipe');
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('https://custom.tinybird.co'),
+      expect.any(Object),
+    );
+  });
+});
+
+describe('jsonReplacer', () => {
+  it('rounds floating point numbers', () => {
+    const result = jsonReplacer('key', 0.123456789);
+    expect(result).toBe(0.123457);
+  });
+
+  it('leaves integers unchanged', () => {
+    const result = jsonReplacer('key', 42);
+    expect(result).toBe(42);
+  });
+
+  it('leaves zero unchanged', () => {
+    const result = jsonReplacer('key', 0);
+    expect(result).toBe(0);
+  });
+
+  it('leaves strings unchanged', () => {
+    const result = jsonReplacer('key', 'test');
+    expect(result).toBe('test');
+  });
+
+  it('leaves objects unchanged', () => {
+    const obj = { nested: 'value' };
+    const result = jsonReplacer('key', obj);
+    expect(result).toBe(obj);
+  });
+
+  it('leaves arrays unchanged', () => {
+    const arr = [1, 2, 3];
+    const result = jsonReplacer('key', arr);
+    expect(result).toBe(arr);
+  });
+});
+
+describe('stripNulls', () => {
+  it('returns undefined for null', () => {
+    const result = stripNulls(null);
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined for undefined', () => {
+    const result = stripNulls(undefined);
+    expect(result).toBeUndefined();
+  });
+
+  it('returns primitive values as-is', () => {
+    expect(stripNulls('test')).toBe('test');
+    expect(stripNulls(42)).toBe(42);
+    expect(stripNulls(true)).toBe(true);
+  });
+
+  it('removes null values from objects', () => {
+    const result = stripNulls({ a: 1, b: null, c: 'test' });
+    expect(result).toEqual({ a: 1, c: 'test' });
+  });
+
+  it('removes undefined values from objects', () => {
+    const result = stripNulls({ a: 1, b: undefined, c: 'test' });
+    expect(result).toEqual({ a: 1, c: 'test' });
+  });
+
+  it('recursively strips nested objects', () => {
+    const result = stripNulls({
+      a: 1,
+      nested: { x: null, y: 2 },
+    });
+    expect(result).toEqual({ a: 1, nested: { y: 2 } });
+  });
+
+  it('filters null values from arrays', () => {
+    const result = stripNulls([1, null, 2, undefined, 3]);
+    expect(result).toEqual([1, 2, 3]);
+  });
+
+  it('returns undefined for empty object after stripping', () => {
+    const result = stripNulls({ a: null, b: undefined });
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined for empty array after stripping', () => {
+    const result = stripNulls([null, undefined]);
+    expect(result).toBeUndefined();
   });
 });

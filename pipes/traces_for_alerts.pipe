@@ -1,0 +1,22 @@
+DESCRIPTION >
+    Fetch ai.request spans for specific traces, used for alert evaluation.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        TraceId,
+        SpanId,
+        SpanName,
+        ServiceName,
+        Duration,
+        StatusCode,
+        SpanAttributes,
+        Timestamp as ReceivedAt
+    FROM otel_traces
+    WHERE SpanName = 'ai.request'
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND TraceId IN splitByChar(',', {{ String(trace_ids, '') }})
+
+TYPE ENDPOINT

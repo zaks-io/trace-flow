@@ -1,0 +1,19 @@
+DESCRIPTION >
+    Providers breakdown by request count, filtered by API keys and time range.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        JSONExtractString(SpanAttributes, 'ai.provider') as provider,
+        count() as request_count
+    FROM otel_traces
+    WHERE ParentSpanId = ''
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
+        AND JSONExtractString(SpanAttributes, 'ai.provider') != ''
+    GROUP BY provider
+    ORDER BY request_count DESC
+
+TYPE ENDPOINT

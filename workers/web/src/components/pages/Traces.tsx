@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
-import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
-import { useUserApiKeys } from '@/hooks/useUserApiKeys';
+import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { DataTable, type AlertFilterValue } from '@/components/requests-table';
@@ -37,63 +36,27 @@ export default function Traces() {
   const prevLiveModeRef = useRef(false);
   const lastProcessedDataRef = useRef<SpanGroupRow[] | null>(null);
 
-  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const alerts = useQuery(api.alerts.listEnabled);
   const { visibility, setVisibility } = useColumnVisibility(
     defaultSpanGroupColumnVisibility,
     'trace-flow-traces-columns',
   );
 
-  const sqlQuery = useMemo(() => {
-    const baseQuery = `
-      SELECT
-        TraceId,
-        count() as ChildSpanCount,
-        min(Timestamp) as FirstTimestamp,
-        max(Timestamp) as LastTimestamp,
-        max(ReceivedAt) as LatestReceivedAt,
-        sum(Duration) as TotalDuration,
-        avg(Duration) as AvgDuration,
-        max(Duration) as MaxDuration,
-        countIf(StatusCode = 'ERROR') as ErrorCount,
-        groupArray(DISTINCT JSONExtractString(SpanAttributes, 'ai.model')) as Models,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.total'))) as TotalTokens,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.prompt'))) as PromptTokens,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.completion'))) as CompletionTokens,
-        max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.time_to_first_token_ms'))) as MaxTTFT,
-        sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.cost.total'))) as TotalCost
-      FROM otel_traces
-      WHERE SpanName = 'ai.request'`;
-
+  // API key filtering is now handled server-side via JWT fixed_params
+  const pipeParams = useMemo(() => {
+    const params: Record<string, number | undefined> = {
+      limit: 100,
+    };
     if (isLiveMode && latestReceivedAt !== null) {
-      return `${baseQuery} AND ReceivedAt > ${latestReceivedAt}
-        GROUP BY TraceId
-        ORDER BY LatestReceivedAt DESC
-        LIMIT 100
-        FORMAT JSON`;
+      params.after_received_at = latestReceivedAt;
     }
-    return `${baseQuery}
-      GROUP BY TraceId
-      ORDER BY LatestReceivedAt DESC
-      LIMIT 100
-      FORMAT JSON`;
+    return params;
   }, [isLiveMode, latestReceivedAt]);
 
-  const {
-    data,
-    loading,
-    error,
-    refetch,
-  }: {
-    data: TinybirdResponse | null;
-    loading: boolean;
-    error: Error | null;
-    refetch: () => Promise<void>;
-  } = useTinybirdQuery<TinybirdResponse>({
-    sql: sqlQuery,
-    scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+  const { data, loading, error, refetch } = useTinybirdPipe<TinybirdResponse>({
+    pipe: 'traces_grouped',
+    params: pipeParams,
     pollInterval: isLiveMode ? 3000 : undefined,
-    apiKeys: userApiKeys,
   });
 
   const traceIds = useMemo(() => {
@@ -101,20 +64,16 @@ export default function Traces() {
     return groups.map((g) => g.TraceId);
   }, [isLiveMode, initialLoadComplete, mergedSpanGroups, data?.data]);
 
-  const alertsQuery = useMemo(() => {
-    if (traceIds.length === 0 || !alerts || alerts.length === 0) return '';
-    const traceIdList = traceIds.map((id) => `'${id}'`).join(',');
-    return `SELECT TraceId, SpanId, SpanName, ServiceName, Duration, StatusCode, SpanAttributes, Timestamp as ReceivedAt
-      FROM otel_traces
-      WHERE SpanName = 'ai.request' AND TraceId IN (${traceIdList})
-      FORMAT JSON`;
+  // Fetch spans for alert evaluation using Pipe API
+  const alertSpansParams = useMemo(() => {
+    if (traceIds.length === 0 || !alerts || alerts.length === 0) return undefined;
+    return { trace_ids: traceIds.join(',') };
   }, [traceIds, alerts]);
 
-  const { data: alertSpansData } = useTinybirdQuery<AlertSpansResponse>({
-    sql: alertsQuery,
-    scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
-    enabled: alertsQuery !== '',
-    apiKeys: userApiKeys,
+  const { data: alertSpansData } = useTinybirdPipe<AlertSpansResponse>({
+    pipe: 'traces_for_alerts',
+    params: alertSpansParams,
+    enabled: alertSpansParams !== undefined,
   });
 
   const handleRowClick = useCallback(
@@ -241,7 +200,7 @@ export default function Traces() {
 
   const getRowId = useCallback((row: SpanGroupRow): string => row.TraceId as string, []);
 
-  if ((loading || keysLoading) && !initialLoadComplete) {
+  if (loading && !initialLoadComplete) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

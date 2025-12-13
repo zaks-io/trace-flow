@@ -1,0 +1,36 @@
+DESCRIPTION >
+    List traces with offset-based pagination for MCP tools.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        TraceId,
+        ReceivedAt,
+        Duration / 1000000 as duration_ms,
+        StatusCode,
+        JSONExtractString(SpanAttributes, 'ai.provider') as provider,
+        JSONExtractString(SpanAttributes, 'ai.model') as model,
+        JSONExtractInt(SpanAttributes, 'ai.tokens.prompt') as prompt_tokens,
+        JSONExtractInt(SpanAttributes, 'ai.tokens.completion') as completion_tokens,
+        JSONExtractInt(SpanAttributes, 'ai.tokens.total') as total_tokens,
+        JSONExtractFloat(SpanAttributes, 'ai.cost.total') as cost_usd
+    FROM otel_traces
+    WHERE SpanName = 'ai.request'
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
+        {% if defined(provider) %}
+        AND JSONExtractString(SpanAttributes, 'ai.provider') = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND JSONExtractString(SpanAttributes, 'ai.model') = {{ String(model) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+    ORDER BY ReceivedAt DESC
+    LIMIT {{ Int32(limit, 10) }} + 1
+    OFFSET {{ Int32(offset, 0) }}
+
+TYPE ENDPOINT
