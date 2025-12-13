@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronRight, Copy, Check, ExternalLink } from 'lucide-react';
+import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-react';
 import { useQuery } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
@@ -17,6 +17,7 @@ import {
   traceSpanToRequestRow,
   getHighestSeverity,
 } from '@/lib/alerts';
+import { generateTraceMarkdown, estimateMarkdownTokens } from '@/lib/traceToMarkdown';
 import type { AlertSeverity } from '@/types/alerts';
 
 interface TraceSpan {
@@ -45,6 +46,8 @@ export default function TraceDetail() {
   usePageHeader('Trace Details');
   const { traceId } = useParams<{ traceId: string }>();
   const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+  const [copiedMarkdown, setCopiedMarkdown] = useState(false);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
   const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
@@ -90,6 +93,11 @@ export default function TraceDetail() {
     return getHighestSeverity(triggeredAlerts.map((t) => t.alert.severity as AlertSeverity));
   }, [triggeredAlerts]);
 
+  const estimatedTokens = useMemo(() => {
+    if (spans.length === 0) return 0;
+    return estimateMarkdownTokens(spans);
+  }, [spans]);
+
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -97,6 +105,28 @@ export default function TraceDetail() {
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy link:', err);
+    }
+  };
+
+  const handleCopyId = async () => {
+    if (!traceId) return;
+    try {
+      await navigator.clipboard.writeText(traceId);
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy ID:', err);
+    }
+  };
+
+  const handleCopyMarkdown = async () => {
+    try {
+      const markdown = generateTraceMarkdown(spans);
+      await navigator.clipboard.writeText(markdown);
+      setCopiedMarkdown(true);
+      setTimeout(() => setCopiedMarkdown(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy markdown:', err);
     }
   };
 
@@ -171,9 +201,7 @@ export default function TraceDetail() {
             Traces
           </Link>
           <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-          <span className="font-medium text-foreground">
-            {rootSpan?.SpanName ?? 'Trace Details'}
-          </span>
+          <span className="font-mono font-medium text-foreground">{traceId}</span>
           {highestSeverity && (
             <AlertBadge severity={highestSeverity} count={triggeredAlerts.length} size="md" />
           )}
@@ -189,6 +217,51 @@ export default function TraceDetail() {
               <span>View Parent</span>
             </Link>
           )}
+
+          <button
+            onClick={() => void handleCopyMarkdown()}
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {copiedMarkdown ? (
+              <>
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+                <span className="text-emerald-400">Copied!</span>
+              </>
+            ) : (
+              <>
+                <FileText className="h-3.5 w-3.5" />
+                <span>
+                  Copy Markdown
+                  {estimatedTokens > 0 && (
+                    <span className="ml-1 text-muted-foreground/70">
+                      (~
+                      {estimatedTokens >= 1000
+                        ? `${(estimatedTokens / 1000).toFixed(1)}k`
+                        : estimatedTokens}
+                      t)
+                    </span>
+                  )}
+                </span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={() => void handleCopyId()}
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {copiedId ? (
+              <>
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+                <span className="text-emerald-400">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Hash className="h-3.5 w-3.5" />
+                <span>Copy ID</span>
+              </>
+            )}
+          </button>
 
           <button
             onClick={() => void handleCopyLink()}
@@ -208,8 +281,6 @@ export default function TraceDetail() {
           </button>
         </div>
       </div>
-
-      <p className="mt-4 shrink-0 break-all font-mono text-xs text-muted-foreground">{traceId}</p>
 
       <div className="mt-4 shrink-0">
         <TokenSummaryCards spans={spans} />

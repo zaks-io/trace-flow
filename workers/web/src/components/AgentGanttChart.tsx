@@ -182,7 +182,7 @@ function getMessageIndex(span: TraceSpan): number | null {
 }
 
 function isHollowType(type: SpanType): boolean {
-  return type === 'llm' || type === 'synthetic';
+  return type === 'llm' || type === 'synthetic' || type === 'internal';
 }
 
 // Color palette for synthetic spans based on operation name
@@ -209,6 +209,12 @@ function getSyntheticColorIndex(spanName: string): number {
 function getSyntheticColor(span: TraceSpan): { border: string; bg: string; text: string } {
   const index = getSyntheticColorIndex(span.SpanName);
   return syntheticColorPalette[index];
+}
+
+function getInternalColor(span: TraceSpan): string {
+  const index = getSyntheticColorIndex(span.SpanName);
+  const colors = syntheticColorPalette[index];
+  return `${colors.border} ${colors.bg}`;
 }
 
 function getTypeColor(type: SpanType, status: string, span?: TraceSpan): string {
@@ -249,6 +255,13 @@ function getTypeColor(type: SpanType, status: string, span?: TraceSpan): string 
     // Tool execution - accent
     case 'tool_execution':
       return 'bg-orange-500';
+
+    // Internal/custom spans - hollow style with dynamic colors
+    case 'internal':
+      if (span) {
+        return getInternalColor(span);
+      }
+      return 'border-zinc-500/70 bg-zinc-500/5';
 
     default:
       return 'bg-zinc-500';
@@ -327,6 +340,13 @@ function getTypeIconColor(type: SpanType, span?: TraceSpan): string {
     case 'tool_execution':
       return 'text-orange-400';
 
+    // Internal/custom spans - dynamic colors
+    case 'internal':
+      if (span) {
+        return getSyntheticColor(span).text;
+      }
+      return 'text-zinc-400';
+
     default:
       return 'text-zinc-400';
   }
@@ -348,6 +368,20 @@ function formatNumber(num: number): string {
     return `${(num / 1000).toFixed(1)}k`;
   }
   return num.toString();
+}
+
+function getAdaptiveInterval(totalDurationNs: number): number {
+  const totalMs = totalDurationNs / 1_000_000;
+  const intervals = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000];
+  const targetTicks = 10;
+  const idealIntervalMs = totalMs / targetTicks;
+
+  let selected = intervals[0];
+  for (const interval of intervals) {
+    if (interval <= idealIntervalMs) selected = interval;
+    else break;
+  }
+  return selected * 1_000_000;
 }
 
 export function AgentGanttChart({
@@ -413,22 +447,6 @@ export function AgentGanttChart({
             SpanAttributes: JSON.stringify({ synthetic: 'true', 'baggage.operation': operation }),
           });
         }
-      }
-
-      // Establish hierarchy among synthetic spans:
-      // The earliest one becomes the root, others become its children
-      if (syntheticSpans.length > 1) {
-        syntheticSpans.sort((a, b) => a.Timestamp - b.Timestamp);
-        const rootSynthetic = syntheticSpans[0];
-
-        // Make other synthetic spans children of the root
-        for (let i = 1; i < syntheticSpans.length; i++) {
-          syntheticSpans[i].ParentSpanId = rootSynthetic.SpanId;
-        }
-
-        // Extend root's duration to cover all synthetic spans
-        const latestEnd = Math.max(...syntheticSpans.map((s) => s.Timestamp + s.Duration));
-        rootSynthetic.Duration = latestEnd - rootSynthetic.Timestamp;
       }
 
       // Combine synthetic and real spans
@@ -569,6 +587,19 @@ export function AgentGanttChart({
     });
   }, [spanRows, expandedSpans]);
 
+  // Adaptive tick lines based on trace duration
+  const tickLines = useMemo(() => {
+    if (totalDuration === 0) return [];
+    const intervalNs = getAdaptiveInterval(totalDuration);
+    const lines: number[] = [];
+    let position = intervalNs;
+    while (position < totalDuration) {
+      lines.push((position / totalDuration) * 100);
+      position += intervalNs;
+    }
+    return lines;
+  }, [totalDuration]);
+
   const toggleExpand = (spanId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpandedSpans((prev) => {
@@ -615,9 +646,10 @@ export function AgentGanttChart({
     return null;
   }
 
-  const timeMarkers = [0, 0.25, 0.5, 0.75, 1].map((pct) => ({
-    position: pct * 100,
-    label: formatDuration(totalDuration * pct),
+  // Time markers aligned with tick lines (0%, tick positions, 100%)
+  const timeMarkers = [0, ...tickLines, 100].map((pct) => ({
+    position: pct,
+    label: formatDuration((pct / 100) * totalDuration),
   }));
 
   const handleMouseMove = (e: React.MouseEvent, spanId: string) => {
@@ -644,10 +676,11 @@ export function AgentGanttChart({
   return (
     <div
       ref={containerRef}
-      className="relative overflow-hidden rounded-xl border border-border/50 bg-card"
+      className="relative h-full overflow-auto rounded-xl border border-border/50 bg-card"
       onMouseLeave={handleMouseLeave}
     >
-      <div className="flex border-b border-border/30 bg-muted/20">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 flex border-b border-border/30 bg-muted/80 backdrop-blur-sm">
         <div className="flex w-56 shrink-0 items-center justify-between border-r border-border/30 px-4 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             Span
@@ -690,6 +723,20 @@ export function AgentGanttChart({
       )}
 
       <div className="relative">
+        {/* Background tick lines - full height solid lines */}
+        <div
+          className="pointer-events-none absolute inset-y-0 right-4"
+          style={{ left: 'calc(224px + 16px)' }}
+        >
+          {tickLines.map((pct, i) => (
+            <div
+              key={i}
+              className="absolute top-0 h-full w-px bg-border/40"
+              style={{ left: `${pct}%` }}
+            />
+          ))}
+        </div>
+
         {visibleRows.map((row) => {
           const hasChildren = childrenMap.has(row.span.SpanId);
           const isExpanded = expandedSpans.has(row.span.SpanId);
@@ -761,7 +808,8 @@ export function AgentGanttChart({
         })}
       </div>
 
-      <div className="flex border-t border-border/30 bg-muted/10">
+      {/* Sticky footer */}
+      <div className="sticky bottom-0 z-20 flex border-t border-border/30 bg-card/95 backdrop-blur-sm">
         <div className="w-56 shrink-0 border-r border-border/30" />
         <div className="relative flex h-8 flex-1 justify-between px-4 py-3">
           {timeMarkers.map((marker, i) => (
@@ -770,8 +818,13 @@ export function AgentGanttChart({
               className="text-[10px] tabular-nums text-muted-foreground/70"
               style={{
                 position: 'absolute',
-                left: `calc(${marker.position}% + 1rem)`,
-                transform: i === timeMarkers.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)',
+                left: `${marker.position}%`,
+                transform:
+                  i === 0
+                    ? 'translateX(0)'
+                    : i === timeMarkers.length - 1
+                      ? 'translateX(-100%)'
+                      : 'translateX(-50%)',
               }}
             >
               {marker.label}
