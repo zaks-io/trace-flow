@@ -1,0 +1,30 @@
+DESCRIPTION >
+    Get all spans for a specific trace, filtered by API keys.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        ReceivedAt,
+        Timestamp,
+        TraceId,
+        SpanId,
+        ParentSpanId,
+        SpanName,
+        SpanKind,
+        ServiceName,
+        Duration,
+        StatusCode,
+        StatusMessage,
+        SpanAttributes,
+        ResourceAttributes,
+        `Events.Timestamp`,
+        `Events.Name`,
+        `Events.Attributes`
+    FROM otel_traces
+    WHERE TraceId = {{ String(trace_id, '') }}
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    ORDER BY Timestamp ASC
+
+TYPE ENDPOINT

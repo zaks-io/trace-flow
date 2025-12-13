@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
-import { useRequestsQuery } from '@/hooks/useRequestsQuery';
-import { useUserApiKeys } from '@/hooks/useUserApiKeys';
+import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
@@ -18,6 +17,10 @@ import {
 } from '@/components/requests-table';
 import { evaluateAlertsForTraces } from '@/lib/alerts';
 
+interface TinybirdResponse {
+  data: RequestRow[];
+}
+
 export default function Requests() {
   usePageHeader('Requests');
   const navigate = useNavigate();
@@ -26,24 +29,91 @@ export default function Requests() {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
+  const [mergedRequests, setMergedRequests] = useState<RequestRow[]>([]);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
 
   const isClosingRef = useRef(false);
+  const lastProcessedDataRef = useRef<RequestRow[] | null>(null);
+  const prevFiltersRef = useRef(JSON.stringify({}));
 
-  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
-  const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions(userApiKeys);
+  const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const alerts = useQuery(api.alerts.listEnabled);
 
-  const {
-    data: requests = [],
-    isLoading,
-    error,
-  } = useRequestsQuery({
-    filters,
-    apiKeys: userApiKeys ?? [],
-    isLiveMode,
+  // Compute pipe params - include after_received_at only after initial load in live mode
+  const pipeParams = useMemo(() => {
+    const params: Record<string, string | number | undefined> = { limit: 100 };
+    if (filters.provider) params.provider = filters.provider;
+    if (filters.model) params.model = filters.model;
+    if (filters.status) params.status = filters.status;
+    if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
+      params.search = `%${filters.search}%`;
+    }
+    if (isLiveMode && latestReceivedAt !== null) {
+      params.after_received_at = latestReceivedAt;
+    }
+    return params;
+  }, [filters, isLiveMode, latestReceivedAt]);
+
+  const { data, loading, error } = useTinybirdPipe<TinybirdResponse>({
+    pipe: 'traces_list',
+    params: pipeParams,
+    pollInterval: isLiveMode ? 3000 : undefined,
   });
+
+  // Reset when filters change
+  useEffect(() => {
+    const currentFilters = JSON.stringify(filters);
+    if (prevFiltersRef.current !== currentFilters) {
+      prevFiltersRef.current = currentFilters;
+      setInitialLoadComplete(false);
+      setLatestReceivedAt(null);
+      setMergedRequests([]);
+      lastProcessedDataRef.current = null;
+    }
+  }, [filters]);
+
+  // Handle initial load
+  useEffect(() => {
+    if (!initialLoadComplete && data?.data && data.data.length > 0) {
+      setMergedRequests(data.data);
+      setLatestReceivedAt(data.data[0].ReceivedAt);
+      lastProcessedDataRef.current = data.data;
+      setInitialLoadComplete(true);
+    }
+  }, [data, initialLoadComplete]);
+
+  // Handle live mode merge
+  useEffect(() => {
+    if (!isLiveMode || !data?.data || !initialLoadComplete) return;
+    if (data.data.length === 0) return;
+    if (lastProcessedDataRef.current === data.data) return;
+
+    lastProcessedDataRef.current = data.data;
+
+    setMergedRequests((prev) => {
+      const merged = [...data.data, ...prev].slice(0, 100);
+      if (merged.length > 0) {
+        setLatestReceivedAt(merged[0].ReceivedAt);
+      }
+      return merged;
+    });
+  }, [data, isLiveMode, initialLoadComplete]);
+
+  // Handle non-live mode - show raw data
+  useEffect(() => {
+    if (!isLiveMode && initialLoadComplete && data?.data) {
+      setMergedRequests(data.data);
+      if (data.data.length > 0) {
+        setLatestReceivedAt(data.data[0].ReceivedAt);
+      }
+    }
+  }, [isLiveMode, data, initialLoadComplete]);
+
+  const requests = isLiveMode && initialLoadComplete ? mergedRequests : (data?.data ?? []);
+  const isLoading = loading && !initialLoadComplete;
 
   const handleRowClick = useCallback(
     (row: RequestRow, event: React.MouseEvent) => {
@@ -118,7 +188,7 @@ export default function Requests() {
     return row ? `${row.TraceId}-${row.SpanId}` : null;
   }, [selectedTraceId, requests]);
 
-  if ((isLoading || keysLoading) && requests.length === 0) {
+  if (isLoading && requests.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

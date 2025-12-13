@@ -59,8 +59,15 @@ export function traceNotFoundError(traceId: string): ToolCallResult {
   };
 }
 
+interface TinybirdScope {
+  type: string;
+  resource: string;
+  fixed_params?: Record<string, unknown>;
+}
+
 export async function generateTinybirdToken(
   scopes: { type: string; resource: string }[],
+  apiKeys: string[],
   ttlSeconds = 600,
 ): Promise<string> {
   const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
@@ -70,10 +77,17 @@ export async function generateTinybirdToken(
     throw new Error('Tinybird credentials not configured');
   }
 
+  // Add api_keys to fixed_params for row-level security
+  const apiKeyString = apiKeys.join(',');
+  const scopesWithApiKeys: TinybirdScope[] = scopes.map((scope) => ({
+    ...scope,
+    fixed_params: { api_keys: apiKeyString },
+  }));
+
   const payload = {
     workspace_id: workspaceId,
     name: `mcp_jwt_${Date.now()}`,
-    scopes,
+    scopes: scopesWithApiKeys,
   };
 
   const secret = new TextEncoder().encode(adminToken);

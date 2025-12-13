@@ -29,7 +29,10 @@ export const listTraces = internalAction({
       return noApiKeysError();
     }
 
-    const token = await generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }]);
+    const token = await generateTinybirdToken(
+      [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+      apiKeys,
+    );
 
     const { limit, hours, offset } = normalizeParams(params);
     const startTimeNs = (Date.now() - hours * 60 * 60 * 1000) * 1_000_000;

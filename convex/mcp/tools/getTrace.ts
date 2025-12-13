@@ -51,7 +51,10 @@ export const getTrace = internalAction({
       return invalidTraceIdError();
     }
 
-    const token = await generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }]);
+    const token = await generateTinybirdToken(
+      [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+      apiKeys,
+    );
 
     const sql = buildGetTraceSQL(params.trace_id, apiKeys);
     const data = await queryTinybird(token, sql);
