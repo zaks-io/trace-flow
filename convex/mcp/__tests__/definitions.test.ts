@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { TOOL_DEFINITIONS } from '../tools/definitions';
 
+interface JsonSchemaProperty {
+  type?: string;
+  enum?: string[];
+  items?: { enum?: string[] };
+  description?: string;
+}
+
 describe('TOOL_DEFINITIONS', () => {
   it('exports an array of tools', () => {
     expect(Array.isArray(TOOL_DEFINITIONS)).toBe(true);
@@ -38,7 +45,7 @@ describe('list_traces tool definition', () => {
   });
 
   describe('parameters', () => {
-    const props = listTracesTool.inputSchema.properties!;
+    const props = listTracesTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
 
     it('has provider parameter', () => {
       expect(props.provider).toBeDefined();
@@ -95,7 +102,7 @@ describe('get_trace tool definition', () => {
   });
 
   describe('parameters', () => {
-    const props = getTraceTool.inputSchema.properties!;
+    const props = getTraceTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
 
     it('has trace_id parameter', () => {
       expect(props.trace_id).toBeDefined();
