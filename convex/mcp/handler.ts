@@ -23,15 +23,15 @@ import { TOOL_DEFINITIONS } from './tools';
 import { requireTraceFlowRole } from '../auth';
 import { api } from '../_generated/api';
 
-function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
+export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
   return 'id' in message && message.id !== undefined;
 }
 
-function isNotification(message: JsonRpcMessage): message is JsonRpcNotification {
+export function isNotification(message: JsonRpcMessage): message is JsonRpcNotification {
   return !('id' in message) || message.id === undefined;
 }
 
-function createErrorResponse(
+export function createErrorResponse(
   id: string | number | null,
   code: number,
   message: string,
@@ -44,7 +44,7 @@ function createErrorResponse(
   };
 }
 
-function createSuccessResponse(id: string | number, result: unknown): JsonRpcResponse {
+export function createSuccessResponse(id: string | number, result: unknown): JsonRpcResponse {
   return {
     jsonrpc: '2.0',
     id,
