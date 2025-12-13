@@ -12,8 +12,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { TraceDetailContent, type TraceSpan } from './TraceDetailContent';
-import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
-import { useUserApiKeys } from '@/hooks/useUserApiKeys';
+import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { AlertBadge, AlertList } from '@/components/alerts';
 import { evaluateAlertsForTraces, traceSpanToRequestRow, getHighestSeverity } from '@/lib/alerts';
 import type { AlertSeverity } from '@/types/alerts';
@@ -31,22 +30,12 @@ interface TinybirdResponse {
 export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelProps) {
   const validatedTraceId = validateTraceId(traceId);
   const alerts = useQuery(api.alerts.listEnabled);
-  const { keys: userApiKeys } = useUserApiKeys();
 
-  const { data } = useTinybirdQuery<TinybirdResponse>({
-    sql: validatedTraceId
-      ? `SELECT
-      Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName,
-      Duration, StatusCode, StatusMessage, SpanAttributes, ResourceAttributes,
-      Events.Timestamp, Events.Name, Events.Attributes
-    FROM otel_traces
-    WHERE TraceId = '${validatedTraceId}'
-    ORDER BY Timestamp ASC
-    FORMAT JSON`
-      : '',
-    scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+  // API key filtering is now handled server-side via JWT fixed_params
+  const { data } = useTinybirdPipe<TinybirdResponse>({
+    pipe: 'trace_detail',
+    params: validatedTraceId ? { trace_id: validatedTraceId } : undefined,
     enabled: isOpen && !!validatedTraceId,
-    apiKeys: userApiKeys,
   });
 
   const spans = data?.data ?? [];

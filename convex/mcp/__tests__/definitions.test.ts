@@ -1,0 +1,174 @@
+import { describe, it, expect } from 'vitest';
+import { TOOL_DEFINITIONS } from '../tools/definitions';
+
+interface JsonSchemaProperty {
+  type?: string;
+  enum?: string[];
+  items?: { enum?: string[] };
+  description?: string;
+}
+
+describe('TOOL_DEFINITIONS', () => {
+  it('exports an array of tools', () => {
+    expect(Array.isArray(TOOL_DEFINITIONS)).toBe(true);
+  });
+
+  it('contains exactly 2 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(2);
+  });
+
+  it('contains list_traces and get_trace tools', () => {
+    const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
+    expect(toolNames).toContain('list_traces');
+    expect(toolNames).toContain('get_trace');
+  });
+});
+
+describe('list_traces tool definition', () => {
+  const listTracesTool = TOOL_DEFINITIONS.find((t) => t.name === 'list_traces')!;
+
+  it('has correct name', () => {
+    expect(listTracesTool.name).toBe('list_traces');
+  });
+
+  it('has a description', () => {
+    expect(listTracesTool.description).toBeDefined();
+    expect(listTracesTool.description!.length).toBeGreaterThan(0);
+  });
+
+  it('has inputSchema with type object', () => {
+    expect(listTracesTool.inputSchema.type).toBe('object');
+  });
+
+  it('has no required parameters', () => {
+    expect(listTracesTool.inputSchema.required).toBeUndefined();
+  });
+
+  describe('parameters', () => {
+    const props = listTracesTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+
+    it('has provider parameter', () => {
+      expect(props.provider).toBeDefined();
+      expect(props.provider.type).toBe('string');
+    });
+
+    it('has model parameter', () => {
+      expect(props.model).toBeDefined();
+      expect(props.model.type).toBe('string');
+    });
+
+    it('has status parameter with enum', () => {
+      expect(props.status).toBeDefined();
+      expect(props.status.type).toBe('string');
+      expect(props.status.enum).toContain('STATUS_CODE_OK');
+      expect(props.status.enum).toContain('STATUS_CODE_ERROR');
+    });
+
+    it('has limit parameter', () => {
+      expect(props.limit).toBeDefined();
+      expect(props.limit.type).toBe('number');
+    });
+
+    it('has hours parameter', () => {
+      expect(props.hours).toBeDefined();
+      expect(props.hours.type).toBe('number');
+    });
+
+    it('has cursor parameter', () => {
+      expect(props.cursor).toBeDefined();
+      expect(props.cursor.type).toBe('string');
+    });
+  });
+});
+
+describe('get_trace tool definition', () => {
+  const getTraceTool = TOOL_DEFINITIONS.find((t) => t.name === 'get_trace')!;
+
+  it('has correct name', () => {
+    expect(getTraceTool.name).toBe('get_trace');
+  });
+
+  it('has a description', () => {
+    expect(getTraceTool.description).toBeDefined();
+    expect(getTraceTool.description!.length).toBeGreaterThan(0);
+  });
+
+  it('has inputSchema with type object', () => {
+    expect(getTraceTool.inputSchema.type).toBe('object');
+  });
+
+  it('requires trace_id parameter', () => {
+    expect(getTraceTool.inputSchema.required).toContain('trace_id');
+  });
+
+  describe('parameters', () => {
+    const props = getTraceTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+
+    it('has trace_id parameter', () => {
+      expect(props.trace_id).toBeDefined();
+      expect(props.trace_id.type).toBe('string');
+    });
+
+    it('has expand parameter as array', () => {
+      expect(props.expand).toBeDefined();
+      expect(props.expand.type).toBe('array');
+    });
+
+    it('expand has valid enum items', () => {
+      const expandItems = props.expand.items as { enum: string[] };
+      expect(expandItems.enum).toContain('provider');
+      expect(expandItems.enum).toContain('model');
+      expect(expandItems.enum).toContain('tokens');
+      expect(expandItems.enum).toContain('costs');
+      expect(expandItems.enum).toContain('ttft');
+      expect(expandItems.enum).toContain('parent');
+      expect(expandItems.enum).toContain('url');
+      expect(expandItems.enum).toContain('http');
+      expect(expandItems.enum).toContain('status_message');
+      expect(expandItems.enum).toContain('baggage');
+    });
+
+    it('has limit parameter', () => {
+      expect(props.limit).toBeDefined();
+      expect(props.limit.type).toBe('number');
+    });
+
+    it('has cursor parameter', () => {
+      expect(props.cursor).toBeDefined();
+      expect(props.cursor.type).toBe('string');
+    });
+
+    it('has span_names parameter as array', () => {
+      expect(props.span_names).toBeDefined();
+      expect(props.span_names.type).toBe('array');
+    });
+
+    it('has top_n parameter', () => {
+      expect(props.top_n).toBeDefined();
+      expect(props.top_n.type).toBe('number');
+    });
+
+    it('has sort_by parameter with enum', () => {
+      expect(props.sort_by).toBeDefined();
+      expect(props.sort_by.type).toBe('string');
+      expect(props.sort_by.enum).toContain('duration_ms');
+      expect(props.sort_by.enum).toContain('cost_usd');
+      expect(props.sort_by.enum).toContain('tokens');
+    });
+
+    it('has min_duration_ms parameter', () => {
+      expect(props.min_duration_ms).toBeDefined();
+      expect(props.min_duration_ms.type).toBe('number');
+    });
+
+    it('has exclude_span_names parameter as array', () => {
+      expect(props.exclude_span_names).toBeDefined();
+      expect(props.exclude_span_names.type).toBe('array');
+    });
+
+    it('has include_summary parameter', () => {
+      expect(props.include_summary).toBeDefined();
+      expect(props.include_summary.type).toBe('boolean');
+    });
+  });
+});

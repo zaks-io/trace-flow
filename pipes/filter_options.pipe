@@ -1,0 +1,44 @@
+DESCRIPTION >
+    Get distinct filter options (providers, models, statuses) for the requests table.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE providers
+SQL >
+    %
+    SELECT DISTINCT JSONExtractString(SpanAttributes, 'ai.provider') as value
+    FROM otel_traces
+    WHERE SpanName = 'ai.request'
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND value != ''
+    ORDER BY value
+    LIMIT 100
+
+NODE models
+SQL >
+    %
+    SELECT DISTINCT JSONExtractString(SpanAttributes, 'ai.model') as value
+    FROM otel_traces
+    WHERE SpanName = 'ai.request'
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND value != ''
+    ORDER BY value
+    LIMIT 100
+
+NODE statuses
+SQL >
+    %
+    SELECT DISTINCT StatusCode as value
+    FROM otel_traces
+    WHERE SpanName = 'ai.request'
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    ORDER BY value
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        (SELECT groupArray(value) FROM providers) as providers,
+        (SELECT groupArray(value) FROM models) as models,
+        (SELECT groupArray(value) FROM statuses) as statuses
+
+TYPE ENDPOINT

@@ -1,7 +1,9 @@
-import { action, internalAction } from './_generated/server';
+import { action, internalAction, type ActionCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { SignJWT } from 'jose';
 import { requireTraceFlowRole } from './auth';
+import { api, internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 
 const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
 const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
@@ -12,6 +14,12 @@ if (!adminToken) {
 
 if (!workspaceId) {
   throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
+}
+
+interface TinybirdScope {
+  type: string;
+  resource: string;
+  fixed_params?: Record<string, unknown>;
 }
 
 export const generateToken = action({
@@ -37,6 +45,20 @@ export const generateToken = action({
       throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
     }
 
+    // Fetch user's API keys to enforce row-level security
+    const user = await ctx.runQuery(api.users.getCurrentUserQuery, {});
+    const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
+
+    // Add api_keys to fixed_params for row-level security
+    // Use sentinel value when user has no keys to prevent matching empty strings
+    const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
+      ...scope,
+      fixed_params: {
+        ...scope.fixed_params,
+        api_keys: apiKeyString || '__NO_KEYS__',
+      },
+    }));
+
     const ttlSeconds = args.ttl ?? 600;
     const expirationTime = Math.floor(Date.now() / 1000) + ttlSeconds;
     const tokenName = args.name ?? `convex_jwt_${Date.now()}`;
@@ -44,7 +66,7 @@ export const generateToken = action({
     const payload = {
       workspace_id: workspaceId,
       name: tokenName,
-      scopes: args.scopes,
+      scopes: scopesWithApiKeys,
     };
 
     const secret = new TextEncoder().encode(adminToken);
@@ -61,18 +83,33 @@ export const generateToken = action({
   },
 });
 
-// Internal action for MCP - bypasses Convex auth
+async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
+  const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
+  return apiKeys.map((k: { key: string }) => k.key).join(',');
+}
+
+// Internal action for MCP - bypasses Convex auth, requires apiKeys parameter
 export const generateTokenInternal = internalAction({
   args: {
     scopes: v.array(v.object({ type: v.string(), resource: v.string() })),
+    apiKeys: v.array(v.string()),
     ttl: v.optional(v.number()),
   },
   handler: async (_, args) => {
+    // Use sentinel value when no keys to prevent matching empty strings
+    const apiKeyString = args.apiKeys.join(',') || '__NO_KEYS__';
+
+    // Add api_keys to fixed_params for row-level security
+    const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
+      ...scope,
+      fixed_params: { api_keys: apiKeyString },
+    }));
+
     const ttlSeconds = args.ttl ?? 600;
     const payload = {
       workspace_id: workspaceId,
       name: `mcp_jwt_${Date.now()}`,
-      scopes: args.scopes,
+      scopes: scopesWithApiKeys,
     };
 
     const secret = new TextEncoder().encode(adminToken);

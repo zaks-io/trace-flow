@@ -1,0 +1,30 @@
+DESCRIPTION >
+    Get per-provider aggregated statistics for a specific trace.
+    Used by MCP tools for summary.by_provider data.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        JSONExtractString(SpanAttributes, 'ai.provider') as provider,
+        count() as count,
+        sum(Duration) / 1000000 as duration_ms,
+        sum(JSONExtractFloat(SpanAttributes, 'ai.cost.total')) as cost_usd,
+        sum(JSONExtractInt(SpanAttributes, 'ai.tokens.total')) as tokens
+    FROM otel_traces
+    WHERE TraceId = {{ String(trace_id, '') }}
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND JSONExtractString(SpanAttributes, 'ai.provider') != ''
+        {% if defined(span_names) %}
+        AND SpanName IN splitByChar(',', {{ String(span_names) }})
+        {% end %}
+        {% if defined(exclude_span_names) %}
+        AND SpanName NOT IN splitByChar(',', {{ String(exclude_span_names) }})
+        {% end %}
+        {% if defined(min_duration_ms) %}
+        AND Duration >= {{ Int64(min_duration_ms) }} * 1000000
+        {% end %}
+    GROUP BY provider
+    ORDER BY count DESC
+
+TYPE ENDPOINT

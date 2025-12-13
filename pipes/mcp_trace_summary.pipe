@@ -1,0 +1,29 @@
+DESCRIPTION >
+    Get aggregated statistics for a specific trace.
+    Used by MCP tools. The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        count() as span_count,
+        sum(Duration) / 1000000 as total_duration_ms,
+        sum(JSONExtractFloat(SpanAttributes, 'ai.cost.total')) as total_cost_usd,
+        sum(JSONExtractInt(SpanAttributes, 'ai.tokens.total')) as total_tokens,
+        countIf(StatusCode = 'STATUS_CODE_ERROR') as error_count,
+        min(Timestamp) as first_timestamp,
+        max(Timestamp) as last_timestamp
+    FROM otel_traces
+    WHERE TraceId = {{ String(trace_id, '') }}
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        {% if defined(span_names) %}
+        AND SpanName IN splitByChar(',', {{ String(span_names) }})
+        {% end %}
+        {% if defined(exclude_span_names) %}
+        AND SpanName NOT IN splitByChar(',', {{ String(exclude_span_names) }})
+        {% end %}
+        {% if defined(min_duration_ms) %}
+        AND Duration >= {{ Int64(min_duration_ms) }} * 1000000
+        {% end %}
+
+TYPE ENDPOINT

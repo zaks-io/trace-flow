@@ -4,8 +4,7 @@ import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-
 import { useQuery } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
-import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
-import { useUserApiKeys } from '@/hooks/useUserApiKeys';
+import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
@@ -50,24 +49,14 @@ export default function TraceDetail() {
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
-  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
   const validatedTraceId = validateTraceId(traceId);
   const alerts = useQuery(api.alerts.listEnabled);
 
-  const { data, loading, error } = useTinybirdQuery<TinybirdResponse>({
-    sql: validatedTraceId
-      ? `SELECT
-      ReceivedAt, Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName,
-      Duration, StatusCode, StatusMessage, SpanAttributes, ResourceAttributes,
-      Events.Timestamp, Events.Name, Events.Attributes
-    FROM otel_traces
-    WHERE TraceId = '${validatedTraceId}'
-    ORDER BY Timestamp ASC
-    FORMAT JSON`
-      : '',
-    scopes: [{ type: 'PIPES:READ', resource: 'otel_traces' }],
+  // API key filtering is now handled server-side via JWT fixed_params
+  const { data, loading, error } = useTinybirdPipe<TinybirdResponse>({
+    pipe: 'trace_detail',
+    params: validatedTraceId ? { trace_id: validatedTraceId } : undefined,
     enabled: !!validatedTraceId,
-    apiKeys: userApiKeys,
   });
 
   const spans = data?.data ?? [];
@@ -154,7 +143,7 @@ export default function TraceDetail() {
     );
   }
 
-  if (loading || keysLoading) {
+  if (loading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">

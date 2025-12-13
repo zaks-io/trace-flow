@@ -10,8 +10,7 @@ import {
   Cpu,
   Server,
 } from 'lucide-react';
-import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
-import { useUserApiKeys } from '@/hooks/useUserApiKeys';
+import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { usePageHeader } from '@/components/PageHeaderContext';
 
 type TimeRange = '24h' | '7d' | '30d';
@@ -120,74 +119,29 @@ export default function Dashboard() {
   usePageHeader('Dashboard');
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const { keys: userApiKeys, isLoading: keysLoading } = useUserApiKeys();
 
   const startTimeNs = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
     return (Date.now() - (range?.ms ?? 0)) * 1_000_000;
   }, [timeRange]);
 
-  const summaryQuery = useTinybirdQuery<SummaryData>({
-    sql: `
-      SELECT
-        countIf(ParentSpanId = '') as total_requests,
-        count() as total_traces,
-        avgIf(
-          JSONExtractFloat(SpanAttributes, 'ai.time_to_first_token_ms'),
-          SpanName = 'ai.request' AND JSONHas(SpanAttributes, 'ai.time_to_first_token_ms')
-        ) as avg_ttft_ms,
-        avgIf(Duration, ParentSpanId = '') / 1000000 as avg_duration_ms,
-        countIf(StatusCode = 'STATUS_CODE_ERROR' AND ParentSpanId = '') * 100.0 /
-          nullIf(countIf(ParentSpanId = ''), 0) as error_rate_percent,
-        sumIf(
-          JSONExtractInt(SpanAttributes, 'ai.tokens.prompt'),
-          ParentSpanId = ''
-        ) as total_input_tokens,
-        sumIf(
-          JSONExtractInt(SpanAttributes, 'ai.tokens.completion'),
-          ParentSpanId = ''
-        ) as total_output_tokens
-      FROM otel_traces
-      WHERE ReceivedAt >= ${startTimeNs}
-      FORMAT JSON
-    `,
-    scopes: [{ type: 'DATASOURCES:READ', resource: 'otel_traces' }],
-    apiKeys: userApiKeys,
+  // All queries now use Pipes with server-side API key filtering via JWT fixed_params
+  const summaryQuery = useTinybirdPipe<SummaryData>({
+    pipe: 'traces_summary',
+    params: { start_time_ns: startTimeNs },
+    transform: (result) => result as SummaryData,
   });
 
-  const modelsQuery = useTinybirdQuery<ModelData>({
-    sql: `
-      SELECT
-        JSONExtractString(SpanAttributes, 'ai.model') as model,
-        count() as request_count
-      FROM otel_traces
-      WHERE ParentSpanId = ''
-        AND ReceivedAt >= ${startTimeNs}
-        AND JSONExtractString(SpanAttributes, 'ai.model') != ''
-      GROUP BY model
-      ORDER BY request_count DESC
-      LIMIT 10
-      FORMAT JSON
-    `,
-    scopes: [{ type: 'DATASOURCES:READ', resource: 'otel_traces' }],
-    apiKeys: userApiKeys,
+  const modelsQuery = useTinybirdPipe<ModelData>({
+    pipe: 'traces_models',
+    params: { start_time_ns: startTimeNs },
+    transform: (result) => result as ModelData,
   });
 
-  const providersQuery = useTinybirdQuery<ProviderData>({
-    sql: `
-      SELECT
-        JSONExtractString(SpanAttributes, 'ai.provider') as provider,
-        count() as request_count
-      FROM otel_traces
-      WHERE ParentSpanId = ''
-        AND ReceivedAt >= ${startTimeNs}
-        AND JSONExtractString(SpanAttributes, 'ai.provider') != ''
-      GROUP BY provider
-      ORDER BY request_count DESC
-      FORMAT JSON
-    `,
-    scopes: [{ type: 'DATASOURCES:READ', resource: 'otel_traces' }],
-    apiKeys: userApiKeys,
+  const providersQuery = useTinybirdPipe<ProviderData>({
+    pipe: 'traces_providers',
+    params: { start_time_ns: startTimeNs },
+    transform: (result) => result as ProviderData,
   });
 
   // Track if this is the initial render to avoid double-fetching
@@ -213,7 +167,6 @@ export default function Dashboard() {
   );
 
   const isLoading =
-    keysLoading === true ||
     summaryQuery.loading === true ||
     modelsQuery.loading === true ||
     providersQuery.loading === true;
