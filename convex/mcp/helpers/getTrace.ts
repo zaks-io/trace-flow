@@ -37,22 +37,8 @@ export interface ParsedSpan {
   model: string | undefined;
   target_url: string | undefined;
   http_status: string | undefined;
-  tokens:
-    | {
-        prompt: number;
-        completion: number;
-        total: number;
-        cached: number;
-        reasoning: number;
-      }
-    | undefined;
-  cost_usd:
-    | {
-        input: number;
-        output: number;
-        total: number;
-      }
-    | undefined;
+  tokens: Record<string, number> | undefined;
+  cost_usd: Record<string, number> | undefined;
   time_to_first_token_ms: number | undefined;
   baggage: Record<string, string> | undefined;
   events: ParsedEvent[] | undefined;
@@ -132,6 +118,20 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
   const outputCost = Number(attrs['ai.cost.output']) || 0;
   const totalCost = Number(attrs['ai.cost.total']) || 0;
 
+  // Build tokens object with only non-zero values
+  const tokens: Record<string, number> = {};
+  if (promptTokens > 0) tokens.prompt = promptTokens;
+  if (completionTokens > 0) tokens.completion = completionTokens;
+  if (totalTokens > 0) tokens.total = totalTokens;
+  if (cachedTokens > 0) tokens.cached = cachedTokens;
+  if (reasoningTokens > 0) tokens.reasoning = reasoningTokens;
+
+  // Build cost object with only non-zero values
+  const costUsd: Record<string, number> = {};
+  if (inputCost > 0) costUsd.input = inputCost;
+  if (outputCost > 0) costUsd.output = outputCost;
+  if (totalCost > 0) costUsd.total = totalCost;
+
   return {
     span_id: row.SpanId as string,
     parent_span_id: row.ParentSpanId as string | undefined,
@@ -144,20 +144,8 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     model: attrs['ai.model'] as string | undefined,
     target_url: attrs['ai.target_url'] as string | undefined,
     http_status: attrs['http.status_code'] as string | undefined,
-    tokens:
-      totalTokens > 0 || promptTokens > 0 || completionTokens > 0
-        ? {
-            prompt: promptTokens,
-            completion: completionTokens,
-            total: totalTokens,
-            cached: cachedTokens,
-            reasoning: reasoningTokens,
-          }
-        : undefined,
-    cost_usd:
-      totalCost > 0 || inputCost > 0 || outputCost > 0
-        ? { input: inputCost, output: outputCost, total: totalCost }
-        : undefined,
+    tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
+    cost_usd: Object.keys(costUsd).length > 0 ? costUsd : undefined,
     time_to_first_token_ms: Number(attrs['ai.time_to_first_token_ms']) || undefined,
     baggage: extractBaggage(attrs),
     events: parseEvents(row.EventTimestamps, row.EventNames, row.EventAttributes),
@@ -185,7 +173,7 @@ export function buildOutputSpan(span: ParsedSpan, expand: Set<string>): Record<s
   if (expand.has('ttft') && span.time_to_first_token_ms)
     output.time_to_first_token_ms = span.time_to_first_token_ms;
   if (expand.has('baggage') && span.baggage) output.baggage = span.baggage;
-  if (expand.has('events') && span.events) output.events = span.events;
+  // Note: events are now handled by get_trace_events tool, not included in span output
 
   return output;
 }

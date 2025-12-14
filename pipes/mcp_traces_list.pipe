@@ -1,21 +1,24 @@
 DESCRIPTION >
     List traces with offset-based pagination for MCP tools.
+    Returns formatted fields ready for API response.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE endpoint
 SQL >
     %
     SELECT
-        TraceId,
-        ReceivedAt,
+        TraceId as trace_id,
+        formatDateTime(toDateTime(ReceivedAt / 1000000000), '%Y-%m-%dT%H:%i:%S') || '.' ||
+            lpad(toString(toInt64(ReceivedAt / 1000000) % 1000), 3, '0') || 'Z' as timestamp,
         Duration / 1000000 as duration_ms,
-        StatusCode,
+        if(StatusCode = 'STATUS_CODE_OK', 'ok', 'error') as status,
         JSONExtractString(SpanAttributes, 'ai.provider') as provider,
         JSONExtractString(SpanAttributes, 'ai.model') as model,
         JSONExtractInt(SpanAttributes, 'ai.tokens.prompt') as prompt_tokens,
         JSONExtractInt(SpanAttributes, 'ai.tokens.completion') as completion_tokens,
         JSONExtractInt(SpanAttributes, 'ai.tokens.total') as total_tokens,
-        JSONExtractFloat(SpanAttributes, 'ai.cost.total') as cost_usd
+        JSONExtractFloat(SpanAttributes, 'ai.cost.total') as cost_usd,
+        count(*) OVER() as total_count
     FROM otel_traces
     WHERE SpanName = 'ai.request'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
@@ -29,8 +32,18 @@ SQL >
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}
         {% end %}
-    ORDER BY ReceivedAt DESC
-    LIMIT {{ Int32(limit, 10) }} + 1
+    ORDER BY
+        {% if defined(sort_by) and sort_by == 'duration_ms' %}
+        duration_ms
+        {% elif defined(sort_by) and sort_by == 'cost_usd' %}
+        cost_usd
+        {% elif defined(sort_by) and sort_by == 'tokens' %}
+        total_tokens
+        {% else %}
+        ReceivedAt
+        {% end %}
+        {% if defined(order) and order == 'asc' %}ASC{% else %}DESC{% end %}
+    LIMIT {{ Int32(limit, 10) }}
     OFFSET {{ Int32(offset, 0) }}
 
 TYPE ENDPOINT

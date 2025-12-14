@@ -100,14 +100,12 @@ describe('parseSpanRow', () => {
     expect(result.model).toBe('gpt-4');
   });
 
-  it('parses tokens', () => {
+  it('parses tokens (zero values stripped)', () => {
     const result = parseSpanRow(baseRow);
     expect(result.tokens).toEqual({
       prompt: 100,
       completion: 50,
       total: 150,
-      cached: 0,
-      reasoning: 0,
     });
   });
 
@@ -196,7 +194,7 @@ describe('buildOutputSpan', () => {
     model: 'gpt-4',
     target_url: 'https://api.openai.com',
     http_status: '200',
-    tokens: { prompt: 10, completion: 5, total: 15, cached: 0, reasoning: 0 },
+    tokens: { prompt: 10, completion: 5, total: 15 },
     cost_usd: { input: 0.001, output: 0.002, total: 0.003 },
     time_to_first_token_ms: 50,
     baggage: { userId: 'user123' },
@@ -254,14 +252,12 @@ describe('buildOutputSpan', () => {
     expect(result.http_status).toBe('200');
   });
 
-  it('includes tokens when expanded', () => {
+  it('includes tokens when expanded (zero values stripped)', () => {
     const result = buildOutputSpan(span, new Set(['tokens']));
     expect(result.tokens).toEqual({
       prompt: 10,
       completion: 5,
       total: 15,
-      cached: 0,
-      reasoning: 0,
     });
   });
 
@@ -280,12 +276,9 @@ describe('buildOutputSpan', () => {
     expect(result.baggage).toEqual({ userId: 'user123' });
   });
 
-  it('includes events when expanded', () => {
+  it('excludes events even when expanded (events handled by get_trace_events tool)', () => {
     const result = buildOutputSpan(span, new Set(['events']));
-    expect(result.events).toEqual([
-      { name: 'input.text', timestamp: '2024-01-01T00:00:00Z', attributes: { role: 'user' } },
-      { name: 'output.text', timestamp: '2024-01-01T00:00:00.5Z', attributes: { type: 'text' } },
-    ]);
+    expect(result.events).toBeUndefined();
   });
 
   it('excludes events when not expanded', () => {

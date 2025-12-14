@@ -9,6 +9,7 @@ import {
   traceNotFoundError,
   jsonReplacer,
   stripNulls,
+  splitPatterns,
 } from '../tools/shared';
 
 describe('TRACE_ID_PATTERN', () => {
@@ -408,5 +409,37 @@ describe('stripNulls', () => {
   it('returns undefined for empty array after stripping', () => {
     const result = stripNulls([null, undefined]);
     expect(result).toBeUndefined();
+  });
+});
+
+describe('splitPatterns', () => {
+  it('separates exact patterns from wildcard prefixes', () => {
+    const result = splitPatterns(['ai.request', 'http.*', 'db.query']);
+    expect(result.exact).toEqual(['ai.request', 'db.query']);
+    expect(result.prefixes).toEqual(['http.']);
+  });
+
+  it('handles patterns ending with .*', () => {
+    const result = splitPatterns(['ai.*', 'gen_ai.*']);
+    expect(result.exact).toEqual([]);
+    expect(result.prefixes).toEqual(['ai.', 'gen_ai.']);
+  });
+
+  it('returns empty arrays for empty input', () => {
+    const result = splitPatterns([]);
+    expect(result.exact).toEqual([]);
+    expect(result.prefixes).toEqual([]);
+  });
+
+  it('handles all exact patterns', () => {
+    const result = splitPatterns(['ai.request', 'ai.response', 'http.request']);
+    expect(result.exact).toEqual(['ai.request', 'ai.response', 'http.request']);
+    expect(result.prefixes).toEqual([]);
+  });
+
+  it('handles single wildcard pattern', () => {
+    const result = splitPatterns(['ai.*']);
+    expect(result.exact).toEqual([]);
+    expect(result.prefixes).toEqual(['ai.']);
   });
 });

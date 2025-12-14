@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import type { ToolCallResult } from '../protocol';
 import {
   jsonReplacer,
+  stripNulls,
   queryTinybirdPipe,
   noApiKeysError,
   generateTinybirdToken,
@@ -12,17 +13,18 @@ import {
   MAX_HOURS,
 } from './shared';
 
-interface TraceRow {
-  TraceId: string;
-  ReceivedAt: number;
+export interface TraceRow {
+  trace_id: string;
+  timestamp: string;
   duration_ms: number;
-  StatusCode: string;
+  status: string;
   provider: string;
   model: string;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   cost_usd: number;
+  total_count: number;
 }
 
 interface FormattedTrace {
@@ -32,28 +34,25 @@ interface FormattedTrace {
   status: string;
   provider: string;
   model: string;
-  tokens: {
-    prompt: number;
-    completion: number;
-    total: number;
-  };
-  cost_usd: number;
+  tokens?: Record<string, number>;
+  cost_usd?: number;
 }
 
-function formatTraceRow(row: TraceRow): FormattedTrace {
+export function formatTraceRow(row: TraceRow): FormattedTrace {
+  const tokens: Record<string, number> = {};
+  if (row.prompt_tokens > 0) tokens.prompt = row.prompt_tokens;
+  if (row.completion_tokens > 0) tokens.completion = row.completion_tokens;
+  if (row.total_tokens > 0) tokens.total = row.total_tokens;
+
   return {
-    trace_id: row.TraceId,
-    timestamp: new Date(Number(row.ReceivedAt) / 1_000_000).toISOString(),
+    trace_id: row.trace_id,
+    timestamp: row.timestamp,
     duration_ms: row.duration_ms,
-    status: row.StatusCode === 'STATUS_CODE_OK' ? 'ok' : 'error',
+    status: row.status,
     provider: row.provider,
     model: row.model,
-    tokens: {
-      prompt: row.prompt_tokens,
-      completion: row.completion_tokens,
-      total: row.total_tokens,
-    },
-    cost_usd: row.cost_usd,
+    tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
+    cost_usd: row.cost_usd > 0 ? row.cost_usd : undefined,
   };
 }
 
@@ -67,6 +66,8 @@ export const listTraces = internalAction({
       limit: v.optional(v.number()),
       hours: v.optional(v.number()),
       cursor: v.optional(v.string()),
+      sort_by: v.optional(v.string()),
+      order: v.optional(v.string()),
     }),
   },
   handler: async (_, args): Promise<ToolCallResult> => {
@@ -76,19 +77,16 @@ export const listTraces = internalAction({
       return noApiKeysError();
     }
 
-    // Generate token with Pipe access
     const token = await generateTinybirdToken(
       [{ type: 'PIPES:READ', resource: 'mcp_traces_list' }],
       apiKeys,
     );
 
-    // Normalize parameters
     const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
     const hours = Math.min(params.hours ?? DEFAULT_HOURS, MAX_HOURS);
     const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
     const startTimeNs = (Date.now() - hours * 60 * 60 * 1000) * 1_000_000;
 
-    // Build pipe parameters
     const pipeParams: Record<string, string | number | undefined> = {
       start_time_ns: startTimeNs,
       limit,
@@ -98,14 +96,14 @@ export const listTraces = internalAction({
     if (params.provider) pipeParams.provider = params.provider;
     if (params.model) pipeParams.model = params.model;
     if (params.status) pipeParams.status = params.status;
+    if (params.sort_by) pipeParams.sort_by = params.sort_by;
+    if (params.order) pipeParams.order = params.order;
 
-    // Fetch from pipe
     const data = await queryTinybirdPipe(token, 'mcp_traces_list', pipeParams);
 
-    // Process results
-    const hasMore = data.length > limit;
-    const traces = hasMore ? data.slice(0, limit) : data;
-    const formattedTraces = traces.map((row) => formatTraceRow(row as unknown as TraceRow));
+    const totalCount = data.length > 0 ? (data[0] as unknown as TraceRow).total_count : 0;
+    const hasMore = totalCount > offset + data.length;
+    const formattedTraces = data.map((row) => formatTraceRow(row as unknown as TraceRow));
     const nextCursor = hasMore ? String(offset + limit) : undefined;
 
     const result = {
@@ -118,7 +116,7 @@ export const listTraces = internalAction({
     };
 
     return {
-      content: [{ type: 'text', text: JSON.stringify(result, jsonReplacer) }],
+      content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
     };
   },
 });

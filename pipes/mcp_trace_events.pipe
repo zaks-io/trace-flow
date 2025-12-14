@@ -1,0 +1,48 @@
+DESCRIPTION >
+    Get flattened events for a specific trace with server-side pagination.
+    Events are extracted from the nested arrays and returned as individual rows.
+    Used by MCP tools. The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        TraceId,
+        SpanId,
+        SpanName,
+        event_name,
+        event_timestamp,
+        event_attributes,
+        count(*) OVER() as total_count
+    FROM (
+        SELECT
+            TraceId,
+            SpanId,
+            SpanName,
+            `Events.Name`[idx] as event_name,
+            `Events.Timestamp`[idx] as event_timestamp,
+            `Events.Attributes`[idx] as event_attributes,
+            idx
+        FROM otel_traces
+        ARRAY JOIN arrayEnumerate(`Events.Name`) as idx
+        WHERE TraceId = {{ String(trace_id, '') }}
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND length(`Events.Name`) > 0
+            {% if defined(span_id) %}
+            AND SpanId = {{ String(span_id) }}
+            {% end %}
+            {% if defined(span_names) %}
+            AND SpanName IN splitByChar(',', {{ String(span_names) }})
+            {% end %}
+            {% if defined(span_name_prefixes) %}
+            AND SpanName LIKE any(arrayMap(x -> concat(x, '%'), splitByChar(',', {{ String(span_name_prefixes) }})))
+            {% end %}
+            {% if defined(event_names) %}
+            AND `Events.Name`[idx] IN splitByChar(',', {{ String(event_names) }})
+            {% end %}
+    )
+    ORDER BY event_timestamp {% if defined(order) and order == 'desc' %}DESC{% else %}ASC{% end %}
+    LIMIT {{ Int32(limit, 20) }}
+    OFFSET {{ Int32(offset, 0) }}
+
+TYPE ENDPOINT

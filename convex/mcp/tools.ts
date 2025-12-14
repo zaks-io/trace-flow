@@ -1,1 +1,7 @@
-export { TOOL_DEFINITIONS, listTraces, getTrace } from './tools/index';
+export {
+  TOOL_DEFINITIONS,
+  listTraces,
+  getTrace,
+  getTraceSpans,
+  getTraceEvents,
+} from './tools/index';
