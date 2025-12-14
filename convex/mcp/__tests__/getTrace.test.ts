@@ -1,59 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseEvents, parseSpanRow, buildOutputSpan, type ParsedSpan } from '../helpers/getTrace';
-
-describe('parseEvents', () => {
-  it('parses events from parallel arrays', () => {
-    const timestamps = [1700000000000000000n, 1700000001000000000n];
-    const names = ['input.text', 'output.text'];
-    const attributes = [
-      JSON.stringify({ 'ai.message.role': 'user' }),
-      JSON.stringify({ 'ai.content.type': 'text' }),
-    ];
-
-    const result = parseEvents(timestamps, names, attributes);
-    expect(result).toHaveLength(2);
-    expect(result![0].name).toBe('input.text');
-    expect(result![0].attributes['ai.message.role']).toBe('user');
-    expect(result![1].name).toBe('output.text');
-  });
-
-  it('returns undefined for empty names array', () => {
-    const result = parseEvents([], [], []);
-    expect(result).toBeUndefined();
-  });
-
-  it('returns undefined for non-array names', () => {
-    const result = parseEvents([], null, []);
-    expect(result).toBeUndefined();
-  });
-
-  it('handles missing timestamps gracefully', () => {
-    const names = ['input.text'];
-    const attributes = [JSON.stringify({ role: 'user' })];
-
-    const result = parseEvents([], names, attributes);
-    expect(result).toHaveLength(1);
-    expect(result![0].name).toBe('input.text');
-  });
-
-  it('handles object attributes', () => {
-    const names = ['input.text'];
-    const attributes = [{ role: 'user' }];
-
-    const result = parseEvents([0], names, attributes);
-    expect(result).toHaveLength(1);
-    expect(result![0].attributes.role).toBe('user');
-  });
-
-  it('handles invalid JSON in attributes', () => {
-    const names = ['input.text'];
-    const attributes = ['not valid json'];
-
-    const result = parseEvents([0], names, attributes);
-    expect(result).toHaveLength(1);
-    expect(result![0].attributes).toEqual({});
-  });
-});
+import { parseSpanRow, buildOutputSpan, type ParsedSpan } from '../helpers/getTrace';
 
 describe('parseSpanRow', () => {
   const baseRow = {
@@ -76,9 +22,6 @@ describe('parseSpanRow', () => {
       'ai.cost.output': 0.002,
       'ai.cost.total': 0.003,
     }),
-    EventTimestamps: [],
-    EventNames: [],
-    EventAttributes: [],
   };
 
   it('parses basic span fields', () => {
@@ -100,14 +43,12 @@ describe('parseSpanRow', () => {
     expect(result.model).toBe('gpt-4');
   });
 
-  it('parses tokens', () => {
+  it('parses tokens (zero values stripped)', () => {
     const result = parseSpanRow(baseRow);
     expect(result.tokens).toEqual({
       prompt: 100,
       completion: 50,
       total: 150,
-      cached: 0,
-      reasoning: 0,
     });
   });
 
@@ -130,24 +71,6 @@ describe('parseSpanRow', () => {
     const row = { ...baseRow, SpanAttributes: '{}' };
     const result = parseSpanRow(row);
     expect(result.cost_usd).toBeUndefined();
-  });
-
-  it('parses events when present', () => {
-    const row = {
-      ...baseRow,
-      EventTimestamps: [1700000000000000000n],
-      EventNames: ['input.text'],
-      EventAttributes: [JSON.stringify({ 'ai.message.role': 'user' })],
-    };
-    const result = parseSpanRow(row);
-    expect(result.events).toHaveLength(1);
-    expect(result.events![0].name).toBe('input.text');
-    expect(result.events![0].attributes['ai.message.role']).toBe('user');
-  });
-
-  it('returns undefined events when no events', () => {
-    const result = parseSpanRow(baseRow);
-    expect(result.events).toBeUndefined();
   });
 
   it('converts error status code', () => {
@@ -196,14 +119,10 @@ describe('buildOutputSpan', () => {
     model: 'gpt-4',
     target_url: 'https://api.openai.com',
     http_status: '200',
-    tokens: { prompt: 10, completion: 5, total: 15, cached: 0, reasoning: 0 },
+    tokens: { prompt: 10, completion: 5, total: 15 },
     cost_usd: { input: 0.001, output: 0.002, total: 0.003 },
     time_to_first_token_ms: 50,
     baggage: { userId: 'user123' },
-    events: [
-      { name: 'input.text', timestamp: '2024-01-01T00:00:00Z', attributes: { role: 'user' } },
-      { name: 'output.text', timestamp: '2024-01-01T00:00:00.5Z', attributes: { type: 'text' } },
-    ],
   };
 
   it('includes base fields by default', () => {
@@ -254,14 +173,12 @@ describe('buildOutputSpan', () => {
     expect(result.http_status).toBe('200');
   });
 
-  it('includes tokens when expanded', () => {
+  it('includes tokens when expanded (zero values stripped)', () => {
     const result = buildOutputSpan(span, new Set(['tokens']));
     expect(result.tokens).toEqual({
       prompt: 10,
       completion: 5,
       total: 15,
-      cached: 0,
-      reasoning: 0,
     });
   });
 
@@ -278,19 +195,6 @@ describe('buildOutputSpan', () => {
   it('includes baggage when expanded', () => {
     const result = buildOutputSpan(span, new Set(['baggage']));
     expect(result.baggage).toEqual({ userId: 'user123' });
-  });
-
-  it('includes events when expanded', () => {
-    const result = buildOutputSpan(span, new Set(['events']));
-    expect(result.events).toEqual([
-      { name: 'input.text', timestamp: '2024-01-01T00:00:00Z', attributes: { role: 'user' } },
-      { name: 'output.text', timestamp: '2024-01-01T00:00:00.5Z', attributes: { type: 'text' } },
-    ]);
-  });
-
-  it('excludes events when not expanded', () => {
-    const result = buildOutputSpan(span, new Set());
-    expect(result.events).toBeUndefined();
   });
 
   it('includes multiple expanded fields', () => {
@@ -318,7 +222,6 @@ describe('buildOutputSpan', () => {
       cost_usd: undefined,
       time_to_first_token_ms: undefined,
       baggage: undefined,
-      events: undefined,
     };
 
     const result = buildOutputSpan(spanWithoutOptionals, new Set(['provider', 'model', 'tokens']));

@@ -268,19 +268,39 @@ async function handleToolsCall(
   } else if (params.name === 'get_trace') {
     const getArgs = (params.arguments ?? {}) as {
       trace_id: string;
-      expand?: string[];
-      limit?: number;
-      cursor?: string;
-      span_names?: string[];
-      top_n?: number;
-      sort_by?: string;
-      min_duration_ms?: number;
-      exclude_span_names?: string[];
-      include_summary?: boolean;
     };
     result = await ctx.runAction(internal.mcp.tools.getTrace, {
       apiKeys: apiKeyStrings,
       params: getArgs,
+    });
+  } else if (params.name === 'get_trace_spans') {
+    const getSpansArgs = (params.arguments ?? {}) as {
+      trace_id: string;
+      expand?: string[];
+      span_names?: string[];
+      exclude_span_names?: string[];
+      min_duration_ms?: number;
+      sort_by?: string;
+      top_n?: number;
+      limit?: number;
+      cursor?: string;
+    };
+    result = await ctx.runAction(internal.mcp.tools.getTraceSpans, {
+      apiKeys: apiKeyStrings,
+      params: getSpansArgs,
+    });
+  } else if (params.name === 'get_trace_events') {
+    const getEventsArgs = (params.arguments ?? {}) as {
+      trace_id: string;
+      span_id?: string;
+      span_names?: string[];
+      event_names?: string[];
+      limit?: number;
+      cursor?: string;
+    };
+    result = await ctx.runAction(internal.mcp.tools.getTraceEvents, {
+      apiKeys: apiKeyStrings,
+      params: getEventsArgs,
     });
   } else {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);

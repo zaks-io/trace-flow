@@ -13,14 +13,16 @@ describe('TOOL_DEFINITIONS', () => {
     expect(Array.isArray(TOOL_DEFINITIONS)).toBe(true);
   });
 
-  it('contains exactly 2 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(2);
+  it('contains exactly 4 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(4);
   });
 
-  it('contains list_traces and get_trace tools', () => {
+  it('contains all expected tools', () => {
     const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
     expect(toolNames).toContain('list_traces');
     expect(toolNames).toContain('get_trace');
+    expect(toolNames).toContain('get_trace_spans');
+    expect(toolNames).toContain('get_trace_events');
   });
 });
 
@@ -109,6 +111,40 @@ describe('get_trace tool definition', () => {
       expect(props.trace_id.type).toBe('string');
     });
 
+    it('only has trace_id parameter', () => {
+      expect(Object.keys(props)).toEqual(['trace_id']);
+    });
+  });
+});
+
+describe('get_trace_spans tool definition', () => {
+  const getTraceSpansTool = TOOL_DEFINITIONS.find((t) => t.name === 'get_trace_spans')!;
+
+  it('has correct name', () => {
+    expect(getTraceSpansTool.name).toBe('get_trace_spans');
+  });
+
+  it('has a description', () => {
+    expect(getTraceSpansTool.description).toBeDefined();
+    expect(getTraceSpansTool.description!.length).toBeGreaterThan(0);
+  });
+
+  it('has inputSchema with type object', () => {
+    expect(getTraceSpansTool.inputSchema.type).toBe('object');
+  });
+
+  it('requires trace_id parameter', () => {
+    expect(getTraceSpansTool.inputSchema.required).toContain('trace_id');
+  });
+
+  describe('parameters', () => {
+    const props = getTraceSpansTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+
+    it('has trace_id parameter', () => {
+      expect(props.trace_id).toBeDefined();
+      expect(props.trace_id.type).toBe('string');
+    });
+
     it('has expand parameter as array', () => {
       expect(props.expand).toBeDefined();
       expect(props.expand.type).toBe('array');
@@ -165,10 +201,67 @@ describe('get_trace tool definition', () => {
       expect(props.exclude_span_names).toBeDefined();
       expect(props.exclude_span_names.type).toBe('array');
     });
+  });
+});
 
-    it('has include_summary parameter', () => {
-      expect(props.include_summary).toBeDefined();
-      expect(props.include_summary.type).toBe('boolean');
+describe('get_trace_events tool definition', () => {
+  const getTraceEventsTool = TOOL_DEFINITIONS.find((t) => t.name === 'get_trace_events')!;
+
+  it('has correct name', () => {
+    expect(getTraceEventsTool.name).toBe('get_trace_events');
+  });
+
+  it('has a description', () => {
+    expect(getTraceEventsTool.description).toBeDefined();
+    expect(getTraceEventsTool.description!.length).toBeGreaterThan(0);
+  });
+
+  it('has inputSchema with type object', () => {
+    expect(getTraceEventsTool.inputSchema.type).toBe('object');
+  });
+
+  it('requires trace_id parameter', () => {
+    expect(getTraceEventsTool.inputSchema.required).toContain('trace_id');
+  });
+
+  describe('parameters', () => {
+    const props = getTraceEventsTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+
+    it('has trace_id parameter', () => {
+      expect(props.trace_id).toBeDefined();
+      expect(props.trace_id.type).toBe('string');
+    });
+
+    it('has span_id parameter', () => {
+      expect(props.span_id).toBeDefined();
+      expect(props.span_id.type).toBe('string');
+    });
+
+    it('has span_names parameter as array', () => {
+      expect(props.span_names).toBeDefined();
+      expect(props.span_names.type).toBe('array');
+    });
+
+    it('has event_names parameter as array', () => {
+      expect(props.event_names).toBeDefined();
+      expect(props.event_names.type).toBe('array');
+    });
+
+    it('has order parameter with enum', () => {
+      expect(props.order).toBeDefined();
+      expect(props.order.type).toBe('string');
+      expect(props.order.enum).toContain('asc');
+      expect(props.order.enum).toContain('desc');
+    });
+
+    it('has limit parameter', () => {
+      expect(props.limit).toBeDefined();
+      expect(props.limit.type).toBe('number');
+    });
+
+    it('has cursor parameter', () => {
+      expect(props.cursor).toBeDefined();
+      expect(props.cursor.type).toBe('string');
     });
   });
 });

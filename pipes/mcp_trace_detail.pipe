@@ -16,12 +16,13 @@ SQL >
         StatusCode,
         StatusMessage,
         SpanAttributes,
-        `Events.Timestamp` as EventTimestamps,
-        `Events.Name` as EventNames,
-        `Events.Attributes` as EventAttributes
+        count(*) OVER() as total_count
     FROM otel_traces
     WHERE TraceId = {{ String(trace_id, '') }}
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        {% if defined(span_id) %}
+        AND SpanId = {{ String(span_id) }}
+        {% end %}
         {% if defined(span_names) %}
         AND SpanName IN splitByChar(',', {{ String(span_names) }})
         {% end %}
@@ -35,17 +36,16 @@ SQL >
         AND Duration >= {{ Int64(min_duration_ms) }} * 1000000
         {% end %}
     ORDER BY
-        {% if defined(sort_by) %}
-            {% if sort_by == 'cost_usd' %}
-            JSONExtractFloat(SpanAttributes, 'ai.cost.total') DESC
-            {% elif sort_by == 'tokens' %}
-            JSONExtractInt(SpanAttributes, 'ai.tokens.total') DESC
-            {% else %}
-            Duration DESC
-            {% end %}
+        {% if defined(sort_by) and sort_by == 'cost_usd' %}
+        JSONExtractFloat(SpanAttributes, 'ai.cost.total')
+        {% elif defined(sort_by) and sort_by == 'tokens' %}
+        JSONExtractInt(SpanAttributes, 'ai.tokens.total')
+        {% elif defined(sort_by) and sort_by == 'duration_ms' %}
+        Duration
         {% else %}
-        Timestamp ASC
+        Timestamp
         {% end %}
+        {% if defined(order) and order == 'desc' %}DESC{% else %}ASC{% end %}
     LIMIT {{ Int32(limit, 100) }}
     OFFSET {{ Int32(offset, 0) }}
 

@@ -39,8 +39,21 @@ export const MAX_LIMIT = 25;
 export const DEFAULT_HOURS = 24;
 export const MAX_HOURS = 168;
 
-export const DEFAULT_SPAN_LIMIT = 10;
+export const DEFAULT_SPAN_LIMIT = 20;
 export const MAX_SPAN_LIMIT = 100;
+
+export function splitPatterns(patterns: string[]): { exact: string[]; prefixes: string[] } {
+  const exact: string[] = [];
+  const prefixes: string[] = [];
+  for (const p of patterns) {
+    if (p.endsWith('.*')) {
+      prefixes.push(p.slice(0, -1));
+    } else {
+      exact.push(p);
+    }
+  }
+  return { exact, prefixes };
+}
 
 interface TinybirdResponse {
   data?: Record<string, unknown>[];
