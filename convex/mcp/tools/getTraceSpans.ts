@@ -101,7 +101,6 @@ export const getTraceSpans = internalAction({
     }
 
     const expand = new Set(params.expand ?? []);
-    expand.delete('events');
 
     const totalCount = (data[0] as unknown as SpanRowWithCount).total_count;
     const parsedSpans = data.map((row) => parseSpanRow(row as unknown as SpanRow));

@@ -16,9 +16,6 @@ SQL >
         StatusCode,
         StatusMessage,
         SpanAttributes,
-        `Events.Timestamp` as EventTimestamps,
-        `Events.Name` as EventNames,
-        `Events.Attributes` as EventAttributes,
         count(*) OVER() as total_count
     FROM otel_traces
     WHERE TraceId = {{ String(trace_id, '') }}

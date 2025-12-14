@@ -39,7 +39,7 @@ export const MAX_LIMIT = 25;
 export const DEFAULT_HOURS = 24;
 export const MAX_HOURS = 168;
 
-export const DEFAULT_SPAN_LIMIT = 10;
+export const DEFAULT_SPAN_LIMIT = 20;
 export const MAX_SPAN_LIMIT = 100;
 
 export function splitPatterns(patterns: string[]): { exact: string[]; prefixes: string[] } {

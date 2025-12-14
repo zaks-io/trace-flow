@@ -7,7 +7,6 @@ import {
   queryTinybirdPipe,
   noApiKeysError,
   invalidTraceIdError,
-  traceNotFoundError,
   generateTinybirdToken,
   TRACE_ID_PATTERN,
   splitPatterns,
@@ -108,10 +107,6 @@ export const getTraceEvents = internalAction({
     }
 
     const data = await queryTinybirdPipe(token, 'mcp_trace_events', pipeParams);
-
-    if (data.length === 0 && offset === 0) {
-      return traceNotFoundError(params.trace_id);
-    }
 
     const totalCount = data.length > 0 ? (data[0] as unknown as EventRow).total_count : 0;
     const hasMore = totalCount > offset + data.length;
