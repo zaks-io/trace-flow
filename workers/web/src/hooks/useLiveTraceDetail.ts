@@ -80,6 +80,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
   const isPollingRef = useRef(false);
+  const shouldContinuePollingRef = useRef(false);
 
   const generateToken = useAction(api.tinybird.generateToken);
 
@@ -148,6 +149,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
       if (err instanceof Error && err.message === 'AUTH_ERROR') {
         try {
           const freshToken = await fetchToken();
+          if (!isMountedRef.current) return;
           const data = await fetchSpans(freshToken);
           if (!isMountedRef.current) return;
           setSpans(data);
@@ -204,8 +206,11 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
       return;
     }
 
+    shouldContinuePollingRef.current = true;
+
     const poll = async () => {
-      if (!isMountedRef.current || isPollingRef.current) return;
+      if (!isMountedRef.current || !shouldContinuePollingRef.current || isPollingRef.current)
+        return;
 
       isPollingRef.current = true;
 
@@ -229,11 +234,14 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
 
         if (lastTimestampRef.current && shouldStopLiveMode(lastTimestampRef.current)) {
           setIsLive(false);
+          shouldContinuePollingRef.current = false;
           isPollingRef.current = false;
           return;
         }
 
-        pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+        if (shouldContinuePollingRef.current && isMountedRef.current) {
+          pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+        }
       } catch (err) {
         if (!isMountedRef.current) {
           isPollingRef.current = false;
@@ -243,11 +251,15 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
         if (err instanceof Error && err.message === 'AUTH_ERROR') {
           try {
             const freshToken = await fetchToken();
+            if (!isMountedRef.current || !shouldContinuePollingRef.current) {
+              isPollingRef.current = false;
+              return;
+            }
             const newSpansData = await fetchSpans(
               freshToken,
               lastTimestampRef.current ?? undefined,
             );
-            if (!isMountedRef.current) {
+            if (!isMountedRef.current || !shouldContinuePollingRef.current) {
               isPollingRef.current = false;
               return;
             }
@@ -263,16 +275,23 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
 
             if (lastTimestampRef.current && shouldStopLiveMode(lastTimestampRef.current)) {
               setIsLive(false);
+              shouldContinuePollingRef.current = false;
               isPollingRef.current = false;
               return;
             }
 
-            pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+            if (shouldContinuePollingRef.current && isMountedRef.current) {
+              pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+            }
           } catch {
-            pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+            if (shouldContinuePollingRef.current && isMountedRef.current) {
+              pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+            }
           }
         } else {
-          pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+          if (shouldContinuePollingRef.current && isMountedRef.current) {
+            pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
+          }
         }
       } finally {
         isPollingRef.current = false;
@@ -282,6 +301,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
     pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
 
     return () => {
+      shouldContinuePollingRef.current = false;
       if (pollTimeoutRef.current) {
         clearTimeout(pollTimeoutRef.current);
         pollTimeoutRef.current = null;
