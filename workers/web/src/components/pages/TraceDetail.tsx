@@ -4,7 +4,7 @@ import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-
 import { useQuery } from 'convex/react';
 import { api } from '../../../../../convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
-import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
+import { useLiveTraceDetail } from '@/hooks/useLiveTraceDetail';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { AgentGanttChart } from '@/components/AgentGanttChart';
@@ -19,28 +19,6 @@ import {
 import { generateTraceMarkdown, estimateMarkdownTokens } from '@/lib/traceToMarkdown';
 import type { AlertSeverity } from '@/types/alerts';
 
-interface TraceSpan {
-  ReceivedAt: number;
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
-  ParentSpanId: string;
-  SpanName: string;
-  ServiceName: string;
-  Duration: number;
-  StatusCode: string;
-  StatusMessage: string;
-  SpanAttributes: string;
-  ResourceAttributes: string;
-  'Events.Timestamp': number[];
-  'Events.Name': string[];
-  'Events.Attributes': string[];
-}
-
-interface TinybirdResponse {
-  data: TraceSpan[];
-}
-
 export default function TraceDetail() {
   usePageHeader('Trace Details');
   const { traceId } = useParams<{ traceId: string }>();
@@ -52,14 +30,10 @@ export default function TraceDetail() {
   const validatedTraceId = validateTraceId(traceId);
   const alerts = useQuery(api.alerts.listEnabled);
 
-  // API key filtering is now handled server-side via JWT fixed_params
-  const { data, loading, error } = useTinybirdPipe<TinybirdResponse>({
-    pipe: 'trace_detail',
-    params: validatedTraceId ? { trace_id: validatedTraceId } : undefined,
+  const { spans, loading, error } = useLiveTraceDetail({
+    traceId: validatedTraceId,
     enabled: !!validatedTraceId,
   });
-
-  const spans = data?.data ?? [];
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
   const requestSpans = spans.filter((s) => s.SpanName === 'ai.request');
   const selectedSpan = spans.find((s) => s.SpanId === selectedSpanId);

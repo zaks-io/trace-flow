@@ -1,5 +1,6 @@
 DESCRIPTION >
     Get all spans for a specific trace, filtered by API keys.
+    Supports delta fetching via optional since_timestamp parameter.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE endpoint
@@ -25,6 +26,9 @@ SQL >
     FROM otel_traces
     WHERE TraceId = {{ String(trace_id, '') }}
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        {% if defined(since_timestamp) %}
+        AND Timestamp > {{ Int64(since_timestamp) }}
+        {% end %}
     ORDER BY Timestamp ASC
 
 TYPE ENDPOINT
