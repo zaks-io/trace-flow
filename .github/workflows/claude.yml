@@ -26,8 +26,9 @@ jobs:
   # General Claude assistant for comments (excludes /review and issues)
   claude:
     if: |
-      !contains(github.event.comment.body, '/review') &&
-      github.event_name != 'issues'
+      github.event_name != 'repository_dispatch' &&
+      github.event_name != 'issues' &&
+      !contains(github.event.comment.body, '/review')
     uses: zaks-io/claude-code-action/.github/workflows/claude.yml@main
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
