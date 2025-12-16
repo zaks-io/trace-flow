@@ -12,7 +12,7 @@ on:
   pull_request:
     types: [opened, ready_for_review]
   repository_dispatch:
-    types: [linear-triage, linear-implement, linear-followup]
+    types: [linear-triage, linear-implement, linear-mention]
 
 permissions:
   contents: write
@@ -66,7 +66,7 @@ jobs:
   # Linear Agent: Triage
   linear-triage:
     if: github.event.action == 'linear-triage'
-    uses: zaks-io/claude-code-action/.github/workflows/issue-triage.yml@main
+    uses: zaks-io/linear-orchestrator/.github/workflows/issue-triage.yml@main
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       linear_api_token: ${{ secrets.LINEAR_API_KEY }}
@@ -74,15 +74,15 @@ jobs:
   # Linear Agent: Implement
   linear-implement:
     if: github.event.action == 'linear-implement'
-    uses: zaks-io/claude-code-action/.github/workflows/issue-implement.yml@main
+    uses: zaks-io/linear-orchestrator/.github/workflows/issue-implement.yml@main
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       linear_api_token: ${{ secrets.LINEAR_API_KEY }}
 
-  # Linear Agent: Follow-up
-  linear-followup:
-    if: github.event.action == 'linear-followup'
-    uses: zaks-io/claude-code-action/.github/workflows/issue-followup.yml@main
+  # Linear Agent: Mention
+  linear-mention:
+    if: github.event.action == 'linear-mention'
+    uses: zaks-io/linear-orchestrator/.github/workflows/issue-mention.yml@main
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       linear_api_token: ${{ secrets.LINEAR_API_KEY }}
