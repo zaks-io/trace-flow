@@ -20,6 +20,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       utils: ${{ steps.filter.outputs.utils }}
       types: ${{ steps.filter.outputs.types }}
+      convex: ${{ steps.filter.outputs.convex }}
       root: ${{ steps.filter.outputs.root }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
@@ -45,6 +46,8 @@ jobs:
               - 'packages/utils/**'
             types:
               - 'packages/types/**'
+            convex:
+              - 'convex/**'
             root:
               - 'package.json'
               - 'pnpm-lock.yaml'
@@ -140,6 +143,36 @@ jobs:
 
       - name: Type check
         run: pnpm turbo run type-check --filter=@trace-flow/types
+
+  convex:
+    name: Convex Backend
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.convex == 'true' || needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm prettier --check "convex/**/*.{ts,tsx,js,jsx,json}"
+
+      - name: Lint
+        run: pnpm turbo run lint --filter=@trace-flow/convex
+
+      - name: Type check
+        run: pnpm turbo run type-check --filter=@trace-flow/convex
+
+      - name: Test
+        run: pnpm -C convex test
 
   proxy:
     name: Proxy Worker
@@ -310,6 +343,7 @@ jobs:
       - actionlint
       - utils
       - types
+      - convex
       - proxy
       - proxy-consumer
       - web
