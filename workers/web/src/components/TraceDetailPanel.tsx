@@ -16,6 +16,7 @@ import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { AlertBadge, AlertList } from '@/components/alerts';
 import { evaluateAlertsForTraces, traceSpanToRequestRow, getHighestSeverity } from '@/lib/alerts';
 import type { AlertSeverity } from '@/types/alerts';
+import { isLLMRequestSpan } from '@/lib/spans';
 
 interface TraceDetailPanelProps {
   traceId: string;
@@ -39,7 +40,7 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
   });
 
   const spans = data?.data ?? [];
-  const requestSpans = spans.filter((s) => s.SpanName === 'ai.request');
+  const requestSpans = spans.filter(isLLMRequestSpan);
   const rootSpan = requestSpans[0];
 
   const triggeredAlerts = useMemo(() => {

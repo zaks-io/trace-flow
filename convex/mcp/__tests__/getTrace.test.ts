@@ -13,14 +13,14 @@ describe('parseSpanRow', () => {
     StatusCode: 'STATUS_CODE_OK',
     StatusMessage: '',
     SpanAttributes: JSON.stringify({
-      'ai.provider': 'openai',
-      'ai.model': 'gpt-4',
-      'ai.tokens.prompt': 100,
-      'ai.tokens.completion': 50,
-      'ai.tokens.total': 150,
-      'ai.cost.input': 0.001,
-      'ai.cost.output': 0.002,
-      'ai.cost.total': 0.003,
+      'gen_ai.provider': 'openai',
+      'gen_ai.model': 'gpt-4',
+      'gen_ai.tokens.prompt': 100,
+      'gen_ai.tokens.completion': 50,
+      'gen_ai.tokens.total': 150,
+      'gen_ai.cost.input': 0.001,
+      'gen_ai.cost.output': 0.002,
+      'gen_ai.cost.total': 0.003,
     }),
   };
 
@@ -85,7 +85,7 @@ describe('parseSpanRow', () => {
       SpanAttributes: JSON.stringify({
         'baggage.userId': 'user123',
         'baggage.sessionId': 'session456',
-        'ai.provider': 'openai',
+        'gen_ai.provider': 'openai',
       }),
     };
     const result = parseSpanRow(row);
@@ -96,8 +96,8 @@ describe('parseSpanRow', () => {
     const row = {
       ...baseRow,
       SpanAttributes: {
-        'ai.provider': 'anthropic',
-        'ai.model': 'claude-3',
+        'gen_ai.provider': 'anthropic',
+        'gen_ai.model': 'claude-3',
       },
     };
     const result = parseSpanRow(row);
@@ -123,6 +123,7 @@ describe('buildOutputSpan', () => {
     cost_usd: { input: 0.001, output: 0.002, total: 0.003 },
     time_to_first_token_ms: 50,
     baggage: { userId: 'user123' },
+    operation: 'chat',
   };
 
   it('includes base fields by default', () => {
@@ -222,6 +223,7 @@ describe('buildOutputSpan', () => {
       cost_usd: undefined,
       time_to_first_token_ms: undefined,
       baggage: undefined,
+      operation: undefined,
     };
 
     const result = buildOutputSpan(spanWithoutOptionals, new Set(['provider', 'model', 'tokens']));

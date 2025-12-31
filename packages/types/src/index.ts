@@ -153,6 +153,8 @@ export interface QueueMessage {
   traceFlags?: number;
   traceState?: string;
   baggage?: Record<string, string>;
+  /** gen_ai.operation.name per OTel GenAI semantic conventions */
+  operationName?: string;
   sseStreamData?: SSEStreamData;
   responseMetadata?: Partial<LLMResponseMetadata>;
   receivedAt: number;

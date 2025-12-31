@@ -32,6 +32,7 @@ export interface ParsedSpan {
   cost_usd: Record<string, number> | undefined;
   time_to_first_token_ms: number | undefined;
   baggage: Record<string, string> | undefined;
+  operation: string | undefined;
 }
 
 function parseSpanAttributes(spanAttributes: unknown): Record<string, unknown> {
@@ -92,14 +93,19 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     duration_ms: Number(row.Duration) / 1_000_000,
     status: row.StatusCode === 'STATUS_CODE_OK' ? 'ok' : 'error',
     status_message: row.StatusMessage as string | undefined,
-    provider: attrs['ai.provider'] as string | undefined,
-    model: attrs['ai.model'] as string | undefined,
+    provider:
+      (attrs['gen_ai.system'] as string | undefined) ??
+      (attrs['ai.provider'] as string | undefined),
+    model:
+      (attrs['gen_ai.request.model'] as string | undefined) ??
+      (attrs['ai.model'] as string | undefined),
     target_url: attrs['ai.target_url'] as string | undefined,
     http_status: attrs['http.status_code'] as string | undefined,
     tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
     cost_usd: Object.keys(costUsd).length > 0 ? costUsd : undefined,
     time_to_first_token_ms: Number(attrs['ai.time_to_first_token_ms']) || undefined,
     baggage: extractBaggage(attrs),
+    operation: attrs['gen_ai.operation.name'] as string | undefined,
   };
 }
 
@@ -124,6 +130,7 @@ export function buildOutputSpan(span: ParsedSpan, expand: Set<string>): Record<s
   if (expand.has('ttft') && span.time_to_first_token_ms)
     output.time_to_first_token_ms = span.time_to_first_token_ms;
   if (expand.has('baggage') && span.baggage) output.baggage = span.baggage;
+  if (expand.has('operation') && span.operation) output.operation = span.operation;
 
   return output;
 }

@@ -27,6 +27,30 @@ export function extractProviderFromUrl(url: string): string {
   }
 }
 
+/**
+ * Derives the gen_ai.operation.name from the API endpoint path.
+ * Per OpenTelemetry GenAI semantic conventions:
+ * https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
+ */
+export function deriveOperationName(path: string): string {
+  const normalizedPath = path.toLowerCase();
+
+  // OpenAI / Groq / OpenRouter patterns
+  if (normalizedPath.includes('/chat/completions')) return 'chat';
+  if (normalizedPath.includes('/completions') && !normalizedPath.includes('/chat/'))
+    return 'text_completion';
+  if (normalizedPath.includes('/embeddings')) return 'embeddings';
+
+  // Anthropic patterns
+  if (normalizedPath.includes('/messages')) return 'chat';
+
+  // Google Gemini patterns
+  if (normalizedPath.includes(':generatecontent')) return 'generate_content';
+  if (normalizedPath.includes(':embedcontent')) return 'embeddings';
+
+  return 'chat';
+}
+
 export function generateSpanId(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);

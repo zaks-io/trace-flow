@@ -88,10 +88,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               'http',
               'status_message',
               'baggage',
+              'operation',
             ],
           },
           description:
-            'Additional fields to include: provider, model, tokens, costs, ttft (time to first token), parent (parent_span_id), url (target_url), http (http_status), status_message, baggage (user context).',
+            'Additional fields to include: provider, model, tokens, costs, ttft (time to first token), parent (parent_span_id), url (target_url), http (http_status), status_message, baggage (user context), operation (gen_ai.operation.name).',
         },
         span_names: {
           type: 'array',

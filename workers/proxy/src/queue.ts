@@ -35,6 +35,7 @@ export function createQueueMessage(params: {
   traceFlags?: number;
   traceState?: string;
   baggage?: Record<string, string>;
+  operationName?: string;
   apiKey: string;
   targetUrl: string;
   responseStatus: number;
@@ -61,6 +62,7 @@ export function createQueueMessage(params: {
     traceFlags,
     traceState,
     baggage,
+    operationName,
     apiKey,
     targetUrl,
     responseStatus,
@@ -152,6 +154,10 @@ export function createQueueMessage(params: {
 
   if (baggage && Object.keys(baggage).length > 0) {
     queueMessage.baggage = baggage;
+  }
+
+  if (operationName) {
+    queueMessage.operationName = operationName;
   }
 
   if (inputMessages && inputMessages.length > 0) {

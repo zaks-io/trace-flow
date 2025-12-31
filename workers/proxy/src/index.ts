@@ -23,6 +23,7 @@ import {
   getCurrentTimestamp,
   parseTraceparent,
   parseBaggage,
+  deriveOperationName,
 } from '@trace-flow/utils';
 import type {
   SSEStreamData,
@@ -132,6 +133,9 @@ app.all('*', async (c) => {
   const traceState = c.req.header('tracestate') ?? '';
   const baggage = parseBaggage(c.req.header('baggage'));
   const omitBody = c.req.header('X-Trace-Flow-Omit-Body') === 'true';
+
+  // Derive gen_ai.operation.name from the API endpoint path
+  const operationName = deriveOperationName(c.req.path);
 
   const { targetUrl } = route;
 
@@ -283,6 +287,7 @@ app.all('*', async (c) => {
           traceFlags,
           traceState: traceState || undefined,
           baggage: Object.keys(baggage).length > 0 ? baggage : undefined,
+          operationName,
           apiKey,
           targetUrl,
           responseStatus: response.status,
