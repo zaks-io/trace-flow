@@ -14,6 +14,7 @@ export default defineSchema({
     key: v.string(),
     expiresAt: v.number(),
     userId: v.optional(v.id('users')),
+    name: v.optional(v.string()),
   }).index('by_user_id', ['userId']),
 
   modelPricing: defineTable({

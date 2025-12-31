@@ -36,6 +36,7 @@ export const getByKey = query({
 export const create = mutation({
   args: {
     expiresAt: v.number(),
+    name: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
@@ -46,6 +47,7 @@ export const create = mutation({
       key,
       expiresAt: args.expiresAt,
       userId: user._id,
+      name: args.name,
     });
 
     await ctx.scheduler.runAfter(0, internal.cloudflare.syncKeyToKV, {
@@ -54,6 +56,28 @@ export const create = mutation({
     });
 
     return id;
+  },
+});
+
+export const update = mutation({
+  args: {
+    id: v.id('apiKeys'),
+    name: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireTraceFlowRole(ctx);
+    const user = await requireEnabledUser(ctx);
+
+    const apiKey = await ctx.db.get(args.id);
+    if (!apiKey) {
+      throw new Error('API key not found');
+    }
+
+    if (apiKey.userId && apiKey.userId !== user._id) {
+      throw new Error('You do not have permission to edit this API key');
+    }
+
+    await ctx.db.patch(args.id, { name: args.name });
   },
 });
 
