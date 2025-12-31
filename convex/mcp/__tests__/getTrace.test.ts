@@ -13,11 +13,10 @@ describe('parseSpanRow', () => {
     StatusCode: 'STATUS_CODE_OK',
     StatusMessage: '',
     SpanAttributes: JSON.stringify({
-      'gen_ai.provider': 'openai',
-      'gen_ai.model': 'gpt-4',
-      'gen_ai.tokens.prompt': 100,
-      'gen_ai.tokens.completion': 50,
-      'gen_ai.tokens.total': 150,
+      'gen_ai.system': 'openai',
+      'gen_ai.request.model': 'gpt-4',
+      'gen_ai.usage.input_tokens': 100,
+      'gen_ai.usage.output_tokens': 50,
       'gen_ai.cost.input': 0.001,
       'gen_ai.cost.output': 0.002,
       'gen_ai.cost.total': 0.003,
@@ -85,7 +84,7 @@ describe('parseSpanRow', () => {
       SpanAttributes: JSON.stringify({
         'baggage.userId': 'user123',
         'baggage.sessionId': 'session456',
-        'gen_ai.provider': 'openai',
+        'gen_ai.system': 'openai',
       }),
     };
     const result = parseSpanRow(row);
@@ -96,8 +95,8 @@ describe('parseSpanRow', () => {
     const row = {
       ...baseRow,
       SpanAttributes: {
-        'gen_ai.provider': 'anthropic',
-        'gen_ai.model': 'claude-3',
+        'gen_ai.system': 'anthropic',
+        'gen_ai.request.model': 'claude-3',
       },
     };
     const result = parseSpanRow(row);

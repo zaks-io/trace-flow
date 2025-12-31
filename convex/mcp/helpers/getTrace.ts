@@ -61,15 +61,15 @@ function extractBaggage(attrs: Record<string, unknown>): Record<string, string> 
 export function parseSpanRow(row: SpanRow): ParsedSpan {
   const attrs = parseSpanAttributes(row.SpanAttributes);
 
-  const promptTokens = Number(attrs['ai.tokens.prompt']) || 0;
-  const completionTokens = Number(attrs['ai.tokens.completion']) || 0;
-  const totalTokens = Number(attrs['ai.tokens.total']) || 0;
-  const cachedTokens = Number(attrs['ai.tokens.cached']) || 0;
-  const reasoningTokens = Number(attrs['ai.tokens.reasoning']) || 0;
+  const promptTokens = Number(attrs['gen_ai.usage.input_tokens']) || 0;
+  const completionTokens = Number(attrs['gen_ai.usage.output_tokens']) || 0;
+  const totalTokens = promptTokens + completionTokens;
+  const cachedTokens = Number(attrs['gen_ai.usage.cache_read_input_tokens']) || 0;
+  const reasoningTokens = Number(attrs['gen_ai.usage.reasoning_tokens']) || 0;
 
-  const inputCost = Number(attrs['ai.cost.input']) || 0;
-  const outputCost = Number(attrs['ai.cost.output']) || 0;
-  const totalCost = Number(attrs['ai.cost.total']) || 0;
+  const inputCost = Number(attrs['gen_ai.cost.input']) || 0;
+  const outputCost = Number(attrs['gen_ai.cost.output']) || 0;
+  const totalCost = Number(attrs['gen_ai.cost.total']) || 0;
 
   // Build tokens object with only non-zero values
   const tokens: Record<string, number> = {};
@@ -93,17 +93,13 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     duration_ms: Number(row.Duration) / 1_000_000,
     status: row.StatusCode === 'STATUS_CODE_OK' ? 'ok' : 'error',
     status_message: row.StatusMessage as string | undefined,
-    provider:
-      (attrs['gen_ai.system'] as string | undefined) ??
-      (attrs['ai.provider'] as string | undefined),
-    model:
-      (attrs['gen_ai.request.model'] as string | undefined) ??
-      (attrs['ai.model'] as string | undefined),
-    target_url: attrs['ai.target_url'] as string | undefined,
-    http_status: attrs['http.status_code'] as string | undefined,
+    provider: attrs['gen_ai.system'] as string | undefined,
+    model: attrs['gen_ai.request.model'] as string | undefined,
+    target_url: attrs['url.full'] as string | undefined,
+    http_status: attrs['http.response.status_code'] as string | undefined,
     tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
     cost_usd: Object.keys(costUsd).length > 0 ? costUsd : undefined,
-    time_to_first_token_ms: Number(attrs['ai.time_to_first_token_ms']) || undefined,
+    time_to_first_token_ms: Number(attrs['gen_ai.server.time_to_first_token']) || undefined,
     baggage: extractBaggage(attrs),
     operation: attrs['gen_ai.operation.name'] as string | undefined,
   };
