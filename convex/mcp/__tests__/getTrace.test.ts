@@ -8,7 +8,7 @@ describe('parseSpanRow', () => {
     TraceId: 'trace123',
     SpanId: 'span123',
     ParentSpanId: 'parent123',
-    SpanName: 'ai.request',
+    SpanName: 'gen_ai.request',
     Duration: 150000000,
     StatusCode: 'STATUS_CODE_OK',
     StatusMessage: '',
@@ -26,7 +26,7 @@ describe('parseSpanRow', () => {
   it('parses basic span fields', () => {
     const result = parseSpanRow(baseRow);
     expect(result.span_id).toBe('span123');
-    expect(result.name).toBe('ai.request');
+    expect(result.name).toBe('gen_ai.request');
     expect(result.status).toBe('ok');
     expect(result.duration_ms).toBe(150);
   });
@@ -109,7 +109,7 @@ describe('buildOutputSpan', () => {
   const span: ParsedSpan = {
     span_id: '123',
     parent_span_id: 'parent123',
-    name: 'ai.request',
+    name: 'gen_ai.request',
     timestamp: '2024-01-01T00:00:00Z',
     duration_ms: 100,
     status: 'ok',
@@ -128,7 +128,7 @@ describe('buildOutputSpan', () => {
   it('includes base fields by default', () => {
     const result = buildOutputSpan(span, new Set());
     expect(result.span_id).toBe('123');
-    expect(result.name).toBe('ai.request');
+    expect(result.name).toBe('gen_ai.request');
     expect(result.duration_ms).toBe(100);
     expect(result.status).toBe('ok');
     expect(result.timestamp).toBeDefined();

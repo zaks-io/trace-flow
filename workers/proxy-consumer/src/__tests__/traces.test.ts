@@ -54,15 +54,13 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes).toMatchObject({
-        'ai.request_id': 'test-request-123',
-        'ai.provider': 'openai',
-        'ai.model': 'gpt-4',
-        'ai.target_url': 'https://api.openai.com/v1/chat/completions',
-        'http.status_code': '200',
-        // OTel GenAI semantic convention attributes
+        'trace_flow.source': 'proxy',
+        'gen_ai.request_id': 'test-request-123',
         'gen_ai.operation.name': 'chat',
         'gen_ai.system': 'openai',
         'gen_ai.request.model': 'gpt-4',
+        'http.url': 'https://api.openai.com/v1/chat/completions',
+        'http.response.status_code': '200',
       });
     });
 
@@ -89,9 +87,8 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.tokens.prompt']).toBe('100');
-      expect(rootSpan.SpanAttributes['ai.tokens.completion']).toBe('50');
-      expect(rootSpan.SpanAttributes['ai.tokens.total']).toBe('150');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens']).toBe('100');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.output_tokens']).toBe('50');
     });
 
     it('should include cached tokens count when present (OpenAI)', () => {
@@ -108,7 +105,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.tokens.cached']).toBe('25');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens']).toBe('25');
     });
 
     it('should include reasoning tokens when present', () => {
@@ -125,7 +122,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.tokens.reasoning']).toBe('20');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.reasoning_tokens']).toBe('20');
     });
 
     it('should include Anthropic cache tokens when present', () => {
@@ -142,8 +139,8 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.tokens.cache_read']).toBe('30');
-      expect(rootSpan.SpanAttributes['ai.tokens.cache_creation']).toBe('10');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens']).toBe('30');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.cache_creation_input_tokens']).toBe('10');
     });
 
     it('should handle partial token usage', () => {
@@ -157,18 +154,16 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.tokens.prompt']).toBe('100');
-      expect(rootSpan.SpanAttributes['ai.tokens.completion']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['ai.tokens.total']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens']).toBe('100');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.output_tokens']).toBeUndefined();
     });
 
     it('should handle no token usage', () => {
       const traces = buildTraces(baseQueueMessage);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.tokens.prompt']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['ai.tokens.completion']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['ai.tokens.total']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.usage.output_tokens']).toBeUndefined();
     });
   });
 
@@ -194,7 +189,7 @@ describe('buildTraces', () => {
       expect(rootSpan.StatusMessage).toBe('Invalid API key');
       expect(rootSpan.SpanAttributes['error.type']).toBe('invalid_request_error');
       expect(rootSpan.SpanAttributes['error.code']).toBe('invalid_api_key');
-      expect(rootSpan.SpanAttributes['http.status_code']).toBe('401');
+      expect(rootSpan.SpanAttributes['http.response.status_code']).toBe('401');
     });
 
     it('should handle error without code', () => {
@@ -243,7 +238,7 @@ describe('buildTraces', () => {
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
-      expect(rootSpan?.SpanAttributes['ai.time_to_first_token_ms']).toBe(
+      expect(rootSpan?.SpanAttributes['gen_ai.server.time_to_first_token']).toBe(
         String(1250 - baseQueueMessage.timing.requestStart),
       );
     });
@@ -269,7 +264,7 @@ describe('buildTraces', () => {
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
-      expect(rootSpan?.SpanAttributes['ai.time_to_first_token_ms']).toBeUndefined();
+      expect(rootSpan?.SpanAttributes['gen_ai.server.time_to_first_token']).toBeUndefined();
     });
 
     it('should not generate content block spans when message is incomplete', () => {
@@ -290,7 +285,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const textSpan = traces.find((t) => t.SpanName === 'ai.response.text');
+      const textSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(textSpan).toBeUndefined();
     });
   });
@@ -320,12 +315,12 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined)!;
-      const textSpan = traces.find((t) => t.SpanName === 'ai.response.text')!;
+      const textSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text')!;
 
       expect(rootSpan.ParentSpanId).toBe('');
       expect(textSpan.ParentSpanId).toBe(rootSpan.SpanId);
       // TTFT is now an attribute on root span, not a separate span
-      expect(rootSpan.SpanAttributes['ai.time_to_first_token_ms']).toBeDefined();
+      expect(rootSpan.SpanAttributes['gen_ai.server.time_to_first_token']).toBeDefined();
     });
 
     it('should generate unique span IDs', () => {
@@ -364,10 +359,8 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.provider']).toBe('anthropic');
-      expect(rootSpan.SpanAttributes['ai.target_url']).toBe(
-        'https://api.anthropic.com/v1/messages',
-      );
+      expect(rootSpan.SpanAttributes['gen_ai.system']).toBe('anthropic');
+      expect(rootSpan.SpanAttributes['http.url']).toBe('https://api.anthropic.com/v1/messages');
     });
 
     it('should handle Google provider', () => {
@@ -387,7 +380,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.provider']).toBe('google');
+      expect(rootSpan.SpanAttributes['gen_ai.system']).toBe('google');
     });
   });
 
@@ -424,12 +417,12 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const contentBlockSpan = traces.find((t) => t.SpanName === 'ai.response.text');
+      const contentBlockSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(contentBlockSpan).toBeDefined();
       expect(contentBlockSpan?.Timestamp).toBe(1200 * 1000000);
       expect(contentBlockSpan?.Duration).toBe((1400 - 1200) * 1000000);
-      expect(contentBlockSpan?.SpanAttributes['ai.message.index']).toBe('0');
-      expect(contentBlockSpan?.SpanAttributes['ai.content.type']).toBe('text');
+      expect(contentBlockSpan?.SpanAttributes['gen_ai.message.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['gen_ai.content.type']).toBe('text');
     });
 
     it('should create spans for tool_use content blocks', () => {
@@ -461,12 +454,12 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const contentBlockSpan = traces.find((t) => t.SpanName === 'ai.response.tool_use');
+      const contentBlockSpan = traces.find((t) => t.SpanName === 'gen_ai.response.tool_use');
       expect(contentBlockSpan).toBeDefined();
-      expect(contentBlockSpan?.SpanAttributes['ai.message.index']).toBe('0');
-      expect(contentBlockSpan?.SpanAttributes['ai.content.type']).toBe('tool_use');
-      expect(contentBlockSpan?.SpanAttributes['ai.tool.id']).toBe('toolu_01abc123');
-      expect(contentBlockSpan?.SpanAttributes['ai.tool.name']).toBe('get_weather');
+      expect(contentBlockSpan?.SpanAttributes['gen_ai.message.index']).toBe('0');
+      expect(contentBlockSpan?.SpanAttributes['gen_ai.content.type']).toBe('tool_use');
+      expect(contentBlockSpan?.SpanAttributes['gen_ai.tool.id']).toBe('toolu_01abc123');
+      expect(contentBlockSpan?.SpanAttributes['gen_ai.tool.name']).toBe('get_weather');
     });
 
     it('should skip incomplete content blocks', () => {
@@ -491,7 +484,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const contentBlockSpan = traces.find((t) => t.SpanName.includes('ai.response.'));
+      const contentBlockSpan = traces.find((t) => t.SpanName.includes('gen_ai.response.'));
       expect(contentBlockSpan).toBeUndefined();
     });
 
@@ -524,18 +517,18 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
 
       // When there are multiple of the same type, they should be numbered
-      const textSpans = traces.filter((t) => t.SpanName.startsWith('ai.response.text'));
-      const toolUseSpans = traces.filter((t) => t.SpanName.startsWith('ai.response.tool_use'));
+      const textSpans = traces.filter((t) => t.SpanName.startsWith('gen_ai.response.text'));
+      const toolUseSpans = traces.filter((t) => t.SpanName.startsWith('gen_ai.response.tool_use'));
 
       expect(textSpans.length).toBe(2);
       expect(toolUseSpans.length).toBe(1);
 
       // Text spans should be numbered since there are 2
-      expect(textSpans[0]?.SpanName).toBe('ai.response.text.1');
-      expect(textSpans[1]?.SpanName).toBe('ai.response.text.2');
+      expect(textSpans[0]?.SpanName).toBe('gen_ai.response.text.1');
+      expect(textSpans[1]?.SpanName).toBe('gen_ai.response.text.2');
 
       // Tool use span should not be numbered since there's only 1
-      expect(toolUseSpans[0]?.SpanName).toBe('ai.response.tool_use');
+      expect(toolUseSpans[0]?.SpanName).toBe('gen_ai.response.tool_use');
     });
 
     it('should create thinking spans', () => {
@@ -558,12 +551,12 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const thinkingSpan = traces.find((t) => t.SpanName === 'ai.response.thinking');
-      const textSpan = traces.find((t) => t.SpanName === 'ai.response.text');
+      const thinkingSpan = traces.find((t) => t.SpanName === 'gen_ai.response.thinking');
+      const textSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
 
       expect(thinkingSpan).toBeDefined();
       expect(textSpan).toBeDefined();
-      expect(thinkingSpan?.SpanAttributes['ai.content.type']).toBe('thinking');
+      expect(thinkingSpan?.SpanAttributes['gen_ai.content.type']).toBe('thinking');
     });
   });
 
@@ -587,8 +580,8 @@ describe('buildTraces', () => {
       expect(rootSpan?.['Events.Name']).toContain('input.system');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.system');
       const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
-      expect(eventAttrs['ai.message.role']).toBe('system');
-      expect(eventAttrs['ai.message.index']).toBe('0');
+      expect(eventAttrs['gen_ai.message.role']).toBe('system');
+      expect(eventAttrs['gen_ai.message.index']).toBe('0');
     });
 
     it('should add input.text event for user text messages', () => {
@@ -610,8 +603,8 @@ describe('buildTraces', () => {
       expect(rootSpan?.['Events.Name']).toContain('input.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.text');
       const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
-      expect(eventAttrs['ai.message.role']).toBe('user');
-      expect(eventAttrs['ai.content.type']).toBe('text');
+      expect(eventAttrs['gen_ai.message.role']).toBe('user');
+      expect(eventAttrs['gen_ai.content.type']).toBe('text');
     });
 
     it('should add input.text event for assistant messages in history', () => {
@@ -633,8 +626,8 @@ describe('buildTraces', () => {
       expect(rootSpan?.['Events.Name']).toContain('input.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.text');
       const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
-      expect(eventAttrs['ai.message.role']).toBe('assistant');
-      expect(eventAttrs['ai.content.type']).toBe('text');
+      expect(eventAttrs['gen_ai.message.role']).toBe('assistant');
+      expect(eventAttrs['gen_ai.content.type']).toBe('text');
     });
 
     it('should add input.tool_result event for tool results', () => {
@@ -656,8 +649,8 @@ describe('buildTraces', () => {
       expect(rootSpan?.['Events.Name']).toContain('input.tool_result');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.tool_result');
       const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
-      expect(eventAttrs['ai.message.role']).toBe('user');
-      expect(eventAttrs['ai.tool.id']).toBe('toolu_abc123');
+      expect(eventAttrs['gen_ai.message.role']).toBe('user');
+      expect(eventAttrs['gen_ai.tool.id']).toBe('toolu_abc123');
     });
 
     it('should add multiple input events based on content types', () => {
@@ -708,8 +701,8 @@ describe('buildTraces', () => {
       const toolUseIndex = rootSpan?.['Events.Name'].indexOf('input.tool_use');
       expect(toolUseIndex).toBeGreaterThanOrEqual(0);
       const firstToolAttrs = JSON.parse(rootSpan?.['Events.Attributes'][toolUseIndex!] ?? '{}');
-      expect(firstToolAttrs['ai.tool.id']).toBe('toolu_abc');
-      expect(firstToolAttrs['ai.tool.name']).toBe('get_weather');
+      expect(firstToolAttrs['gen_ai.tool.id']).toBe('toolu_abc');
+      expect(firstToolAttrs['gen_ai.tool.name']).toBe('get_weather');
     });
   });
 
@@ -743,7 +736,7 @@ describe('buildTraces', () => {
       expect(rootSpan?.['Events.Name']).toContain('output.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('output.text');
       const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
-      expect(eventAttrs['ai.content.type']).toBe('text');
+      expect(eventAttrs['gen_ai.content.type']).toBe('text');
     });
 
     it('should add output events for tool_use with tool info', () => {
@@ -777,8 +770,8 @@ describe('buildTraces', () => {
       expect(rootSpan?.['Events.Name']).toContain('output.tool_use');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('output.tool_use');
       const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
-      expect(eventAttrs['ai.tool.id']).toBe('toolu_abc');
-      expect(eventAttrs['ai.tool.name']).toBe('get_weather');
+      expect(eventAttrs['gen_ai.tool.id']).toBe('toolu_abc');
+      expect(eventAttrs['gen_ai.tool.name']).toBe('get_weather');
     });
 
     it('should add output event for non-streaming responses', () => {
@@ -789,7 +782,7 @@ describe('buildTraces', () => {
       expect(rootSpan?.['Events.Name']).toContain('output.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('output.text');
       const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex!] ?? '{}');
-      expect(eventAttrs['ai.response.streaming']).toBe('false');
+      expect(eventAttrs['gen_ai.response.streaming']).toBe('false');
     });
 
     it('should add multiple output events for multiple content blocks', () => {
@@ -845,13 +838,13 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const toolExecSpan = traces.find((t) => t.SpanName === 'ai.tool.execution');
+      const toolExecSpan = traces.find((t) => t.SpanName === 'gen_ai.tool.execution');
       expect(toolExecSpan).toBeDefined();
       expect(toolExecSpan?.Timestamp).toBe(500 * 1000000);
       expect(toolExecSpan?.Duration).toBe((1000 - 500) * 1000000);
-      expect(toolExecSpan?.SpanAttributes['ai.tool.id']).toBe('toolu_abc123');
-      expect(toolExecSpan?.SpanAttributes['ai.tool.name']).toBe('get_weather');
-      expect(toolExecSpan?.SpanAttributes['ai.original_trace_id']).toBe('original-trace-id');
+      expect(toolExecSpan?.SpanAttributes['gen_ai.tool.id']).toBe('toolu_abc123');
+      expect(toolExecSpan?.SpanAttributes['gen_ai.tool.name']).toBe('get_weather');
+      expect(toolExecSpan?.SpanAttributes['gen_ai.original_trace_id']).toBe('original-trace-id');
       expect(toolExecSpan?.['Links.TraceId']).toContain('original-trace-id');
     });
 
@@ -878,7 +871,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const toolExecSpans = traces.filter((t) => t.SpanName === 'ai.tool.execution');
+      const toolExecSpans = traces.filter((t) => t.SpanName === 'gen_ai.tool.execution');
       expect(toolExecSpans.length).toBe(2);
     });
   });
@@ -887,9 +880,9 @@ describe('buildTraces', () => {
     it('should create assistant response span for non-streaming responses', () => {
       const traces = buildTraces(baseQueueMessage);
 
-      const responseSpan = traces.find((t) => t.SpanName === 'ai.response.text');
+      const responseSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(responseSpan).toBeDefined();
-      expect(responseSpan?.SpanAttributes['ai.response.streaming']).toBe('false');
+      expect(responseSpan?.SpanAttributes['gen_ai.response.streaming']).toBe('false');
     });
 
     it('should not create assistant response span for error responses', () => {
@@ -903,7 +896,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const responseSpan = traces.find((t) => t.SpanName === 'ai.response.text');
+      const responseSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(responseSpan).toBeUndefined();
     });
   });
@@ -932,11 +925,11 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       // 1000 * 3M / 1M = 3000 microdollars = $0.003
-      expect(rootSpan.SpanAttributes['ai.cost.input']).toBe('0.003');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.input']).toBe('0.003');
       // 500 * 15M / 1M = 7500 microdollars = $0.0075
-      expect(rootSpan.SpanAttributes['ai.cost.output']).toBe('0.0075');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.output']).toBe('0.0075');
       // Total = 10500 microdollars = $0.0105
-      expect(rootSpan.SpanAttributes['ai.cost.total']).toBe('0.0105');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBe('0.0105');
     });
 
     it('should not add cost attributes when pricing is not provided', () => {
@@ -951,9 +944,9 @@ describe('buildTraces', () => {
       const traces = buildTraces(message);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.cost.input']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['ai.cost.output']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['ai.cost.total']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.input']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.output']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBeUndefined();
     });
 
     it('should not add cost attributes when pricing is null', () => {
@@ -968,9 +961,9 @@ describe('buildTraces', () => {
       const traces = buildTraces(message, null);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.cost.input']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['ai.cost.output']).toBeUndefined();
-      expect(rootSpan.SpanAttributes['ai.cost.total']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.input']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.output']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBeUndefined();
     });
 
     it('should add cache_read cost when > 0', () => {
@@ -987,7 +980,7 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       // 2000 * 300K / 1M = 600 microdollars = $0.0006
-      expect(rootSpan.SpanAttributes['ai.cost.cache_read']).toBe('0.0006');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.cache_read']).toBe('0.0006');
     });
 
     it('should add cache_creation cost when > 0', () => {
@@ -1004,7 +997,7 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       // 1000 * 3.75M / 1M = 3750 microdollars = $0.00375
-      expect(rootSpan.SpanAttributes['ai.cost.cache_creation']).toBe('0.00375');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.cache_creation']).toBe('0.00375');
     });
 
     it('should add reasoning cost when > 0', () => {
@@ -1021,7 +1014,7 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       // 200 * 15M / 1M = 3000 microdollars = $0.003
-      expect(rootSpan.SpanAttributes['ai.cost.reasoning']).toBe('0.003');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.reasoning']).toBe('0.003');
     });
 
     it('should not include cache_read when cost is 0', () => {
@@ -1037,7 +1030,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message, samplePricing);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.cost.cache_read']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.cache_read']).toBeUndefined();
     });
 
     it('should not include cache_creation when cost is 0', () => {
@@ -1053,7 +1046,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message, samplePricing);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.cost.cache_creation']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.cache_creation']).toBeUndefined();
     });
 
     it('should not include reasoning when cost is 0', () => {
@@ -1069,7 +1062,7 @@ describe('buildTraces', () => {
       const traces = buildTraces(message, samplePricing);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanAttributes['ai.cost.reasoning']).toBeUndefined();
+      expect(rootSpan.SpanAttributes['gen_ai.cost.reasoning']).toBeUndefined();
     });
 
     it('should format costs as dollar strings not microdollars', () => {
@@ -1085,8 +1078,8 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       // 1M * 3M / 1M = 3M microdollars = $3
-      expect(rootSpan.SpanAttributes['ai.cost.input']).toBe('3');
-      expect(rootSpan.SpanAttributes['ai.cost.total']).toBe('3');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.input']).toBe('3');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.total']).toBe('3');
     });
   });
 });

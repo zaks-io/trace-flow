@@ -32,7 +32,10 @@ declare module '@tanstack/react-table' {
 
 function getSpanAttribute(row: RequestRow, key: string): string | undefined {
   try {
-    const attrs = JSON.parse(row.SpanAttributes) as Record<string, string>;
+    const attrs =
+      typeof row.SpanAttributes === 'string'
+        ? (JSON.parse(row.SpanAttributes) as Record<string, string>)
+        : (row.SpanAttributes as unknown as Record<string, string>);
     return attrs[key];
   } catch {
     return undefined;
@@ -105,7 +108,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'aiProvider',
-    accessorFn: (row) => getSpanAttribute(row, 'ai.provider'),
+    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.system'),
     header: 'Provider',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -119,7 +122,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'aiModel',
-    accessorFn: (row) => getSpanAttribute(row, 'ai.model'),
+    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.request.model'),
     header: 'Model',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -133,7 +136,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'httpStatusCode',
-    accessorFn: (row) => getSpanAttribute(row, 'http.status_code'),
+    accessorFn: (row) => getSpanAttribute(row, 'http.response.status_code'),
     header: 'HTTP',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -196,7 +199,19 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'totalTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'ai.tokens.total'),
+    accessorFn: (row) => {
+      try {
+        const attrs =
+          typeof row.SpanAttributes === 'string'
+            ? (JSON.parse(row.SpanAttributes) as Record<string, string>)
+            : (row.SpanAttributes as unknown as Record<string, string>);
+        const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) || 0;
+        const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10) || 0;
+        return input + output > 0 ? String(input + output) : undefined;
+      } catch {
+        return undefined;
+      }
+    },
     header: 'Tokens',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -210,7 +225,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'promptTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'ai.tokens.prompt'),
+    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.usage.input_tokens'),
     header: 'Prompt',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -224,7 +239,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'completionTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'ai.tokens.completion'),
+    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.usage.output_tokens'),
     header: 'Completion',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();

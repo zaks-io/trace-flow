@@ -81,18 +81,31 @@ export function TraceDetailContent({
   const [isMoreAttributesOpen, setIsMoreAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
 
-  const rootSpan = spans.find((s) => s.SpanName === 'ai.request');
+  // Find root span by trace_flow.source attribute
+  const rootSpan = spans.find((s) => {
+    try {
+      const attrs =
+        typeof s.SpanAttributes === 'string'
+          ? (JSON.parse(s.SpanAttributes) as Record<string, string>)
+          : (s.SpanAttributes as unknown as Record<string, string>);
+      return attrs['trace_flow.source'] === 'proxy';
+    } catch {
+      return false;
+    }
+  });
 
   // Extract requestId from root span attributes - bodies are stored by requestId not traceId
   const rootSpanAttributes = (() => {
     if (!rootSpan?.SpanAttributes) return {};
     try {
-      return JSON.parse(rootSpan.SpanAttributes) as Record<string, string>;
+      return typeof rootSpan.SpanAttributes === 'string'
+        ? (JSON.parse(rootSpan.SpanAttributes) as Record<string, string>)
+        : (rootSpan.SpanAttributes as unknown as Record<string, string>);
     } catch {
       return {};
     }
   })();
-  const requestId = rootSpanAttributes['ai.request_id'];
+  const requestId = rootSpanAttributes['gen_ai.request_id'];
 
   useEffect(() => {
     setRequestBody(null);
@@ -209,7 +222,9 @@ export function TraceDetailContent({
 
   const parseAttributes = (attributesJson: string): Record<string, string> => {
     try {
-      return JSON.parse(attributesJson) as Record<string, string>;
+      return typeof attributesJson === 'string'
+        ? (JSON.parse(attributesJson) as Record<string, string>)
+        : (attributesJson as unknown as Record<string, string>);
     } catch {
       return {};
     }
@@ -321,22 +336,18 @@ export function TraceDetailContent({
   const allAttributes = { ...spanAttributes, ...resourceAttributes };
 
   // Extract key attributes for the card display
-  const provider = allAttributes['ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
-  const targetUrl = allAttributes['ai.target_url'] ?? allAttributes['http.url'] ?? '';
-  const statusCode = allAttributes['http.status_code'] ?? '';
-  const responseId = allAttributes['ai.response_id'] ?? allAttributes['gen_ai.response.id'] ?? '';
+  const provider = allAttributes['gen_ai.system'] ?? '';
+  const model = allAttributes['gen_ai.request.model'] ?? '';
+  const targetUrl = allAttributes['http.url'] ?? '';
+  const statusCode = allAttributes['http.response.status_code'] ?? '';
+  const responseId = allAttributes['gen_ai.response.id'] ?? '';
 
   // Get remaining attributes (not shown in cards)
   const displayedKeys = new Set([
-    'ai.provider',
     'gen_ai.system',
-    'ai.model',
     'gen_ai.request.model',
-    'ai.target_url',
     'http.url',
-    'http.status_code',
-    'ai.response_id',
+    'http.response.status_code',
     'gen_ai.response.id',
     'service.name',
   ]);

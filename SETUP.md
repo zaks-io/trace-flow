@@ -206,12 +206,13 @@ All spans use the same `TraceId` for correlation and form a parent-child relatio
 ```sql
 SELECT
     Timestamp,
-    SpanAttributes['ai.provider'] as Provider,
-    SpanAttributes['ai.model'] as Model,
+    SpanAttributes['gen_ai.system'] as Provider,
+    SpanAttributes['gen_ai.request.model'] as Model,
     Duration / 1000000 as DurationMs,
-    SpanAttributes['ai.tokens.total'] as TotalTokens
+    CAST(SpanAttributes['gen_ai.usage.input_tokens'] as Int64) +
+    CAST(SpanAttributes['gen_ai.usage.output_tokens'] as Int64) as TotalTokens
 FROM otel_traces
-WHERE SpanName = 'ai.request'
+WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
 ORDER BY Timestamp DESC
 LIMIT 10;
 ```
@@ -220,11 +221,11 @@ LIMIT 10;
 
 ```sql
 SELECT
-    SpanAttributes['ai.provider'] as Provider,
+    SpanAttributes['gen_ai.system'] as Provider,
     avg(Duration / 1000000) as AvgLatencyMs,
     count() as RequestCount
 FROM otel_traces
-WHERE SpanName = 'ai.request'
+WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
   AND Timestamp > now() - INTERVAL 1 HOUR
 GROUP BY Provider;
 ```
@@ -235,11 +236,11 @@ GROUP BY Provider;
 SELECT
     Timestamp,
     TraceId,
-    SpanAttributes['ai.provider'] as Provider,
-    SpanAttributes['ai.model'] as Model,
+    SpanAttributes['gen_ai.system'] as Provider,
+    SpanAttributes['gen_ai.request.model'] as Model,
     Duration / 1000000 as DurationMs
 FROM otel_traces
-WHERE SpanName = 'ai.request'
+WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
   AND Duration > 5000000000
 ORDER BY Duration DESC
 LIMIT 10;

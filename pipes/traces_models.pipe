@@ -6,13 +6,13 @@ NODE endpoint
 SQL >
     %
     SELECT
-        JSONExtractString(SpanAttributes, 'ai.model') as model,
+        JSONExtractString(SpanAttributes, 'gen_ai.request.model') as model,
         count() as request_count
     FROM otel_traces
     WHERE ParentSpanId = ''
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
-        AND JSONExtractString(SpanAttributes, 'ai.model') != ''
+        AND JSONExtractString(SpanAttributes, 'gen_ai.request.model') != ''
     GROUP BY model
     ORDER BY request_count DESC
     LIMIT 10

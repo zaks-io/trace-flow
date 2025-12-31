@@ -27,21 +27,10 @@ SQL >
         `Links.SpanId`,
         `Links.TraceState`,
         `Links.Attributes`,
-        -- Extract GenAI attributes
-        coalesce(
-            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.operation.name'), ''),
-            ''
-        ) AS OperationName,
-        coalesce(
-            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.system'), ''),
-            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.provider'), ''),
-            ''
-        ) AS Provider,
-        coalesce(
-            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), ''),
-            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.model'), ''),
-            ''
-        ) AS Model
+        -- Extract GenAI attributes using OTel semantic conventions
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.operation.name'), ''), '') AS OperationName,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.system'), ''), '') AS Provider,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), ''), '') AS Model
     FROM otel_traces
 
 TYPE materialized

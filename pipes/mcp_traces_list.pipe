@@ -12,22 +12,22 @@ SQL >
             lpad(toString(toInt64(ReceivedAt / 1000000) % 1000), 3, '0') || 'Z' as timestamp,
         Duration / 1000000 as duration_ms,
         if(StatusCode = 'STATUS_CODE_OK', 'ok', 'error') as status,
-        JSONExtractString(SpanAttributes, 'ai.provider') as provider,
-        JSONExtractString(SpanAttributes, 'ai.model') as model,
-        JSONExtractInt(SpanAttributes, 'ai.tokens.prompt') as prompt_tokens,
-        JSONExtractInt(SpanAttributes, 'ai.tokens.completion') as completion_tokens,
-        JSONExtractInt(SpanAttributes, 'ai.tokens.total') as total_tokens,
-        JSONExtractFloat(SpanAttributes, 'ai.cost.total') as cost_usd,
+        JSONExtractString(SpanAttributes, 'gen_ai.system') as provider,
+        JSONExtractString(SpanAttributes, 'gen_ai.request.model') as model,
+        JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens') as prompt_tokens,
+        JSONExtractInt(SpanAttributes, 'gen_ai.usage.output_tokens') as completion_tokens,
+        JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens') + JSONExtractInt(SpanAttributes, 'gen_ai.usage.output_tokens') as total_tokens,
+        JSONExtractFloat(SpanAttributes, 'gen_ai.cost.total') as cost_usd,
         count(*) OVER() as total_count
     FROM otel_traces
-    WHERE SpanName = 'ai.request'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
         {% if defined(provider) %}
-        AND JSONExtractString(SpanAttributes, 'ai.provider') = {{ String(provider) }}
+        AND JSONExtractString(SpanAttributes, 'gen_ai.system') = {{ String(provider) }}
         {% end %}
         {% if defined(model) %}
-        AND JSONExtractString(SpanAttributes, 'ai.model') = {{ String(model) }}
+        AND JSONExtractString(SpanAttributes, 'gen_ai.request.model') = {{ String(model) }}
         {% end %}
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}

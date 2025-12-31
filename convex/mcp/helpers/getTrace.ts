@@ -95,7 +95,7 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     status_message: row.StatusMessage as string | undefined,
     provider: attrs['gen_ai.system'] as string | undefined,
     model: attrs['gen_ai.request.model'] as string | undefined,
-    target_url: attrs['url.full'] as string | undefined,
+    target_url: attrs['http.url'] as string | undefined,
     http_status: attrs['http.response.status_code'] as string | undefined,
     tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
     cost_usd: Object.keys(costUsd).length > 0 ? costUsd : undefined,

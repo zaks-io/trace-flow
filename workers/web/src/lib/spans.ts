@@ -21,21 +21,23 @@ export interface TraceSpan {
 
 /**
  * Safely parses span attributes JSON string into a record.
+ * Handles both string (from database) and object (from Tinybird API) formats.
  */
 export function parseSpanAttributes(attributesJson: string): Record<string, string> {
   try {
-    return JSON.parse(attributesJson) as Record<string, string>;
+    return typeof attributesJson === 'string'
+      ? (JSON.parse(attributesJson) as Record<string, string>)
+      : (attributesJson as unknown as Record<string, string>);
   } catch {
     return {};
   }
 }
 
 /**
- * Checks if a span is an LLM request span (root span for an LLM call).
- * Supports both legacy 'ai.request' naming and new GenAI semantic conventions.
+ * Checks if a span is a Trace Flow proxy LLM request span.
+ * Uses the trace_flow.source attribute to identify spans created by the proxy.
  */
 export function isLLMRequestSpan(span: Pick<TraceSpan, 'SpanName' | 'SpanAttributes'>): boolean {
-  if (span.SpanName === 'ai.request') return true;
   const attrs = parseSpanAttributes(span.SpanAttributes);
-  return 'gen_ai.operation.name' in attrs;
+  return attrs['trace_flow.source'] === 'proxy';
 }

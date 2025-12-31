@@ -19,7 +19,10 @@ export interface SpanRow {
 
 function getSpanAttribute(row: SpanRow, key: string): string | undefined {
   try {
-    const attrs = JSON.parse(row.SpanAttributes) as Record<string, string>;
+    const attrs =
+      typeof row.SpanAttributes === 'string'
+        ? (JSON.parse(row.SpanAttributes) as Record<string, string>)
+        : (row.SpanAttributes as unknown as Record<string, string>);
     return attrs[key];
   } catch {
     return undefined;
@@ -48,11 +51,11 @@ function truncateId(id: string) {
 
 function getSpanTypeColor(spanName: string): string {
   const name = spanName.toLowerCase();
-  if (name === 'ai.request' || name.includes('chat/completions'))
+  if (name === 'gen_ai.request' || name.includes('chat/completions'))
     return 'bg-purple-500/20 text-purple-400';
-  if (name.startsWith('ai.response.')) return 'bg-blue-500/20 text-blue-400';
+  if (name.startsWith('gen_ai.response.')) return 'bg-blue-500/20 text-blue-400';
   if (name.includes('tool')) return 'bg-orange-500/20 text-orange-400';
-  if (name.startsWith('ai.request.')) return 'bg-emerald-500/20 text-emerald-400';
+  if (name.startsWith('gen_ai.request.')) return 'bg-emerald-500/20 text-emerald-400';
   return 'bg-zinc-500/20 text-zinc-400';
 }
 
@@ -130,7 +133,7 @@ export const spanColumns: ColumnDef<SpanRow>[] = [
   },
   {
     id: 'aiProvider',
-    accessorFn: (row) => getSpanAttribute(row, 'ai.provider'),
+    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.system'),
     header: 'Provider',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -144,7 +147,7 @@ export const spanColumns: ColumnDef<SpanRow>[] = [
   },
   {
     id: 'aiModel',
-    accessorFn: (row) => getSpanAttribute(row, 'ai.model'),
+    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.request.model'),
     header: 'Model',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();

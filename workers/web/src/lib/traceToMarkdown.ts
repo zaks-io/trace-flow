@@ -50,23 +50,10 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
       llmActiveDuration += span.Duration;
     }
 
-    const prompt =
-      parseInt(attrs['gen_ai.tokens.prompt'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.tokens.input'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
-
-    const completion =
-      parseInt(attrs['gen_ai.tokens.completion'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.tokens.output'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
-
-    const cacheRead =
-      parseInt(attrs['gen_ai.tokens.cache_read'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
-
-    const cacheCreation =
-      parseInt(attrs['gen_ai.tokens.cache_creation'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
+    const prompt = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
+    const completion = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+    const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
+    const cacheCreation = parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
 
     promptTokens += prompt;
     completionTokens += completion;
@@ -103,31 +90,21 @@ function extractLLMCalls(spans: TraceSpan[], traceStart: number): LLMCall[] {
   return llmSpans.map((span, index) => {
     const attrs = parseSpanAttributes(span.SpanAttributes);
 
-    const promptTokens =
-      parseInt(attrs['gen_ai.tokens.prompt'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.tokens.input'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
-
-    const completionTokens =
-      parseInt(attrs['gen_ai.tokens.completion'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.tokens.output'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
-
-    const cacheReadTokens =
-      parseInt(attrs['gen_ai.tokens.cache_read'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
-
-    const cacheCreationTokens =
-      parseInt(attrs['gen_ai.tokens.cache_creation'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
+    const promptTokens = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
+    const completionTokens = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+    const cacheReadTokens = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
+    const cacheCreationTokens = parseInt(
+      attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0',
+      10,
+    );
 
     const cost = attrs['gen_ai.cost.total'] ? parseFloat(attrs['gen_ai.cost.total']) : null;
 
     return {
       index: index + 1,
       spanId: span.SpanId,
-      provider: attrs['gen_ai.provider'] ?? attrs['gen_ai.system'] ?? 'unknown',
-      model: attrs['gen_ai.model'] ?? attrs['gen_ai.request.model'] ?? 'unknown',
+      provider: attrs['gen_ai.system'] ?? 'unknown',
+      model: attrs['gen_ai.request.model'] ?? 'unknown',
       promptTokens,
       completionTokens,
       totalTokens: promptTokens + completionTokens,
@@ -294,16 +271,14 @@ function renderSpanTree(nodes: SpanNode[], traceStart: number, depth = 0): strin
     const statusIcon = span.StatusCode === 'ERROR' ? ' ERROR' : '';
 
     const tokens =
-      parseInt(attrs['gen_ai.tokens.total'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.total_tokens'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) +
-        parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+      parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
     const parts: string[] = [`${indent}- **${span.SpanName}**${statusIcon}`];
     parts.push(`[${offset} → ${duration}]`);
 
     if (isLLMRequestSpan(span)) {
-      const model = attrs['gen_ai.model'] ?? attrs['gen_ai.request.model'];
+      const model = attrs['gen_ai.request.model'];
       if (model) parts.push(`model=${model}`);
     }
 

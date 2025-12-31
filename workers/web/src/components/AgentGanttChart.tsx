@@ -120,35 +120,33 @@ function getSpanType(span: TraceSpan): SpanType {
   }
 
   // Legacy infrastructure spans (muted)
-  if (name === 'ai.request' || name.includes('chat/completions')) return 'llm';
+  if (name === 'gen_ai.request' || name.includes('chat/completions')) return 'llm';
 
   // Input message spans (warm tones) - ai.request.{role} pattern
-  if (name === 'ai.request.system') return 'system';
-  if (name === 'ai.request.user') return 'user';
-  if (name === 'ai.request.assistant') return 'assistant_input';
-  if (name === 'ai.request.tool_result') return 'tool_result';
+  if (name === 'gen_ai.request.system') return 'system';
+  if (name === 'gen_ai.request.user') return 'user';
+  if (name === 'gen_ai.request.assistant') return 'assistant_input';
+  if (name === 'gen_ai.request.tool_result') return 'tool_result';
 
   // Output spans (cool/vibrant tones) - ai.response.{type} pattern
-  if (name.startsWith('ai.response.text')) return 'assistant_text';
-  if (name.startsWith('ai.response.thinking')) return 'assistant_thinking';
-  if (name.startsWith('ai.response.tool_use')) return 'assistant_tool_use';
+  if (name.startsWith('gen_ai.response.text')) return 'assistant_text';
+  if (name.startsWith('gen_ai.response.thinking')) return 'assistant_thinking';
+  if (name.startsWith('gen_ai.response.tool_use')) return 'assistant_tool_use';
 
   // Tool execution
-  if (name === 'ai.tool.execution') return 'tool_execution';
+  if (name === 'gen_ai.tool.execution') return 'tool_execution';
 
   // Fallback for other response outputs (numbered variants like ai.response.text.2)
-  if (name.startsWith('ai.response.')) return 'assistant_text';
+  if (name.startsWith('gen_ai.response.')) return 'assistant_text';
 
   return 'internal';
 }
 
 function getSpanTokens(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
-  const total =
-    parseInt(attrs['ai.tokens.total'] ?? '0', 10) ||
-    parseInt(attrs['ai.usage.total_tokens'] ?? '0', 10) ||
-    parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) +
-      parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+  const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
+  const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+  const total = input + output;
 
   return total > 0 ? total : null;
 }
@@ -157,15 +155,12 @@ function getSpanTokensPerSecond(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
 
   // Use pre-calculated TPS if available
-  if (attrs['ai.tokens_per_second']) {
-    return parseFloat(attrs['ai.tokens_per_second']);
+  if (attrs['gen_ai.tokens_per_second']) {
+    return parseFloat(attrs['gen_ai.tokens_per_second']);
   }
 
   // Fallback for older spans without pre-calculated TPS
-  const completion =
-    parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
-    parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
-    parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+  const completion = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
   const durationSeconds = span.Duration / 1_000_000_000;
   return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
@@ -173,7 +168,7 @@ function getSpanTokensPerSecond(span: TraceSpan): number | null {
 
 function getSpanCost(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
-  const cost = attrs['ai.cost.total'];
+  const cost = attrs['gen_ai.cost.total'];
   return cost ? parseFloat(cost) : null;
 }
 
@@ -195,7 +190,7 @@ function getBaggageAttributes(span: TraceSpan): Record<string, string> {
 
 function getMessageIndex(span: TraceSpan): number | null {
   const attrs = parseAttributes(span.SpanAttributes);
-  const index = attrs['ai.message.index'];
+  const index = attrs['gen_ai.message.index'];
   return index !== undefined ? parseInt(index, 10) : null;
 }
 
@@ -510,7 +505,7 @@ export function AgentGanttChart({
         const groups = new Map<string, TraceSpan[]>();
         for (const child of children) {
           const name = child.SpanName.toLowerCase();
-          const groupKey = name.startsWith('ai.') ? child.SpanName : child.SpanId;
+          const groupKey = name.startsWith('gen_ai.') ? child.SpanName : child.SpanId;
           if (!groups.has(groupKey)) {
             groups.set(groupKey, []);
           }

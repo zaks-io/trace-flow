@@ -16,14 +16,14 @@ SQL >
         avg(Duration) as AvgDuration,
         max(Duration) as MaxDuration,
         countIf(StatusCode = 'ERROR') as ErrorCount,
-        groupArray(DISTINCT JSONExtractString(SpanAttributes, 'ai.model')) as Models,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.total'))) as TotalTokens,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.prompt'))) as PromptTokens,
-        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'ai.tokens.completion'))) as CompletionTokens,
-        max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.time_to_first_token_ms'))) as MaxTTFT,
-        sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'ai.cost.total'))) as TotalCost
+        groupArray(DISTINCT JSONExtractString(SpanAttributes, 'gen_ai.request.model')) as Models,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) + toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) as TotalTokens,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))) as PromptTokens,
+        sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) as CompletionTokens,
+        max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) as MaxTTFT,
+        sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total'))) as TotalCost
     FROM otel_traces
-    WHERE SpanName = 'ai.request'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         {% if defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}

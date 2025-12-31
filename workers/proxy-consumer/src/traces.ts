@@ -37,18 +37,16 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   const model =
     data.responseMetadata?.model ?? (data.request.model !== 'unknown' ? data.request.model : '');
 
-  // Build span attributes starting with base AI attributes
+  // Build span attributes using OTel GenAI semantic conventions
   const spanAttributes: Record<string, string> = {
-    'ai.request_id': data.requestId,
-    'ai.provider': data.request.provider,
-    'ai.model': data.request.model,
-    'ai.target_url': data.targetUrl,
-    'http.status_code': String(data.response.status),
-    'ai.streaming': String(isStreaming),
-    // OTel GenAI semantic convention attributes
-    'gen_ai.operation.name': operationName,
+    'trace_flow.source': 'proxy',
+    'gen_ai.request_id': data.requestId,
     'gen_ai.system': data.request.provider,
     'gen_ai.request.model': data.request.model,
+    'http.url': data.targetUrl,
+    'http.response.status_code': String(data.response.status),
+    'gen_ai.streaming': String(isStreaming),
+    'gen_ai.operation.name': operationName,
   };
 
   // Add W3C baggage entries as span attributes with baggage. prefix
@@ -90,47 +88,54 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
 
   if (data.tokens) {
     if (data.tokens.promptTokens) {
-      rootSpan.SpanAttributes['ai.tokens.prompt'] = String(data.tokens.promptTokens);
+      rootSpan.SpanAttributes['gen_ai.usage.input_tokens'] = String(data.tokens.promptTokens);
     }
     if (data.tokens.completionTokens) {
-      rootSpan.SpanAttributes['ai.tokens.completion'] = String(data.tokens.completionTokens);
-    }
-    if (data.tokens.totalTokens) {
-      rootSpan.SpanAttributes['ai.tokens.total'] = String(data.tokens.totalTokens);
+      rootSpan.SpanAttributes['gen_ai.usage.output_tokens'] = String(data.tokens.completionTokens);
     }
     if (data.tokens.reasoningTokens !== undefined) {
-      rootSpan.SpanAttributes['ai.tokens.reasoning'] = String(data.tokens.reasoningTokens);
+      rootSpan.SpanAttributes['gen_ai.usage.reasoning_tokens'] = String(
+        data.tokens.reasoningTokens,
+      );
     }
     if (data.tokens.cachedTokens !== undefined) {
-      rootSpan.SpanAttributes['ai.tokens.cached'] = String(data.tokens.cachedTokens);
+      rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens'] = String(
+        data.tokens.cachedTokens,
+      );
     }
     if (data.tokens.cacheReadTokens !== undefined) {
-      rootSpan.SpanAttributes['ai.tokens.cache_read'] = String(data.tokens.cacheReadTokens);
+      rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens'] = String(
+        data.tokens.cacheReadTokens,
+      );
     }
     if (data.tokens.cacheCreationTokens !== undefined) {
-      rootSpan.SpanAttributes['ai.tokens.cache_creation'] = String(data.tokens.cacheCreationTokens);
+      rootSpan.SpanAttributes['gen_ai.usage.cache_creation_input_tokens'] = String(
+        data.tokens.cacheCreationTokens,
+      );
     }
 
     // Calculate cost if pricing is available
     if (pricing) {
       const cost = calculateCost(data.tokens, pricing);
 
-      rootSpan.SpanAttributes['ai.cost.input'] = formatCostAsString(cost.inputCostMicrodollars);
-      rootSpan.SpanAttributes['ai.cost.output'] = formatCostAsString(cost.outputCostMicrodollars);
-      rootSpan.SpanAttributes['ai.cost.total'] = formatCostAsString(cost.totalCostMicrodollars);
+      rootSpan.SpanAttributes['gen_ai.cost.input'] = formatCostAsString(cost.inputCostMicrodollars);
+      rootSpan.SpanAttributes['gen_ai.cost.output'] = formatCostAsString(
+        cost.outputCostMicrodollars,
+      );
+      rootSpan.SpanAttributes['gen_ai.cost.total'] = formatCostAsString(cost.totalCostMicrodollars);
 
       if (cost.cacheReadCostMicrodollars > 0) {
-        rootSpan.SpanAttributes['ai.cost.cache_read'] = formatCostAsString(
+        rootSpan.SpanAttributes['gen_ai.cost.cache_read'] = formatCostAsString(
           cost.cacheReadCostMicrodollars,
         );
       }
       if (cost.cacheWriteCostMicrodollars > 0) {
-        rootSpan.SpanAttributes['ai.cost.cache_creation'] = formatCostAsString(
+        rootSpan.SpanAttributes['gen_ai.cost.cache_creation'] = formatCostAsString(
           cost.cacheWriteCostMicrodollars,
         );
       }
       if (cost.reasoningCostMicrodollars > 0) {
-        rootSpan.SpanAttributes['ai.cost.reasoning'] = formatCostAsString(
+        rootSpan.SpanAttributes['gen_ai.cost.reasoning'] = formatCostAsString(
           cost.reasoningCostMicrodollars,
         );
       }
@@ -145,7 +150,7 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
 
     if (generationDurationMs > 0) {
       const tokensPerSecond = data.tokens.completionTokens / (generationDurationMs / 1000);
-      rootSpan.SpanAttributes['ai.tokens_per_second'] = String(tokensPerSecond.toFixed(2));
+      rootSpan.SpanAttributes['gen_ai.tokens_per_second'] = String(tokensPerSecond.toFixed(2));
     }
   }
 
@@ -162,41 +167,40 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   if (data.responseMetadata) {
     const meta = data.responseMetadata;
     if (meta.id) {
-      rootSpan.SpanAttributes['ai.response_id'] = meta.id;
+      rootSpan.SpanAttributes['gen_ai.response_id'] = meta.id;
     }
     if (meta.model) {
-      // Update model from response if available (overrides request model)
-      rootSpan.SpanAttributes['ai.model'] = meta.model;
+      rootSpan.SpanAttributes['gen_ai.response.model'] = meta.model;
     }
     if (meta.object) {
-      rootSpan.SpanAttributes['ai.response_object'] = meta.object;
+      rootSpan.SpanAttributes['gen_ai.response_object'] = meta.object;
     }
     if (meta.created !== undefined) {
-      rootSpan.SpanAttributes['ai.response_created'] = String(meta.created);
+      rootSpan.SpanAttributes['gen_ai.response_created'] = String(meta.created);
     }
     if (meta.finishReason) {
-      rootSpan.SpanAttributes['ai.finish_reason'] = meta.finishReason;
+      rootSpan.SpanAttributes['gen_ai.finish_reason'] = meta.finishReason;
     }
     if (meta.nativeFinishReason) {
-      rootSpan.SpanAttributes['ai.native_finish_reason'] = meta.nativeFinishReason;
+      rootSpan.SpanAttributes['gen_ai.native_finish_reason'] = meta.nativeFinishReason;
     }
     if (meta.stopReason) {
-      rootSpan.SpanAttributes['ai.stop_reason'] = meta.stopReason;
+      rootSpan.SpanAttributes['gen_ai.stop_reason'] = meta.stopReason;
     }
     if (meta.stopSequence) {
-      rootSpan.SpanAttributes['ai.stop_sequence'] = meta.stopSequence;
+      rootSpan.SpanAttributes['gen_ai.stop_sequence'] = meta.stopSequence;
     }
     if (meta.hasLogprobs !== undefined) {
-      rootSpan.SpanAttributes['ai.has_logprobs'] = String(meta.hasLogprobs);
+      rootSpan.SpanAttributes['gen_ai.has_logprobs'] = String(meta.hasLogprobs);
     }
     if (meta.reasoningTokens !== undefined) {
-      rootSpan.SpanAttributes['ai.reasoning_tokens'] = String(meta.reasoningTokens);
+      rootSpan.SpanAttributes['gen_ai.reasoning_tokens'] = String(meta.reasoningTokens);
     }
     if (meta.refusal !== undefined) {
-      rootSpan.SpanAttributes['ai.has_refusal'] = String(meta.refusal !== null);
+      rootSpan.SpanAttributes['gen_ai.has_refusal'] = String(meta.refusal !== null);
     }
     if (meta.reasoning !== undefined) {
-      rootSpan.SpanAttributes['ai.has_reasoning'] = String(meta.reasoning !== null);
+      rootSpan.SpanAttributes['gen_ai.has_reasoning'] = String(meta.reasoning !== null);
     }
   }
 
@@ -219,14 +223,14 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     // Add TTFT attribute and event to root span (measures user-perceived time to first content)
     if (firstContentDelta) {
       const ttftMs = firstContentDelta.timestamp - data.timing.requestStart;
-      rootSpan.SpanAttributes['ai.time_to_first_token_ms'] = String(ttftMs);
+      rootSpan.SpanAttributes['gen_ai.server.time_to_first_token'] = String(ttftMs);
 
       // Add TTFT event for timeline visualization
       rootSpan['Events.Timestamp'].push(firstContentDelta.timestamp * 1_000_000);
       rootSpan['Events.Name'].push('output.time_to_first_token');
       rootSpan['Events.Attributes'].push(
         JSON.stringify({
-          'ai.time_to_first_token_ms': String(ttftMs),
+          'gen_ai.server.time_to_first_token': String(ttftMs),
         }),
       );
     }
@@ -278,17 +282,17 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       SpanId: generateSpanId(),
       ParentSpanId: rootSpan.SpanId,
       TraceState: '',
-      SpanName: 'ai.response.text',
+      SpanName: 'gen_ai.response.text',
       SpanKind: 'SPAN_KIND_INTERNAL',
       ServiceName: serviceName,
       ResourceAttributes: {
         'service.name': serviceName,
       },
       SpanAttributes: {
-        'ai.request_id': data.requestId,
-        'ai.response.streaming': 'false',
-        'ai.content.type': 'text',
-        'ai.message.index': String(data.inputMessages?.length ?? 0),
+        'gen_ai.request_id': data.requestId,
+        'gen_ai.response.streaming': 'false',
+        'gen_ai.content.type': 'text',
+        'gen_ai.message.index': String(data.inputMessages?.length ?? 0),
       },
       Duration: (data.timing.responseComplete - data.timing.requestSent) * 1_000_000,
       StatusCode: 'STATUS_CODE_OK',
@@ -346,8 +350,8 @@ function addInputMessageEvents(rootSpan: TinybirdTrace, inputMessages: InputMess
       rootSpan['Events.Name'].push('input.system');
       rootSpan['Events.Attributes'].push(
         JSON.stringify({
-          'ai.message.role': message.role,
-          'ai.message.index': String(message.index),
+          'gen_ai.message.role': message.role,
+          'gen_ai.message.index': String(message.index),
         }),
       );
       continue;
@@ -356,9 +360,9 @@ function addInputMessageEvents(rootSpan: TinybirdTrace, inputMessages: InputMess
     // For user/assistant messages, create events based on content block types
     for (const block of message.contentBlocks) {
       const attributes: Record<string, string> = {
-        'ai.message.role': message.role,
-        'ai.message.index': String(message.index),
-        'ai.content.type': block.type,
+        'gen_ai.message.role': message.role,
+        'gen_ai.message.index': String(message.index),
+        'gen_ai.content.type': block.type,
       };
 
       let eventName: string;
@@ -366,15 +370,15 @@ function addInputMessageEvents(rootSpan: TinybirdTrace, inputMessages: InputMess
       if (block.type === 'tool_result') {
         eventName = 'input.tool_result';
         if (block.toolResultId) {
-          attributes['ai.tool.id'] = block.toolResultId;
+          attributes['gen_ai.tool.id'] = block.toolResultId;
         }
       } else if (block.type === 'tool_use' || block.type === 'tool_call') {
         eventName = 'input.tool_use';
         if (block.toolUseId) {
-          attributes['ai.tool.id'] = block.toolUseId;
+          attributes['gen_ai.tool.id'] = block.toolUseId;
         }
         if (block.toolName) {
-          attributes['ai.tool.name'] = block.toolName;
+          attributes['gen_ai.tool.name'] = block.toolName;
         }
       } else {
         // text, image, or other content types
@@ -400,13 +404,13 @@ function addOutputEvents(
   for (const { block } of contentBlocks) {
     const eventName = `output.${block.type}`;
     const attributes: Record<string, string> = {
-      'ai.content.type': block.type,
-      'ai.message.index': String(block.index),
+      'gen_ai.content.type': block.type,
+      'gen_ai.message.index': String(block.index),
     };
 
     if (block.type === 'tool_use') {
-      if (block.toolUseId) attributes['ai.tool.id'] = block.toolUseId;
-      if (block.toolName) attributes['ai.tool.name'] = block.toolName;
+      if (block.toolUseId) attributes['gen_ai.tool.id'] = block.toolUseId;
+      if (block.toolName) attributes['gen_ai.tool.name'] = block.toolName;
     }
 
     // Use block's stop timestamp if available, otherwise use fallback (response complete time)
@@ -422,8 +426,8 @@ function addOutputEvents(
  */
 function addNonStreamingOutputEvent(rootSpan: TinybirdTrace, data: QueueMessage): void {
   const attributes: Record<string, string> = {
-    'ai.content.type': 'text',
-    'ai.response.streaming': 'false',
+    'gen_ai.content.type': 'text',
+    'gen_ai.response.streaming': 'false',
   };
 
   rootSpan['Events.Timestamp'].push(data.timing.responseComplete * 1_000_000);
@@ -470,26 +474,26 @@ function buildContentBlockSpans(
     const occurrenceNum = typeOccurrences[block.type];
     const totalOfType = typeCounts[block.type] ?? 1;
 
-    // Build span name: ai.response.{type} or ai.response.{type}.{N} if multiple
-    let spanName = `ai.response.${block.type}`;
+    // Build span name: gen_ai.response.{type} or gen_ai.response.{type}.{N} if multiple
+    let spanName = `gen_ai.response.${block.type}`;
     if (totalOfType > 1) {
       spanName = `${spanName}.${occurrenceNum}`;
     }
 
     const attributes: Record<string, string> = {
-      'ai.request_id': data.requestId,
+      'gen_ai.request_id': data.requestId,
       // Unified message index: inputMessages come first, then content blocks
       // Content blocks use: inputMessageCount + (messageIndex * 100) + blockIndex
-      'ai.message.index': String(inputMessageCount + messageIndex * 100 + block.index),
-      'ai.content.type': block.type,
+      'gen_ai.message.index': String(inputMessageCount + messageIndex * 100 + block.index),
+      'gen_ai.content.type': block.type,
     };
 
     if (block.type === 'tool_use') {
       if (block.toolUseId) {
-        attributes['ai.tool.id'] = block.toolUseId;
+        attributes['gen_ai.tool.id'] = block.toolUseId;
       }
       if (block.toolName) {
-        attributes['ai.tool.name'] = block.toolName;
+        attributes['gen_ai.tool.name'] = block.toolName;
       }
     }
 
@@ -528,8 +532,8 @@ function buildContentBlockSpans(
       span['Events.Name'].push('tool_call.start');
       span['Events.Attributes'].push(
         JSON.stringify({
-          'ai.tool.id': toolId,
-          'ai.tool.name': toolName,
+          'gen_ai.tool.id': toolId,
+          'gen_ai.tool.name': toolName,
         }),
       );
 
@@ -538,8 +542,8 @@ function buildContentBlockSpans(
       span['Events.Name'].push('tool_call.end');
       span['Events.Attributes'].push(
         JSON.stringify({
-          'ai.tool.id': toolId,
-          'ai.tool.name': toolName,
+          'gen_ai.tool.id': toolId,
+          'gen_ai.tool.name': toolName,
         }),
       );
     }
@@ -565,10 +569,10 @@ function buildToolExecutionSpans(
 
   for (const execution of toolExecutions) {
     const attributes: Record<string, string> = {
-      'ai.request_id': data.requestId,
-      'ai.tool.id': execution.toolUseId,
-      'ai.tool.name': execution.toolName,
-      'ai.original_trace_id': execution.originalTraceId,
+      'gen_ai.request_id': data.requestId,
+      'gen_ai.tool.id': execution.toolUseId,
+      'gen_ai.tool.name': execution.toolName,
+      'gen_ai.original_trace_id': execution.originalTraceId,
     };
 
     const span: TinybirdTrace = {
@@ -578,7 +582,7 @@ function buildToolExecutionSpans(
       SpanId: generateSpanId(),
       ParentSpanId: parentSpanId,
       TraceState: '',
-      SpanName: 'ai.tool.execution',
+      SpanName: 'gen_ai.tool.execution',
       SpanKind: 'SPAN_KIND_INTERNAL',
       ServiceName: serviceName,
       ResourceAttributes: { 'service.name': serviceName },

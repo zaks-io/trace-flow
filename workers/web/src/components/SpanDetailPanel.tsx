@@ -178,7 +178,7 @@ function extractOutputContent(
   contentType: string,
   spanName: string,
 ): { formatted: string; raw: object } | null {
-  // Parse the occurrence number from span name (e.g., "ai.assistant.text.2" → 2)
+  // Parse the occurrence number from span name (e.g., "gen_ai.assistant.text.2" → 2)
   const match = /\.(\d+)$/.exec(spanName);
   const occurrenceNum = match ? parseInt(match[1], 10) : 1;
 
@@ -623,36 +623,26 @@ export function SpanDetailPanel({
     [spanAttributes, resourceAttributes],
   );
 
-  const provider = allAttributes['gen_ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['gen_ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
-  const promptTokens =
-    parseInt(allAttributes['gen_ai.tokens.prompt'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.tokens.input'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
-  const completionTokens =
-    parseInt(allAttributes['gen_ai.tokens.completion'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.tokens.output'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
-  const ttftMs = allAttributes['gen_ai.time_to_first_token_ms']
-    ? parseFloat(allAttributes['gen_ai.time_to_first_token_ms'])
+  const provider = allAttributes['gen_ai.system'] ?? '';
+  const model = allAttributes['gen_ai.request.model'] ?? '';
+  const promptTokens = parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
+  const completionTokens = parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
+  const ttftMs = allAttributes['gen_ai.server.time_to_first_token']
+    ? parseFloat(allAttributes['gen_ai.server.time_to_first_token'])
     : null;
   const totalCost = allAttributes['gen_ai.cost.total']
     ? parseFloat(allAttributes['gen_ai.cost.total'])
     : null;
 
   const displayedKeys = new Set([
-    'gen_ai.provider',
     'gen_ai.system',
-    'gen_ai.model',
     'gen_ai.request.model',
-    'gen_ai.tokens.prompt',
-    'gen_ai.tokens.input',
-    'gen_ai.tokens.completion',
-    'gen_ai.tokens.output',
-    'gen_ai.tokens.total',
-    'gen_ai.time_to_first_token_ms',
     'gen_ai.usage.input_tokens',
     'gen_ai.usage.output_tokens',
+    'gen_ai.usage.reasoning_tokens',
+    'gen_ai.usage.cache_read_input_tokens',
+    'gen_ai.usage.cache_creation_input_tokens',
+    'gen_ai.server.time_to_first_token',
     'service.name',
     'gen_ai.cost.input',
     'gen_ai.cost.output',
@@ -776,11 +766,8 @@ export function SpanDetailPanel({
       : {};
     const rootAttrs = rootSpan ? parseSpanAttributes(rootSpan.SpanAttributes) : {};
     const provider =
-      spanAttributes['gen_ai.provider'] ??
       spanAttributes['gen_ai.system'] ??
-      parentAttrs['gen_ai.provider'] ??
       parentAttrs['gen_ai.system'] ??
-      rootAttrs['gen_ai.provider'] ??
       rootAttrs['gen_ai.system'] ??
       '';
 

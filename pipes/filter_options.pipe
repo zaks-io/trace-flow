@@ -5,9 +5,9 @@ DESCRIPTION >
 NODE providers
 SQL >
     %
-    SELECT DISTINCT JSONExtractString(SpanAttributes, 'ai.provider') as value
+    SELECT DISTINCT JSONExtractString(SpanAttributes, 'gen_ai.system') as value
     FROM otel_traces
-    WHERE SpanName = 'ai.request'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND value != ''
     ORDER BY value
@@ -16,9 +16,9 @@ SQL >
 NODE models
 SQL >
     %
-    SELECT DISTINCT JSONExtractString(SpanAttributes, 'ai.model') as value
+    SELECT DISTINCT JSONExtractString(SpanAttributes, 'gen_ai.request.model') as value
     FROM otel_traces
-    WHERE SpanName = 'ai.request'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND value != ''
     ORDER BY value
@@ -29,7 +29,7 @@ SQL >
     %
     SELECT DISTINCT StatusCode as value
     FROM otel_traces
-    WHERE SpanName = 'ai.request'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
     ORDER BY value
 

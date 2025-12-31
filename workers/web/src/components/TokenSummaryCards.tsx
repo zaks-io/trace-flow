@@ -41,30 +41,23 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   for (const span of spans) {
     const attrs = parseAttributes(span.SpanAttributes);
 
-    const prompt =
-      parseInt(attrs['ai.tokens.prompt'] ?? '0', 10) ||
-      parseInt(attrs['ai.tokens.input'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
-
-    const completion =
-      parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
-      parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
-      parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+    const prompt = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
+    const completion = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
     promptTokens += prompt;
     completionTokens += completion;
 
-    if (attrs['ai.cost.total']) {
-      totalCost += parseFloat(attrs['ai.cost.total']);
+    if (attrs['gen_ai.cost.total']) {
+      totalCost += parseFloat(attrs['gen_ai.cost.total']);
     }
 
     // Use pre-calculated TPS from span attribute (first one found)
-    if (attrs['ai.tokens_per_second'] && tokensPerSecond === null) {
-      tokensPerSecond = parseFloat(attrs['ai.tokens_per_second']);
+    if (attrs['gen_ai.tokens_per_second'] && tokensPerSecond === null) {
+      tokensPerSecond = parseFloat(attrs['gen_ai.tokens_per_second']);
     }
 
-    if (attrs['ai.time_to_first_token_ms'] && ttftMs === null) {
-      ttftMs = parseFloat(attrs['ai.time_to_first_token_ms']);
+    if (attrs['gen_ai.server.time_to_first_token'] && ttftMs === null) {
+      ttftMs = parseFloat(attrs['gen_ai.server.time_to_first_token']);
     }
 
     minTimestamp = Math.min(minTimestamp, span.Timestamp);

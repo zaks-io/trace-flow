@@ -8,8 +8,8 @@ SQL >
     SELECT
         count() as span_count,
         sum(Duration) / 1000000 as total_duration_ms,
-        sum(JSONExtractFloat(SpanAttributes, 'ai.cost.total')) as total_cost_usd,
-        sum(JSONExtractInt(SpanAttributes, 'ai.tokens.total')) as total_tokens,
+        sum(JSONExtractFloat(SpanAttributes, 'gen_ai.cost.total')) as total_cost_usd,
+        sum(JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens')) + sum(JSONExtractInt(SpanAttributes, 'gen_ai.usage.output_tokens')) as total_tokens,
         countIf(StatusCode = 'STATUS_CODE_ERROR') as error_count,
         min(Timestamp) as first_timestamp,
         max(Timestamp) as last_timestamp
