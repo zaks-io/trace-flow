@@ -31,7 +31,7 @@ SQL >
         AND StatusCode = {{ String(status) }}
         {% end %}
         {% if defined(search) %}
-        AND TraceId LIKE concat('%', {{ String(search) }}, '%')
+        AND TraceId = {{ String(search) }}
         {% end %}
     ORDER BY ReceivedAt DESC
     LIMIT {{ Int32(limit, 100) }}
