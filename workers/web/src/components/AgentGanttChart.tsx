@@ -106,7 +106,20 @@ function getSpanType(span: TraceSpan): SpanType {
 
   const name = span.SpanName.toLowerCase();
 
-  // Infrastructure spans (muted)
+  // OTel GenAI semantic conventions: span names like "chat gpt-4", "embeddings text-embedding-3-small"
+  // Also check gen_ai.operation.name attribute for new-style spans
+  const operationName = attrs['gen_ai.operation.name']?.toLowerCase();
+  if (
+    operationName === 'chat' ||
+    operationName === 'text_completion' ||
+    operationName === 'generate_content' ||
+    operationName === 'embeddings' ||
+    operationName === 'invoke_agent'
+  ) {
+    return 'llm';
+  }
+
+  // Legacy infrastructure spans (muted)
   if (name === 'ai.request' || name.includes('chat/completions')) return 'llm';
 
   // Input message spans (warm tones) - ai.request.{role} pattern
@@ -171,6 +184,11 @@ function getBaggageAttributes(span: TraceSpan): Record<string, string> {
     if (key.startsWith('baggage.')) {
       baggage[key.replace('baggage.', '')] = value;
     }
+  }
+  // Include gen_ai.operation.name as 'operation' (with fallback to baggage.operation)
+  const genAiOperation = attrs['gen_ai.operation.name'];
+  if (genAiOperation && !baggage.operation) {
+    baggage.operation = genAiOperation;
   }
   return baggage;
 }
@@ -431,9 +449,12 @@ export function AgentGanttChart({
           const earliestStart = Math.min(...childSpans.map((s) => s.Timestamp));
           const latestEnd = Math.max(...childSpans.map((s) => s.Timestamp + s.Duration));
 
-          // Get operation from first child's baggage for labeling
+          // Get operation from first child's gen_ai.operation.name or baggage for labeling
           const firstChildAttrs = parseAttributes(childSpans[0].SpanAttributes);
-          const operation = firstChildAttrs['baggage.operation'] ?? 'group';
+          const operation =
+            firstChildAttrs['gen_ai.operation.name'] ??
+            firstChildAttrs['baggage.operation'] ??
+            'group';
 
           syntheticSpans.push({
             Timestamp: earliestStart,
@@ -444,7 +465,11 @@ export function AgentGanttChart({
             ServiceName: childSpans[0].ServiceName,
             Duration: latestEnd - earliestStart,
             StatusCode: 'OK',
-            SpanAttributes: JSON.stringify({ synthetic: 'true', 'baggage.operation': operation }),
+            SpanAttributes: JSON.stringify({
+              synthetic: 'true',
+              'gen_ai.operation.name': operation,
+              'baggage.operation': operation,
+            }),
           });
         }
       }

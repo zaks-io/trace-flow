@@ -32,6 +32,11 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     data.sseStreamData?.messages && data.sseStreamData.messages.length > 0,
   );
 
+  // Derive operation name and model for span naming per OTel GenAI semantic conventions
+  const operationName = data.operationName ?? 'chat';
+  const model =
+    data.responseMetadata?.model ?? (data.request.model !== 'unknown' ? data.request.model : '');
+
   // Build span attributes starting with base AI attributes
   const spanAttributes: Record<string, string> = {
     'ai.request_id': data.requestId,
@@ -40,6 +45,10 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     'ai.target_url': data.targetUrl,
     'http.status_code': String(data.response.status),
     'ai.streaming': String(isStreaming),
+    // OTel GenAI semantic convention attributes
+    'gen_ai.operation.name': operationName,
+    'gen_ai.system': data.request.provider,
+    'gen_ai.request.model': data.request.model,
   };
 
   // Add W3C baggage entries as span attributes with baggage. prefix
@@ -49,6 +58,9 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     }
   }
 
+  // Build span name per OTel GenAI conventions: "{gen_ai.operation.name} {gen_ai.request.model}"
+  const spanName = model ? `${operationName} ${model}` : operationName;
+
   const rootSpan: TinybirdTrace = {
     ReceivedAt: data.receivedAt,
     Timestamp: data.timing.requestStart * 1_000_000,
@@ -56,7 +68,7 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     SpanId: generateSpanId(),
     ParentSpanId: data.parentSpanId ?? '',
     TraceState: data.traceState ?? '',
-    SpanName: 'ai.request',
+    SpanName: spanName,
     SpanKind: 'SPAN_KIND_CLIENT',
     ServiceName: serviceName,
     ResourceAttributes: {

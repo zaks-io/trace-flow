@@ -39,7 +39,8 @@ describe('buildTraces', () => {
       expect(traces.length).toBeGreaterThanOrEqual(1);
       const rootSpan = traces[0]!;
 
-      expect(rootSpan.SpanName).toBe('ai.request');
+      // OTel GenAI convention: "{gen_ai.operation.name} {model}"
+      expect(rootSpan.SpanName).toBe('chat gpt-4');
       expect(rootSpan.SpanKind).toBe('SPAN_KIND_CLIENT');
       expect(rootSpan.TraceId).toBe('test-request-123');
       expect(rootSpan.ParentSpanId).toBe('');
@@ -58,6 +59,10 @@ describe('buildTraces', () => {
         'ai.model': 'gpt-4',
         'ai.target_url': 'https://api.openai.com/v1/chat/completions',
         'http.status_code': '200',
+        // OTel GenAI semantic convention attributes
+        'gen_ai.operation.name': 'chat',
+        'gen_ai.system': 'openai',
+        'gen_ai.request.model': 'gpt-4',
       });
     });
 
@@ -236,7 +241,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.SpanAttributes['ai.time_to_first_token_ms']).toBe(
         String(1250 - baseQueueMessage.timing.requestStart),
@@ -262,7 +267,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.SpanAttributes['ai.time_to_first_token_ms']).toBeUndefined();
     });
@@ -314,7 +319,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request')!;
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined)!;
       const textSpan = traces.find((t) => t.SpanName === 'ai.response.text')!;
 
       expect(rootSpan.ParentSpanId).toBe('');
@@ -577,7 +582,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('input.system');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.system');
@@ -600,7 +605,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('input.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.text');
@@ -623,7 +628,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('input.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.text');
@@ -646,7 +651,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('input.tool_result');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('input.tool_result');
@@ -668,7 +673,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('input.system');
       // 3 text blocks from user and assistant messages
@@ -693,7 +698,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       // Should have 1 text event and 2 tool_use events
       expect(rootSpan?.['Events.Name']).toContain('input.text');
@@ -733,7 +738,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('output.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('output.text');
@@ -767,7 +772,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('output.tool_use');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('output.tool_use');
@@ -779,7 +784,7 @@ describe('buildTraces', () => {
     it('should add output event for non-streaming responses', () => {
       const traces = buildTraces(baseQueueMessage);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('output.text');
       const eventIndex = rootSpan?.['Events.Name'].indexOf('output.text');
@@ -815,7 +820,7 @@ describe('buildTraces', () => {
 
       const traces = buildTraces(message);
 
-      const rootSpan = traces.find((t) => t.SpanName === 'ai.request');
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
       expect(rootSpan?.['Events.Name']).toContain('output.thinking');
       expect(rootSpan?.['Events.Name']).toContain('output.text');
