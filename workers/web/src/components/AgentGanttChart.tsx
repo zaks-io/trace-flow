@@ -122,13 +122,7 @@ function getSpanType(span: TraceSpan): SpanType {
   // Legacy infrastructure spans (muted)
   if (name === 'gen_ai.request' || name.includes('chat/completions')) return 'llm';
 
-  // Input message spans (warm tones) - ai.request.{role} pattern
-  if (name === 'gen_ai.request.system') return 'system';
-  if (name === 'gen_ai.request.user') return 'user';
-  if (name === 'gen_ai.request.assistant') return 'assistant_input';
-  if (name === 'gen_ai.request.tool_result') return 'tool_result';
-
-  // Output spans (cool/vibrant tones) - ai.response.{type} pattern
+  // Output spans (cool/vibrant tones) - gen_ai.response.{type} pattern
   if (name.startsWith('gen_ai.response.text')) return 'assistant_text';
   if (name.startsWith('gen_ai.response.thinking')) return 'assistant_thinking';
   if (name.startsWith('gen_ai.response.tool_use')) return 'assistant_tool_use';
@@ -136,7 +130,7 @@ function getSpanType(span: TraceSpan): SpanType {
   // Tool execution
   if (name === 'gen_ai.tool.execution') return 'tool_execution';
 
-  // Fallback for other response outputs (numbered variants like ai.response.text.2)
+  // Fallback for other response outputs (numbered variants like gen_ai.response.text.2)
   if (name.startsWith('gen_ai.response.')) return 'assistant_text';
 
   return 'internal';
