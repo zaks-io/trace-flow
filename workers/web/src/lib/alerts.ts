@@ -50,27 +50,31 @@ function extractMetricValue(row: RequestRow, field: AlertField): number | string
       return row.Duration / 1_000_000;
 
     case 'total_tokens': {
-      const total = attrs['ai.tokens.total'];
-      return total ? parseInt(total, 10) : null;
+      const input = attrs['gen_ai.usage.input_tokens'];
+      const output = attrs['gen_ai.usage.output_tokens'];
+      if (input || output) {
+        return (parseInt(input ?? '0', 10) || 0) + (parseInt(output ?? '0', 10) || 0);
+      }
+      return null;
     }
 
     case 'prompt_tokens': {
-      const prompt = attrs['ai.tokens.prompt'];
+      const prompt = attrs['gen_ai.usage.input_tokens'];
       return prompt ? parseInt(prompt, 10) : null;
     }
 
     case 'completion_tokens': {
-      const completion = attrs['ai.tokens.completion'];
+      const completion = attrs['gen_ai.usage.output_tokens'];
       return completion ? parseInt(completion, 10) : null;
     }
 
     case 'tokens_per_second': {
-      const tps = attrs['ai.tokens_per_second'];
+      const tps = attrs['gen_ai.tokens_per_second'];
       return tps ? parseFloat(tps) : null;
     }
 
     case 'ttft_ms': {
-      const ttft = attrs['ai.time_to_first_token_ms'];
+      const ttft = attrs['gen_ai.server.time_to_first_token'];
       return ttft ? parseFloat(ttft) : null;
     }
 
@@ -78,12 +82,12 @@ function extractMetricValue(row: RequestRow, field: AlertField): number | string
       return row.StatusCode === 'ERROR';
 
     case 'http_status_code': {
-      const statusCode = attrs['http.status_code'];
+      const statusCode = attrs['http.response.status_code'];
       return statusCode ? parseInt(statusCode, 10) : null;
     }
 
     case 'cost_total': {
-      const cost = attrs['ai.cost.total'];
+      const cost = attrs['gen_ai.cost.total'];
       return cost ? parseFloat(cost) : null;
     }
 

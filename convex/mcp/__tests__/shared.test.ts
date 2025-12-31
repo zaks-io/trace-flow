@@ -414,15 +414,15 @@ describe('stripNulls', () => {
 
 describe('splitPatterns', () => {
   it('separates exact patterns from wildcard prefixes', () => {
-    const result = splitPatterns(['ai.request', 'http.*', 'db.query']);
-    expect(result.exact).toEqual(['ai.request', 'db.query']);
+    const result = splitPatterns(['gen_ai.request', 'http.*', 'db.query']);
+    expect(result.exact).toEqual(['gen_ai.request', 'db.query']);
     expect(result.prefixes).toEqual(['http.']);
   });
 
   it('handles patterns ending with .*', () => {
-    const result = splitPatterns(['ai.*', 'gen_ai.*']);
+    const result = splitPatterns(['gen_ai.*', 'gen_ai.*']);
     expect(result.exact).toEqual([]);
-    expect(result.prefixes).toEqual(['ai.', 'gen_ai.']);
+    expect(result.prefixes).toEqual(['gen_ai.', 'gen_ai.']);
   });
 
   it('returns empty arrays for empty input', () => {
@@ -432,14 +432,14 @@ describe('splitPatterns', () => {
   });
 
   it('handles all exact patterns', () => {
-    const result = splitPatterns(['ai.request', 'ai.response', 'http.request']);
-    expect(result.exact).toEqual(['ai.request', 'ai.response', 'http.request']);
+    const result = splitPatterns(['gen_ai.request', 'gen_ai.response', 'http.request']);
+    expect(result.exact).toEqual(['gen_ai.request', 'gen_ai.response', 'http.request']);
     expect(result.prefixes).toEqual([]);
   });
 
   it('handles single wildcard pattern', () => {
-    const result = splitPatterns(['ai.*']);
+    const result = splitPatterns(['gen_ai.*']);
     expect(result.exact).toEqual([]);
-    expect(result.prefixes).toEqual(['ai.']);
+    expect(result.prefixes).toEqual(['gen_ai.']);
   });
 });

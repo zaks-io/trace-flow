@@ -68,108 +68,6 @@ function formatNumber(num: number): string {
 }
 
 /**
- * Formats message content for display. Handles various message content formats:
- * - Simple strings
- * - Arrays of content blocks (multimodal: text, images, tool_use, tool_result)
- * - Objects with nested content
- */
-function formatMessageForDisplay(content: unknown): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-
-  if (Array.isArray(content)) {
-    // Handle array of content blocks (e.g., Anthropic multimodal format)
-    return content
-      .map((block) => {
-        if (typeof block === 'string') return block;
-        if (typeof block !== 'object' || block === null) return JSON.stringify(block);
-
-        const typedBlock = block as { type?: string; text?: string; [key: string]: unknown };
-        if (typedBlock.type === 'text' && typeof typedBlock.text === 'string') {
-          return typedBlock.text;
-        }
-        if (typedBlock.type === 'image' || typedBlock.type === 'image_url') {
-          return '[Image]';
-        }
-        if (typedBlock.type === 'tool_use') {
-          return `[Tool Call: ${(typedBlock as { name?: string }).name ?? 'unknown'}]`;
-        }
-        if (typedBlock.type === 'tool_result') {
-          const result = (typedBlock as { content?: unknown }).content;
-          if (typeof result === 'string') return result;
-          return JSON.stringify(result, null, 2);
-        }
-        return JSON.stringify(block, null, 2);
-      })
-      .join('\n\n');
-  }
-
-  // For objects or other types, stringify
-  return JSON.stringify(content, null, 2);
-}
-
-/**
- * Extracts a message from the request body using provider-aware logic.
- * - Anthropic: system prompt is in separate `system` field, messages array starts after that
- * - OpenAI/Groq/OpenRouter: all messages in `messages[]` array with direct index mapping
- */
-function extractMessageFromBody(
-  body: object,
-  messageIndex: number,
-  provider: string,
-): { formatted: string; raw: object } | null {
-  // Anthropic: system is separate, messages array starts at index 1 (if system exists)
-  if (provider === 'anthropic') {
-    const anthropicBody = body as {
-      system?: string | { type: string; text?: string }[];
-      messages?: { role: string; content: unknown }[];
-    };
-
-    if (messageIndex === 0 && anthropicBody.system) {
-      // Index 0 = system prompt (separate field in Anthropic)
-      const systemContent =
-        typeof anthropicBody.system === 'string'
-          ? anthropicBody.system
-          : anthropicBody.system.map((b) => b.text ?? '').join('\n');
-      return {
-        formatted: systemContent,
-        raw: { role: 'system', content: anthropicBody.system },
-      };
-    }
-
-    // For non-zero indices, offset by 1 if system exists
-    const offset = anthropicBody.system ? 1 : 0;
-    const messages = anthropicBody.messages ?? [];
-    const actualIndex = messageIndex - offset;
-
-    if (actualIndex < 0 || actualIndex >= messages.length) {
-      return null;
-    }
-    const msg = messages[actualIndex];
-    return {
-      formatted: formatMessageForDisplay(msg.content),
-      raw: msg,
-    };
-  }
-
-  // OpenAI/Groq/OpenRouter: direct index mapping
-  const openaiBody = body as {
-    messages?: { role: string; content: unknown }[];
-  };
-  const messages = openaiBody.messages ?? [];
-
-  if (messageIndex >= messages.length) {
-    return null;
-  }
-  const msg = messages[messageIndex];
-  return {
-    formatted: formatMessageForDisplay(msg.content),
-    raw: msg,
-  };
-}
-
-/**
  * Extracts content from response body for output spans (assistant text, thinking, tool_use).
  * Handles both JSON (non-streaming) and SSE (streaming) responses.
  */
@@ -178,7 +76,7 @@ function extractOutputContent(
   contentType: string,
   spanName: string,
 ): { formatted: string; raw: object } | null {
-  // Parse the occurrence number from span name (e.g., "ai.assistant.text.2" → 2)
+  // Parse the occurrence number from span name (e.g., "gen_ai.assistant.text.2" → 2)
   const match = /\.(\d+)$/.exec(spanName);
   const occurrenceNum = match ? parseInt(match[1], 10) : 1;
 
@@ -586,8 +484,8 @@ function BodySection({
 
 export function SpanDetailPanel({
   span,
-  rootSpan,
-  allSpans = [],
+  rootSpan: _rootSpan,
+  allSpans: _allSpans = [],
   isRootSpan,
   isOpen,
   onClose,
@@ -623,36 +521,26 @@ export function SpanDetailPanel({
     [spanAttributes, resourceAttributes],
   );
 
-  const provider = allAttributes['gen_ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['gen_ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
-  const promptTokens =
-    parseInt(allAttributes['gen_ai.tokens.prompt'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.tokens.input'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
-  const completionTokens =
-    parseInt(allAttributes['gen_ai.tokens.completion'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.tokens.output'] ?? '0', 10) ||
-    parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
-  const ttftMs = allAttributes['gen_ai.time_to_first_token_ms']
-    ? parseFloat(allAttributes['gen_ai.time_to_first_token_ms'])
+  const provider = allAttributes['gen_ai.system'] ?? '';
+  const model = allAttributes['gen_ai.request.model'] ?? '';
+  const promptTokens = parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
+  const completionTokens = parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
+  const ttftMs = allAttributes['gen_ai.server.time_to_first_token']
+    ? parseFloat(allAttributes['gen_ai.server.time_to_first_token'])
     : null;
   const totalCost = allAttributes['gen_ai.cost.total']
     ? parseFloat(allAttributes['gen_ai.cost.total'])
     : null;
 
   const displayedKeys = new Set([
-    'gen_ai.provider',
     'gen_ai.system',
-    'gen_ai.model',
     'gen_ai.request.model',
-    'gen_ai.tokens.prompt',
-    'gen_ai.tokens.input',
-    'gen_ai.tokens.completion',
-    'gen_ai.tokens.output',
-    'gen_ai.tokens.total',
-    'gen_ai.time_to_first_token_ms',
     'gen_ai.usage.input_tokens',
     'gen_ai.usage.output_tokens',
+    'gen_ai.usage.reasoning_tokens',
+    'gen_ai.usage.cache_read_input_tokens',
+    'gen_ai.usage.cache_creation_input_tokens',
+    'gen_ai.server.time_to_first_token',
     'service.name',
     'gen_ai.cost.input',
     'gen_ai.cost.output',
@@ -713,19 +601,10 @@ export function SpanDetailPanel({
     void fetchBodies();
   }, [isRootSpan, span, getAccessTokenSilently]);
 
-  // Check if this is an input message span (from request)
-  // Matches: ai.request.system, ai.request.user, ai.request.assistant, ai.request.tool_result
-  const isInputMessageSpan =
-    span?.SpanName.match(/^ai\.request\.(system|user|assistant|tool_result)/i) !== null;
-
   // Check if this is an output span (from response)
   // Matches: gen_ai.response.text, gen_ai.response.thinking, gen_ai.response.tool_use (with optional numeric suffix)
   const isOutputSpan =
     span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i) !== null;
-
-  const messageIndex = spanAttributes['gen_ai.message.index']
-    ? parseInt(spanAttributes['gen_ai.message.index'], 10)
-    : null;
 
   // Get content type from attribute, or infer from span name
   const contentType = (() => {
@@ -736,54 +615,16 @@ export function SpanDetailPanel({
     return spanMatch?.[1]?.toLowerCase() ?? '';
   })();
 
-  // Find the parent LLM request span for this span (used for requestId and provider lookup)
-  const parentRequestSpan = (() => {
-    if (!span || allSpans.length === 0) return null;
-    // If this span is itself an LLM request, use it
-    if (isLLMRequestSpan(span)) return span;
-    // Otherwise walk up to find the parent LLM request
-    let currentSpanId = span.ParentSpanId;
-    while (currentSpanId) {
-      const parentSpan = allSpans.find((s) => s.SpanId === currentSpanId);
-      if (!parentSpan) break;
-      if (isLLMRequestSpan(parentSpan)) return parentSpan;
-      currentSpanId = parentSpan.ParentSpanId;
-    }
-    return null;
-  })();
-
-  // Fetch message content for non-root spans (both input and output)
+  // Fetch message content for output spans (gen_ai.response.*)
   useEffect(() => {
-    const isContentSpan = isInputMessageSpan || isOutputSpan;
-    // For input spans, we need messageIndex. For output spans, we use occurrence from span name.
     const isTraceRoot = span?.ParentSpanId === '';
 
-    if (isTraceRoot || !isContentSpan || !span) {
-      setMessageContent(null);
-      return;
-    }
-    if (isInputMessageSpan && messageIndex === null) {
+    if (isTraceRoot || !isOutputSpan || !span) {
       setMessageContent(null);
       return;
     }
 
-    // Get requestId from the span's own attributes
     const requestId = spanAttributes['gen_ai.request_id'];
-
-    // Get provider from parent ai.request span, root span, or current span's attributes
-    const parentAttrs = parentRequestSpan
-      ? parseSpanAttributes(parentRequestSpan.SpanAttributes)
-      : {};
-    const rootAttrs = rootSpan ? parseSpanAttributes(rootSpan.SpanAttributes) : {};
-    const provider =
-      spanAttributes['gen_ai.provider'] ??
-      spanAttributes['gen_ai.system'] ??
-      parentAttrs['gen_ai.provider'] ??
-      parentAttrs['gen_ai.system'] ??
-      rootAttrs['gen_ai.provider'] ??
-      rootAttrs['gen_ai.system'] ??
-      '';
-
     if (!requestId) {
       return;
     }
@@ -794,9 +635,7 @@ export function SpanDetailPanel({
         const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
         const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
-        // For output spans, fetch response body; for input spans, fetch request body
-        const bodyType = isOutputSpan ? 'response' : 'request';
-        const res = await fetch(`${apiUrl}/bodies/${requestId}/${bodyType}`, {
+        const res = await fetch(`${apiUrl}/bodies/${requestId}/response`, {
           headers: { Authorization: `Bearer ${id_token}` },
         });
 
@@ -813,20 +652,7 @@ export function SpanDetailPanel({
           return;
         }
 
-        let extracted: { formatted: string; raw: object } | null = null;
-
-        if (isOutputSpan) {
-          // Extract content from response body
-          extracted = extractOutputContent(body, contentType, span.SpanName);
-        } else if (messageIndex !== null) {
-          // Extract message from request body (provider-aware)
-          if (body.format !== 'json') {
-            setMessageContent(null);
-            return;
-          }
-          extracted = extractMessageFromBody(body.content as object, messageIndex, provider);
-        }
-
+        const extracted = extractOutputContent(body, contentType, span.SpanName);
         setMessageContent(extracted);
       } catch {
         setMessageContent(null);
@@ -836,17 +662,7 @@ export function SpanDetailPanel({
     };
 
     void fetchMessageContent();
-  }, [
-    isInputMessageSpan,
-    isOutputSpan,
-    span,
-    parentRequestSpan,
-    rootSpan,
-    spanAttributes,
-    messageIndex,
-    contentType,
-    getAccessTokenSilently,
-  ]);
+  }, [isOutputSpan, span, spanAttributes, contentType, getAccessTokenSilently]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -1035,20 +851,13 @@ export function SpanDetailPanel({
                 </>
               )}
 
-              {((isInputMessageSpan && messageIndex !== null) || isOutputSpan) && !isRootSpan && (
+              {isOutputSpan && !isRootSpan && (
                 <Collapsible open={isMessageOpen} onOpenChange={setIsMessageOpen}>
                   <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
                     <ChevronDown
                       className={`h-4 w-4 text-muted-foreground transition-transform ${isMessageOpen ? 'rotate-0' : '-rotate-90'}`}
                     />
-                    <span className="text-sm font-medium text-foreground">
-                      {isOutputSpan ? 'Output Content' : 'Message Content'}
-                    </span>
-                    {messageIndex !== null && (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                        #{messageIndex}
-                      </span>
-                    )}
+                    <span className="text-sm font-medium text-foreground">Output Content</span>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     <div className="mt-2">

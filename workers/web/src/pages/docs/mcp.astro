@@ -40,13 +40,13 @@ const GET_TRACE_RESPONSE = `{
   "spans": [
     {
       "span_id": "abc123...",
-      "name": "ai.request",
+      "name": "chat",
       "duration_ms": 1847,
       "attributes": {
-        "provider": "openai",
-        "model": "gpt-4o",
-        "http_status": 200,
-        "time_to_first_token_ms": 423
+        "gen_ai.system": "openai",
+        "gen_ai.request.model": "gpt-4o",
+        "http.response.status_code": "200",
+        "gen_ai.server.time_to_first_token": "423"
       }
     }
   ],

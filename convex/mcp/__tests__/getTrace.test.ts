@@ -8,16 +8,15 @@ describe('parseSpanRow', () => {
     TraceId: 'trace123',
     SpanId: 'span123',
     ParentSpanId: 'parent123',
-    SpanName: 'ai.request',
+    SpanName: 'gen_ai.request',
     Duration: 150000000,
     StatusCode: 'STATUS_CODE_OK',
     StatusMessage: '',
     SpanAttributes: JSON.stringify({
-      'gen_ai.provider': 'openai',
-      'gen_ai.model': 'gpt-4',
-      'gen_ai.tokens.prompt': 100,
-      'gen_ai.tokens.completion': 50,
-      'gen_ai.tokens.total': 150,
+      'gen_ai.system': 'openai',
+      'gen_ai.request.model': 'gpt-4',
+      'gen_ai.usage.input_tokens': 100,
+      'gen_ai.usage.output_tokens': 50,
       'gen_ai.cost.input': 0.001,
       'gen_ai.cost.output': 0.002,
       'gen_ai.cost.total': 0.003,
@@ -27,7 +26,7 @@ describe('parseSpanRow', () => {
   it('parses basic span fields', () => {
     const result = parseSpanRow(baseRow);
     expect(result.span_id).toBe('span123');
-    expect(result.name).toBe('ai.request');
+    expect(result.name).toBe('gen_ai.request');
     expect(result.status).toBe('ok');
     expect(result.duration_ms).toBe(150);
   });
@@ -85,7 +84,7 @@ describe('parseSpanRow', () => {
       SpanAttributes: JSON.stringify({
         'baggage.userId': 'user123',
         'baggage.sessionId': 'session456',
-        'gen_ai.provider': 'openai',
+        'gen_ai.system': 'openai',
       }),
     };
     const result = parseSpanRow(row);
@@ -96,8 +95,8 @@ describe('parseSpanRow', () => {
     const row = {
       ...baseRow,
       SpanAttributes: {
-        'gen_ai.provider': 'anthropic',
-        'gen_ai.model': 'claude-3',
+        'gen_ai.system': 'anthropic',
+        'gen_ai.request.model': 'claude-3',
       },
     };
     const result = parseSpanRow(row);
@@ -110,7 +109,7 @@ describe('buildOutputSpan', () => {
   const span: ParsedSpan = {
     span_id: '123',
     parent_span_id: 'parent123',
-    name: 'ai.request',
+    name: 'gen_ai.request',
     timestamp: '2024-01-01T00:00:00Z',
     duration_ms: 100,
     status: 'ok',
@@ -129,7 +128,7 @@ describe('buildOutputSpan', () => {
   it('includes base fields by default', () => {
     const result = buildOutputSpan(span, new Set());
     expect(result.span_id).toBe('123');
-    expect(result.name).toBe('ai.request');
+    expect(result.name).toBe('gen_ai.request');
     expect(result.duration_ms).toBe(100);
     expect(result.status).toBe('ok');
     expect(result.timestamp).toBeDefined();

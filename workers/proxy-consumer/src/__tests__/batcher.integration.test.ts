@@ -22,14 +22,14 @@ describe('TraceBatcher Integration', () => {
     SpanId: 'span-123',
     ParentSpanId: '',
     TraceState: '',
-    SpanName: 'ai.request',
+    SpanName: 'gen_ai.request',
     SpanKind: 'SPAN_KIND_CLIENT',
     ServiceName: 'llm-observability',
     ResourceAttributes: { 'service.name': 'llm-observability' },
     SpanAttributes: {
-      'ai.request_id': traceId,
-      'ai.provider': 'openai',
-      'ai.model': 'gpt-4',
+      'gen_ai.request_id': traceId,
+      'gen_ai.system': 'openai',
+      'gen_ai.request.model': 'gpt-4',
     },
     Duration: 500000,
     StatusCode: 'STATUS_CODE_OK',
@@ -224,12 +224,12 @@ describe('TraceBatcher Integration', () => {
   it('should handle traces with complex attributes', async () => {
     const trace = createMockTrace('trace-complex');
     trace.SpanAttributes = {
-      'ai.request_id': 'complex-id',
-      'ai.provider': 'anthropic',
-      'ai.model': 'claude-3-opus',
-      'ai.tokens.prompt': '1000',
-      'ai.tokens.completion': '500',
-      'ai.cached': 'true',
+      'gen_ai.request_id': 'complex-id',
+      'gen_ai.system': 'anthropic',
+      'gen_ai.request.model': 'claude-3-opus',
+      'gen_ai.usage.input_tokens': '1000',
+      'gen_ai.usage.output_tokens': '500',
+      'gen_ai.cached': 'true',
     };
 
     await runInDurableObject(batcher, (instance: TraceBatcher) => {

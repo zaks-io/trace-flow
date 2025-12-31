@@ -179,23 +179,24 @@ The system works as follows:
 
 ## OpenTelemetry Traces Schema
 
-Each queue message creates multiple spans in ClickHouse:
+Each queue message creates spans following [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/):
 
-- **`ai.request`** - Root span for the entire LLM request
-  - `ai.request_id` - Unique request identifier
-  - `ai.provider` - LLM provider (openai, anthropic, etc.)
-  - `ai.model` - Model name
-  - `ai.target_url` - Original target URL
-  - `http.status_code` - HTTP response status
-  - `ai.tokens.prompt` - Prompt token count
-  - `ai.tokens.completion` - Completion token count
-  - `ai.tokens.total` - Total token count
-  - `ai.cached` - Whether response was cached
+- **Root LLM Request Span** - Main span with `gen_ai.operation.name` attribute
+  - `gen_ai.request_id` - Unique request identifier
+  - `gen_ai.system` - LLM provider (openai, anthropic, etc.)
+  - `gen_ai.request.model` - Model name
+  - `gen_ai.operation.name` - Operation type (chat, text_completion, etc.)
+  - `http.url` - Original target URL
+  - `http.response.status_code` - HTTP response status
+  - `gen_ai.usage.input_tokens` - Input/prompt token count
+  - `gen_ai.usage.output_tokens` - Output/completion token count
+  - `gen_ai.server.time_to_first_token` - TTFT in milliseconds (if streaming)
+  - `gen_ai.cost.total` - Total cost in USD
+  - `trace_flow.source` - Set to "proxy" for proxy-originated spans
 
-- **`ai.request.ttft`** - Time to first token (if streaming)
-  - `ai.time_to_first_token_ms` - TTFT in milliseconds
-
-- **`ai.assistant.*`** - Content block spans (text, thinking, tool_use)
+- **`gen_ai.response.*`** - Content block spans (text, thinking, tool_use)
+  - `gen_ai.content.type` - Content type (text, thinking, tool_use)
+  - `gen_ai.message.index` - Content block index
 
 All spans use the same `TraceId` for correlation and form a parent-child relationship.
 
@@ -206,12 +207,13 @@ All spans use the same `TraceId` for correlation and form a parent-child relatio
 ```sql
 SELECT
     Timestamp,
-    SpanAttributes['ai.provider'] as Provider,
-    SpanAttributes['ai.model'] as Model,
+    SpanAttributes['gen_ai.system'] as Provider,
+    SpanAttributes['gen_ai.request.model'] as Model,
     Duration / 1000000 as DurationMs,
-    SpanAttributes['ai.tokens.total'] as TotalTokens
+    CAST(SpanAttributes['gen_ai.usage.input_tokens'] as Int64) +
+    CAST(SpanAttributes['gen_ai.usage.output_tokens'] as Int64) as TotalTokens
 FROM otel_traces
-WHERE SpanName = 'ai.request'
+WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
 ORDER BY Timestamp DESC
 LIMIT 10;
 ```
@@ -220,11 +222,11 @@ LIMIT 10;
 
 ```sql
 SELECT
-    SpanAttributes['ai.provider'] as Provider,
+    SpanAttributes['gen_ai.system'] as Provider,
     avg(Duration / 1000000) as AvgLatencyMs,
     count() as RequestCount
 FROM otel_traces
-WHERE SpanName = 'ai.request'
+WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
   AND Timestamp > now() - INTERVAL 1 HOUR
 GROUP BY Provider;
 ```
@@ -235,11 +237,11 @@ GROUP BY Provider;
 SELECT
     Timestamp,
     TraceId,
-    SpanAttributes['ai.provider'] as Provider,
-    SpanAttributes['ai.model'] as Model,
+    SpanAttributes['gen_ai.system'] as Provider,
+    SpanAttributes['gen_ai.request.model'] as Model,
     Duration / 1000000 as DurationMs
 FROM otel_traces
-WHERE SpanName = 'ai.request'
+WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
   AND Duration > 5000000000
 ORDER BY Duration DESC
 LIMIT 10;

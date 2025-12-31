@@ -98,7 +98,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Filter by span names. Supports wildcard suffix (e.g., "ai.*" matches ai.request, ai.embedding).',
+            'Filter by span names. Supports wildcard suffix (e.g., "gen_ai.*" matches gen_ai.request, gen_ai.embedding).',
         },
         exclude_span_names: {
           type: 'array',
@@ -153,7 +153,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         span_names: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Filter to events from spans matching these names (e.g., ["ai.request"]).',
+          description:
+            'Filter to events from spans matching these names (e.g., ["gen_ai.request"]).',
         },
         event_names: {
           type: 'array',

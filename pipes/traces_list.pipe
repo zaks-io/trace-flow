@@ -16,16 +16,16 @@ SQL >
         StatusCode,
         SpanAttributes
     FROM otel_traces
-    WHERE SpanName = 'ai.request'
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         {% if defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}
         {% if defined(provider) %}
-        AND JSONExtractString(SpanAttributes, 'ai.provider') = {{ String(provider) }}
+        AND JSONExtractString(SpanAttributes, 'gen_ai.system') = {{ String(provider) }}
         {% end %}
         {% if defined(model) %}
-        AND JSONExtractString(SpanAttributes, 'ai.model') = {{ String(model) }}
+        AND JSONExtractString(SpanAttributes, 'gen_ai.request.model') = {{ String(model) }}
         {% end %}
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}

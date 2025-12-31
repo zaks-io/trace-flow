@@ -37,9 +37,9 @@ SQL >
         {% end %}
     ORDER BY
         {% if defined(sort_by) and sort_by == 'cost_usd' %}
-        JSONExtractFloat(SpanAttributes, 'ai.cost.total')
+        JSONExtractFloat(SpanAttributes, 'gen_ai.cost.total')
         {% elif defined(sort_by) and sort_by == 'tokens' %}
-        JSONExtractInt(SpanAttributes, 'ai.tokens.total')
+        JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens') + JSONExtractInt(SpanAttributes, 'gen_ai.usage.output_tokens')
         {% elif defined(sort_by) and sort_by == 'duration_ms' %}
         Duration
         {% else %}

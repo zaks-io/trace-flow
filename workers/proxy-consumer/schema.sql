@@ -31,9 +31,9 @@ TTL Timestamp + INTERVAL 30 DAY;
 -- Optional: Create materialized columns for frequently queried attributes
 -- Uncomment and adjust based on your needs:
 
--- ALTER TABLE otel_traces ADD COLUMN `ai_provider` String MATERIALIZED SpanAttributes['ai.provider'];
--- ALTER TABLE otel_traces ADD COLUMN `ai_model` String MATERIALIZED SpanAttributes['ai.model'];
--- ALTER TABLE otel_traces ADD COLUMN `ai_request_id` String MATERIALIZED SpanAttributes['ai.request_id'];
+-- ALTER TABLE otel_traces ADD COLUMN `ai_provider` String MATERIALIZED SpanAttributes['gen_ai.system'];
+-- ALTER TABLE otel_traces ADD COLUMN `ai_model` String MATERIALIZED SpanAttributes['gen_ai.request.model'];
+-- ALTER TABLE otel_traces ADD COLUMN `ai_request_id` String MATERIALIZED SpanAttributes['gen_ai.request_id'];
 -- ALTER TABLE otel_traces ADD COLUMN `http_status_code` Int32 MATERIALIZED CAST(SpanAttributes['http.status_code'], 'Int32');
 
 -- Create indexes for common query patterns

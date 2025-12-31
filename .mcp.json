@@ -6,7 +6,7 @@
     },
     "trace-flow-prod": {
       "type": "http",
-      "url": "https://mcp.trace-flow.app/mcp"
+      "url": "https://mcp.trace-flow.dev/mcp"
     }
   }
 }
