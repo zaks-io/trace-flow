@@ -9,6 +9,7 @@
     "test:google": "bun run src/test-google.ts",
     "test:openrouter": "bun run src/test-openrouter.ts",
     "test:groq": "bun run src/test-groq.ts",
+    "test:groq-tools": "bun run src/test-groq-tools.ts",
     "test:all": "bun run src/test-all.ts"
   },
   "dependencies": {
