@@ -1,14 +1,4 @@
-interface TraceSpan {
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
-  ParentSpanId: string;
-  SpanName: string;
-  ServiceName: string;
-  Duration: number;
-  StatusCode: string;
-  SpanAttributes: string;
-}
+import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from './spans';
 
 interface TokenSummary {
   promptTokens: number;
@@ -41,14 +31,6 @@ interface LLMCall {
   endOffset: number;
 }
 
-function parseAttributes(attributesJson: string): Record<string, string> {
-  try {
-    return JSON.parse(attributesJson) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
 function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   let promptTokens = 0;
   let completionTokens = 0;
@@ -61,29 +43,29 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   let llmActiveDuration = 0;
 
   for (const span of spans) {
-    const attrs = parseAttributes(span.SpanAttributes);
+    const attrs = parseSpanAttributes(span.SpanAttributes);
 
-    if (span.SpanName === 'ai.request') {
+    if (isLLMRequestSpan(span)) {
       llmCallCount++;
       llmActiveDuration += span.Duration;
     }
 
     const prompt =
-      parseInt(attrs['ai.tokens.prompt'] ?? '0', 10) ||
-      parseInt(attrs['ai.tokens.input'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.prompt'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.input'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
 
     const completion =
-      parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
-      parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.completion'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.output'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
     const cacheRead =
-      parseInt(attrs['ai.tokens.cache_read'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.cache_read'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
 
     const cacheCreation =
-      parseInt(attrs['ai.tokens.cache_creation'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.cache_creation'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
 
     promptTokens += prompt;
@@ -91,8 +73,8 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
     cacheReadTokens += cacheRead;
     cacheCreationTokens += cacheCreation;
 
-    if (attrs['ai.cost.total']) {
-      totalCost += parseFloat(attrs['ai.cost.total']);
+    if (attrs['gen_ai.cost.total']) {
+      totalCost += parseFloat(attrs['gen_ai.cost.total']);
     }
 
     minTimestamp = Math.min(minTimestamp, span.Timestamp);
@@ -117,35 +99,35 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
 }
 
 function extractLLMCalls(spans: TraceSpan[], traceStart: number): LLMCall[] {
-  const llmSpans = spans.filter((s) => s.SpanName === 'ai.request');
+  const llmSpans = spans.filter(isLLMRequestSpan);
   return llmSpans.map((span, index) => {
-    const attrs = parseAttributes(span.SpanAttributes);
+    const attrs = parseSpanAttributes(span.SpanAttributes);
 
     const promptTokens =
-      parseInt(attrs['ai.tokens.prompt'] ?? '0', 10) ||
-      parseInt(attrs['ai.tokens.input'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.prompt'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.input'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
 
     const completionTokens =
-      parseInt(attrs['ai.tokens.completion'] ?? '0', 10) ||
-      parseInt(attrs['ai.tokens.output'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.completion'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.output'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
     const cacheReadTokens =
-      parseInt(attrs['ai.tokens.cache_read'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.cache_read'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
 
     const cacheCreationTokens =
-      parseInt(attrs['ai.tokens.cache_creation'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.cache_creation'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
 
-    const cost = attrs['ai.cost.total'] ? parseFloat(attrs['ai.cost.total']) : null;
+    const cost = attrs['gen_ai.cost.total'] ? parseFloat(attrs['gen_ai.cost.total']) : null;
 
     return {
       index: index + 1,
       spanId: span.SpanId,
-      provider: attrs['ai.provider'] ?? attrs['gen_ai.system'] ?? 'unknown',
-      model: attrs['ai.model'] ?? attrs['gen_ai.request.model'] ?? 'unknown',
+      provider: attrs['gen_ai.provider'] ?? attrs['gen_ai.system'] ?? 'unknown',
+      model: attrs['gen_ai.model'] ?? attrs['gen_ai.request.model'] ?? 'unknown',
       promptTokens,
       completionTokens,
       totalTokens: promptTokens + completionTokens,
@@ -306,22 +288,22 @@ function renderSpanTree(nodes: SpanNode[], traceStart: number, depth = 0): strin
 
   for (const node of nodes) {
     const { span } = node;
-    const attrs = parseAttributes(span.SpanAttributes);
+    const attrs = parseSpanAttributes(span.SpanAttributes);
     const duration = formatDuration(span.Duration);
     const offset = formatOffset(span.Timestamp - traceStart);
     const statusIcon = span.StatusCode === 'ERROR' ? ' ERROR' : '';
 
     const tokens =
-      parseInt(attrs['ai.tokens.total'] ?? '0', 10) ||
-      parseInt(attrs['ai.usage.total_tokens'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.tokens.total'] ?? '0', 10) ||
+      parseInt(attrs['gen_ai.usage.total_tokens'] ?? '0', 10) ||
       parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) +
         parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
 
     const parts: string[] = [`${indent}- **${span.SpanName}**${statusIcon}`];
     parts.push(`[${offset} → ${duration}]`);
 
-    if (span.SpanName === 'ai.request') {
-      const model = attrs['ai.model'] ?? attrs['gen_ai.request.model'];
+    if (isLLMRequestSpan(span)) {
+      const model = attrs['gen_ai.model'] ?? attrs['gen_ai.request.model'];
       if (model) parts.push(`model=${model}`);
     }
 
@@ -329,7 +311,7 @@ function renderSpanTree(nodes: SpanNode[], traceStart: number, depth = 0): strin
       parts.push(`${formatNumber(tokens)}t`);
     }
 
-    const cost = attrs['ai.cost.total'] ? parseFloat(attrs['ai.cost.total']) : null;
+    const cost = attrs['gen_ai.cost.total'] ? parseFloat(attrs['gen_ai.cost.total']) : null;
     if (cost !== null && cost > 0) {
       parts.push(formatCost(cost));
     }

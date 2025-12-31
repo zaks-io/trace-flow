@@ -35,23 +35,7 @@ import {
 } from '@/components/ui/dialog';
 import { AlertList } from '@/components/alerts';
 import type { TriggeredAlert } from '@/types/alerts';
-
-interface TraceSpan {
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
-  ParentSpanId: string;
-  SpanName: string;
-  ServiceName: string;
-  Duration: number;
-  StatusCode: string;
-  StatusMessage: string;
-  SpanAttributes: string;
-  ResourceAttributes: string;
-  'Events.Timestamp': number[];
-  'Events.Name': string[];
-  'Events.Attributes': string[];
-}
+import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from '@/lib/spans';
 
 interface SpanDetailPanelProps {
   span: TraceSpan | null;
@@ -61,14 +45,6 @@ interface SpanDetailPanelProps {
   isOpen: boolean;
   onClose: () => void;
   triggeredAlerts?: TriggeredAlert[];
-}
-
-function parseAttributes(attributesJson: string): Record<string, string> {
-  try {
-    return JSON.parse(attributesJson) as Record<string, string>;
-  } catch {
-    return {};
-  }
 }
 
 function formatDuration(nanoseconds: number): string {
@@ -634,9 +610,12 @@ export function SpanDetailPanel({
   const [messageTab, setMessageTab] = useState<'formatted' | 'raw'>('formatted');
   const [isMessageOpen, setIsMessageOpen] = useState(true);
 
-  const spanAttributes = useMemo(() => (span ? parseAttributes(span.SpanAttributes) : {}), [span]);
+  const spanAttributes = useMemo(
+    () => (span ? parseSpanAttributes(span.SpanAttributes) : {}),
+    [span],
+  );
   const resourceAttributes = useMemo(
-    () => (span ? parseAttributes(span.ResourceAttributes) : {}),
+    () => (span?.ResourceAttributes ? parseSpanAttributes(span.ResourceAttributes) : {}),
     [span],
   );
   const allAttributes = useMemo(
@@ -644,55 +623,55 @@ export function SpanDetailPanel({
     [spanAttributes, resourceAttributes],
   );
 
-  const provider = allAttributes['ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
+  const provider = allAttributes['gen_ai.provider'] ?? allAttributes['gen_ai.system'] ?? '';
+  const model = allAttributes['gen_ai.model'] ?? allAttributes['gen_ai.request.model'] ?? '';
   const promptTokens =
-    parseInt(allAttributes['ai.tokens.prompt'] ?? '0', 10) ||
-    parseInt(allAttributes['ai.tokens.input'] ?? '0', 10) ||
+    parseInt(allAttributes['gen_ai.tokens.prompt'] ?? '0', 10) ||
+    parseInt(allAttributes['gen_ai.tokens.input'] ?? '0', 10) ||
     parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
   const completionTokens =
-    parseInt(allAttributes['ai.tokens.completion'] ?? '0', 10) ||
-    parseInt(allAttributes['ai.tokens.output'] ?? '0', 10) ||
+    parseInt(allAttributes['gen_ai.tokens.completion'] ?? '0', 10) ||
+    parseInt(allAttributes['gen_ai.tokens.output'] ?? '0', 10) ||
     parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
-  const ttftMs = allAttributes['ai.time_to_first_token_ms']
-    ? parseFloat(allAttributes['ai.time_to_first_token_ms'])
+  const ttftMs = allAttributes['gen_ai.time_to_first_token_ms']
+    ? parseFloat(allAttributes['gen_ai.time_to_first_token_ms'])
     : null;
-  const totalCost = allAttributes['ai.cost.total']
-    ? parseFloat(allAttributes['ai.cost.total'])
+  const totalCost = allAttributes['gen_ai.cost.total']
+    ? parseFloat(allAttributes['gen_ai.cost.total'])
     : null;
 
   const displayedKeys = new Set([
-    'ai.provider',
+    'gen_ai.provider',
     'gen_ai.system',
-    'ai.model',
+    'gen_ai.model',
     'gen_ai.request.model',
-    'ai.tokens.prompt',
-    'ai.tokens.input',
-    'ai.tokens.completion',
-    'ai.tokens.output',
-    'ai.tokens.total',
-    'ai.time_to_first_token_ms',
+    'gen_ai.tokens.prompt',
+    'gen_ai.tokens.input',
+    'gen_ai.tokens.completion',
+    'gen_ai.tokens.output',
+    'gen_ai.tokens.total',
+    'gen_ai.time_to_first_token_ms',
     'gen_ai.usage.input_tokens',
     'gen_ai.usage.output_tokens',
     'service.name',
-    'ai.cost.input',
-    'ai.cost.output',
-    'ai.cost.total',
-    'ai.cost.cache_read',
-    'ai.cost.cache_creation',
-    'ai.cost.reasoning',
+    'gen_ai.cost.input',
+    'gen_ai.cost.output',
+    'gen_ai.cost.total',
+    'gen_ai.cost.cache_read',
+    'gen_ai.cost.cache_creation',
+    'gen_ai.cost.reasoning',
   ]);
   const remainingAttributes = Object.entries(allAttributes).filter(
     ([key]) => !displayedKeys.has(key),
   );
 
   useEffect(() => {
-    // Only fetch bodies for ai.request spans
-    if (!isRootSpan || span?.SpanName !== 'ai.request') return;
+    // Only fetch bodies for LLM request spans
+    if (!isRootSpan || !span || !isLLMRequestSpan(span)) return;
 
     // Extract requestId from span attributes - bodies are stored by requestId not traceId
-    const attrs = parseAttributes(span.SpanAttributes);
-    const requestId = attrs['ai.request_id'];
+    const attrs = parseSpanAttributes(span.SpanAttributes);
+    const requestId = attrs['gen_ai.request_id'];
     if (!requestId) {
       // No requestId means body not available (e.g., OTLP traces from external systems)
       return;
@@ -740,33 +719,34 @@ export function SpanDetailPanel({
     span?.SpanName.match(/^ai\.request\.(system|user|assistant|tool_result)/i) !== null;
 
   // Check if this is an output span (from response)
-  // Matches: ai.response.text, ai.response.thinking, ai.response.tool_use (with optional numeric suffix)
-  const isOutputSpan = span?.SpanName.match(/^ai\.response\.(text|thinking|tool_use)/i) !== null;
+  // Matches: gen_ai.response.text, gen_ai.response.thinking, gen_ai.response.tool_use (with optional numeric suffix)
+  const isOutputSpan =
+    span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i) !== null;
 
-  const messageIndex = spanAttributes['ai.message.index']
-    ? parseInt(spanAttributes['ai.message.index'], 10)
+  const messageIndex = spanAttributes['gen_ai.message.index']
+    ? parseInt(spanAttributes['gen_ai.message.index'], 10)
     : null;
 
   // Get content type from attribute, or infer from span name
   const contentType = (() => {
-    const attrType = spanAttributes['ai.content.type'];
+    const attrType = spanAttributes['gen_ai.content.type'];
     if (attrType) return attrType;
-    // Infer from span name (e.g., "ai.response.text.2" → "text")
-    const spanMatch = span?.SpanName.match(/^ai\.response\.(text|thinking|tool_use)/i);
+    // Infer from span name (e.g., "gen_ai.response.text.2" → "text")
+    const spanMatch = span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i);
     return spanMatch?.[1]?.toLowerCase() ?? '';
   })();
 
-  // Find the parent ai.request span for this span (used for requestId and provider lookup)
+  // Find the parent LLM request span for this span (used for requestId and provider lookup)
   const parentRequestSpan = (() => {
     if (!span || allSpans.length === 0) return null;
-    // If this span is itself an ai.request, use it
-    if (span.SpanName === 'ai.request') return span;
-    // Otherwise walk up to find the parent ai.request
+    // If this span is itself an LLM request, use it
+    if (isLLMRequestSpan(span)) return span;
+    // Otherwise walk up to find the parent LLM request
     let currentSpanId = span.ParentSpanId;
     while (currentSpanId) {
       const parentSpan = allSpans.find((s) => s.SpanId === currentSpanId);
       if (!parentSpan) break;
-      if (parentSpan.SpanName === 'ai.request') return parentSpan;
+      if (isLLMRequestSpan(parentSpan)) return parentSpan;
       currentSpanId = parentSpan.ParentSpanId;
     }
     return null;
@@ -788,17 +768,19 @@ export function SpanDetailPanel({
     }
 
     // Get requestId from the span's own attributes
-    const requestId = spanAttributes['ai.request_id'];
+    const requestId = spanAttributes['gen_ai.request_id'];
 
     // Get provider from parent ai.request span, root span, or current span's attributes
-    const parentAttrs = parentRequestSpan ? parseAttributes(parentRequestSpan.SpanAttributes) : {};
-    const rootAttrs = rootSpan ? parseAttributes(rootSpan.SpanAttributes) : {};
+    const parentAttrs = parentRequestSpan
+      ? parseSpanAttributes(parentRequestSpan.SpanAttributes)
+      : {};
+    const rootAttrs = rootSpan ? parseSpanAttributes(rootSpan.SpanAttributes) : {};
     const provider =
-      spanAttributes['ai.provider'] ??
+      spanAttributes['gen_ai.provider'] ??
       spanAttributes['gen_ai.system'] ??
-      parentAttrs['ai.provider'] ??
+      parentAttrs['gen_ai.provider'] ??
       parentAttrs['gen_ai.system'] ??
-      rootAttrs['ai.provider'] ??
+      rootAttrs['gen_ai.provider'] ??
       rootAttrs['gen_ai.system'] ??
       '';
 
@@ -1016,8 +998,8 @@ export function SpanDetailPanel({
                 </Collapsible>
               )}
 
-              {/* Request/Response sections for ai.request spans */}
-              {isRootSpan && span?.SpanName === 'ai.request' && (
+              {/* Request/Response sections for LLM request spans */}
+              {isRootSpan && span && isLLMRequestSpan(span) && (
                 <>
                   <BodySection
                     title="Request"
@@ -1136,17 +1118,18 @@ export function SpanDetailPanel({
                   <CollapsibleContent>
                     <div className="mt-2 space-y-1.5 rounded-lg border border-border/30 bg-muted/10 p-2">
                       {span['Events.Name'].map((name, index) => {
-                        const attrsJson = span['Events.Attributes'][index];
-                        const attrs = attrsJson ? parseAttributes(attrsJson) : {};
+                        const attrsJson = span['Events.Attributes']?.[index];
+                        const attrs = attrsJson ? parseSpanAttributes(attrsJson) : {};
                         const hasAttrs = Object.keys(attrs).length > 0;
+                        const timestamp = span['Events.Timestamp']?.[index];
 
                         return (
                           <div key={index} className="border-l-2 border-primary/50 py-1 pl-2">
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-medium text-foreground">{name}</span>
-                              {span['Events.Timestamp'][index] && (
+                              {timestamp && (
                                 <span className="text-[10px] text-muted-foreground">
-                                  {formatTimestamp(span['Events.Timestamp'][index])}
+                                  {formatTimestamp(timestamp)}
                                 </span>
                               )}
                             </div>

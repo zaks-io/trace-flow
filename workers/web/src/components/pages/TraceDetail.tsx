@@ -18,6 +18,7 @@ import {
 } from '@/lib/alerts';
 import { generateTraceMarkdown, estimateMarkdownTokens } from '@/lib/traceToMarkdown';
 import type { AlertSeverity } from '@/types/alerts';
+import { isLLMRequestSpan } from '@/lib/spans';
 
 export default function TraceDetail() {
   usePageHeader('Trace Details');
@@ -35,7 +36,7 @@ export default function TraceDetail() {
     enabled: !!validatedTraceId,
   });
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
-  const requestSpans = spans.filter((s) => s.SpanName === 'ai.request');
+  const requestSpans = spans.filter(isLLMRequestSpan);
   const selectedSpan = spans.find((s) => s.SpanId === selectedSpanId);
 
   const { triggeredAlerts, spanAlertSummary } = useMemo(() => {
@@ -267,9 +268,7 @@ export default function TraceDetail() {
         rootSpan={rootSpan ?? null}
         allSpans={spans}
         isRootSpan={
-          selectedSpan
-            ? selectedSpan.ParentSpanId === '' || selectedSpan.SpanName === 'ai.request'
-            : false
+          selectedSpan ? selectedSpan.ParentSpanId === '' || isLLMRequestSpan(selectedSpan) : false
         }
         isOpen={!!selectedSpan}
         onClose={() => setSelectedSpanId(null)}
