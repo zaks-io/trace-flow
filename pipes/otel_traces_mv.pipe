@@ -1,0 +1,48 @@
+DESCRIPTION >
+    Materialized view that extracts GenAI semantic convention attributes from otel_traces.
+    Populates otel_traces_genai with indexed columns for efficient querying.
+
+NODE extract
+SQL >
+    SELECT
+        ReceivedAt,
+        Timestamp,
+        TraceId,
+        SpanId,
+        ParentSpanId,
+        TraceState,
+        SpanName,
+        SpanKind,
+        ServiceName,
+        ResourceAttributes,
+        SpanAttributes,
+        Duration,
+        StatusCode,
+        StatusMessage,
+        ApiKey,
+        `Events.Timestamp`,
+        `Events.Name`,
+        `Events.Attributes`,
+        `Links.TraceId`,
+        `Links.SpanId`,
+        `Links.TraceState`,
+        `Links.Attributes`,
+        -- Extract GenAI attributes
+        coalesce(
+            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.operation.name'), ''),
+            ''
+        ) AS OperationName,
+        coalesce(
+            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.system'), ''),
+            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.provider'), ''),
+            ''
+        ) AS Provider,
+        coalesce(
+            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), ''),
+            nullIf(JSONExtractString(SpanAttributes, 'gen_ai.model'), ''),
+            ''
+        ) AS Model
+    FROM otel_traces
+
+TYPE materialized
+DATASOURCE otel_traces_genai
