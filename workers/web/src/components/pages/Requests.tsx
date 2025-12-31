@@ -60,7 +60,7 @@ export default function Requests() {
   const { data, loading, error } = useTinybirdPipe<TinybirdResponse>({
     pipe: 'traces_list',
     params: pipeParams,
-    pollInterval: isLiveMode ? 3000 : undefined,
+    pollInterval: isLiveMode ? 10000 : undefined,
   });
 
   // Reset when filters change

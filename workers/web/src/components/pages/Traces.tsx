@@ -56,7 +56,7 @@ export default function Traces() {
   const { data, loading, error, refetch } = useTinybirdPipe<TinybirdResponse>({
     pipe: 'traces_grouped',
     params: pipeParams,
-    pollInterval: isLiveMode ? 3000 : undefined,
+    pollInterval: isLiveMode ? 10000 : undefined,
   });
 
   const traceIds = useMemo(() => {
