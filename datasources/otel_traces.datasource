@@ -23,31 +23,6 @@ SCHEMA >
     `Links.Attributes` Array(String) DEFAULT [] `json:$.Links.Attributes[:]`
 
 ENGINE "MergeTree"
-ENGINE_SORTING_KEY "ApiKey, ReceivedAt, TraceId, SpanId"
+ENGINE_SORTING_KEY "ReceivedAt, ApiKey, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(ReceivedAt / 1000000000) + INTERVAL 90 DAY"
-
-FORWARD_QUERY >
-    SELECT
-        Timestamp AS ReceivedAt,
-        Timestamp,
-        TraceId,
-        SpanId,
-        ParentSpanId,
-        TraceState,
-        SpanName,
-        SpanKind,
-        ServiceName,
-        ResourceAttributes,
-        SpanAttributes,
-        Duration,
-        StatusCode,
-        StatusMessage,
-        ApiKey,
-        `Events.Timestamp`,
-        `Events.Name`,
-        `Events.Attributes`,
-        `Links.TraceId`,
-        `Links.SpanId`,
-        `Links.TraceState`,
-        `Links.Attributes`
