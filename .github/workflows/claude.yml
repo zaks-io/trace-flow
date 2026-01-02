@@ -66,17 +66,17 @@ jobs:
   # Linear Agent: Triage
   linear-triage:
     if: github.event.action == 'linear-triage'
-    uses: zaks-io/linear-orchestrator/.github/workflows/issue-triage.yml@main
+    uses: zaks-io/otto/.github/workflows/issue-triage.yml@main
     secrets: inherit
 
   # Linear Agent: Implement
   linear-implement:
     if: github.event.action == 'linear-implement'
-    uses: zaks-io/linear-orchestrator/.github/workflows/issue-implement.yml@main
+    uses: zaks-io/otto/.github/workflows/issue-implement.yml@main
     secrets: inherit
 
   # Linear Agent: Mention
   linear-mention:
     if: github.event.action == 'linear-mention'
-    uses: zaks-io/linear-orchestrator/.github/workflows/issue-mention.yml@main
+    uses: zaks-io/otto/.github/workflows/issue-mention.yml@main
     secrets: inherit
