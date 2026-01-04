@@ -42,14 +42,55 @@ const result = await generateText({
 
 Adapt the example above: change `baseURL` path and use the appropriate SDK/API key for each provider.
 
+## Understanding Trace Context (W3C Spec)
+
+Trace Flow uses the [W3C Trace Context](https://www.w3.org/TR/trace-context/) standard. Understanding when to generate vs reuse IDs is critical:
+
+```
+User Request (e.g., "Plan my trip")
+    │
+    └── Trace (trace-id: 32 hex chars) ─────────────────────────┐
+            │                                                    │
+            ├── Span 1: Planning call (span-id: 16 hex chars)   │ Same Gantt chart
+            ├── Span 2: Search call (span-id: 16 hex chars)     │
+            └── Span 3: Summary call (span-id: 16 hex chars)    │
+                                                                 ┘
+Next User Request (e.g., "Book the hotel")
+    │
+    └── NEW Trace (NEW trace-id) ───────────────────────────────┐
+            │                                                    │ Different Gantt chart
+            └── Span 1: Booking call (span-id: 16 hex chars)    │
+                                                                 ┘
+```
+
+### When to Generate IDs
+
+| ID           | Generate NEW                                 | Reuse                             |
+| ------------ | -------------------------------------------- | --------------------------------- |
+| **trace-id** | Start of each user request/conversation turn | All LLM calls within that request |
+| **span-id**  | Every single LLM call                        | Never—always generate fresh       |
+
+### traceparent Format
+
+```
+traceparent: 00-{trace-id}-{span-id}-01
+                 │          │        │
+                 │          │        └─ flags (01 = sampled)
+                 │          └─ 16 hex chars, unique per LLM call
+                 └─ 32 hex chars, same for entire user request
+```
+
+### Common Mistakes
+
+1. **Reusing span-ids across calls** → Every LLM call needs a fresh `generateSpanId()`. Reusing causes calls to overwrite each other.
+
+2. **Sharing trace-ids across user requests** → Each new user message should call `generateTraceId()`. Persisting trace-ids across conversation turns causes traces to grow indefinitely.
+
+3. **New trace-id per LLM call** → Within one user request, reuse the same trace-id for all related calls (planning, execution, tool use). This groups them in one Gantt chart.
+
 ## Gantt Chart Hierarchy
 
-Trace Flow displays a Gantt chart of your LLM calls. Use the `traceparent` header to group related calls:
-
-**Format:** `traceparent: 00-{traceId}-{spanId}-01`
-
-- **traceId** (32 hex chars): Same for all calls in a workflow → groups them in one trace
-- **spanId** (16 hex chars): Different per call → creates timeline entries
+Use the `traceparent` header to group related LLM calls in one Gantt chart. See [Understanding Trace Context](#understanding-trace-context-w3c-spec) for when to generate vs reuse IDs.
 
 ```typescript
 function generateTraceId(): string {
@@ -64,27 +105,33 @@ function generateSpanId(): string {
     .join('');
 }
 
-// Generate once per user request
+// IMPORTANT: Generate trace-id ONCE per user request, then reuse it
 const traceId = generateTraceId();
 
-// Call 1: Planning
+// Call 1: Planning (new span-id, same trace-id)
 await generateText({
   model: openai('gpt-5'),
   prompt: 'Plan: ' + task,
   headers: { traceparent: `00-${traceId}-${generateSpanId()}-01` },
 });
 
-// Call 2: Execution (same traceId = same Gantt chart)
+// Call 2: Execution (new span-id, same trace-id = same Gantt chart)
 await generateText({
   model: openai('gpt-5'),
   prompt: 'Execute: ' + plan,
   headers: { traceparent: `00-${traceId}-${generateSpanId()}-01` },
 });
+
+// WRONG: Don't do this - reusing span-id causes overwrites
+// const spanId = generateSpanId();
+// headers: { traceparent: `00-${traceId}-${spanId}-01` } // Same spanId = BAD
 ```
 
 ## Operation Labels
 
-Use `baggage` header to label phases in the UI. Stored as `baggage.operation` attribute for filtering:
+Use the [W3C Baggage](https://www.w3.org/TR/baggage/) header to add metadata (not hierarchy). Baggage does NOT affect trace grouping—only `traceparent` does.
+
+**Format:** Comma-separated `key=value` pairs. Percent-encode special characters.
 
 ```typescript
 headers: {
@@ -92,12 +139,13 @@ headers: {
   baggage: 'operation=planning',
 }
 
-// Example operation values:
+// Multiple values (comma-separated, no spaces after commas)
+baggage: 'operation=planning,user_id=123,session_id=abc'
+
+// Example operation values for filtering in UI:
 // operation=planning, operation=execution, operation=summarization
 // operation=tool-search, operation=tool-calculator, operation=rag-retrieval
 ```
-
-Add custom context: `baggage: 'operation=planning,user_id=123,session_id=abc'`
 
 ## OpenTelemetry Integration
 
