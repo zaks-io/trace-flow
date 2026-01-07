@@ -11,9 +11,6 @@ on:
     types: [submitted]
   pull_request:
     types: [opened, ready_for_review]
-  repository_dispatch:
-    types: [linear-triage, linear-implement, linear-mention]
-
 permissions:
   contents: write
   pull-requests: write
@@ -26,7 +23,6 @@ jobs:
   # General Claude assistant for comments (excludes /review and issues)
   claude:
     if: |
-      github.event_name != 'repository_dispatch' &&
       github.event_name != 'issues' &&
       !contains(github.event.comment.body, '/review')
     uses: zaks-io/claude-code-action/.github/workflows/claude.yml@main
@@ -62,21 +58,3 @@ jobs:
       trigger_type: ${{ github.event_name == 'issue_comment' && 'comment' || 'auto' }}
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-  # Linear Agent: Triage
-  linear-triage:
-    if: github.event.action == 'linear-triage'
-    uses: zaks-io/otto/.github/workflows/issue-triage.yml@main
-    secrets: inherit
-
-  # Linear Agent: Implement
-  linear-implement:
-    if: github.event.action == 'linear-implement'
-    uses: zaks-io/otto/.github/workflows/issue-implement.yml@main
-    secrets: inherit
-
-  # Linear Agent: Mention
-  linear-mention:
-    if: github.event.action == 'linear-mention'
-    uses: zaks-io/otto/.github/workflows/issue-mention.yml@main
-    secrets: inherit
