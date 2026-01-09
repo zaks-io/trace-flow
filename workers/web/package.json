@@ -7,7 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "deploy:dev": "pnpm run build && wrangler pages deploy dist --branch preview",
+    "deploy:dev": "bun run build && wrangler pages deploy dist --branch preview",
     "type-check": "astro check && tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",

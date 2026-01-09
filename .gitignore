@@ -34,9 +34,8 @@ Thumbs.db
 # Testing
 coverage/
 
-# pnpm
-.pnpm-store/
-pnpm-debug.log
+# bun
+bun-debug.log
 
 # Tinybird
 .tinyb
