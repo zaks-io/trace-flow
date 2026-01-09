@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useConvexAuth, useMutation } from 'convex/react';
-import { api } from '../../../../convex/_generated/api';
+import { api } from '@convex/_generated/api';
 
 export function useInitializeUser() {
   const { isAuthenticated, isLoading } = useConvexAuth();

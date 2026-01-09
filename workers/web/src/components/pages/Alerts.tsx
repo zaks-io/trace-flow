@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from 'convex/react';
-import { api } from '../../../../../convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import { useState } from 'react';
-import type { Id, Doc } from '../../../../../convex/_generated/dataModel';
+import type { Id, Doc } from '@convex/_generated/dataModel';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import {
   Dialog,
@@ -297,7 +297,7 @@ export default function Alerts() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border bg-card">
-                {alerts.map((alert) => (
+                {alerts.map((alert: Alert) => (
                   <tr key={alert._id} className="table-row-interactive">
                     <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-foreground">
                       {alert.name}
