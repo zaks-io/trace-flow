@@ -67,18 +67,18 @@ After creating the queues and setting the secrets, deploy the workers to your ch
 
 ```bash
 # Deploy all workers to development (from project root)
-pnpm run deploy:dev
+bun run deploy:dev
 
 # Or deploy individual workers
-cd workers/proxy && pnpm run deploy:dev
-cd workers/proxy-consumer && pnpm run deploy:dev
-cd workers/web && pnpm run deploy:dev
+cd workers/proxy && bun run deploy:dev
+cd workers/proxy-consumer && bun run deploy:dev
+cd workers/web && bun run deploy:dev
 
 # For staging
-pnpm run deploy:staging
+bun run deploy:staging
 
 # For production (requires explicit approval)
-pnpm run deploy:prod
+bun run deploy:prod
 ```
 
 ## 5. Configure Custom Domains (Production)
