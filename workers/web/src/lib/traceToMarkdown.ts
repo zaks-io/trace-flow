@@ -355,6 +355,14 @@ export function generateTraceMarkdown(spans: TraceSpan[]): string {
     if (summary.cacheCreationTokens > 0) {
       lines.push(`| Cache Created | ${formatNumber(summary.cacheCreationTokens)} |`);
     }
+
+    // Add cache hit rate
+    const totalCacheable = summary.cacheReadTokens + summary.cacheCreationTokens;
+    if (totalCacheable > 0) {
+      const hitRate = (summary.cacheReadTokens / totalCacheable) * 100;
+      const hitRateEmoji = hitRate >= 80 ? '🟢' : hitRate >= 50 ? '🟡' : '🔴';
+      lines.push(`| Cache Hit Rate | ${hitRateEmoji} ${hitRate.toFixed(1)}% |`);
+    }
   }
 
   lines.push(`| Total Cost | ${summary.totalCost > 0 ? formatCost(summary.totalCost) : '-'} |`);
