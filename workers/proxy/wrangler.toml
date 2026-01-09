@@ -1,9 +1,17 @@
 name = "trace-flow-proxy-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
+compatibility_flags = ["nodejs_compat", "no_nodejs_compat_v2"]
+upload_source_maps = true
 
 [observability]
 enabled = true
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[vars]
+SENTRY_ENVIRONMENT = "development"
 
 # KV Namespace for API key validation (dev)
 [[kv_namespaces]]
@@ -24,6 +32,9 @@ bucket_name = "trace-flow-storage-dev"
 name = "trace-flow-proxy"
 workers_dev = false
 
+[env.production.vars]
+SENTRY_ENVIRONMENT = "production"
+
 [[env.production.routes]]
 pattern = "gateway.trace-flow.dev/*"
 zone_name = "trace-flow.dev"
@@ -42,6 +53,9 @@ bucket_name = "trace-flow-storage-prod"
 
 [env.preview]
 name = "trace-flow-proxy-preview"
+
+[env.preview.vars]
+SENTRY_ENVIRONMENT = "preview"
 
 [[env.preview.kv_namespaces]]
 binding = "API_KEYS"

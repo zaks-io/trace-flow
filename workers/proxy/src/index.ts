@@ -15,6 +15,7 @@
  * SSE streaming responses (text/event-stream) receive special handling to extract timing metrics
  * for streaming-specific events (message_start, content_block_delta, etc).
  */
+import * as Sentry from '@sentry/cloudflare';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import {
@@ -51,6 +52,9 @@ interface Env {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
+  SENTRY_DSN?: string;
+  SENTRY_ENVIRONMENT?: string;
+  CF_VERSION_METADATA?: { id: string };
 }
 
 const app = new OpenAPIHono<{ Bindings: Env }>();
@@ -324,4 +328,12 @@ app.all('*', async (c) => {
   });
 });
 
-export default app;
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    release: env.CF_VERSION_METADATA?.id,
+    environment: env.SENTRY_ENVIRONMENT ?? 'development',
+    tracesSampleRate: 0.1,
+  }),
+  app,
+);

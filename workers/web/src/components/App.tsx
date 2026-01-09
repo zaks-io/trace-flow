@@ -1,3 +1,5 @@
+import '../sentry';
+import * as Sentry from '@sentry/react';
 import { useMemo } from 'react';
 import { BrowserRouter, useRoutes } from 'react-router-dom';
 import { Auth0Provider } from '@auth0/auth0-react';
@@ -7,6 +9,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppLayout } from './AppLayout';
 import { routes } from './routes';
 import { useInitializeUser } from '../hooks/useInitializeUser';
+
+const useSentryRoutes = Sentry.wrapUseRoutesV7(useRoutes);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,7 +23,7 @@ const queryClient = new QueryClient({
 
 function AppRoutes() {
   useInitializeUser();
-  const element = useRoutes(routes);
+  const element = useSentryRoutes(routes);
   return <AppLayout>{element}</AppLayout>;
 }
 

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { env, runInDurableObject, runDurableObjectAlarm } from 'cloudflare:test';
 import type { TinybirdTrace } from '@trace-flow/types';
-import { type TraceBatcher } from '../batcher';
+import type { TraceBatcherInstance } from '../batcher';
 
 describe('TraceBatcher Integration', () => {
-  let batcher: DurableObjectStub<TraceBatcher>;
+  let batcher: DurableObjectStub<TraceBatcherInstance>;
 
   beforeEach(() => {
     // Get a fresh Durable Object instance for each test with unique ID
@@ -47,7 +47,7 @@ describe('TraceBatcher Integration', () => {
   it('should initialize SQL schema on first instantiation', async () => {
     const traces = [createMockTrace('trace-1')];
 
-    const response = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const response = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
@@ -58,11 +58,11 @@ describe('TraceBatcher Integration', () => {
   it('should add single trace to storage', async () => {
     const traces = [createMockTrace('trace-single')];
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
@@ -71,39 +71,39 @@ describe('TraceBatcher Integration', () => {
   it('should add multiple traces to storage', async () => {
     const traces = Array.from({ length: 10 }, (_, i) => createMockTrace(`trace-${i}`));
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(10);
   });
 
   it('should accumulate traces across multiple addTraces calls', async () => {
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([createMockTrace('trace-1')]);
     });
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([createMockTrace('trace-2')]);
     });
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([createMockTrace('trace-3')]);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(3);
   });
 
   it('should handle empty traces array', async () => {
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([]);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(0);
@@ -111,11 +111,11 @@ describe('TraceBatcher Integration', () => {
 
   it('should store trace data as JSON', async () => {
     const trace = createMockTrace('trace-json');
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([trace]);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
@@ -123,17 +123,17 @@ describe('TraceBatcher Integration', () => {
   });
 
   it('should track lastFlushTime', async () => {
-    const stats1 = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats1 = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats1.lastFlushTime).toBeGreaterThan(0);
 
     const trace = createMockTrace('trace-time');
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([trace]);
     });
 
-    const stats2 = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats2 = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats2.lastFlushTime).toBe(stats1.lastFlushTime);
@@ -142,12 +142,12 @@ describe('TraceBatcher Integration', () => {
   it('should schedule flush alarm when traces are added', async () => {
     const traces = [createMockTrace('trace-alarm')];
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
     // Alarm should be scheduled (internal state check)
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
@@ -158,11 +158,11 @@ describe('TraceBatcher Integration', () => {
     // This test verifies the basic accumulation logic
     const traces = Array.from({ length: 50 }, (_, i) => createMockTrace(`trace-batch-${i}`));
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(50);
@@ -173,11 +173,11 @@ describe('TraceBatcher Integration', () => {
     const id = env.TRACE_BATCHER.idFromName('test-batcher-persist');
     const batcher1 = env.TRACE_BATCHER.get(id);
 
-    await runInDurableObject(batcher1, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher1, (instance: TraceBatcherInstance) => {
       return instance.addTraces([createMockTrace('trace-persist')]);
     });
 
-    const stats1 = await runInDurableObject(batcher1, (instance: TraceBatcher) => {
+    const stats1 = await runInDurableObject(batcher1, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats1.queuedTraces).toBe(1);
@@ -185,7 +185,7 @@ describe('TraceBatcher Integration', () => {
     // Get a new stub to the same Durable Object
     const batcher2 = env.TRACE_BATCHER.get(id);
 
-    const stats2 = await runInDurableObject(batcher2, (instance: TraceBatcher) => {
+    const stats2 = await runInDurableObject(batcher2, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats2.queuedTraces).toBe(1);
@@ -193,25 +193,25 @@ describe('TraceBatcher Integration', () => {
 
   it('should handle concurrent addTraces calls', async () => {
     const promises = Array.from({ length: 5 }, (_, i) =>
-      runInDurableObject(batcher, (instance: TraceBatcher) => {
+      runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
         return instance.addTraces([createMockTrace(`trace-concurrent-${i}`)]);
       }),
     );
 
     await Promise.all(promises);
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(5);
   });
 
   it('should return stats with correct structure', async () => {
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([createMockTrace('trace-stats')]);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
 
@@ -232,11 +232,11 @@ describe('TraceBatcher Integration', () => {
       'gen_ai.cached': 'true',
     };
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([trace]);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
@@ -248,11 +248,11 @@ describe('TraceBatcher Integration', () => {
     trace.StatusMessage = 'API key invalid';
     trace.SpanAttributes['error.type'] = 'invalid_request_error';
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([trace]);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
@@ -263,11 +263,11 @@ describe('TraceBatcher Integration', () => {
     // So max is 499 traces. Test with 50 to be safe.
     const largeBatch = Array.from({ length: 50 }, (_, i) => createMockTrace(`trace-large-${i}`));
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(largeBatch);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(50);
@@ -281,11 +281,11 @@ describe('TraceBatcher Integration', () => {
       'service.environment': 'production',
     };
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([trace]);
     });
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
@@ -299,7 +299,7 @@ describe('TraceBatcher Integration', () => {
     });
     global.fetch = mockFetch;
 
-    await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+    await runInDurableObject(batcher, async (instance: TraceBatcherInstance, state) => {
       for (let i = 0; i < 1000; i++) {
         state.storage.sql.exec(
           'INSERT INTO traces (data, timestamp) VALUES (?, ?)',
@@ -326,7 +326,7 @@ describe('TraceBatcher Integration', () => {
 
     const traces = Array.from({ length: 10 }, (_, i) => createMockTrace(`trace-alarm-${i}`));
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
@@ -341,26 +341,29 @@ describe('TraceBatcher Integration', () => {
     });
     global.fetch = mockFetch;
 
-    const alarmTime = await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
-      await instance.addTraces([createMockTrace('trace-1')]);
-      const alarmAfterFirst = await state.storage.getAlarm();
+    const alarmTime = await runInDurableObject(
+      batcher,
+      async (instance: TraceBatcherInstance, state) => {
+        await instance.addTraces([createMockTrace('trace-1')]);
+        const alarmAfterFirst = await state.storage.getAlarm();
 
-      await instance.addTraces([createMockTrace('trace-2')]);
-      const alarmAfterSecond = await state.storage.getAlarm();
+        await instance.addTraces([createMockTrace('trace-2')]);
+        const alarmAfterSecond = await state.storage.getAlarm();
 
-      await instance.addTraces([createMockTrace('trace-3')]);
-      const alarmAfterThird = await state.storage.getAlarm();
+        await instance.addTraces([createMockTrace('trace-3')]);
+        const alarmAfterThird = await state.storage.getAlarm();
 
-      expect(alarmAfterSecond).toBe(alarmAfterFirst);
-      expect(alarmAfterThird).toBe(alarmAfterFirst);
+        expect(alarmAfterSecond).toBe(alarmAfterFirst);
+        expect(alarmAfterThird).toBe(alarmAfterFirst);
 
-      return alarmAfterFirst;
-    });
+        return alarmAfterFirst;
+      },
+    );
 
     expect(alarmTime).toBeDefined();
     expect(alarmTime).toBeGreaterThan(0);
 
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(3);
@@ -375,7 +378,7 @@ describe('TraceBatcher Integration', () => {
 
     const traces = Array.from({ length: 5 }, (_, i) => createMockTrace(`trace-flush-${i}`));
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
@@ -390,7 +393,7 @@ describe('TraceBatcher Integration', () => {
     });
     global.fetch = mockFetch;
 
-    await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+    await runInDurableObject(batcher, async (instance: TraceBatcherInstance, state) => {
       for (let i = 0; i < 2000; i++) {
         state.storage.sql.exec(
           'INSERT INTO traces (data, timestamp) VALUES (?, ?)',
@@ -419,7 +422,7 @@ describe('TraceBatcher Integration', () => {
 
     const traces = Array.from({ length: 10 }, (_, i) => createMockTrace(`trace-error-${i}`));
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces(traces);
     });
 
@@ -431,7 +434,7 @@ describe('TraceBatcher Integration', () => {
     const mockFetch = vi.fn();
     global.fetch = mockFetch;
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([]);
     });
 
@@ -450,7 +453,7 @@ describe('TraceBatcher Integration', () => {
     const namedId = env.TRACE_BATCHER.idFromName('test-batcher-reschedule');
     const namedBatcher = env.TRACE_BATCHER.get(namedId);
 
-    await runInDurableObject(namedBatcher, async (instance: TraceBatcher, state) => {
+    await runInDurableObject(namedBatcher, async (instance: TraceBatcherInstance, state) => {
       await instance.addTraces([createMockTrace('trace-reschedule')]);
 
       const alarmBefore = await state.storage.getAlarm();
@@ -472,7 +475,7 @@ describe('TraceBatcher Integration', () => {
 
     expect(rescheduled).toBeDefined();
 
-    const stats = await runInDurableObject(namedBatcher, (instance: TraceBatcher) => {
+    const stats = await runInDurableObject(namedBatcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
     expect(stats.queuedTraces).toBe(1);
@@ -486,7 +489,7 @@ describe('TraceBatcher Integration', () => {
     });
     global.fetch = mockFetch;
 
-    await runInDurableObject(batcher, async (instance: TraceBatcher, state) => {
+    await runInDurableObject(batcher, async (instance: TraceBatcherInstance, state) => {
       await instance.addTraces([createMockTrace('trace-jitter')]);
 
       const stats = instance.getStats();
@@ -513,7 +516,7 @@ describe('TraceBatcher Integration', () => {
     });
     global.fetch = mockFetch;
 
-    await runInDurableObject(batcher, (instance: TraceBatcher) => {
+    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addTraces([createMockTrace('trace-cleanup')]);
     });
 
