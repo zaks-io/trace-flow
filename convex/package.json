@@ -1,7 +1,10 @@
 {
   "name": "@trace-flow/convex",
+  "version": "0.0.1",
   "private": true,
   "scripts": {
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
