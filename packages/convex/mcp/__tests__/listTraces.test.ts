@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTraceRow, type TraceRow } from '../tools/listTraces';
+import { formatTraceRow, type TraceRow } from '../tools/listTracesAction';
 
 describe('formatTraceRow', () => {
   const baseRow: TraceRow = {

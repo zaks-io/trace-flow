@@ -261,7 +261,7 @@ async function handleToolsCall(
       hours?: number;
       cursor?: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.listTraces, {
+    result = await ctx.runAction(internal.mcp.tools.listTracesAction.listTraces, {
       apiKeys: apiKeyStrings,
       params: listArgs,
     });
@@ -269,7 +269,7 @@ async function handleToolsCall(
     const getArgs = (params.arguments ?? {}) as {
       trace_id: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.getTrace, {
+    result = await ctx.runAction(internal.mcp.tools.getTraceAction.getTrace, {
       apiKeys: apiKeyStrings,
       params: getArgs,
     });
@@ -285,7 +285,7 @@ async function handleToolsCall(
       limit?: number;
       cursor?: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.getTraceSpans, {
+    result = await ctx.runAction(internal.mcp.tools.getTraceSpansAction.getTraceSpans, {
       apiKeys: apiKeyStrings,
       params: getSpansArgs,
     });
@@ -298,7 +298,7 @@ async function handleToolsCall(
       limit?: number;
       cursor?: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.getTraceEvents, {
+    result = await ctx.runAction(internal.mcp.tools.getTraceEventsAction.getTraceEvents, {
       apiKeys: apiKeyStrings,
       params: getEventsArgs,
     });
