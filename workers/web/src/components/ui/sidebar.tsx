@@ -494,8 +494,6 @@ function SidebarMenuButton({
 }: React.ComponentPropsWithoutRef<'button'> & {
   asChild?: boolean;
   isActive?: boolean;
-  // Radix UI types contain `any` in TooltipContent props
-  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   tooltip?: string | React.ComponentPropsWithoutRef<typeof TooltipContent>;
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const Comp = asChild ? Slot : 'button';

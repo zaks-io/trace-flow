@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "lint": "eslint src",
+    "type-check": "tsc --noEmit",
     "test:openai": "bun run src/test-openai.ts",
     "test:anthropic": "bun run src/test-anthropic.ts",
     "test:google": "bun run src/test-google.ts",

@@ -34,7 +34,7 @@ async function testToolCall() {
     const traceId = generateTraceId();
     const spanId = generateSpanId();
 
-    const result = await streamText({
+    const result = streamText({
       model,
       system:
         'You are a helpful assistant. When asked for the current time, use the getCurrentTime tool and return the result.',
@@ -43,7 +43,7 @@ async function testToolCall() {
         getCurrentTime: tool({
           description: 'Get the current time',
           inputSchema: z.object({}),
-          execute: async ({}) => new Date().toISOString(),
+          execute: () => new Date().toISOString(),
         }),
       },
       stopWhen: stepCountIs(2),

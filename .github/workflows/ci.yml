@@ -47,7 +47,7 @@ jobs:
             types:
               - 'packages/types/**'
             convex:
-              - 'convex/**'
+              - 'packages/convex/**'
             root:
               - 'package.json'
               - 'pnpm-lock.yaml'
@@ -163,7 +163,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: pnpm prettier --check "convex/**/*.{ts,tsx,js,jsx,json}"
+        run: pnpm prettier --check "packages/convex/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
         run: pnpm turbo run lint --filter=@trace-flow/convex
@@ -172,7 +172,7 @@ jobs:
         run: pnpm turbo run type-check --filter=@trace-flow/convex
 
       - name: Test
-        run: pnpm -C convex test
+        run: pnpm -C packages/convex test
 
   proxy:
     name: Proxy Worker
