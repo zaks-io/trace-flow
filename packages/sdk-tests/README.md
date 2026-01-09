@@ -66,7 +66,7 @@ const groq = createOpenAI({
 
 ```bash
 cd packages/sdk-tests
-pnpm install
+bun install
 ```
 
 2. Create a `.env` file with your API keys:
@@ -80,7 +80,7 @@ cp .env.example .env
 
 ```bash
 # From repo root
-pnpm run dev:all
+bun run dev:all
 ```
 
 ## Environment Variables
@@ -100,17 +100,17 @@ pnpm run dev:all
 Test individual providers:
 
 ```bash
-pnpm run test:openai
-pnpm run test:anthropic
-pnpm run test:google
-pnpm run test:openrouter
-pnpm run test:groq
+bun run test:openai
+bun run test:anthropic
+bun run test:google
+bun run test:openrouter
+bun run test:groq
 ```
 
 Test all configured providers:
 
 ```bash
-pnpm run test:all
+bun run test:all
 ```
 
 Or run directly with bun:

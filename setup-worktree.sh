@@ -22,8 +22,8 @@ echo "Setting up worktree..."
 echo "Main worktree: $MAIN_WORKTREE"
 
 # Install dependencies
-echo "Installing dependencies with pnpm..."
-pnpm install
+echo "Installing dependencies with bun..."
+bun install
 
 if [ -f "$MAIN_WORKTREE/.env.local" ]; then
   echo "Copying .env.local from main worktree..."

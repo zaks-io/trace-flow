@@ -57,13 +57,13 @@ trace-flow/
 Install dependencies:
 
 ```bash
-pnpm install
+bun install
 ```
 
 Initialize husky:
 
 ```bash
-pnpm run prepare
+bun run prepare
 ```
 
 ## Using the Proxy
@@ -112,13 +112,13 @@ Run all workers together with shared R2 storage:
 
 ```bash
 # Terminal 1: All workers with shared R2
-pnpm run dev:all
+bun run dev:all
 
 # Terminal 2: Convex backend (watch mode)
-pnpm dlx convex dev
+bunx convex dev
 
 # Terminal 3: Web UI
-cd workers/web && pnpm run dev
+cd workers/web && bun run dev
 ```
 
 ### Running Proxy + Consumer + API Together
@@ -137,10 +137,10 @@ The web worker uses Next.js and requires Convex backend:
 
 ```bash
 # Terminal 1: Start Convex backend
-pnpm dlx convex dev
+bunx convex dev
 
 # Terminal 2: Start web UI
-cd workers/web && pnpm run dev
+cd workers/web && bun run dev
 ```
 
 On first run, Convex will prompt you to login and create a project.
@@ -160,16 +160,16 @@ You can also run workers separately:
 
 ```bash
 # Proxy only
-cd workers/proxy && pnpm run dev
+cd workers/proxy && bun run dev
 
 # Consumer only
-cd workers/proxy-consumer && pnpm run dev
+cd workers/proxy-consumer && bun run dev
 
 # API only
-cd workers/api && pnpm run dev
+cd workers/api && bun run dev
 
 # Web only (still requires Convex)
-cd workers/web && pnpm run dev
+cd workers/web && bun run dev
 ```
 
 ## Building
@@ -177,7 +177,7 @@ cd workers/web && pnpm run dev
 Build all workers:
 
 ```bash
-pnpm run build
+bun run build
 ```
 
 ## Deployment
@@ -203,10 +203,10 @@ The project has two environments:
 
 ```bash
 # Deploy all workers to development
-pnpm run deploy:dev
+bun run deploy:dev
 
 # Deploy individual workers to dev
-cd workers/proxy && pnpm run deploy:dev
+cd workers/proxy && bun run deploy:dev
 ```
 
 ## Configuration
@@ -227,7 +227,7 @@ Quick overview:
 ## Tech Stack
 
 - **Runtime**: Cloudflare Workers
-- **Package Manager**: pnpm
+- **Package Manager**: Bun
 - **Monorepo**: Turborepo
 - **Frontend**: Next.js (Cloudflare Pages)
 - **Backend**: Convex
