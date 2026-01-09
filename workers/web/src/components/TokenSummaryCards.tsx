@@ -1,5 +1,10 @@
 import { useMemo } from 'react';
-import { Cpu, MessageSquare, Hash, Zap, Clock, Activity, DollarSign } from 'lucide-react';
+import { Cpu, MessageSquare, Hash, Zap, Clock, Activity, DollarSign, Target } from 'lucide-react';
+import {
+  calculateCacheHitRate,
+  formatCacheHitRate,
+  getCacheHitRateAccent,
+} from '@/lib/cacheMetrics';
 
 interface TraceSpan {
   SpanAttributes: string;
@@ -15,6 +20,9 @@ interface TokenSummary {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRate: number | null;
   ttftMs: number | null;
   totalDuration: number;
   tokensPerSecond: number | null;
@@ -32,6 +40,8 @@ function parseAttributes(attributesJson: string): Record<string, string> {
 function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   let promptTokens = 0;
   let completionTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
   let totalCost = 0;
   let ttftMs: number | null = null;
   let tokensPerSecond: number | null = null;
@@ -43,9 +53,13 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
 
     const prompt = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
     const completion = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+    const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
+    const cacheCreation = parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
 
     promptTokens += prompt;
     completionTokens += completion;
+    cacheReadTokens += cacheRead;
+    cacheCreationTokens += cacheCreation;
 
     if (attrs['gen_ai.cost.total']) {
       totalCost += parseFloat(attrs['gen_ai.cost.total']);
@@ -65,11 +79,15 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   }
 
   const totalDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
+  const cacheHitRate = calculateCacheHitRate(cacheReadTokens, cacheCreationTokens);
 
   return {
     promptTokens,
     completionTokens,
     totalTokens: promptTokens + completionTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    cacheHitRate,
     ttftMs,
     totalDuration,
     tokensPerSecond,
@@ -117,7 +135,7 @@ interface SummaryCardProps {
   icon: React.ReactNode;
   label: string;
   value: string;
-  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'green';
+  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'green' | 'red';
 }
 
 function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) {
@@ -128,6 +146,7 @@ function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) 
     amber: 'from-amber-500/20 to-amber-500/5 border-amber-500/30',
     zinc: 'from-zinc-500/20 to-zinc-500/5 border-zinc-500/30',
     green: 'from-green-500/20 to-green-500/5 border-green-500/30',
+    red: 'from-red-500/20 to-red-500/5 border-red-500/30',
   };
 
   const iconColors = {
@@ -137,6 +156,7 @@ function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) 
     amber: 'text-amber-400',
     zinc: 'text-zinc-400',
     green: 'text-green-400',
+    red: 'text-red-400',
   };
 
   return (
@@ -162,7 +182,7 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
   const summary = useMemo(() => aggregateTokens(spans), [spans]);
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
       <SummaryCard
         icon={<Cpu className="h-4 w-4" />}
         label="Prompt Tokens"
@@ -180,6 +200,12 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
         label="Total Tokens"
         value={summary.totalTokens > 0 ? formatNumber(summary.totalTokens) : '-'}
         accent="emerald"
+      />
+      <SummaryCard
+        icon={<Target className="h-4 w-4" />}
+        label="Cache Hit Rate"
+        value={formatCacheHitRate(summary.cacheHitRate)}
+        accent={getCacheHitRateAccent(summary.cacheHitRate)}
       />
       <SummaryCard
         icon={<Zap className="h-4 w-4" />}
