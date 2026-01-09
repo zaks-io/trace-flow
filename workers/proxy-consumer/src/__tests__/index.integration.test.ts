@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 import type { QueueMessage } from '@trace-flow/types';
-import type { TraceBatcher } from '../batcher';
+import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
 
 describe('Queue Handler Integration', () => {
@@ -218,7 +218,7 @@ describe('Queue Handler Integration', () => {
       addTraces: (): Promise<void> => {
         throw new Error('Durable Object failure');
       },
-    } as unknown as DurableObjectStub<TraceBatcher>;
+    } as unknown as DurableObjectStub<TraceBatcherInstance>;
 
     env.TRACE_BATCHER.get = () => mockDOStub;
 

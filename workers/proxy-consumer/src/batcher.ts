@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare';
 import { DurableObject } from 'cloudflare:workers';
 import type { TinybirdTrace } from '@trace-flow/types';
 import type { Env } from './index';
@@ -7,7 +8,7 @@ const BATCH_SIZE = 10_000;
 const FLUSH_INTERVAL_MS = 5000;
 const MAX_JITTER_MS = 1000;
 
-export class TraceBatcher extends DurableObject<Env> {
+class TraceBatcherBase extends DurableObject<Env> {
   private lastFlushTime: number = Date.now();
   private flushAlarmScheduled = false;
   private durableState: DurableObjectState;
@@ -161,6 +162,10 @@ export class TraceBatcher extends DurableObject<Env> {
           batchSize: traces.length,
           error: error instanceof Error ? error.message : String(error),
         });
+        Sentry.captureException(error, {
+          tags: { operation: 'flush' },
+          extra: { batchSize: traces.length },
+        });
         break;
       }
     }
@@ -188,3 +193,15 @@ export class TraceBatcher extends DurableObject<Env> {
     };
   }
 }
+
+export const TraceBatcher = Sentry.instrumentDurableObjectWithSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    release: env.CF_VERSION_METADATA?.id,
+    environment: env.SENTRY_ENVIRONMENT ?? 'development',
+    tracesSampleRate: 0.1,
+  }),
+  TraceBatcherBase,
+);
+
+export type TraceBatcherInstance = InstanceType<typeof TraceBatcher>;

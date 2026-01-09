@@ -1,9 +1,16 @@
 name = "trace-flow-consumer-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
+upload_source_maps = true
 
 [observability]
 enabled = true
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[vars]
+SENTRY_ENVIRONMENT = "development"
 
 [placement]
 mode = "smart"
@@ -45,6 +52,9 @@ id = "25a35f71a8d64884a8e8935056880dba"
 name = "trace-flow-consumer"
 workers_dev = false
 
+[env.production.vars]
+SENTRY_ENVIRONMENT = "production"
+
 [[env.production.durable_objects.bindings]]
 name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
@@ -67,6 +77,9 @@ id = "45dd0d5e619d44fc831ccab01ed428a4"
 
 [env.preview]
 name = "trace-flow-consumer-preview"
+
+[env.preview.vars]
+SENTRY_ENVIRONMENT = "preview"
 
 [[env.preview.durable_objects.bindings]]
 name = "TRACE_BATCHER"
