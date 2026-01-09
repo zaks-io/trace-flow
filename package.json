@@ -16,8 +16,8 @@
     "deploy:dev": "turbo run deploy:dev --filter='./workers/*'",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
-    "type-check": "turbo run type-check && tsc --noEmit -p convex/tsconfig.json",
-    "test": "turbo run test && pnpm -C convex test",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test",
     "test:watch": "turbo run test:watch",
     "test:coverage": "turbo run test:coverage",
     "prepare": "husky"
@@ -47,8 +47,8 @@
   },
   "dependencies": {
     "@toon-format/toon": "^2.1.0",
-    "convex": "^1.27.5",
-    "convex-helpers": "^0.1.107",
+    "convex": "^1.31.3",
+    "convex-helpers": "^0.1.108",
     "hono": "^4.10.2",
     "jose": "^6.1.0"
   }

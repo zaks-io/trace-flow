@@ -1,6 +1,6 @@
 import { useQuery } from 'convex/react';
 import { Authenticated, Unauthenticated, AuthLoading } from 'convex/react';
-import { api } from '../../../../convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import { AppSidebar } from '@/components/AppSidebar';
 import { PageHeaderProvider } from '@/components/PageHeaderContext';
 import { PageHeader } from '@/components/PageHeader';

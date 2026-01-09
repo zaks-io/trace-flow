@@ -1,7 +1,9 @@
 import { useQuery, useMutation, useAction } from 'convex/react';
-import { api } from '../../../../../convex/_generated/api';
+import { api } from '@convex/_generated/api';
 import { useState } from 'react';
-import type { Id } from '../../../../../convex/_generated/dataModel';
+import type { Id, Doc } from '@convex/_generated/dataModel';
+
+type ModelPricing = Doc<'modelPricing'>;
 import { usePageHeader } from '@/components/PageHeaderContext';
 
 interface PricingFormData {
@@ -157,9 +159,13 @@ export default function Pricing() {
     setShowForm(true);
   };
 
-  const filteredPricing = pricing?.filter((p) => !filterProvider || p.provider === filterProvider);
+  const filteredPricing = pricing?.filter(
+    (p: ModelPricing) => !filterProvider || p.provider === filterProvider,
+  );
 
-  const uniqueProviders = [...new Set(pricing?.map((p) => p.provider) ?? [])].sort();
+  const uniqueProviders = [
+    ...new Set(pricing?.map((p: ModelPricing) => p.provider) ?? []),
+  ].sort() as string[];
 
   return (
     <div className="animate-fade-in">
@@ -463,7 +469,7 @@ export default function Pricing() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border bg-card">
-                {filteredPricing?.map((item) => (
+                {filteredPricing?.map((item: ModelPricing) => (
                   <tr key={item._id} className="table-row-interactive">
                     <td className="whitespace-nowrap px-6 py-4 text-sm text-foreground">
                       {item.provider}

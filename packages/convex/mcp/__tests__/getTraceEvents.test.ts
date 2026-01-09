@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatEventRow, type EventRow } from '../tools/getTraceEvents';
+import { formatEventRow, type EventRow } from '../tools/getTraceEventsAction';
 
 describe('formatEventRow', () => {
   const baseRow: EventRow = {

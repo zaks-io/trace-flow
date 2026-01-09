@@ -99,7 +99,7 @@ export function DataTable<TData>({
       }
       return false;
     });
-  }, [data, alertSummary, alertFilter, getRowId]);
+  }, [data, alertSummary, alertFilter]);
 
   // Force re-render when "new" rows age out
   const [, forceUpdate] = useState(0);

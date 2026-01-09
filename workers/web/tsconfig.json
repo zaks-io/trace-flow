@@ -12,7 +12,8 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@convex/*": ["../../packages/convex/*"]
     },
     "types": ["node"]
   },
