@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 import prettierConfig from 'eslint-config-prettier';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   js.configs.recommended,
@@ -42,7 +43,11 @@ export default tseslint.config(
   },
   {
     files: ['workers/web/**/*.{ts,tsx}'],
+    plugins: {
+      'react-hooks': reactHooks,
+    },
     rules: {
+      ...reactHooks.configs.recommended.rules,
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
@@ -52,12 +57,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['convex/**/*.ts'],
+    files: ['packages/convex/**/*.ts'],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
     },
   },
   {
@@ -71,6 +77,12 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['**/dist/**', '**/.wrangler/**', '**/node_modules/**', '**/.turbo/**'],
+    ignores: [
+      '**/dist/**',
+      '**/.wrangler/**',
+      '**/node_modules/**',
+      '**/.turbo/**',
+      '**/packages/convex/_generated/**',
+    ],
   },
 );

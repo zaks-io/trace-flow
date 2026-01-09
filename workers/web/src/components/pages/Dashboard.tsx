@@ -148,6 +148,7 @@ export default function Dashboard() {
   const isInitialRender = useRef(true);
 
   // Refetch all queries when time range changes
+  // Query params already derive from timeRange, triggering auto-refetch in useTinybirdPipe
   useEffect(() => {
     if (isInitialRender.current) {
       isInitialRender.current = false;
@@ -156,6 +157,7 @@ export default function Dashboard() {
     void summaryQuery.refetch();
     void modelsQuery.refetch();
     void providersQuery.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange]);
 
   const summary = summaryQuery.data?.data?.[0];

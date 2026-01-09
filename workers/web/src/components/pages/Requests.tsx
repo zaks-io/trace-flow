@@ -112,7 +112,10 @@ export default function Requests() {
     }
   }, [isLiveMode, data, initialLoadComplete]);
 
-  const requests = isLiveMode && initialLoadComplete ? mergedRequests : (data?.data ?? []);
+  const requests = useMemo(
+    () => (isLiveMode && initialLoadComplete ? mergedRequests : (data?.data ?? [])),
+    [isLiveMode, initialLoadComplete, mergedRequests, data?.data],
+  );
   const isLoading = loading && !initialLoadComplete;
 
   const handleRowClick = useCallback(

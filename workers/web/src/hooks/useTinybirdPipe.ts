@@ -46,14 +46,15 @@ export function useTinybirdPipe<T = unknown>(
     return result.token;
   }, [generateToken, options.pipe, options.ttl]);
 
+  const { pipe, params, transform } = options;
   const fetchData = useCallback(
     async (token: string) => {
       const apiUrl = import.meta.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
-      const url = new URL(`${apiUrl}/v0/pipes/${options.pipe}.json`);
+      const url = new URL(`${apiUrl}/v0/pipes/${pipe}.json`);
 
       // Add query parameters (excluding undefined values)
-      if (options.params) {
-        Object.entries(options.params).forEach(([key, value]) => {
+      if (params) {
+        Object.entries(params).forEach(([key, value]) => {
           if (value !== undefined) {
             url.searchParams.set(key, String(value));
           }
@@ -78,9 +79,9 @@ export function useTinybirdPipe<T = unknown>(
       }
 
       const result = await response.json();
-      return options.transform ? options.transform(result) : result;
+      return transform ? transform(result) : result;
     },
-    [options.pipe, options.params, options.transform],
+    [pipe, params, transform],
   );
 
   const refetch = useCallback(async () => {
