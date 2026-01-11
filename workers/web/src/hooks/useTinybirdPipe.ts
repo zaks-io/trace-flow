@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -49,7 +51,7 @@ export function useTinybirdPipe<T = unknown>(
   const { pipe, params, transform } = options;
   const fetchData = useCallback(
     async (token: string) => {
-      const apiUrl = import.meta.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
+      const apiUrl = process.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
       const url = new URL(`${apiUrl}/v0/pipes/${pipe}.json`);
 
       // Add query parameters (excluding undefined values)

@@ -1,5 +1,7 @@
+'use client';
+
 import { useState, useMemo } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import Link from 'next/link';
 import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -20,9 +22,12 @@ import { generateTraceMarkdown, estimateMarkdownTokens } from '@/lib/traceToMark
 import type { AlertSeverity } from '@/types/alerts';
 import { isLLMRequestSpan } from '@/lib/spans';
 
-export default function TraceDetail() {
+interface TraceDetailProps {
+  traceId?: string;
+}
+
+export default function TraceDetail({ traceId }: TraceDetailProps) {
   usePageHeader('Trace Details');
-  const { traceId } = useParams<{ traceId: string }>();
   const [copied, setCopied] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
@@ -110,7 +115,7 @@ export default function TraceDetail() {
               ? 'The provided trace ID is not a valid 32-character hex string.'
               : 'Please select a trace from the traces list.'}
           </p>
-          <Link to="/traces" className="text-sm text-primary underline hover:text-primary/80">
+          <Link href="/app/traces" className="text-sm text-primary underline hover:text-primary/80">
             Go to Traces
           </Link>
         </div>
@@ -146,7 +151,7 @@ export default function TraceDetail() {
           <p className="mb-4 text-sm text-muted-foreground">
             The trace with ID {traceId} could not be found.
           </p>
-          <Link to="/traces" className="text-sm text-primary underline hover:text-primary/80">
+          <Link href="/app/traces" className="text-sm text-primary underline hover:text-primary/80">
             Go to Traces
           </Link>
         </div>
@@ -159,7 +164,7 @@ export default function TraceDetail() {
       <div className="flex shrink-0 items-center justify-between">
         <nav className="flex items-center space-x-2 text-sm">
           <Link
-            to="/traces"
+            href="/app/traces"
             className="text-muted-foreground transition-colors hover:text-foreground"
           >
             Traces
@@ -174,7 +179,7 @@ export default function TraceDetail() {
         <div className="flex items-center gap-2">
           {rootSpan?.ParentSpanId && rootSpan.ParentSpanId !== '' && (
             <Link
-              to={`/trace/${rootSpan.ParentSpanId}`}
+              href={`/app/trace/${rootSpan.ParentSpanId}`}
               className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <ExternalLink className="h-3.5 w-3.5" />

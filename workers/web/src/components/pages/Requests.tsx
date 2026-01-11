@@ -1,5 +1,7 @@
+'use client';
+
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
@@ -21,10 +23,13 @@ interface TinybirdResponse {
   data: RequestRow[];
 }
 
-export default function Requests() {
+interface RequestsProps {
+  traceId?: string;
+}
+
+export default function Requests({ traceId: traceIdParam }: RequestsProps) {
   usePageHeader('Requests');
-  const navigate = useNavigate();
-  const { traceId: traceIdParam } = useParams<{ traceId?: string }>();
+  const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -126,23 +131,23 @@ export default function Requests() {
         isClosingRef.current = false;
         setSelectedTraceId(row.TraceId);
         setIsPanelOpen(true);
-        void navigate(`/requests/${row.TraceId}`, { replace: true });
+        router.replace(`/app/requests/${row.TraceId}`);
       }
     },
-    [navigate],
+    [router],
   );
 
   const handleClosePanel = useCallback(() => {
     isClosingRef.current = true;
     setIsPanelOpen(false);
-    void navigate('/requests', { replace: true });
+    router.replace('/app/requests');
     setTimeout(() => {
       setSelectedTraceId(null);
       setTimeout(() => {
         isClosingRef.current = false;
       }, 100);
     }, 300);
-  }, [navigate]);
+  }, [router]);
 
   useEffect(() => {
     if (isClosingRef.current) {

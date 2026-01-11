@@ -33,7 +33,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['astro.config.mjs'],
+    files: ['next.config.ts', 'open-next.config.ts', 'postcss.config.mjs'],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -41,6 +41,15 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['dist/**', '.astro/**', 'node_modules/**', '.wrangler/**', 'out/**', '.next/**'],
+    ignores: [
+      'dist/**',
+      '.astro/**',
+      'node_modules/**',
+      '.wrangler/**',
+      'out/**',
+      '.next/**',
+      '.open-next/**',
+      'next-env.d.ts',
+    ],
   }
 );

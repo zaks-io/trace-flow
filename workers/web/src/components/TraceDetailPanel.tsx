@@ -1,5 +1,7 @@
+'use client';
+
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -108,7 +110,7 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
                 </>
               )}
               <Link
-                to={`/trace/${traceId}`}
+                href={`/app/trace/${traceId}`}
                 className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 <span>View Trace</span>

@@ -1,7 +1,7 @@
 'use client';
 
 import { MoreHorizontal } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 import { usePageHeaderContext, type PageHeaderAction } from './PageHeaderContext';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import {
@@ -24,7 +24,7 @@ function ActionItem({ action }: { action: PageHeaderAction }) {
   if (action.href) {
     return (
       <DropdownMenuItem asChild disabled={action.disabled}>
-        <Link to={action.href}>{content}</Link>
+        <Link href={action.href}>{content}</Link>
       </DropdownMenuItem>
     );
   }

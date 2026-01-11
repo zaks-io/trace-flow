@@ -1,6 +1,7 @@
+'use client';
+
 import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { useAuth0 } from '@auth0/auth0-react';
+import Link from 'next/link';
 import {
   Clock,
   Hash,
@@ -491,7 +492,6 @@ export function SpanDetailPanel({
   onClose,
   triggeredAlerts = [],
 }: SpanDetailPanelProps) {
-  const { getAccessTokenSilently } = useAuth0();
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
   const [requestBodyLoading, setRequestBodyLoading] = useState(false);
@@ -567,8 +567,14 @@ export function SpanDetailPanel({
 
     const fetchBodies = async () => {
       try {
-        const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
-        const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+        // Get ID token from our API endpoint
+        const tokenRes = await fetch('/api/token');
+        if (!tokenRes.ok) {
+          window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
+          return;
+        }
+        const { token: id_token } = await tokenRes.json();
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
         setRequestBodyLoading(true);
         setResponseBodyLoading(true);
@@ -599,7 +605,7 @@ export function SpanDetailPanel({
     };
 
     void fetchBodies();
-  }, [isRootSpan, span, getAccessTokenSilently]);
+  }, [isRootSpan, span]);
 
   // Check if this is an output span (from response)
   // Matches: gen_ai.response.text, gen_ai.response.thinking, gen_ai.response.tool_use (with optional numeric suffix)
@@ -632,8 +638,14 @@ export function SpanDetailPanel({
     const fetchMessageContent = async () => {
       setMessageContentLoading(true);
       try {
-        const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
-        const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+        // Get ID token from our API endpoint
+        const tokenRes = await fetch('/api/token');
+        if (!tokenRes.ok) {
+          setMessageContent(null);
+          return;
+        }
+        const { token: id_token } = await tokenRes.json();
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
         const res = await fetch(`${apiUrl}/bodies/${requestId}/response`, {
           headers: { Authorization: `Bearer ${id_token}` },
@@ -662,7 +674,7 @@ export function SpanDetailPanel({
     };
 
     void fetchMessageContent();
-  }, [isOutputSpan, span, spanAttributes, contentType, getAccessTokenSilently]);
+  }, [isOutputSpan, span, spanAttributes, contentType]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -728,7 +740,7 @@ export function SpanDetailPanel({
                   mono
                 />
                 {span.ParentSpanId && span.ParentSpanId !== '' && (
-                  <Link to={`/trace/${span.ParentSpanId}`}>
+                  <Link href={`/app/trace/${span.ParentSpanId}`}>
                     <AttributeCard
                       icon={<GitBranch className="h-3.5 w-3.5" />}
                       label="Parent Span"
