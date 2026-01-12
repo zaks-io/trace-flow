@@ -135,6 +135,51 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 75_000,
     completionCostPerMillion: 300_000,
   },
+  {
+    provider: 'groq',
+    model: 'openai/gpt-oss-safeguard-20b',
+    promptCostPerMillion: 75_000,
+    completionCostPerMillion: 300_000,
+    cacheReadCostPerMillion: 37_000,
+  },
+
+  // Groq models - Preview
+  {
+    provider: 'groq',
+    model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+    promptCostPerMillion: 200_000,
+    completionCostPerMillion: 600_000,
+  },
+  {
+    provider: 'groq',
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    promptCostPerMillion: 110_000,
+    completionCostPerMillion: 340_000,
+  },
+  {
+    provider: 'groq',
+    model: 'meta-llama/llama-prompt-guard-2-22m',
+    promptCostPerMillion: 30_000,
+    completionCostPerMillion: 30_000,
+  },
+  {
+    provider: 'groq',
+    model: 'meta-llama/llama-prompt-guard-2-86m',
+    promptCostPerMillion: 40_000,
+    completionCostPerMillion: 40_000,
+  },
+  {
+    provider: 'groq',
+    model: 'moonshotai/kimi-k2-instruct-0905',
+    promptCostPerMillion: 1_000_000,
+    completionCostPerMillion: 3_000_000,
+  },
+  {
+    provider: 'groq',
+    model: 'qwen/qwen3-32b',
+    promptCostPerMillion: 290_000,
+    completionCostPerMillion: 590_000,
+  },
 
   // Groq models - Legacy/Alternative IDs
   {
