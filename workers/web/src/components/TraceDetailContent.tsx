@@ -1,6 +1,7 @@
+'use client';
+
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { useAuth0 } from '@auth0/auth0-react';
+import Link from 'next/link';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
 import { ChevronDown, Globe, Clock, Hash, Server, Link2, FileJson, GitBranch } from 'lucide-react';
@@ -65,7 +66,6 @@ export function TraceDetailContent({
   enabled = true,
   spans = [],
 }: TraceDetailContentProps) {
-  const { getAccessTokenSilently } = useAuth0();
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
   const [requestBodyLoading, setRequestBodyLoading] = useState(false);
@@ -128,8 +128,14 @@ export function TraceDetailContent({
 
       const fetchRequestBody = async () => {
         try {
-          const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
-          const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+          // Get ID token from our API endpoint
+          const tokenRes = await fetch('/api/token');
+          if (!tokenRes.ok) {
+            window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
+            return;
+          }
+          const { token: id_token } = await tokenRes.json();
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
           const res = await fetch(`${apiUrl}/bodies/${requestId}/request`, {
             headers: {
@@ -161,7 +167,7 @@ export function TraceDetailContent({
 
       void fetchRequestBody();
     }
-  }, [enabled, requestId, requestBodyFetched, requestBodyLoading, getAccessTokenSilently]);
+  }, [enabled, requestId, requestBodyFetched, requestBodyLoading]);
 
   useEffect(() => {
     // Bodies are stored by requestId, not traceId
@@ -173,8 +179,14 @@ export function TraceDetailContent({
 
       const fetchResponseBody = async () => {
         try {
-          const { id_token } = await getAccessTokenSilently({ detailedResponse: true });
-          const apiUrl = import.meta.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+          // Get ID token from our API endpoint
+          const tokenRes = await fetch('/api/token');
+          if (!tokenRes.ok) {
+            window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
+            return;
+          }
+          const { token: id_token } = await tokenRes.json();
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
           const res = await fetch(`${apiUrl}/bodies/${requestId}/response`, {
             headers: {
@@ -208,7 +220,7 @@ export function TraceDetailContent({
 
       void fetchResponseBody();
     }
-  }, [enabled, requestId, responseBodyFetched, responseBodyLoading, getAccessTokenSilently]);
+  }, [enabled, requestId, responseBodyFetched, responseBodyLoading]);
 
   const formatTimestamp = (nanoseconds: number) => {
     const milliseconds = nanoseconds / 1_000_000;
@@ -415,7 +427,7 @@ export function TraceDetailContent({
           {/* Parent Span row */}
           {rootSpan.ParentSpanId && rootSpan.ParentSpanId !== '' && (
             <div className="grid grid-cols-1 gap-2">
-              <Link to={`/trace/${rootSpan.ParentSpanId}`}>
+              <Link href={`/app/trace/${rootSpan.ParentSpanId}`}>
                 <AttributeCard
                   icon={<GitBranch className="h-3.5 w-3.5" />}
                   label="Parent Span"

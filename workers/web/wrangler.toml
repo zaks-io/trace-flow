@@ -1,9 +1,0 @@
-name = "trace-flow-web"
-compatibility_date = "2024-11-27"
-pages_build_output_dir = "./dist"
-
-[observability]
-enabled = true
-
-[env.preview]
-name = "trace-flow-web-preview"

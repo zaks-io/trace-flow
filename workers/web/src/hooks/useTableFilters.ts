@@ -1,4 +1,6 @@
-import { useSearchParams } from 'react-router-dom';
+'use client';
+
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { useCallback, useMemo } from 'react';
 
 export interface TableFilters {
@@ -18,7 +20,9 @@ export interface UseTableFiltersResult {
 const FILTER_KEYS: (keyof TableFilters)[] = ['provider', 'model', 'status', 'search'];
 
 export function useTableFilters(): UseTableFiltersResult {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
 
   const filters = useMemo((): TableFilters => {
     return {
@@ -31,34 +35,26 @@ export function useTableFilters(): UseTableFiltersResult {
 
   const setFilter = useCallback(
     (key: keyof TableFilters, value: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (value === null || value === '') {
-            next.delete(key);
-          } else {
-            next.set(key, value);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      const next = new URLSearchParams(searchParams.toString());
+      if (value === null || value === '') {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+      const queryString = next.toString();
+      router.replace(queryString ? `${pathname}?${queryString}` : pathname);
     },
-    [setSearchParams],
+    [searchParams, router, pathname],
   );
 
   const clearFilters = useCallback(() => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        for (const key of FILTER_KEYS) {
-          next.delete(key);
-        }
-        return next;
-      },
-      { replace: true },
-    );
-  }, [setSearchParams]);
+    const next = new URLSearchParams(searchParams.toString());
+    for (const key of FILTER_KEYS) {
+      next.delete(key);
+    }
+    const queryString = next.toString();
+    router.replace(queryString ? `${pathname}?${queryString}` : pathname);
+  }, [searchParams, router, pathname]);
 
   const hasActiveFilters = useMemo(() => {
     return FILTER_KEYS.some((key) => filters[key] !== null);

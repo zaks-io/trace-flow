@@ -1,5 +1,7 @@
+'use client';
+
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
@@ -24,7 +26,7 @@ interface AlertSpansResponse {
 
 export default function Traces() {
   usePageHeader('Traces');
-  const navigate = useNavigate();
+  const router = useRouter();
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [mergedSpanGroups, setMergedSpanGroups] = useState<SpanGroupRow[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
@@ -81,10 +83,10 @@ export default function Traces() {
       if (event.metaKey || event.ctrlKey) {
         window.open(`/app/trace/${row.TraceId}`, '_blank');
       } else {
-        void navigate(`/trace/${row.TraceId}`);
+        router.push(`/app/trace/${row.TraceId}`);
       }
     },
-    [navigate],
+    [router],
   );
 
   useEffect(() => {

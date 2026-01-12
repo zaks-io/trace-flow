@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -94,7 +96,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
 
   const fetchSpans = useCallback(
     async (token: string, sinceTimestamp?: number): Promise<TraceSpan[]> => {
-      const apiUrl = import.meta.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
+      const apiUrl = process.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
       const url = new URL(`${apiUrl}/v0/pipes/${PIPE_NAME}.json`);
       url.searchParams.set('trace_id', traceId!);
       if (sinceTimestamp !== undefined) {
