@@ -1,4 +1,5 @@
 import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from './spans';
+import { calculateCacheHitRate } from './cacheMetrics';
 
 interface TokenSummary {
   promptTokens: number;
@@ -6,6 +7,7 @@ interface TokenSummary {
   totalTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  cacheHitRate: number | null;
   wallClockDuration: number;
   llmActiveDuration: number;
   idleTime: number;
@@ -70,6 +72,7 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
 
   const wallClockDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
   const idleTime = Math.max(0, wallClockDuration - llmActiveDuration);
+  const cacheHitRate = calculateCacheHitRate(cacheReadTokens, cacheCreationTokens);
 
   return {
     promptTokens,
@@ -77,6 +80,7 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
     totalTokens: promptTokens + completionTokens,
     cacheReadTokens,
     cacheCreationTokens,
+    cacheHitRate,
     wallClockDuration,
     llmActiveDuration,
     idleTime,
@@ -354,6 +358,13 @@ export function generateTraceMarkdown(spans: TraceSpan[]): string {
     );
     if (summary.cacheCreationTokens > 0) {
       lines.push(`| Cache Created | ${formatNumber(summary.cacheCreationTokens)} |`);
+    }
+
+    // Add cache hit rate with emoji indicator
+    if (summary.cacheHitRate !== null) {
+      const hitRateEmoji =
+        summary.cacheHitRate >= 80 ? '🟢' : summary.cacheHitRate >= 50 ? '🟡' : '🔴';
+      lines.push(`| Cache Hit Rate | ${hitRateEmoji} ${summary.cacheHitRate.toFixed(1)}% |`);
     }
   }
 
