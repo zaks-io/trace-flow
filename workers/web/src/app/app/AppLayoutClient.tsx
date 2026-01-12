@@ -5,12 +5,10 @@ import { AppSidebar } from '@/components/AppSidebar';
 import { PageHeaderProvider } from '@/components/PageHeaderContext';
 import { PageHeader } from '@/components/PageHeader';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
-import { useInitializeUser } from '@/hooks/useInitializeUser';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 
 function AppLayoutInner({ children }: { children: React.ReactNode }) {
-  useInitializeUser();
   const hasRole = useQuery(api.auth.hasTraceFlowRole);
 
   if (hasRole === undefined) {

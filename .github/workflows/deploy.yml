@@ -51,8 +51,6 @@ jobs:
       - name: Test
         run: bun run test
 
-      - name: Build (non-web workers)
-        run: bunx turbo run build --filter='!@trace-flow/web'
 
   deploy-convex:
     name: Deploy Convex
@@ -73,7 +71,7 @@ jobs:
 
       - name: Deploy Convex and build web
         run: |
-          npx convex deploy \
+          bunx convex deploy \
             --cmd 'bunx turbo run build --filter=@trace-flow/web && cd workers/web && bunx opennextjs-cloudflare build' \
             --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
         env:
