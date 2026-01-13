@@ -7,8 +7,10 @@ import { PageHeader } from '@/components/PageHeader';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { useUserInitialization } from '@/hooks/useUserInitialization';
 
 function AppLayoutInner({ children }: { children: React.ReactNode }) {
+  useUserInitialization();
   const hasRole = useQuery(api.auth.hasTraceFlowRole);
 
   if (hasRole === undefined) {
