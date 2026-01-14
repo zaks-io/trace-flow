@@ -29,6 +29,7 @@ export interface LLMTokenUsage {
   cachedTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  upstreamCost?: number;
 }
 
 export interface LLMResponseMetadata {
@@ -121,7 +122,9 @@ export interface SSEMessage {
     input_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    cache_write_tokens?: number;
     output_tokens?: number;
+    cost?: number;
     // Google-style token fields (usageMetadata)
     prompt_token_count?: number;
     candidates_token_count?: number;

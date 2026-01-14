@@ -18,6 +18,10 @@ export function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined
   const totalTokensMatch = /"total_tokens"\s*:\s*(\d+)/.exec(responseBody);
   const cachedTokensMatch = /"cached_tokens"\s*:\s*(\d+)/.exec(responseBody);
   const reasoningTokensMatch = /"reasoning_tokens"\s*:\s*(\d+)/.exec(responseBody);
+  const cacheWriteTokensMatch = /"cache_write_tokens"\s*:\s*(\d+)/.exec(responseBody);
+
+  // OpenRouter cost pattern (provided directly in usage object)
+  const upstreamCostMatch = /"cost"\s*:\s*([0-9.]+)/.exec(responseBody);
 
   // Anthropic-style patterns
   const inputTokensMatch = /"input_tokens"\s*:\s*(\d+)/.exec(responseBody);
@@ -43,6 +47,7 @@ export function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined
     cachedTokensMatch !== null ||
     cacheCreationTokensMatch !== null ||
     cacheReadTokensMatch !== null ||
+    cacheWriteTokensMatch !== null ||
     reasoningTokensMatch !== null ||
     cachedContentTokenCountMatch !== null;
 
@@ -60,6 +65,10 @@ export function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined
   const reasoningTokens = reasoningTokensMatch?.[1]
     ? parseInt(reasoningTokensMatch[1], 10)
     : undefined;
+  const cacheWriteTokens = cacheWriteTokensMatch?.[1]
+    ? parseInt(cacheWriteTokensMatch[1], 10)
+    : undefined;
+  const upstreamCost = upstreamCostMatch?.[1] ? parseFloat(upstreamCostMatch[1]) : undefined;
 
   // Extract Anthropic-style tokens
   const inputTokens = inputTokensMatch?.[1] ? parseInt(inputTokensMatch[1], 10) : undefined;
@@ -93,6 +102,7 @@ export function parseTokenUsage(responseBody: string): LLMTokenUsage | undefined
     reasoningTokens,
     cachedTokens: cachedTokens ?? googleCachedTokens,
     cacheReadTokens,
-    cacheCreationTokens,
+    cacheCreationTokens: cacheCreationTokens ?? cacheWriteTokens,
+    upstreamCost,
   };
 }
