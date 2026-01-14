@@ -253,4 +253,107 @@ describe('extractTokenUsageFromSSEData', () => {
     expect(usage.input_tokens).toBeUndefined();
     expect(usage.output_tokens).toBeUndefined();
   });
+
+  describe('OpenRouter-style tokens', () => {
+    it('should extract cache_write_tokens', () => {
+      const data = JSON.stringify({
+        usage: {
+          prompt_tokens: 6497,
+          completion_tokens: 87,
+          total_tokens: 6584,
+          prompt_tokens_details: {
+            cached_tokens: 0,
+            cache_write_tokens: 6494,
+          },
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cache_write_tokens).toBe(6494);
+    });
+
+    it('should extract cost from usage', () => {
+      const data = JSON.stringify({
+        usage: {
+          prompt_tokens: 6497,
+          completion_tokens: 87,
+          total_tokens: 6584,
+          cost: 0.06713,
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cost).toBe(0.06713);
+    });
+
+    it('should extract all fields from full OpenRouter SSE chunk', () => {
+      const data = JSON.stringify({
+        id: 'gen-1768355145-SgNmN4luqmA9SQbSNGfU',
+        provider: 'Google',
+        model: 'anthropic/claude-opus-4.5',
+        object: 'chat.completion.chunk',
+        created: 1768355145,
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: '' },
+            finish_reason: null,
+          },
+        ],
+        usage: {
+          prompt_tokens: 6497,
+          completion_tokens: 87,
+          total_tokens: 6584,
+          cost: 0.06713,
+          is_byok: false,
+          prompt_tokens_details: {
+            cached_tokens: 0,
+            cache_write_tokens: 6494,
+            audio_tokens: 0,
+            video_tokens: 0,
+          },
+          cost_details: {
+            upstream_inference_cost: null,
+            upstream_inference_prompt_cost: 0.064955,
+            upstream_inference_completions_cost: 0.002175,
+          },
+          completion_tokens_details: {
+            reasoning_tokens: 0,
+            image_tokens: 0,
+          },
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cache_write_tokens).toBe(6494);
+      expect(usage.cost).toBe(0.06713);
+    });
+
+    it('should handle cost with many decimal places', () => {
+      const data = JSON.stringify({
+        usage: {
+          cost: 0.00012345678,
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cost).toBe(0.00012345678);
+    });
+
+    it('should handle integer cost', () => {
+      const data = JSON.stringify({
+        usage: {
+          cost: 1,
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cost).toBe(1);
+    });
+  });
 });

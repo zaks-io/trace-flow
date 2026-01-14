@@ -134,6 +134,121 @@ describe('parseTokenUsage', () => {
     });
   });
 
+  describe('OpenRouter-style tokens', () => {
+    it('should parse cache_write_tokens from prompt_tokens_details', () => {
+      const response = JSON.stringify({
+        usage: {
+          prompt_tokens: 6497,
+          completion_tokens: 87,
+          total_tokens: 6584,
+          prompt_tokens_details: {
+            cached_tokens: 0,
+            cache_write_tokens: 6494,
+          },
+        },
+      });
+
+      const result = parseTokenUsage(response);
+
+      expect(result).toEqual({
+        promptTokens: 6497,
+        completionTokens: 87,
+        totalTokens: 6584,
+        cachedTokens: 0,
+        cacheCreationTokens: 6494,
+      });
+    });
+
+    it('should parse upstream cost from usage', () => {
+      const response = JSON.stringify({
+        usage: {
+          prompt_tokens: 6497,
+          completion_tokens: 87,
+          total_tokens: 6584,
+          cost: 0.06713,
+        },
+      });
+
+      const result = parseTokenUsage(response);
+
+      expect(result).toEqual({
+        promptTokens: 6497,
+        completionTokens: 87,
+        totalTokens: 6584,
+        upstreamCost: 0.06713,
+      });
+    });
+
+    it('should parse full OpenRouter response with all fields', () => {
+      const response = JSON.stringify({
+        id: 'gen-1768355145-SgNmN4luqmA9SQbSNGfU',
+        provider: 'Google',
+        model: 'anthropic/claude-opus-4.5',
+        object: 'chat.completion.chunk',
+        created: 1768355145,
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: '' },
+            finish_reason: null,
+          },
+        ],
+        usage: {
+          prompt_tokens: 6497,
+          completion_tokens: 87,
+          total_tokens: 6584,
+          cost: 0.06713,
+          is_byok: false,
+          prompt_tokens_details: {
+            cached_tokens: 0,
+            cache_write_tokens: 6494,
+            audio_tokens: 0,
+            video_tokens: 0,
+          },
+          cost_details: {
+            upstream_inference_cost: null,
+            upstream_inference_prompt_cost: 0.064955,
+            upstream_inference_completions_cost: 0.002175,
+          },
+          completion_tokens_details: {
+            reasoning_tokens: 0,
+            image_tokens: 0,
+          },
+        },
+      });
+
+      const result = parseTokenUsage(response);
+
+      expect(result).toEqual({
+        promptTokens: 6497,
+        completionTokens: 87,
+        totalTokens: 6584,
+        cachedTokens: 0,
+        cacheCreationTokens: 6494,
+        reasoningTokens: 0,
+        upstreamCost: 0.06713,
+      });
+    });
+
+    it('should prefer cache_creation_input_tokens over cache_write_tokens when both present', () => {
+      const response = JSON.stringify({
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 50,
+          cache_creation_input_tokens: 30,
+          prompt_tokens_details: {
+            cache_write_tokens: 20,
+          },
+        },
+      });
+
+      const result = parseTokenUsage(response);
+
+      // cache_creation_input_tokens (Anthropic style) takes precedence
+      expect(result?.cacheCreationTokens).toBe(30);
+    });
+  });
+
   describe('Groq-style tokens', () => {
     it('should parse Groq response with reasoning tokens', () => {
       const response = JSON.stringify({

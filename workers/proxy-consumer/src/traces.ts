@@ -140,6 +140,10 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
         );
       }
     }
+
+    if (data.tokens.upstreamCost !== undefined) {
+      rootSpan.SpanAttributes['gen_ai.cost.upstream'] = String(data.tokens.upstreamCost);
+    }
   }
 
   // Calculate TPS using generation duration (first token → complete)

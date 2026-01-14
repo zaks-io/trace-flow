@@ -268,6 +268,7 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
   let totalCachedTokens = 0;
+  let lastUpstreamCost: number | undefined;
   let hasAnyTokens = false;
 
   for (const message of streamData.messages) {
@@ -288,6 +289,14 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
     }
     if (message.usage.cache_creation_input_tokens !== undefined) {
       totalCacheCreationTokens += message.usage.cache_creation_input_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.cache_write_tokens !== undefined) {
+      totalCacheCreationTokens += message.usage.cache_write_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.cost !== undefined) {
+      lastUpstreamCost = message.usage.cost;
       hasAnyTokens = true;
     }
 
@@ -326,6 +335,9 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   }
   if (totalCachedTokens > 0) {
     result.cachedTokens = totalCachedTokens;
+  }
+  if (lastUpstreamCost !== undefined) {
+    result.upstreamCost = lastUpstreamCost;
   }
 
   // Calculate total if we have both prompt and completion tokens

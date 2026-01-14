@@ -39,6 +39,8 @@ const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
 const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
 const CACHE_CREATION_INPUT_TOKENS_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d+)/;
 const CACHE_READ_INPUT_TOKENS_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
+const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d+)/;
+const UPSTREAM_COST_PATTERN = /"cost"\s*:\s*([0-9.]+)/;
 
 /**
  * Extracts OpenAI-compatible metadata from SSE event data string.
@@ -226,7 +228,9 @@ export function extractTokenUsageFromSSEData(data: string): {
   input_tokens?: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  cache_write_tokens?: number;
   output_tokens?: number;
+  cost?: number;
   prompt_token_count?: number;
   candidates_token_count?: number;
   cached_content_token_count?: number;
@@ -236,7 +240,9 @@ export function extractTokenUsageFromSSEData(data: string): {
     input_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
+    cache_write_tokens?: number;
     output_tokens?: number;
+    cost?: number;
     prompt_token_count?: number;
     candidates_token_count?: number;
     cached_content_token_count?: number;
@@ -262,6 +268,16 @@ export function extractTokenUsageFromSSEData(data: string): {
   const cacheReadMatch = CACHE_READ_INPUT_TOKENS_PATTERN.exec(data);
   if (cacheReadMatch?.[1]) {
     usage.cache_read_input_tokens = parseInt(cacheReadMatch[1], 10);
+  }
+
+  const cacheWriteMatch = CACHE_WRITE_TOKENS_PATTERN.exec(data);
+  if (cacheWriteMatch?.[1]) {
+    usage.cache_write_tokens = parseInt(cacheWriteMatch[1], 10);
+  }
+
+  const costMatch = UPSTREAM_COST_PATTERN.exec(data);
+  if (costMatch?.[1]) {
+    usage.cost = parseFloat(costMatch[1]);
   }
 
   // Google patterns
