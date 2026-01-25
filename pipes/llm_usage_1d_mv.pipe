@@ -4,7 +4,7 @@ DESCRIPTION >
 NODE rollup
 SQL >
     SELECT
-        toStartOfDay(toDateTime(ReceivedAt / 1000000000)) AS BucketStart,
+        toStartOfDay(toDateTime(ReceivedAt / 1000000000, 'UTC')) AS BucketStart,
         ApiKey,
         Provider,
         Model,

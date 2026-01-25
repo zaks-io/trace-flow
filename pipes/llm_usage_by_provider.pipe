@@ -111,5 +111,6 @@ SQL >
     )
     GROUP BY provider
     ORDER BY total_cost_usd DESC
+    LIMIT 10
 
 TYPE ENDPOINT

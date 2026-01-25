@@ -27,3 +27,6 @@ ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode"
 ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
 ENGINE_TTL "BucketStart + INTERVAL 5 YEAR"
+
+FORWARD_QUERY >
+    SELECT *
