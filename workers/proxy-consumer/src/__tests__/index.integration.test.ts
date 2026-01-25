@@ -184,6 +184,57 @@ describe('Queue Handler Integration', () => {
     expect(ackCalled.value).toBe(true);
   });
 
+  it('should ack duplicate messages for the same request', async () => {
+    const message = createMockQueueMessage('test-dup', 'api-key-dup');
+    const ackCalled = { first: false, second: false };
+    const retryCalled = { first: false, second: false };
+
+    const messages: Message<QueueMessage>[] = [
+      {
+        id: '1',
+        timestamp: new Date(),
+        body: message,
+        attempts: 0,
+        ack: () => {
+          ackCalled.first = true;
+        },
+        retry: () => {
+          retryCalled.first = true;
+        },
+      },
+      {
+        id: '2',
+        timestamp: new Date(),
+        body: message,
+        attempts: 0,
+        ack: () => {
+          ackCalled.second = true;
+        },
+        retry: () => {
+          retryCalled.second = true;
+        },
+      },
+    ];
+
+    const batch: MessageBatch<QueueMessage> = {
+      queue: 'test-queue',
+      messages,
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
+    };
+
+    await worker.queue(batch, env);
+
+    expect(ackCalled.first).toBe(true);
+    expect(ackCalled.second).toBe(true);
+    expect(retryCalled.first).toBe(false);
+    expect(retryCalled.second).toBe(false);
+  });
+
   it('should retry messages when Durable Object fails', async () => {
     const message = createMockQueueMessage('test-do-fail', 'api-key-do-fail');
     const retryCalled = { value: false };
@@ -215,7 +266,7 @@ describe('Queue Handler Integration', () => {
 
     const originalGet = env.TRACE_BATCHER.get.bind(env.TRACE_BATCHER);
     const mockDOStub = {
-      addTraces: (): Promise<void> => {
+      addMessageTraces: (): Promise<void> => {
         throw new Error('Durable Object failure');
       },
     } as unknown as DurableObjectStub<TraceBatcherInstance>;

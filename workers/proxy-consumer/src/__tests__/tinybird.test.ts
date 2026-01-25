@@ -44,7 +44,7 @@ describe('insertIntoTinybird', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://api.tinybird.co/v0/events?name=otel_traces',
+      'https://api.tinybird.co/v0/events?name=otel_traces&wait=true',
       expect.objectContaining({
         method: 'POST',
         headers: {
@@ -99,6 +99,7 @@ describe('insertIntoTinybird', () => {
     const call = mockFetch.mock.calls[0];
     const url = call?.[0] as string;
     expect(url).toContain('otel%20traces%20with%20spaces');
+    expect(url).toContain('wait=true');
   });
 
   it('should throw error on non-ok response', async () => {
@@ -153,6 +154,7 @@ describe('insertIntoTinybird', () => {
     const call = mockFetch.mock.calls[0];
     const url = call?.[0] as string;
     expect(url).toContain('http://localhost:7181/v0/events');
+    expect(url).toContain('wait=true');
   });
 
   it('should handle multiple traces', async () => {
@@ -286,6 +288,54 @@ describe('insertIntoTinybirdWithRetry', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockDelay).toHaveBeenCalledTimes(2);
+  });
+
+  it('should not retry on 422 partial ingestion errors', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      text: () => Promise.resolve('Partial ingestion error'),
+    });
+    global.fetch = mockFetch;
+
+    const mockDelay = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      insertIntoTinybirdWithRetry(
+        [mockTrace],
+        'test-token',
+        'otel_traces',
+        'https://api.tinybird.co',
+        mockDelay,
+      ),
+    ).rejects.toThrow('Tinybird insert failed: 422 Partial ingestion error');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockDelay).not.toHaveBeenCalled();
+  });
+
+  it('should not retry on 400 errors', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: () => Promise.resolve('Bad request error'),
+    });
+    global.fetch = mockFetch;
+
+    const mockDelay = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      insertIntoTinybirdWithRetry(
+        [mockTrace],
+        'test-token',
+        'otel_traces',
+        'https://api.tinybird.co',
+        mockDelay,
+      ),
+    ).rejects.toThrow('Tinybird insert failed: 400 Bad request error');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockDelay).not.toHaveBeenCalled();
   });
 
   it('should use exponential backoff', async () => {

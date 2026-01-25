@@ -2,6 +2,38 @@ import type { TinybirdTrace } from '@trace-flow/types';
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 1000;
+const TINYBIRD_TIMEOUT_MS = 60000;
+
+class TinybirdInsertError extends Error {
+  readonly status: number;
+  readonly responseText: string;
+
+  constructor(status: number, responseText: string) {
+    super(`Tinybird insert failed: ${status} ${responseText}`);
+    this.status = status;
+    this.responseText = responseText;
+  }
+}
+
+function shouldRetryTinybirdError(error: unknown): boolean {
+  if (!(error instanceof TinybirdInsertError)) {
+    return true;
+  }
+
+  if (error.status === 422) {
+    return false;
+  }
+
+  if (error.status === 429 || error.status === 503) {
+    return true;
+  }
+
+  if ([400, 401, 403, 404, 413].includes(error.status)) {
+    return false;
+  }
+
+  return error.status >= 500;
+}
 
 /**
  * Inserts traces into Tinybird using their Events API.
@@ -17,7 +49,7 @@ export async function insertIntoTinybird(
   datasource: string,
   host: string,
 ): Promise<void> {
-  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
+  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}&wait=true`;
 
   const body = traces
     .map((trace) => {
@@ -58,13 +90,13 @@ export async function insertIntoTinybird(
       Authorization: `Bearer ${tinybirdToken}`,
     },
     body,
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(TINYBIRD_TIMEOUT_MS),
   });
 
   const responseText = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Tinybird insert failed: ${response.status} ${responseText}`);
+    throw new TinybirdInsertError(response.status, responseText);
   }
 }
 
@@ -94,7 +126,13 @@ export async function insertIntoTinybirdWithRetry(
       return;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      const retryable = shouldRetryTinybirdError(error);
       console.warn(`Insert attempt ${attempt + 1}/${MAX_RETRIES} failed:`, lastError.message);
+
+      if (!retryable) {
+        console.error('Non-retriable Tinybird insert error:', lastError);
+        throw lastError;
+      }
 
       if (attempt < MAX_RETRIES - 1) {
         const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt);
