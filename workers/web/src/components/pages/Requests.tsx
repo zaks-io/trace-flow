@@ -77,13 +77,16 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
       setInitialLoadComplete(false);
       setLatestReceivedAt(null);
       setMergedRequests([]);
-      lastProcessedDataRef.current = null;
+      lastProcessedDataRef.current = data?.data ?? null; // Mark current data as seen
     }
-  }, [filters]);
+  }, [filters, data?.data]);
 
   // Handle initial load
   useEffect(() => {
     if (!initialLoadComplete && data?.data && data.data.length > 0) {
+      if (lastProcessedDataRef.current === data.data) {
+        return; // Skip stale data
+      }
       setMergedRequests(data.data);
       setLatestReceivedAt(data.data[0].ReceivedAt);
       lastProcessedDataRef.current = data.data;
@@ -100,7 +103,10 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
     lastProcessedDataRef.current = data.data;
 
     setMergedRequests((prev) => {
-      const merged = [...data.data, ...prev].slice(0, 100);
+      // Deduplicate by TraceId-SpanId-ReceivedAt for proper uniqueness
+      const seen = new Set(data.data.map((r) => `${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
+      const uniquePrev = prev.filter((r) => !seen.has(`${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
+      const merged = [...data.data, ...uniquePrev].slice(0, 100);
       if (merged.length > 0) {
         setLatestReceivedAt(merged[0].ReceivedAt);
       }
@@ -200,12 +206,15 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
     return evaluateAlertsForTraces(requests, alerts);
   }, [requests, alerts]);
 
-  const getRowId = useCallback((row: RequestRow) => `${row.TraceId}-${row.SpanId}`, []);
+  const getRowId = useCallback(
+    (row: RequestRow) => `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}`,
+    [],
+  );
 
   const selectedRowId = useMemo(() => {
     if (!selectedTraceId) return null;
     const row = requests.find((r) => r.TraceId === selectedTraceId);
-    return row ? `${row.TraceId}-${row.SpanId}` : null;
+    return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
   }, [selectedTraceId, requests]);
 
   if (isLoading && requests.length === 0) {

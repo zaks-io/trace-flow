@@ -6,6 +6,8 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
+import { useTableFilters } from '@/hooks/useTableFilters';
+import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { DataTable, type AlertFilterValue } from '@/components/requests-table';
 import {
@@ -37,6 +39,7 @@ export default function Traces() {
   const latestReceivedAtRef = useRef<number | null>(null);
   const prevLiveModeRef = useRef(false);
   const lastProcessedDataRef = useRef<SpanGroupRow[] | null>(null);
+  const prevFiltersRef = useRef(JSON.stringify({}));
 
   const alerts = useQuery(api.alerts.listEnabled);
   const { visibility, setVisibility } = useColumnVisibility(
@@ -44,22 +47,42 @@ export default function Traces() {
     'trace-flow-traces-columns',
   );
 
-  // API key filtering is now handled server-side via JWT fixed_params
+  const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
+  const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
+
   const pipeParams = useMemo(() => {
-    const params: Record<string, number | undefined> = {
+    const params: Record<string, string | number | undefined> = {
       limit: 100,
     };
+    if (filters.provider) params.provider = filters.provider;
+    if (filters.model) params.model = filters.model;
+    if (filters.status) params.status = filters.status;
+    if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
+      params.search = filters.search;
+    }
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }
     return params;
-  }, [isLiveMode, latestReceivedAt]);
+  }, [filters, isLiveMode, latestReceivedAt]);
 
   const { data, loading, error, refetch } = useTinybirdPipe<TinybirdResponse>({
     pipe: 'traces_grouped',
     params: pipeParams,
     pollInterval: isLiveMode ? 10000 : undefined,
   });
+
+  // Reset state when filters change
+  useEffect(() => {
+    const currentFilters = JSON.stringify(filters);
+    if (prevFiltersRef.current !== currentFilters) {
+      prevFiltersRef.current = currentFilters;
+      setInitialLoadComplete(false);
+      setLatestReceivedAt(null);
+      setMergedSpanGroups([]);
+      lastProcessedDataRef.current = null;
+    }
+  }, [filters]);
 
   const traceIds = useMemo(() => {
     const groups = isLiveMode && initialLoadComplete ? mergedSpanGroups : (data?.data ?? []);
@@ -237,29 +260,27 @@ export default function Traces() {
         </div>
       )}
 
-      {spanGroups.length === 0 && !error ? (
-        <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
-          <p className="text-muted-foreground">No traces found</p>
-          <p className="mt-1 text-sm text-muted-foreground/70">
-            Traces will appear here when you send requests through the gateway
-          </p>
-        </div>
-      ) : (
-        <DataTable
-          columns={spanGroupColumns}
-          data={spanGroups}
-          columnVisibility={visibility}
-          onColumnVisibilityChange={setVisibility}
-          onRowClick={handleRowClick}
-          getRowId={getRowId}
-          isLiveMode={isLiveMode}
-          onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
-          alertSummary={alertSummary}
-          alerts={alerts ?? []}
-          alertFilter={alertFilter}
-          onAlertFilterChange={setAlertFilter}
-        />
-      )}
+      <DataTable
+        columns={spanGroupColumns}
+        data={spanGroups}
+        columnVisibility={visibility}
+        onColumnVisibilityChange={setVisibility}
+        onRowClick={handleRowClick}
+        getRowId={getRowId}
+        isLiveMode={isLiveMode}
+        onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+        alertSummary={alertSummary}
+        alerts={alerts ?? []}
+        alertFilter={alertFilter}
+        onAlertFilterChange={setAlertFilter}
+        filters={filters}
+        filterOptions={filterOptions}
+        filterOptionsLoading={filterOptionsLoading}
+        onFilterChange={setFilter}
+        onClearFilters={clearFilters}
+        hasActiveFilters={hasActiveFilters}
+        emptyMessage="No traces found"
+      />
     </div>
   );
 }

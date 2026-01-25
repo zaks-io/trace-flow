@@ -1,26 +1,25 @@
 DESCRIPTION >
     Get distinct filter options (providers, models, statuses) for the requests table.
+    Uses otel_traces_genai materialized view for efficient distinct value lookups.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE providers
 SQL >
     %
-    SELECT DISTINCT JSONExtractString(SpanAttributes, 'gen_ai.system') as value
-    FROM otel_traces
-    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        AND value != ''
+    SELECT DISTINCT Provider as value
+    FROM otel_traces_genai
+    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND Provider != ''
     ORDER BY value
     LIMIT 100
 
 NODE models
 SQL >
     %
-    SELECT DISTINCT JSONExtractString(SpanAttributes, 'gen_ai.request.model') as value
-    FROM otel_traces
-    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        AND value != ''
+    SELECT DISTINCT Model as value
+    FROM otel_traces_genai
+    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND Model != ''
     ORDER BY value
     LIMIT 100
 
@@ -28,9 +27,8 @@ NODE statuses
 SQL >
     %
     SELECT DISTINCT StatusCode as value
-    FROM otel_traces
-    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    FROM otel_traces_genai
+    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
     ORDER BY value
 
 NODE endpoint
