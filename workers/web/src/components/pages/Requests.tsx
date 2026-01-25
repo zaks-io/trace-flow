@@ -79,7 +79,7 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
       setMergedRequests([]);
       lastProcessedDataRef.current = data?.data ?? null; // Mark current data as seen
     }
-  }, [filters, data?.data]);
+  }, [filters]);
 
   // Handle initial load
   useEffect(() => {
