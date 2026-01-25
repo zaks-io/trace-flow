@@ -22,6 +22,7 @@ import { isLLMRequestSpan } from '@/lib/spans';
 
 interface TraceDetailPanelProps {
   traceId: string;
+  requestId?: string;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -30,7 +31,7 @@ interface TinybirdResponse {
   data: TraceSpan[];
 }
 
-export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelProps) {
+export function TraceDetailPanel({ traceId, requestId, isOpen, onClose }: TraceDetailPanelProps) {
   const validatedTraceId = validateTraceId(traceId);
   const alerts = useQuery(api.alerts.listEnabled);
 
@@ -128,7 +129,12 @@ export function TraceDetailPanel({ traceId, isOpen, onClose }: TraceDetailPanelP
                 <AlertList triggeredAlerts={triggeredAlerts} />
               </div>
             )}
-            <TraceDetailContent traceId={traceId} enabled={isOpen} spans={spans} />
+            <TraceDetailContent
+              traceId={traceId}
+              requestId={requestId}
+              enabled={isOpen}
+              spans={spans}
+            />
           </div>
         </div>
       </DialogContent>

@@ -8,7 +8,7 @@ SQL >
     %
     SELECT
         TraceId,
-        count() as ChildSpanCount,
+        countDistinct(SpanId) as ChildSpanCount,
         min(Timestamp) as FirstTimestamp,
         max(Timestamp) as LastTimestamp,
         max(ReceivedAt) as LatestReceivedAt,

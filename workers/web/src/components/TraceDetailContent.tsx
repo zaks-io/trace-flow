@@ -31,6 +31,7 @@ export interface TraceSpan {
 
 interface TraceDetailContentProps {
   traceId: string;
+  requestId?: string;
   enabled?: boolean;
   spans?: TraceSpan[];
 }
@@ -63,6 +64,7 @@ function AttributeCard({ icon, label, value, mono = false }: AttributeCardProps)
 
 export function TraceDetailContent({
   traceId,
+  requestId: requestIdProp,
   enabled = true,
   spans = [],
 }: TraceDetailContentProps) {
@@ -81,13 +83,19 @@ export function TraceDetailContent({
   const [isMoreAttributesOpen, setIsMoreAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
 
-  // Find root span by trace_flow.source attribute
+  // Find the specific span by requestId if provided, or fall back to first proxy span
   const rootSpan = spans.find((s) => {
     try {
       const attrs =
         typeof s.SpanAttributes === 'string'
           ? (JSON.parse(s.SpanAttributes) as Record<string, string>)
           : (s.SpanAttributes as unknown as Record<string, string>);
+
+      // If requestId provided, match by it
+      if (requestIdProp) {
+        return attrs['gen_ai.request_id'] === requestIdProp;
+      }
+      // Otherwise use old logic - find first proxy span
       return attrs['trace_flow.source'] === 'proxy';
     } catch {
       return false;
@@ -105,7 +113,8 @@ export function TraceDetailContent({
       return {};
     }
   })();
-  const requestId = rootSpanAttributes['gen_ai.request_id'];
+  // Use prop requestId if provided, else extract from found span
+  const requestId = requestIdProp ?? rootSpanAttributes['gen_ai.request_id'];
 
   useEffect(() => {
     setRequestBody(null);
@@ -116,7 +125,7 @@ export function TraceDetailContent({
     setResponseBodyError(null);
     setRequestBodyFetched(false);
     setResponseBodyFetched(false);
-  }, [traceId]);
+  }, [traceId, requestIdProp]);
 
   useEffect(() => {
     // Bodies are stored by requestId, not traceId

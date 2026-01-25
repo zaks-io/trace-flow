@@ -31,6 +31,7 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
   usePageHeader('Requests');
   const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
@@ -125,11 +126,21 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
 
   const handleRowClick = useCallback(
     (row: RequestRow, event: React.MouseEvent) => {
+      // Extract requestId from SpanAttributes
+      let requestId: string | undefined;
+      try {
+        const attrs = JSON.parse(row.SpanAttributes) as Record<string, string>;
+        requestId = attrs['gen_ai.request_id'];
+      } catch {
+        // Ignore parse errors
+      }
+
       if (event.metaKey || event.ctrlKey) {
         window.open(`/app/trace/${row.TraceId}`, '_blank');
       } else {
         isClosingRef.current = false;
         setSelectedTraceId(row.TraceId);
+        setSelectedRequestId(requestId ?? null);
         setIsPanelOpen(true);
         router.replace(`/app/requests/${row.TraceId}`);
       }
@@ -143,6 +154,7 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
     router.replace('/app/requests');
     setTimeout(() => {
       setSelectedTraceId(null);
+      setSelectedRequestId(null);
       setTimeout(() => {
         isClosingRef.current = false;
       }, 100);
@@ -246,6 +258,7 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
       {selectedTraceId && (
         <TraceDetailPanel
           traceId={selectedTraceId}
+          requestId={selectedRequestId ?? undefined}
           isOpen={isPanelOpen}
           onClose={handleClosePanel}
         />
