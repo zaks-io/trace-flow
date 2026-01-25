@@ -7,7 +7,7 @@ SQL >
     %
     SELECT
         JSONExtractString(SpanAttributes, 'gen_ai.system') as provider,
-        count() as request_count
+        countDistinct(SpanId) as request_count
     FROM otel_traces
     WHERE ParentSpanId = ''
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
