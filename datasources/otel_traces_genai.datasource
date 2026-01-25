@@ -29,7 +29,7 @@ SCHEMA >
     `Provider` LowCardinality(String),
     `Model` LowCardinality(String)
 
-ENGINE "MergeTree"
+ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "ReceivedAt, ApiKey, OperationName, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(ReceivedAt / 1000000000) + INTERVAL 90 DAY"

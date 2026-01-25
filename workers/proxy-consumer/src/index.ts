@@ -47,8 +47,11 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
   const shardedMessages = new Map<
     number,
     {
-      traces: TinybirdTrace[];
-      messages: Message<QueueMessageUnion>[];
+      items: {
+        messageId: string;
+        traces: TinybirdTrace[];
+        message: Message<QueueMessageUnion>;
+      }[];
     }
   >();
 
@@ -58,25 +61,27 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
     try {
       let traces: TinybirdTrace[];
       let apiKey: string;
+      let messageId: string;
 
       if (message.body.type === 'otlp') {
         traces = message.body.traces;
         apiKey = message.body.apiKey;
+        messageId = `otlp:${apiKey}:${message.body.receivedAt}:${traces.length}`;
       } else {
         const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
         traces = buildTraces(message.body, pricing);
         apiKey = message.body.apiKey;
+        messageId = `llm:${message.body.requestId}`;
       }
 
       const shardId = calculateShardId(apiKey, NUM_SHARDS);
 
       if (!shardedMessages.has(shardId)) {
-        shardedMessages.set(shardId, { traces: [], messages: [] });
+        shardedMessages.set(shardId, { items: [] });
       }
 
       const shard = shardedMessages.get(shardId)!;
-      shard.traces.push(...traces);
-      shard.messages.push(message);
+      shard.items.push({ messageId, traces, message });
     } catch (error) {
       const messageId =
         message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : message.body.requestId;
@@ -93,10 +98,18 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
       const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
       const batcher = env.TRACE_BATCHER.get(batcherId);
 
-      await batcher.addTraces(shard.traces);
+      const results = await batcher.addMessageTraces(
+        shard.items.map((item) => ({ messageId: item.messageId, traces: item.traces })),
+      );
+      const statusById = new Map(results.map((result) => [result.messageId, result.status]));
 
-      for (const message of shard.messages) {
-        message.ack();
+      for (const item of shard.items) {
+        const status = statusById.get(item.messageId) ?? 'failed';
+        if (status === 'failed') {
+          item.message.retry();
+        } else {
+          item.message.ack();
+        }
       }
     } catch (error) {
       console.error(`Shard ${shardId}: Failed to add traces to batcher:`, {
@@ -104,8 +117,8 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
       });
       // Note: Errors in the TraceBatcher Durable Object are captured by Sentry there
 
-      for (const message of shard.messages) {
-        message.retry();
+      for (const item of shard.items) {
+        item.message.retry();
       }
     }
   });
