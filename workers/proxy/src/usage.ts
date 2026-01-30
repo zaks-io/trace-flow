@@ -7,7 +7,7 @@ interface UsageEnv {
 
 export async function checkUsage(env: UsageEnv, orgId: string, count: number): Promise<boolean> {
   const subConfigRaw = await env.API_KEYS.get(`sub:${orgId}`);
-  if (!subConfigRaw) return true;
+  if (!subConfigRaw) return false;
 
   const subscriptionConfig = JSON.parse(subConfigRaw) as SubscriptionKVData;
   const doId = env.USAGE_TRACKER.idFromName(orgId);

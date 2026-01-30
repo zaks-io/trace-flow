@@ -173,13 +173,25 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     return c.json(response, 200);
   }
 
-  // Check usage via Durable Object
-  if (keyData.orgId) {
-    const allowed = await checkUsage(c.env, keyData.orgId, traces.length);
-    if (!allowed) {
-      const response: OTLPExportTraceServiceResponse = { partialSuccess: {} };
-      return c.json(response, 200);
-    }
+  // Check usage via Durable Object — deny if orgId is missing
+  if (!keyData.orgId) {
+    const response: OTLPExportTraceServiceResponse = {
+      partialSuccess: {
+        rejectedSpans: traces.length,
+        errorMessage: 'Missing organization ID',
+      },
+    };
+    return c.json(response, 200);
+  }
+  const allowed = await checkUsage(c.env, keyData.orgId, traces.length);
+  if (!allowed) {
+    const response: OTLPExportTraceServiceResponse = {
+      partialSuccess: {
+        rejectedSpans: traces.length,
+        errorMessage: 'Usage limit exceeded',
+      },
+    };
+    return c.json(response, 200);
   }
 
   const message: OTLPQueueMessage = {

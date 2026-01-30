@@ -23,10 +23,10 @@ function createMockEnv(kvData: string | null, doResponse: { allowed: boolean }) 
 }
 
 describe('checkUsage', () => {
-  it('returns true when no subscription config in KV', async () => {
+  it('returns false when no subscription config in KV', async () => {
     const { env } = createMockEnv(null, { allowed: false });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toBe(true);
+    expect(result).toBe(false);
   });
 
   it('returns true when DO responds allowed: true', async () => {

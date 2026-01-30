@@ -108,7 +108,7 @@ app.all('*', async (c) => {
   const keyData: ApiKeyData = authResult;
 
   // Check usage via Durable Object
-  const usageAllowed = keyData.orgId ? await checkUsage(c.env, keyData.orgId, 1) : true;
+  const usageAllowed = keyData.orgId ? await checkUsage(c.env, keyData.orgId, 1) : false;
 
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
@@ -180,10 +180,12 @@ app.all('*', async (c) => {
 
   // If usage is not allowed, skip capture entirely — just proxy the raw response
   if (!usageAllowed) {
+    const passthroughHeaders = new Headers(response.headers);
+    passthroughHeaders.set('X-Trace-Flow-Usage-Exceeded', 'true');
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
+      headers: passthroughHeaders,
     });
   }
 

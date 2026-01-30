@@ -42,6 +42,7 @@ export class UsageTracker extends DurableObject<Env> {
         id INTEGER PRIMARY KEY DEFAULT 1,
         subscription_units_used INTEGER NOT NULL DEFAULT 0,
         addon_units_used INTEGER NOT NULL DEFAULT 0,
+        addon_baseline INTEGER NOT NULL DEFAULT 0,
         last_pushed_subscription INTEGER NOT NULL DEFAULT 0,
         last_pushed_addon INTEGER NOT NULL DEFAULT 0
       )
@@ -69,18 +70,20 @@ export class UsageTracker extends DurableObject<Env> {
   private getCounters(): {
     subscription_units_used: number;
     addon_units_used: number;
+    addon_baseline: number;
     last_pushed_subscription: number;
     last_pushed_addon: number;
   } {
     const rows = this.ctx.storage.sql
       .exec(
-        'SELECT subscription_units_used, addon_units_used, last_pushed_subscription, last_pushed_addon FROM counters WHERE id = 1',
+        'SELECT subscription_units_used, addon_units_used, addon_baseline, last_pushed_subscription, last_pushed_addon FROM counters WHERE id = 1',
       )
       .toArray();
     if (rows.length === 0) {
       return {
         subscription_units_used: 0,
         addon_units_used: 0,
+        addon_baseline: 0,
         last_pushed_subscription: 0,
         last_pushed_addon: 0,
       };
@@ -88,6 +91,7 @@ export class UsageTracker extends DurableObject<Env> {
     return rows[0] as unknown as {
       subscription_units_used: number;
       addon_units_used: number;
+      addon_baseline: number;
       last_pushed_subscription: number;
       last_pushed_addon: number;
     };
@@ -106,7 +110,7 @@ export class UsageTracker extends DurableObject<Env> {
     );
 
     this.ctx.storage.sql.exec(
-      'INSERT OR REPLACE INTO counters (id, subscription_units_used, addon_units_used, last_pushed_subscription, last_pushed_addon) VALUES (1, 0, 0, 0, 0)',
+      'INSERT OR REPLACE INTO counters (id, subscription_units_used, addon_units_used, addon_baseline, last_pushed_subscription, last_pushed_addon) VALUES (1, 0, 0, 0, 0, 0)',
     );
   }
 
@@ -126,14 +130,23 @@ export class UsageTracker extends DurableObject<Env> {
     const now = Date.now();
     if (now < config.period_end) return;
 
-    // Push final totals for completed period before resetting
+    // Push final totals for completed period before resetting.
+    // If push fails, proceed with reset — the alarm will retry the push.
+    // This avoids blocking all capture during transient Convex outages.
     await this.ctx.blockConcurrencyWhile(async () => {
-      await this.pushToConvex(config.period_start, config.period_end);
+      try {
+        await this.pushToConvex(config.period_start, config.period_end);
+      } catch (e) {
+        console.error('pushToConvex failed during rollover, proceeding with reset:', e);
+      }
     });
 
     const { periodStart, periodEnd } = computePeriod(new Date());
 
     // Reset subscription counters; addon_units_used does NOT reset (addon units persist until used)
+    // Snapshot current addon_units_used as baseline so pushToConvex reports only incremental usage per period
+    const counters = this.getCounters();
+
     this.ctx.storage.sql.exec(
       'UPDATE config SET period_start = ?, period_end = ? WHERE id = 1',
       periodStart,
@@ -141,7 +154,8 @@ export class UsageTracker extends DurableObject<Env> {
     );
 
     this.ctx.storage.sql.exec(
-      'UPDATE counters SET subscription_units_used = 0, last_pushed_subscription = 0, last_pushed_addon = 0 WHERE id = 1',
+      'UPDATE counters SET subscription_units_used = 0, addon_baseline = ?, last_pushed_subscription = 0, last_pushed_addon = 0 WHERE id = 1',
+      counters.addon_units_used,
     );
   }
 
@@ -265,7 +279,7 @@ export class UsageTracker extends DurableObject<Env> {
         periodStart,
         periodEnd,
         subscriptionUnitsUsed: counters.subscription_units_used,
-        addonUnitsUsed: counters.addon_units_used,
+        addonUnitsUsed: counters.addon_units_used - counters.addon_baseline,
       }),
     });
 

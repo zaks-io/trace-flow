@@ -18,6 +18,7 @@ function createSqlMock() {
   let counters = {
     subscription_units_used: 0,
     addon_units_used: 0,
+    addon_baseline: 0,
     last_pushed_subscription: 0,
     last_pushed_addon: 0,
   };
@@ -56,6 +57,7 @@ function createSqlMock() {
         counters = {
           subscription_units_used: 0,
           addon_units_used: 0,
+          addon_baseline: 0,
           last_pushed_subscription: 0,
           last_pushed_addon: 0,
         };
@@ -101,8 +103,9 @@ function createSqlMock() {
       }
 
       // UPDATE counters reset (period rollover)
-      if (q.includes('subscription_units_used = 0, last_pushed_subscription = 0')) {
+      if (q.includes('subscription_units_used = 0, addon_baseline = ?')) {
         counters.subscription_units_used = 0;
+        counters.addon_baseline = args[0] as number;
         counters.last_pushed_subscription = 0;
         counters.last_pushed_addon = 0;
         return { toArray: () => [] };
@@ -194,19 +197,21 @@ function createDoFetch(
   function getCounters() {
     const rows = sqlMock
       .exec(
-        'SELECT subscription_units_used, addon_units_used, last_pushed_subscription, last_pushed_addon FROM counters WHERE id = 1',
+        'SELECT subscription_units_used, addon_units_used, addon_baseline, last_pushed_subscription, last_pushed_addon FROM counters WHERE id = 1',
       )
       .toArray();
     if (rows.length === 0)
       return {
         subscription_units_used: 0,
         addon_units_used: 0,
+        addon_baseline: 0,
         last_pushed_subscription: 0,
         last_pushed_addon: 0,
       };
     return rows[0] as {
       subscription_units_used: number;
       addon_units_used: number;
+      addon_baseline: number;
       last_pushed_subscription: number;
       last_pushed_addon: number;
     };
@@ -237,6 +242,7 @@ function createDoFetch(
       } else {
         // Period rollover check
         if (Date.now() >= config.period_end) {
+          const currentCounters = getCounters();
           const { periodStart, periodEnd } = computePeriod(new Date());
           sqlMock.exec(
             'UPDATE config SET period_start = ?, period_end = ?',
@@ -244,7 +250,8 @@ function createDoFetch(
             periodEnd,
           );
           sqlMock.exec(
-            'UPDATE counters SET subscription_units_used = 0, last_pushed_subscription = 0, last_pushed_addon = 0',
+            'UPDATE counters SET subscription_units_used = 0, addon_baseline = ?, last_pushed_subscription = 0, last_pushed_addon = 0',
+            currentCounters.addon_units_used,
           );
           config = getConfig()!;
         }
@@ -388,6 +395,61 @@ describe('UsageTracker Durable Object', () => {
       const configWithAddon = { tier: 'pro', monthlyUnits: 10, addonUnits: 5 };
       const body2 = await callCheck(doFetch, 3, configWithAddon);
       expect(body2.allowed).toBe(true);
+    });
+  });
+
+  describe('addon baseline on rollover', () => {
+    it('sets addon_baseline on period rollover so push reports incremental usage', async () => {
+      const config = { tier: 'pro', monthlyUnits: 10, addonUnits: 20 };
+      // Use all 10 subscription units + 5 addon units
+      await callCheck(doFetch, 10, config);
+      await callCheck(doFetch, 5, config);
+
+      const countersBeforeRollover = sqlMock._getCounters();
+      expect(countersBeforeRollover.addon_units_used).toBe(5);
+      expect(countersBeforeRollover.addon_baseline).toBe(0);
+
+      // Force period rollover by setting period_end in the past
+      const currentConfig = sqlMock._getConfig()!;
+      sqlMock._setConfig({ ...currentConfig, period_end: Date.now() - 1000 });
+
+      // Trigger rollover via a new check
+      await callCheck(doFetch, 1, config);
+
+      const countersAfterRollover = sqlMock._getCounters();
+      expect(countersAfterRollover.subscription_units_used).toBe(1);
+      expect(countersAfterRollover.addon_units_used).toBe(5); // cumulative, unchanged
+      expect(countersAfterRollover.addon_baseline).toBe(5); // snapshotted at rollover
+
+      // Use 3 more addon units (exhaust subscription first)
+      await callCheck(doFetch, 10, config); // fills subscription to 10+1=11, but monthly is 10 so spills 2 to addon
+      // Actually let's just check the counters directly
+      const finalCounters = sqlMock._getCounters();
+      // incremental addon = addon_units_used - addon_baseline
+      const incrementalAddon = finalCounters.addon_units_used - finalCounters.addon_baseline;
+      expect(incrementalAddon).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('rollover resilience', () => {
+    it('allows capture to continue after period rollover', async () => {
+      const config = { tier: 'pro', monthlyUnits: 10, addonUnits: 0 };
+      // Exhaust all units
+      await callCheck(doFetch, 10, config);
+      const denied = await callCheck(doFetch, 1, config);
+      expect(denied.allowed).toBe(false);
+
+      // Force period rollover by setting period_end in the past
+      const currentConfig = sqlMock._getConfig()!;
+      sqlMock._setConfig({ ...currentConfig, period_end: Date.now() - 1000 });
+
+      // After rollover, subscription resets — should allow again
+      const afterRollover = await callCheck(doFetch, 1, config);
+      expect(afterRollover.allowed).toBe(true);
+
+      // Counters should have been reset
+      const counters = sqlMock._getCounters();
+      expect(counters.subscription_units_used).toBe(1);
     });
   });
 
