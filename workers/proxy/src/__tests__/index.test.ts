@@ -3,12 +3,21 @@ import { env, fetchMock, SELF } from 'cloudflare:test';
 
 const WAIT_UNTIL_DELAY = 100; // Time for waitUntil operations to complete
 
-async function setupValidApiKey(key: string): Promise<void> {
+async function setupValidApiKey(key: string, orgId = 'org-test-123'): Promise<void> {
   const keyData = {
     expiresAt: Date.now() + 86400000,
     createdAt: Date.now(),
+    orgId,
   };
   await env.API_KEYS.put(key, JSON.stringify(keyData));
+
+  // Set up subscription config so usage checks pass
+  const subConfig = {
+    tier: 'pro',
+    monthlyUnits: 100000,
+    addonUnits: 0,
+  };
+  await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
 }
 
 describe('Proxy Worker Integration', () => {
@@ -425,6 +434,118 @@ describe('Proxy Worker Integration', () => {
       // Verify request body was stored
       const requestKeys = await env.STORAGE.list({ prefix: 'requests/' });
       expect(requestKeys.objects.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('OTLP Rejection Feedback', () => {
+    it('should return rejectedSpans when usage is denied', async () => {
+      const key = 'otlp-exhausted-key';
+      const orgId = 'org-otlp-exhausted';
+      const keyData = {
+        expiresAt: Date.now() + 86400000,
+        createdAt: Date.now(),
+        orgId,
+      };
+      await env.API_KEYS.put(key, JSON.stringify(keyData));
+
+      const subConfig = {
+        tier: 'hobby',
+        monthlyUnits: 0,
+        addonUnits: 0,
+      };
+      await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
+
+      const otlpRequest = {
+        resourceSpans: [
+          {
+            scopeSpans: [
+              {
+                spans: [
+                  {
+                    traceId: 'abc123',
+                    spanId: 'span1',
+                    name: 'test-span',
+                    startTimeUnixNano: '1000000000',
+                    endTimeUnixNano: '2000000000',
+                  },
+                  {
+                    traceId: 'abc123',
+                    spanId: 'span2',
+                    name: 'test-span-2',
+                    startTimeUnixNano: '1000000000',
+                    endTimeUnixNano: '2000000000',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const res = await SELF.fetch('http://localhost/v1/traces', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': key,
+        },
+        body: JSON.stringify(otlpRequest),
+      });
+
+      expect(res.status).toBe(200);
+      const body: { partialSuccess: { rejectedSpans: number; errorMessage: string } } =
+        await res.json();
+      expect(body.partialSuccess.rejectedSpans).toBeGreaterThan(0);
+      expect(body.partialSuccess.errorMessage).toBe('Usage limit exceeded');
+    });
+  });
+
+  describe('Usage Exceeded', () => {
+    it('should include X-Trace-Flow-Usage-Exceeded header when usage is denied', async () => {
+      const key = 'usage-exceeded-key';
+      const orgId = 'org-exhausted';
+      const keyData = {
+        expiresAt: Date.now() + 86400000,
+        createdAt: Date.now(),
+        orgId,
+      };
+      await env.API_KEYS.put(key, JSON.stringify(keyData));
+
+      // Set subscription with 0 units so usage is immediately denied
+      const subConfig = {
+        tier: 'hobby',
+        monthlyUnits: 0,
+        addonUnits: 0,
+      };
+      await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
+
+      const mockResponse = {
+        id: 'chatcmpl-123',
+        choices: [{ message: { content: 'Hello!' } }],
+      };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': key,
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Trace-Flow-Usage-Exceeded')).toBe('true');
+
+      // Should still proxy the response body
+      const body = await res.json();
+      expect(body).toEqual(mockResponse);
     });
   });
 

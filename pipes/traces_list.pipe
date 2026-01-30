@@ -1,6 +1,7 @@
 DESCRIPTION >
-    List traces filtered by API keys with optional filtering by provider, model, and status.
+    List individual spans filtered by API keys with optional filtering by provider, model, and status.
     The api_keys parameter is enforced via JWT fixed_params for security.
+    Returns all spans (no deduplication) - each span is a separate row.
 
 NODE endpoint
 SQL >
@@ -18,9 +19,6 @@ SQL >
     FROM otel_traces
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        {% if defined(after_received_at) %}
-        AND ReceivedAt > {{ Int64(after_received_at) }}
-        {% end %}
         {% if defined(provider) %}
         AND JSONExtractString(SpanAttributes, 'gen_ai.system') = {{ String(provider) }}
         {% end %}
@@ -32,6 +30,9 @@ SQL >
         {% end %}
         {% if defined(search) %}
         AND TraceId = {{ String(search) }}
+        {% end %}
+        {% if defined(after_received_at) %}
+        AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}
     ORDER BY ReceivedAt DESC
     LIMIT {{ Int32(limit, 100) }}

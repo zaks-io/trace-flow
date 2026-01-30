@@ -55,6 +55,7 @@ interface DataTableProps<TData> {
   onClearFilters?: () => void;
   hasActiveFilters?: boolean;
   loading?: boolean;
+  emptyMessage?: string;
 }
 
 export function DataTable<TData>({
@@ -78,6 +79,7 @@ export function DataTable<TData>({
   onClearFilters,
   hasActiveFilters,
   loading,
+  emptyMessage = 'No results found',
 }: DataTableProps<TData>) {
   const filteredData = useMemo(() => {
     if (!alertSummary || alertFilter === 'all') {
@@ -204,7 +206,7 @@ export function DataTable<TData>({
                     colSpan={table.getVisibleLeafColumns().length}
                     className="py-12 text-center text-muted-foreground"
                   >
-                    No requests found
+                    {emptyMessage}
                   </td>
                 </tr>
               ) : (

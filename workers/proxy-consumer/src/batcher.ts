@@ -7,12 +7,28 @@ import { insertIntoTinybirdWithRetry } from './tinybird';
 const BATCH_SIZE = 10_000;
 const FLUSH_INTERVAL_MS = 5000;
 const MAX_JITTER_MS = 1000;
+const PROCESSED_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+type MessageTraceStatus = 'inserted' | 'duplicate' | 'failed';
+
+interface MessageTraceBatchItem {
+  messageId: string;
+  traces: TinybirdTrace[];
+}
+
+interface MessageTraceResult {
+  messageId: string;
+  status: MessageTraceStatus;
+}
 
 class TraceBatcherBase extends DurableObject<Env> {
   private lastFlushTime: number = Date.now();
   private flushAlarmScheduled = false;
   private durableState: DurableObjectState;
   private traceCount = 0;
+  private flushInProgress = false;
+  private lastCleanupTime = 0;
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -47,6 +63,18 @@ class TraceBatcherBase extends DurableObject<Env> {
     `);
 
     this.durableState.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS processed_messages (
+        message_id TEXT PRIMARY KEY,
+        processed_at_ms INTEGER NOT NULL
+      )
+    `);
+
+    this.durableState.storage.sql.exec(`
+      CREATE INDEX IF NOT EXISTS idx_processed_messages_time
+      ON processed_messages(processed_at_ms)
+    `);
+
+    this.durableState.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS metadata (
         id INTEGER PRIMARY KEY,
         last_flush_time INTEGER NOT NULL
@@ -67,31 +95,48 @@ class TraceBatcherBase extends DurableObject<Env> {
     }
   }
 
-  async addTraces(traces: TinybirdTrace[]): Promise<void> {
-    if (traces.length === 0) {
-      return;
+  async addMessageTraces(items: MessageTraceBatchItem[]): Promise<MessageTraceResult[]> {
+    if (items.length === 0) {
+      return [];
     }
 
-    const timestamp = Date.now();
+    const now = Date.now();
+    this.cleanupProcessedMessages(now);
 
-    const values = traces.map(() => '(?, ?)').join(', ');
-    const params = traces.flatMap((trace) => [JSON.stringify(trace), timestamp]);
+    const results: MessageTraceResult[] = [];
+    let insertedTraceCount = 0;
 
-    this.durableState.storage.sql.exec(
-      `INSERT INTO traces (data, timestamp) VALUES ${values}`,
-      ...params,
-    );
-
-    this.traceCount += traces.length;
-
-    if (this.traceCount >= BATCH_SIZE) {
-      await this.flush();
-    } else {
-      const currentAlarm = await this.durableState.storage.getAlarm();
-      if (!currentAlarm) {
-        await this.scheduleFlush();
+    for (const item of items) {
+      try {
+        const inserted = this.insertMessageTraces(item, now);
+        if (inserted) {
+          insertedTraceCount += item.traces.length;
+        }
+        results.push({
+          messageId: item.messageId,
+          status: inserted ? 'inserted' : 'duplicate',
+        });
+      } catch (error) {
+        console.error('Failed to add message traces:', {
+          messageId: item.messageId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        results.push({ messageId: item.messageId, status: 'failed' });
       }
     }
+
+    if (this.traceCount > 0) {
+      if (this.traceCount >= BATCH_SIZE && insertedTraceCount > 0) {
+        await this.flush();
+      } else {
+        const currentAlarm = await this.durableState.storage.getAlarm();
+        if (!currentAlarm) {
+          await this.scheduleFlush();
+        }
+      }
+    }
+
+    return results;
   }
 
   async alarm(): Promise<void> {
@@ -123,59 +168,67 @@ class TraceBatcherBase extends DurableObject<Env> {
   }
 
   private async flush(): Promise<void> {
+    if (this.flushInProgress) {
+      return;
+    }
+
     if (this.traceCount === 0) {
       return;
     }
 
+    this.flushInProgress = true;
+
     const batchCount = Math.ceil(this.traceCount / BATCH_SIZE);
-    let _totalFlushed = 0;
 
-    for (let i = 0; i < batchCount; i++) {
-      const rows = [
-        ...this.durableState.storage.sql.exec<{ id: number; data: string }>(
-          'SELECT id, data FROM traces ORDER BY id LIMIT ?',
-          BATCH_SIZE,
-        ),
-      ];
+    try {
+      for (let i = 0; i < batchCount; i++) {
+        const rows = [
+          ...this.durableState.storage.sql.exec<{ id: number; data: string }>(
+            'SELECT id, data FROM traces ORDER BY id LIMIT ?',
+            BATCH_SIZE,
+          ),
+        ];
 
-      if (rows.length === 0) {
-        break;
+        if (rows.length === 0) {
+          break;
+        }
+
+        const traces: TinybirdTrace[] = rows.map((row) => JSON.parse(row.data) as TinybirdTrace);
+        const ids = rows.map((row) => row.id);
+
+        try {
+          const datasource = this.env.TINYBIRD_DATASOURCE ?? 'otel_traces';
+          const host = this.env.TINYBIRD_HOST ?? 'https://api.tinybird.co';
+          await insertIntoTinybirdWithRetry(traces, this.env.TINYBIRD_TOKEN, datasource, host);
+
+          this.durableState.storage.sql.exec(
+            `DELETE FROM traces WHERE id IN (${ids.map(() => '?').join(',')})`,
+            ...ids,
+          );
+
+          this.traceCount -= traces.length;
+        } catch (error) {
+          console.error('Failed to flush traces to Tinybird:', {
+            batchSize: traces.length,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          Sentry.captureException(error, {
+            tags: { operation: 'flush' },
+            extra: { batchSize: traces.length },
+          });
+          break;
+        }
+      }
+    } finally {
+      this.lastFlushTime = Date.now();
+      this.updateLastFlushTime();
+
+      if (this.flushAlarmScheduled) {
+        void this.durableState.storage.deleteAlarm();
+        this.flushAlarmScheduled = false;
       }
 
-      const traces: TinybirdTrace[] = rows.map((row) => JSON.parse(row.data) as TinybirdTrace);
-      const ids = rows.map((row) => row.id);
-
-      try {
-        const datasource = this.env.TINYBIRD_DATASOURCE ?? 'otel_traces';
-        const host = this.env.TINYBIRD_HOST ?? 'https://api.tinybird.co';
-        await insertIntoTinybirdWithRetry(traces, this.env.TINYBIRD_TOKEN, datasource, host);
-
-        this.durableState.storage.sql.exec(
-          `DELETE FROM traces WHERE id IN (${ids.map(() => '?').join(',')})`,
-          ...ids,
-        );
-
-        this.traceCount -= traces.length;
-        _totalFlushed += traces.length;
-      } catch (error) {
-        console.error('Failed to flush traces to Tinybird:', {
-          batchSize: traces.length,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        Sentry.captureException(error, {
-          tags: { operation: 'flush' },
-          extra: { batchSize: traces.length },
-        });
-        break;
-      }
-    }
-
-    this.lastFlushTime = Date.now();
-    this.updateLastFlushTime();
-
-    if (this.flushAlarmScheduled) {
-      void this.durableState.storage.deleteAlarm();
-      this.flushAlarmScheduled = false;
+      this.flushInProgress = false;
     }
   }
 
@@ -191,6 +244,59 @@ class TraceBatcherBase extends DurableObject<Env> {
       queuedTraces: this.traceCount,
       lastFlushTime: this.lastFlushTime,
     };
+  }
+
+  private insertMessageTraces(item: MessageTraceBatchItem, now: number): boolean {
+    let inserted = false;
+    let tracesInserted = 0;
+
+    this.durableState.storage.transactionSync(() => {
+      this.durableState.storage.sql.exec(
+        `INSERT OR IGNORE INTO processed_messages (message_id, processed_at_ms)
+         VALUES (?, ?)`,
+        item.messageId,
+        now,
+      );
+
+      const changeRow = [
+        ...this.durableState.storage.sql.exec<{ changes: number }>('SELECT changes() as changes'),
+      ][0];
+      inserted = (changeRow?.changes ?? 0) > 0;
+
+      if (!inserted) {
+        return;
+      }
+
+      if (item.traces.length > 0) {
+        const timestamp = now;
+        const values = item.traces.map(() => '(?, ?)').join(', ');
+        const params = item.traces.flatMap((trace) => [JSON.stringify(trace), timestamp]);
+
+        this.durableState.storage.sql.exec(
+          `INSERT INTO traces (data, timestamp) VALUES ${values}`,
+          ...params,
+        );
+        tracesInserted = item.traces.length;
+      }
+    });
+
+    if (inserted) {
+      this.traceCount += tracesInserted;
+    }
+    return inserted;
+  }
+
+  private cleanupProcessedMessages(now: number): void {
+    if (now - this.lastCleanupTime < CLEANUP_INTERVAL_MS) {
+      return;
+    }
+
+    const cutoff = now - PROCESSED_MESSAGE_TTL_MS;
+    this.durableState.storage.sql.exec(
+      'DELETE FROM processed_messages WHERE processed_at_ms < ?',
+      cutoff,
+    );
+    this.lastCleanupTime = now;
   }
 }
 

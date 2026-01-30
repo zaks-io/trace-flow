@@ -30,6 +30,10 @@
     "packages/convex": {
       "name": "@trace-flow/convex",
       "version": "0.0.1",
+      "dependencies": {
+        "@trace-flow/types": "workspace:*",
+        "@trace-flow/utils": "workspace:*",
+      },
       "devDependencies": {
         "vitest": "^3.2.4",
       },

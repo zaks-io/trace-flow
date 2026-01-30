@@ -76,12 +76,6 @@ export declare const api: {
       { expiresAt: number; name?: string },
       any
     >;
-    getByIdInternal: FunctionReference<
-      "query",
-      "public",
-      { id: Id<"apiKeys"> },
-      any
-    >;
     getByKey: FunctionReference<"query", "public", { key: string }, any>;
     list: FunctionReference<"query", "public", any, any>;
     remove: FunctionReference<"mutation", "public", { id: Id<"apiKeys"> }, any>;
@@ -165,6 +159,25 @@ export declare const api: {
       any
     >;
   };
+  organizations: {
+    get: FunctionReference<"query", "public", any, any>;
+    rename: FunctionReference<"mutation", "public", { name: string }, any>;
+  };
+  subscriptions: {
+    addAddonUnits: FunctionReference<
+      "mutation",
+      "public",
+      { orgId: Id<"organizations">; units: number },
+      any
+    >;
+    getForCurrentUser: FunctionReference<"query", "public", any, any>;
+    setTier: FunctionReference<
+      "mutation",
+      "public",
+      { orgId: Id<"organizations">; tier: "hobby" | "pro" },
+      any
+    >;
+  };
   tinybird: {
     generateToken: FunctionReference<
       "action",
@@ -180,6 +193,9 @@ export declare const api: {
       },
       any
     >;
+  };
+  usage: {
+    getCurrentUsage: FunctionReference<"query", "public", any, any>;
   };
   users: {
     getCurrentUserQuery: FunctionReference<"query", "public", {}, any>;
@@ -198,6 +214,12 @@ export declare const api: {
  */
 export declare const internal: {
   apiKeys: {
+    getByIdInternal: FunctionReference<
+      "query",
+      "internal",
+      { id: Id<"apiKeys"> },
+      any
+    >;
     listByUserId: FunctionReference<
       "query",
       "internal",
@@ -216,7 +238,13 @@ export declare const internal: {
     syncKeyToKV: FunctionReference<
       "action",
       "internal",
-      { expiresAt: number; key: string },
+      { expiresAt: number; key: string; orgId?: string },
+      any
+    >;
+    syncSubscriptionToKV: FunctionReference<
+      "action",
+      "internal",
+      { addonUnits: number; monthlyUnits: number; orgId: string; tier: string },
       any
     >;
   };
@@ -526,6 +554,11 @@ export declare const internal: {
       };
     };
   };
+  migrations: {
+    backfillOrgs: {
+      backfillOrgs: FunctionReference<"mutation", "internal", any, any>;
+    };
+  };
   modelPricing: {
     getInternal: FunctionReference<
       "query",
@@ -550,6 +583,14 @@ export declare const internal: {
       any
     >;
   };
+  organizations: {
+    getByIdInternal: FunctionReference<
+      "query",
+      "internal",
+      { id: Id<"organizations"> },
+      any
+    >;
+  };
   pricingSync: {
     deleteFromKV: FunctionReference<
       "action",
@@ -564,6 +605,14 @@ export declare const internal: {
       any
     >;
   };
+  subscriptions: {
+    getByOrgId: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
+  };
   tinybird: {
     generateTokenInternal: FunctionReference<
       "action",
@@ -572,6 +621,26 @@ export declare const internal: {
         apiKeys: Array<string>;
         scopes: Array<{ resource: string; type: string }>;
         ttl?: number;
+      },
+      any
+    >;
+  };
+  usage: {
+    getForOrgInternal: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
+    recordUsage: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        addonUnitsUsed: number;
+        orgId: Id<"organizations">;
+        periodEnd: number;
+        periodStart: number;
+        subscriptionUnitsUsed: number;
       },
       any
     >;

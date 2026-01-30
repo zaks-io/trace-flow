@@ -1,0 +1,31 @@
+DESCRIPTION >
+    Request-level facts extracted from LLM spans.
+    One row per proxy request span with token and cost metrics.
+
+SCHEMA >
+    `ReceivedAt` Int64,
+    `Timestamp` Int64,
+    `TraceId` String,
+    `SpanId` String,
+    `ApiKey` LowCardinality(String),
+    `Provider` LowCardinality(String),
+    `Model` LowCardinality(String),
+    `OperationName` LowCardinality(String),
+    `BaggageOperation` LowCardinality(String),
+    `StatusCode` LowCardinality(String),
+    `InputTokens` UInt32,
+    `OutputTokens` UInt32,
+    `CacheReadInputTokens` UInt32,
+    `CacheCreationInputTokens` UInt32,
+    `ReasoningTokens` UInt32,
+    `InputCostMicrodollars` UInt64,
+    `OutputCostMicrodollars` UInt64,
+    `CacheReadCostMicrodollars` UInt64,
+    `CacheCreationCostMicrodollars` UInt64,
+    `ReasoningCostMicrodollars` UInt64,
+    `TotalCostMicrodollars` UInt64
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "ReceivedAt, ApiKey, Provider, Model, OperationName, StatusCode, TraceId, SpanId"
+ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
+ENGINE_TTL "toDateTime(ReceivedAt / 1000000000) + INTERVAL 90 DAY"

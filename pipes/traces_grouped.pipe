@@ -1,14 +1,44 @@
 DESCRIPTION >
     Grouped traces view with aggregated statistics, filtered by API keys.
+    Uses otel_traces_genai materialized view for efficient filtering.
     The api_keys parameter is enforced via JWT fixed_params for security.
-    Supports incremental loading by filtering on ReceivedAt for live mode.
+
+NODE filter_traces
+DESCRIPTION >
+    Filter TraceIds using the materialized view's indexed columns.
+SQL >
+    %
+    SELECT DISTINCT TraceId
+    FROM otel_traces_genai
+    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        {% if defined(after_received_at) %}
+        AND ReceivedAt > {{ Int64(after_received_at) }}
+        {% end %}
+        {% if defined(provider) %}
+        AND Provider = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND Model = {{ String(model) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+        {% if defined(search) %}
+        AND TraceId = {{ String(search) }}
+        {% end %}
+    ORDER BY TraceId DESC
+    LIMIT {{ Int32(limit, 100) * 10 }}
 
 NODE endpoint
+DESCRIPTION >
+    Aggregate spans for the filtered traces.
+    When filters are active, uses MV subquery for efficient indexed lookup.
+    When no filters, queries otel_traces directly to avoid subquery overhead.
 SQL >
     %
     SELECT
         TraceId,
-        count() as ChildSpanCount,
+        countDistinct(SpanId) as ChildSpanCount,
         min(Timestamp) as FirstTimestamp,
         max(Timestamp) as LastTimestamp,
         max(ReceivedAt) as LatestReceivedAt,
@@ -23,9 +53,12 @@ SQL >
         max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) as MaxTTFT,
         sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total'))) as TotalCost
     FROM otel_traces
-    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+    WHERE {% if defined(provider) or defined(model) or defined(status) or defined(search) %}
+        TraceId IN (SELECT TraceId FROM filter_traces)
+        AND {% end %}
+        JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        {% if defined(after_received_at) %}
+        {% if not (defined(provider) or defined(model) or defined(status) or defined(search)) and defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}
     GROUP BY TraceId

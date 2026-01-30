@@ -1,7 +1,7 @@
 import { action, mutation, query, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import { getCurrentUser, requireEnabledUser } from './users';
 
 export const list = query({
@@ -9,16 +9,19 @@ export const list = query({
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
 
-    if (!user) {
-      return [];
+    if (!user) return [];
+
+    if (user.orgId) {
+      return await ctx.db
+        .query('apiKeys')
+        .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId))
+        .collect();
     }
 
-    const userKeys = await ctx.db
+    return await ctx.db
       .query('apiKeys')
       .withIndex('by_user_id', (q) => q.eq('userId', user._id))
       .collect();
-
-    return userKeys;
   },
 });
 
@@ -47,12 +50,14 @@ export const create = mutation({
       key,
       expiresAt: args.expiresAt,
       userId: user._id,
+      orgId: user.orgId,
       name: args.name,
     });
 
     await ctx.scheduler.runAfter(0, internal.cloudflare.syncKeyToKV, {
       key,
       expiresAt: args.expiresAt,
+      orgId: user.orgId,
     });
 
     return id;
@@ -109,7 +114,7 @@ export const syncToKV = action({
   handler: async (ctx, args): Promise<{ synced: boolean; existed: boolean }> => {
     await requireTraceFlowRole(ctx);
 
-    const apiKey = await ctx.runQuery(api.apiKeys.getByIdInternal, { id: args.id });
+    const apiKey = await ctx.runQuery(internal.apiKeys.getByIdInternal, { id: args.id });
     if (!apiKey) {
       throw new Error('API key not found');
     }
@@ -125,13 +130,14 @@ export const syncToKV = action({
     await ctx.runAction(internal.cloudflare.syncKeyToKV, {
       key: apiKey.key,
       expiresAt: apiKey.expiresAt,
+      orgId: apiKey.orgId,
     });
 
     return { synced: true, existed: false };
   },
 });
 
-export const getByIdInternal = query({
+export const getByIdInternal = internalQuery({
   args: { id: v.id('apiKeys') },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);

@@ -2,6 +2,8 @@ import { mutation, query, internalMutation, internalQuery } from './_generated/s
 import { v } from 'convex/values';
 import { type QueryCtx, type MutationCtx } from './_generated/server';
 import { type Doc, type Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
+import { TIER_CONFIG } from '@trace-flow/types';
 
 type AuthContext = QueryCtx | MutationCtx;
 
@@ -18,6 +20,31 @@ function hasUserDataChanged(existingUser: Doc<'users'>, newUserInfo: UserInfo): 
     existingUser.name !== newUserInfo.name ||
     existingUser.picture !== newUserInfo.picture
   );
+}
+
+async function ensureOrg(ctx: MutationCtx, userId: Id<'users'>, name?: string) {
+  const orgId = await ctx.db.insert('organizations', {
+    name: `${name ? `${name}'s Org` : 'My Organization'}`,
+    ownerId: userId,
+  });
+  await ctx.db.patch(userId, { orgId });
+
+  const hobbyConfig = TIER_CONFIG.hobby;
+  await ctx.db.insert('subscriptions', {
+    orgId,
+    tier: 'hobby',
+    monthlyUnits: hobbyConfig.monthlyUnits,
+    addonUnits: 0,
+  });
+
+  await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
+    orgId,
+    tier: 'hobby',
+    monthlyUnits: hobbyConfig.monthlyUnits,
+    addonUnits: 0,
+  });
+
+  return orgId;
 }
 
 export async function getCurrentUser(ctx: AuthContext): Promise<Doc<'users'> | null> {
@@ -76,6 +103,9 @@ export const initializeUser = mutation({
       if (hasUserDataChanged(existingUser, userInfo)) {
         await ctx.db.patch(existingUser._id, userInfo);
       }
+      if (!existingUser.orgId) {
+        await ensureOrg(ctx, existingUser._id, existingUser.name);
+      }
       return { userId: existingUser._id };
     }
 
@@ -83,6 +113,8 @@ export const initializeUser = mutation({
       ...userInfo,
       enabled: false,
     });
+
+    await ensureOrg(ctx, userId, userInfo.name);
 
     return { userId };
   },
@@ -127,16 +159,23 @@ export const findOrCreateUser = internalMutation({
           picture: args.picture,
         });
       }
+      if (!existingUser.orgId) {
+        await ensureOrg(ctx, existingUser._id, existingUser.name);
+      }
       return existingUser._id;
     }
 
-    return await ctx.db.insert('users', {
+    const userId = await ctx.db.insert('users', {
       tokenIdentifier: args.tokenIdentifier,
       email: args.email,
       name: args.name,
       picture: args.picture,
       enabled: false,
     });
+
+    await ensureOrg(ctx, userId, args.name);
+
+    return userId;
   },
 });
 

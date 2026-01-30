@@ -1,17 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import {
-  Activity,
-  GitBranch,
-  Zap,
-  Clock,
-  AlertTriangle,
-  Hash,
-  ChevronDown,
-  Cpu,
-  Server,
-} from 'lucide-react';
+import { Activity, Zap, Hash, ChevronDown, Cpu, Server, DollarSign } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { usePageHeader } from '@/components/PageHeaderContext';
 
@@ -25,13 +15,15 @@ const TIME_RANGES: { value: TimeRange; label: string; ms: number }[] = [
 
 interface SummaryData {
   data: {
-    total_requests: number;
-    total_traces: number;
-    avg_ttft_ms: number | null;
-    avg_duration_ms: number | null;
-    error_rate_percent: number | null;
-    total_input_tokens: number;
-    total_output_tokens: number;
+    request_count: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+    reasoning_tokens: number;
+    total_cost_usd: number;
+    total_tokens: number;
+    new_input_tokens: number;
   }[];
 }
 
@@ -39,6 +31,8 @@ interface ModelData {
   data: {
     model: string;
     request_count: number;
+    total_cost_usd: number;
+    total_tokens: number;
   }[];
 }
 
@@ -46,6 +40,23 @@ interface ProviderData {
   data: {
     provider: string;
     request_count: number;
+    total_cost_usd: number;
+    total_tokens: number;
+  }[];
+}
+
+interface TimeseriesData {
+  data: {
+    bucket_start: string;
+    request_count: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+    reasoning_tokens: number;
+    total_cost_usd: number;
+    total_tokens: number;
+    new_input_tokens: number;
   }[];
 }
 
@@ -53,7 +64,7 @@ interface SummaryCardProps {
   icon: React.ReactNode;
   label: string;
   value: string;
-  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'red';
+  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'red' | 'green';
 }
 
 function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) {
@@ -64,6 +75,7 @@ function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) 
     amber: 'from-amber-500/20 to-amber-500/5 border-amber-500/30',
     zinc: 'from-zinc-500/20 to-zinc-500/5 border-zinc-500/30',
     red: 'from-red-500/20 to-red-500/5 border-red-500/30',
+    green: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
   };
 
   const iconColors = {
@@ -73,11 +85,12 @@ function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) 
     amber: 'text-amber-400',
     zinc: 'text-zinc-400',
     red: 'text-red-400',
+    green: 'text-emerald-400',
   };
 
   return (
     <div
-      className={`relative overflow-hidden rounded-xl border bg-gradient-to-br p-4 ${accentColors[accent]}`}
+      className={`relative overflow-hidden rounded-xl border bg-linear-to-br p-4 ${accentColors[accent]}`}
     >
       <div className="flex items-start justify-between">
         <div>
@@ -104,17 +117,78 @@ function formatNumber(num: number): string {
   return new Intl.NumberFormat().format(num);
 }
 
-function formatDuration(ms: number | null): string {
-  if (ms === null || isNaN(ms)) return '-';
-  if (ms < 1000) {
-    return `${Math.round(ms)}ms`;
-  }
-  return `${(ms / 1000).toFixed(2)}s`;
+function formatCurrency(value: number | null): string {
+  if (value === null || isNaN(value)) return '-';
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  if (value < 1) return `$${value.toFixed(3)}`;
+  return `$${value.toFixed(2)}`;
 }
 
-function formatPercent(value: number | null): string {
-  if (value === null || isNaN(value)) return '-';
-  return `${value.toFixed(1)}%`;
+function formatBucketLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function UsageTimeseriesChart({ data }: { data: TimeseriesData['data'] }) {
+  if (!data || data.length === 0) {
+    return <p className="text-sm text-muted-foreground">No usage data available</p>;
+  }
+
+  const width = 640;
+  const height = 180;
+  const padding = 24;
+  const usableWidth = width - padding * 2;
+  const usableHeight = height - padding * 2;
+
+  const tokens = data.map((point) => point.total_tokens ?? 0);
+  const costs = data.map((point) => point.total_cost_usd ?? 0);
+  const maxTokens = Math.max(...tokens, 1);
+  const maxCost = Math.max(...costs, 1);
+
+  const xStep = data.length > 1 ? usableWidth / (data.length - 1) : 0;
+
+  const tokenPoints = data
+    .map((point, index) => {
+      const x = data.length === 1 ? width / 2 : padding + index * xStep;
+      const y = height - padding - (tokens[index] / maxTokens) * usableHeight;
+      return `${x},${y}`;
+    })
+    .join(' ');
+
+  const costPoints = data
+    .map((point, index) => {
+      const x = data.length === 1 ? width / 2 : padding + index * xStep;
+      const y = height - padding - (costs[index] / maxCost) * usableHeight;
+      return `${x},${y}`;
+    })
+    .join(' ');
+
+  const startLabel = formatBucketLabel(data[0]?.bucket_start ?? '');
+  const endLabel = formatBucketLabel(data[data.length - 1]?.bucket_start ?? '');
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
+          Tokens
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+          Cost
+        </span>
+      </div>
+      <svg className="h-40 w-full" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        <polyline points={tokenPoints} fill="none" stroke="rgb(16 185 129)" strokeWidth="2" />
+        <polyline points={costPoints} fill="none" stroke="rgb(251 191 36)" strokeWidth="2" />
+      </svg>
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>{startLabel}</span>
+        <span>{endLabel}</span>
+      </div>
+    </div>
+  );
 }
 
 export default function Dashboard() {
@@ -127,23 +201,32 @@ export default function Dashboard() {
     return (Date.now() - (range?.ms ?? 0)) * 1_000_000;
   }, [timeRange]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally recalculate on timeRange change
+  const endTimeNs = useMemo(() => Date.now() * 1_000_000, [timeRange]);
+
   // All queries now use Pipes with server-side API key filtering via JWT fixed_params
   const summaryQuery = useTinybirdPipe<SummaryData>({
-    pipe: 'traces_summary',
-    params: { start_time_ns: startTimeNs },
+    pipe: 'llm_usage_summary',
+    params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
     transform: (result) => result as SummaryData,
   });
 
   const modelsQuery = useTinybirdPipe<ModelData>({
-    pipe: 'traces_models',
-    params: { start_time_ns: startTimeNs },
+    pipe: 'llm_usage_by_model',
+    params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
     transform: (result) => result as ModelData,
   });
 
   const providersQuery = useTinybirdPipe<ProviderData>({
-    pipe: 'traces_providers',
-    params: { start_time_ns: startTimeNs },
+    pipe: 'llm_usage_by_provider',
+    params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
     transform: (result) => result as ProviderData,
+  });
+
+  const timeseriesQuery = useTinybirdPipe<TimeseriesData>({
+    pipe: 'llm_usage_timeseries',
+    params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
+    transform: (result) => result as TimeseriesData,
   });
 
   // Track if this is the initial render to avoid double-fetching
@@ -159,22 +242,22 @@ export default function Dashboard() {
     void summaryQuery.refetch();
     void modelsQuery.refetch();
     void providersQuery.refetch();
+    void timeseriesQuery.refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange]);
 
   const summary = summaryQuery.data?.data?.[0];
   const models = modelsQuery.data?.data ?? [];
   const providers = providersQuery.data?.data ?? [];
-  const totalProviderRequests = providers.reduce(
-    (sum: number, p): number => sum + Number(p.request_count ?? 0),
-    0,
-  );
+  const timeseries = timeseriesQuery.data?.data ?? [];
 
   const isLoading =
     summaryQuery.loading === true ||
     modelsQuery.loading === true ||
-    providersQuery.loading === true;
-  const hasError = summaryQuery.error ?? modelsQuery.error ?? providersQuery.error;
+    providersQuery.loading === true ||
+    timeseriesQuery.loading === true;
+  const hasError =
+    summaryQuery.error ?? modelsQuery.error ?? providersQuery.error ?? timeseriesQuery.error;
 
   const selectedRangeLabel = TIME_RANGES.find((r) => r.value === timeRange)?.label;
 
@@ -229,43 +312,47 @@ export default function Dashboard() {
             <SummaryCard
               icon={<Activity className="h-4 w-4" />}
               label="Total Requests"
-              value={summary ? formatNumber(summary.total_requests) : '-'}
+              value={summary ? formatNumber(summary.request_count) : '-'}
               accent="purple"
             />
             <SummaryCard
-              icon={<GitBranch className="h-4 w-4" />}
-              label="Total Traces"
-              value={summary ? formatNumber(summary.total_traces) : '-'}
+              icon={<Cpu className="h-4 w-4" />}
+              label="Input Tokens"
+              value={summary ? formatNumber(summary.input_tokens) : '-'}
               accent="blue"
             />
             <SummaryCard
               icon={<Zap className="h-4 w-4" />}
-              label="Avg TTFT"
-              value={formatDuration(summary?.avg_ttft_ms ?? null)}
+              label="Output Tokens"
+              value={summary ? formatNumber(summary.output_tokens) : '-'}
               accent="amber"
             />
             <SummaryCard
-              icon={<Clock className="h-4 w-4" />}
-              label="Avg Duration"
-              value={formatDuration(summary?.avg_duration_ms ?? null)}
+              icon={<Server className="h-4 w-4" />}
+              label="Cached Tokens"
+              value={summary ? formatNumber(summary.cache_read_input_tokens) : '-'}
               accent="zinc"
-            />
-            <SummaryCard
-              icon={<AlertTriangle className="h-4 w-4" />}
-              label="Error Rate"
-              value={formatPercent(summary?.error_rate_percent ?? null)}
-              accent="red"
             />
             <SummaryCard
               icon={<Hash className="h-4 w-4" />}
               label="Total Tokens"
-              value={
-                summary
-                  ? formatNumber(summary.total_input_tokens + summary.total_output_tokens)
-                  : '-'
-              }
+              value={summary ? formatNumber(summary.total_tokens) : '-'}
               accent="emerald"
             />
+            <SummaryCard
+              icon={<DollarSign className="h-4 w-4" />}
+              label="Total Cost"
+              value={summary ? formatCurrency(summary.total_cost_usd) : '-'}
+              accent="green"
+            />
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <Activity className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-base font-medium text-foreground">Usage Over Time</h2>
+            </div>
+            <UsageTimeseriesChart data={timeseries} />
           </div>
 
           {/* Breakdown Sections */}
@@ -274,22 +361,23 @@ export default function Dashboard() {
             <div className="rounded-xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-base font-medium text-foreground">Models by Request Count</h2>
+                <h2 className="text-base font-medium text-foreground">Models by Cost</h2>
               </div>
               {models.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No model data available</p>
               ) : (
                 <div className="space-y-3">
                   {models.map((model) => {
-                    const maxCount = models[0]?.request_count ?? 1;
-                    const percentage = (model.request_count / maxCount) * 100;
+                    const maxCost = models[0]?.total_cost_usd ?? 1;
+                    const percentage = maxCost > 0 ? (model.total_cost_usd / maxCost) * 100 : 0;
                     return (
                       <div key={model.model} className="group">
                         <div className="mb-1 flex items-center justify-between text-sm">
                           <span className="truncate font-medium text-foreground">
                             {model.model}
                           </span>
-                          <span className="ml-2 shrink-0 font-mono text-muted-foreground">
+                          <span className="ml-2 shrink-0 text-right font-mono text-muted-foreground">
+                            {formatCurrency(model.total_cost_usd)} ·{' '}
                             {formatNumber(model.request_count)}
                           </span>
                         </div>
@@ -310,26 +398,24 @@ export default function Dashboard() {
             <div className="rounded-xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Server className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-base font-medium text-foreground">Providers</h2>
+                <h2 className="text-base font-medium text-foreground">Providers by Cost</h2>
               </div>
               {providers.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No provider data available</p>
               ) : (
                 <div className="space-y-3">
                   {providers.map((provider) => {
-                    const percentage =
-                      totalProviderRequests > 0
-                        ? (provider.request_count / totalProviderRequests) * 100
-                        : 0;
+                    const maxCost = providers[0]?.total_cost_usd ?? 1;
+                    const percentage = maxCost > 0 ? (provider.total_cost_usd / maxCost) * 100 : 0;
                     return (
                       <div key={provider.provider} className="group">
                         <div className="mb-1 flex items-center justify-between text-sm">
                           <span className="font-medium capitalize text-foreground">
                             {provider.provider}
                           </span>
-                          <span className="ml-2 shrink-0 font-mono text-muted-foreground">
-                            {formatNumber(provider.request_count)}{' '}
-                            <span className="text-xs">({percentage.toFixed(1)}%)</span>
+                          <span className="ml-2 shrink-0 text-right font-mono text-muted-foreground">
+                            {formatCurrency(provider.total_cost_usd)} ·{' '}
+                            {formatNumber(provider.request_count)}
                           </span>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-muted">

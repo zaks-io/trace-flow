@@ -32,7 +32,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
   usePageHeader('Requests');
   const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
-  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
@@ -78,13 +78,16 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
       setInitialLoadComplete(false);
       setLatestReceivedAt(null);
       setMergedRequests([]);
-      lastProcessedDataRef.current = null;
+      lastProcessedDataRef.current = data?.data ?? null; // Mark current data as seen
     }
   }, [filters]);
 
   // Handle initial load
   useEffect(() => {
     if (!initialLoadComplete && data?.data && data.data.length > 0) {
+      if (lastProcessedDataRef.current === data.data) {
+        return; // Skip stale data
+      }
       setMergedRequests(data.data);
       setLatestReceivedAt(data.data[0].ReceivedAt);
       lastProcessedDataRef.current = data.data;
@@ -101,7 +104,10 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
     lastProcessedDataRef.current = data.data;
 
     setMergedRequests((prev) => {
-      const merged = [...data.data, ...prev].slice(0, 100);
+      // Deduplicate by TraceId-SpanId-ReceivedAt for proper uniqueness
+      const seen = new Set(data.data.map((r) => `${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
+      const uniquePrev = prev.filter((r) => !seen.has(`${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
+      const merged = [...data.data, ...uniquePrev].slice(0, 100);
       if (merged.length > 0) {
         setLatestReceivedAt(merged[0].ReceivedAt);
       }
@@ -127,12 +133,21 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
 
   const handleRowClick = useCallback(
     (row: RequestRow, event: React.MouseEvent) => {
+      // Extract requestId from SpanAttributes
+      let requestId: string | undefined;
+      try {
+        const attrs = JSON.parse(row.SpanAttributes) as Record<string, string>;
+        requestId = attrs['gen_ai.request_id'];
+      } catch {
+        // Ignore parse errors
+      }
+
       if (event.metaKey || event.ctrlKey) {
         window.open(`/app/trace/${row.TraceId}`, '_blank');
       } else {
         isClosingRef.current = false;
         setSelectedTraceId(row.TraceId);
-        setSelectedSpanId(row.SpanId);
+        setSelectedRequestId(requestId ?? null);
         setIsPanelOpen(true);
         router.replace(`/app/requests/${row.TraceId}/${row.SpanId}`);
       }
@@ -146,7 +161,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
     router.replace('/app/requests');
     setTimeout(() => {
       setSelectedTraceId(null);
-      setSelectedSpanId(null);
+      setSelectedRequestId(null);
       setTimeout(() => {
         isClosingRef.current = false;
       }, 100);
@@ -205,7 +220,10 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
     return evaluateAlertsForTraces(requests, alerts);
   }, [requests, alerts]);
 
-  const getRowId = useCallback((row: RequestRow) => `${row.TraceId}-${row.SpanId}`, []);
+  const getRowId = useCallback(
+    (row: RequestRow) => `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}`,
+    [],
+  );
 
   const selectedRowId = useMemo(() => {
     if (!selectedTraceId) return null;
@@ -220,8 +238,8 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
 
     // Fallback for backwards compatibility (traceId only)
     const row = requests.find((r) => r.TraceId === selectedTraceId);
-    return row ? `${row.TraceId}-${row.SpanId}` : null;
-  }, [selectedTraceId, selectedSpanId, requests]);
+    return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
+  }, [selectedTraceId, requests]);
 
   if (isLoading && requests.length === 0) {
     return (
@@ -273,6 +291,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
       {selectedTraceId && (
         <TraceDetailPanel
           traceId={selectedTraceId}
+          requestId={selectedRequestId ?? undefined}
           isOpen={isPanelOpen}
           onClose={handleClosePanel}
         />

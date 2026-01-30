@@ -1,0 +1,37 @@
+DESCRIPTION >
+    Materialized view to roll up LLM usage metrics into daily buckets.
+
+NODE rollup
+SQL >
+    SELECT
+        toStartOfDay(toDateTime(ReceivedAt / 1000000000, 'UTC')) AS BucketStart,
+        ApiKey,
+        Provider,
+        Model,
+        OperationName,
+        BaggageOperation,
+        StatusCode,
+        countState() AS RequestCount,
+        sumState(toUInt64(InputTokens)) AS InputTokens,
+        sumState(toUInt64(OutputTokens)) AS OutputTokens,
+        sumState(toUInt64(CacheReadInputTokens)) AS CacheReadInputTokens,
+        sumState(toUInt64(CacheCreationInputTokens)) AS CacheCreationInputTokens,
+        sumState(toUInt64(ReasoningTokens)) AS ReasoningTokens,
+        sumState(toUInt64(InputCostMicrodollars)) AS InputCostMicrodollars,
+        sumState(toUInt64(OutputCostMicrodollars)) AS OutputCostMicrodollars,
+        sumState(toUInt64(CacheReadCostMicrodollars)) AS CacheReadCostMicrodollars,
+        sumState(toUInt64(CacheCreationCostMicrodollars)) AS CacheCreationCostMicrodollars,
+        sumState(toUInt64(ReasoningCostMicrodollars)) AS ReasoningCostMicrodollars,
+        sumState(toUInt64(TotalCostMicrodollars)) AS TotalCostMicrodollars
+    FROM llm_requests
+    GROUP BY
+        BucketStart,
+        ApiKey,
+        Provider,
+        Model,
+        OperationName,
+        BaggageOperation,
+        StatusCode
+
+TYPE materialized
+DATASOURCE llm_usage_1d
