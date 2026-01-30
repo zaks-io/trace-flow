@@ -51,6 +51,7 @@ export const setTier = mutation({
   },
 });
 
+// TODO: Gate behind payment flow
 export const addAddonUnits = mutation({
   args: {
     orgId: v.id('organizations'),

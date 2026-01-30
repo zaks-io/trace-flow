@@ -1,7 +1,7 @@
 import { action, mutation, query, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import { getCurrentUser, requireEnabledUser } from './users';
 
 export const list = query({
@@ -114,7 +114,7 @@ export const syncToKV = action({
   handler: async (ctx, args): Promise<{ synced: boolean; existed: boolean }> => {
     await requireTraceFlowRole(ctx);
 
-    const apiKey = await ctx.runQuery(api.apiKeys.getByIdInternal, { id: args.id });
+    const apiKey = await ctx.runQuery(internal.apiKeys.getByIdInternal, { id: args.id });
     if (!apiKey) {
       throw new Error('API key not found');
     }
@@ -137,7 +137,7 @@ export const syncToKV = action({
   },
 });
 
-export const getByIdInternal = query({
+export const getByIdInternal = internalQuery({
   args: { id: v.id('apiKeys') },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);

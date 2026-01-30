@@ -76,12 +76,6 @@ export declare const api: {
       { expiresAt: number; name?: string },
       any
     >;
-    getByIdInternal: FunctionReference<
-      "query",
-      "public",
-      { id: Id<"apiKeys"> },
-      any
-    >;
     getByKey: FunctionReference<"query", "public", { key: string }, any>;
     list: FunctionReference<"query", "public", any, any>;
     remove: FunctionReference<"mutation", "public", { id: Id<"apiKeys"> }, any>;
@@ -220,6 +214,12 @@ export declare const api: {
  */
 export declare const internal: {
   apiKeys: {
+    getByIdInternal: FunctionReference<
+      "query",
+      "internal",
+      { id: Id<"apiKeys"> },
+      any
+    >;
     listByUserId: FunctionReference<
       "query",
       "internal",

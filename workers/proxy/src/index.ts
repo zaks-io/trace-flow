@@ -178,7 +178,8 @@ app.all('*', async (c) => {
     body: streamToProxy,
   });
 
-  // If usage is not allowed, skip capture entirely — just proxy the raw response
+  // Soft limit: exceeded usage skips trace capture but still proxies the request
+  // so the end-user's LLM call is never blocked.
   if (!usageAllowed) {
     const passthroughHeaders = new Headers(response.headers);
     passthroughHeaders.set('X-Trace-Flow-Usage-Exceeded', 'true');

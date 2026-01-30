@@ -2,12 +2,7 @@ import { query, internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
 import { getCurrentUser } from './users';
-
-function computePeriod(now: Date): { periodStart: number; periodEnd: number } {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return { periodStart: start.getTime(), periodEnd: end.getTime() };
-}
+import { computePeriod } from '@trace-flow/utils';
 
 export const getCurrentUsage = query({
   handler: async (ctx) => {

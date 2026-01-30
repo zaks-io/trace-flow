@@ -222,7 +222,14 @@ function createDoFetch(
     const url = new URL(request.url);
 
     if (url.pathname === '/check' && request.method === 'POST') {
-      const body = await request.json();
+      const body: {
+        count: number;
+        subscriptionConfig: {
+          tier: string;
+          monthlyUnits: number;
+          addonUnits: number;
+        };
+      } = await request.json();
       const { count, subscriptionConfig } = body;
 
       let config = getConfig();
