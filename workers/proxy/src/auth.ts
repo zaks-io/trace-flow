@@ -1,17 +1,19 @@
 import type { Context } from 'hono';
 
+export interface ApiKeyData {
+  expiresAt: number;
+  createdAt: number;
+  orgId: string;
+}
+
 /**
  * Validates API keys from KV namespace using the X-Trace-Flow-Api-Key header.
  *
- * This header is used exclusively for proxy authentication, allowing Authorization
- * and X-API-Key headers to pass through to LLM providers unchanged.
- *
- * Stored key data includes expiration timestamps to support key rotation.
- * Returns an error Response if validation fails, or null if the key is valid (null = success).
+ * Returns an error Response if validation fails, or ApiKeyData if the key is valid.
  */
 export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   c: Context<{ Bindings: E }>,
-): Promise<Response | null> {
+): Promise<Response | ApiKeyData> {
   const apiKey = c.req.header('X-Trace-Flow-Api-Key');
 
   if (!apiKey) {
@@ -37,7 +39,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   }
 
   try {
-    const parsed = JSON.parse(keyData) as { expiresAt: number; createdAt: number };
+    const parsed = JSON.parse(keyData) as ApiKeyData;
 
     if (parsed.expiresAt < Date.now()) {
       return c.json(
@@ -48,6 +50,8 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
         401,
       );
     }
+
+    return parsed;
   } catch {
     return c.json(
       {
@@ -57,6 +61,8 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
       401,
     );
   }
+}
 
-  return null;
+export function isAuthError(result: Response | ApiKeyData): result is Response {
+  return result instanceof Response;
 }

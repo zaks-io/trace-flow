@@ -389,6 +389,43 @@ export function createApp(
     return c.json(result);
   });
 
+  // Usage: DO pushes usage totals
+  app.post('/usage/record', async (c) => {
+    const ctx = c.env;
+
+    const authHeader = c.req.header('Authorization');
+    const secret = process.env.USAGE_SYNC_SECRET;
+    if (!secret || authHeader !== `Bearer ${secret}`) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const body = await c.req.json<{
+      orgId: string;
+      periodStart: number;
+      periodEnd: number;
+      subscriptionUnitsUsed: number;
+      addonUnitsUsed: number;
+    }>();
+
+    const orgId = body.orgId as Id<'organizations'>;
+
+    // Verify the org exists before recording usage
+    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: orgId });
+    if (!org) {
+      return c.json({ error: 'Organization not found' }, 404);
+    }
+
+    await ctx.runMutation(internal.usage.recordUsage, {
+      orgId,
+      periodStart: body.periodStart,
+      periodEnd: body.periodEnd,
+      subscriptionUnitsUsed: body.subscriptionUnitsUsed,
+      addonUnitsUsed: body.addonUnitsUsed,
+    });
+
+    return c.json({ ok: true });
+  });
+
   // MCP: Terminate session
   app.delete('/mcp', async (c) => {
     const ctx = c.env;

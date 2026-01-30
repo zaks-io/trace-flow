@@ -9,16 +9,19 @@ export const list = query({
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
 
-    if (!user) {
-      return [];
+    if (!user) return [];
+
+    if (user.orgId) {
+      return await ctx.db
+        .query('apiKeys')
+        .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId))
+        .collect();
     }
 
-    const userKeys = await ctx.db
+    return await ctx.db
       .query('apiKeys')
       .withIndex('by_user_id', (q) => q.eq('userId', user._id))
       .collect();
-
-    return userKeys;
   },
 });
 
@@ -47,12 +50,14 @@ export const create = mutation({
       key,
       expiresAt: args.expiresAt,
       userId: user._id,
+      orgId: user.orgId,
       name: args.name,
     });
 
     await ctx.scheduler.runAfter(0, internal.cloudflare.syncKeyToKV, {
       key,
       expiresAt: args.expiresAt,
+      orgId: user.orgId,
     });
 
     return id;
@@ -125,6 +130,7 @@ export const syncToKV = action({
     await ctx.runAction(internal.cloudflare.syncKeyToKV, {
       key: apiKey.key,
       expiresAt: apiKey.expiresAt,
+      orgId: apiKey.orgId,
     });
 
     return { synced: true, existed: false };

@@ -32,7 +32,9 @@ import type {
   LLMResponseMetadata,
   InputMessage,
 } from '@trace-flow/types';
-import { validateApiKey } from './auth';
+import { validateApiKey, isAuthError } from './auth';
+import type { ApiKeyData } from './auth';
+import { checkUsage } from './usage';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
@@ -48,10 +50,15 @@ import { createQueueMessage } from './queue';
 import { resolveRoute, PROVIDERS } from './providers';
 import { handleOTLPTraces } from './otlp';
 import { otlpTracesRoute } from './otlp/routes';
+export { UsageTracker } from './usage-tracker';
+
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
+  USAGE_TRACKER: DurableObjectNamespace;
+  CONVEX_URL: string;
+  USAGE_SYNC_SECRET: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -94,10 +101,15 @@ app.post('/v1/traces', handleOTLPTraces);
 app.openAPIRegistry.registerPath(otlpTracesRoute);
 
 app.all('*', async (c) => {
-  const authError = await validateApiKey(c);
-  if (authError) {
-    return authError;
+  const authResult = await validateApiKey(c);
+  if (isAuthError(authResult)) {
+    return authResult;
   }
+  const keyData: ApiKeyData = authResult;
+
+  // Check usage via Durable Object
+  const usageAllowed = keyData.orgId ? await checkUsage(c.env, keyData.orgId, 1) : true;
+
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
 
@@ -166,6 +178,15 @@ app.all('*', async (c) => {
     body: streamToProxy,
   });
 
+  // If usage is not allowed, skip capture entirely — just proxy the raw response
+  if (!usageAllowed) {
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
   const sseStreamData: SSEStreamData = { messages: [] };
@@ -185,9 +206,6 @@ app.all('*', async (c) => {
 
   const pipePromise = response.body?.pipeTo(writable);
 
-  // All observability operations happen in waitUntil to avoid blocking the client response
-  // This ensures the proxy returns low latency even if R2 storage or queue operations are slow
-  // Wrapped in try-catch to ensure proxy never fails due to observability errors
   c.executionCtx.waitUntil(
     (async () => {
       try {

@@ -66,6 +66,7 @@ export type DataModel = {
       expiresAt: number;
       key: string;
       name?: string;
+      orgId?: Id<"organizations">;
       userId?: Id<"users">;
       _id: Id<"apiKeys">;
       _creationTime: number;
@@ -76,10 +77,12 @@ export type DataModel = {
       | "expiresAt"
       | "key"
       | "name"
+      | "orgId"
       | "userId";
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
       by_user_id: ["userId", "_creationTime"];
     };
     searchIndexes: {};
@@ -228,11 +231,78 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  organizations: {
+    document: {
+      name: string;
+      ownerId: Id<"users">;
+      _id: Id<"organizations">;
+      _creationTime: number;
+    };
+    fieldPaths: "_creationTime" | "_id" | "name" | "ownerId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_owner_id: ["ownerId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  subscriptions: {
+    document: {
+      addonUnits: number;
+      monthlyUnits: number;
+      orgId: Id<"organizations">;
+      tier: "hobby" | "pro";
+      _id: Id<"subscriptions">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "addonUnits"
+      | "monthlyUnits"
+      | "orgId"
+      | "tier";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  usage: {
+    document: {
+      addonUnitsUsed: number;
+      orgId: Id<"organizations">;
+      periodEnd: number;
+      periodStart: number;
+      subscriptionUnitsUsed: number;
+      _id: Id<"usage">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "addonUnitsUsed"
+      | "orgId"
+      | "periodEnd"
+      | "periodStart"
+      | "subscriptionUnitsUsed";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id_period: ["orgId", "periodStart", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   users: {
     document: {
       email: string;
       enabled: boolean;
       name?: string;
+      orgId?: Id<"organizations">;
       picture?: string;
       tokenIdentifier: string;
       _id: Id<"users">;
@@ -244,6 +314,7 @@ export type DataModel = {
       | "email"
       | "enabled"
       | "name"
+      | "orgId"
       | "picture"
       | "tokenIdentifier";
     indexes: {

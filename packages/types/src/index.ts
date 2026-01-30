@@ -1,3 +1,16 @@
+export type SubscriptionTier = 'hobby' | 'pro';
+
+export const TIER_CONFIG = {
+  hobby: { monthlyUnits: 50_000, price: 0, overagePer100k: 0 },
+  pro: { monthlyUnits: 100_000, price: 20, overagePer100k: 8 },
+} as const;
+
+export interface SubscriptionKVData {
+  tier: SubscriptionTier;
+  monthlyUnits: number;
+  addonUnits: number;
+}
+
 export interface LLMRequest {
   id: string;
   provider: string;

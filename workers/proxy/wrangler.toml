@@ -28,6 +28,15 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
 
+# Durable Object for usage tracking
+[[durable_objects.bindings]]
+name = "USAGE_TRACKER"
+class_name = "UsageTracker"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["UsageTracker"]
+
 [env.production]
 name = "trace-flow-proxy"
 workers_dev = false
@@ -51,6 +60,10 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-prod"
 
+[[env.production.durable_objects.bindings]]
+name = "USAGE_TRACKER"
+class_name = "UsageTracker"
+
 [env.preview]
 name = "trace-flow-proxy-preview"
 
@@ -68,3 +81,7 @@ binding = "REQUEST_QUEUE"
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
+
+[[env.preview.durable_objects.bindings]]
+name = "USAGE_TRACKER"
+class_name = "UsageTracker"

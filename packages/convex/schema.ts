@@ -8,14 +8,38 @@ export default defineSchema({
     name: v.optional(v.string()),
     picture: v.optional(v.string()),
     enabled: v.boolean(),
+    orgId: v.optional(v.id('organizations')),
   }).index('by_token_identifier', ['tokenIdentifier']),
+
+  organizations: defineTable({
+    name: v.string(),
+    ownerId: v.id('users'),
+  }).index('by_owner_id', ['ownerId']),
+
+  subscriptions: defineTable({
+    orgId: v.id('organizations'),
+    tier: v.union(v.literal('hobby'), v.literal('pro')),
+    monthlyUnits: v.number(),
+    addonUnits: v.number(),
+  }).index('by_org_id', ['orgId']),
+
+  usage: defineTable({
+    orgId: v.id('organizations'),
+    periodStart: v.number(),
+    periodEnd: v.number(),
+    subscriptionUnitsUsed: v.number(),
+    addonUnitsUsed: v.number(),
+  }).index('by_org_id_period', ['orgId', 'periodStart']),
 
   apiKeys: defineTable({
     key: v.string(),
     expiresAt: v.number(),
     userId: v.optional(v.id('users')),
+    orgId: v.optional(v.id('organizations')),
     name: v.optional(v.string()),
-  }).index('by_user_id', ['userId']),
+  })
+    .index('by_user_id', ['userId'])
+    .index('by_org_id', ['orgId']),
 
   modelPricing: defineTable({
     provider: v.string(),

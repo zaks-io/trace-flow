@@ -486,6 +486,12 @@ export function mergeSSEEvents(events: ParsedSSEEvent[]): MergedSSEResponse {
   return result;
 }
 
+export function computePeriod(now: Date): { periodStart: number; periodEnd: number } {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return { periodStart: start.getTime(), periodEnd: end.getTime() };
+}
+
 // Token estimation utilities for message breakdown
 
 /**

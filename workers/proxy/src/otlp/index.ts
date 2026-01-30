@@ -1,13 +1,16 @@
 import type { Context } from 'hono';
 import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
-import { validateApiKey } from '../auth';
+import { validateApiKey, isAuthError } from '../auth';
+import type { ApiKeyData } from '../auth';
+import { checkUsage } from '../usage';
 import { transformOTLPToTraces } from './transform';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
   API_KEYS: KVNamespace;
+  USAGE_TRACKER: DurableObjectNamespace;
 }
 
 const MAX_REQUEST_SIZE = 10 * 1024 * 1024; // 10MB
@@ -100,10 +103,11 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult {
  * Accepts standard OpenTelemetry OTLP/HTTP JSON format.
  */
 export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const authError = await validateApiKey(c);
-  if (authError) {
-    return authError;
+  const authResult = await validateApiKey(c);
+  if (isAuthError(authResult)) {
+    return authResult;
   }
+  const keyData: ApiKeyData = authResult;
 
   const contentType = c.req.header('Content-Type');
   if (!contentType?.includes('application/json')) {
@@ -167,6 +171,15 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   if (traces.length === 0) {
     const response: OTLPExportTraceServiceResponse = { partialSuccess: {} };
     return c.json(response, 200);
+  }
+
+  // Check usage via Durable Object
+  if (keyData.orgId) {
+    const allowed = await checkUsage(c.env, keyData.orgId, traces.length);
+    if (!allowed) {
+      const response: OTLPExportTraceServiceResponse = { partialSuccess: {} };
+      return c.json(response, 200);
+    }
   }
 
   const message: OTLPQueueMessage = {
