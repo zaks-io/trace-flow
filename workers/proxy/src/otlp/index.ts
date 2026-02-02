@@ -186,11 +186,22 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
-  // Check usage via Durable Object
-  const usageCheck: UsageCheckResult = await checkUsage(c.env, keyData.orgId, traces.length);
-  if (usageCheck.status === 'no_subscription') {
-    console.warn('No subscription found for org, allowing OTLP traces:', keyData.orgId);
+  let usageCheck: UsageCheckResult;
+  try {
+    usageCheck = await checkUsage(c.env, keyData.orgId, traces.length);
+  } catch (error) {
+    console.error('Usage check failed:', error instanceof Error ? error.message : String(error));
+    return c.json(
+      {
+        error: {
+          code: 500,
+          message: 'Usage check failed due to misconfiguration',
+        },
+      },
+      500,
+    );
   }
+
   if (usageCheck.status === 'exceeded') {
     const response: OTLPExportTraceServiceResponse = {
       partialSuccess: {
@@ -222,5 +233,6 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   );
 
   const response: OTLPExportTraceServiceResponse = { partialSuccess: {} };
+  c.header('X-Trace-Flow-Usage-Status', 'allowed');
   return c.json(response, 200);
 }

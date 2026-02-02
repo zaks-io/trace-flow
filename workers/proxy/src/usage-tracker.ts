@@ -10,6 +10,7 @@ interface Env {
 interface CheckRequest {
   count: number;
   subscriptionConfig: SubscriptionKVData;
+  orgId: string;
 }
 
 interface ConfigRow {
@@ -125,7 +126,9 @@ export class UsageTracker extends DurableObject<Env> {
 
   private async handlePeriodRollover() {
     const config = this.getConfig();
-    if (!config) return;
+    if (!config) {
+      throw new Error('UsageTracker rollover: no config row found');
+    }
 
     const now = Date.now();
     if (now < config.period_end) return;
@@ -174,7 +177,9 @@ export class UsageTracker extends DurableObject<Env> {
 
     if (url.pathname === '/check' && request.method === 'POST') {
       const body: CheckRequest = await request.json();
-      const { count, subscriptionConfig } = body;
+      const { count, subscriptionConfig, orgId } = body;
+
+      await this.ctx.storage.put('orgId', orgId);
 
       let config = this.getConfig();
 
@@ -233,7 +238,9 @@ export class UsageTracker extends DurableObject<Env> {
     this.ensureTables();
 
     const config = this.getConfig();
-    if (!config) return;
+    if (!config) {
+      throw new Error('UsageTracker alarm: no config row found');
+    }
 
     const counters = this.getCounters();
 
@@ -257,14 +264,17 @@ export class UsageTracker extends DurableObject<Env> {
         freshCounters.subscription_units_used,
         freshCounters.addon_units_used,
       );
+    } else {
+      // Counters unchanged, nothing to push
     }
   }
 
   private async pushToConvex(periodStart: number, periodEnd: number) {
     const counters = this.getCounters();
-    // The org ID is the DO name (set via idFromName in the proxy)
-    const orgId = this.ctx.id.name;
-    if (!orgId) return;
+    const orgId = await this.ctx.storage.get<string>('orgId');
+    if (!orgId) {
+      throw new Error('UsageTracker DO has no orgId in storage');
+    }
 
     const url = `${this.env.CONVEX_SITE_URL}/usage/record`;
 
@@ -283,8 +293,9 @@ export class UsageTracker extends DurableObject<Env> {
       }),
     });
 
-    // Fix #4: Check response status
     if (!response.ok) {
+      const body = await response.text();
+      console.error('pushToConvex failed:', { status: response.status, body });
       throw new Error(`pushToConvex failed: ${response.status} ${response.statusText}`);
     }
   }
