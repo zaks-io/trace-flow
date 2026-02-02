@@ -34,7 +34,7 @@ import type {
 } from '@trace-flow/types';
 import { validateApiKey, isAuthError } from './auth';
 import type { ApiKeyData } from './auth';
-import { checkUsage } from './usage';
+import { checkUsage, type UsageCheckResult } from './usage';
 import { parseTokenUsage } from './parsers/tokens';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
@@ -57,7 +57,7 @@ interface Env {
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
   USAGE_TRACKER: DurableObjectNamespace;
-  CONVEX_URL: string;
+  CONVEX_SITE_URL: string;
   USAGE_SYNC_SECRET: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
@@ -108,7 +108,13 @@ app.all('*', async (c) => {
   const keyData: ApiKeyData = authResult;
 
   // Check usage via Durable Object
-  const usageAllowed = keyData.orgId ? await checkUsage(c.env, keyData.orgId, 1) : false;
+  let usageCheck: UsageCheckResult = { status: 'no_subscription' };
+  if (keyData.orgId) {
+    usageCheck = await checkUsage(c.env, keyData.orgId, 1);
+    if (usageCheck.status === 'no_subscription') {
+      console.warn('No subscription found for org, allowing trace capture:', keyData.orgId);
+    }
+  }
 
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
@@ -180,7 +186,7 @@ app.all('*', async (c) => {
 
   // Soft limit: exceeded usage skips trace capture but still proxies the request
   // so the end-user's LLM call is never blocked.
-  if (!usageAllowed) {
+  if (usageCheck.status === 'exceeded') {
     const passthroughHeaders = new Headers(response.headers);
     passthroughHeaders.set('X-Trace-Flow-Usage-Exceeded', 'true');
     return new Response(response.body, {

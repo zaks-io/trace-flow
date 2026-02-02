@@ -28,6 +28,8 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
 
+# Secrets required: CONVEX_SITE_URL (https://{deployment}.convex.site), USAGE_SYNC_SECRET, SENTRY_DSN
+
 # Durable Object for usage tracking
 [[durable_objects.bindings]]
 name = "USAGE_TRACKER"

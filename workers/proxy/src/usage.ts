@@ -5,9 +5,18 @@ interface UsageEnv {
   USAGE_TRACKER: DurableObjectNamespace;
 }
 
-export async function checkUsage(env: UsageEnv, orgId: string, count: number): Promise<boolean> {
+export type UsageCheckResult =
+  | { status: 'allowed' }
+  | { status: 'exceeded' }
+  | { status: 'no_subscription' };
+
+export async function checkUsage(
+  env: UsageEnv,
+  orgId: string,
+  count: number,
+): Promise<UsageCheckResult> {
   const subConfigRaw = await env.API_KEYS.get(`sub:${orgId}`);
-  if (!subConfigRaw) return false;
+  if (!subConfigRaw) return { status: 'no_subscription' };
 
   const subscriptionConfig = JSON.parse(subConfigRaw) as SubscriptionKVData;
   const doId = env.USAGE_TRACKER.idFromName(orgId);
@@ -19,5 +28,5 @@ export async function checkUsage(env: UsageEnv, orgId: string, count: number): P
     }),
   );
   const result: { allowed: boolean } = await doResponse.json();
-  return result.allowed;
+  return result.allowed ? { status: 'allowed' } : { status: 'exceeded' };
 }
