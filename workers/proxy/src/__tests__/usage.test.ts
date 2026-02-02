@@ -23,13 +23,13 @@ function createMockEnv(kvData: string | null, doResponse: { allowed: boolean }) 
 }
 
 describe('checkUsage', () => {
-  it('returns false when no subscription config in KV', async () => {
+  it('returns no_subscription when no subscription config in KV', async () => {
     const { env } = createMockEnv(null, { allowed: false });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toBe(false);
+    expect(result).toEqual({ status: 'no_subscription' });
   });
 
-  it('returns true when DO responds allowed: true', async () => {
+  it('returns allowed when DO responds allowed: true', async () => {
     const kvData = JSON.stringify({
       tier: 'pro',
       monthlyUnits: 10000,
@@ -37,10 +37,10 @@ describe('checkUsage', () => {
     });
     const { env } = createMockEnv(kvData, { allowed: true });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toBe(true);
+    expect(result).toEqual({ status: 'allowed' });
   });
 
-  it('returns false when DO responds allowed: false', async () => {
+  it('returns exceeded when DO responds allowed: false', async () => {
     const kvData = JSON.stringify({
       tier: 'hobby',
       monthlyUnits: 100,
@@ -48,7 +48,7 @@ describe('checkUsage', () => {
     });
     const { env } = createMockEnv(kvData, { allowed: false });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toBe(false);
+    expect(result).toEqual({ status: 'exceeded' });
   });
 
   it('passes correct subscription config and count to DO', async () => {

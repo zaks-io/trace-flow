@@ -3,7 +3,7 @@ import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
 import { validateApiKey, isAuthError } from '../auth';
 import type { ApiKeyData } from '../auth';
-import { checkUsage } from '../usage';
+import { checkUsage, type UsageCheckResult } from '../usage';
 import { transformOTLPToTraces } from './transform';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
 
@@ -173,18 +173,25 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     return c.json(response, 200);
   }
 
-  // Check usage via Durable Object — deny if orgId is missing
+  // Require orgId for OTLP ingestion
   if (!keyData.orgId) {
-    const response: OTLPExportTraceServiceResponse = {
-      partialSuccess: {
-        rejectedSpans: traces.length,
-        errorMessage: 'Missing organization ID',
+    return c.json(
+      {
+        error: {
+          code: 403,
+          message: 'API key is not associated with an organization',
+        },
       },
-    };
-    return c.json(response, 200);
+      403,
+    );
   }
-  const allowed = await checkUsage(c.env, keyData.orgId, traces.length);
-  if (!allowed) {
+
+  // Check usage via Durable Object
+  const usageCheck: UsageCheckResult = await checkUsage(c.env, keyData.orgId, traces.length);
+  if (usageCheck.status === 'no_subscription') {
+    console.warn('No subscription found for org, allowing OTLP traces:', keyData.orgId);
+  }
+  if (usageCheck.status === 'exceeded') {
     const response: OTLPExportTraceServiceResponse = {
       partialSuccess: {
         rejectedSpans: traces.length,

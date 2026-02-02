@@ -140,7 +140,7 @@ function createMockDO(sqlMock: ReturnType<typeof createSqlMock>) {
   };
 
   const mockEnv = {
-    CONVEX_URL: 'https://test-convex.example.com',
+    CONVEX_SITE_URL: 'https://test-convex.example.com',
     USAGE_SYNC_SECRET: 'test-secret',
   };
 

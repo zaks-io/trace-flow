@@ -3,7 +3,7 @@ import { computePeriod } from '@trace-flow/utils';
 import { DurableObject } from 'cloudflare:workers';
 
 interface Env {
-  CONVEX_URL: string;
+  CONVEX_SITE_URL: string;
   USAGE_SYNC_SECRET: string;
 }
 
@@ -266,7 +266,7 @@ export class UsageTracker extends DurableObject<Env> {
     const orgId = this.ctx.id.name;
     if (!orgId) return;
 
-    const url = `${this.env.CONVEX_URL}/usage/record`;
+    const url = `${this.env.CONVEX_SITE_URL}/usage/record`;
 
     const response = await fetch(url, {
       method: 'POST',
