@@ -1,5 +1,6 @@
-import { internalAction } from './_generated/server';
+import { internalAction, internalQuery, action } from './_generated/server';
 import { v } from 'convex/values';
+import { internal } from './_generated/api';
 
 function getCloudflareConfig() {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -81,6 +82,46 @@ export const checkKeyInKV = internalAction({
     });
 
     return response.ok;
+  },
+});
+
+export const getAllSyncData = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const apiKeys = await ctx.db.query('apiKeys').collect();
+    const subscriptions = await ctx.db.query('subscriptions').collect();
+    return { apiKeys, subscriptions };
+  },
+});
+
+export const syncAll = action({
+  args: {},
+  handler: async (ctx) => {
+    const { apiKeys, subscriptions } = await ctx.runQuery(internal.cloudflare.getAllSyncData);
+
+    let keySynced = 0;
+    let subSynced = 0;
+
+    for (const key of apiKeys) {
+      await ctx.runAction(internal.cloudflare.syncKeyToKV, {
+        key: key.key,
+        expiresAt: key.expiresAt,
+        orgId: key.orgId,
+      });
+      keySynced++;
+    }
+
+    for (const sub of subscriptions) {
+      await ctx.runAction(internal.cloudflare.syncSubscriptionToKV, {
+        orgId: sub.orgId,
+        tier: sub.tier,
+        monthlyUnits: sub.monthlyUnits,
+        addonUnits: sub.addonUnits,
+      });
+      subSynced++;
+    }
+
+    return { keySynced, subSynced };
   },
 });
 

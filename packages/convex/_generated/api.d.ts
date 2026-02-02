@@ -90,6 +90,9 @@ export declare const api: {
   auth: {
     hasTraceFlowRole: FunctionReference<"query", "public", any, any>;
   };
+  cloudflare: {
+    syncAll: FunctionReference<"action", "public", {}, any>;
+  };
   mcp: {
     handler: {
       handleMessage: FunctionReference<
@@ -235,6 +238,7 @@ export declare const internal: {
       { key: string },
       any
     >;
+    getAllSyncData: FunctionReference<"query", "internal", {}, any>;
     syncKeyToKV: FunctionReference<
       "action",
       "internal",
