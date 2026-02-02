@@ -32,6 +32,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
   usePageHeader('Requests');
   const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -147,6 +148,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
       } else {
         isClosingRef.current = false;
         setSelectedTraceId(row.TraceId);
+        setSelectedSpanId(row.SpanId);
         setSelectedRequestId(requestId ?? null);
         setIsPanelOpen(true);
         router.replace(`/app/requests/${row.TraceId}/${row.SpanId}`);
@@ -161,6 +163,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
     router.replace('/app/requests');
     setTimeout(() => {
       setSelectedTraceId(null);
+      setSelectedSpanId(null);
       setSelectedRequestId(null);
       setTimeout(() => {
         isClosingRef.current = false;
@@ -233,13 +236,13 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
       const row = requests.find(
         (r) => r.TraceId === selectedTraceId && r.SpanId === selectedSpanId,
       );
-      return row ? `${row.TraceId}-${row.SpanId}` : null;
+      return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
     }
 
     // Fallback for backwards compatibility (traceId only)
     const row = requests.find((r) => r.TraceId === selectedTraceId);
     return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
-  }, [selectedTraceId, requests]);
+  }, [selectedTraceId, selectedSpanId, requests]);
 
   if (isLoading && requests.length === 0) {
     return (
