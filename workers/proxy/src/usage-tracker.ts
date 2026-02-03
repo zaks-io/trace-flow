@@ -179,11 +179,10 @@ export class UsageTracker extends DurableObject<Env> {
       const body: CheckRequest = await request.json();
       const { count, subscriptionConfig, orgId } = body;
 
-      await this.ctx.storage.put('orgId', orgId);
-
       let config = this.getConfig();
 
       if (!config) {
+        await this.ctx.storage.put('orgId', orgId);
         this.seedConfig(subscriptionConfig);
         config = this.requireConfig();
       } else {
