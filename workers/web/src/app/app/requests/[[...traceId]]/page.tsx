@@ -6,5 +6,6 @@ import Requests from '@/components/pages/Requests';
 export default function RequestsPage() {
   const params = useParams();
   const traceId = params.traceId?.[0];
-  return <Requests traceId={traceId} />;
+  const spanId = params.traceId?.[1];
+  return <Requests traceId={traceId} spanId={spanId} />;
 }
