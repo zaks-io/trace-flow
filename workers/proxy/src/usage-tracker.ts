@@ -14,6 +14,7 @@ interface CheckRequest {
 }
 
 interface ConfigRow {
+  org_id: string;
   tier: string;
   monthly_units: number;
   addon_units: number;
@@ -30,6 +31,7 @@ export class UsageTracker extends DurableObject<Env> {
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS config (
         id INTEGER PRIMARY KEY DEFAULT 1,
+        org_id TEXT NOT NULL,
         tier TEXT NOT NULL,
         monthly_units INTEGER NOT NULL,
         addon_units INTEGER NOT NULL,
@@ -55,7 +57,7 @@ export class UsageTracker extends DurableObject<Env> {
   private getConfig(): ConfigRow | null {
     const rows = this.ctx.storage.sql
       .exec(
-        'SELECT tier, monthly_units, addon_units, period_start, period_end FROM config WHERE id = 1',
+        'SELECT org_id, tier, monthly_units, addon_units, period_start, period_end FROM config WHERE id = 1',
       )
       .toArray();
     if (rows.length === 0) return null;
@@ -98,11 +100,12 @@ export class UsageTracker extends DurableObject<Env> {
     };
   }
 
-  private seedConfig(subConfig: SubscriptionKVData) {
+  private seedConfig(subConfig: SubscriptionKVData, orgId: string) {
     const { periodStart, periodEnd } = computePeriod(new Date());
 
     this.ctx.storage.sql.exec(
-      'INSERT OR REPLACE INTO config (id, tier, monthly_units, addon_units, period_start, period_end) VALUES (1, ?, ?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO config (id, org_id, tier, monthly_units, addon_units, period_start, period_end) VALUES (1, ?, ?, ?, ?, ?, ?)',
+      orgId,
       subConfig.tier,
       subConfig.monthlyUnits,
       subConfig.addonUnits,
@@ -138,7 +141,7 @@ export class UsageTracker extends DurableObject<Env> {
     // This avoids blocking all capture during transient Convex outages.
     await this.ctx.blockConcurrencyWhile(async () => {
       try {
-        await this.pushToConvex(config.period_start, config.period_end);
+        await this.pushToConvex(config.org_id, config.period_start, config.period_end);
       } catch (e) {
         console.error('pushToConvex failed during rollover, proceeding with reset:', e);
       }
@@ -182,8 +185,7 @@ export class UsageTracker extends DurableObject<Env> {
       let config = this.getConfig();
 
       if (!config) {
-        await this.ctx.storage.put('orgId', orgId);
-        this.seedConfig(subscriptionConfig);
+        this.seedConfig(subscriptionConfig, orgId);
         config = this.requireConfig();
       } else {
         await this.handlePeriodRollover();
@@ -247,9 +249,8 @@ export class UsageTracker extends DurableObject<Env> {
       counters.subscription_units_used !== counters.last_pushed_subscription ||
       counters.addon_units_used !== counters.last_pushed_addon
     ) {
-      // Fix #4: Handle pushToConvex errors — reschedule alarm on failure
       try {
-        await this.pushToConvex(config.period_start, config.period_end);
+        await this.pushToConvex(config.org_id, config.period_start, config.period_end);
       } catch (e) {
         console.error('pushToConvex failed in alarm, rescheduling:', e);
         await this.ctx.storage.setAlarm(Date.now() + 60_000);
@@ -268,12 +269,8 @@ export class UsageTracker extends DurableObject<Env> {
     }
   }
 
-  private async pushToConvex(periodStart: number, periodEnd: number) {
+  private async pushToConvex(orgId: string, periodStart: number, periodEnd: number) {
     const counters = this.getCounters();
-    const orgId = await this.ctx.storage.get<string>('orgId');
-    if (!orgId) {
-      throw new Error('UsageTracker DO has no orgId in storage');
-    }
 
     const url = `${this.env.CONVEX_SITE_URL}/usage/record`;
 
