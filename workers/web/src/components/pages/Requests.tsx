@@ -25,12 +25,14 @@ interface TinybirdResponse {
 
 interface RequestsProps {
   traceId?: string;
+  spanId?: string;
 }
 
-export default function Requests({ traceId: traceIdParam }: RequestsProps) {
+export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }: RequestsProps) {
   usePageHeader('Requests');
   const router = useRouter();
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -146,9 +148,10 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
       } else {
         isClosingRef.current = false;
         setSelectedTraceId(row.TraceId);
+        setSelectedSpanId(row.SpanId);
         setSelectedRequestId(requestId ?? null);
         setIsPanelOpen(true);
-        router.replace(`/app/requests/${row.TraceId}`);
+        router.replace(`/app/requests/${row.TraceId}/${row.SpanId}`);
       }
     },
     [router],
@@ -160,6 +163,7 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
     router.replace('/app/requests');
     setTimeout(() => {
       setSelectedTraceId(null);
+      setSelectedSpanId(null);
       setSelectedRequestId(null);
       setTimeout(() => {
         isClosingRef.current = false;
@@ -172,17 +176,30 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
       return;
     }
 
-    if (traceIdParam) {
+    if (traceIdParam && spanIdParam) {
+      // Both parameters present - use exact match
+      if (traceIdParam !== selectedTraceId || spanIdParam !== selectedSpanId) {
+        isClosingRef.current = false;
+        setSelectedTraceId(traceIdParam);
+        setSelectedSpanId(spanIdParam);
+        setIsPanelOpen(true);
+      }
+    } else if (traceIdParam && !spanIdParam) {
+      // Backwards compatibility: if only traceId in URL, still open panel
       if (traceIdParam !== selectedTraceId) {
         isClosingRef.current = false;
         setSelectedTraceId(traceIdParam);
+        setSelectedSpanId(null);
         setIsPanelOpen(true);
       }
     } else if (selectedTraceId && isPanelOpen) {
       setIsPanelOpen(false);
-      setTimeout(() => setSelectedTraceId(null), 300);
+      setTimeout(() => {
+        setSelectedTraceId(null);
+        setSelectedSpanId(null);
+      }, 300);
     }
-  }, [traceIdParam, selectedTraceId, isPanelOpen]);
+  }, [traceIdParam, spanIdParam, selectedTraceId, selectedSpanId, isPanelOpen]);
 
   useEffect(() => {
     if (!isPanelOpen) return;
@@ -213,9 +230,19 @@ export default function Requests({ traceId: traceIdParam }: RequestsProps) {
 
   const selectedRowId = useMemo(() => {
     if (!selectedTraceId) return null;
+
+    // If we have both IDs, use exact match
+    if (selectedSpanId) {
+      const row = requests.find(
+        (r) => r.TraceId === selectedTraceId && r.SpanId === selectedSpanId,
+      );
+      return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
+    }
+
+    // Fallback for backwards compatibility (traceId only)
     const row = requests.find((r) => r.TraceId === selectedTraceId);
     return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
-  }, [selectedTraceId, requests]);
+  }, [selectedTraceId, selectedSpanId, requests]);
 
   if (isLoading && requests.length === 0) {
     return (
