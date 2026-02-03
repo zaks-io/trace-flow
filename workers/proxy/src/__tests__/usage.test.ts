@@ -23,10 +23,11 @@ function createMockEnv(kvData: string | null, doResponse: { allowed: boolean }) 
 }
 
 describe('checkUsage', () => {
-  it('returns no_subscription when no subscription config in KV', async () => {
+  it('throws when no subscription config in KV', async () => {
     const { env } = createMockEnv(null, { allowed: false });
-    const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toEqual({ status: 'no_subscription' });
+    await expect(checkUsage(env, 'org-1', 1)).rejects.toThrow(
+      'No subscription config found in KV for org: org-1',
+    );
   });
 
   it('returns allowed when DO responds allowed: true', async () => {
@@ -65,6 +66,7 @@ describe('checkUsage', () => {
     const body = await request.json();
     expect(body).toEqual({
       count: 3,
+      orgId: 'org-1',
       subscriptionConfig: {
         tier: 'pro',
         monthlyUnits: 5000,

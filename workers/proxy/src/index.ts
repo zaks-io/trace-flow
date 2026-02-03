@@ -107,13 +107,28 @@ app.all('*', async (c) => {
   }
   const keyData: ApiKeyData = authResult;
 
-  // Check usage via Durable Object
-  let usageCheck: UsageCheckResult = { status: 'no_subscription' };
-  if (keyData.orgId) {
+  if (!keyData.orgId) {
+    return c.json(
+      {
+        error: 'Misconfigured API key',
+        message: 'API key is not associated with an organization',
+      },
+      403,
+    );
+  }
+
+  let usageCheck: UsageCheckResult;
+  try {
     usageCheck = await checkUsage(c.env, keyData.orgId, 1);
-    if (usageCheck.status === 'no_subscription') {
-      console.warn('No subscription found for org, allowing trace capture:', keyData.orgId);
-    }
+  } catch (error) {
+    console.error('Usage check failed:', error instanceof Error ? error.message : String(error));
+    return c.json(
+      {
+        error: 'Internal error',
+        message: 'Usage check failed due to misconfiguration',
+      },
+      500,
+    );
   }
 
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
@@ -348,10 +363,13 @@ app.all('*', async (c) => {
     })(),
   );
 
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.set('X-Trace-Flow-Usage-Status', 'allowed');
+
   return new Response(readable, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers: responseHeaders,
   });
 });
 
