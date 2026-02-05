@@ -29,7 +29,7 @@ describe('checkUsage', () => {
     expect(result).toEqual({ status: 'no_subscription' });
   });
 
-  it('returns allowed when DO responds allowed: true', async () => {
+  it('returns allowed with tier when DO responds allowed: true', async () => {
     const kvData = JSON.stringify({
       tier: 'pro',
       monthlyUnits: 10000,
@@ -37,10 +37,10 @@ describe('checkUsage', () => {
     });
     const { env } = createMockEnv(kvData, { allowed: true });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toEqual({ status: 'allowed' });
+    expect(result).toEqual({ status: 'allowed', tier: 'pro' });
   });
 
-  it('returns exceeded when DO responds allowed: false', async () => {
+  it('returns exceeded with tier when DO responds allowed: false', async () => {
     const kvData = JSON.stringify({
       tier: 'hobby',
       monthlyUnits: 100,
@@ -48,7 +48,7 @@ describe('checkUsage', () => {
     });
     const { env } = createMockEnv(kvData, { allowed: false });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toEqual({ status: 'exceeded' });
+    expect(result).toEqual({ status: 'exceeded', tier: 'hobby' });
   });
 
   it('passes correct subscription config and count to DO', async () => {

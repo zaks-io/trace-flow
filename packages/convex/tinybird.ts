@@ -4,9 +4,11 @@ import { SignJWT } from 'jose';
 import { requireTraceFlowRole } from './auth';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import { RETENTION_DAYS } from '@trace-flow/types';
 
 const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
 const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
+const tinybirdApiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.tinybird.co';
 
 if (!adminToken) {
   throw new Error('TINYBIRD_ADMIN_TOKEN environment variable is not set');
@@ -15,6 +17,8 @@ if (!adminToken) {
 if (!workspaceId) {
   throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
 }
+
+const NANOSECONDS_PER_DAY = 24 * 60 * 60 * 1_000_000_000;
 
 interface TinybirdScope {
   type: string;
@@ -117,5 +121,75 @@ export const generateTokenInternal = internalAction({
       .setProtectedHeader({ alg: 'HS256' })
       .setExpirationTime(Math.floor(Date.now() / 1000) + ttlSeconds)
       .sign(secret);
+  },
+});
+
+/**
+ * Extends retention for existing traces when a user upgrades from hobby to pro.
+ * Updates RetentionExpiresAt and TierAtIngestion in all three datasources.
+ *
+ * Only extends data that hasn't already expired (RetentionExpiresAt > now).
+ */
+export const extendRetention = internalAction({
+  args: {
+    orgId: v.id('organizations'),
+  },
+  handler: async (ctx, args) => {
+    // Get all API keys for this organization
+    const apiKeys = await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: args.orgId });
+    const apiKeyStrings = apiKeys.map((k: { key: string }) => k.key);
+
+    if (apiKeyStrings.length === 0) {
+      return { updated: false, reason: 'No API keys found for organization' };
+    }
+
+    // Calculate the extension: difference between pro and hobby retention in nanoseconds
+    const extensionNanos = (RETENTION_DAYS.pro - RETENTION_DAYS.hobby) * NANOSECONDS_PER_DAY;
+    const nowNanos = Date.now() * 1_000_000;
+
+    // Format API keys for SQL IN clause
+    const apiKeysInClause = apiKeyStrings.map((k: string) => `'${k}'`).join(',');
+
+    // Datasources to update
+    const datasources = ['otel_traces', 'otel_traces_genai', 'llm_requests'];
+
+    const results: Record<string, { success: boolean; error?: string }> = {};
+
+    for (const datasource of datasources) {
+      // Use ALTER TABLE UPDATE to extend retention for all traces with these API keys
+      // Only update rows where RetentionExpiresAt > now (not yet expired)
+      // and TierAtIngestion is 'hobby' or 'unknown' (not already pro)
+      const sql = `
+        ALTER TABLE ${datasource}
+        UPDATE
+          RetentionExpiresAt = RetentionExpiresAt + ${extensionNanos},
+          TierAtIngestion = 'pro_upgraded'
+        WHERE ApiKey IN (${apiKeysInClause})
+          AND RetentionExpiresAt > ${nowNanos}
+          AND TierAtIngestion IN ('hobby', 'unknown')
+      `;
+
+      const response = await fetch(`${tinybirdApiUrl}/v0/sql`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'text/plain',
+        },
+        body: sql,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        results[datasource] = {
+          success: false,
+          error: `${response.status}: ${errorText}`,
+        };
+        console.error(`Failed to extend retention for ${datasource}:`, errorText);
+      } else {
+        results[datasource] = { success: true };
+      }
+    }
+
+    return { updated: true, results };
   },
 });

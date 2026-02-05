@@ -5,6 +5,11 @@ export const TIER_CONFIG = {
   pro: { monthlyUnits: 100_000, price: 20, overagePer100k: 8 },
 } as const;
 
+export const RETENTION_DAYS = {
+  hobby: 7,
+  pro: 30,
+} as const;
+
 export interface SubscriptionKVData {
   tier: SubscriptionTier;
   monthlyUnits: number;
@@ -176,6 +181,10 @@ export interface QueueMessage {
   receivedAt: number;
   inputMessages?: InputMessage[];
   toolExecutions?: ToolExecution[];
+  /** Subscription tier at time of ingestion for retention policy */
+  tier?: SubscriptionTier;
+  /** Organization ID for tier lookup */
+  orgId?: string;
 }
 
 export interface TinybirdTrace {
@@ -201,6 +210,10 @@ export interface TinybirdTrace {
   'Links.SpanId': string[];
   'Links.TraceState': string[];
   'Links.Attributes': string[];
+  /** Subscription tier at time of ingestion (hobby, pro, unknown) */
+  TierAtIngestion?: string;
+  /** Nanosecond timestamp when this trace should be deleted */
+  RetentionExpiresAt?: number;
 }
 
 /**

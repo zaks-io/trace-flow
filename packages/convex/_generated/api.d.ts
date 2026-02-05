@@ -223,6 +223,12 @@ export declare const internal: {
       { id: Id<"apiKeys"> },
       any
     >;
+    listByOrgId: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
     listByUserId: FunctionReference<
       "query",
       "internal",
@@ -618,6 +624,12 @@ export declare const internal: {
     >;
   };
   tinybird: {
+    extendRetention: FunctionReference<
+      "action",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
     generateTokenInternal: FunctionReference<
       "action",
       "internal",

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { storeRequestResponse } from '../storage';
 
 describe('storeRequestResponse', () => {
-  it('should store both request and response bodies', async () => {
+  it('should store both request and response bodies with tier prefix', async () => {
     const mockStorage = {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
@@ -11,23 +11,23 @@ describe('storeRequestResponse', () => {
     const requestBody = 'request body content';
     const responseBody = 'response body content';
 
-    await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
+    await storeRequestResponse(mockStorage, requestId, requestBody, responseBody, 'pro');
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledTimes(2);
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledWith(
-      'requests/test-request-id',
+      'requests/pro/test-request-id',
       'request body content',
     );
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledWith(
-      'responses/test-request-id',
+      'responses/pro/test-request-id',
       'response body content',
     );
   });
 
-  it('should return correct keys', async () => {
+  it('should default to hobby tier when tier not provided', async () => {
     const mockStorage = {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
@@ -39,8 +39,32 @@ describe('storeRequestResponse', () => {
     const result = await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
 
     expect(result).toEqual({
-      requestBodyKey: 'requests/my-request-123',
-      responseBodyKey: 'responses/my-request-123',
+      requestBodyKey: 'requests/hobby/my-request-123',
+      responseBodyKey: 'responses/hobby/my-request-123',
+      stored: true,
+    });
+  });
+
+  it('should return correct keys with tier prefix', async () => {
+    const mockStorage = {
+      put: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+
+    const requestId = 'my-request-123';
+    const requestBody = 'test request';
+    const responseBody = 'test response';
+
+    const result = await storeRequestResponse(
+      mockStorage,
+      requestId,
+      requestBody,
+      responseBody,
+      'pro',
+    );
+
+    expect(result).toEqual({
+      requestBodyKey: 'requests/pro/my-request-123',
+      responseBodyKey: 'responses/pro/my-request-123',
       stored: true,
     });
   });
@@ -59,7 +83,7 @@ describe('storeRequestResponse', () => {
     const responseBody = 'response';
 
     const startTime = Date.now();
-    await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
+    await storeRequestResponse(mockStorage, requestId, requestBody, responseBody, 'hobby');
     const endTime = Date.now();
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -76,15 +100,21 @@ describe('storeRequestResponse', () => {
     const requestBody = '';
     const responseBody = '';
 
-    const result = await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
+    const result = await storeRequestResponse(
+      mockStorage,
+      requestId,
+      requestBody,
+      responseBody,
+      'hobby',
+    );
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('requests/empty-test', '');
+    expect(mockStorage.put).toHaveBeenCalledWith('requests/hobby/empty-test', '');
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('responses/empty-test', '');
+    expect(mockStorage.put).toHaveBeenCalledWith('responses/hobby/empty-test', '');
     expect(result).toEqual({
-      requestBodyKey: 'requests/empty-test',
-      responseBodyKey: 'responses/empty-test',
+      requestBodyKey: 'requests/hobby/empty-test',
+      responseBodyKey: 'responses/hobby/empty-test',
       stored: true,
     });
   });
@@ -98,12 +128,12 @@ describe('storeRequestResponse', () => {
     const largeRequestBody = 'a'.repeat(100000);
     const largeResponseBody = 'b'.repeat(200000);
 
-    await storeRequestResponse(mockStorage, requestId, largeRequestBody, largeResponseBody);
+    await storeRequestResponse(mockStorage, requestId, largeRequestBody, largeResponseBody, 'pro');
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('requests/large-test', largeRequestBody);
+    expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/large-test', largeRequestBody);
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('responses/large-test', largeResponseBody);
+    expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/large-test', largeResponseBody);
   });
 
   it('should handle storage errors gracefully', async () => {
@@ -115,11 +145,17 @@ describe('storeRequestResponse', () => {
     const requestBody = 'request';
     const responseBody = 'response';
 
-    const result = await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
+    const result = await storeRequestResponse(
+      mockStorage,
+      requestId,
+      requestBody,
+      responseBody,
+      'hobby',
+    );
 
     expect(result).toEqual({
-      requestBodyKey: 'requests/error-test',
-      responseBodyKey: 'responses/error-test',
+      requestBodyKey: 'requests/hobby/error-test',
+      responseBodyKey: 'responses/hobby/error-test',
       stored: false,
     });
   });

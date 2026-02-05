@@ -27,9 +27,11 @@ SCHEMA >
     `Links.Attributes` Array(String),
     `OperationName` LowCardinality(String),
     `Provider` LowCardinality(String),
-    `Model` LowCardinality(String)
+    `Model` LowCardinality(String),
+    `TierAtIngestion` LowCardinality(String),
+    `RetentionExpiresAt` Int64
 
 ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "ReceivedAt, ApiKey, OperationName, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
-ENGINE_TTL "toDateTime(ReceivedAt / 1000000000) + INTERVAL 90 DAY"
+ENGINE_TTL "toDateTime(if(RetentionExpiresAt > 0, RetentionExpiresAt, ReceivedAt + 90 * 86400 * 1000000000) / 1000000000)"

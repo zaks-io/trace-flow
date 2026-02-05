@@ -1,4 +1,4 @@
-import type { SubscriptionKVData } from '@trace-flow/types';
+import type { SubscriptionKVData, SubscriptionTier } from '@trace-flow/types';
 
 interface UsageEnv {
   API_KEYS: KVNamespace;
@@ -6,8 +6,8 @@ interface UsageEnv {
 }
 
 export type UsageCheckResult =
-  | { status: 'allowed' }
-  | { status: 'exceeded' }
+  | { status: 'allowed'; tier: SubscriptionTier }
+  | { status: 'exceeded'; tier: SubscriptionTier }
   | { status: 'no_subscription' };
 
 export async function checkUsage(
@@ -28,5 +28,7 @@ export async function checkUsage(
     }),
   );
   const result: { allowed: boolean } = await doResponse.json();
-  return result.allowed ? { status: 'allowed' } : { status: 'exceeded' };
+  return result.allowed
+    ? { status: 'allowed', tier: subscriptionConfig.tier }
+    : { status: 'exceeded', tier: subscriptionConfig.tier };
 }

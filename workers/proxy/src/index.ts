@@ -291,6 +291,9 @@ app.all('*', async (c) => {
           }
         }
 
+        // Extract tier from usage check result (available when status is 'allowed' or 'exceeded')
+        const tier = usageCheck.status !== 'no_subscription' ? usageCheck.tier : undefined;
+
         let requestBodyKey: string | undefined;
         let responseBodyKey: string | undefined;
         let stored = false;
@@ -301,6 +304,7 @@ app.all('*', async (c) => {
             requestId,
             requestBody,
             responseBody,
+            tier,
           );
           requestBodyKey = result.requestBodyKey;
           responseBodyKey = result.responseBodyKey;
@@ -336,6 +340,8 @@ app.all('*', async (c) => {
           responseMetadata,
           receivedAt: requestStart * 1_000_000,
           inputMessages,
+          tier,
+          orgId: keyData.orgId,
         });
 
         await c.env.REQUEST_QUEUE.send(queueMessage);
