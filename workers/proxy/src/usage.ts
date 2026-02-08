@@ -16,7 +16,9 @@ export async function checkUsage(
   count: number,
 ): Promise<UsageCheckResult> {
   const subConfigRaw = await env.API_KEYS.get(`sub:${orgId}`);
-  if (!subConfigRaw) return { status: 'no_subscription' };
+  if (!subConfigRaw) {
+    throw new Error(`No subscription config found in KV for org: ${orgId}`);
+  }
 
   const subscriptionConfig = JSON.parse(subConfigRaw) as SubscriptionKVData;
   const doId = env.USAGE_TRACKER.idFromName(orgId);
@@ -24,7 +26,7 @@ export async function checkUsage(
   const doResponse = await stub.fetch(
     new Request('http://do/check', {
       method: 'POST',
-      body: JSON.stringify({ count, subscriptionConfig }),
+      body: JSON.stringify({ count, subscriptionConfig, orgId }),
     }),
   );
   const result: { allowed: boolean } = await doResponse.json();

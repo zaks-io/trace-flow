@@ -61,8 +61,11 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
   const cacheCreationTokens = tokens.cacheCreationTokens ?? 0;
   const reasoningTokens = tokens.reasoningTokens ?? 0;
 
-  // Cache tokens are counted separately from prompt tokens in some providers
-  // We use the specific cache pricing if available, otherwise fall back to prompt pricing
+  // For Anthropic (and some other providers), input_tokens includes cache_read_input_tokens.
+  // We subtract cached tokens to avoid double-charging: once at full input rate, once at cache rate.
+  // Use Math.max to handle edge cases where data might be inconsistent.
+  const nonCachedPromptTokens = Math.max(0, promptTokens - cacheReadTokens);
+
   const cacheReadCostPerMillion = pricing.cacheReadCostPerMillion ?? pricing.promptCostPerMillion;
   const cacheWriteCostPerMillion = pricing.cacheWriteCostPerMillion ?? pricing.promptCostPerMillion;
   const reasoningCostPerMillion =
@@ -71,7 +74,7 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
   // Calculate costs in microdollars
   // Formula: (tokens * pricePerMillion) / 1_000_000
   const inputCostMicrodollars = Math.round(
-    (promptTokens * pricing.promptCostPerMillion) / 1_000_000,
+    (nonCachedPromptTokens * pricing.promptCostPerMillion) / 1_000_000,
   );
   const outputCostMicrodollars = Math.round(
     (completionTokens * pricing.completionCostPerMillion) / 1_000_000,

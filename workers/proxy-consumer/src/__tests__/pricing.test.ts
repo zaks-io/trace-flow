@@ -120,8 +120,9 @@ describe('pricing', () => {
         reasoningCostPerMillion: 15000000, // $15 per million
       };
 
+      // promptTokens includes cacheReadTokens (3000 total = 1000 non-cached + 2000 cached)
       const tokens: LLMTokenUsage = {
-        promptTokens: 1000,
+        promptTokens: 3000,
         completionTokens: 500,
         cacheReadTokens: 2000,
         cacheCreationTokens: 100,
@@ -130,7 +131,8 @@ describe('pricing', () => {
 
       const result = calculateCost(tokens, pricing);
 
-      expect(result.inputCostMicrodollars).toBe(3000); // 1000 * 3M / 1M
+      // Non-cached input: (3000 - 2000) * 3M / 1M = 3000
+      expect(result.inputCostMicrodollars).toBe(3000);
       expect(result.outputCostMicrodollars).toBe(7500); // 500 * 15M / 1M
       expect(result.cacheReadCostMicrodollars).toBe(600); // 2000 * 300K / 1M
       expect(result.cacheWriteCostMicrodollars).toBe(375); // 100 * 3.75M / 1M
@@ -227,6 +229,81 @@ describe('pricing', () => {
       const result = calculateCost(tokens, pricing);
 
       expect(Number.isInteger(result.inputCostMicrodollars)).toBe(true);
+    });
+
+    it('should not double-count cached input tokens', () => {
+      // Anthropic-style: input_tokens includes cache_read_input_tokens
+      const tokens: LLMTokenUsage = {
+        promptTokens: 1000, // Total input (includes cached)
+        completionTokens: 500,
+        cacheReadTokens: 800, // 800 of the 1000 are cached
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000, // $3/M
+        completionCostPerMillion: 15_000_000, // $15/M
+        cacheReadCostPerMillion: 300_000, // $0.30/M
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // Non-cached input: 200 tokens @ $3/M = 600 microdollars
+      expect(cost.inputCostMicrodollars).toBe(600);
+      // Cache read: 800 tokens @ $0.30/M = 240 microdollars
+      expect(cost.cacheReadCostMicrodollars).toBe(240);
+      // Output: 500 tokens @ $15/M = 7500 microdollars
+      expect(cost.outputCostMicrodollars).toBe(7500);
+      // Total: 600 + 240 + 7500 = 8340 microdollars
+      expect(cost.totalCostMicrodollars).toBe(8340);
+    });
+
+    it('should handle when cacheReadTokens exceeds promptTokens (edge case)', () => {
+      // Defensive: if data is inconsistent, don't go negative
+      const tokens: LLMTokenUsage = {
+        promptTokens: 500,
+        cacheReadTokens: 800, // More than prompt (shouldn't happen, but be safe)
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheReadCostPerMillion: 300_000,
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // Math.max(0, 500 - 800) = 0
+      expect(cost.inputCostMicrodollars).toBe(0);
+      // Cache read still charged: 800 * 0.3M / 1M = 240
+      expect(cost.cacheReadCostMicrodollars).toBe(240);
+    });
+
+    it('should correctly calculate cost with no cached tokens', () => {
+      const tokens: LLMTokenUsage = {
+        promptTokens: 1000,
+        completionTokens: 500,
+        // No cacheReadTokens
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheReadCostPerMillion: 300_000,
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // Full prompt charged: 1000 * 3M / 1M = 3000
+      expect(cost.inputCostMicrodollars).toBe(3000);
+      expect(cost.cacheReadCostMicrodollars).toBe(0);
+      expect(cost.outputCostMicrodollars).toBe(7500);
+      expect(cost.totalCostMicrodollars).toBe(10500);
     });
   });
 

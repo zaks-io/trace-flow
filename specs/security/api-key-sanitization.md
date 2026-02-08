@@ -1,0 +1,121 @@
+# API Key Sanitization for Tinybird Queries
+
+## Problem
+
+API keys are passed as parameters to Tinybird queries via JWT tokens. The keys are joined into a comma-separated string in `convex/tinybird.ts` and passed to Tinybird's `fixed_params.api_keys`. If a malicious API key value contains SQL metacharacters, it could potentially inject SQL into Tinybird queries.
+
+## Current Flow
+
+1. User creates API keys stored in Convex `apiKeys` table
+2. `convex/tinybird.ts` fetches keys and joins them: `apiKeys.map(k => k.key).join(',')`
+3. JWT token includes `fixed_params: { api_keys: 'key1,key2,key3' }`
+4. Tinybird pipes use: `WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})`
+
+## Risk Assessment
+
+- **Injection point**: The `api_keys` string flows directly into ClickHouse SQL
+- **Attack vector**: User-controlled API key values during key creation
+- **Severity**: High - could allow data exfiltration or query manipulation
+
+## Implementation
+
+### 1. API Key Validation at Creation
+
+**File**: `convex/apiKeys.ts`
+
+Add validation when creating/updating API keys:
+
+```typescript
+const API_KEY_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const MAX_KEY_LENGTH = 64;
+
+function validateApiKey(key: string): void {
+  if (!key || key.length > MAX_KEY_LENGTH) {
+    throw new Error('API key must be 1-64 characters');
+  }
+  if (!API_KEY_PATTERN.test(key)) {
+    throw new Error('API key may only contain alphanumeric characters, underscores, and hyphens');
+  }
+}
+```
+
+### 2. Sanitization at Token Generation
+
+**File**: `convex/tinybird.ts`
+
+Add sanitization before building the JWT:
+
+```typescript
+function sanitizeApiKey(key: string): string {
+  // Remove any characters that could be SQL injection vectors
+  return key.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
+  const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
+  return apiKeys
+    .map((k: { key: string }) => sanitizeApiKey(k.key))
+    .filter(Boolean)
+    .join(',');
+}
+```
+
+### 3. Parameterized Queries in Tinybird
+
+Audit all Tinybird pipes to ensure they use parameterized queries properly:
+
+**Files to audit**:
+
+- `pipes/traces_summary.pipe`
+- `pipes/traces_list.pipe`
+- `pipes/trace_detail.pipe`
+- `pipes/llm_usage_*.pipe`
+
+Current pattern (safe when combined with sanitization):
+
+```sql
+WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+```
+
+## Testing
+
+### Unit Tests
+
+**File**: `convex/__tests__/apiKeys.test.ts`
+
+```typescript
+describe('API Key Validation', () => {
+  it('rejects keys with SQL metacharacters', () => {
+    expect(() => validateApiKey("key'; DROP TABLE--")).toThrow();
+  });
+
+  it('rejects keys with commas', () => {
+    expect(() => validateApiKey('key1,key2')).toThrow();
+  });
+
+  it('accepts valid alphanumeric keys', () => {
+    expect(() => validateApiKey('my_api-key_123')).not.toThrow();
+  });
+});
+```
+
+### Integration Tests
+
+- Attempt to create API key with injection payload, verify rejection
+- Verify existing keys are sanitized when generating tokens
+- Verify Tinybird queries work correctly with sanitized keys
+
+## Migration
+
+1. Audit existing API keys in database for invalid characters
+2. If invalid keys exist, decide: sanitize in place or notify users
+3. Run validation script to report any problematic keys before enforcing
+
+## Acceptance Criteria
+
+- [ ] API key creation validates against allowed character set
+- [ ] Token generation sanitizes all keys before inclusion
+- [ ] All Tinybird pipes audited and documented
+- [ ] Unit tests for validation and sanitization
+- [ ] Integration tests for end-to-end flow
+- [ ] Migration plan for existing data
