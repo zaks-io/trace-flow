@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
@@ -95,6 +95,20 @@ export function TraceDetailContent({
   const [isMergedView, setIsMergedView] = useState(true);
   const [copiedRequest, setCopiedRequest] = useState(false);
   const [copiedResponse, setCopiedResponse] = useState(false);
+  const copiedRequestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copiedResponseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (copiedRequestTimeoutRef.current) {
+        clearTimeout(copiedRequestTimeoutRef.current);
+      }
+      if (copiedResponseTimeoutRef.current) {
+        clearTimeout(copiedResponseTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Find the specific span by requestId if provided, or fall back to first proxy span
   const rootSpan = spans.find((s) => {
@@ -271,13 +285,23 @@ export function TraceDetailContent({
   };
 
   const handleCopy = async (content: string, type: 'request' | 'response') => {
-    await navigator.clipboard.writeText(content);
-    if (type === 'request') {
-      setCopiedRequest(true);
-      setTimeout(() => setCopiedRequest(false), 2000);
-    } else {
-      setCopiedResponse(true);
-      setTimeout(() => setCopiedResponse(false), 2000);
+    try {
+      await navigator.clipboard.writeText(content);
+      if (type === 'request') {
+        if (copiedRequestTimeoutRef.current) {
+          clearTimeout(copiedRequestTimeoutRef.current);
+        }
+        setCopiedRequest(true);
+        copiedRequestTimeoutRef.current = setTimeout(() => setCopiedRequest(false), 2000);
+      } else {
+        if (copiedResponseTimeoutRef.current) {
+          clearTimeout(copiedResponseTimeoutRef.current);
+        }
+        setCopiedResponse(true);
+        copiedResponseTimeoutRef.current = setTimeout(() => setCopiedResponse(false), 2000);
+      }
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
     }
   };
 
