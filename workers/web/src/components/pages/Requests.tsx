@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
@@ -9,7 +8,7 @@ import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { usePageHeader } from '@/components/PageHeaderContext';
-import { TraceDetailPanel } from '@/components/TraceDetailPanel';
+import { RequestDetailSidePanel } from '@/components/RequestDetailSidePanel';
 import {
   DataTable,
   allColumns,
@@ -23,25 +22,25 @@ interface TinybirdResponse {
   data: RequestRow[];
 }
 
-interface RequestsProps {
-  traceId?: string;
-  spanId?: string;
+function getRequestId(row: RequestRow): string | undefined {
+  try {
+    const attrs =
+      typeof row.SpanAttributes === 'string' ? JSON.parse(row.SpanAttributes) : row.SpanAttributes;
+    return attrs['gen_ai.request_id'];
+  } catch {
+    return undefined;
+  }
 }
 
-export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }: RequestsProps) {
+export default function Requests() {
   usePageHeader('Requests');
-  const router = useRouter();
-  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
-  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
-  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
-  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<RequestRow | null>(null);
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
   const [mergedRequests, setMergedRequests] = useState<RequestRow[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
 
-  const isClosingRef = useRef(false);
   const lastProcessedDataRef = useRef<RequestRow[] | null>(null);
   const prevFiltersRef = useRef(JSON.stringify({}));
 
@@ -50,14 +49,13 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const alerts = useQuery(api.alerts.listEnabled);
 
-  // Compute pipe params - include after_received_at only after initial load in live mode
   const pipeParams = useMemo(() => {
     const params: Record<string, string | number | undefined> = { limit: 100 };
     if (filters.provider) params.provider = filters.provider;
     if (filters.model) params.model = filters.model;
     if (filters.status) params.status = filters.status;
     if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
-      params.search = filters.search; // Raw value, Pipe handles wildcards
+      params.search = filters.search;
     }
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
@@ -79,7 +77,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
       setInitialLoadComplete(false);
       setLatestReceivedAt(null);
       setMergedRequests([]);
-      lastProcessedDataRef.current = data?.data ?? null; // Mark current data as seen
+      lastProcessedDataRef.current = data?.data ?? null;
     }
   }, [filters]);
 
@@ -87,7 +85,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
   useEffect(() => {
     if (!initialLoadComplete && data?.data && data.data.length > 0) {
       if (lastProcessedDataRef.current === data.data) {
-        return; // Skip stale data
+        return;
       }
       setMergedRequests(data.data);
       setLatestReceivedAt(data.data[0].ReceivedAt);
@@ -105,7 +103,6 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
     lastProcessedDataRef.current = data.data;
 
     setMergedRequests((prev) => {
-      // Deduplicate by TraceId-SpanId-ReceivedAt for proper uniqueness
       const seen = new Set(data.data.map((r) => `${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
       const uniquePrev = prev.filter((r) => !seen.has(`${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
       const merged = [...data.data, ...uniquePrev].slice(0, 100);
@@ -132,89 +129,24 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
   );
   const isLoading = loading && !initialLoadComplete;
 
-  const handleRowClick = useCallback(
-    (row: RequestRow, event: React.MouseEvent) => {
-      // Extract requestId from SpanAttributes
-      let requestId: string | undefined;
-      try {
-        const attrs = JSON.parse(row.SpanAttributes) as Record<string, string>;
-        requestId = attrs['gen_ai.request_id'];
-      } catch {
-        // Ignore parse errors
-      }
-
-      if (event.metaKey || event.ctrlKey) {
-        window.open(`/app/trace/${row.TraceId}`, '_blank');
-      } else {
-        isClosingRef.current = false;
-        setSelectedTraceId(row.TraceId);
-        setSelectedSpanId(row.SpanId);
-        setSelectedRequestId(requestId ?? null);
-        setIsPanelOpen(true);
-        router.replace(`/app/requests/${row.TraceId}/${row.SpanId}`);
-      }
-    },
-    [router],
-  );
+  const handleRowClick = useCallback((row: RequestRow, event: React.MouseEvent) => {
+    if (event.metaKey || event.ctrlKey) {
+      window.open(`/app/trace/${row.TraceId}`, '_blank');
+    } else {
+      setSelectedRequest(row);
+    }
+  }, []);
 
   const handleClosePanel = useCallback(() => {
-    isClosingRef.current = true;
-    setIsPanelOpen(false);
-    router.replace('/app/requests');
-    setTimeout(() => {
-      setSelectedTraceId(null);
-      setSelectedSpanId(null);
-      setSelectedRequestId(null);
-      setTimeout(() => {
-        isClosingRef.current = false;
-      }, 100);
-    }, 300);
-  }, [router]);
+    setSelectedRequest(null);
+  }, []);
 
-  useEffect(() => {
-    if (isClosingRef.current) {
-      return;
-    }
+  const getRowId = useCallback((row: RequestRow) => getRequestId(row) ?? row.TraceId, []);
 
-    if (traceIdParam && spanIdParam) {
-      // Both parameters present - use exact match
-      if (traceIdParam !== selectedTraceId || spanIdParam !== selectedSpanId) {
-        isClosingRef.current = false;
-        setSelectedTraceId(traceIdParam);
-        setSelectedSpanId(spanIdParam);
-        setIsPanelOpen(true);
-      }
-    } else if (traceIdParam && !spanIdParam) {
-      // Backwards compatibility: if only traceId in URL, still open panel
-      if (traceIdParam !== selectedTraceId) {
-        isClosingRef.current = false;
-        setSelectedTraceId(traceIdParam);
-        setSelectedSpanId(null);
-        setIsPanelOpen(true);
-      }
-    } else if (selectedTraceId && isPanelOpen) {
-      setIsPanelOpen(false);
-      setTimeout(() => {
-        setSelectedTraceId(null);
-        setSelectedSpanId(null);
-      }, 300);
-    }
-  }, [traceIdParam, spanIdParam, selectedTraceId, selectedSpanId, isPanelOpen]);
-
-  useEffect(() => {
-    if (!isPanelOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        handleClosePanel();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isPanelOpen, handleClosePanel]);
+  const selectedRequestId = useMemo(() => {
+    if (!selectedRequest) return null;
+    return getRequestId(selectedRequest) ?? null;
+  }, [selectedRequest]);
 
   const alertSummary = useMemo(() => {
     if (!alerts || alerts.length === 0 || requests.length === 0) {
@@ -222,27 +154,6 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
     }
     return evaluateAlertsForTraces(requests, alerts);
   }, [requests, alerts]);
-
-  const getRowId = useCallback(
-    (row: RequestRow) => `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}`,
-    [],
-  );
-
-  const selectedRowId = useMemo(() => {
-    if (!selectedTraceId) return null;
-
-    // If we have both IDs, use exact match
-    if (selectedSpanId) {
-      const row = requests.find(
-        (r) => r.TraceId === selectedTraceId && r.SpanId === selectedSpanId,
-      );
-      return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
-    }
-
-    // Fallback for backwards compatibility (traceId only)
-    const row = requests.find((r) => r.TraceId === selectedTraceId);
-    return row ? `${row.TraceId}-${row.SpanId}-${row.ReceivedAt}` : null;
-  }, [selectedTraceId, selectedSpanId, requests]);
 
   if (isLoading && requests.length === 0) {
     return (
@@ -274,7 +185,7 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
         columnVisibility={visibility}
         onColumnVisibilityChange={setVisibility}
         onRowClick={handleRowClick}
-        selectedRowId={selectedRowId}
+        selectedRowId={selectedRequestId}
         getRowId={getRowId}
         isLiveMode={isLiveMode}
         onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
@@ -291,14 +202,11 @@ export default function Requests({ traceId: traceIdParam, spanId: spanIdParam }:
         loading={isLoading}
       />
 
-      {selectedTraceId && (
-        <TraceDetailPanel
-          traceId={selectedTraceId}
-          requestId={selectedRequestId ?? undefined}
-          isOpen={isPanelOpen}
-          onClose={handleClosePanel}
-        />
-      )}
+      <RequestDetailSidePanel
+        request={selectedRequest}
+        isOpen={!!selectedRequest}
+        onClose={handleClosePanel}
+      />
     </div>
   );
 }
