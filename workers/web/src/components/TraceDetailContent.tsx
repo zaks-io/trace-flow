@@ -4,7 +4,18 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
-import { ChevronDown, Globe, Clock, Hash, Server, Link2, FileJson, GitBranch } from 'lucide-react';
+import {
+  ChevronDown,
+  Globe,
+  Clock,
+  Hash,
+  Server,
+  Link2,
+  FileJson,
+  GitBranch,
+  Copy,
+  Check,
+} from 'lucide-react';
 import {
   formatBodyForDisplay,
   mergeSSEEvents,
@@ -82,6 +93,8 @@ export function TraceDetailContent({
   const [isEventsOpen, setIsEventsOpen] = useState(false);
   const [isMoreAttributesOpen, setIsMoreAttributesOpen] = useState(false);
   const [isMergedView, setIsMergedView] = useState(true);
+  const [copiedRequest, setCopiedRequest] = useState(false);
+  const [copiedResponse, setCopiedResponse] = useState(false);
 
   // Find the specific span by requestId if provided, or fall back to first proxy span
   const rootSpan = spans.find((s) => {
@@ -255,6 +268,17 @@ export function TraceDetailContent({
     return spans
       .filter((span) => span.ParentSpanId === parentId)
       .sort((a, b) => a.Timestamp - b.Timestamp);
+  };
+
+  const handleCopy = async (content: string, type: 'request' | 'response') => {
+    await navigator.clipboard.writeText(content);
+    if (type === 'request') {
+      setCopiedRequest(true);
+      setTimeout(() => setCopiedRequest(false), 2000);
+    } else {
+      setCopiedResponse(true);
+      setTimeout(() => setCopiedResponse(false), 2000);
+    }
   };
 
   const renderBodyContent = (formattedBody: FormattedBody | null, isResponse = false) => {
@@ -490,12 +514,30 @@ export function TraceDetailContent({
               </span>
             )}
           </CollapsibleTrigger>
-          {responseBody?.format === 'sse' && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">Merge</span>
-              <Switch checked={isMergedView} onCheckedChange={setIsMergedView} />
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {responseBody?.format === 'sse' && (
+              <>
+                <span className="text-xs text-muted-foreground">Merge</span>
+                <Switch checked={isMergedView} onCheckedChange={setIsMergedView} />
+              </>
+            )}
+            {responseBody && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleCopy(responseBody.raw, 'response');
+                }}
+                className="rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                title="Copy to clipboard"
+              >
+                {copiedResponse ? (
+                  <Check className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
         <CollapsibleContent>
           <div className="mt-3">
@@ -516,12 +558,30 @@ export function TraceDetailContent({
 
       {/* Request Body - Collapsible */}
       <Collapsible open={isRequestOpen} onOpenChange={setIsRequestOpen}>
-        <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
-          <ChevronDown
-            className={`h-4 w-4 text-muted-foreground transition-transform ${isRequestOpen ? 'rotate-0' : '-rotate-90'}`}
-          />
-          <span className="text-sm font-medium text-foreground">Request</span>
-        </CollapsibleTrigger>
+        <div className="flex items-center justify-between">
+          <CollapsibleTrigger className="flex items-center gap-2 text-left transition-colors hover:opacity-70">
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform ${isRequestOpen ? 'rotate-0' : '-rotate-90'}`}
+            />
+            <span className="text-sm font-medium text-foreground">Request</span>
+          </CollapsibleTrigger>
+          {requestBody && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleCopy(requestBody.raw, 'request');
+              }}
+              className="rounded p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+              title="Copy to clipboard"
+            >
+              {copiedRequest ? (
+                <Check className="h-4 w-4 text-green-500" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+            </button>
+          )}
+        </div>
         <CollapsibleContent>
           <div className="mt-3">
             {requestBodyError ? (
