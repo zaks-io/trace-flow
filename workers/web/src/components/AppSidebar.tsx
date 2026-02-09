@@ -12,7 +12,10 @@ import {
   User,
   Zap,
   BookOpen,
+  UserPlus,
 } from 'lucide-react';
+import { useQuery } from 'convex/react';
+import { api } from '@convex/_generated/api';
 import {
   Sidebar,
   SidebarContent,
@@ -37,6 +40,12 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const isUserAdmin = useQuery(api.users.isAdmin);
+
+  const allNavItems = [
+    ...navItems,
+    ...(isUserAdmin ? [{ title: 'Invites', href: '/app/admin/invites', icon: UserPlus }] : []),
+  ];
 
   const isActive = (href: string) => {
     if (href === '/app') {
@@ -67,7 +76,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
-              {navItems.map((item, index) => (
+              {allNavItems.map((item, index) => (
                 <SidebarMenuItem
                   key={item.href}
                   className="animate-fade-in"
