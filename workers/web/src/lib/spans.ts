@@ -1,6 +1,6 @@
-/**
- * Shared span utilities for working with trace spans.
- */
+import { parseSpanAttributes } from '@trace-flow/utils';
+
+export { parseSpanAttributes };
 
 export interface TraceSpan {
   Timestamp: number;
@@ -17,20 +17,6 @@ export interface TraceSpan {
   'Events.Timestamp'?: number[];
   'Events.Name'?: string[];
   'Events.Attributes'?: string[];
-}
-
-/**
- * Safely parses span attributes JSON string into a record.
- * Handles both string (from database) and object (from Tinybird API) formats.
- */
-export function parseSpanAttributes(attributesJson: string): Record<string, string> {
-  try {
-    return typeof attributesJson === 'string'
-      ? (JSON.parse(attributesJson) as Record<string, string>)
-      : (attributesJson as unknown as Record<string, string>);
-  } catch {
-    return {};
-  }
 }
 
 /**

@@ -1,6 +1,7 @@
 'use client';
 
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
+import { parseSpanAttributes } from '@trace-flow/utils';
 import { cn } from '@/lib/utils';
 import { GitBranch } from 'lucide-react';
 
@@ -18,15 +19,7 @@ export interface SpanRow {
 }
 
 function getSpanAttribute(row: SpanRow, key: string): string | undefined {
-  try {
-    const attrs =
-      typeof row.SpanAttributes === 'string'
-        ? (JSON.parse(row.SpanAttributes) as Record<string, string>)
-        : (row.SpanAttributes as unknown as Record<string, string>);
-    return attrs[key];
-  } catch {
-    return undefined;
-  }
+  return parseSpanAttributes(row.SpanAttributes)[key];
 }
 
 function formatTimestamp(nanoseconds: number) {

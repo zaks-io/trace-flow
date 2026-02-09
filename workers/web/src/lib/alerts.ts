@@ -1,3 +1,4 @@
+import { parseSpanAttributes } from '@trace-flow/utils';
 import type { RequestRow } from '@/components/requests-table/columns';
 import type {
   Alert,
@@ -32,14 +33,6 @@ export function traceSpanToRequestRow(span: TraceSpanInput): RequestRow {
     StatusCode: span.StatusCode,
     SpanAttributes: span.SpanAttributes,
   };
-}
-
-function parseSpanAttributes(attributesJson: string): Record<string, string> {
-  try {
-    return JSON.parse(attributesJson) as Record<string, string>;
-  } catch {
-    return {};
-  }
 }
 
 function extractMetricValue(row: RequestRow, field: AlertField): number | string | boolean | null {

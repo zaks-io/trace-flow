@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { parseSpanAttributes } from '@trace-flow/utils';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
@@ -23,13 +24,7 @@ interface TinybirdResponse {
 }
 
 function getRequestId(row: RequestRow): string | undefined {
-  try {
-    const attrs =
-      typeof row.SpanAttributes === 'string' ? JSON.parse(row.SpanAttributes) : row.SpanAttributes;
-    return attrs['gen_ai.request_id'];
-  } catch {
-    return undefined;
-  }
+  return parseSpanAttributes(row.SpanAttributes)['gen_ai.request_id'];
 }
 
 export default function Requests() {

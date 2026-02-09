@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
+import { parseSpanAttributes } from '@trace-flow/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Sheet,
@@ -122,16 +123,10 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
 
   const alerts = useQuery(api.alerts.listEnabled);
 
-  const parsedAttributes = useMemo(() => {
-    if (!request?.SpanAttributes) return {};
-    try {
-      return typeof request.SpanAttributes === 'string'
-        ? (JSON.parse(request.SpanAttributes) as Record<string, string>)
-        : (request.SpanAttributes as unknown as Record<string, string>);
-    } catch {
-      return {};
-    }
-  }, [request?.SpanAttributes]);
+  const parsedAttributes = useMemo(
+    () => (request?.SpanAttributes ? parseSpanAttributes(request.SpanAttributes) : {}),
+    [request?.SpanAttributes],
+  );
 
   const requestId = parsedAttributes['gen_ai.request_id'];
   const provider = parsedAttributes['gen_ai.system'] ?? '';
