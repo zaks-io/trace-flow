@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { parseSpanAttributes } from '@trace-flow/utils';
 import { Cpu, MessageSquare, Hash, Zap, Clock, Activity, DollarSign, Target } from 'lucide-react';
 import {
   calculateCacheHitRate,
@@ -29,14 +30,6 @@ interface TokenSummary {
   totalCost: number;
 }
 
-function parseAttributes(attributesJson: string): Record<string, string> {
-  try {
-    return JSON.parse(attributesJson) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
 function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   let promptTokens = 0;
   let completionTokens = 0;
@@ -49,7 +42,7 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   let maxEndTimestamp = 0;
 
   for (const span of spans) {
-    const attrs = parseAttributes(span.SpanAttributes);
+    const attrs = parseSpanAttributes(span.SpanAttributes);
 
     const prompt = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
     const completion = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);

@@ -19,6 +19,7 @@ import {
 import {
   formatBodyForDisplay,
   mergeSSEEvents,
+  parseSpanAttributes,
   type FormattedBody,
   type ParsedSSEEvent,
 } from '@trace-flow/utils';
@@ -112,34 +113,15 @@ export function TraceDetailContent({
 
   // Find the specific span by requestId if provided, or fall back to first proxy span
   const rootSpan = spans.find((s) => {
-    try {
-      const attrs =
-        typeof s.SpanAttributes === 'string'
-          ? (JSON.parse(s.SpanAttributes) as Record<string, string>)
-          : (s.SpanAttributes as unknown as Record<string, string>);
-
-      // If requestId provided, match by it
-      if (requestIdProp) {
-        return attrs['gen_ai.request_id'] === requestIdProp;
-      }
-      // Otherwise use old logic - find first proxy span
-      return attrs['trace_flow.source'] === 'proxy';
-    } catch {
-      return false;
+    const attrs = parseSpanAttributes(s.SpanAttributes);
+    if (requestIdProp) {
+      return attrs['gen_ai.request_id'] === requestIdProp;
     }
+    return attrs['trace_flow.source'] === 'proxy';
   });
 
   // Extract requestId from root span attributes - bodies are stored by requestId not traceId
-  const rootSpanAttributes = (() => {
-    if (!rootSpan?.SpanAttributes) return {};
-    try {
-      return typeof rootSpan.SpanAttributes === 'string'
-        ? (JSON.parse(rootSpan.SpanAttributes) as Record<string, string>)
-        : (rootSpan.SpanAttributes as unknown as Record<string, string>);
-    } catch {
-      return {};
-    }
-  })();
+  const rootSpanAttributes = rootSpan ? parseSpanAttributes(rootSpan.SpanAttributes) : {};
   // Use prop requestId if provided, else extract from found span
   const requestId = requestIdProp ?? rootSpanAttributes['gen_ai.request_id'];
 
@@ -268,16 +250,6 @@ export function TraceDetailContent({
     return `${milliseconds.toFixed(2)}ms`;
   };
 
-  const parseAttributes = (attributesJson: string): Record<string, string> => {
-    try {
-      return typeof attributesJson === 'string'
-        ? (JSON.parse(attributesJson) as Record<string, string>)
-        : (attributesJson as unknown as Record<string, string>);
-    } catch {
-      return {};
-    }
-  };
-
   const buildSpanTree = (spans: TraceSpan[], parentId = ''): TraceSpan[] => {
     return spans
       .filter((span) => span.ParentSpanId === parentId)
@@ -400,8 +372,8 @@ export function TraceDetailContent({
     ));
   };
 
-  const spanAttributes = rootSpan ? parseAttributes(rootSpan.SpanAttributes) : {};
-  const resourceAttributes = rootSpan ? parseAttributes(rootSpan.ResourceAttributes) : {};
+  const spanAttributes = rootSpan ? parseSpanAttributes(rootSpan.SpanAttributes) : {};
+  const resourceAttributes = rootSpan ? parseSpanAttributes(rootSpan.ResourceAttributes) : {};
   const allAttributes = { ...spanAttributes, ...resourceAttributes };
 
   // Extract key attributes for the card display
@@ -670,7 +642,7 @@ export function TraceDetailContent({
                   {rootSpan['Events.Attributes'][index] && (
                     <pre className="mt-1 overflow-x-auto font-mono text-xs text-muted-foreground">
                       {JSON.stringify(
-                        parseAttributes(rootSpan['Events.Attributes'][index]),
+                        parseSpanAttributes(rootSpan['Events.Attributes'][index]),
                         null,
                         2,
                       )}

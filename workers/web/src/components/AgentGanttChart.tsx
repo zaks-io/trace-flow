@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
+import { parseSpanAttributes } from '@trace-flow/utils';
 import {
   Bot,
   Activity,
@@ -90,16 +91,8 @@ interface SpanRow {
   baggage: Record<string, string>;
 }
 
-function parseAttributes(attributesJson: string): Record<string, string> {
-  try {
-    return JSON.parse(attributesJson) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
 function getSpanType(span: TraceSpan): SpanType {
-  const attrs = parseAttributes(span.SpanAttributes);
+  const attrs = parseSpanAttributes(span.SpanAttributes);
 
   // Synthetic grouping spans
   if (attrs.synthetic === 'true') return 'synthetic';
@@ -137,7 +130,7 @@ function getSpanType(span: TraceSpan): SpanType {
 }
 
 function getSpanTokens(span: TraceSpan): number | null {
-  const attrs = parseAttributes(span.SpanAttributes);
+  const attrs = parseSpanAttributes(span.SpanAttributes);
   const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
   const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
   const total = input + output;
@@ -146,7 +139,7 @@ function getSpanTokens(span: TraceSpan): number | null {
 }
 
 function getSpanTokensPerSecond(span: TraceSpan): number | null {
-  const attrs = parseAttributes(span.SpanAttributes);
+  const attrs = parseSpanAttributes(span.SpanAttributes);
 
   // Use pre-calculated TPS if available
   if (attrs['gen_ai.tokens_per_second']) {
@@ -161,13 +154,13 @@ function getSpanTokensPerSecond(span: TraceSpan): number | null {
 }
 
 function getSpanCost(span: TraceSpan): number | null {
-  const attrs = parseAttributes(span.SpanAttributes);
+  const attrs = parseSpanAttributes(span.SpanAttributes);
   const cost = attrs['gen_ai.cost.total'];
   return cost ? parseFloat(cost) : null;
 }
 
 function getBaggageAttributes(span: TraceSpan): Record<string, string> {
-  const attrs = parseAttributes(span.SpanAttributes);
+  const attrs = parseSpanAttributes(span.SpanAttributes);
   const baggage: Record<string, string> = {};
   for (const [key, value] of Object.entries(attrs)) {
     if (key.startsWith('baggage.')) {
@@ -183,7 +176,7 @@ function getBaggageAttributes(span: TraceSpan): Record<string, string> {
 }
 
 function getMessageIndex(span: TraceSpan): number | null {
-  const attrs = parseAttributes(span.SpanAttributes);
+  const attrs = parseSpanAttributes(span.SpanAttributes);
   const index = attrs['gen_ai.message.index'];
   return index !== undefined ? parseInt(index, 10) : null;
 }
@@ -439,7 +432,7 @@ export function AgentGanttChart({
           const latestEnd = Math.max(...childSpans.map((s) => s.Timestamp + s.Duration));
 
           // Get operation from first child's gen_ai.operation.name or baggage for labeling
-          const firstChildAttrs = parseAttributes(childSpans[0].SpanAttributes);
+          const firstChildAttrs = parseSpanAttributes(childSpans[0].SpanAttributes);
           const operation =
             firstChildAttrs['gen_ai.operation.name'] ??
             firstChildAttrs['baggage.operation'] ??
