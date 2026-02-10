@@ -12,6 +12,7 @@ import {
   User,
   Zap,
   BookOpen,
+  DollarSign,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -28,6 +29,7 @@ import {
 
 const navItems = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
+  { title: 'Usage', href: '/app/usage', icon: DollarSign },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
   { title: 'API Keys', href: '/app/api-keys', icon: Key },
