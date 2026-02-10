@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Activity, Zap, Hash, ChevronDown, Cpu, Server, DollarSign } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { usePageHeader } from '@/components/PageHeaderContext';
+import { formatNumber, formatCurrency } from '@/lib/format';
 
 type TimeRange = '24h' | '7d' | '30d';
 
@@ -105,23 +106,6 @@ function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) 
       </div>
     </div>
   );
-}
-
-function formatNumber(num: number): string {
-  if (num >= 1_000_000) {
-    return `${(num / 1_000_000).toFixed(1)}M`;
-  }
-  if (num >= 1_000) {
-    return `${(num / 1_000).toFixed(1)}K`;
-  }
-  return new Intl.NumberFormat().format(num);
-}
-
-function formatCurrency(value: number | null): string {
-  if (value === null || isNaN(value)) return '-';
-  if (value < 0.01) return `$${value.toFixed(4)}`;
-  if (value < 1) return `$${value.toFixed(3)}`;
-  return `$${value.toFixed(2)}`;
 }
 
 function formatBucketLabel(value: string): string {

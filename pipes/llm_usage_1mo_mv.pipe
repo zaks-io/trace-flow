@@ -22,7 +22,10 @@ SQL >
         sumState(toUInt64(CacheReadCostMicrodollars)) AS CacheReadCostMicrodollars,
         sumState(toUInt64(CacheCreationCostMicrodollars)) AS CacheCreationCostMicrodollars,
         sumState(toUInt64(ReasoningCostMicrodollars)) AS ReasoningCostMicrodollars,
-        sumState(toUInt64(TotalCostMicrodollars)) AS TotalCostMicrodollars
+        sumState(toUInt64(TotalCostMicrodollars)) AS TotalCostMicrodollars,
+        avgState(DurationNano) AS AvgDurationNano,
+        maxState(DurationNano) AS MaxDurationNano,
+        quantileState(0.95)(DurationNano) AS P95DurationNano
     FROM llm_requests
     GROUP BY
         BucketStart,

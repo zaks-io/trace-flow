@@ -1,6 +1,6 @@
 DESCRIPTION >
-    Time series of LLM usage and cost metrics for a time range.
-    Uses hourly, daily, or monthly rollups based on range length.
+    Operations breakdown by cost and usage, filtered by API keys and time range.
+    Groups by BaggageOperation (user-defined operation label).
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE endpoint
@@ -14,7 +14,7 @@ SQL >
         toDateTime(end_ns / 1000000000) AS end_dt,
         dateDiff('day', start_dt, end_dt) AS range_days
     SELECT
-        bucket_start,
+        operation,
         countMerge(RequestCount) AS request_count,
         sumMerge(InputTokens) AS input_tokens,
         sumMerge(OutputTokens) AS output_tokens,
@@ -27,6 +27,7 @@ SQL >
         sumMerge(CacheReadCostMicrodollars) / 1000000 AS cache_read_cost_usd,
         sumMerge(CacheCreationCostMicrodollars) / 1000000 AS cache_creation_cost_usd,
         sumMerge(ReasoningCostMicrodollars) / 1000000 AS reasoning_cost_usd,
+        sumMerge(TotalCostMicrodollars) / nullIf(sumMerge(OutputTokens), 0) * 1000 / 1000000 AS cost_per_1k_output_tokens,
         sumMerge(InputTokens) + sumMerge(OutputTokens) AS total_tokens,
         greatest(sumMerge(InputTokens) - sumMerge(CacheReadInputTokens), 0) AS new_input_tokens,
         avgMerge(AvgDurationNano) / 1000000 AS avg_duration_ms,
@@ -34,7 +35,7 @@ SQL >
         quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
     FROM (
         SELECT
-            BucketStart AS bucket_start,
+            BaggageOperation AS operation,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -55,6 +56,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BaggageOperation != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
             {% end %}
@@ -64,15 +66,12 @@ SQL >
             {% if defined(operation_name) %}
             AND OperationName = {{ String(operation_name) }}
             {% end %}
-            {% if defined(baggage_operation) %}
-            AND BaggageOperation = {{ String(baggage_operation) }}
-            {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
         UNION ALL
         SELECT
-            BucketStart AS bucket_start,
+            BaggageOperation AS operation,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -94,6 +93,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BaggageOperation != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
             {% end %}
@@ -103,15 +103,12 @@ SQL >
             {% if defined(operation_name) %}
             AND OperationName = {{ String(operation_name) }}
             {% end %}
-            {% if defined(baggage_operation) %}
-            AND BaggageOperation = {{ String(baggage_operation) }}
-            {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
         UNION ALL
         SELECT
-            BucketStart AS bucket_start,
+            BaggageOperation AS operation,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -132,6 +129,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BaggageOperation != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
             {% end %}
@@ -141,14 +139,12 @@ SQL >
             {% if defined(operation_name) %}
             AND OperationName = {{ String(operation_name) }}
             {% end %}
-            {% if defined(baggage_operation) %}
-            AND BaggageOperation = {{ String(baggage_operation) }}
-            {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
     )
-    GROUP BY bucket_start
-    ORDER BY bucket_start ASC
+    GROUP BY operation
+    ORDER BY total_cost_usd DESC
+    LIMIT 20
 
 TYPE ENDPOINT

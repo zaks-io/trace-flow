@@ -20,8 +20,16 @@ SQL >
         sumMerge(CacheCreationInputTokens) AS cache_creation_input_tokens,
         sumMerge(ReasoningTokens) AS reasoning_tokens,
         sumMerge(TotalCostMicrodollars) / 1000000 AS total_cost_usd,
+        sumMerge(InputCostMicrodollars) / 1000000 AS input_cost_usd,
+        sumMerge(OutputCostMicrodollars) / 1000000 AS output_cost_usd,
+        sumMerge(CacheReadCostMicrodollars) / 1000000 AS cache_read_cost_usd,
+        sumMerge(CacheCreationCostMicrodollars) / 1000000 AS cache_creation_cost_usd,
+        sumMerge(ReasoningCostMicrodollars) / 1000000 AS reasoning_cost_usd,
         sumMerge(InputTokens) + sumMerge(OutputTokens) AS total_tokens,
-        greatest(sumMerge(InputTokens) - sumMerge(CacheReadInputTokens), 0) AS new_input_tokens
+        greatest(sumMerge(InputTokens) - sumMerge(CacheReadInputTokens), 0) AS new_input_tokens,
+        avgMerge(AvgDurationNano) / 1000000 AS avg_duration_ms,
+        maxMerge(MaxDurationNano) / 1000000 AS max_duration_ms,
+        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
     FROM (
         SELECT
             RequestCount,
@@ -30,7 +38,15 @@ SQL >
             CacheReadInputTokens,
             CacheCreationInputTokens,
             ReasoningTokens,
-            TotalCostMicrodollars
+            TotalCostMicrodollars,
+            InputCostMicrodollars,
+            OutputCostMicrodollars,
+            CacheReadCostMicrodollars,
+            CacheCreationCostMicrodollars,
+            ReasoningCostMicrodollars,
+            AvgDurationNano,
+            MaxDurationNano,
+            P95DurationNano
         FROM llm_usage_1h
         WHERE range_days <= 30
             AND BucketStart >= start_dt
@@ -59,7 +75,15 @@ SQL >
             CacheReadInputTokens,
             CacheCreationInputTokens,
             ReasoningTokens,
-            TotalCostMicrodollars
+            TotalCostMicrodollars,
+            InputCostMicrodollars,
+            OutputCostMicrodollars,
+            CacheReadCostMicrodollars,
+            CacheCreationCostMicrodollars,
+            ReasoningCostMicrodollars,
+            AvgDurationNano,
+            MaxDurationNano,
+            P95DurationNano
         FROM llm_usage_1d
         WHERE range_days > 30
             AND range_days <= 180
@@ -89,7 +113,15 @@ SQL >
             CacheReadInputTokens,
             CacheCreationInputTokens,
             ReasoningTokens,
-            TotalCostMicrodollars
+            TotalCostMicrodollars,
+            InputCostMicrodollars,
+            OutputCostMicrodollars,
+            CacheReadCostMicrodollars,
+            CacheCreationCostMicrodollars,
+            ReasoningCostMicrodollars,
+            AvgDurationNano,
+            MaxDurationNano,
+            P95DurationNano
         FROM llm_usage_1mo
         WHERE range_days > 180
             AND BucketStart >= start_dt
