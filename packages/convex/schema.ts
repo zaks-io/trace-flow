@@ -9,6 +9,8 @@ export default defineSchema({
     picture: v.optional(v.string()),
     enabled: v.boolean(),
     orgId: v.optional(v.id('organizations')),
+    inviteId: v.optional(v.id('invites')),
+    isAdmin: v.optional(v.boolean()),
   }).index('by_token_identifier', ['tokenIdentifier']),
 
   organizations: defineTable({
@@ -103,4 +105,26 @@ export default defineSchema({
     expiresAt: v.number(),
     used: v.boolean(),
   }).index('by_code', ['code']),
+
+  invites: defineTable({
+    email: v.string(),
+    invitedBy: v.id('users'),
+    status: v.union(v.literal('pending'), v.literal('accepted'), v.literal('expired')),
+    token: v.string(),
+    acceptedAt: v.optional(v.number()),
+    expiresAt: v.number(),
+  })
+    .index('by_email', ['email'])
+    .index('by_token', ['token'])
+    .index('by_status', ['status']),
+
+  waitlist: defineTable({
+    email: v.string(),
+    source: v.optional(v.string()),
+    confirmed: v.boolean(),
+    confirmationToken: v.string(),
+    notifiedAt: v.optional(v.number()),
+  })
+    .index('by_email', ['email'])
+    .index('by_confirmation_token', ['confirmationToken']),
 });

@@ -6,7 +6,7 @@ void initOpenNextCloudflareForDev();
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   reactCompiler: true,
-  transpilePackages: ['@trace-flow/utils'],
+  transpilePackages: ['@trace-flow/utils', '@trace-flow/emails'],
 };
 
 export default nextConfig;
