@@ -88,6 +88,36 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  invites: {
+    document: {
+      acceptedAt?: number;
+      email: string;
+      expiresAt: number;
+      invitedBy: Id<"users">;
+      status: "pending" | "accepted" | "expired";
+      token: string;
+      _id: Id<"invites">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "acceptedAt"
+      | "email"
+      | "expiresAt"
+      | "invitedBy"
+      | "status"
+      | "token";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_email: ["email", "_creationTime"];
+      by_status: ["status", "_creationTime"];
+      by_token: ["token", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   mcpAuthCodes: {
     document: {
       auth0RefreshToken: string;
@@ -301,6 +331,8 @@ export type DataModel = {
     document: {
       email: string;
       enabled: boolean;
+      inviteId?: Id<"invites">;
+      isAdmin?: boolean;
       name?: string;
       orgId?: Id<"organizations">;
       picture?: string;
@@ -313,6 +345,8 @@ export type DataModel = {
       | "_id"
       | "email"
       | "enabled"
+      | "inviteId"
+      | "isAdmin"
       | "name"
       | "orgId"
       | "picture"
@@ -321,6 +355,33 @@ export type DataModel = {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
       by_token_identifier: ["tokenIdentifier", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  waitlist: {
+    document: {
+      confirmationToken: string;
+      confirmed: boolean;
+      email: string;
+      notifiedAt?: number;
+      source?: string;
+      _id: Id<"waitlist">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "confirmationToken"
+      | "confirmed"
+      | "email"
+      | "notifiedAt"
+      | "source";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_confirmation_token: ["confirmationToken", "_creationTime"];
+      by_email: ["email", "_creationTime"];
     };
     searchIndexes: {};
     vectorIndexes: {};

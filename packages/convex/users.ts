@@ -28,7 +28,10 @@ async function ensureOrg(ctx: MutationCtx, userId: Id<'users'>, name?: string) {
     ownerId: userId,
   });
   await ctx.db.patch(userId, { orgId });
+  return orgId;
+}
 
+async function createHobbySubscription(ctx: MutationCtx, orgId: Id<'organizations'>) {
   const hobbyConfig = TIER_CONFIG.hobby;
   await ctx.db.insert('subscriptions', {
     orgId,
@@ -36,15 +39,12 @@ async function ensureOrg(ctx: MutationCtx, userId: Id<'users'>, name?: string) {
     monthlyUnits: hobbyConfig.monthlyUnits,
     addonUnits: 0,
   });
-
   await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
     orgId,
     tier: 'hobby',
     monthlyUnits: hobbyConfig.monthlyUnits,
     addonUnits: 0,
   });
-
-  return orgId;
 }
 
 export async function getCurrentUser(ctx: AuthContext): Promise<Doc<'users'> | null> {
@@ -71,6 +71,14 @@ export async function requireEnabledUser(ctx: AuthContext): Promise<Doc<'users'>
   }
   if (!user.enabled) {
     throw new Error('User account is not enabled. Please contact support.');
+  }
+  return user;
+}
+
+export async function requireAdmin(ctx: AuthContext): Promise<Doc<'users'>> {
+  const user = await requireEnabledUser(ctx);
+  if (!user.isAdmin) {
+    throw new Error('Admin access required');
   }
   return user;
 }
@@ -106,15 +114,51 @@ export const initializeUser = mutation({
       if (!existingUser.orgId) {
         await ensureOrg(ctx, existingUser._id, existingUser.name);
       }
+      // Enable user if they have an accepted invite and aren't enabled yet
+      if (!existingUser.enabled && !existingUser.inviteId) {
+        const acceptedInvite = await ctx.db
+          .query('invites')
+          .withIndex('by_email', (q) => q.eq('email', userInfo.email))
+          .filter((q) => q.eq(q.field('status'), 'accepted'))
+          .first();
+
+        if (acceptedInvite) {
+          await ctx.db.patch(existingUser._id, {
+            enabled: true,
+            inviteId: acceptedInvite._id,
+          });
+          if (existingUser.orgId) {
+            const existingSub = await ctx.db
+              .query('subscriptions')
+              .withIndex('by_org_id', (q) => q.eq('orgId', existingUser.orgId!))
+              .first();
+            if (!existingSub) {
+              await createHobbySubscription(ctx, existingUser.orgId);
+            }
+          }
+        }
+      }
       return { userId: existingUser._id };
     }
 
+    // Check for accepted invite for new users
+    const acceptedInvite = await ctx.db
+      .query('invites')
+      .withIndex('by_email', (q) => q.eq('email', userInfo.email))
+      .filter((q) => q.eq(q.field('status'), 'accepted'))
+      .first();
+
     const userId = await ctx.db.insert('users', {
       ...userInfo,
-      enabled: false,
+      enabled: !!acceptedInvite,
+      inviteId: acceptedInvite?._id,
     });
 
-    await ensureOrg(ctx, userId, userInfo.name);
+    const orgId = await ensureOrg(ctx, userId, userInfo.name);
+
+    if (acceptedInvite) {
+      await createHobbySubscription(ctx, orgId);
+    }
 
     return { userId };
   },
@@ -183,5 +227,13 @@ export const getUserById = internalQuery({
   args: { id: v.id('users') },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+export const isAdmin = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx);
+    return user?.isAdmin === true;
   },
 });
