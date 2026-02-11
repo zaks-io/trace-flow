@@ -46,7 +46,7 @@ export const providerChartConfig = {
   total_cost_usd: { label: 'Cost', color: '#8b5cf6' },
 } satisfies ChartConfig;
 
-export interface CostBreakdownRow {
+interface CostBreakdownRow {
   input_cost_usd: number;
   output_cost_usd: number;
   cache_read_cost_usd: number;
@@ -54,7 +54,7 @@ export interface CostBreakdownRow {
   reasoning_cost_usd: number;
 }
 
-export interface LatencyRow {
+interface LatencyRow {
   avg_duration_ms: number;
   max_duration_ms: number;
   p95_duration_ms: number;

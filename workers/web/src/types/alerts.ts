@@ -49,9 +49,3 @@ export const ALERT_OPERATOR_LABELS: Record<AlertOperator, string> = {
   eq: '=',
   neq: '!=',
 };
-
-export const ALERT_SEVERITY_ORDER: Record<AlertSeverity, number> = {
-  info: 0,
-  warning: 1,
-  error: 2,
-};

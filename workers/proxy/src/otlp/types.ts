@@ -23,7 +23,7 @@ export interface OTLPResource {
   droppedAttributesCount?: number;
 }
 
-export interface OTLPInstrumentationScope {
+interface OTLPInstrumentationScope {
   name?: string;
   version?: string;
   attributes?: OTLPKeyValue[];
@@ -70,7 +70,7 @@ export interface OTLPSpan {
   status?: OTLPStatus;
 }
 
-export interface OTLPScopeSpans {
+interface OTLPScopeSpans {
   scope?: OTLPInstrumentationScope;
   spans: OTLPSpan[];
   schemaUrl?: string;
