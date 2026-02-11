@@ -1,8 +1,15 @@
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { FlowingTraces } from '@/components/landing/FlowingTraces';
 import { WaitlistForm } from '@/components/landing/WaitlistForm';
+import { getSession } from '@/lib/auth0';
 
-export default function HomePage() {
+export default async function HomePage() {
+  const session = await getSession();
+  if (session) {
+    redirect('/app');
+  }
+
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background">
       {/* Grid background */}
