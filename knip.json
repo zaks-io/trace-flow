@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "ignore": ["datasources/**", "pipes/**"],
+  "workspaces": {
+    "packages/convex": {
+      "entry": ["**/*.ts"],
+      "project": ["**/*.ts"],
+      "ignore": ["_generated/**"]
+    },
+    "packages/sdk-tests": {
+      "entry": ["src/**/*.ts"]
+    },
+    "workers/web": {
+      "entry": ["src/worker-entry.ts", "open-next.config.ts"]
+    }
+  }
+}

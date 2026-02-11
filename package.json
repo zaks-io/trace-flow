@@ -20,6 +20,7 @@
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
     "test:coverage": "turbo run test:coverage",
+    "knip": "knip",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -31,6 +32,7 @@
     "eslint-plugin-react-hooks": "^5.1.0",
     "globals": "^16.4.0",
     "husky": "^9.1.7",
+    "knip": "^5.83.1",
     "lint-staged": "^16.2.4",
     "prettier": "^3.6.2",
     "turbo": "^2.5.8",
