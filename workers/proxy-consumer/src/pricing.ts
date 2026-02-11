@@ -10,7 +10,7 @@ export interface ModelPricing {
   source: 'manual' | 'openrouter' | 'default';
 }
 
-export interface CostBreakdown {
+interface CostBreakdown {
   inputCostMicrodollars: number;
   outputCostMicrodollars: number;
   cacheReadCostMicrodollars: number;

@@ -1,4 +1,3 @@
-export { spanColumns, defaultSpanColumnVisibility, type SpanRow } from './columns';
 export {
   spanGroupColumns,
   defaultSpanGroupColumnVisibility,

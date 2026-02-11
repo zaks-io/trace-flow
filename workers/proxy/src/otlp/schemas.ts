@@ -11,7 +11,7 @@ import { z } from '@hono/zod-openapi';
  * Nested arrays/kvlists use z.unknown() to avoid circular references
  * that OpenAPI generators cannot handle.
  */
-export const OTLPAnyValueSchema = z
+const OTLPAnyValueSchema = z
   .object({
     stringValue: z.string().optional(),
     boolValue: z.boolean().optional(),
@@ -31,21 +31,21 @@ export const OTLPAnyValueSchema = z
   })
   .openapi('OTLPAnyValue');
 
-export const OTLPKeyValueSchema = z
+const OTLPKeyValueSchema = z
   .object({
     key: z.string(),
     value: OTLPAnyValueSchema,
   })
   .openapi('OTLPKeyValue');
 
-export const OTLPResourceSchema = z
+const OTLPResourceSchema = z
   .object({
     attributes: z.array(OTLPKeyValueSchema).optional(),
     droppedAttributesCount: z.number().int().optional(),
   })
   .openapi('OTLPResource');
 
-export const OTLPInstrumentationScopeSchema = z
+const OTLPInstrumentationScopeSchema = z
   .object({
     name: z.string().optional(),
     version: z.string().optional(),
@@ -54,7 +54,7 @@ export const OTLPInstrumentationScopeSchema = z
   })
   .openapi('OTLPInstrumentationScope');
 
-export const OTLPSpanEventSchema = z
+const OTLPSpanEventSchema = z
   .object({
     timeUnixNano: z.string().optional(),
     name: z.string(),
@@ -63,7 +63,7 @@ export const OTLPSpanEventSchema = z
   })
   .openapi('OTLPSpanEvent');
 
-export const OTLPSpanLinkSchema = z
+const OTLPSpanLinkSchema = z
   .object({
     traceId: z.string(),
     spanId: z.string(),
@@ -74,7 +74,7 @@ export const OTLPSpanLinkSchema = z
   })
   .openapi('OTLPSpanLink');
 
-export const OTLPStatusSchema = z
+const OTLPStatusSchema = z
   .object({
     message: z.string().optional(),
     code: z
@@ -87,7 +87,7 @@ export const OTLPStatusSchema = z
   })
   .openapi('OTLPStatus');
 
-export const OTLPSpanSchema = z
+const OTLPSpanSchema = z
   .object({
     traceId: z.string().openapi({ description: '32-character hex trace ID' }),
     spanId: z.string().openapi({ description: '16-character hex span ID' }),
@@ -114,7 +114,7 @@ export const OTLPSpanSchema = z
   })
   .openapi('OTLPSpan');
 
-export const OTLPScopeSpansSchema = z
+const OTLPScopeSpansSchema = z
   .object({
     scope: OTLPInstrumentationScopeSchema.optional(),
     spans: z.array(OTLPSpanSchema),
@@ -122,7 +122,7 @@ export const OTLPScopeSpansSchema = z
   })
   .openapi('OTLPScopeSpans');
 
-export const OTLPResourceSpansSchema = z
+const OTLPResourceSpansSchema = z
   .object({
     resource: OTLPResourceSchema.optional(),
     scopeSpans: z.array(OTLPScopeSpansSchema),
@@ -138,7 +138,7 @@ export const OTLPExportTraceServiceRequestSchema = z
   })
   .openapi('OTLPExportTraceServiceRequest');
 
-export const OTLPPartialSuccessSchema = z
+const OTLPPartialSuccessSchema = z
   .object({
     rejectedSpans: z.number().int().optional(),
     errorMessage: z.string().optional(),

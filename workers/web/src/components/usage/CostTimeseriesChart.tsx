@@ -11,7 +11,7 @@ import {
 } from './types';
 import type { TimeseriesRow, TimeseriesMetric } from './types';
 
-export function formatTickDate(value: string): string {
+function formatTickDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
