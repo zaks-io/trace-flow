@@ -18,8 +18,10 @@ import {
   type ProviderRow,
   type OperationRow,
   type ApiKeyRow,
+  type CostForecastRow,
 } from './types';
 import { SummaryCard } from './SummaryCard';
+import { ProjectedCostCard } from './ProjectedCostCard';
 import { CostTimeseriesChart } from './CostTimeseriesChart';
 import { CostBreakdownChart } from './CostBreakdownChart';
 import { OperationTable } from './OperationTable';
@@ -60,6 +62,15 @@ export default function Usage() {
     return p;
   }, [startTimeNs, endTimeNs, providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
+  const forecastParams = useMemo(() => {
+    const p: Record<string, string> = {};
+    if (providerFilter) p.provider = providerFilter;
+    if (modelFilter) p.model = modelFilter;
+    if (operationFilter) p.baggage_operation = operationFilter;
+    if (apiKeyFilter) p.api_key_filter = apiKeyFilter;
+    return p;
+  }, [providerFilter, modelFilter, operationFilter, apiKeyFilter]);
+
   const summaryQuery = useTinybirdPipe<TinybirdResponse<SummaryRow>>({
     pipe: 'llm_usage_summary',
     params: filterParams,
@@ -96,6 +107,12 @@ export default function Usage() {
     transform: (r) => r as TinybirdResponse<ApiKeyRow>,
   });
 
+  const forecastQuery = useTinybirdPipe<TinybirdResponse<CostForecastRow>>({
+    pipe: 'llm_cost_forecast',
+    params: forecastParams,
+    transform: (r) => r as TinybirdResponse<CostForecastRow>,
+  });
+
   const isInitialRender = useRef(true);
   useEffect(() => {
     if (isInitialRender.current) {
@@ -108,6 +125,7 @@ export default function Usage() {
     void providersQuery.refetch();
     void operationsQuery.refetch();
     void apiKeysQuery.refetch();
+    void forecastQuery.refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange, providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
@@ -117,6 +135,7 @@ export default function Usage() {
   const providers = providersQuery.data?.data ?? [];
   const operations = operationsQuery.data?.data ?? [];
   const apiKeyRows = apiKeysQuery.data?.data ?? [];
+  const forecast = forecastQuery.data?.data?.[0] ?? null;
 
   const isLoading = [
     summaryQuery.loading,
@@ -125,6 +144,7 @@ export default function Usage() {
     providersQuery.loading,
     operationsQuery.loading,
     apiKeysQuery.loading,
+    forecastQuery.loading,
   ].some(Boolean);
 
   const hasError =
@@ -133,7 +153,8 @@ export default function Usage() {
     modelsQuery.error ??
     providersQuery.error ??
     operationsQuery.error ??
-    apiKeysQuery.error;
+    apiKeysQuery.error ??
+    forecastQuery.error;
 
   // Accumulate filter options so they persist across filter changes
   const seenProviders = useRef(new Set<string>());
@@ -232,7 +253,7 @@ export default function Usage() {
       ) : (
         <div className="space-y-8">
           {/* Summary Cards */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <SummaryCard
               icon={<Activity className="h-4 w-4" />}
               label="Requests"
@@ -245,6 +266,7 @@ export default function Usage() {
               value={summary ? formatCurrency(summary.total_cost_usd) : '-'}
               accent="blue"
             />
+            <ProjectedCostCard forecast={forecast} />
             <SummaryCard
               icon={<TrendingDown className="h-4 w-4" />}
               label="Cache Read Cost"

@@ -137,3 +137,19 @@ export type ModelSortKey =
   | 'cost_per_1k_output_tokens'
   | 'avg_duration_ms'
   | 'p95_duration_ms';
+
+export interface CostForecastRow {
+  projected_monthly_cost: number;
+  month_to_date_cost: number;
+  confidence_low: number;
+  confidence_high: number;
+  daily_average: number;
+  basis_days: number;
+  days_elapsed_in_month: number;
+  days_remaining_in_month: number;
+  trend: string;
+  trend_percent: number;
+  anomaly_count: number;
+  anomalies: [string, number, number, number][];
+  insufficient_data: number;
+}
