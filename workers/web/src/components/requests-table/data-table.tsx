@@ -56,6 +56,7 @@ interface DataTableProps<TData> {
   hasActiveFilters?: boolean;
   loading?: boolean;
   emptyMessage?: string;
+  apiKeyMap?: Map<string, string>;
 }
 
 export function DataTable<TData>({
@@ -80,6 +81,7 @@ export function DataTable<TData>({
   hasActiveFilters,
   loading,
   emptyMessage = 'No results found',
+  apiKeyMap,
 }: DataTableProps<TData>) {
   const filteredData = useMemo(() => {
     if (!alertSummary || alertFilter === 'all') {
@@ -161,6 +163,7 @@ export function DataTable<TData>({
         onAlertFilterChange={onAlertFilterChange}
         isLiveMode={isLiveMode}
         onLiveModeToggle={onLiveModeToggle}
+        apiKeyMap={apiKeyMap}
       />
 
       <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card relative">

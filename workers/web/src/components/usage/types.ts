@@ -112,6 +112,13 @@ export interface OperationRow extends CostBreakdownRow, LatencyRow {
   total_tokens: number;
 }
 
+export interface ApiKeyRow extends CostBreakdownRow, LatencyRow {
+  api_key: string;
+  request_count: number;
+  total_cost_usd: number;
+  total_tokens: number;
+}
+
 export interface TinybirdResponse<T> {
   data: T[];
 }

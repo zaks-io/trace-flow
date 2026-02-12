@@ -18,5 +18,8 @@ SQL >
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND TraceId IN splitByChar(',', {{ String(trace_ids, '') }})
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
 
 TYPE ENDPOINT

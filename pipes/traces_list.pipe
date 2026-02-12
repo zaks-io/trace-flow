@@ -34,6 +34,9 @@ SQL >
         {% if defined(search) %}
         AND TraceId = {{ String(search) }}
         {% end %}
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
         {% if defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}

@@ -8,6 +8,7 @@ import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { DataTable, type AlertFilterValue } from '@/components/requests-table';
 import {
@@ -49,6 +50,7 @@ export default function Traces() {
 
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
+  const apiKeyMap = useApiKeyMap();
 
   const pipeParams = useMemo(() => {
     const params: Record<string, string | number | undefined> = {
@@ -61,6 +63,7 @@ export default function Traces() {
     if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
       params.search = filters.search;
     }
+    if (filters.apiKey) params.api_key_filter = filters.apiKey;
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }
@@ -281,6 +284,7 @@ export default function Traces() {
         onClearFilters={clearFilters}
         hasActiveFilters={hasActiveFilters}
         emptyMessage="No traces found"
+        apiKeyMap={apiKeyMap}
       />
     </div>
   );
