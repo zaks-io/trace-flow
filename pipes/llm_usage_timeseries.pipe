@@ -70,6 +70,9 @@ SQL >
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
         UNION ALL
         SELECT
             BucketStart AS bucket_start,
@@ -109,6 +112,9 @@ SQL >
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
         UNION ALL
         SELECT
             BucketStart AS bucket_start,
@@ -146,6 +152,9 @@ SQL >
             {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
             {% end %}
     )
     GROUP BY bucket_start

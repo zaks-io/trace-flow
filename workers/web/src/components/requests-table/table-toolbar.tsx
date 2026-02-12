@@ -26,11 +26,20 @@ interface FilterDropdownProps {
   loading?: boolean;
   onChange: (value: string | null) => void;
   icon?: React.ReactNode;
+  labelMap?: Map<string, string>;
 }
 
-function FilterDropdown({ label, value, options, loading, onChange, icon }: FilterDropdownProps) {
+function FilterDropdown({
+  label,
+  value,
+  options,
+  loading,
+  onChange,
+  icon,
+  labelMap,
+}: FilterDropdownProps) {
   const hasValue = value !== null;
-  const displayValue = hasValue ? value : `${label}`;
+  const displayValue = hasValue ? (labelMap?.get(value) ?? value) : `${label}`;
 
   return (
     <DropdownMenu>
@@ -60,7 +69,7 @@ function FilterDropdown({ label, value, options, loading, onChange, icon }: Filt
             onClick={() => onChange(opt)}
             className={cn(value === opt && 'bg-muted')}
           >
-            {opt}
+            {labelMap?.get(opt) ?? opt}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -206,6 +215,7 @@ interface TableToolbarProps<TData> {
   onAlertFilterChange?: (filter: AlertFilterValue) => void;
   isLiveMode?: boolean;
   onLiveModeToggle?: () => void;
+  apiKeyMap?: Map<string, string>;
 }
 
 export function TableToolbar<TData>({
@@ -221,6 +231,7 @@ export function TableToolbar<TData>({
   onAlertFilterChange,
   isLiveMode,
   onLiveModeToggle,
+  apiKeyMap,
 }: TableToolbarProps<TData>) {
   const [searchValue, setSearchValue] = useState(filters?.search ?? '');
 
@@ -318,6 +329,14 @@ export function TableToolbar<TData>({
                 onChange={(value) => onFilterChange('operation', value)}
               />
             )}
+            <FilterDropdown
+              label="API Key"
+              value={filters.apiKey}
+              options={filterOptions.apiKeys}
+              loading={filterOptionsLoading}
+              onChange={(value) => onFilterChange('apiKey', value)}
+              labelMap={apiKeyMap}
+            />
           </>
         )}
         {showAlertFilter && (

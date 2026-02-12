@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer } from 'lucide-react';
+import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer, Key } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
+import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { formatNumber, formatCurrency, formatPercent, formatDuration } from '@/lib/format';
 import {
@@ -16,6 +17,7 @@ import {
   type ModelRow,
   type ProviderRow,
   type OperationRow,
+  type ApiKeyRow,
 } from './types';
 import { SummaryCard } from './SummaryCard';
 import { CostTimeseriesChart } from './CostTimeseriesChart';
@@ -23,6 +25,7 @@ import { CostBreakdownChart } from './CostBreakdownChart';
 import { OperationTable } from './OperationTable';
 import { ModelComparisonTable } from './ModelComparisonTable';
 import { ProviderBreakdownChart } from './ProviderBreakdownChart';
+import { ApiKeyBreakdownTable } from './ApiKeyBreakdownTable';
 import { FilterDropdown } from './FilterDropdown';
 
 export default function Usage() {
@@ -33,6 +36,9 @@ export default function Usage() {
   const [providerFilter, setProviderFilter] = useState('');
   const [modelFilter, setModelFilter] = useState('');
   const [operationFilter, setOperationFilter] = useState('');
+  const [apiKeyFilter, setApiKeyFilter] = useState('');
+
+  const apiKeyMap = useApiKeyMap();
 
   const startTimeNs = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
@@ -50,8 +56,9 @@ export default function Usage() {
     if (providerFilter) p.provider = providerFilter;
     if (modelFilter) p.model = modelFilter;
     if (operationFilter) p.baggage_operation = operationFilter;
+    if (apiKeyFilter) p.api_key_filter = apiKeyFilter;
     return p;
-  }, [startTimeNs, endTimeNs, providerFilter, modelFilter, operationFilter]);
+  }, [startTimeNs, endTimeNs, providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
   const summaryQuery = useTinybirdPipe<TinybirdResponse<SummaryRow>>({
     pipe: 'llm_usage_summary',
@@ -83,6 +90,12 @@ export default function Usage() {
     transform: (r) => r as TinybirdResponse<OperationRow>,
   });
 
+  const apiKeysQuery = useTinybirdPipe<TinybirdResponse<ApiKeyRow>>({
+    pipe: 'llm_usage_by_api_key',
+    params: filterParams,
+    transform: (r) => r as TinybirdResponse<ApiKeyRow>,
+  });
+
   const isInitialRender = useRef(true);
   useEffect(() => {
     if (isInitialRender.current) {
@@ -94,14 +107,16 @@ export default function Usage() {
     void modelsQuery.refetch();
     void providersQuery.refetch();
     void operationsQuery.refetch();
+    void apiKeysQuery.refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange, providerFilter, modelFilter, operationFilter]);
+  }, [timeRange, providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
   const summary = summaryQuery.data?.data?.[0];
   const timeseries = timeseriesQuery.data?.data ?? [];
   const models = modelsQuery.data?.data ?? [];
   const providers = providersQuery.data?.data ?? [];
   const operations = operationsQuery.data?.data ?? [];
+  const apiKeyRows = apiKeysQuery.data?.data ?? [];
 
   const isLoading = [
     summaryQuery.loading,
@@ -109,6 +124,7 @@ export default function Usage() {
     modelsQuery.loading,
     providersQuery.loading,
     operationsQuery.loading,
+    apiKeysQuery.loading,
   ].some(Boolean);
 
   const hasError =
@@ -116,28 +132,33 @@ export default function Usage() {
     timeseriesQuery.error ??
     modelsQuery.error ??
     providersQuery.error ??
-    operationsQuery.error;
+    operationsQuery.error ??
+    apiKeysQuery.error;
 
   // Accumulate filter options so they persist across filter changes
   const seenProviders = useRef(new Set<string>());
   const seenModels = useRef(new Set<string>());
   const seenOperations = useRef(new Set<string>());
+  const seenApiKeys = useRef(new Set<string>());
 
   const prevTimeRange = useRef(timeRange);
   if (prevTimeRange.current !== timeRange) {
     seenProviders.current.clear();
     seenModels.current.clear();
     seenOperations.current.clear();
+    seenApiKeys.current.clear();
     prevTimeRange.current = timeRange;
   }
 
   providers.forEach((p) => seenProviders.current.add(p.provider));
   models.forEach((m) => seenModels.current.add(m.model));
   operations.forEach((o) => seenOperations.current.add(o.operation));
+  apiKeyRows.forEach((k) => seenApiKeys.current.add(k.api_key));
 
   const providerOptions = Array.from(seenProviders.current).sort();
   const modelOptions = Array.from(seenModels.current).sort();
   const operationOptions = Array.from(seenOperations.current).sort();
+  const apiKeyOptions = Array.from(seenApiKeys.current).sort();
 
   const costPerRequest =
     summary && summary.request_count > 0 ? summary.total_cost_usd / summary.request_count : null;
@@ -186,6 +207,13 @@ export default function Usage() {
             value={operationFilter}
             options={operationOptions}
             onChange={setOperationFilter}
+          />
+          <FilterDropdown
+            label="API Key"
+            value={apiKeyFilter}
+            options={apiKeyOptions}
+            onChange={setApiKeyFilter}
+            labelMap={apiKeyMap}
           />
         </div>
       </div>
@@ -309,13 +337,23 @@ export default function Usage() {
             <ModelComparisonTable data={models} />
           </div>
 
-          {/* Provider Breakdown */}
-          <div className="rounded-xl border border-border bg-card p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Server className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-base font-medium text-foreground">Provider Breakdown</h2>
+          {/* Provider Breakdown + API Key Breakdown (side by side) */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <Server className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-base font-medium text-foreground">Provider Breakdown</h2>
+              </div>
+              <ProviderBreakdownChart data={providers} />
             </div>
-            <ProviderBreakdownChart data={providers} />
+
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <Key className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-base font-medium text-foreground">By API Key</h2>
+              </div>
+              <ApiKeyBreakdownTable data={apiKeyRows} apiKeyMap={apiKeyMap} />
+            </div>
           </div>
         </div>
       )}
