@@ -23,6 +23,9 @@ SQL >
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}
         {% end %}
+        {% if defined(operation) %}
+        AND BaggageOperation = {{ String(operation) }}
+        {% end %}
         {% if defined(search) %}
         AND TraceId = {{ String(search) }}
         {% end %}
@@ -53,12 +56,12 @@ SQL >
         max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) as MaxTTFT,
         sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total'))) as TotalCost
     FROM otel_traces
-    WHERE {% if defined(provider) or defined(model) or defined(status) or defined(search) %}
+    WHERE {% if defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) %}
         TraceId IN (SELECT TraceId FROM filter_traces)
         AND {% end %}
         JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        {% if not (defined(provider) or defined(model) or defined(status) or defined(search)) and defined(after_received_at) %}
+        {% if not (defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search)) and defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}
     GROUP BY TraceId

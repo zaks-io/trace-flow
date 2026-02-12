@@ -30,7 +30,8 @@ SQL >
         -- Extract GenAI attributes using OTel semantic conventions
         coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.operation.name'), ''), '') AS OperationName,
         coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.system'), ''), '') AS Provider,
-        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), ''), '') AS Model
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), ''), '') AS Model,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'baggage.operation'), ''), '') AS BaggageOperation
     FROM otel_traces
 
 TYPE materialized

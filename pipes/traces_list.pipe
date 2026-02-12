@@ -16,17 +16,20 @@ SQL >
         Duration,
         StatusCode,
         SpanAttributes
-    FROM otel_traces
+    FROM otel_traces_genai
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         {% if defined(provider) %}
-        AND JSONExtractString(SpanAttributes, 'gen_ai.system') = {{ String(provider) }}
+        AND Provider = {{ String(provider) }}
         {% end %}
         {% if defined(model) %}
-        AND JSONExtractString(SpanAttributes, 'gen_ai.request.model') = {{ String(model) }}
+        AND Model = {{ String(model) }}
         {% end %}
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}
+        {% end %}
+        {% if defined(operation) %}
+        AND BaggageOperation = {{ String(operation) }}
         {% end %}
         {% if defined(search) %}
         AND TraceId = {{ String(search) }}

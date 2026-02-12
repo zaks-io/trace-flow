@@ -309,6 +309,15 @@ export function TableToolbar<TData>({
               loading={filterOptionsLoading}
               onChange={(value) => onFilterChange('status', value)}
             />
+            {filterOptions.operations.length > 0 && (
+              <FilterDropdown
+                label="Operation"
+                value={filters.operation}
+                options={filterOptions.operations}
+                loading={filterOptionsLoading}
+                onChange={(value) => onFilterChange('operation', value)}
+              />
+            )}
           </>
         )}
         {showAlertFilter && (

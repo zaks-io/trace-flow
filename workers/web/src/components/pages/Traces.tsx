@@ -57,6 +57,7 @@ export default function Traces() {
     if (filters.provider) params.provider = filters.provider;
     if (filters.model) params.model = filters.model;
     if (filters.status) params.status = filters.status;
+    if (filters.operation) params.operation = filters.operation;
     if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
       params.search = filters.search;
     }

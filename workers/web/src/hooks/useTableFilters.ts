@@ -7,6 +7,7 @@ export interface TableFilters {
   provider: string | null;
   model: string | null;
   status: string | null;
+  operation: string | null;
   search: string | null;
 }
 
@@ -17,7 +18,7 @@ interface UseTableFiltersResult {
   hasActiveFilters: boolean;
 }
 
-const FILTER_KEYS: (keyof TableFilters)[] = ['provider', 'model', 'status', 'search'];
+const FILTER_KEYS: (keyof TableFilters)[] = ['provider', 'model', 'status', 'operation', 'search'];
 
 export function useTableFilters(): UseTableFiltersResult {
   const searchParams = useSearchParams();
@@ -29,6 +30,7 @@ export function useTableFilters(): UseTableFiltersResult {
       provider: searchParams.get('provider'),
       model: searchParams.get('model'),
       status: searchParams.get('status'),
+      operation: searchParams.get('operation'),
       search: searchParams.get('search'),
     };
   }, [searchParams]);
