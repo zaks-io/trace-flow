@@ -31,12 +31,23 @@ SQL >
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
     ORDER BY value
 
+NODE operations
+SQL >
+    %
+    SELECT DISTINCT BaggageOperation as value
+    FROM llm_requests
+    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND BaggageOperation != ''
+    ORDER BY value
+    LIMIT 100
+
 NODE endpoint
 SQL >
     %
     SELECT
         (SELECT groupArray(value) FROM providers) as providers,
         (SELECT groupArray(value) FROM models) as models,
-        (SELECT groupArray(value) FROM statuses) as statuses
+        (SELECT groupArray(value) FROM statuses) as statuses,
+        (SELECT groupArray(value) FROM operations) as operations
 
 TYPE ENDPOINT

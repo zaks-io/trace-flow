@@ -5,6 +5,7 @@ export interface FilterOptions {
   providers: string[];
   models: string[];
   statuses: string[];
+  operations: string[];
 }
 
 interface UseFilterOptionsResult {
@@ -15,7 +16,7 @@ interface UseFilterOptionsResult {
 }
 
 interface FilterOptionsResponse {
-  data: { providers: string[]; models: string[]; statuses: string[] }[];
+  data: { providers: string[]; models: string[]; statuses: string[]; operations: string[] }[];
 }
 
 /**
@@ -35,6 +36,7 @@ export function useFilterOptions(): UseFilterOptionsResult {
       providers: row?.providers ?? [],
       models: row?.models ?? [],
       statuses: row?.statuses ?? [],
+      operations: row?.operations ?? [],
     };
   }, [data]);
 

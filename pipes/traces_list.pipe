@@ -28,6 +28,14 @@ SQL >
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}
         {% end %}
+        {% if defined(operation) %}
+        AND TraceId IN (
+            SELECT DISTINCT TraceId
+            FROM llm_requests
+            WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+                AND BaggageOperation = {{ String(operation) }}
+        )
+        {% end %}
         {% if defined(search) %}
         AND TraceId = {{ String(search) }}
         {% end %}
