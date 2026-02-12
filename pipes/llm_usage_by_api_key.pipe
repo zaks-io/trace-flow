@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Summary of LLM usage and cost for a time range.
+    API key breakdown by cost and usage, filtered by API keys and time range.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE endpoint
@@ -13,6 +13,7 @@ SQL >
         toDateTime(end_ns / 1000000000) AS end_dt,
         dateDiff('day', start_dt, end_dt) AS range_days
     SELECT
+        api_key,
         countMerge(RequestCount) AS request_count,
         sumMerge(InputTokens) AS input_tokens,
         sumMerge(OutputTokens) AS output_tokens,
@@ -32,6 +33,7 @@ SQL >
         quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
     FROM (
         SELECT
+            ApiKey AS api_key,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -52,7 +54,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND ApiKey != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
             {% end %}
@@ -73,6 +75,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT
+            ApiKey AS api_key,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -94,7 +97,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND ApiKey != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
             {% end %}
@@ -115,6 +118,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT
+            ApiKey AS api_key,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -135,7 +139,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND ApiKey != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
             {% end %}
@@ -155,5 +159,8 @@ SQL >
             AND ApiKey = {{ String(api_key_filter) }}
             {% end %}
     )
+    GROUP BY api_key
+    ORDER BY total_cost_usd DESC
+    LIMIT 10
 
 TYPE ENDPOINT

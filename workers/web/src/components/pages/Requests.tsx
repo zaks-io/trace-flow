@@ -8,6 +8,7 @@ import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { RequestDetailSidePanel } from '@/components/RequestDetailSidePanel';
 import {
@@ -42,6 +43,7 @@ export default function Requests() {
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
+  const apiKeyMap = useApiKeyMap();
   const alerts = useQuery(api.alerts.listEnabled);
 
   const pipeParams = useMemo(() => {
@@ -53,6 +55,7 @@ export default function Requests() {
     if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
       params.search = filters.search;
     }
+    if (filters.apiKey) params.api_key_filter = filters.apiKey;
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }
@@ -196,6 +199,7 @@ export default function Requests() {
         onClearFilters={clearFilters}
         hasActiveFilters={hasActiveFilters}
         loading={isLoading}
+        apiKeyMap={apiKeyMap}
       />
 
       <RequestDetailSidePanel

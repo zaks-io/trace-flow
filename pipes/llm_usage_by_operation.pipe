@@ -70,6 +70,9 @@ SQL >
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
         UNION ALL
         SELECT
             BaggageOperation AS operation,
@@ -108,6 +111,9 @@ SQL >
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
         UNION ALL
         SELECT
             BaggageOperation AS operation,
@@ -144,6 +150,9 @@ SQL >
             {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
             {% end %}
     )
     GROUP BY operation

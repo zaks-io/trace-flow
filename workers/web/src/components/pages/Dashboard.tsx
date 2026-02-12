@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Activity, Zap, Hash, ChevronDown, Cpu, Server, DollarSign } from 'lucide-react';
+import { Activity, Zap, Hash, ChevronDown, Cpu, Server, DollarSign, Key } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { usePageHeader } from '@/components/PageHeaderContext';
+import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { formatNumber, formatCurrency } from '@/lib/format';
 
 type TimeRange = '24h' | '7d' | '30d';
@@ -40,6 +41,15 @@ interface ModelData {
 interface ProviderData {
   data: {
     provider: string;
+    request_count: number;
+    total_cost_usd: number;
+    total_tokens: number;
+  }[];
+}
+
+interface ApiKeyData {
+  data: {
+    api_key: string;
     request_count: number;
     total_cost_usd: number;
     total_tokens: number;
@@ -177,6 +187,7 @@ function UsageTimeseriesChart({ data }: { data: TimeseriesData['data'] }) {
 
 export default function Dashboard() {
   usePageHeader('Dashboard');
+  const apiKeyMap = useApiKeyMap();
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -207,6 +218,12 @@ export default function Dashboard() {
     transform: (result) => result as ProviderData,
   });
 
+  const apiKeysQuery = useTinybirdPipe<ApiKeyData>({
+    pipe: 'llm_usage_by_api_key',
+    params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
+    transform: (result) => result as ApiKeyData,
+  });
+
   const timeseriesQuery = useTinybirdPipe<TimeseriesData>({
     pipe: 'llm_usage_timeseries',
     params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
@@ -226,6 +243,7 @@ export default function Dashboard() {
     void summaryQuery.refetch();
     void modelsQuery.refetch();
     void providersQuery.refetch();
+    void apiKeysQuery.refetch();
     void timeseriesQuery.refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange]);
@@ -233,15 +251,21 @@ export default function Dashboard() {
   const summary = summaryQuery.data?.data?.[0];
   const models = modelsQuery.data?.data ?? [];
   const providers = providersQuery.data?.data ?? [];
+  const apiKeys = apiKeysQuery.data?.data ?? [];
   const timeseries = timeseriesQuery.data?.data ?? [];
 
   const isLoading =
     summaryQuery.loading === true ||
     modelsQuery.loading === true ||
     providersQuery.loading === true ||
+    apiKeysQuery.loading === true ||
     timeseriesQuery.loading === true;
   const hasError =
-    summaryQuery.error ?? modelsQuery.error ?? providersQuery.error ?? timeseriesQuery.error;
+    summaryQuery.error ??
+    modelsQuery.error ??
+    providersQuery.error ??
+    apiKeysQuery.error ??
+    timeseriesQuery.error;
 
   const selectedRangeLabel = TIME_RANGES.find((r) => r.value === timeRange)?.label;
 
@@ -340,7 +364,7 @@ export default function Dashboard() {
           </div>
 
           {/* Breakdown Sections */}
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-3">
             {/* Models Breakdown */}
             <div className="rounded-xl border border-border bg-card p-6">
               <div className="mb-4 flex items-center gap-2">
@@ -405,6 +429,42 @@ export default function Dashboard() {
                         <div className="h-2 overflow-hidden rounded-full bg-muted">
                           <div
                             className="h-full rounded-full bg-blue-500 transition-all"
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* API Keys Breakdown */}
+            <div className="rounded-xl border border-border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <Key className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-base font-medium text-foreground">API Keys by Cost</h2>
+              </div>
+              {apiKeys.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No API key data available</p>
+              ) : (
+                <div className="space-y-3">
+                  {apiKeys.map((row) => {
+                    const maxCost = apiKeys[0]?.total_cost_usd ?? 1;
+                    const percentage = maxCost > 0 ? (row.total_cost_usd / maxCost) * 100 : 0;
+                    return (
+                      <div key={row.api_key} className="group">
+                        <div className="mb-1 flex items-center justify-between text-sm">
+                          <span className="truncate font-medium text-foreground">
+                            {apiKeyMap.get(row.api_key) ?? row.api_key}
+                          </span>
+                          <span className="ml-2 shrink-0 text-right font-mono text-muted-foreground">
+                            {formatCurrency(row.total_cost_usd)} · {formatNumber(row.request_count)}
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full bg-amber-500 transition-all"
                             style={{ width: `${percentage}%` }}
                           />
                         </div>

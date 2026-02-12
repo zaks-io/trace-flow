@@ -11,6 +11,9 @@ SQL >
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Provider != ''
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
     ORDER BY value
     LIMIT 100
 
@@ -22,6 +25,9 @@ SQL >
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Model != ''
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
     ORDER BY value
     LIMIT 100
 
@@ -32,6 +38,9 @@ SQL >
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
     ORDER BY value
 
 NODE operations
@@ -42,6 +51,19 @@ SQL >
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND BaggageOperation != ''
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
+    ORDER BY value
+    LIMIT 100
+
+NODE api_keys_list
+SQL >
+    %
+    SELECT DISTINCT ApiKey as value
+    FROM otel_traces_genai
+    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ApiKey != ''
     ORDER BY value
     LIMIT 100
 
@@ -52,6 +74,7 @@ SQL >
         (SELECT groupArray(value) FROM providers) as providers,
         (SELECT groupArray(value) FROM models) as models,
         (SELECT groupArray(value) FROM statuses) as statuses,
-        (SELECT groupArray(value) FROM operations) as operations
+        (SELECT groupArray(value) FROM operations) as operations,
+        (SELECT groupArray(value) FROM api_keys_list) as api_keys
 
 TYPE ENDPOINT

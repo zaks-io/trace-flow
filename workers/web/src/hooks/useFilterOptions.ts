@@ -6,6 +6,7 @@ export interface FilterOptions {
   models: string[];
   statuses: string[];
   operations: string[];
+  apiKeys: string[];
 }
 
 interface UseFilterOptionsResult {
@@ -16,7 +17,13 @@ interface UseFilterOptionsResult {
 }
 
 interface FilterOptionsResponse {
-  data: { providers: string[]; models: string[]; statuses: string[]; operations: string[] }[];
+  data: {
+    providers: string[];
+    models: string[];
+    statuses: string[];
+    operations: string[];
+    api_keys: string[];
+  }[];
 }
 
 /**
@@ -37,6 +44,7 @@ export function useFilterOptions(): UseFilterOptionsResult {
       models: row?.models ?? [],
       statuses: row?.statuses ?? [],
       operations: row?.operations ?? [],
+      apiKeys: row?.api_keys ?? [],
     };
   }, [data]);
 
