@@ -33,7 +33,7 @@ SCHEMA >
     `BaggageOperation` LowCardinality(String)
 
 FORWARD_QUERY >
-    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ParentSpanId, TraceState, SpanName, SpanKind, ServiceName, ResourceAttributes, SpanAttributes, Duration, StatusCode, StatusMessage, ApiKey, `Events.Timestamp`, `Events.Name`, `Events.Attributes`, `Links.TraceId`, `Links.SpanId`, `Links.TraceState`, `Links.Attributes`, OperationName, Provider, Model, defaultValueOfTypeName('LowCardinality(String)') AS TierAtIngestion, defaultValueOfTypeName('Int64') AS RetentionExpiresAt, defaultValueOfTypeName('LowCardinality(String)') AS BaggageOperation
+    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ParentSpanId, TraceState, SpanName, SpanKind, ServiceName, ResourceAttributes, SpanAttributes, Duration, StatusCode, StatusMessage, ApiKey, `Events.Timestamp`, `Events.Name`, `Events.Attributes`, `Links.TraceId`, `Links.SpanId`, `Links.TraceState`, `Links.Attributes`, OperationName, Provider, Model, 'hobby' AS TierAtIngestion, toInt64(0) AS RetentionExpiresAt, '' AS BaggageOperation
 
 ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "ReceivedAt, ApiKey, OperationName, TraceId, SpanId"

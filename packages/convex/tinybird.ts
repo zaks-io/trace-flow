@@ -182,10 +182,10 @@ export const extendRetention = internalAction({
         ALTER TABLE ${datasource}
         UPDATE
           RetentionExpiresAt = RetentionExpiresAt + ${extensionNanos},
-          TierAtIngestion = 'pro_upgraded'
+          TierAtIngestion = 'pro'
         WHERE ApiKey IN (${apiKeysInClause})
           AND RetentionExpiresAt > ${nowNanos}
-          AND TierAtIngestion = 'hobby'
+          AND TierAtIngestion IN ('hobby', '')
       `;
 
       const response = await fetch(`${tinybirdApiUrl}/v0/sql`, {
