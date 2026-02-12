@@ -1,3 +1,4 @@
+import { parseSpanAttributes } from '@trace-flow/utils';
 import type { RequestRow } from '@/components/requests-table/columns';
 import type {
   Alert,
@@ -8,7 +9,7 @@ import type {
   TraceAlertSummary,
 } from '@/types/alerts';
 
-export interface TraceSpanInput {
+interface TraceSpanInput {
   Timestamp: number;
   TraceId: string;
   SpanId: string;
@@ -32,14 +33,6 @@ export function traceSpanToRequestRow(span: TraceSpanInput): RequestRow {
     StatusCode: span.StatusCode,
     SpanAttributes: span.SpanAttributes,
   };
-}
-
-function parseSpanAttributes(attributesJson: string): Record<string, string> {
-  try {
-    return JSON.parse(attributesJson) as Record<string, string>;
-  } catch {
-    return {};
-  }
 }
 
 function extractMetricValue(row: RequestRow, field: AlertField): number | string | boolean | null {
@@ -143,7 +136,7 @@ function compareValues(
   }
 }
 
-export function evaluateAlerts(row: RequestRow, alerts: Alert[]): TriggeredAlert[] {
+function evaluateAlerts(row: RequestRow, alerts: Alert[]): TriggeredAlert[] {
   const enabledAlerts = alerts.filter((alert) => alert.enabled);
   const triggered: TriggeredAlert[] = [];
 
@@ -173,32 +166,6 @@ export function getHighestSeverity(severities: AlertSeverity[]): AlertSeverity |
   return severities.reduce((highest, current) =>
     SEVERITY_ORDER[current] > SEVERITY_ORDER[highest] ? current : highest,
   );
-}
-
-export function evaluateAlertsForRows(
-  rows: RequestRow[],
-  alerts: Alert[],
-): Map<string, TraceAlertSummary> {
-  const summaryMap = new Map<string, TraceAlertSummary>();
-
-  for (const row of rows) {
-    const key = `${row.TraceId}-${row.SpanId}`;
-    const triggered = evaluateAlerts(row, alerts);
-
-    if (triggered.length > 0) {
-      const highestSeverity = getHighestSeverity(
-        triggered.map((t) => t.alert.severity as AlertSeverity),
-      );
-      summaryMap.set(key, {
-        traceId: row.TraceId,
-        spanId: row.SpanId,
-        triggeredAlerts: triggered,
-        highestSeverity,
-      });
-    }
-  }
-
-  return summaryMap;
 }
 
 export function evaluateAlertsForTraces(

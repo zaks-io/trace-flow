@@ -1,4 +1,4 @@
-export interface ProviderConfig {
+interface ProviderConfig {
   id: string;
   baseUrl: string;
 }
@@ -11,7 +11,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
   google: { id: 'google', baseUrl: 'https://generativelanguage.googleapis.com' },
 };
 
-export interface ResolvedRoute {
+interface ResolvedRoute {
   provider: ProviderConfig;
   targetUrl: string;
 }

@@ -7,6 +7,10 @@
     "trace-flow-prod": {
       "type": "http",
       "url": "https://mcp.trace-flow.dev/mcp"
+    },
+    "otto": {
+      "type": "http",
+      "url": "https://expert-marten-103.convex.site/mcp"
     }
   }
 }

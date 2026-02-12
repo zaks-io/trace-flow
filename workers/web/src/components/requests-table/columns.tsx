@@ -1,6 +1,7 @@
 'use client';
 
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
+import { parseSpanAttributes } from '@trace-flow/utils';
 import { cn } from '@/lib/utils';
 import { AlertIndicator } from '@/components/alerts';
 import type { TraceAlertSummary } from '@/types/alerts';
@@ -31,15 +32,7 @@ declare module '@tanstack/react-table' {
 }
 
 function getSpanAttribute(row: RequestRow, key: string): string | undefined {
-  try {
-    const attrs =
-      typeof row.SpanAttributes === 'string'
-        ? (JSON.parse(row.SpanAttributes) as Record<string, string>)
-        : (row.SpanAttributes as unknown as Record<string, string>);
-    return attrs[key];
-  } catch {
-    return undefined;
-  }
+  return parseSpanAttributes(row.SpanAttributes)[key];
 }
 
 function formatTimestamp(nanoseconds: number) {
@@ -200,17 +193,10 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   {
     id: 'totalTokens',
     accessorFn: (row) => {
-      try {
-        const attrs =
-          typeof row.SpanAttributes === 'string'
-            ? (JSON.parse(row.SpanAttributes) as Record<string, string>)
-            : (row.SpanAttributes as unknown as Record<string, string>);
-        const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) || 0;
-        const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10) || 0;
-        return input + output > 0 ? String(input + output) : undefined;
-      } catch {
-        return undefined;
-      }
+      const attrs = parseSpanAttributes(row.SpanAttributes);
+      const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) || 0;
+      const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10) || 0;
+      return input + output > 0 ? String(input + output) : undefined;
     },
     header: 'Tokens',
     cell: ({ getValue }) => {

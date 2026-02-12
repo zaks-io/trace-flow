@@ -21,7 +21,10 @@ SCHEMA >
     `CacheReadCostMicrodollars` AggregateFunction(sum, UInt64),
     `CacheCreationCostMicrodollars` AggregateFunction(sum, UInt64),
     `ReasoningCostMicrodollars` AggregateFunction(sum, UInt64),
-    `TotalCostMicrodollars` AggregateFunction(sum, UInt64)
+    `TotalCostMicrodollars` AggregateFunction(sum, UInt64),
+    `AvgDurationNano` AggregateFunction(avg, Int64),
+    `MaxDurationNano` AggregateFunction(max, Int64),
+    `P95DurationNano` AggregateFunction(quantile(0.95), Int64)
 
 ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode"
@@ -29,4 +32,11 @@ ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
 ENGINE_TTL "BucketStart + INTERVAL 2 YEAR"
 
 FORWARD_QUERY >
-    SELECT *
+    SELECT
+        BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode,
+        RequestCount, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens,
+        ReasoningTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars,
+        CacheCreationCostMicrodollars, ReasoningCostMicrodollars, TotalCostMicrodollars,
+        defaultValueOfTypeName('AggregateFunction(avg,Int64)') AS AvgDurationNano,
+        defaultValueOfTypeName('AggregateFunction(max,Int64)') AS MaxDurationNano,
+        defaultValueOfTypeName('AggregateFunction(quantile(0.95),Int64)') AS P95DurationNano

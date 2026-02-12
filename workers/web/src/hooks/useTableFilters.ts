@@ -10,7 +10,7 @@ export interface TableFilters {
   search: string | null;
 }
 
-export interface UseTableFiltersResult {
+interface UseTableFiltersResult {
   filters: TableFilters;
   setFilter: (key: keyof TableFilters, value: string | null) => void;
   clearFilters: () => void;

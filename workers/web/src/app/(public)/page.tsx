@@ -1,7 +1,15 @@
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { FlowingTraces } from '@/components/landing/FlowingTraces';
+import { WaitlistForm } from '@/components/landing/WaitlistForm';
+import { getSession } from '@/lib/auth0';
 
-export default function HomePage() {
+export default async function HomePage() {
+  const session = await getSession();
+  if (session) {
+    redirect('/app');
+  }
+
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background">
       {/* Grid background */}
@@ -42,31 +50,18 @@ export default function HomePage() {
         </h1>
 
         {/* Subheadline */}
-        <p className="delay-300 animate-hero-fade mb-10 text-lg text-muted-foreground sm:text-xl">
+        <p className="delay-300 animate-hero-fade mb-4 text-lg text-muted-foreground sm:text-xl">
           Trace, analyze, and optimize your LLM integrations with real-time observability.
         </p>
 
-        {/* CTAs */}
-        <div className="delay-450 animate-hero-fade flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <Link
-            href="/app"
-            className="glow-primary inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-8 text-sm font-medium text-primary-foreground ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          >
-            Sign In
-            <svg
-              className="h-4 w-4"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M5 12h14" />
-              <path d="m12 5 7 7-7 7" />
-            </svg>
-          </Link>
+        {/* Invite-only banner */}
+        <p className="delay-300 animate-hero-fade mb-8 text-sm text-muted-foreground">
+          Currently invite-only. Join the waitlist to get early access.
+        </p>
+
+        {/* Waitlist form + Docs link */}
+        <div className="delay-450 animate-hero-fade flex flex-col items-center gap-6">
+          <WaitlistForm />
           <Link
             href="/docs"
             className="inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md border border-input bg-background px-8 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"

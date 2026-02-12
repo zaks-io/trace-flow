@@ -93,6 +93,33 @@ export declare const api: {
   cloudflare: {
     syncAll: FunctionReference<"action", "public", {}, any>;
   };
+  invites: {
+    acceptInvite: FunctionReference<
+      "mutation",
+      "public",
+      { token: string },
+      any
+    >;
+    createInvite: FunctionReference<
+      "mutation",
+      "public",
+      { email: string },
+      any
+    >;
+    getInviteByToken: FunctionReference<
+      "query",
+      "public",
+      { token: string },
+      any
+    >;
+    listInvites: FunctionReference<"query", "public", {}, any>;
+    revokeInvite: FunctionReference<
+      "mutation",
+      "public",
+      { inviteId: Id<"invites"> },
+      any
+    >;
+  };
   mcp: {
     handler: {
       handleMessage: FunctionReference<
@@ -204,6 +231,28 @@ export declare const api: {
     getCurrentUserQuery: FunctionReference<"query", "public", {}, any>;
     getUser: FunctionReference<"query", "public", { id: Id<"users"> }, any>;
     initializeUser: FunctionReference<"mutation", "public", {}, any>;
+    isAdmin: FunctionReference<"query", "public", {}, any>;
+  };
+  waitlist: {
+    bulkInviteFromWaitlist: FunctionReference<
+      "mutation",
+      "public",
+      { waitlistIds: Array<Id<"waitlist">> },
+      any
+    >;
+    confirmEmail: FunctionReference<
+      "mutation",
+      "public",
+      { token: string },
+      any
+    >;
+    joinWaitlist: FunctionReference<
+      "mutation",
+      "public",
+      { email: string; source?: string },
+      any
+    >;
+    listWaitlist: FunctionReference<"query", "public", {}, any>;
   };
 };
 
@@ -255,6 +304,20 @@ export declare const internal: {
       "action",
       "internal",
       { addonUnits: number; monthlyUnits: number; orgId: string; tier: string },
+      any
+    >;
+  };
+  emails: {
+    sendConfirmationEmail: FunctionReference<
+      "action",
+      "internal",
+      { confirmationToken: string; email: string },
+      any
+    >;
+    sendInviteEmail: FunctionReference<
+      "action",
+      "internal",
+      { email: string; token: string },
       any
     >;
   };

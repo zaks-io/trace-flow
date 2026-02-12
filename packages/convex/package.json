@@ -9,8 +9,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@trace-flow/emails": "workspace:*",
     "@trace-flow/types": "workspace:*",
-    "@trace-flow/utils": "workspace:*"
+    "@trace-flow/utils": "workspace:*",
+    "resend": "^6.9.1"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

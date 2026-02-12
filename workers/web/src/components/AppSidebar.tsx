@@ -12,7 +12,11 @@ import {
   User,
   Zap,
   BookOpen,
+  DollarSign,
+  UserPlus,
 } from 'lucide-react';
+import { useQuery } from 'convex/react';
+import { api } from '@convex/_generated/api';
 import {
   Sidebar,
   SidebarContent,
@@ -28,6 +32,7 @@ import {
 
 const navItems = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
+  { title: 'Usage', href: '/app/usage', icon: DollarSign },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
   { title: 'API Keys', href: '/app/api-keys', icon: Key },
@@ -37,6 +42,12 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const isUserAdmin = useQuery(api.users.isAdmin);
+
+  const allNavItems = [
+    ...navItems,
+    ...(isUserAdmin ? [{ title: 'Invites', href: '/app/admin/invites', icon: UserPlus }] : []),
+  ];
 
   const isActive = (href: string) => {
     if (href === '/app') {
@@ -67,7 +78,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
-              {navItems.map((item, index) => (
+              {allNavItems.map((item, index) => (
                 <SidebarMenuItem
                   key={item.href}
                   className="animate-fade-in"

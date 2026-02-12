@@ -24,6 +24,7 @@ SCHEMA >
     `CacheCreationCostMicrodollars` UInt64,
     `ReasoningCostMicrodollars` UInt64,
     `TotalCostMicrodollars` UInt64,
+    `DurationNano` Int64,
     `TierAtIngestion` LowCardinality(String),
     `RetentionExpiresAt` Int64
 
@@ -31,3 +32,6 @@ ENGINE "MergeTree"
 ENGINE_SORTING_KEY "ReceivedAt, ApiKey, Provider, Model, OperationName, StatusCode, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(if(RetentionExpiresAt > 0, RetentionExpiresAt, ReceivedAt + 90 * 86400 * 1000000000) / 1000000000)"
+
+FORWARD_QUERY >
+    SELECT *, toInt64(0) AS DurationNano, '' AS TierAtIngestion, toInt64(0) AS RetentionExpiresAt

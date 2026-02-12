@@ -159,6 +159,22 @@ export function formatBaggage(entries: Record<string, string>): string {
     .join(',');
 }
 
+/**
+ * Safely parses span attributes from either a JSON string (database) or
+ * an already-parsed object (Tinybird API) into a string record.
+ */
+export function parseSpanAttributes(
+  attributes: string | Record<string, string>,
+): Record<string, string> {
+  try {
+    return typeof attributes === 'string'
+      ? (JSON.parse(attributes) as Record<string, string>)
+      : attributes;
+  } catch {
+    return {};
+  }
+}
+
 export function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
