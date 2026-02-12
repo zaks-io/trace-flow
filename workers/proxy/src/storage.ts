@@ -1,6 +1,14 @@
+import type { SubscriptionTier } from '@trace-flow/types';
+
 /**
  * Stores request and response bodies in R2 for later retrieval via the API worker.
- * Uses a consistent key naming convention (`requests/{requestId}`, `responses/{requestId}`).
+ *
+ * Key format: `{type}s/{tier}/{requestId}` (e.g., `requests/hobby/abc-123`)
+ * This enables R2 lifecycle rules to automatically delete bodies based on tier:
+ * - hobby: 7-day retention
+ * - pro: 30-day retention
+ *
+ * When tier is unknown, defaults to 'hobby' for conservative retention.
  *
  * Each request gets a unique requestId, ensuring bodies are never overwritten even when
  * multiple requests share the same parent trace ID for grouping.
@@ -16,14 +24,20 @@ export async function storeRequestResponse(
   requestId: string,
   requestBody: string,
   responseBody: string,
+  tier?: SubscriptionTier,
+  orgId?: string,
 ): Promise<{ requestBodyKey: string; responseBodyKey: string; stored: boolean }> {
-  const requestBodyKey = `requests/${requestId}`;
-  const responseBodyKey = `responses/${requestId}`;
+  // Default to 'hobby' for unknown tiers (conservative retention)
+  const tierPrefix = tier ?? 'hobby';
+  const requestBodyKey = `requests/${tierPrefix}/${requestId}`;
+  const responseBodyKey = `responses/${tierPrefix}/${requestId}`;
+
+  const putOptions: R2PutOptions = orgId ? { customMetadata: { orgId } } : {};
 
   try {
     await Promise.all([
-      storage.put(requestBodyKey, requestBody),
-      storage.put(responseBodyKey, responseBody),
+      storage.put(requestBodyKey, requestBody, putOptions),
+      storage.put(responseBodyKey, responseBody, putOptions),
     ]);
 
     return { requestBodyKey, responseBodyKey, stored: true };

@@ -41,6 +41,8 @@ describe('TraceBatcher Integration', () => {
     'Links.SpanId': [],
     'Links.TraceState': [],
     'Links.Attributes': [],
+    TierAtIngestion: 'hobby',
+    RetentionExpiresAt: 1700604800000000000,
   });
 
   it('should deduplicate message IDs in addMessageTraces', async () => {

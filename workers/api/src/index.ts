@@ -1,10 +1,12 @@
 import * as Sentry from '@sentry/cloudflare';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { RETENTION_DAYS, type SubscriptionKVData } from '@trace-flow/types';
 import { validateAuth0JWT } from './auth';
 
 interface Env {
   STORAGE: R2Bucket;
+  API_KEYS: KVNamespace;
   AUTH0_DOMAIN: string;
   AUTH0_CLIENT_ID: string;
   SENTRY_DSN?: string;
@@ -48,11 +50,29 @@ app.get('/bodies/:requestId/:type', async (c) => {
     return c.json({ error: 'Invalid type. Must be "request" or "response"' }, 400);
   }
 
-  const key = `${type}s/${requestId}`;
-  const object = await c.env.STORAGE.get(key);
+  // Try all possible key formats in parallel: tier-prefixed (new) and legacy
+  const [pro, hobby, legacy] = await Promise.all([
+    c.env.STORAGE.get(`${type}s/pro/${requestId}`),
+    c.env.STORAGE.get(`${type}s/hobby/${requestId}`),
+    c.env.STORAGE.get(`${type}s/${requestId}`),
+  ]);
+  const object = pro ?? hobby ?? legacy;
 
   if (!object) {
     return c.json({ error: `${type} body not found` }, 404);
+  }
+
+  // Enforce retention based on current subscription tier
+  const orgId = object.customMetadata?.orgId;
+  if (orgId) {
+    const subData = await c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json');
+    const tier = subData?.tier ?? 'hobby';
+    const retentionMs = RETENTION_DAYS[tier] * 86_400_000;
+    const expiresAt = object.uploaded.getTime() + retentionMs;
+
+    if (Date.now() > expiresAt) {
+      return c.json({ error: 'Body expired under current retention policy' }, 403);
+    }
   }
 
   return new Response(object.body, {

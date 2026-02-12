@@ -17,6 +17,7 @@ SQL >
     FROM otel_traces
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND TraceId IN splitByChar(',', {{ String(trace_ids, '') }})
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}

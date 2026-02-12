@@ -20,9 +20,11 @@ SCHEMA >
     `Links.TraceId` Array(String) DEFAULT [] `json:$.Links.TraceId[:]`,
     `Links.SpanId` Array(String) DEFAULT [] `json:$.Links.SpanId[:]`,
     `Links.TraceState` Array(String) DEFAULT [] `json:$.Links.TraceState[:]`,
-    `Links.Attributes` Array(String) DEFAULT [] `json:$.Links.Attributes[:]`
+    `Links.Attributes` Array(String) DEFAULT [] `json:$.Links.Attributes[:]`,
+    `TierAtIngestion` LowCardinality(String) DEFAULT 'hobby' `json:$.TierAtIngestion`,
+    `RetentionExpiresAt` Int64 DEFAULT 0 `json:$.RetentionExpiresAt`
 
 ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "ReceivedAt, ApiKey, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
-ENGINE_TTL "toDateTime(ReceivedAt / 1000000000) + INTERVAL 90 DAY"
+ENGINE_TTL "toDateTime(if(RetentionExpiresAt > 0, RetentionExpiresAt, ReceivedAt + 90 * 86400 * 1000000000) / 1000000000)"

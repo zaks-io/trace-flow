@@ -9,6 +9,7 @@ SQL >
     SELECT DISTINCT Provider as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Provider != ''
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
@@ -22,6 +23,7 @@ SQL >
     SELECT DISTINCT Model as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Model != ''
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
@@ -35,6 +37,7 @@ SQL >
     SELECT DISTINCT StatusCode as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
         {% end %}
@@ -46,6 +49,7 @@ SQL >
     SELECT DISTINCT BaggageOperation as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND BaggageOperation != ''
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}

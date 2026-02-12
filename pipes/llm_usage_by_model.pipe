@@ -55,6 +55,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             AND Model != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
@@ -95,6 +96,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             AND Model != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
@@ -134,6 +136,7 @@ SQL >
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             AND Model != ''
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}

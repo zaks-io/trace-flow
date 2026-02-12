@@ -19,6 +19,10 @@ SENTRY_ENVIRONMENT = "development"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
 
+[[kv_namespaces]]
+binding = "API_KEYS"
+id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
+
 [env.production]
 name = "trace-flow-api"
 workers_dev = false
@@ -36,6 +40,10 @@ zone_name = "trace-flow.dev"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-prod"
 
+[[env.production.kv_namespaces]]
+binding = "API_KEYS"
+id = "f004c21e2b8c4754af5947c08069bd00"
+
 [env.preview]
 name = "trace-flow-api-preview"
 
@@ -47,3 +55,7 @@ SENTRY_ENVIRONMENT = "preview"
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
+
+[[env.preview.kv_namespaces]]
+binding = "API_KEYS"
+id = "30c9a31ff3af4b408b4d64b8ecfa98a5"

@@ -154,3 +154,14 @@ export const listByUserId = internalQuery({
       .collect();
   },
 });
+
+// Internal query to get all API keys for an organization
+export const listByOrgId = internalQuery({
+  args: { orgId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('apiKeys')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .collect();
+  },
+});

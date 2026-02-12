@@ -306,6 +306,8 @@ app.all('*', async (c) => {
           }
         }
 
+        const tier = usageCheck.tier;
+
         let requestBodyKey: string | undefined;
         let responseBodyKey: string | undefined;
         let stored = false;
@@ -316,6 +318,8 @@ app.all('*', async (c) => {
             requestId,
             requestBody,
             responseBody,
+            tier,
+            keyData.orgId,
           );
           requestBodyKey = result.requestBodyKey;
           responseBodyKey = result.responseBodyKey;
@@ -351,6 +355,8 @@ app.all('*', async (c) => {
           responseMetadata,
           receivedAt: requestStart * 1_000_000,
           inputMessages,
+          tier,
+          orgId: keyData.orgId,
         });
 
         await c.env.REQUEST_QUEUE.send(queueMessage);

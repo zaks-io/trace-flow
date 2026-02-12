@@ -1,3 +1,4 @@
+import { RETENTION_DAYS } from '@trace-flow/types';
 import type { TinybirdTrace } from '@trace-flow/types';
 import type {
   OTLPExportTraceServiceRequest,
@@ -108,6 +109,8 @@ function transformSpan(
     'Links.SpanId': [],
     'Links.TraceState': [],
     'Links.Attributes': [],
+    TierAtIngestion: 'hobby',
+    RetentionExpiresAt: receivedAt + RETENTION_DAYS.hobby * 24 * 60 * 60 * 1_000_000_000,
   };
 
   // Transform events - keep timestamps in nanoseconds

@@ -5,8 +5,20 @@ import type {
   AnthropicContentBlock,
   ToolExecution,
 } from '@trace-flow/types';
+import { RETENTION_DAYS } from '@trace-flow/types';
 import { generateSpanId } from '@trace-flow/utils';
 import { type ModelPricing, calculateCost, formatCostAsString } from './pricing';
+
+const NANOSECONDS_PER_DAY = 24 * 60 * 60 * 1_000_000_000;
+
+/**
+ * Calculates the retention expiration timestamp based on the subscription tier.
+ * Returns a nanosecond timestamp for when the data should be deleted.
+ */
+function calculateRetentionExpiresAt(receivedAt: number, tier?: string): number {
+  const retentionDays = tier === 'pro' ? RETENTION_DAYS.pro : RETENTION_DAYS.hobby;
+  return receivedAt + retentionDays * NANOSECONDS_PER_DAY;
+}
 
 /**
  * Transforms queue messages into OpenTelemetry traces for Tinybird storage.
@@ -26,6 +38,10 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   const traces: TinybirdTrace[] = [];
   const traceId = data.traceId ?? data.requestId;
   const serviceName = 'llm-observability';
+
+  // Calculate retention fields based on tier
+  const tierAtIngestion = data.tier ?? 'hobby';
+  const retentionExpiresAt = calculateRetentionExpiresAt(data.receivedAt, data.tier);
 
   // Determine if this is a streaming response
   const isStreaming = Boolean(
@@ -84,6 +100,8 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     'Links.SpanId': [],
     'Links.TraceState': [],
     'Links.Attributes': [],
+    TierAtIngestion: tierAtIngestion,
+    RetentionExpiresAt: retentionExpiresAt,
   };
 
   if (data.tokens) {
@@ -266,6 +284,8 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
         traceId,
         serviceName,
         inputMessageCount,
+        tierAtIngestion,
+        retentionExpiresAt,
       );
       traces.push(...contentBlockSpans);
 
@@ -309,6 +329,8 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       'Links.SpanId': [],
       'Links.TraceState': [],
       'Links.Attributes': [],
+      TierAtIngestion: tierAtIngestion,
+      RetentionExpiresAt: retentionExpiresAt,
     };
     traces.push(responseSpan);
 
@@ -329,6 +351,8 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       rootSpan.SpanId,
       traceId,
       serviceName,
+      tierAtIngestion,
+      retentionExpiresAt,
     );
     traces.push(...toolSpans);
   }
@@ -452,6 +476,8 @@ function buildContentBlockSpans(
   traceId: string,
   serviceName: string,
   inputMessageCount: number,
+  tierAtIngestion: string,
+  retentionExpiresAt: number,
 ): TinybirdTrace[] {
   const spans: TinybirdTrace[] = [];
 
@@ -524,6 +550,8 @@ function buildContentBlockSpans(
       'Links.SpanId': [],
       'Links.TraceState': [],
       'Links.Attributes': [],
+      TierAtIngestion: tierAtIngestion,
+      RetentionExpiresAt: retentionExpiresAt,
     };
 
     // Add start/end events for tool_use blocks to track tool call timing
@@ -568,6 +596,8 @@ function buildToolExecutionSpans(
   parentSpanId: string,
   traceId: string,
   serviceName: string,
+  tierAtIngestion: string,
+  retentionExpiresAt: number,
 ): TinybirdTrace[] {
   const spans: TinybirdTrace[] = [];
 
@@ -602,6 +632,8 @@ function buildToolExecutionSpans(
       'Links.SpanId': [],
       'Links.TraceState': [],
       'Links.Attributes': [],
+      TierAtIngestion: tierAtIngestion,
+      RetentionExpiresAt: retentionExpiresAt,
     };
 
     spans.push(span);

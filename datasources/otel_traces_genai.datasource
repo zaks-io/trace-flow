@@ -28,12 +28,14 @@ SCHEMA >
     `OperationName` LowCardinality(String),
     `Provider` LowCardinality(String),
     `Model` LowCardinality(String),
+    `TierAtIngestion` LowCardinality(String),
+    `RetentionExpiresAt` Int64,
     `BaggageOperation` LowCardinality(String)
 
 FORWARD_QUERY >
-    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ParentSpanId, TraceState, SpanName, SpanKind, ServiceName, ResourceAttributes, SpanAttributes, Duration, StatusCode, StatusMessage, ApiKey, `Events.Timestamp`, `Events.Name`, `Events.Attributes`, `Links.TraceId`, `Links.SpanId`, `Links.TraceState`, `Links.Attributes`, OperationName, Provider, Model, defaultValueOfTypeName('LowCardinality(String)') AS BaggageOperation
+    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ParentSpanId, TraceState, SpanName, SpanKind, ServiceName, ResourceAttributes, SpanAttributes, Duration, StatusCode, StatusMessage, ApiKey, `Events.Timestamp`, `Events.Name`, `Events.Attributes`, `Links.TraceId`, `Links.SpanId`, `Links.TraceState`, `Links.Attributes`, OperationName, Provider, Model, 'hobby' AS TierAtIngestion, toInt64(0) AS RetentionExpiresAt, '' AS BaggageOperation
 
 ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "ReceivedAt, ApiKey, OperationName, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
-ENGINE_TTL "toDateTime(ReceivedAt / 1000000000) + INTERVAL 90 DAY"
+ENGINE_TTL "toDateTime(if(RetentionExpiresAt > 0, RetentionExpiresAt, ReceivedAt + 90 * 86400 * 1000000000) / 1000000000)"

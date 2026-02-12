@@ -7,6 +7,7 @@ import type {
   LLMResponseMetadata,
   InputMessage,
   ToolExecution,
+  SubscriptionTier,
 } from '@trace-flow/types';
 import { extractProviderFromUrl } from '@trace-flow/utils';
 
@@ -54,6 +55,8 @@ export function createQueueMessage(params: {
   receivedAt: number;
   inputMessages?: InputMessage[];
   toolExecutions?: ToolExecution[];
+  tier?: SubscriptionTier;
+  orgId?: string;
 }): QueueMessage {
   const {
     requestId,
@@ -81,6 +84,8 @@ export function createQueueMessage(params: {
     receivedAt,
     inputMessages,
     toolExecutions,
+    tier,
+    orgId,
   } = params;
 
   const provider = extractProviderFromUrl(targetUrl);
@@ -166,6 +171,14 @@ export function createQueueMessage(params: {
 
   if (toolExecutions && toolExecutions.length > 0) {
     queueMessage.toolExecutions = toolExecutions;
+  }
+
+  if (tier) {
+    queueMessage.tier = tier;
+  }
+
+  if (orgId) {
+    queueMessage.orgId = orgId;
   }
 
   return queueMessage;

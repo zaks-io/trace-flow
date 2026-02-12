@@ -36,6 +36,7 @@ export const setTier = mutation({
 
     if (!subscription) throw new Error('Subscription not found');
 
+    const previousTier = subscription.tier;
     const config = TIER_CONFIG[args.tier as SubscriptionTier];
     await ctx.db.patch(subscription._id, {
       tier: args.tier,
@@ -48,6 +49,13 @@ export const setTier = mutation({
       monthlyUnits: config.monthlyUnits,
       addonUnits: subscription.addonUnits,
     });
+
+    // When upgrading from hobby to pro, extend retention for existing traces
+    if (previousTier === 'hobby' && args.tier === 'pro') {
+      await ctx.scheduler.runAfter(0, internal.tinybird.extendRetention, {
+        orgId: args.orgId,
+      });
+    }
   },
 });
 

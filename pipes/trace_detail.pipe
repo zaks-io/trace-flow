@@ -26,6 +26,7 @@ SQL >
     FROM otel_traces
     WHERE TraceId = {{ String(trace_id, '') }}
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(since_timestamp) %}
         AND Timestamp > {{ Int64(since_timestamp) }}
         {% end %}
