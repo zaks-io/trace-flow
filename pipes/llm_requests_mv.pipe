@@ -40,7 +40,9 @@ SQL >
         toUInt64(
             round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total')) * 1000000)
         ) AS TotalCostMicrodollars,
-        Duration AS DurationNano
+        Duration AS DurationNano,
+        TierAtIngestion,
+        RetentionExpiresAt
     FROM otel_traces
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
 

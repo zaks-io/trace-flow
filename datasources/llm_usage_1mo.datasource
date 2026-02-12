@@ -30,13 +30,3 @@ ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode"
 ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
 ENGINE_TTL "BucketStart + INTERVAL 5 YEAR"
-
-FORWARD_QUERY >
-    SELECT
-        BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode,
-        RequestCount, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens,
-        ReasoningTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars,
-        CacheCreationCostMicrodollars, ReasoningCostMicrodollars, TotalCostMicrodollars,
-        defaultValueOfTypeName('AggregateFunction(avg,Int64)') AS AvgDurationNano,
-        defaultValueOfTypeName('AggregateFunction(max,Int64)') AS MaxDurationNano,
-        defaultValueOfTypeName('AggregateFunction(quantile(0.95),Int64)') AS P95DurationNano
