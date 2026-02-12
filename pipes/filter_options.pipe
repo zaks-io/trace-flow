@@ -35,7 +35,7 @@ NODE operations
 SQL >
     %
     SELECT DISTINCT BaggageOperation as value
-    FROM llm_requests
+    FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND BaggageOperation != ''
     ORDER BY value

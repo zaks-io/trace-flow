@@ -31,7 +31,7 @@ SQL >
         {% if defined(operation) %}
         AND TraceId IN (
             SELECT DISTINCT TraceId
-            FROM llm_requests
+            FROM otel_traces_genai
             WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
                 AND BaggageOperation = {{ String(operation) }}
         )
