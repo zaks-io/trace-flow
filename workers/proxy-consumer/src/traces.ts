@@ -40,7 +40,7 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   const serviceName = 'llm-observability';
 
   // Calculate retention fields based on tier
-  const tierAtIngestion = data.tier ?? 'unknown';
+  const tierAtIngestion = data.tier ?? 'hobby';
   const retentionExpiresAt = calculateRetentionExpiresAt(data.receivedAt, data.tier);
 
   // Determine if this is a streaming response

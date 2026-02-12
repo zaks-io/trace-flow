@@ -26,6 +26,8 @@ describe('insertIntoTinybird', () => {
     'Links.SpanId': [],
     'Links.TraceState': [],
     'Links.Attributes': [],
+    TierAtIngestion: 'hobby',
+    RetentionExpiresAt: 1700604800000000000,
   };
 
   beforeEach(() => {
@@ -211,6 +213,8 @@ describe('insertIntoTinybirdWithRetry', () => {
     'Links.SpanId': [],
     'Links.TraceState': [],
     'Links.Attributes': [],
+    TierAtIngestion: 'hobby',
+    RetentionExpiresAt: 1700604800000000000,
   };
 
   beforeEach(() => {

@@ -306,8 +306,7 @@ app.all('*', async (c) => {
           }
         }
 
-        // Extract tier from usage check result (available when status is 'allowed' or 'exceeded')
-        const tier = usageCheck.status !== 'no_subscription' ? usageCheck.tier : undefined;
+        const tier = usageCheck.tier;
 
         let requestBodyKey: string | undefined;
         let responseBodyKey: string | undefined;

@@ -7,8 +7,7 @@ interface UsageEnv {
 
 export type UsageCheckResult =
   | { status: 'allowed'; tier: SubscriptionTier }
-  | { status: 'exceeded'; tier: SubscriptionTier }
-  | { status: 'no_subscription' };
+  | { status: 'exceeded'; tier: SubscriptionTier };
 
 export async function checkUsage(
   env: UsageEnv,

@@ -210,10 +210,8 @@ export interface TinybirdTrace {
   'Links.SpanId': string[];
   'Links.TraceState': string[];
   'Links.Attributes': string[];
-  /** Subscription tier at time of ingestion (hobby, pro, unknown) */
-  TierAtIngestion?: string;
-  /** Nanosecond timestamp when this trace should be deleted */
-  RetentionExpiresAt?: number;
+  TierAtIngestion: string;
+  RetentionExpiresAt: number;
 }
 
 /**

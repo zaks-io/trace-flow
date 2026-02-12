@@ -53,13 +53,21 @@ export const generateToken = action({
     const user = await ctx.runQuery(api.users.getCurrentUserQuery, {});
     const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
 
-    // Add api_keys to fixed_params for row-level security
+    // Look up subscription tier to enforce retention-based filtering
+    const subscription = user?.orgId
+      ? await ctx.runQuery(internal.subscriptions.getByOrgId, { orgId: user.orgId })
+      : null;
+    const tier = (subscription?.tier ?? 'hobby') as keyof typeof RETENTION_DAYS;
+    const retentionDays = RETENTION_DAYS[tier];
+
+    // Add api_keys and retention_days to fixed_params for server-side enforcement
     // Use sentinel value when user has no keys to prevent matching empty strings
     const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
       ...scope,
       fixed_params: {
         ...scope.fixed_params,
         api_keys: apiKeyString || '__NO_KEYS__',
+        retention_days: retentionDays,
       },
     }));
 
@@ -97,16 +105,20 @@ export const generateTokenInternal = internalAction({
   args: {
     scopes: v.array(v.object({ type: v.string(), resource: v.string() })),
     apiKeys: v.array(v.string()),
+    retentionDays: v.optional(v.number()),
     ttl: v.optional(v.number()),
   },
   handler: async (_, args) => {
     // Use sentinel value when no keys to prevent matching empty strings
     const apiKeyString = args.apiKeys.join(',') || '__NO_KEYS__';
 
-    // Add api_keys to fixed_params for row-level security
+    // Add api_keys and retention_days to fixed_params for row-level security
     const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
       ...scope,
-      fixed_params: { api_keys: apiKeyString },
+      fixed_params: {
+        api_keys: apiKeyString,
+        retention_days: args.retentionDays ?? RETENTION_DAYS.hobby,
+      },
     }));
 
     const ttlSeconds = args.ttl ?? 600;
@@ -147,8 +159,15 @@ export const extendRetention = internalAction({
     const extensionNanos = (RETENTION_DAYS.pro - RETENTION_DAYS.hobby) * NANOSECONDS_PER_DAY;
     const nowNanos = Date.now() * 1_000_000;
 
+    // Validate API keys are UUIDs before interpolating into SQL (defense in depth)
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const validKeys = apiKeyStrings.filter((k: string) => uuidPattern.test(k));
+    if (validKeys.length === 0) {
+      return { updated: false, reason: 'No valid API keys found for organization' };
+    }
+
     // Format API keys for SQL IN clause
-    const apiKeysInClause = apiKeyStrings.map((k: string) => `'${k}'`).join(',');
+    const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
 
     // Datasources to update
     const datasources = ['otel_traces', 'otel_traces_genai', 'llm_requests'];
@@ -166,7 +185,7 @@ export const extendRetention = internalAction({
           TierAtIngestion = 'pro_upgraded'
         WHERE ApiKey IN (${apiKeysInClause})
           AND RetentionExpiresAt > ${nowNanos}
-          AND TierAtIngestion IN ('hobby', 'unknown')
+          AND TierAtIngestion = 'hobby'
       `;
 
       const response = await fetch(`${tinybirdApiUrl}/v0/sql`, {

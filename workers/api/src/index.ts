@@ -48,23 +48,13 @@ app.get('/bodies/:requestId/:type', async (c) => {
     return c.json({ error: 'Invalid type. Must be "request" or "response"' }, 400);
   }
 
-  // Try tier-prefixed keys first (new format), then fall back to legacy format
-  // New format: {type}s/{tier}/{requestId} (e.g., requests/hobby/abc-123)
-  // Legacy format: {type}s/{requestId} (e.g., requests/abc-123)
-  const tierPrefixes = ['pro', 'hobby'];
-  let object: R2ObjectBody | null = null;
-
-  for (const tier of tierPrefixes) {
-    const key = `${type}s/${tier}/${requestId}`;
-    object = await c.env.STORAGE.get(key);
-    if (object) break;
-  }
-
-  // Fall back to legacy format if not found with tier prefix
-  if (!object) {
-    const legacyKey = `${type}s/${requestId}`;
-    object = await c.env.STORAGE.get(legacyKey);
-  }
+  // Try all possible key formats in parallel: tier-prefixed (new) and legacy
+  const [pro, hobby, legacy] = await Promise.all([
+    c.env.STORAGE.get(`${type}s/pro/${requestId}`),
+    c.env.STORAGE.get(`${type}s/hobby/${requestId}`),
+    c.env.STORAGE.get(`${type}s/${requestId}`),
+  ]);
+  const object = pro ?? hobby ?? legacy;
 
   if (!object) {
     return c.json({ error: `${type} body not found` }, 404);

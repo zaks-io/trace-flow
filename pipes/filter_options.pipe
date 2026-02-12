@@ -9,6 +9,7 @@ SQL >
     SELECT DISTINCT Provider as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Provider != ''
     ORDER BY value
     LIMIT 100
@@ -19,6 +20,7 @@ SQL >
     SELECT DISTINCT Model as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Model != ''
     ORDER BY value
     LIMIT 100
@@ -29,6 +31,7 @@ SQL >
     SELECT DISTINCT StatusCode as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
     ORDER BY value
 
 NODE operations
@@ -37,6 +40,7 @@ SQL >
     SELECT DISTINCT BaggageOperation as value
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND BaggageOperation != ''
     ORDER BY value
     LIMIT 100

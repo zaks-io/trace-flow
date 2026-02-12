@@ -11,6 +11,7 @@ SQL >
     SELECT DISTINCT TraceId
     FROM otel_traces_genai
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}
@@ -61,6 +62,7 @@ SQL >
         AND {% end %}
         JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if not (defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search)) and defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
         {% end %}

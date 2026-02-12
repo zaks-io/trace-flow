@@ -21,7 +21,7 @@ SCHEMA >
     `Links.SpanId` Array(String) DEFAULT [] `json:$.Links.SpanId[:]`,
     `Links.TraceState` Array(String) DEFAULT [] `json:$.Links.TraceState[:]`,
     `Links.Attributes` Array(String) DEFAULT [] `json:$.Links.Attributes[:]`,
-    `TierAtIngestion` LowCardinality(String) DEFAULT 'unknown' `json:$.TierAtIngestion`,
+    `TierAtIngestion` LowCardinality(String) DEFAULT 'hobby' `json:$.TierAtIngestion`,
     `RetentionExpiresAt` Int64 DEFAULT 0 `json:$.RetentionExpiresAt`
 
 ENGINE "ReplacingMergeTree"

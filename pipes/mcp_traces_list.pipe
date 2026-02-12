@@ -22,6 +22,7 @@ SQL >
     FROM otel_traces
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
         {% if defined(provider) %}
         AND JSONExtractString(SpanAttributes, 'gen_ai.system') = {{ String(provider) }}
