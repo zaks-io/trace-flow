@@ -19,11 +19,13 @@ describe('storeRequestResponse', () => {
     expect(mockStorage.put).toHaveBeenCalledWith(
       'requests/pro/test-request-id',
       'request body content',
+      {},
     );
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledWith(
       'responses/pro/test-request-id',
       'response body content',
+      {},
     );
   });
 
@@ -109,9 +111,9 @@ describe('storeRequestResponse', () => {
     );
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('requests/hobby/empty-test', '');
+    expect(mockStorage.put).toHaveBeenCalledWith('requests/hobby/empty-test', '', {});
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('responses/hobby/empty-test', '');
+    expect(mockStorage.put).toHaveBeenCalledWith('responses/hobby/empty-test', '', {});
     expect(result).toEqual({
       requestBodyKey: 'requests/hobby/empty-test',
       responseBodyKey: 'responses/hobby/empty-test',
@@ -131,9 +133,26 @@ describe('storeRequestResponse', () => {
     await storeRequestResponse(mockStorage, requestId, largeRequestBody, largeResponseBody, 'pro');
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/large-test', largeRequestBody);
+    expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/large-test', largeRequestBody, {});
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/large-test', largeResponseBody);
+    expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/large-test', largeResponseBody, {});
+  });
+
+  it('should pass orgId as custom metadata when provided', async () => {
+    const mockStorage = {
+      put: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+
+    await storeRequestResponse(mockStorage, 'meta-test', 'req', 'res', 'pro', 'org_123');
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/meta-test', 'req', {
+      customMetadata: { orgId: 'org_123' },
+    });
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/meta-test', 'res', {
+      customMetadata: { orgId: 'org_123' },
+    });
   });
 
   it('should handle storage errors gracefully', async () => {

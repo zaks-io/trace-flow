@@ -25,16 +25,19 @@ export async function storeRequestResponse(
   requestBody: string,
   responseBody: string,
   tier?: SubscriptionTier,
+  orgId?: string,
 ): Promise<{ requestBodyKey: string; responseBodyKey: string; stored: boolean }> {
   // Default to 'hobby' for unknown tiers (conservative retention)
   const tierPrefix = tier ?? 'hobby';
   const requestBodyKey = `requests/${tierPrefix}/${requestId}`;
   const responseBodyKey = `responses/${tierPrefix}/${requestId}`;
 
+  const putOptions: R2PutOptions = orgId ? { customMetadata: { orgId } } : {};
+
   try {
     await Promise.all([
-      storage.put(requestBodyKey, requestBody),
-      storage.put(responseBodyKey, responseBody),
+      storage.put(requestBodyKey, requestBody, putOptions),
+      storage.put(responseBodyKey, responseBody, putOptions),
     ]);
 
     return { requestBodyKey, responseBodyKey, stored: true };

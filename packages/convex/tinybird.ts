@@ -167,7 +167,7 @@ export const extendRetention = internalAction({
     }
 
     // Format API keys for SQL IN clause
-    const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
+    const apiKeysInClause = validKeys.map((k: string) => `'${k.replace(/'/g, "''")}'`).join(',');
 
     // Datasources to update
     const datasources = ['otel_traces', 'otel_traces_genai', 'llm_requests'];

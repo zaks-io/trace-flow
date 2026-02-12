@@ -1,10 +1,12 @@
 import * as Sentry from '@sentry/cloudflare';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { RETENTION_DAYS, type SubscriptionKVData } from '@trace-flow/types';
 import { validateAuth0JWT } from './auth';
 
 interface Env {
   STORAGE: R2Bucket;
+  API_KEYS: KVNamespace;
   AUTH0_DOMAIN: string;
   AUTH0_CLIENT_ID: string;
   SENTRY_DSN?: string;
@@ -58,6 +60,19 @@ app.get('/bodies/:requestId/:type', async (c) => {
 
   if (!object) {
     return c.json({ error: `${type} body not found` }, 404);
+  }
+
+  // Enforce retention based on current subscription tier
+  const orgId = object.customMetadata?.orgId;
+  if (orgId) {
+    const subData = await c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json');
+    const tier = subData?.tier ?? 'hobby';
+    const retentionMs = RETENTION_DAYS[tier] * 86_400_000;
+    const expiresAt = object.uploaded.getTime() + retentionMs;
+
+    if (Date.now() > expiresAt) {
+      return c.json({ error: 'Body expired under current retention policy' }, 403);
+    }
   }
 
   return new Response(object.body, {

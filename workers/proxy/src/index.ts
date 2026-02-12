@@ -319,6 +319,7 @@ app.all('*', async (c) => {
             requestBody,
             responseBody,
             tier,
+            keyData.orgId,
           );
           requestBodyKey = result.requestBodyKey;
           responseBodyKey = result.responseBodyKey;
