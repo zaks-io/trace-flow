@@ -144,7 +144,6 @@ export const setTier = internalMutation({
       tier: args.tier,
       status: 'active',
       monthlyUnits: config.monthlyUnits,
-      includedUnitsPerSeat: config.monthlyUnits,
     });
 
     await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
@@ -623,8 +622,6 @@ export const upsertStripeSubscriptionState = internalMutation({
     if (!subscription) throw new Error('Subscription not found');
 
     const seatQuantity = args.seatQuantity ?? subscription.seatQuantity ?? 1;
-    const includedUnitsPerSeat = subscription.includedUnitsPerSeat ?? subscription.monthlyUnits;
-    const monthlyUnits = Math.max(0, seatQuantity * includedUnitsPerSeat);
 
     // Cancel grace period scheduler when transitioning to active
     if (args.status === 'active' && subscription.gracePeriodSchedulerId) {
@@ -638,8 +635,6 @@ export const upsertStripeSubscriptionState = internalMutation({
       stripeSubscriptionItemId:
         args.stripeSubscriptionItemId ?? subscription.stripeSubscriptionItemId,
       seatQuantity,
-      includedUnitsPerSeat,
-      monthlyUnits,
       currentPeriodStart: args.currentPeriodStart ?? subscription.currentPeriodStart,
       currentPeriodEnd: args.currentPeriodEnd ?? subscription.currentPeriodEnd,
       currentPeriodOverageSpentCents:
@@ -652,7 +647,7 @@ export const upsertStripeSubscriptionState = internalMutation({
     await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
       orgId: args.orgId,
       tier: subscription.tier,
-      monthlyUnits,
+      monthlyUnits: subscription.monthlyUnits,
       addonUnits: subscription.addonUnits,
       status: args.status,
       seatQuantity,

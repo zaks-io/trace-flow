@@ -1,8 +1,9 @@
 export type SubscriptionTier = 'hobby' | 'pro';
+export type BillingStatus = 'active' | 'grace' | 'suspended' | 'canceled';
 
 export const TIER_CONFIG = {
-  hobby: { monthlyUnits: 50_000, price: 0, overagePer100k: 0 },
-  pro: { monthlyUnits: 100_000, price: 20, overagePer100k: 8 },
+  hobby: { monthlyUnits: 50_000, overagePer100kCents: 0 },
+  pro: { monthlyUnits: 100_000, overagePer100kCents: 800 },
 } as const;
 
 export const RETENTION_DAYS = {
@@ -12,8 +13,14 @@ export const RETENTION_DAYS = {
 
 export interface SubscriptionKVData {
   tier: SubscriptionTier;
+  status: BillingStatus;
   monthlyUnits: number;
   addonUnits: number;
+  seatQuantity?: number;
+  currentPeriodStart?: number;
+  currentPeriodEnd?: number;
+  autoOverage?: boolean;
+  overageCapCents?: number;
 }
 
 export interface LLMRequest {
