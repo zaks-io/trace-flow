@@ -13,7 +13,8 @@ export function useLaunchDarklyIdentity() {
 
   useEffect(() => {
     if (!ldClient || !user) return;
-    if (identifiedKey.current === user.tokenIdentifier) return;
+    const identityKey = `${user.tokenIdentifier}:${subscription?.tier}`;
+    if (identifiedKey.current === identityKey) return;
 
     void ldClient.identify({
       kind: 'user',
@@ -22,6 +23,6 @@ export function useLaunchDarklyIdentity() {
       name: user.name,
       tier: subscription?.tier,
     });
-    identifiedKey.current = user.tokenIdentifier;
+    identifiedKey.current = identityKey;
   }, [ldClient, user, subscription]);
 }
