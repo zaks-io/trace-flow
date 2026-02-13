@@ -230,6 +230,7 @@ export function extractTokenUsageFromSSEData(data: string): {
   cache_read_input_tokens?: number;
   cache_write_tokens?: number;
   output_tokens?: number;
+  reasoning_tokens?: number;
   cost?: number;
   prompt_token_count?: number;
   candidates_token_count?: number;
@@ -242,6 +243,7 @@ export function extractTokenUsageFromSSEData(data: string): {
     cache_read_input_tokens?: number;
     cache_write_tokens?: number;
     output_tokens?: number;
+    reasoning_tokens?: number;
     cost?: number;
     prompt_token_count?: number;
     candidates_token_count?: number;
@@ -273,6 +275,11 @@ export function extractTokenUsageFromSSEData(data: string): {
   const cacheWriteMatch = CACHE_WRITE_TOKENS_PATTERN.exec(data);
   if (cacheWriteMatch?.[1]) {
     usage.cache_write_tokens = parseInt(cacheWriteMatch[1], 10);
+  }
+
+  const reasoningTokensMatch = OPENAI_REASONING_TOKENS_PATTERN.exec(data);
+  if (reasoningTokensMatch?.[1]) {
+    usage.reasoning_tokens = parseInt(reasoningTokensMatch[1], 10);
   }
 
   const costMatch = UPSTREAM_COST_PATTERN.exec(data);

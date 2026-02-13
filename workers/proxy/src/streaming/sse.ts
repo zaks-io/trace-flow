@@ -18,6 +18,8 @@ const CONTENT_BLOCK_TYPE_PATTERN =
   /"content_block"\s*:\s*\{[^}]*"type"\s*:\s*"(text|tool_use|thinking)"/;
 const TOOL_USE_ID_PATTERN = /"content_block"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]+)"/;
 const TOOL_USE_NAME_PATTERN = /"content_block"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"/;
+const THINKING_DELTA_TYPE_PATTERN = /"type"\s*:\s*"thinking_delta"/;
+const THINKING_DELTA_TEXT_PATTERN = /"thinking"\s*:\s*"((?:[^"\\]|\\.)*)"/;
 
 /**
  * Parses content_block_start event data to extract block info.
@@ -194,6 +196,21 @@ export function processSSEEvent(
       }
     }
 
+    // Track thinking text length from thinking_delta events (Anthropic extended thinking)
+    if (eventType === 'content_block_delta' && event.data && currentMessage.contentBlocks) {
+      if (THINKING_DELTA_TYPE_PATTERN.test(event.data)) {
+        const indexMatch = CONTENT_BLOCK_INDEX_PATTERN.exec(event.data);
+        const textMatch = THINKING_DELTA_TEXT_PATTERN.exec(event.data);
+        if (indexMatch?.[1] && textMatch?.[1]) {
+          const blockIndex = parseInt(indexMatch[1], 10);
+          const block = currentMessage.contentBlocks.find((b) => b.index === blockIndex);
+          if (block) {
+            block.thinkingTextLength = (block.thinkingTextLength ?? 0) + textMatch[1].length;
+          }
+        }
+      }
+    }
+
     // Track content block stop (Anthropic-specific)
     if (eventType === 'content_block_stop' && event.data) {
       const blockIndex = parseContentBlockStopIndex(event.data);
@@ -265,13 +282,24 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
 
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
+  let totalReasoningTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
   let totalCachedTokens = 0;
+  let totalThinkingChars = 0;
   let lastUpstreamCost: number | undefined;
   let hasAnyTokens = false;
 
   for (const message of streamData.messages) {
+    // Accumulate thinking text length from content blocks (for Anthropic estimation)
+    if (message.contentBlocks) {
+      for (const block of message.contentBlocks) {
+        if (block.type === 'thinking' && block.thinkingTextLength) {
+          totalThinkingChars += block.thinkingTextLength;
+        }
+      }
+    }
+
     if (!message.usage) continue;
 
     // OpenAI/Anthropic style
@@ -281,6 +309,10 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
     }
     if (message.usage.output_tokens !== undefined) {
       totalCompletionTokens += message.usage.output_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.reasoning_tokens !== undefined) {
+      totalReasoningTokens += message.usage.reasoning_tokens;
       hasAnyTokens = true;
     }
     if (message.usage.cache_read_input_tokens !== undefined) {
@@ -335,6 +367,12 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   }
   if (totalCachedTokens > 0) {
     result.cachedTokens = totalCachedTokens;
+  }
+  // Use provider-reported reasoning tokens, or estimate from Anthropic thinking blocks
+  if (totalReasoningTokens > 0) {
+    result.reasoningTokens = totalReasoningTokens;
+  } else if (totalThinkingChars > 0) {
+    result.reasoningTokens = Math.ceil(totalThinkingChars / 4);
   }
   if (lastUpstreamCost !== undefined) {
     result.upstreamCost = lastUpstreamCost;

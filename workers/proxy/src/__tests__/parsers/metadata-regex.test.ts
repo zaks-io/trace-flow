@@ -356,4 +356,34 @@ describe('extractTokenUsageFromSSEData', () => {
       expect(usage.cost).toBe(1);
     });
   });
+
+  it('should extract reasoning_tokens from OpenAI streaming usage', () => {
+    const data = JSON.stringify({
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 500,
+        total_tokens: 600,
+        completion_tokens_details: {
+          reasoning_tokens: 350,
+        },
+      },
+    });
+
+    const usage = extractTokenUsageFromSSEData(data);
+
+    expect(usage.reasoning_tokens).toBe(350);
+  });
+
+  it('should not set reasoning_tokens when absent', () => {
+    const data = JSON.stringify({
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 50,
+      },
+    });
+
+    const usage = extractTokenUsageFromSSEData(data);
+
+    expect(usage.reasoning_tokens).toBeUndefined();
+  });
 });
