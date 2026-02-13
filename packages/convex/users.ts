@@ -2,8 +2,8 @@ import { mutation, query, internalMutation, internalQuery } from './_generated/s
 import { v } from 'convex/values';
 import { type QueryCtx, type MutationCtx } from './_generated/server';
 import { type Doc, type Id } from './_generated/dataModel';
-import { internal } from './_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
+import { scheduleKVSync } from './subscriptions';
 
 type AuthContext = QueryCtx | MutationCtx;
 
@@ -42,7 +42,7 @@ async function createHobbySubscription(ctx: MutationCtx, orgId: Id<'organization
   const hobbyConfig = TIER_CONFIG.hobby;
   const now = Date.now();
   const periodEnd = now + 30 * 24 * 60 * 60 * 1000;
-  await ctx.db.insert('subscriptions', {
+  const subscriptionId = await ctx.db.insert('subscriptions', {
     orgId,
     tier: 'hobby',
     status: 'active',
@@ -55,16 +55,7 @@ async function createHobbySubscription(ctx: MutationCtx, orgId: Id<'organization
     currentPeriodEnd: periodEnd,
     addonPurchaseCount: 0,
   });
-  await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
-    orgId,
-    tier: 'hobby',
-    monthlyUnits: hobbyConfig.monthlyUnits,
-    addonUnits: 0,
-    status: 'active',
-    seatQuantity: 1,
-    currentPeriodStart: now,
-    currentPeriodEnd: periodEnd,
-  });
+  await scheduleKVSync(ctx, subscriptionId);
 }
 
 async function ensureOrgMembership(

@@ -6,12 +6,14 @@ import {
   internalAction,
   internalMutation,
 } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
 import { getCurrentUser, requireEnabledUser } from './users';
 import { internal } from './_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
 import type { SubscriptionTier } from '@trace-flow/types';
+import type { Id } from './_generated/dataModel';
 import Stripe from 'stripe';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
@@ -69,6 +71,23 @@ async function requireOrgOwner(ctx: Parameters<typeof requireEnabledUser>[0]) {
     throw new Error('Only organization owners can manage billing');
   }
   return { user, org };
+}
+
+export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subscriptions'>) {
+  const sub = await ctx.db.get(subscriptionId);
+  if (!sub) return;
+  await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
+    orgId: sub.orgId,
+    tier: sub.tier,
+    monthlyUnits: sub.monthlyUnits,
+    addonUnits: sub.addonUnits,
+    status: sub.status ?? 'active',
+    seatQuantity: sub.seatQuantity ?? 1,
+    currentPeriodStart: sub.currentPeriodStart ?? 0,
+    currentPeriodEnd: sub.currentPeriodEnd ?? 0,
+    autoOverage: sub.autoOverage,
+    overageCapCents: sub.overageCapCents,
+  });
 }
 
 export const getForCurrentUser = query({
@@ -146,18 +165,7 @@ export const setTier = internalMutation({
       monthlyUnits: config.monthlyUnits,
     });
 
-    await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
-      orgId: args.orgId,
-      tier: args.tier,
-      monthlyUnits: config.monthlyUnits,
-      addonUnits: subscription.addonUnits,
-      status: subscription.status ?? 'active',
-      seatQuantity: subscription.seatQuantity ?? 1,
-      currentPeriodStart: subscription.currentPeriodStart ?? 0,
-      currentPeriodEnd: subscription.currentPeriodEnd ?? 0,
-      autoOverage: subscription.autoOverage,
-      overageCapCents: subscription.overageCapCents,
-    });
+    await scheduleKVSync(ctx, subscription._id);
 
     // When upgrading from hobby to pro, extend retention for existing traces
     if (previousTier === 'hobby' && args.tier === 'pro') {
@@ -186,18 +194,7 @@ export const addAddonUnits = internalMutation({
     const newAddonUnits = subscription.addonUnits + args.units;
     await ctx.db.patch(subscription._id, { addonUnits: newAddonUnits });
 
-    await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
-      orgId: args.orgId,
-      tier: subscription.tier,
-      monthlyUnits: subscription.monthlyUnits,
-      addonUnits: newAddonUnits,
-      status: subscription.status ?? 'active',
-      seatQuantity: subscription.seatQuantity ?? 1,
-      currentPeriodStart: subscription.currentPeriodStart ?? 0,
-      currentPeriodEnd: subscription.currentPeriodEnd ?? 0,
-      autoOverage: subscription.autoOverage,
-      overageCapCents: subscription.overageCapCents,
-    });
+    await scheduleKVSync(ctx, subscription._id);
   },
 });
 
@@ -459,18 +456,7 @@ export const updateAutoOverageSettings = mutation({
       autoOverage: args.autoOverage,
       overageCapCents: args.overageCapCents,
     });
-    await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
-      orgId: user.orgId!,
-      tier: subscription.tier,
-      monthlyUnits: subscription.monthlyUnits,
-      addonUnits: subscription.addonUnits,
-      status: subscription.status ?? 'active',
-      seatQuantity: subscription.seatQuantity ?? 1,
-      currentPeriodStart: subscription.currentPeriodStart ?? 0,
-      currentPeriodEnd: subscription.currentPeriodEnd ?? 0,
-      autoOverage: args.autoOverage,
-      overageCapCents: args.overageCapCents,
-    });
+    await scheduleKVSync(ctx, subscription._id);
   },
 });
 
@@ -644,18 +630,7 @@ export const upsertStripeSubscriptionState = internalMutation({
       ...(args.status === 'active' ? { gracePeriodSchedulerId: undefined } : {}),
     });
 
-    await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
-      orgId: args.orgId,
-      tier: subscription.tier,
-      monthlyUnits: subscription.monthlyUnits,
-      addonUnits: subscription.addonUnits,
-      status: args.status,
-      seatQuantity,
-      currentPeriodStart: args.currentPeriodStart ?? subscription.currentPeriodStart ?? 0,
-      currentPeriodEnd: args.currentPeriodEnd ?? subscription.currentPeriodEnd ?? 0,
-      autoOverage: subscription.autoOverage,
-      overageCapCents: subscription.overageCapCents,
-    });
+    await scheduleKVSync(ctx, subscription._id);
   },
 });
 
@@ -713,18 +688,7 @@ export const creditAddonPurchase = internalMutation({
       createdAt: Date.now(),
     });
 
-    await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
-      orgId: args.orgId,
-      tier: subscription.tier,
-      monthlyUnits: subscription.monthlyUnits,
-      addonUnits: newAddonUnits,
-      status: subscription.status ?? 'active',
-      seatQuantity: subscription.seatQuantity ?? 1,
-      currentPeriodStart: subscription.currentPeriodStart ?? 0,
-      currentPeriodEnd: subscription.currentPeriodEnd ?? 0,
-      autoOverage: subscription.autoOverage,
-      overageCapCents: subscription.overageCapCents,
-    });
+    await scheduleKVSync(ctx, subscription._id);
   },
 });
 
@@ -768,17 +732,6 @@ export const transitionGraceToSuspended = internalMutation({
       gracePeriodSchedulerId: undefined,
     });
 
-    await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
-      orgId: args.orgId,
-      tier: subscription.tier,
-      monthlyUnits: subscription.monthlyUnits,
-      addonUnits: subscription.addonUnits,
-      status: 'suspended',
-      seatQuantity: subscription.seatQuantity ?? 1,
-      currentPeriodStart: subscription.currentPeriodStart ?? 0,
-      currentPeriodEnd: subscription.currentPeriodEnd ?? 0,
-      autoOverage: subscription.autoOverage,
-      overageCapCents: subscription.overageCapCents,
-    });
+    await scheduleKVSync(ctx, subscription._id);
   },
 });
