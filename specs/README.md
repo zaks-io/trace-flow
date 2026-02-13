@@ -11,7 +11,7 @@ Architectural decisions, technology choices, and contextual information for the 
 - **Runtime**: Cloudflare Workers (edge deployment)
 - **Storage**: R2 (bodies), Tinybird/ClickHouse (traces), Convex (users/config)
 - **Queue**: Cloudflare Queues (async processing)
-- **Frontend**: Astro + React + Shadcn + Tailwind
+- **Frontend**: Next.js + React + Shadcn + Tailwind
 - **Auth**: Auth0 + Convex JWT tokens
 
 **Data Flow:**
@@ -48,7 +48,7 @@ Why we chose specific technologies and patterns.
 - [R2 Body Storage](decisions/r2-body-storage.md) - Separate storage for request/response bodies
 - [OpenTelemetry Conventions](decisions/otel-semantic-conventions.md) - GenAI semantic conventions
 - [JWT Tinybird Auth](decisions/jwt-tinybird-auth.md) - Frontend-direct queries with scoped tokens
-- [Astro Frontend](decisions/astro-frontend.md) - Static-first dashboard
+- [Next.js + OpenNext Frontend](decisions/nextjs-opennext-frontend.md) - Next.js on Cloudflare Workers
 
 ### Components
 

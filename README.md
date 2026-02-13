@@ -9,7 +9,7 @@ This monorepo contains four Cloudflare Workers:
 - **Proxy** (`workers/proxy`) - LLM request proxy that logs requests and enqueues them for processing
 - **Proxy Consumer** (`workers/proxy-consumer`) - Queue consumer that writes traces to Tinybird and stores bodies in R2
 - **API** (`workers/api`) - Provides R2 access for fetching request/response bodies
-- **Web** (`workers/web`) - Next.js analytics dashboard (Cloudflare Pages)
+- **Web** (`workers/web`) - Next.js analytics dashboard (Cloudflare Workers via OpenNext)
 
 ### How It Works
 
@@ -49,7 +49,7 @@ trace-flow/
     ├── proxy/               # LLM proxy worker
     ├── proxy-consumer/      # Queue consumer worker
     ├── api/                 # API worker for R2 body access
-    └── web/                 # Next.js dashboard (Cloudflare Pages)
+    └── web/                 # Next.js dashboard (Cloudflare Workers via OpenNext)
 ```
 
 ## Setup
@@ -229,7 +229,7 @@ Quick overview:
 - **Runtime**: Cloudflare Workers
 - **Package Manager**: Bun
 - **Monorepo**: Turborepo
-- **Frontend**: Next.js (Cloudflare Pages)
+- **Frontend**: Next.js (Cloudflare Workers via OpenNext)
 - **Backend**: Convex
 - **Analytics**: Tinybird (ClickHouse)
 - **Storage**: Cloudflare R2

@@ -183,7 +183,7 @@ AUTH0_DOMAIN = "auth0.zaks.io"
 AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 ```
 
-## Web Worker (Cloudflare Pages)
+## Web Worker (OpenNext)
 
 **Location**: `workers/web/`
 
@@ -191,7 +191,7 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 
 ### What It Owns
 
-- Static asset serving via Cloudflare Pages
+- Next.js SSR and static assets via OpenNext on Cloudflare Workers
 - React-based dashboard UI
 - Tinybird query generation and execution
 - Real-time data visualization
@@ -210,13 +210,13 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
   - Tinybird for trace queries (via JWT from Convex)
   - API worker for body retrieval
 
-### Why Pages Instead of Worker?
+### Deployment Architecture
 
-Cloudflare Pages provides:
+The web worker uses `@opennextjs/cloudflare` to compile Next.js for the Cloudflare Workers runtime:
 
-- Automatic static asset optimization
-- Built-in preview deployments per branch
-- Simpler build configuration for Astro/React
+- Next.js App Router with SSR runs natively on Workers
+- Static assets served via the Worker assets binding
+- Same `--env development` / `--env production` deployment pattern as other workers
 
 ## Cross-Worker Communication
 

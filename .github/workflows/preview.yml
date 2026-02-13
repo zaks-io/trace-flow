@@ -53,7 +53,7 @@ jobs:
           NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID: ${{ vars.NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID }}
           AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
-          APP_BASE_URL: https://${{ github.head_ref }}.trace-flow-web.pages.dev
+          APP_BASE_URL: https://trace-flow-web-dev.isaac-a46.workers.dev
 
       # Deploy web to Workers preview
       - name: Deploy Web Preview
@@ -65,12 +65,8 @@ jobs:
       # Post/update comment with preview URLs
       - name: Comment PR
         uses: actions/github-script@v7
-        env:
-          BRANCH_NAME: ${{ github.head_ref }}
         with:
           script: |
-            // Cloudflare Pages sanitizes branch names: slashes become hyphens
-            const branchName = process.env.BRANCH_NAME.replace(/\//g, '-');
             const body = `## 🚀 Preview Deployed
 
             | Service | URL |

@@ -89,7 +89,7 @@ Custom domains are configured in `wrangler.toml` and connected through the Cloud
 
 - `api.trace-flow.dev` → API worker
 - `gateway.trace-flow.dev` → Proxy worker
-- `trace-flow.dev` → Web worker (Cloudflare Pages)
+- `trace-flow.dev` → Web worker (Cloudflare Workers via OpenNext)
 
 **To connect domains:**
 
