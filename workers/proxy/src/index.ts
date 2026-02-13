@@ -33,7 +33,7 @@ import type {
   LLMTokenUsage,
   InputMessage,
 } from '@trace-flow/types';
-import { validateApiKey, isAuthError } from './auth';
+import { validateApiKey, isAuthError, validateOrgBillingStatus } from './auth';
 import type { ApiKeyData } from './auth';
 import { checkUsage, type UsageCheckResult } from './usage';
 import { parseTokenUsage } from './parsers/providers';
@@ -118,6 +118,11 @@ app.all('*', async (c) => {
     );
   }
 
+  const statusCheck = await validateOrgBillingStatus(c, keyData.orgId);
+  if (statusCheck) {
+    return statusCheck;
+  }
+
   let usageCheck: UsageCheckResult;
   try {
     usageCheck = await checkUsage(c.env, keyData.orgId, 1);
@@ -129,6 +134,21 @@ app.all('*', async (c) => {
         message: 'Usage check failed due to misconfiguration',
       },
       500,
+    );
+  }
+
+  if (usageCheck.status === 'exceeded') {
+    return c.json(
+      {
+        error: 'Usage limit exceeded',
+        code: 'USAGE_LIMIT_EXCEEDED',
+        message:
+          'Your organization has used all available units for this billing period. Increase seats or purchase addon units.',
+        details: {
+          resetAt: new Date(usageCheck.periodEnd).toISOString(),
+        },
+      },
+      429,
     );
   }
 
@@ -199,18 +219,6 @@ app.all('*', async (c) => {
     headers,
     body: streamToProxy,
   });
-
-  // Soft limit: exceeded usage skips trace capture but still proxies the request
-  // so the end-user's LLM call is never blocked.
-  if (usageCheck.status === 'exceeded') {
-    const passthroughHeaders = new Headers(response.headers);
-    passthroughHeaders.set('X-Trace-Flow-Usage-Exceeded', 'true');
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: passthroughHeaders,
-    });
-  }
 
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 

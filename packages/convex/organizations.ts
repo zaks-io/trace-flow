@@ -12,6 +12,19 @@ export const get = query({
   },
 });
 
+export const getMembers = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireTraceFlowRole(ctx);
+    const user = await getCurrentUser(ctx);
+    if (!user?.orgId) return [];
+    return await ctx.db
+      .query('organizationMembers')
+      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
+      .collect();
+  },
+});
+
 export const rename = mutation({
   args: { name: v.string() },
   handler: async (ctx, args) => {
@@ -31,5 +44,16 @@ export const getByIdInternal = internalQuery({
   args: { id: v.id('organizations') },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+export const getActiveMemberCountInternal = internalQuery({
+  args: { orgId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    const members = await ctx.db
+      .query('organizationMembers')
+      .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'active'))
+      .collect();
+    return members.length;
   },
 });

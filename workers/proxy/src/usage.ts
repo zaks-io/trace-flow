@@ -7,7 +7,7 @@ interface UsageEnv {
 
 export type UsageCheckResult =
   | { status: 'allowed'; tier: SubscriptionTier }
-  | { status: 'exceeded'; tier: SubscriptionTier };
+  | { status: 'exceeded'; tier: SubscriptionTier; periodEnd: number };
 
 export async function checkUsage(
   env: UsageEnv,
@@ -28,8 +28,8 @@ export async function checkUsage(
       body: JSON.stringify({ count, subscriptionConfig, orgId }),
     }),
   );
-  const result: { allowed: boolean } = await doResponse.json();
+  const result: { allowed: boolean; periodEnd?: number } = await doResponse.json();
   return result.allowed
     ? { status: 'allowed', tier: subscriptionConfig.tier }
-    : { status: 'exceeded', tier: subscriptionConfig.tier };
+    : { status: 'exceeded', tier: subscriptionConfig.tier, periodEnd: result.periodEnd ?? 0 };
 }

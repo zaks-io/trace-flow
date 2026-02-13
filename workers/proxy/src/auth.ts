@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import type { SubscriptionKVData } from '@trace-flow/types';
 
 export interface ApiKeyData {
   expiresAt: number;
@@ -65,4 +66,71 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
 
 export function isAuthError(result: Response | ApiKeyData): result is Response {
   return result instanceof Response;
+}
+
+export async function validateOrgBillingStatus<E extends { API_KEYS: KVNamespace }>(
+  c: Context<{ Bindings: E }>,
+  orgId: string,
+): Promise<Response | null> {
+  const subRaw = await c.env.API_KEYS.get(`sub:${orgId}`);
+  if (!subRaw) {
+    return c.json(
+      {
+        error: 'Subscription not found',
+        code: 'SUBSCRIPTION_NOT_FOUND',
+        message: 'Organization subscription is not configured.',
+      },
+      429,
+    );
+  }
+
+  let sub: SubscriptionKVData;
+  try {
+    sub = JSON.parse(subRaw) as SubscriptionKVData;
+  } catch {
+    return c.json(
+      {
+        error: 'Invalid subscription config',
+        code: 'SUBSCRIPTION_CONFIG_INVALID',
+        message: 'Organization subscription is misconfigured.',
+      },
+      500,
+    );
+  }
+
+  if (sub.status === 'active' || sub.status === 'grace') {
+    return null;
+  }
+
+  if (sub.status === 'suspended') {
+    return c.json(
+      {
+        error: 'Account suspended',
+        code: 'ACCOUNT_SUSPENDED',
+        message:
+          'Your organization is suspended due to a billing issue. Update your payment method in billing settings.',
+      },
+      429,
+    );
+  }
+
+  if (sub.status === 'canceled') {
+    return c.json(
+      {
+        error: 'Account canceled',
+        code: 'ACCOUNT_CANCELED',
+        message: 'This organization subscription has been canceled. Contact support to reactivate.',
+      },
+      429,
+    );
+  }
+
+  return c.json(
+    {
+      error: 'Unknown billing status',
+      code: 'BILLING_STATUS_UNKNOWN',
+      message: 'Organization billing status is unrecognized. Contact support.',
+    },
+    429,
+  );
 }

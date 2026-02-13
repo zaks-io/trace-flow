@@ -14,6 +14,7 @@ async function setupValidApiKey(key: string, orgId = 'org-test-123'): Promise<vo
   // Set up subscription config so usage checks pass
   const subConfig = {
     tier: 'pro',
+    status: 'active',
     monthlyUnits: 100000,
     addonUnits: 0,
   };
@@ -450,6 +451,7 @@ describe('Proxy Worker Integration', () => {
 
       const subConfig = {
         tier: 'hobby',
+        status: 'active',
         monthlyUnits: 0,
         addonUnits: 0,
       };
@@ -500,7 +502,7 @@ describe('Proxy Worker Integration', () => {
   });
 
   describe('Usage Exceeded', () => {
-    it('should include X-Trace-Flow-Usage-Exceeded header when usage is denied', async () => {
+    it('should return 429 before proxying when usage is denied', async () => {
       const key = 'usage-exceeded-key';
       const orgId = 'org-exhausted';
       const keyData = {
@@ -513,22 +515,11 @@ describe('Proxy Worker Integration', () => {
       // Set subscription with 0 units so usage is immediately denied
       const subConfig = {
         tier: 'hobby',
+        status: 'active',
         monthlyUnits: 0,
         addonUnits: 0,
       };
       await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
-
-      const mockResponse = {
-        id: 'chatcmpl-123',
-        choices: [{ message: { content: 'Hello!' } }],
-      };
-
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -540,12 +531,11 @@ describe('Proxy Worker Integration', () => {
         body: JSON.stringify({ model: 'gpt-4', messages: [] }),
       });
 
-      expect(res.status).toBe(200);
-      expect(res.headers.get('X-Trace-Flow-Usage-Exceeded')).toBe('true');
-
-      // Should still proxy the response body
-      const body = await res.json();
-      expect(body).toEqual(mockResponse);
+      expect(res.status).toBe(429);
+      const body: { error: string; code: string; details?: { resetAt?: string } } =
+        await res.json();
+      expect(body.code).toBe('USAGE_LIMIT_EXCEEDED');
+      expect(body.details?.resetAt).toBeDefined();
     });
   });
 

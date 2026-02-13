@@ -49,7 +49,7 @@ describe('checkUsage', () => {
     });
     const { env } = createMockEnv(kvData, { allowed: false });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toEqual({ status: 'exceeded', tier: 'hobby' });
+    expect(result).toEqual({ status: 'exceeded', tier: 'hobby', periodEnd: 0 });
   });
 
   it('passes correct subscription config and count to DO', async () => {
