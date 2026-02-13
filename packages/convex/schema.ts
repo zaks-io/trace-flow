@@ -23,33 +23,29 @@ export default defineSchema({
   subscriptions: defineTable({
     orgId: v.id('organizations'),
     tier: v.union(v.literal('hobby'), v.literal('pro')),
-    status: v.optional(
-      v.union(
-        v.literal('active'),
-        v.literal('grace'),
-        v.literal('suspended'),
-        v.literal('canceled'),
-      ),
+    status: v.union(
+      v.literal('active'),
+      v.literal('grace'),
+      v.literal('suspended'),
+      v.literal('canceled'),
     ),
     monthlyUnits: v.number(),
     addonUnits: v.number(),
-    // Stripe ownership (org-scoped)
+    seatQuantity: v.number(),
+    currentPeriodStart: v.number(),
+    currentPeriodEnd: v.number(),
+    currentPeriodOverageSpentCents: v.number(),
+    addonPurchaseCount: v.number(),
+    // Stripe ownership (org-scoped, not set until checkout)
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
     stripeSubscriptionItemId: v.optional(v.string()),
-    seatQuantity: v.optional(v.number()),
-    // Overage controls
+    // Overage controls (opt-in)
     autoOverage: v.optional(v.boolean()),
     overageCapCents: v.optional(v.number()),
-    currentPeriodOverageSpentCents: v.optional(v.number()),
-    // Stripe billing period boundaries (epoch ms)
-    currentPeriodStart: v.optional(v.number()),
-    currentPeriodEnd: v.optional(v.number()),
-    // Auto-topup idempotency sequence
-    addonPurchaseCount: v.optional(v.number()),
-    // Grace period -> suspended scheduler
+    // Grace period -> suspended scheduler (transient)
     gracePeriodSchedulerId: v.optional(v.id('_scheduled_functions')),
-    // Auto-topup dedup
+    // Auto-topup dedup (transient)
     autoTopupPendingSince: v.optional(v.number()),
   })
     .index('by_org_id', ['orgId'])

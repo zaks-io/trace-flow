@@ -376,19 +376,19 @@ export type DataModel = {
   };
   subscriptions: {
     document: {
-      addonPurchaseCount?: number;
+      addonPurchaseCount: number;
       addonUnits: number;
       autoOverage?: boolean;
       autoTopupPendingSince?: number;
-      currentPeriodEnd?: number;
-      currentPeriodOverageSpentCents?: number;
-      currentPeriodStart?: number;
+      currentPeriodEnd: number;
+      currentPeriodOverageSpentCents: number;
+      currentPeriodStart: number;
       gracePeriodSchedulerId?: Id<"_scheduled_functions">;
       monthlyUnits: number;
       orgId: Id<"organizations">;
       overageCapCents?: number;
-      seatQuantity?: number;
-      status?: "active" | "grace" | "suspended" | "canceled";
+      seatQuantity: number;
+      status: "active" | "grace" | "suspended" | "canceled";
       stripeCustomerId?: string;
       stripeSubscriptionId?: string;
       stripeSubscriptionItemId?: string;

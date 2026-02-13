@@ -7,11 +7,36 @@ import type { Id } from './_generated/dataModel';
 import { api, internal } from './_generated/api';
 import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
+import Stripe from 'stripe';
+import { mapStripeStatusToInternal } from './subscriptions';
 
 // Dependencies that can be injected for testing
 export interface HttpDeps {
   oauth: typeof oauthModule;
   tokens: typeof tokensModule;
+}
+
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+function stripeClient() {
+  if (!stripeSecretKey) {
+    throw new Error('STRIPE_SECRET_KEY environment variable is not set');
+  }
+  return new Stripe(stripeSecretKey);
+}
+
+async function resolveOrgSubscription(ctx: ActionCtx, customerId: string, subscriptionId?: string) {
+  if (subscriptionId) {
+    const bySub = await ctx.runQuery(internal.subscriptions.getByStripeSubscriptionId, {
+      stripeSubscriptionId: subscriptionId,
+    });
+    if (bySub) return bySub;
+  }
+
+  return await ctx.runQuery(internal.subscriptions.getByStripeCustomerId, {
+    stripeCustomerId: customerId,
+  });
 }
 
 // Factory function for creating the Hono app (exported for testing)
@@ -30,6 +55,182 @@ export function createApp(
       maxAge: 86400,
     }),
   );
+
+  app.post('/stripe/webhook', async (c) => {
+    const ctx = c.env;
+    const signature = c.req.header('stripe-signature');
+    if (!signature) {
+      return c.json({ error: 'Missing stripe-signature header' }, 400);
+    }
+    if (!stripeWebhookSecret) {
+      return c.json({ error: 'STRIPE_WEBHOOK_SECRET environment variable is not set' }, 500);
+    }
+
+    const rawBody = await c.req.text();
+    const stripe = stripeClient();
+
+    let event: Stripe.Event;
+    try {
+      event = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
+    } catch (error) {
+      return c.json(
+        {
+          error: 'Invalid webhook signature',
+          details: error instanceof Error ? error.message : '',
+        },
+        400,
+      );
+    }
+
+    const start = await ctx.runMutation(internal.stripeEvents.startProcessing, {
+      eventId: event.id,
+      eventType: event.type,
+      stripeObjectId:
+        typeof event.data.object === 'object' && event.data.object && 'id' in event.data.object
+          ? ((event.data.object as { id?: string }).id ?? undefined)
+          : undefined,
+    });
+    if (start.alreadyProcessed) {
+      return c.json({ ok: true, deduped: true });
+    }
+
+    try {
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object;
+          const orgId = session.metadata?.orgId as Id<'organizations'> | undefined;
+          if (!orgId) break;
+          const stripeSubId =
+            typeof session.subscription === 'string' ? session.subscription : undefined;
+          if (!stripeSubId || !session.customer || typeof session.customer !== 'string') break;
+          const sub = await stripe.subscriptions.retrieve(stripeSubId);
+          const subscriptionItem = sub.items.data[0];
+          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+            orgId,
+            status: mapStripeStatusToInternal(sub.status),
+            stripeCustomerId: session.customer,
+            stripeSubscriptionId: sub.id,
+            stripeSubscriptionItemId: subscriptionItem?.id,
+            seatQuantity: subscriptionItem?.quantity ?? 1,
+            currentPeriodStart: (subscriptionItem?.current_period_start ?? 0) * 1000,
+            currentPeriodEnd: (subscriptionItem?.current_period_end ?? 0) * 1000,
+          });
+          break;
+        }
+        case 'customer.subscription.updated':
+        case 'customer.subscription.deleted': {
+          const stripeSub = event.data.object;
+          const customerId =
+            typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id;
+          const existing = await resolveOrgSubscription(ctx, customerId, stripeSub.id);
+          if (!existing) break;
+          const item = stripeSub.items.data[0];
+          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+            orgId: existing.orgId,
+            status: mapStripeStatusToInternal(stripeSub.status),
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: stripeSub.id,
+            stripeSubscriptionItemId: item?.id,
+            seatQuantity: item?.quantity ?? 1,
+            currentPeriodStart: (item?.current_period_start ?? 0) * 1000,
+            currentPeriodEnd: (item?.current_period_end ?? 0) * 1000,
+          });
+          break;
+        }
+        case 'invoice.paid': {
+          const invoice = event.data.object;
+          const parentSubscription = invoice.parent?.subscription_details?.subscription;
+          const subscriptionId =
+            typeof parentSubscription === 'string' ? parentSubscription : parentSubscription?.id;
+          const customerId =
+            typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
+          if (!customerId) break;
+          const existing = await resolveOrgSubscription(ctx, customerId, subscriptionId);
+          if (!existing) break;
+
+          const stripeSub = subscriptionId
+            ? await stripe.subscriptions.retrieve(subscriptionId)
+            : undefined;
+          const item = stripeSub?.items.data[0];
+          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+            orgId: existing.orgId,
+            status: 'active',
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscriptionId,
+            stripeSubscriptionItemId: item?.id ?? existing.stripeSubscriptionItemId,
+            seatQuantity: item?.quantity ?? existing.seatQuantity,
+            currentPeriodStart: item?.current_period_start
+              ? item.current_period_start * 1000
+              : existing.currentPeriodStart,
+            currentPeriodEnd: item?.current_period_end
+              ? item.current_period_end * 1000
+              : existing.currentPeriodEnd,
+          });
+          break;
+        }
+        case 'invoice.payment_failed': {
+          const invoice = event.data.object;
+          const customerId =
+            typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
+          if (!customerId) break;
+          const existing = await resolveOrgSubscription(
+            ctx,
+            customerId,
+            typeof invoice.parent?.subscription_details?.subscription === 'string'
+              ? invoice.parent.subscription_details.subscription
+              : invoice.parent?.subscription_details?.subscription?.id,
+          );
+          if (!existing) break;
+          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+            orgId: existing.orgId,
+            status: 'grace',
+          });
+          await ctx.runMutation(internal.subscriptions.scheduleGraceSuspension, {
+            orgId: existing.orgId,
+          });
+          break;
+        }
+        case 'payment_intent.succeeded': {
+          const paymentIntent = event.data.object;
+          const orgIdRaw = paymentIntent.metadata.orgId;
+          const addonUnitsRaw = paymentIntent.metadata.addonUnits;
+          if (!orgIdRaw || !addonUnitsRaw) break;
+          if (!orgIdRaw.includes(':')) {
+            throw new Error(`Invalid orgId format in payment_intent metadata: "${orgIdRaw}"`);
+          }
+          const orgId = orgIdRaw as Id<'organizations'>;
+          const units = Number(addonUnitsRaw);
+          if (!Number.isFinite(units) || units <= 0) break;
+          const mode = paymentIntent.metadata.mode === 'auto' ? 'auto' : 'manual';
+          await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
+            orgId,
+            units,
+            amountCents: paymentIntent.amount_received,
+            stripePaymentIntentId: paymentIntent.id,
+            mode,
+          });
+          break;
+        }
+        default:
+          break;
+      }
+
+      await ctx.runMutation(internal.stripeEvents.markProcessed, { eventId: event.id });
+      return c.json({ ok: true });
+    } catch (error) {
+      console.error('Stripe webhook processing failed:', {
+        eventId: event.id,
+        eventType: event.type,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await ctx.runMutation(internal.stripeEvents.markFailed, {
+        eventId: event.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Return 500 so Stripe retries. Idempotency table prevents double-processing.
+      return c.json({ ok: false, error: 'processing_failed' }, 500);
+    }
+  });
 
   // OAuth: Discovery metadata (RFC 8414)
   app.get('/.well-known/oauth-authorization-server', (c) => {
@@ -419,6 +620,12 @@ export function createApp(
       orgId,
       periodStart: body.periodStart,
       periodEnd: body.periodEnd,
+      subscriptionUnitsUsed: body.subscriptionUnitsUsed,
+      addonUnitsUsed: body.addonUnitsUsed,
+    });
+
+    await ctx.runMutation(internal.usage.checkAutoTopup, {
+      orgId,
       subscriptionUnitsUsed: body.subscriptionUnitsUsed,
       addonUnitsUsed: body.addonUnitsUsed,
     });

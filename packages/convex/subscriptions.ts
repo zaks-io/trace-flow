@@ -81,10 +81,10 @@ export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subsc
     tier: sub.tier,
     monthlyUnits: sub.monthlyUnits,
     addonUnits: sub.addonUnits,
-    status: sub.status ?? 'active',
-    seatQuantity: sub.seatQuantity ?? 1,
-    currentPeriodStart: sub.currentPeriodStart ?? 0,
-    currentPeriodEnd: sub.currentPeriodEnd ?? 0,
+    status: sub.status,
+    seatQuantity: sub.seatQuantity,
+    currentPeriodStart: sub.currentPeriodStart,
+    currentPeriodEnd: sub.currentPeriodEnd,
     autoOverage: sub.autoOverage,
     overageCapCents: sub.overageCapCents,
   });
@@ -121,11 +121,10 @@ export const getBillingSummaryForCurrentUser = query({
       .withIndex('by_org_id_status', (q) => q.eq('orgId', user.orgId!).eq('status', 'active'))
       .collect();
 
-    const periodStart = subscription.currentPeriodStart ?? 0;
     const usage = await ctx.db
       .query('usage')
       .withIndex('by_org_id_period', (q) =>
-        q.eq('orgId', user.orgId!).eq('periodStart', periodStart),
+        q.eq('orgId', user.orgId!).eq('periodStart', subscription.currentPeriodStart),
       )
       .first();
 
@@ -135,11 +134,11 @@ export const getBillingSummaryForCurrentUser = query({
     return {
       subscription,
       activeMembers: members.length,
-      seatsRemaining: Math.max(0, (subscription.seatQuantity ?? 1) - members.length),
+      seatsRemaining: Math.max(0, subscription.seatQuantity - members.length),
       totalUsed,
       totalAvailable,
       remaining: Math.max(0, totalAvailable - totalUsed),
-      currentPeriodEnd: subscription.currentPeriodEnd ?? 0,
+      currentPeriodEnd: subscription.currentPeriodEnd,
     };
   },
 });
@@ -489,12 +488,11 @@ export const triggerAutoTopup = internalAction({
 
     // Pre-check cap to avoid charging then failing
     const cap = subscription.overageCapCents;
-    const spent = subscription.currentPeriodOverageSpentCents ?? 0;
-    if (cap !== undefined && spent + args.amountCents > cap) {
+    if (cap !== undefined && subscription.currentPeriodOverageSpentCents + args.amountCents > cap) {
       return { ok: false, reason: 'cap_reached' as const };
     }
 
-    const idempotencyKey = `auto-topup:${args.orgId}:${subscription.currentPeriodStart ?? 0}:${subscription.addonPurchaseCount ?? 0}`;
+    const idempotencyKey = `auto-topup:${args.orgId}:${subscription.currentPeriodStart}:${subscription.addonPurchaseCount}`;
     const stripe = getStripeClient();
     const paymentIntent = await stripe.paymentIntents.create(
       {
@@ -615,7 +613,7 @@ export const upsertStripeSubscriptionState = internalMutation({
       .first();
     if (!subscription) throw new Error('Subscription not found');
 
-    const seatQuantity = args.seatQuantity ?? subscription.seatQuantity ?? 1;
+    const seatQuantity = args.seatQuantity ?? subscription.seatQuantity;
 
     // Cancel grace period scheduler when transitioning to active
     if (args.status === 'active' && subscription.gracePeriodSchedulerId) {
@@ -669,19 +667,20 @@ export const creditAddonPurchase = internalMutation({
     // Validate overage cap inside the transactional mutation to prevent races
     if (args.mode === 'auto') {
       const cap = subscription.overageCapCents;
-      const spent = subscription.currentPeriodOverageSpentCents ?? 0;
-      if (cap !== undefined && spent + args.amountCents > cap) {
+      if (
+        cap !== undefined &&
+        subscription.currentPeriodOverageSpentCents + args.amountCents > cap
+      ) {
         throw new Error('Overage cap reached');
       }
     }
 
     const newAddonUnits = subscription.addonUnits + args.units;
     const newOverageSpent =
-      (subscription.currentPeriodOverageSpentCents ?? 0) +
-      (args.mode === 'auto' ? args.amountCents : 0);
+      subscription.currentPeriodOverageSpentCents + (args.mode === 'auto' ? args.amountCents : 0);
     await ctx.db.patch(subscription._id, {
       addonUnits: newAddonUnits,
-      addonPurchaseCount: (subscription.addonPurchaseCount ?? 0) + 1,
+      addonPurchaseCount: subscription.addonPurchaseCount + 1,
       currentPeriodOverageSpentCents: newOverageSpent,
       autoTopupPendingSince: undefined,
     });
@@ -692,7 +691,7 @@ export const creditAddonPurchase = internalMutation({
       amountCents: args.amountCents,
       stripePaymentIntentId: args.stripePaymentIntentId,
       mode: args.mode,
-      periodStart: subscription.currentPeriodStart ?? 0,
+      periodStart: subscription.currentPeriodStart,
     });
 
     await scheduleKVSync(ctx, subscription._id);

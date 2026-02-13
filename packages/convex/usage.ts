@@ -2,20 +2,23 @@ import { query, internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
 import { getCurrentUser } from './users';
-import { computePeriod } from '@trace-flow/utils';
+import { internal } from './_generated/api';
+import { TIER_CONFIG } from '@trace-flow/types';
 
 export const getCurrentUsage = query({
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
-
-    const { periodStart } = computePeriod(new Date());
-
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
+      .first();
+    if (!subscription) return null;
     return await ctx.db
       .query('usage')
       .withIndex('by_org_id_period', (q) =>
-        q.eq('orgId', user.orgId!).eq('periodStart', periodStart),
+        q.eq('orgId', user.orgId!).eq('periodStart', subscription.currentPeriodStart),
       )
       .first();
   },
@@ -58,13 +61,68 @@ export const recordUsage = internalMutation({
 export const getForOrgInternal = internalQuery({
   args: { orgId: v.id('organizations') },
   handler: async (ctx, args) => {
-    const { periodStart } = computePeriod(new Date());
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .first();
+    if (!subscription) return null;
 
     return await ctx.db
       .query('usage')
       .withIndex('by_org_id_period', (q) =>
-        q.eq('orgId', args.orgId).eq('periodStart', periodStart),
+        q.eq('orgId', args.orgId).eq('periodStart', subscription.currentPeriodStart),
       )
       .first();
+  },
+});
+
+const AUTO_TOPUP_DEDUP_MS = 15 * 60 * 1000; // 15 minutes
+
+export const checkAutoTopup = internalMutation({
+  args: {
+    orgId: v.id('organizations'),
+    subscriptionUnitsUsed: v.number(),
+    addonUnitsUsed: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .first();
+    if (!subscription) return;
+    if (subscription.tier !== 'pro') return;
+    if (!subscription.autoOverage) return;
+
+    // Dedup: skip if a topup was recently triggered
+    if (
+      subscription.autoTopupPendingSince &&
+      Date.now() - subscription.autoTopupPendingSince < AUTO_TOPUP_DEDUP_MS
+    ) {
+      return;
+    }
+
+    const totalUsed = args.subscriptionUnitsUsed + args.addonUnitsUsed;
+    const totalAvailable = subscription.monthlyUnits + subscription.addonUnits;
+    if (totalAvailable <= 0) return;
+
+    const usageRatio = totalUsed / totalAvailable;
+    if (usageRatio < 0.9) return;
+
+    // Check cap before scheduling
+    const cap = subscription.overageCapCents;
+    const addonAmountCents = TIER_CONFIG.pro.overagePer100kCents;
+    if (cap !== undefined && subscription.currentPeriodOverageSpentCents + addonAmountCents > cap)
+      return;
+
+    await ctx.db.patch(subscription._id, {
+      autoTopupPendingSince: Date.now(),
+    });
+
+    await ctx.scheduler.runAfter(0, internal.subscriptions.triggerAutoTopup, {
+      orgId: args.orgId,
+      units: 100_000,
+      amountCents: addonAmountCents,
+      reason: 'usage_threshold',
+    });
   },
 });

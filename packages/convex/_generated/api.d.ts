@@ -356,13 +356,13 @@ export declare const internal: {
       {
         addonUnits: number;
         autoOverage?: boolean;
-        currentPeriodEnd?: number;
-        currentPeriodStart?: number;
+        currentPeriodEnd: number;
+        currentPeriodStart: number;
         monthlyUnits: number;
         orgId: string;
         overageCapCents?: number;
-        seatQuantity?: number;
-        status?: string;
+        seatQuantity: number;
+        status: string;
         tier: string;
       },
       any

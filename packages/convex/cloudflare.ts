@@ -2,6 +2,7 @@ import { internalAction, internalQuery, action } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { requireTraceFlowRole } from './auth';
+import type { Doc } from './_generated/dataModel';
 
 function getCloudflareConfig() {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -59,12 +60,24 @@ export const syncSubscriptionToKV = internalAction({
     tier: v.string(),
     monthlyUnits: v.number(),
     addonUnits: v.number(),
+    status: v.string(),
+    seatQuantity: v.number(),
+    currentPeriodStart: v.number(),
+    currentPeriodEnd: v.number(),
+    autoOverage: v.optional(v.boolean()),
+    overageCapCents: v.optional(v.number()),
   },
   handler: async (_ctx, args) => {
     const value = JSON.stringify({
       tier: args.tier,
       monthlyUnits: args.monthlyUnits,
       addonUnits: args.addonUnits,
+      status: args.status,
+      seatQuantity: args.seatQuantity,
+      currentPeriodStart: args.currentPeriodStart,
+      currentPeriodEnd: args.currentPeriodEnd,
+      autoOverage: args.autoOverage,
+      overageCapCents: args.overageCapCents,
     });
 
     await putKV(`sub:${args.orgId}`, value);
@@ -108,37 +121,47 @@ export const getAllSyncData = internalQuery({
   },
 });
 
+async function runBatched<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>) {
+  for (let i = 0; i < items.length; i += concurrency) {
+    await Promise.all(items.slice(i, i + concurrency).map(fn));
+  }
+}
+
 export const syncAll = action({
   args: {},
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const isAdmin = await ctx.runQuery(internal.cloudflare.isCallerAdmin);
     if (!isAdmin) throw new Error('Admin access required');
-    const { apiKeys, subscriptions } = await ctx.runQuery(internal.cloudflare.getAllSyncData);
+    const { apiKeys, subscriptions } = (await ctx.runQuery(internal.cloudflare.getAllSyncData)) as {
+      apiKeys: Doc<'apiKeys'>[];
+      subscriptions: Doc<'subscriptions'>[];
+    };
 
-    let keySynced = 0;
-    let subSynced = 0;
-
-    for (const key of apiKeys) {
-      await ctx.runAction(internal.cloudflare.syncKeyToKV, {
+    await runBatched(apiKeys, 10, (key) =>
+      ctx.runAction(internal.cloudflare.syncKeyToKV, {
         key: key.key,
         expiresAt: key.expiresAt,
         orgId: key.orgId,
-      });
-      keySynced++;
-    }
+      }),
+    );
 
-    for (const sub of subscriptions) {
-      await ctx.runAction(internal.cloudflare.syncSubscriptionToKV, {
+    await runBatched(subscriptions, 10, (sub) =>
+      ctx.runAction(internal.cloudflare.syncSubscriptionToKV, {
         orgId: sub.orgId,
         tier: sub.tier,
         monthlyUnits: sub.monthlyUnits,
         addonUnits: sub.addonUnits,
-      });
-      subSynced++;
-    }
+        status: sub.status,
+        seatQuantity: sub.seatQuantity,
+        currentPeriodStart: sub.currentPeriodStart,
+        currentPeriodEnd: sub.currentPeriodEnd,
+        autoOverage: sub.autoOverage,
+        overageCapCents: sub.overageCapCents,
+      }),
+    );
 
-    return { keySynced, subSynced };
+    return { keySynced: apiKeys.length, subSynced: subscriptions.length };
   },
 });
 

@@ -18,11 +18,18 @@ export const backfillOrgs = internalMutation({
       await ctx.db.patch(user._id, { orgId });
 
       const hobbyConfig = TIER_CONFIG.hobby;
+      const now = Date.now();
       await ctx.db.insert('subscriptions', {
         orgId,
         tier: 'hobby',
+        status: 'active',
         monthlyUnits: hobbyConfig.monthlyUnits,
         addonUnits: 0,
+        seatQuantity: 1,
+        currentPeriodStart: now,
+        currentPeriodEnd: now + 30 * 24 * 60 * 60 * 1000,
+        currentPeriodOverageSpentCents: 0,
+        addonPurchaseCount: 0,
       });
 
       // Re-sync all API keys for this user with orgId
@@ -45,6 +52,10 @@ export const backfillOrgs = internalMutation({
         tier: 'hobby',
         monthlyUnits: hobbyConfig.monthlyUnits,
         addonUnits: 0,
+        status: 'active',
+        seatQuantity: 1,
+        currentPeriodStart: now,
+        currentPeriodEnd: now + 30 * 24 * 60 * 60 * 1000,
       });
 
       migrated++;
