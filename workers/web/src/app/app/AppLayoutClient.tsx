@@ -8,9 +8,11 @@ import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useUserInitialization } from '@/hooks/useUserInitialization';
+import { useLaunchDarklyIdentity } from '@/hooks/useLaunchDarklyIdentity';
 
 function AppLayoutInner({ children }: { children: React.ReactNode }) {
   useUserInitialization();
+  useLaunchDarklyIdentity();
   const hasRole = useQuery(api.auth.hasTraceFlowRole);
 
   if (hasRole === undefined) {

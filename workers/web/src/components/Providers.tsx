@@ -4,6 +4,7 @@ import { ConvexReactClient, ConvexProviderWithAuth } from 'convex/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { type ReactNode, useMemo } from 'react';
 import { useConvexAuthSession } from '@/hooks/useConvexAuthSession';
+import { LaunchDarklyProvider } from '@/components/LaunchDarklyProvider';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,7 +28,9 @@ function ConvexAuthProvider({ children }: { children: ReactNode }) {
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <ConvexAuthProvider>
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <LaunchDarklyProvider>{children}</LaunchDarklyProvider>
+      </QueryClientProvider>
     </ConvexAuthProvider>
   );
 }
