@@ -33,6 +33,7 @@ export type DataModel = {
       mode: "manual" | "auto";
       orgId: Id<"organizations">;
       periodStart: number;
+      stripeInvoiceId?: string;
       stripePaymentIntentId: string;
       triggeredByUserId?: Id<"users">;
       units: number;
@@ -46,6 +47,7 @@ export type DataModel = {
       | "mode"
       | "orgId"
       | "periodStart"
+      | "stripeInvoiceId"
       | "stripePaymentIntentId"
       | "triggeredByUserId"
       | "units";

@@ -167,6 +167,7 @@ export default defineSchema({
     units: v.number(),
     amountCents: v.number(),
     stripePaymentIntentId: v.string(),
+    stripeInvoiceId: v.optional(v.string()),
     mode: v.union(v.literal('manual'), v.literal('auto')),
     periodStart: v.number(),
   })

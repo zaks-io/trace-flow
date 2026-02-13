@@ -269,12 +269,10 @@ export const createOrgCheckoutSession = action({
         },
       });
       stripeCustomerId = customer.id;
-      if (subscription) {
-        await ctx.runMutation(internal.subscriptions.setStripeCustomerId, {
-          orgId: user.orgId,
-          stripeCustomerId,
-        });
-      }
+      await ctx.runMutation(internal.subscriptions.setStripeCustomerId, {
+        orgId: user.orgId,
+        stripeCustomerId,
+      });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -342,12 +340,15 @@ export const createAddonCheckoutSession = action({
       line_items: [{ price: getAddonPriceId(), quantity }],
       success_url: args.successUrl ?? `${appUrl}/app/settings/billing?addon=success`,
       cancel_url: args.cancelUrl ?? `${appUrl}/app/settings/billing?addon=cancel`,
-      payment_intent_data: {
-        metadata: {
-          orgId: user.orgId,
-          ownerUserId: user._id,
-          addonUnits: String(args.units),
-          mode: 'manual',
+      invoice_creation: {
+        enabled: true,
+        invoice_data: {
+          metadata: {
+            orgId: user.orgId,
+            ownerUserId: user._id,
+            addonUnits: String(args.units),
+            mode: 'manual',
+          },
         },
       },
     });
@@ -494,24 +495,45 @@ export const triggerAutoTopup = internalAction({
 
     const idempotencyKey = `auto-topup:${args.orgId}:${subscription.currentPeriodStart}:${subscription.addonPurchaseCount}`;
     const stripe = getStripeClient();
-    const paymentIntent = await stripe.paymentIntents.create(
+
+    const invoiceItem = await stripe.invoiceItems.create({
+      customer: subscription.stripeCustomerId,
+      amount: args.amountCents,
+      currency: 'usd',
+      description: `Auto top-up: ${args.units.toLocaleString()} units`,
+    });
+
+    const invoice = await stripe.invoices.create(
       {
-        amount: args.amountCents,
-        currency: 'usd',
         customer: subscription.stripeCustomerId,
-        confirm: true,
-        off_session: true,
+        auto_advance: true,
         metadata: {
           orgId: args.orgId,
           reason: args.reason ?? 'usage_threshold',
           mode: 'auto',
           addonUnits: String(args.units),
+          invoiceItemId: invoiceItem.id,
         },
       },
       { idempotencyKey },
     );
-    if (paymentIntent.status !== 'succeeded') {
-      throw new Error(`Auto-topup payment did not succeed (${paymentIntent.status})`);
+
+    const paid = await stripe.invoices.pay(invoice.id);
+    if (paid.status !== 'paid') {
+      throw new Error(`Auto-topup invoice payment did not succeed (${paid.status})`);
+    }
+
+    // In Stripe v20+, payment_intent is on the invoice payments, not top-level
+    const invoicePayments = await stripe.invoicePayments.list({ invoice: invoice.id, limit: 1 });
+    const payment = invoicePayments.data[0]?.payment;
+    const paymentIntentId =
+      payment?.type === 'payment_intent'
+        ? typeof payment.payment_intent === 'string'
+          ? payment.payment_intent
+          : payment.payment_intent?.id
+        : undefined;
+    if (!paymentIntentId) {
+      throw new Error('Auto-topup invoice missing payment_intent');
     }
 
     try {
@@ -519,15 +541,25 @@ export const triggerAutoTopup = internalAction({
         orgId: args.orgId,
         units: args.units,
         amountCents: args.amountCents,
-        stripePaymentIntentId: paymentIntent.id,
+        stripePaymentIntentId: paymentIntentId,
+        stripeInvoiceId: invoice.id,
         mode: 'auto',
       });
     } catch (e) {
-      await stripe.refunds.create({ payment_intent: paymentIntent.id });
+      await stripe.creditNotes.create({
+        invoice: invoice.id,
+        lines: [
+          {
+            type: 'invoice_line_item',
+            invoice_line_item: invoiceItem.id,
+            quantity: 1,
+          },
+        ],
+      });
       throw e;
     }
 
-    return { ok: true, paymentIntentId: paymentIntent.id };
+    return { ok: true, invoiceId: invoice.id };
   },
 });
 
@@ -636,6 +668,19 @@ export const upsertStripeSubscriptionState = internalMutation({
       ...(args.status === 'active' ? { gracePeriodSchedulerId: undefined } : {}),
     });
 
+    // Warn if seats were reduced below active member count (e.g. via Stripe Portal)
+    if (seatQuantity < subscription.seatQuantity) {
+      const activeMembers = await ctx.db
+        .query('organizationMembers')
+        .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'active'))
+        .collect();
+      if (seatQuantity < activeMembers.length) {
+        console.warn(
+          `Seat count (${seatQuantity}) is below active member count (${activeMembers.length}) for org ${args.orgId}`,
+        );
+      }
+    }
+
     await scheduleKVSync(ctx, subscription._id);
   },
 });
@@ -646,6 +691,7 @@ export const creditAddonPurchase = internalMutation({
     units: v.number(),
     amountCents: v.number(),
     stripePaymentIntentId: v.string(),
+    stripeInvoiceId: v.optional(v.string()),
     mode: v.union(v.literal('manual'), v.literal('auto')),
     triggeredByUserId: v.optional(v.id('users')),
   },
@@ -690,8 +736,64 @@ export const creditAddonPurchase = internalMutation({
       units: args.units,
       amountCents: args.amountCents,
       stripePaymentIntentId: args.stripePaymentIntentId,
+      stripeInvoiceId: args.stripeInvoiceId,
       mode: args.mode,
       periodStart: subscription.currentPeriodStart,
+    });
+
+    await scheduleKVSync(ctx, subscription._id);
+  },
+});
+
+export const revokeAddonPurchase = internalMutation({
+  args: { stripePaymentIntentId: v.string() },
+  handler: async (ctx, args) => {
+    const purchase = await ctx.db
+      .query('addonPurchases')
+      .withIndex('by_payment_intent', (q) =>
+        q.eq('stripePaymentIntentId', args.stripePaymentIntentId),
+      )
+      .first();
+    if (!purchase) return;
+
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', purchase.orgId))
+      .first();
+    if (!subscription) return;
+
+    const newAddonUnits = Math.max(0, subscription.addonUnits - purchase.units);
+    await ctx.db.patch(subscription._id, { addonUnits: newAddonUnits });
+    await scheduleKVSync(ctx, subscription._id);
+  },
+});
+
+export const revertToHobby = internalMutation({
+  args: { orgId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .first();
+    if (!subscription) return;
+
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const hobbyConfig = TIER_CONFIG.hobby;
+
+    await ctx.db.patch(subscription._id, {
+      tier: 'hobby',
+      status: 'active',
+      monthlyUnits: hobbyConfig.monthlyUnits,
+      addonUnits: 0,
+      currentPeriodOverageSpentCents: 0,
+      autoOverage: undefined,
+      overageCapCents: undefined,
+      currentPeriodStart: now,
+      currentPeriodEnd: now + thirtyDaysMs,
+      stripeSubscriptionId: undefined,
+      stripeSubscriptionItemId: undefined,
+      gracePeriodSchedulerId: undefined,
     });
 
     await scheduleKVSync(ctx, subscription._id);

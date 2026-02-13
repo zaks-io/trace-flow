@@ -789,6 +789,7 @@ export declare const internal: {
         amountCents: number;
         mode: "manual" | "auto";
         orgId: Id<"organizations">;
+        stripeInvoiceId?: string;
         stripePaymentIntentId: string;
         triggeredByUserId?: Id<"users">;
         units: number;
@@ -811,6 +812,18 @@ export declare const internal: {
       "query",
       "internal",
       { stripeSubscriptionId: string },
+      any
+    >;
+    revertToHobby: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
+    revokeAddonPurchase: FunctionReference<
+      "mutation",
+      "internal",
+      { stripePaymentIntentId: string },
       any
     >;
     scheduleGraceSuspension: FunctionReference<

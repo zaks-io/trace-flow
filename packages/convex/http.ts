@@ -117,8 +117,8 @@ export function createApp(
           });
           break;
         }
-        case 'customer.subscription.updated':
-        case 'customer.subscription.deleted': {
+        case 'customer.subscription.created':
+        case 'customer.subscription.updated': {
           const stripeSub = event.data.object;
           const customerId =
             typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id;
@@ -137,14 +137,72 @@ export function createApp(
           });
           break;
         }
+        case 'customer.subscription.deleted': {
+          const stripeSub = event.data.object;
+          const customerId =
+            typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id;
+          const existing = await resolveOrgSubscription(ctx, customerId, stripeSub.id);
+          if (!existing) break;
+          const item = stripeSub.items.data[0];
+          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+            orgId: existing.orgId,
+            status: mapStripeStatusToInternal(stripeSub.status),
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: stripeSub.id,
+            stripeSubscriptionItemId: item?.id,
+            seatQuantity: item?.quantity ?? 1,
+            currentPeriodStart: (item?.current_period_start ?? 0) * 1000,
+            currentPeriodEnd: (item?.current_period_end ?? 0) * 1000,
+          });
+          await ctx.runMutation(internal.subscriptions.revertToHobby, {
+            orgId: existing.orgId,
+          });
+          break;
+        }
         case 'invoice.paid': {
           const invoice = event.data.object;
-          const parentSubscription = invoice.parent?.subscription_details?.subscription;
-          const subscriptionId =
-            typeof parentSubscription === 'string' ? parentSubscription : parentSubscription?.id;
           const customerId =
             typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
           if (!customerId) break;
+
+          // Check if this is an addon purchase invoice (manual or auto-topup)
+          const addonUnitsRaw = invoice.metadata?.addonUnits;
+          if (addonUnitsRaw) {
+            const orgIdRaw = invoice.metadata?.orgId as Id<'organizations'> | undefined;
+            if (!orgIdRaw) break;
+            const units = Number(addonUnitsRaw);
+            if (!Number.isFinite(units) || units <= 0) break;
+            const mode = invoice.metadata?.mode === 'auto' ? 'auto' : 'manual';
+
+            // In Stripe v20+, payment_intent is on invoice payments, not top-level
+            const invoicePayments = await stripe.invoicePayments.list({
+              invoice: invoice.id,
+              limit: 1,
+            });
+            const payment = invoicePayments.data[0]?.payment;
+            const paymentIntentId =
+              payment?.type === 'payment_intent'
+                ? typeof payment.payment_intent === 'string'
+                  ? payment.payment_intent
+                  : payment.payment_intent?.id
+                : undefined;
+            if (!paymentIntentId) break;
+
+            await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
+              orgId: orgIdRaw,
+              units,
+              amountCents: invoice.amount_paid,
+              stripePaymentIntentId: paymentIntentId,
+              stripeInvoiceId: invoice.id,
+              mode,
+            });
+            break;
+          }
+
+          // Subscription renewal invoice
+          const parentSubscription = invoice.parent?.subscription_details?.subscription;
+          const subscriptionId =
+            typeof parentSubscription === 'string' ? parentSubscription : parentSubscription?.id;
           const existing = await resolveOrgSubscription(ctx, customerId, subscriptionId);
           if (!existing) break;
 
@@ -190,24 +248,15 @@ export function createApp(
           });
           break;
         }
-        case 'payment_intent.succeeded': {
-          const paymentIntent = event.data.object;
-          const orgIdRaw = paymentIntent.metadata.orgId;
-          const addonUnitsRaw = paymentIntent.metadata.addonUnits;
-          if (!orgIdRaw || !addonUnitsRaw) break;
-          if (!orgIdRaw.includes(':')) {
-            throw new Error(`Invalid orgId format in payment_intent metadata: "${orgIdRaw}"`);
-          }
-          const orgId = orgIdRaw as Id<'organizations'>;
-          const units = Number(addonUnitsRaw);
-          if (!Number.isFinite(units) || units <= 0) break;
-          const mode = paymentIntent.metadata.mode === 'auto' ? 'auto' : 'manual';
-          await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
-            orgId,
-            units,
-            amountCents: paymentIntent.amount_received,
-            stripePaymentIntentId: paymentIntent.id,
-            mode,
+        case 'charge.refunded': {
+          const charge = event.data.object;
+          const paymentIntentId =
+            typeof charge.payment_intent === 'string'
+              ? charge.payment_intent
+              : charge.payment_intent?.id;
+          if (!paymentIntentId) break;
+          await ctx.runMutation(internal.subscriptions.revokeAddonPurchase, {
+            stripePaymentIntentId: paymentIntentId,
           });
           break;
         }
