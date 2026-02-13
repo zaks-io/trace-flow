@@ -18,8 +18,7 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:8788',
   'https://trace-flow.dev',
-  'https://trace-flow-web.pages.dev',
-  'https://trace-flow-web-preview.pages.dev',
+  'https://trace-flow-web-dev.isaac-a46.workers.dev',
 ];
 
 const app = new Hono<{ Bindings: Env }>();

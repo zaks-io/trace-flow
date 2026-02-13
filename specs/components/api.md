@@ -55,12 +55,10 @@ The worker validates Auth0 JWT tokens using public key verification:
 
 The worker allows requests from specific origins:
 
-- `http://localhost:4321` - Local Astro dev
-- `http://localhost:4322` - Alternative local port
+- `http://localhost:3000` - Local Next.js dev
 - `http://localhost:8788` - Local workers dev
 - `https://trace-flow.dev` - Production
-- `https://trace-flow-web.pages.dev` - Pages deployment
-- `https://trace-flow-web-preview.pages.dev` - Preview deployments
+- `https://trace-flow-web-dev.isaac-a46.workers.dev` - Preview deployments
 
 Only `GET` and `OPTIONS` methods are allowed.
 

@@ -9,7 +9,7 @@ LLM observability platform built on Cloudflare Workers. Four workers form the sy
 - **Proxy** - Streaming proxy that captures LLM requests/responses and enqueues them
 - **Consumer** - Processes queue batches and sends OpenTelemetry traces to Tinybird
 - **API** - Provides R2 access for fetching request/response bodies
-- **Web** - Static dashboard (Cloudflare Pages) displaying analytics via Tinybird
+- **Web** - Next.js dashboard (Cloudflare Workers via OpenNext) displaying analytics via Tinybird
 
 ## Documentation
 
@@ -34,7 +34,7 @@ Pull requests automatically get preview deployments via `.github/workflows/previ
 
 - **Convex**: Creates isolated preview backend per branch
 - **Workers**: Deploy to `-preview` suffixed workers (trace-flow-proxy-preview, trace-flow-api-preview)
-- **Web**: Deploys to branch-specific Pages URL (`{branch}.trace-flow-web.pages.dev`)
+- **Web**: Deploys to preview Worker (`trace-flow-web-dev.isaac-a46.workers.dev`)
 
 A comment with preview URLs is posted to each PR.
 
@@ -366,31 +366,22 @@ Project has two separate environments with isolated resources:
 - R2 bucket: `trace-flow-storage-prod`
 - KV namespace: `trace-flow-api-keys-prod` (ID: f004c21e2b8c4754af5947c08069bd00)
 
-### Environment Differences: Workers vs Pages
+### Deployment Commands
 
-**Workers (proxy, proxy-consumer, api):**
+All workers (including web) use the same environment pattern:
 
 - Default deployment goes to dev environment
 - Production deployment uses `--env production` flag
-- Worker names are consistent across environments (no env suffix in name)
-
-**Pages (web):**
-
-- Only supports TWO environments: `preview` and `production`
-- `deploy:preview` deploys to `preview` environment (same as dev)
-- `deploy:prod` deploys to `production` environment
-
-### Deployment Commands
 
 ```bash
 # Deploy all workers to a specific environment
-bun run deploy:dev      # Workers → dev, Pages → preview
-bun run deploy:prod     # Workers → production, Pages → production (requires explicit approval)
+bun run deploy:dev      # All workers → dev
+bun run deploy:prod     # All workers → production (requires explicit approval)
 
 # Deploy individual workers
 cd workers/proxy && bun run deploy:dev
 cd workers/proxy-consumer && bun run deploy:prod
-cd workers/web && bun run deploy:preview  # Deploys to Pages preview environment
+cd workers/web && bun run deploy:dev
 ```
 
 ## Wrangler Configuration
@@ -414,9 +405,9 @@ cd workers/web && bun run deploy:preview  # Deploys to Pages preview environment
 - Simple Hono worker with GET `/bodies/:traceId` endpoint
 - Returns request/response bodies from R2 for the web UI
 
-**Web** (`workers/web/wrangler.toml`):
+**Web** (`workers/web/wrangler.jsonc`):
 
-- Pages project with static export (no R2 bindings)
+- Next.js app deployed via OpenNext (`@opennextjs/cloudflare`)
 - Fetches trace data from Tinybird and bodies from API worker
 
 ## Managing Secrets and Environment Variables
