@@ -350,6 +350,50 @@ describe('content block tracking', () => {
     });
   });
 
+  it('should track thinking text length from thinking_delta events', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [{ type: 'message_start', timestamp: 1000, data: '{}' }],
+          contentBlocks: [{ index: 0, type: 'thinking', startTimestamp: 1100 }],
+        },
+      ],
+    };
+
+    // First thinking delta
+    processSSEEvent(
+      {
+        event: 'content_block_delta',
+        data: JSON.stringify({
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: 'Let me analyze this' },
+        }),
+      },
+      1150,
+      streamData,
+    );
+
+    // Second thinking delta
+    processSSEEvent(
+      {
+        event: 'content_block_delta',
+        data: JSON.stringify({
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta', thinking: ' step by step.' },
+        }),
+      },
+      1160,
+      streamData,
+    );
+
+    expect(streamData.messages[0]?.contentBlocks?.[0]?.thinkingTextLength).toBe(
+      'Let me analyze this'.length + ' step by step.'.length,
+    );
+  });
+
   it('should not create content block when data is missing required fields', () => {
     const streamData: SSEStreamData = {
       messages: [
@@ -561,5 +605,76 @@ describe('aggregateSSETokens', () => {
       completionTokens: 75,
       totalTokens: 225,
     });
+  });
+
+  it('should aggregate reasoning_tokens from SSE usage', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 500,
+            reasoning_tokens: 350,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result).toEqual({
+      promptTokens: 100,
+      completionTokens: 500,
+      totalTokens: 600,
+      reasoningTokens: 350,
+    });
+  });
+
+  it('should estimate reasoning tokens from Anthropic thinking content blocks', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 200,
+          },
+          contentBlocks: [
+            { index: 0, type: 'thinking', startTimestamp: 1100, thinkingTextLength: 400 },
+            { index: 1, type: 'text', startTimestamp: 1200 },
+          ],
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result?.reasoningTokens).toBe(100); // Math.ceil(400 / 4)
+  });
+
+  it('should prefer provider-reported reasoning tokens over estimation', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 500,
+            reasoning_tokens: 350,
+          },
+          contentBlocks: [
+            { index: 0, type: 'thinking', startTimestamp: 1100, thinkingTextLength: 800 },
+          ],
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData);
+
+    expect(result?.reasoningTokens).toBe(350);
   });
 });

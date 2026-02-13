@@ -88,6 +88,7 @@ export interface AnthropicContentBlock {
   stopTimestamp?: number;
   toolUseId?: string;
   toolName?: string;
+  thinkingTextLength?: number;
 }
 
 /**
@@ -142,6 +143,7 @@ export interface SSEMessage {
     cache_read_input_tokens?: number;
     cache_write_tokens?: number;
     output_tokens?: number;
+    reasoning_tokens?: number;
     cost?: number;
     // Google-style token fields (usageMetadata)
     prompt_token_count?: number;
