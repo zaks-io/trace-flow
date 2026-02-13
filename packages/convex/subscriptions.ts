@@ -248,9 +248,12 @@ export const createOrgCheckoutSession = action({
     const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
       orgId: user.orgId,
     });
-    if (subscription?.stripeSubscriptionId && subscription.tier === 'pro') {
+    if (
+      subscription?.stripeSubscriptionId &&
+      (subscription.status === 'active' || subscription.status === 'grace')
+    ) {
       throw new Error(
-        'Organization already has an active Pro subscription. Use the billing portal to manage it.',
+        'Organization already has an active subscription. Use the billing portal to manage it.',
       );
     }
     const seatQuantity = Math.max(1, subscription?.seatQuantity ?? 1);
@@ -288,6 +291,11 @@ export const createOrgCheckoutSession = action({
       metadata: {
         orgId: user.orgId,
         ownerUserId: user._id,
+      },
+      subscription_data: {
+        metadata: {
+          orgId: user.orgId,
+        },
       },
     });
 
@@ -685,7 +693,6 @@ export const creditAddonPurchase = internalMutation({
       stripePaymentIntentId: args.stripePaymentIntentId,
       mode: args.mode,
       periodStart: subscription.currentPeriodStart ?? 0,
-      createdAt: Date.now(),
     });
 
     await scheduleKVSync(ctx, subscription._id);

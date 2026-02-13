@@ -173,7 +173,6 @@ export default defineSchema({
     stripePaymentIntentId: v.string(),
     mode: v.union(v.literal('manual'), v.literal('auto')),
     periodStart: v.number(),
-    createdAt: v.number(),
   })
     .index('by_org_id', ['orgId'])
     .index('by_payment_intent', ['stripePaymentIntentId']),
