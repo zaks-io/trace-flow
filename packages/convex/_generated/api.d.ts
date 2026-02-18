@@ -356,6 +356,7 @@ export declare const internal: {
       {
         addonUnits: number;
         autoOverage?: boolean;
+        cancelAtPeriodEnd?: boolean;
         currentPeriodEnd: number;
         currentPeriodStart: number;
         monthlyUnits: number;
@@ -695,6 +696,14 @@ export declare const internal: {
     backfillOrgs: {
       backfillOrgs: FunctionReference<"mutation", "internal", any, any>;
     };
+    backfillStripeCustomerIdToOrgs: {
+      backfillStripeCustomerIdToOrgs: FunctionReference<
+        "mutation",
+        "internal",
+        any,
+        any
+      >;
+    };
   };
   modelPricing: {
     getInternal: FunctionReference<
@@ -722,6 +731,12 @@ export declare const internal: {
     >;
   };
   organizations: {
+    canAddMember: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
     getActiveMemberCountInternal: FunctionReference<
       "query",
       "internal",
@@ -732,6 +747,18 @@ export declare const internal: {
       "query",
       "internal",
       { id: Id<"organizations"> },
+      any
+    >;
+    getByStripeCustomerId: FunctionReference<
+      "query",
+      "internal",
+      { stripeCustomerId: string },
+      any
+    >;
+    setStripeCustomerId: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations">; stripeCustomerId: string },
       any
     >;
   };
@@ -814,6 +841,18 @@ export declare const internal: {
       { stripeSubscriptionId: string },
       any
     >;
+    releaseAutoTopupReservation: FunctionReference<
+      "mutation",
+      "internal",
+      { amountCents: number; orgId: Id<"organizations"> },
+      any
+    >;
+    reserveAutoTopup: FunctionReference<
+      "mutation",
+      "internal",
+      { amountCents: number; orgId: Id<"organizations"> },
+      any
+    >;
     revertToHobby: FunctionReference<
       "mutation",
       "internal",
@@ -865,14 +904,16 @@ export declare const internal: {
       "mutation",
       "internal",
       {
+        cancelAtPeriodEnd?: boolean;
         currentPeriodEnd?: number;
         currentPeriodStart?: number;
         orgId: Id<"organizations">;
         seatQuantity?: number;
         status: "active" | "grace" | "suspended" | "canceled";
         stripeCustomerId?: string;
+        stripePlanItemId?: string;
+        stripeSeatItemId?: string;
         stripeSubscriptionId?: string;
-        stripeSubscriptionItemId?: string;
       },
       any
     >;

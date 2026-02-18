@@ -18,14 +18,17 @@ import Stripe from 'stripe';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeProPriceId = process.env.STRIPE_PRICE_ID_PRO;
+const stripeSeatPriceId = process.env.STRIPE_PRICE_ID_SEAT;
 const stripeAddonPriceId = process.env.STRIPE_PRICE_ID_ADDON;
 const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
+
+const STRIPE_API_VERSION = '2026-01-28.clover';
 
 function getStripeClient() {
   if (!stripeSecretKey) {
     throw new Error('STRIPE_SECRET_KEY environment variable is not set');
   }
-  return new Stripe(stripeSecretKey);
+  return new Stripe(stripeSecretKey, { apiVersion: STRIPE_API_VERSION });
 }
 
 function getProPriceId(): string {
@@ -35,11 +38,46 @@ function getProPriceId(): string {
   return stripeProPriceId;
 }
 
+function getSeatPriceId(): string {
+  if (!stripeSeatPriceId) {
+    throw new Error('STRIPE_PRICE_ID_SEAT environment variable is not set');
+  }
+  return stripeSeatPriceId;
+}
+
 function getAddonPriceId(): string {
   if (!stripeAddonPriceId) {
     throw new Error('STRIPE_PRICE_ID_ADDON environment variable is not set');
   }
   return stripeAddonPriceId;
+}
+
+/**
+ * Matches subscription items to plan vs seat by their price ID.
+ * Stripe subscriptions have two items: one for the base plan (quantity 1)
+ * and one for per-seat billing (quantity = seat count).
+ */
+export function findSubscriptionItems(items: Stripe.SubscriptionItem[]): {
+  planItem?: Stripe.SubscriptionItem;
+  seatItem?: Stripe.SubscriptionItem;
+} {
+  const proPriceId = stripeProPriceId;
+  const seatPriceId = stripeSeatPriceId;
+  let planItem: Stripe.SubscriptionItem | undefined;
+  let seatItem: Stripe.SubscriptionItem | undefined;
+
+  for (const item of items) {
+    const priceId = typeof item.price === 'string' ? item.price : item.price?.id;
+    if (priceId === proPriceId) planItem = item;
+    else if (priceId === seatPriceId) seatItem = item;
+  }
+
+  // If only one item and no match by price ID, treat it as the plan item (legacy)
+  if (!planItem && !seatItem && items.length === 1) {
+    planItem = items[0];
+  }
+
+  return { planItem, seatItem };
 }
 
 export function mapStripeStatusToInternal(
@@ -87,6 +125,7 @@ export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subsc
     currentPeriodEnd: sub.currentPeriodEnd,
     autoOverage: sub.autoOverage,
     overageCapCents: sub.overageCapCents,
+    cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
   });
 }
 
@@ -258,43 +297,57 @@ export const createOrgCheckoutSession = action({
     const seatQuantity = Math.max(1, subscription?.seatQuantity ?? 1);
 
     const stripe = getStripeClient();
-    let stripeCustomerId = subscription?.stripeCustomerId;
+    let stripeCustomerId = org.stripeCustomerId ?? subscription?.stripeCustomerId;
     if (!stripeCustomerId) {
-      const customer = await stripe.customers.create({
-        email: user.email,
-        name: org.name,
+      const customer = await stripe.customers.create(
+        {
+          email: user.email,
+          name: org.name,
+          metadata: {
+            orgId: user.orgId,
+            ownerUserId: user._id,
+          },
+        },
+        { idempotencyKey: `cust-create:${user.orgId}` },
+      );
+      stripeCustomerId = customer.id;
+    }
+    // Write to both org and subscription tables during transition
+    await ctx.runMutation(internal.organizations.setStripeCustomerId, {
+      orgId: user.orgId,
+      stripeCustomerId,
+    });
+    await ctx.runMutation(internal.subscriptions.setStripeCustomerId, {
+      orgId: user.orgId,
+      stripeCustomerId,
+    });
+
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'subscription',
+        customer: stripeCustomerId,
+        automatic_tax: { enabled: true },
+        tax_id_collection: { enabled: true },
+        customer_update: { name: 'auto', address: 'auto' },
+        line_items: [
+          { price: getProPriceId(), quantity: 1 },
+          { price: getSeatPriceId(), quantity: seatQuantity },
+        ],
+        client_reference_id: user.orgId,
+        success_url: args.successUrl ?? `${appUrl}/app/settings/billing?checkout=success`,
+        cancel_url: args.cancelUrl ?? `${appUrl}/app/settings/billing?checkout=cancel`,
         metadata: {
           orgId: user.orgId,
           ownerUserId: user._id,
         },
-      });
-      stripeCustomerId = customer.id;
-      await ctx.runMutation(internal.subscriptions.setStripeCustomerId, {
-        orgId: user.orgId,
-        stripeCustomerId,
-      });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: stripeCustomerId,
-      automatic_tax: { enabled: true },
-      tax_id_collection: { enabled: true },
-      customer_update: { name: 'auto', address: 'auto' },
-      line_items: [{ price: getProPriceId(), quantity: seatQuantity }],
-      client_reference_id: user.orgId,
-      success_url: args.successUrl ?? `${appUrl}/app/settings/billing?checkout=success`,
-      cancel_url: args.cancelUrl ?? `${appUrl}/app/settings/billing?checkout=cancel`,
-      metadata: {
-        orgId: user.orgId,
-        ownerUserId: user._id,
-      },
-      subscription_data: {
-        metadata: {
-          orgId: user.orgId,
+        subscription_data: {
+          metadata: {
+            orgId: user.orgId,
+          },
         },
       },
-    });
+      { idempotencyKey: `checkout-sub:${user.orgId}:${Math.floor(Date.now() / 60000)}` },
+    );
 
     return { url: session.url };
   },
@@ -327,31 +380,35 @@ export const createAddonCheckoutSession = action({
     if (subscription?.tier !== 'pro') {
       throw new Error('Addons require a Pro subscription');
     }
-    if (!subscription.stripeCustomerId) {
+    const stripeCustomerId = org.stripeCustomerId ?? subscription.stripeCustomerId;
+    if (!stripeCustomerId) {
       throw new Error('Organization is missing Stripe customer');
     }
 
     const quantity = Math.max(1, args.quantity ?? 1);
     const stripe = getStripeClient();
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer: subscription.stripeCustomerId,
-      automatic_tax: { enabled: true },
-      line_items: [{ price: getAddonPriceId(), quantity }],
-      success_url: args.successUrl ?? `${appUrl}/app/settings/billing?addon=success`,
-      cancel_url: args.cancelUrl ?? `${appUrl}/app/settings/billing?addon=cancel`,
-      invoice_creation: {
-        enabled: true,
-        invoice_data: {
-          metadata: {
-            orgId: user.orgId,
-            ownerUserId: user._id,
-            addonUnits: String(args.units),
-            mode: 'manual',
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        customer: stripeCustomerId,
+        automatic_tax: { enabled: true },
+        line_items: [{ price: getAddonPriceId(), quantity }],
+        success_url: args.successUrl ?? `${appUrl}/app/settings/billing?addon=success`,
+        cancel_url: args.cancelUrl ?? `${appUrl}/app/settings/billing?addon=cancel`,
+        invoice_creation: {
+          enabled: true,
+          invoice_data: {
+            metadata: {
+              orgId: user.orgId,
+              ownerUserId: user._id,
+              addonUnits: String(args.units),
+              mode: 'manual',
+            },
           },
         },
       },
-    });
+      { idempotencyKey: `checkout-addon:${user.orgId}:${Math.floor(Date.now() / 60000)}` },
+    );
     return { url: session.url };
   },
 });
@@ -376,13 +433,14 @@ export const createBillingPortalSession = action({
     const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
       orgId: user.orgId,
     });
-    if (!subscription?.stripeCustomerId) {
+    const stripeCustomerId = org.stripeCustomerId ?? subscription?.stripeCustomerId;
+    if (!stripeCustomerId) {
       throw new Error('Organization is missing Stripe customer');
     }
 
     const stripe = getStripeClient();
     const session = await stripe.billingPortal.sessions.create({
-      customer: subscription.stripeCustomerId,
+      customer: stripeCustomerId,
       return_url: args.returnUrl ?? `${appUrl}/app/settings/billing`,
     });
     return { url: session.url };
@@ -410,7 +468,7 @@ export const updateSeatQuantity = action({
     const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
       orgId: user.orgId,
     });
-    if (!subscription?.stripeSubscriptionId || !subscription.stripeSubscriptionItemId) {
+    if (!subscription?.stripeSubscriptionId || !subscription.stripeSeatItemId) {
       throw new Error('Stripe subscription is not configured');
     }
 
@@ -425,12 +483,13 @@ export const updateSeatQuantity = action({
     const updated = await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
       items: [
         {
-          id: subscription.stripeSubscriptionItemId,
+          id: subscription.stripeSeatItemId,
           quantity: args.seatQuantity,
         },
       ],
     });
-    const item = updated.items.data[0];
+    const { planItem, seatItem } = findSubscriptionItems(updated.items.data);
+    const periodItem = seatItem ?? planItem;
 
     await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
       orgId: user.orgId,
@@ -438,10 +497,11 @@ export const updateSeatQuantity = action({
       stripeCustomerId:
         typeof updated.customer === 'string' ? updated.customer : updated.customer.id,
       stripeSubscriptionId: updated.id,
-      stripeSubscriptionItemId: item?.id,
-      seatQuantity: item?.quantity ?? args.seatQuantity,
-      currentPeriodStart: (item?.current_period_start ?? 0) * 1000,
-      currentPeriodEnd: (item?.current_period_end ?? 0) * 1000,
+      stripePlanItemId: planItem?.id,
+      stripeSeatItemId: seatItem?.id,
+      seatQuantity: seatItem?.quantity ?? args.seatQuantity,
+      currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
+      currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
     });
   },
 });
@@ -468,6 +528,66 @@ export const updateAutoOverageSettings = mutation({
   },
 });
 
+/**
+ * Atomically reserves overage spend before charging Stripe.
+ * Prevents cap overruns from concurrent topups by reserving the amount
+ * inside a serialized mutation, so only one topup can claim remaining cap.
+ */
+export const reserveAutoTopup = internalMutation({
+  args: {
+    orgId: v.id('organizations'),
+    amountCents: v.number(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ ok: true; idempotencyKey: string } | { ok: false; reason: string }> => {
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .first();
+    if (!subscription) return { ok: false, reason: 'subscription_not_found' };
+    if (subscription.tier !== 'pro') return { ok: false, reason: 'not_pro' };
+    if (!subscription.autoOverage) return { ok: false, reason: 'auto_topup_disabled' };
+
+    const cap = subscription.overageCapCents;
+    if (cap !== undefined && subscription.currentPeriodOverageSpentCents + args.amountCents > cap) {
+      return { ok: false, reason: 'cap_reached' };
+    }
+
+    // Reserve the spend atomically
+    await ctx.db.patch(subscription._id, {
+      currentPeriodOverageSpentCents:
+        subscription.currentPeriodOverageSpentCents + args.amountCents,
+    });
+
+    const idempotencyKey = `auto-topup:${args.orgId}:${subscription.currentPeriodStart}:${subscription.addonPurchaseCount}`;
+    return { ok: true, idempotencyKey };
+  },
+});
+
+export const releaseAutoTopupReservation = internalMutation({
+  args: {
+    orgId: v.id('organizations'),
+    amountCents: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .first();
+    if (!subscription) return;
+
+    await ctx.db.patch(subscription._id, {
+      currentPeriodOverageSpentCents: Math.max(
+        0,
+        subscription.currentPeriodOverageSpentCents - args.amountCents,
+      ),
+      autoTopupPendingSince: undefined,
+    });
+  },
+});
+
 export const triggerAutoTopup = internalAction({
   args: {
     orgId: v.id('organizations'),
@@ -479,48 +599,61 @@ export const triggerAutoTopup = internalAction({
     if (args.units <= 0 || args.amountCents <= 0) {
       throw new Error('units and amountCents must be positive');
     }
+
+    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: args.orgId });
     const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
       orgId: args.orgId,
     });
-    if (!subscription) throw new Error('Subscription not found');
-    if (subscription.tier !== 'pro') throw new Error('Auto-topup requires Pro');
-    if (!subscription.autoOverage) throw new Error('Auto-topup disabled');
-    if (!subscription.stripeCustomerId) throw new Error('Missing stripe customer');
+    const stripeCustomerId = org?.stripeCustomerId ?? subscription?.stripeCustomerId;
+    if (!stripeCustomerId) throw new Error('Missing stripe customer');
 
-    // Pre-check cap to avoid charging then failing
-    const cap = subscription.overageCapCents;
-    if (cap !== undefined && subscription.currentPeriodOverageSpentCents + args.amountCents > cap) {
-      return { ok: false, reason: 'cap_reached' as const };
+    // Atomically reserve the overage spend before charging Stripe
+    const reservation = await ctx.runMutation(internal.subscriptions.reserveAutoTopup, {
+      orgId: args.orgId,
+      amountCents: args.amountCents,
+    });
+    if (!reservation.ok) {
+      return { ok: false, reason: reservation.reason };
     }
 
-    const idempotencyKey = `auto-topup:${args.orgId}:${subscription.currentPeriodStart}:${subscription.addonPurchaseCount}`;
     const stripe = getStripeClient();
+    let invoiceItem: Stripe.InvoiceItem;
+    let invoice: Stripe.Invoice;
 
-    const invoiceItem = await stripe.invoiceItems.create({
-      customer: subscription.stripeCustomerId,
-      amount: args.amountCents,
-      currency: 'usd',
-      description: `Auto top-up: ${args.units.toLocaleString()} units`,
-    });
+    try {
+      invoiceItem = await stripe.invoiceItems.create({
+        customer: stripeCustomerId,
+        amount: args.amountCents,
+        currency: 'usd',
+        description: `Auto top-up: ${args.units.toLocaleString()} units`,
+      });
 
-    const invoice = await stripe.invoices.create(
-      {
-        customer: subscription.stripeCustomerId,
-        auto_advance: true,
-        metadata: {
-          orgId: args.orgId,
-          reason: args.reason ?? 'usage_threshold',
-          mode: 'auto',
-          addonUnits: String(args.units),
-          invoiceItemId: invoiceItem.id,
+      invoice = await stripe.invoices.create(
+        {
+          customer: stripeCustomerId,
+          auto_advance: true,
+          metadata: {
+            orgId: args.orgId,
+            reason: args.reason ?? 'usage_threshold',
+            mode: 'auto',
+            addonUnits: String(args.units),
+            invoiceItemId: invoiceItem.id,
+          },
         },
-      },
-      { idempotencyKey },
-    );
+        { idempotencyKey: reservation.idempotencyKey },
+      );
 
-    const paid = await stripe.invoices.pay(invoice.id);
-    if (paid.status !== 'paid') {
-      throw new Error(`Auto-topup invoice payment did not succeed (${paid.status})`);
+      const paid = await stripe.invoices.pay(invoice.id);
+      if (paid.status !== 'paid') {
+        throw new Error(`Auto-topup invoice payment did not succeed (${paid.status})`);
+      }
+    } catch (e) {
+      // Stripe charge failed — release the reservation
+      await ctx.runMutation(internal.subscriptions.releaseAutoTopupReservation, {
+        orgId: args.orgId,
+        amountCents: args.amountCents,
+      });
+      throw e;
     }
 
     // In Stripe v20+, payment_intent is on the invoice payments, not top-level
@@ -536,28 +669,14 @@ export const triggerAutoTopup = internalAction({
       throw new Error('Auto-topup invoice missing payment_intent');
     }
 
-    try {
-      await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
-        orgId: args.orgId,
-        units: args.units,
-        amountCents: args.amountCents,
-        stripePaymentIntentId: paymentIntentId,
-        stripeInvoiceId: invoice.id,
-        mode: 'auto',
-      });
-    } catch (e) {
-      await stripe.creditNotes.create({
-        invoice: invoice.id,
-        lines: [
-          {
-            type: 'invoice_line_item',
-            invoice_line_item: invoiceItem.id,
-            quantity: 1,
-          },
-        ],
-      });
-      throw e;
-    }
+    await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
+      orgId: args.orgId,
+      units: args.units,
+      amountCents: args.amountCents,
+      stripePaymentIntentId: paymentIntentId,
+      stripeInvoiceId: invoice.id,
+      mode: 'auto',
+    });
 
     return { ok: true, invoiceId: invoice.id };
   },
@@ -587,7 +706,8 @@ export const reconcileCurrentOrgWithStripe = action({
 
     const stripe = getStripeClient();
     const stripeSub = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
-    const item = stripeSub.items.data[0];
+    const { planItem, seatItem } = findSubscriptionItems(stripeSub.items.data);
+    const periodItem = seatItem ?? planItem;
 
     await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
       orgId: user.orgId,
@@ -595,10 +715,12 @@ export const reconcileCurrentOrgWithStripe = action({
       stripeCustomerId:
         typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id,
       stripeSubscriptionId: stripeSub.id,
-      stripeSubscriptionItemId: item?.id,
-      seatQuantity: item?.quantity ?? 1,
-      currentPeriodStart: (item?.current_period_start ?? 0) * 1000,
-      currentPeriodEnd: (item?.current_period_end ?? 0) * 1000,
+      stripePlanItemId: planItem?.id,
+      stripeSeatItemId: seatItem?.id,
+      seatQuantity: seatItem?.quantity ?? 1,
+      currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
+      currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
+      cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
     });
 
     return { reconciled: true };
@@ -633,10 +755,12 @@ export const upsertStripeSubscriptionState = internalMutation({
     ),
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
-    stripeSubscriptionItemId: v.optional(v.string()),
+    stripePlanItemId: v.optional(v.string()),
+    stripeSeatItemId: v.optional(v.string()),
     seatQuantity: v.optional(v.number()),
     currentPeriodStart: v.optional(v.number()),
     currentPeriodEnd: v.optional(v.number()),
+    cancelAtPeriodEnd: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const subscription = await ctx.db
@@ -656,8 +780,8 @@ export const upsertStripeSubscriptionState = internalMutation({
       status: args.status,
       stripeCustomerId: args.stripeCustomerId ?? subscription.stripeCustomerId,
       stripeSubscriptionId: args.stripeSubscriptionId ?? subscription.stripeSubscriptionId,
-      stripeSubscriptionItemId:
-        args.stripeSubscriptionItemId ?? subscription.stripeSubscriptionItemId,
+      stripePlanItemId: args.stripePlanItemId ?? subscription.stripePlanItemId,
+      stripeSeatItemId: args.stripeSeatItemId ?? subscription.stripeSeatItemId,
       seatQuantity,
       currentPeriodStart: args.currentPeriodStart ?? subscription.currentPeriodStart,
       currentPeriodEnd: args.currentPeriodEnd ?? subscription.currentPeriodEnd,
@@ -665,21 +789,9 @@ export const upsertStripeSubscriptionState = internalMutation({
         args.currentPeriodStart && args.currentPeriodStart !== subscription.currentPeriodStart
           ? 0
           : subscription.currentPeriodOverageSpentCents,
+      cancelAtPeriodEnd: args.cancelAtPeriodEnd,
       ...(args.status === 'active' ? { gracePeriodSchedulerId: undefined } : {}),
     });
-
-    // Warn if seats were reduced below active member count (e.g. via Stripe Portal)
-    if (seatQuantity < subscription.seatQuantity) {
-      const activeMembers = await ctx.db
-        .query('organizationMembers')
-        .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'active'))
-        .collect();
-      if (seatQuantity < activeMembers.length) {
-        console.warn(
-          `Seat count (${seatQuantity}) is below active member count (${activeMembers.length}) for org ${args.orgId}`,
-        );
-      }
-    }
 
     await scheduleKVSync(ctx, subscription._id);
   },
@@ -710,24 +822,12 @@ export const creditAddonPurchase = internalMutation({
       .first();
     if (!subscription) throw new Error('Subscription not found');
 
-    // Validate overage cap inside the transactional mutation to prevent races
-    if (args.mode === 'auto') {
-      const cap = subscription.overageCapCents;
-      if (
-        cap !== undefined &&
-        subscription.currentPeriodOverageSpentCents + args.amountCents > cap
-      ) {
-        throw new Error('Overage cap reached');
-      }
-    }
-
+    // For auto mode, reserveAutoTopup already checked the cap and reserved the spend.
+    // For manual mode, no cap applies.
     const newAddonUnits = subscription.addonUnits + args.units;
-    const newOverageSpent =
-      subscription.currentPeriodOverageSpentCents + (args.mode === 'auto' ? args.amountCents : 0);
     await ctx.db.patch(subscription._id, {
       addonUnits: newAddonUnits,
       addonPurchaseCount: subscription.addonPurchaseCount + 1,
-      currentPeriodOverageSpentCents: newOverageSpent,
       autoTopupPendingSince: undefined,
     });
     await ctx.db.insert('addonPurchases', {
@@ -777,6 +877,11 @@ export const revertToHobby = internalMutation({
       .first();
     if (!subscription) return;
 
+    // Cancel any pending grace->suspended scheduler before clearing the ID
+    if (subscription.gracePeriodSchedulerId) {
+      await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+    }
+
     const now = Date.now();
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     const hobbyConfig = TIER_CONFIG.hobby;
@@ -792,7 +897,9 @@ export const revertToHobby = internalMutation({
       currentPeriodStart: now,
       currentPeriodEnd: now + thirtyDaysMs,
       stripeSubscriptionId: undefined,
-      stripeSubscriptionItemId: undefined,
+      stripePlanItemId: undefined,
+      stripeSeatItemId: undefined,
+      cancelAtPeriodEnd: undefined,
       gracePeriodSchedulerId: undefined,
     });
 

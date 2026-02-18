@@ -8,7 +8,7 @@ import { api, internal } from './_generated/api';
 import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
 import Stripe from 'stripe';
-import { mapStripeStatusToInternal } from './subscriptions';
+import { mapStripeStatusToInternal, findSubscriptionItems } from './subscriptions';
 
 // Dependencies that can be injected for testing
 export interface HttpDeps {
@@ -19,11 +19,13 @@ export interface HttpDeps {
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
+const STRIPE_API_VERSION = '2026-01-28.clover';
+
 function stripeClient() {
   if (!stripeSecretKey) {
     throw new Error('STRIPE_SECRET_KEY environment variable is not set');
   }
-  return new Stripe(stripeSecretKey);
+  return new Stripe(stripeSecretKey, { apiVersion: STRIPE_API_VERSION });
 }
 
 async function resolveOrgSubscription(ctx: ActionCtx, customerId: string, subscriptionId?: string) {
@@ -34,9 +36,20 @@ async function resolveOrgSubscription(ctx: ActionCtx, customerId: string, subscr
     if (bySub) return bySub;
   }
 
-  return await ctx.runQuery(internal.subscriptions.getByStripeCustomerId, {
+  // Check subscription table first, then fall back to org table
+  const byCust = await ctx.runQuery(internal.subscriptions.getByStripeCustomerId, {
     stripeCustomerId: customerId,
   });
+  if (byCust) return byCust;
+
+  const org = await ctx.runQuery(internal.organizations.getByStripeCustomerId, {
+    stripeCustomerId: customerId,
+  });
+  if (org) {
+    return await ctx.runQuery(internal.subscriptions.getByOrgId, { orgId: org._id });
+  }
+
+  return null;
 }
 
 // Factory function for creating the Hono app (exported for testing)
@@ -103,17 +116,24 @@ export function createApp(
           const stripeSubId =
             typeof session.subscription === 'string' ? session.subscription : undefined;
           if (!stripeSubId || !session.customer || typeof session.customer !== 'string') break;
+          // Ensure org has the customer ID persisted
+          await ctx.runMutation(internal.organizations.setStripeCustomerId, {
+            orgId,
+            stripeCustomerId: session.customer,
+          });
           const sub = await stripe.subscriptions.retrieve(stripeSubId);
-          const subscriptionItem = sub.items.data[0];
+          const { planItem, seatItem } = findSubscriptionItems(sub.items.data);
+          const periodItem = seatItem ?? planItem;
           await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
             orgId,
             status: mapStripeStatusToInternal(sub.status),
             stripeCustomerId: session.customer,
             stripeSubscriptionId: sub.id,
-            stripeSubscriptionItemId: subscriptionItem?.id,
-            seatQuantity: subscriptionItem?.quantity ?? 1,
-            currentPeriodStart: (subscriptionItem?.current_period_start ?? 0) * 1000,
-            currentPeriodEnd: (subscriptionItem?.current_period_end ?? 0) * 1000,
+            stripePlanItemId: planItem?.id,
+            stripeSeatItemId: seatItem?.id,
+            seatQuantity: seatItem?.quantity ?? 1,
+            currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
+            currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
           });
           break;
         }
@@ -124,16 +144,19 @@ export function createApp(
             typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id;
           const existing = await resolveOrgSubscription(ctx, customerId, stripeSub.id);
           if (!existing) break;
-          const item = stripeSub.items.data[0];
+          const { planItem, seatItem } = findSubscriptionItems(stripeSub.items.data);
+          const periodItem = seatItem ?? planItem;
           await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
             status: mapStripeStatusToInternal(stripeSub.status),
             stripeCustomerId: customerId,
             stripeSubscriptionId: stripeSub.id,
-            stripeSubscriptionItemId: item?.id,
-            seatQuantity: item?.quantity ?? 1,
-            currentPeriodStart: (item?.current_period_start ?? 0) * 1000,
-            currentPeriodEnd: (item?.current_period_end ?? 0) * 1000,
+            stripePlanItemId: planItem?.id,
+            stripeSeatItemId: seatItem?.id,
+            seatQuantity: seatItem?.quantity ?? 1,
+            currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
+            currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
+            cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
           });
           break;
         }
@@ -143,17 +166,6 @@ export function createApp(
             typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id;
           const existing = await resolveOrgSubscription(ctx, customerId, stripeSub.id);
           if (!existing) break;
-          const item = stripeSub.items.data[0];
-          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
-            orgId: existing.orgId,
-            status: mapStripeStatusToInternal(stripeSub.status),
-            stripeCustomerId: customerId,
-            stripeSubscriptionId: stripeSub.id,
-            stripeSubscriptionItemId: item?.id,
-            seatQuantity: item?.quantity ?? 1,
-            currentPeriodStart: (item?.current_period_start ?? 0) * 1000,
-            currentPeriodEnd: (item?.current_period_end ?? 0) * 1000,
-          });
           await ctx.runMutation(internal.subscriptions.revertToHobby, {
             orgId: existing.orgId,
           });
@@ -188,6 +200,8 @@ export function createApp(
                 : undefined;
             if (!paymentIntentId) break;
 
+            const ownerUserId = invoice.metadata?.ownerUserId as Id<'users'> | undefined;
+
             await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
               orgId: orgIdRaw,
               units,
@@ -195,6 +209,7 @@ export function createApp(
               stripePaymentIntentId: paymentIntentId,
               stripeInvoiceId: invoice.id,
               mode,
+              triggeredByUserId: ownerUserId,
             });
             break;
           }
@@ -209,19 +224,23 @@ export function createApp(
           const stripeSub = subscriptionId
             ? await stripe.subscriptions.retrieve(subscriptionId)
             : undefined;
-          const item = stripeSub?.items.data[0];
+          const items = stripeSub
+            ? findSubscriptionItems(stripeSub.items.data)
+            : { planItem: undefined, seatItem: undefined };
+          const periodItem = items.seatItem ?? items.planItem;
           await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
             status: 'active',
             stripeCustomerId: customerId,
             stripeSubscriptionId: subscriptionId,
-            stripeSubscriptionItemId: item?.id ?? existing.stripeSubscriptionItemId,
-            seatQuantity: item?.quantity ?? existing.seatQuantity,
-            currentPeriodStart: item?.current_period_start
-              ? item.current_period_start * 1000
+            stripePlanItemId: items.planItem?.id ?? existing.stripePlanItemId,
+            stripeSeatItemId: items.seatItem?.id ?? existing.stripeSeatItemId,
+            seatQuantity: items.seatItem?.quantity ?? existing.seatQuantity,
+            currentPeriodStart: periodItem?.current_period_start
+              ? periodItem.current_period_start * 1000
               : existing.currentPeriodStart,
-            currentPeriodEnd: item?.current_period_end
-              ? item.current_period_end * 1000
+            currentPeriodEnd: periodItem?.current_period_end
+              ? periodItem.current_period_end * 1000
               : existing.currentPeriodEnd,
           });
           break;

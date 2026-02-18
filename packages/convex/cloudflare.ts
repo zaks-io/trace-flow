@@ -66,6 +66,7 @@ export const syncSubscriptionToKV = internalAction({
     currentPeriodEnd: v.number(),
     autoOverage: v.optional(v.boolean()),
     overageCapCents: v.optional(v.number()),
+    cancelAtPeriodEnd: v.optional(v.boolean()),
   },
   handler: async (_ctx, args) => {
     const value = JSON.stringify({
@@ -78,6 +79,7 @@ export const syncSubscriptionToKV = internalAction({
       currentPeriodEnd: args.currentPeriodEnd,
       autoOverage: args.autoOverage,
       overageCapCents: args.overageCapCents,
+      cancelAtPeriodEnd: args.cancelAtPeriodEnd,
     });
 
     await putKV(`sub:${args.orgId}`, value);
@@ -158,6 +160,7 @@ export const syncAll = action({
         currentPeriodEnd: sub.currentPeriodEnd,
         autoOverage: sub.autoOverage,
         overageCapCents: sub.overageCapCents,
+        cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
       }),
     );
 

@@ -89,6 +89,13 @@ export default function Billing() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {summary.subscription.cancelAtPeriodEnd && (
+            <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
+              Your subscription will end on{' '}
+              {new Date(summary.subscription.currentPeriodEnd).toLocaleDateString()}. You can
+              resubscribe from the billing portal.
+            </div>
+          )}
           <div className="text-sm text-muted-foreground">{usageCopy}</div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

@@ -21,6 +21,7 @@ export interface SubscriptionKVData {
   currentPeriodEnd?: number;
   autoOverage?: boolean;
   overageCapCents?: number;
+  cancelAtPeriodEnd?: boolean;
 }
 
 export interface LLMRequest {

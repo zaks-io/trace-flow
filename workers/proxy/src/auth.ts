@@ -80,7 +80,7 @@ export async function validateOrgBillingStatus<E extends { API_KEYS: KVNamespace
         code: 'SUBSCRIPTION_NOT_FOUND',
         message: 'Organization subscription is not configured.',
       },
-      429,
+      500,
     );
   }
 

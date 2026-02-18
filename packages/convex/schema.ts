@@ -18,7 +18,10 @@ export default defineSchema({
   organizations: defineTable({
     name: v.string(),
     ownerId: v.id('users'),
-  }).index('by_owner_id', ['ownerId']),
+    stripeCustomerId: v.optional(v.string()),
+  })
+    .index('by_owner_id', ['ownerId'])
+    .index('by_stripe_customer_id', ['stripeCustomerId']),
 
   subscriptions: defineTable({
     orgId: v.id('organizations'),
@@ -39,7 +42,9 @@ export default defineSchema({
     // Stripe ownership (org-scoped, not set until checkout)
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
-    stripeSubscriptionItemId: v.optional(v.string()),
+    stripePlanItemId: v.optional(v.string()),
+    stripeSeatItemId: v.optional(v.string()),
+    cancelAtPeriodEnd: v.optional(v.boolean()),
     // Overage controls (opt-in)
     autoOverage: v.optional(v.boolean()),
     overageCapCents: v.optional(v.number()),

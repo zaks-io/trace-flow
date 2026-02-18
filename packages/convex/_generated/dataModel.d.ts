@@ -335,14 +335,21 @@ export type DataModel = {
     document: {
       name: string;
       ownerId: Id<"users">;
+      stripeCustomerId?: string;
       _id: Id<"organizations">;
       _creationTime: number;
     };
-    fieldPaths: "_creationTime" | "_id" | "name" | "ownerId";
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "name"
+      | "ownerId"
+      | "stripeCustomerId";
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
       by_owner_id: ["ownerId", "_creationTime"];
+      by_stripe_customer_id: ["stripeCustomerId", "_creationTime"];
     };
     searchIndexes: {};
     vectorIndexes: {};
@@ -382,6 +389,7 @@ export type DataModel = {
       addonUnits: number;
       autoOverage?: boolean;
       autoTopupPendingSince?: number;
+      cancelAtPeriodEnd?: boolean;
       currentPeriodEnd: number;
       currentPeriodOverageSpentCents: number;
       currentPeriodStart: number;
@@ -392,8 +400,9 @@ export type DataModel = {
       seatQuantity: number;
       status: "active" | "grace" | "suspended" | "canceled";
       stripeCustomerId?: string;
+      stripePlanItemId?: string;
+      stripeSeatItemId?: string;
       stripeSubscriptionId?: string;
-      stripeSubscriptionItemId?: string;
       tier: "hobby" | "pro";
       _id: Id<"subscriptions">;
       _creationTime: number;
@@ -405,6 +414,7 @@ export type DataModel = {
       | "addonUnits"
       | "autoOverage"
       | "autoTopupPendingSince"
+      | "cancelAtPeriodEnd"
       | "currentPeriodEnd"
       | "currentPeriodOverageSpentCents"
       | "currentPeriodStart"
@@ -415,8 +425,9 @@ export type DataModel = {
       | "seatQuantity"
       | "status"
       | "stripeCustomerId"
+      | "stripePlanItemId"
+      | "stripeSeatItemId"
       | "stripeSubscriptionId"
-      | "stripeSubscriptionItemId"
       | "tier";
     indexes: {
       by_id: ["_id"];
