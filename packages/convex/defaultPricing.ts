@@ -9,6 +9,23 @@ export interface DefaultPricing {
 
 export const DEFAULT_PRICING: DefaultPricing[] = [
   // Anthropic models - using prefixes (without date suffixes) for automatic matching
+  // Claude 4.6 series
+  {
+    provider: 'anthropic',
+    model: 'claude-opus-4-6',
+    promptCostPerMillion: 5_000_000,
+    completionCostPerMillion: 25_000_000,
+    cacheWriteCostPerMillion: 6_250_000,
+    cacheReadCostPerMillion: 500_000,
+  },
+  {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-6',
+    promptCostPerMillion: 3_000_000,
+    completionCostPerMillion: 15_000_000,
+    cacheWriteCostPerMillion: 3_750_000,
+    cacheReadCostPerMillion: 300_000,
+  },
   // Claude 4.5 series
   {
     provider: 'anthropic',
