@@ -30,12 +30,13 @@ import type {
   SSEStreamData,
   QueueMessageUnion,
   LLMResponseMetadata,
+  LLMTokenUsage,
   InputMessage,
 } from '@trace-flow/types';
 import { validateApiKey, isAuthError } from './auth';
 import type { ApiKeyData } from './auth';
 import { checkUsage, type UsageCheckResult } from './usage';
-import { parseTokenUsage } from './parsers/tokens';
+import { parseTokenUsage } from './parsers/providers';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
 import {
@@ -254,15 +255,14 @@ app.all('*', async (c) => {
         }
 
         // Extract tokens from response body (non-streaming) or SSE stream data (streaming)
-        // SSE tokens take precedence as they're accumulated throughout the stream
-        const parsedTokens = response.status >= 400 ? undefined : parseTokenUsage(responseBody);
-        const sseTokens =
-          isSSE && sseStreamData.messages.length > 0
-            ? aggregateSSETokens(sseStreamData)
-            : undefined;
-        // Merge tokens: prefer SSE tokens for prompt/completion, but also include any
-        // additional fields from parsed tokens (like reasoningTokens, cachedTokens)
-        const tokens = sseTokens ? { ...parsedTokens, ...sseTokens } : parsedTokens;
+        // For SSE responses, only use aggregated SSE tokens — running parseTokenUsage on raw
+        // SSE text would match partial data from individual events and could leak stale fields.
+        let tokens: LLMTokenUsage | undefined;
+        if (isSSE && sseStreamData.messages.length > 0) {
+          tokens = aggregateSSETokens(sseStreamData, route.provider.id);
+        } else if (response.status < 400) {
+          tokens = parseTokenUsage(responseBody, route.provider.id);
+        }
         const error =
           response.status >= 400 ? parseError(responseBody, response.status) : undefined;
 

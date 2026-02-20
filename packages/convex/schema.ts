@@ -50,6 +50,7 @@ export default defineSchema({
     completionCostPerMillion: v.number(),
     cacheReadCostPerMillion: v.optional(v.number()),
     cacheWriteCostPerMillion: v.optional(v.number()),
+    cacheWrite1hCostPerMillion: v.optional(v.number()),
     reasoningCostPerMillion: v.optional(v.number()),
     source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
     updatedAt: v.number(),

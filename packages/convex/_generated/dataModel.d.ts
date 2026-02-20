@@ -229,6 +229,7 @@ export type DataModel = {
   modelPricing: {
     document: {
       cacheReadCostPerMillion?: number;
+      cacheWrite1hCostPerMillion?: number;
       cacheWriteCostPerMillion?: number;
       completionCostPerMillion: number;
       model: string;
@@ -244,6 +245,7 @@ export type DataModel = {
       | "_creationTime"
       | "_id"
       | "cacheReadCostPerMillion"
+      | "cacheWrite1hCostPerMillion"
       | "cacheWriteCostPerMillion"
       | "completionCostPerMillion"
       | "model"

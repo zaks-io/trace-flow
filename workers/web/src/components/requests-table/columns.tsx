@@ -3,6 +3,7 @@
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
 import { parseSpanAttributes } from '@trace-flow/utils';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/format';
 import { AlertIndicator } from '@/components/alerts';
 import type { TraceAlertSummary } from '@/types/alerts';
 
@@ -237,12 +238,56 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     },
     meta: { category: 'ai', label: 'Completion Tokens' },
   },
+  {
+    id: 'cost',
+    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.cost.total'),
+    header: 'Cost',
+    cell: ({ getValue }) => {
+      const value = getValue<string | undefined>();
+      if (!value) return <span className="text-muted-foreground/50">-</span>;
+      const cost = parseFloat(value);
+      return <span className="font-mono text-sm text-emerald-400">{formatCurrency(cost)}</span>;
+    },
+    meta: { category: 'ai', label: 'Cost' },
+  },
+  {
+    id: 'cacheHitRate',
+    accessorFn: (row) => {
+      const attrs = parseSpanAttributes(row.SpanAttributes);
+      const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10) || 0;
+      const cacheCreation =
+        parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10) || 0;
+      if (cacheRead === 0 && cacheCreation === 0) return null;
+      return cacheRead / (cacheRead + cacheCreation);
+    },
+    header: 'Cache',
+    cell: ({ getValue }) => {
+      const value = getValue<number | null>();
+      if (value === null) return <span className="text-muted-foreground/50">-</span>;
+      const percent = Math.round(value * 100);
+      return (
+        <span
+          className={cn(
+            'font-mono text-sm',
+            percent >= 80
+              ? 'text-emerald-400'
+              : percent >= 50
+                ? 'text-amber-400'
+                : 'text-muted-foreground',
+          )}
+        >
+          {percent}%
+        </span>
+      );
+    },
+    meta: { category: 'ai', label: 'Cache Hit Rate' },
+  },
 ];
 
 export const defaultColumnVisibility: VisibilityState = {
   receivedAt: true,
   traceId: true,
-  spanName: true,
+  spanName: false,
   aiProvider: true,
   aiModel: true,
   httpStatusCode: true,
@@ -250,6 +295,8 @@ export const defaultColumnVisibility: VisibilityState = {
   statusCode: true,
   serviceName: false,
   totalTokens: false,
-  promptTokens: false,
-  completionTokens: false,
+  promptTokens: true,
+  completionTokens: true,
+  cost: true,
+  cacheHitRate: true,
 };

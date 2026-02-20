@@ -5,6 +5,7 @@ export interface ModelPricing {
   completionCostPerMillion: number;
   cacheReadCostPerMillion?: number;
   cacheWriteCostPerMillion?: number;
+  cacheWrite1hCostPerMillion?: number;
   reasoningCostPerMillion?: number;
   updatedAt: number;
   source: 'manual' | 'openrouter' | 'default';
@@ -82,9 +83,23 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
   const cacheReadCostMicrodollars = Math.round(
     (cacheReadTokens * cacheReadCostPerMillion) / 1_000_000,
   );
-  const cacheWriteCostMicrodollars = Math.round(
-    (cacheCreationTokens * cacheWriteCostPerMillion) / 1_000_000,
-  );
+
+  // Tiered cache write pricing: if 5m/1h breakdown available, price each tier separately
+  let cacheWriteCostMicrodollars: number;
+  if (tokens.cacheCreation5mTokens !== undefined || tokens.cacheCreation1hTokens !== undefined) {
+    const tokens5m = tokens.cacheCreation5mTokens ?? 0;
+    const tokens1h = tokens.cacheCreation1hTokens ?? 0;
+    // Falls back: 1h tier rate → 5m tier rate → prompt rate
+    const cost1h = pricing.cacheWrite1hCostPerMillion ?? cacheWriteCostPerMillion;
+    cacheWriteCostMicrodollars =
+      Math.round((tokens5m * cacheWriteCostPerMillion) / 1_000_000) +
+      Math.round((tokens1h * cost1h) / 1_000_000);
+  } else {
+    cacheWriteCostMicrodollars = Math.round(
+      (cacheCreationTokens * cacheWriteCostPerMillion) / 1_000_000,
+    );
+  }
+
   const reasoningCostMicrodollars = Math.round(
     (reasoningTokens * reasoningCostPerMillion) / 1_000_000,
   );

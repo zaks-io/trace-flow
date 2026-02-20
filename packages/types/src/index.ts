@@ -44,9 +44,10 @@ export interface LLMTokenUsage {
   completionTokens?: number;
   totalTokens?: number;
   reasoningTokens?: number;
-  cachedTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  cacheCreation5mTokens?: number;
+  cacheCreation1hTokens?: number;
   upstreamCost?: number;
 }
 
@@ -142,6 +143,8 @@ export interface SSEMessage {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     cache_write_tokens?: number;
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
     output_tokens?: number;
     reasoning_tokens?: number;
     cost?: number;

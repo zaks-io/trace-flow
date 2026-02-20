@@ -116,11 +116,6 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
         data.tokens.reasoningTokens,
       );
     }
-    if (data.tokens.cachedTokens !== undefined) {
-      rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens'] = String(
-        data.tokens.cachedTokens,
-      );
-    }
     if (data.tokens.cacheReadTokens !== undefined) {
       rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens'] = String(
         data.tokens.cacheReadTokens,
@@ -129,6 +124,16 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     if (data.tokens.cacheCreationTokens !== undefined) {
       rootSpan.SpanAttributes['gen_ai.usage.cache_creation_input_tokens'] = String(
         data.tokens.cacheCreationTokens,
+      );
+    }
+    if (data.tokens.cacheCreation5mTokens !== undefined) {
+      rootSpan.SpanAttributes['gen_ai.usage.cache_creation_5m_input_tokens'] = String(
+        data.tokens.cacheCreation5mTokens,
+      );
+    }
+    if (data.tokens.cacheCreation1hTokens !== undefined) {
+      rootSpan.SpanAttributes['gen_ai.usage.cache_creation_1h_input_tokens'] = String(
+        data.tokens.cacheCreation1hTokens,
       );
     }
 
