@@ -5,10 +5,30 @@ export interface DefaultPricing {
   completionCostPerMillion: number; // microdollars per million tokens
   cacheReadCostPerMillion?: number;
   cacheWriteCostPerMillion?: number;
+  cacheWrite1hCostPerMillion?: number;
 }
 
 export const DEFAULT_PRICING: DefaultPricing[] = [
   // Anthropic models - using prefixes (without date suffixes) for automatic matching
+  // Claude 4.6 series
+  {
+    provider: 'anthropic',
+    model: 'claude-opus-4-6',
+    promptCostPerMillion: 5_000_000,
+    completionCostPerMillion: 25_000_000,
+    cacheWriteCostPerMillion: 6_250_000,
+    cacheWrite1hCostPerMillion: 10_000_000,
+    cacheReadCostPerMillion: 500_000,
+  },
+  {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-6',
+    promptCostPerMillion: 3_000_000,
+    completionCostPerMillion: 15_000_000,
+    cacheWriteCostPerMillion: 3_750_000,
+    cacheWrite1hCostPerMillion: 6_000_000,
+    cacheReadCostPerMillion: 300_000,
+  },
   // Claude 4.5 series
   {
     provider: 'anthropic',
@@ -16,6 +36,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 5_000_000,
     completionCostPerMillion: 25_000_000,
     cacheWriteCostPerMillion: 6_250_000,
+    cacheWrite1hCostPerMillion: 10_000_000,
     cacheReadCostPerMillion: 500_000,
   },
   {
@@ -24,6 +45,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 3_000_000,
     completionCostPerMillion: 15_000_000,
     cacheWriteCostPerMillion: 3_750_000,
+    cacheWrite1hCostPerMillion: 6_000_000,
     cacheReadCostPerMillion: 300_000,
   },
   {
@@ -32,6 +54,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 1_000_000,
     completionCostPerMillion: 5_000_000,
     cacheWriteCostPerMillion: 1_250_000,
+    cacheWrite1hCostPerMillion: 2_000_000,
     cacheReadCostPerMillion: 100_000,
   },
   // Claude 4.1 series
@@ -41,6 +64,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 15_000_000,
     completionCostPerMillion: 75_000_000,
     cacheWriteCostPerMillion: 18_750_000,
+    cacheWrite1hCostPerMillion: 30_000_000,
     cacheReadCostPerMillion: 1_500_000,
   },
   // Claude 4 series
@@ -50,6 +74,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 15_000_000,
     completionCostPerMillion: 75_000_000,
     cacheWriteCostPerMillion: 18_750_000,
+    cacheWrite1hCostPerMillion: 30_000_000,
     cacheReadCostPerMillion: 1_500_000,
   },
   {
@@ -58,6 +83,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 3_000_000,
     completionCostPerMillion: 15_000_000,
     cacheWriteCostPerMillion: 3_750_000,
+    cacheWrite1hCostPerMillion: 6_000_000,
     cacheReadCostPerMillion: 300_000,
   },
   // Claude 3.7 series
@@ -67,6 +93,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 3_000_000,
     completionCostPerMillion: 15_000_000,
     cacheWriteCostPerMillion: 3_750_000,
+    cacheWrite1hCostPerMillion: 6_000_000,
     cacheReadCostPerMillion: 300_000,
   },
   // Claude 3.5 series
@@ -76,6 +103,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 800_000,
     completionCostPerMillion: 4_000_000,
     cacheWriteCostPerMillion: 1_000_000,
+    cacheWrite1hCostPerMillion: 1_600_000,
     cacheReadCostPerMillion: 80_000,
   },
   {
@@ -84,6 +112,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 3_000_000,
     completionCostPerMillion: 15_000_000,
     cacheWriteCostPerMillion: 3_750_000,
+    cacheWrite1hCostPerMillion: 6_000_000,
     cacheReadCostPerMillion: 300_000,
   },
   // Claude 3 series (legacy)
@@ -93,6 +122,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 15_000_000,
     completionCostPerMillion: 75_000_000,
     cacheWriteCostPerMillion: 18_750_000,
+    cacheWrite1hCostPerMillion: 30_000_000,
     cacheReadCostPerMillion: 1_500_000,
   },
   {
@@ -101,6 +131,7 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     promptCostPerMillion: 250_000,
     completionCostPerMillion: 1_250_000,
     cacheWriteCostPerMillion: 300_000,
+    cacheWrite1hCostPerMillion: 500_000,
     cacheReadCostPerMillion: 30_000,
   },
 

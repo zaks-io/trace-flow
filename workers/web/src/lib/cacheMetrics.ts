@@ -1,27 +1,27 @@
 /**
- * Calculates cache hit rate from cache token metrics.
+ * Calculates cache hit rate as percentage of total input tokens that were cache reads.
  *
- * Formula: (cache_read_tokens / (cache_read_tokens + cache_creation_tokens)) × 100
+ * Formula: (cacheReadTokens / totalInputTokens) × 100
  *
- * Returns null if there's no caching activity (both values are 0).
+ * Returns null if there's no caching activity (both read and creation are 0) or no input tokens.
+ * cacheCreationTokens is only used to detect whether any caching occurred at all — it does not
+ * affect the hit rate formula itself.
  */
 export function calculateCacheHitRate(
   cacheReadTokens: number,
   cacheCreationTokens: number,
+  totalInputTokens: number,
 ): number | null {
-  // No caching activity
+  // No cache activity at all → null (distinguishes "no caching" from "0% hit rate")
   if (cacheReadTokens === 0 && cacheCreationTokens === 0) {
     return null;
   }
 
-  const totalCacheableTokens = cacheReadTokens + cacheCreationTokens;
-
-  // Edge case: avoid division by zero
-  if (totalCacheableTokens === 0) {
+  if (totalInputTokens === 0) {
     return null;
   }
 
-  return (cacheReadTokens / totalCacheableTokens) * 100;
+  return Math.min((cacheReadTokens / totalInputTokens) * 100, 100);
 }
 
 /**

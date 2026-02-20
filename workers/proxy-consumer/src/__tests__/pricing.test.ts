@@ -78,6 +78,20 @@ describe('pricing', () => {
       expect(result).toBeNull();
     });
 
+    it('should not attempt prefix match for version suffixes like claude-sonnet-4-6', async () => {
+      mockKV.get.mockResolvedValue(null);
+
+      const result = await getPricing(
+        mockKV as unknown as KVNamespace,
+        'anthropic',
+        'claude-sonnet-4-6',
+      );
+
+      expect(mockKV.get).toHaveBeenCalledTimes(1);
+      expect(mockKV.get).toHaveBeenCalledWith('pricing:anthropic:claude-sonnet-4-6', 'json');
+      expect(result).toBeNull();
+    });
+
     it('should not attempt prefix match for partial date patterns', async () => {
       mockKV.get.mockResolvedValue(null);
 
@@ -259,6 +273,32 @@ describe('pricing', () => {
       expect(cost.totalCostMicrodollars).toBe(8340);
     });
 
+    it('should charge zero input cost when all tokens are cached (100% cache hit)', () => {
+      const tokens: LLMTokenUsage = {
+        promptTokens: 1000,
+        completionTokens: 500,
+        cacheReadTokens: 1000,
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheReadCostPerMillion: 300_000,
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // All 1000 prompt tokens are cached → non-cached = max(0, 1000 - 1000) = 0
+      expect(cost.inputCostMicrodollars).toBe(0);
+      // Cache read: 1000 * 300K / 1M = 300
+      expect(cost.cacheReadCostMicrodollars).toBe(300);
+      // Output: 500 * 15M / 1M = 7500
+      expect(cost.outputCostMicrodollars).toBe(7500);
+      expect(cost.totalCostMicrodollars).toBe(7800);
+    });
+
     it('should handle when cacheReadTokens exceeds promptTokens (edge case)', () => {
       // Defensive: if data is inconsistent, don't go negative
       const tokens: LLMTokenUsage = {
@@ -280,6 +320,80 @@ describe('pricing', () => {
       expect(cost.inputCostMicrodollars).toBe(0);
       // Cache read still charged: 800 * 0.3M / 1M = 240
       expect(cost.cacheReadCostMicrodollars).toBe(240);
+    });
+
+    it('should calculate tiered cache write cost with 5m/1h breakdown', () => {
+      const tokens: LLMTokenUsage = {
+        promptTokens: 1000,
+        completionTokens: 500,
+        cacheCreationTokens: 556,
+        cacheCreation5mTokens: 456,
+        cacheCreation1hTokens: 100,
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheWriteCostPerMillion: 3_750_000, // 5m rate (1.25x)
+        cacheWrite1hCostPerMillion: 6_000_000, // 1h rate (2x)
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // 5m: 456 * 3.75M / 1M = 1710
+      // 1h: 100 * 6M / 1M = 600
+      // Total cache write: 2310
+      expect(cost.cacheWriteCostMicrodollars).toBe(2310);
+    });
+
+    it('should fall back to cacheWriteCostPerMillion for 1h tier when cacheWrite1hCostPerMillion missing', () => {
+      const tokens: LLMTokenUsage = {
+        promptTokens: 1000,
+        completionTokens: 500,
+        cacheCreationTokens: 200,
+        cacheCreation5mTokens: 100,
+        cacheCreation1hTokens: 100,
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheWriteCostPerMillion: 3_750_000, // 5m rate
+        // no cacheWrite1hCostPerMillion → falls back to cacheWriteCostPerMillion
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // 5m: 100 * 3.75M / 1M = 375
+      // 1h: 100 * 3.75M / 1M = 375  (same as cacheWrite)
+      expect(cost.cacheWriteCostMicrodollars).toBe(750);
+    });
+
+    it('should use aggregate cacheCreationTokens when no 5m/1h breakdown', () => {
+      const tokens: LLMTokenUsage = {
+        promptTokens: 1000,
+        completionTokens: 500,
+        cacheCreationTokens: 556,
+        // no cacheCreation5mTokens or cacheCreation1hTokens
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheWriteCostPerMillion: 3_750_000,
+        cacheWrite1hCostPerMillion: 6_000_000,
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // All at 5m rate: 556 * 3.75M / 1M = 2085
+      expect(cost.cacheWriteCostMicrodollars).toBe(2085);
     });
 
     it('should correctly calculate cost with no cached tokens', () => {

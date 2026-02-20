@@ -98,7 +98,7 @@ describe('buildTraces', () => {
           promptTokens: 100,
           completionTokens: 50,
           totalTokens: 150,
-          cachedTokens: 25,
+          cacheReadTokens: 25,
         },
       };
 
@@ -141,6 +141,42 @@ describe('buildTraces', () => {
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens']).toBe('30');
       expect(rootSpan.SpanAttributes['gen_ai.usage.cache_creation_input_tokens']).toBe('10');
+    });
+
+    it('should include cache creation 5m/1h breakdown when present', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 100,
+          completionTokens: 50,
+          cacheCreationTokens: 556,
+          cacheCreation5mTokens: 456,
+          cacheCreation1hTokens: 100,
+        },
+      };
+
+      const traces = buildTraces(message);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['gen_ai.usage.cache_creation_input_tokens']).toBe('556');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.cache_creation_5m_input_tokens']).toBe('456');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.cache_creation_1h_input_tokens']).toBe('100');
+    });
+
+    it('should include upstream cost when present (OpenRouter)', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 100,
+          completionTokens: 50,
+          upstreamCost: 0.06713,
+        },
+      };
+
+      const traces = buildTraces(message);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['gen_ai.cost.upstream']).toBe('0.06713');
     });
 
     it('should handle partial token usage', () => {

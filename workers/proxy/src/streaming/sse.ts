@@ -163,7 +163,15 @@ export function processSSEEvent(
         messageStart: timestamp,
         events: [sseEvent],
         metadata,
-        usage: usage?.input_tokens || usage?.output_tokens ? usage : undefined,
+        usage:
+          usage?.input_tokens !== undefined ||
+          usage?.output_tokens !== undefined ||
+          usage?.cache_creation_input_tokens !== undefined ||
+          usage?.cache_read_input_tokens !== undefined ||
+          usage?.ephemeral_5m_input_tokens !== undefined ||
+          usage?.ephemeral_1h_input_tokens !== undefined
+            ? usage
+            : undefined,
       };
       streamData.messages.push(newMessage);
       return;
@@ -241,7 +249,9 @@ export function processSSEEvent(
           mergedUsage.input_tokens !== undefined ||
           mergedUsage.output_tokens !== undefined ||
           mergedUsage.cache_creation_input_tokens !== undefined ||
-          mergedUsage.cache_read_input_tokens !== undefined;
+          mergedUsage.cache_read_input_tokens !== undefined ||
+          mergedUsage.ephemeral_5m_input_tokens !== undefined ||
+          mergedUsage.ephemeral_1h_input_tokens !== undefined;
         currentMessage.usage = hasUsageData ? mergedUsage : undefined;
       }
     }
@@ -275,7 +285,10 @@ export function createSSEParser(streamData: SSEStreamData): EventSourceParser {
  *
  * For multi-message streams, sums token counts across all messages.
  */
-export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | undefined {
+export function aggregateSSETokens(
+  streamData: SSEStreamData,
+  provider?: string,
+): LLMTokenUsage | undefined {
   if (!streamData.messages || streamData.messages.length === 0) {
     return undefined;
   }
@@ -285,7 +298,9 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   let totalReasoningTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
-  let totalCachedTokens = 0;
+  let totalCacheCreation5mTokens = 0;
+  let totalCacheCreation1hTokens = 0;
+  let totalGoogleCachedTokens = 0;
   let totalThinkingChars = 0;
   let lastUpstreamCost: number | undefined;
   let hasAnyTokens = false;
@@ -323,6 +338,14 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
       totalCacheCreationTokens += message.usage.cache_creation_input_tokens;
       hasAnyTokens = true;
     }
+    if (message.usage.ephemeral_5m_input_tokens !== undefined) {
+      totalCacheCreation5mTokens += message.usage.ephemeral_5m_input_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.ephemeral_1h_input_tokens !== undefined) {
+      totalCacheCreation1hTokens += message.usage.ephemeral_1h_input_tokens;
+      hasAnyTokens = true;
+    }
     if (message.usage.cache_write_tokens !== undefined) {
       totalCacheCreationTokens += message.usage.cache_write_tokens;
       hasAnyTokens = true;
@@ -342,7 +365,7 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
       hasAnyTokens = true;
     }
     if (message.usage.cached_content_token_count !== undefined) {
-      totalCachedTokens += message.usage.cached_content_token_count;
+      totalGoogleCachedTokens += message.usage.cached_content_token_count;
       hasAnyTokens = true;
     }
   }
@@ -352,6 +375,16 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   }
 
   const result: LLMTokenUsage = {};
+
+  // Normalize: for Anthropic, input_tokens excludes cached — add them back for total
+  if (provider === 'anthropic' && totalCacheReadTokens > 0) {
+    totalPromptTokens += totalCacheReadTokens;
+  }
+
+  // Unify Google's cachedContentTokenCount → cacheReadTokens
+  if (totalGoogleCachedTokens > 0) {
+    totalCacheReadTokens += totalGoogleCachedTokens;
+  }
 
   if (totalPromptTokens > 0) {
     result.promptTokens = totalPromptTokens;
@@ -365,8 +398,11 @@ export function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | u
   if (totalCacheCreationTokens > 0) {
     result.cacheCreationTokens = totalCacheCreationTokens;
   }
-  if (totalCachedTokens > 0) {
-    result.cachedTokens = totalCachedTokens;
+  if (totalCacheCreation5mTokens > 0) {
+    result.cacheCreation5mTokens = totalCacheCreation5mTokens;
+  }
+  if (totalCacheCreation1hTokens > 0) {
+    result.cacheCreation1hTokens = totalCacheCreation1hTokens;
   }
   // Use provider-reported reasoning tokens, or estimate from Anthropic thinking blocks
   if (totalReasoningTokens > 0) {
