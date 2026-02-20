@@ -677,4 +677,313 @@ describe('aggregateSSETokens', () => {
 
     expect(result?.reasoningTokens).toBe(350);
   });
+
+  it('should normalize Anthropic: promptTokens = input_tokens + cache_read_input_tokens', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 972,
+            output_tokens: 150,
+            cache_read_input_tokens: 2236,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    expect(result).toEqual({
+      promptTokens: 3208, // 972 + 2236
+      completionTokens: 150,
+      totalTokens: 3358,
+      cacheReadTokens: 2236,
+    });
+  });
+
+  it('should NOT normalize non-Anthropic providers (promptTokens = input_tokens as-is)', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 30,
+          },
+        },
+      ],
+    };
+
+    // OpenAI: prompt_tokens already includes cached, so no normalization
+    const result = aggregateSSETokens(streamData, 'openai');
+
+    expect(result).toEqual({
+      promptTokens: 100,
+      completionTokens: 50,
+      totalTokens: 150,
+      cacheReadTokens: 30,
+    });
+  });
+
+  it('should unify Google cached_content_token_count into cacheReadTokens', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            prompt_token_count: 100,
+            candidates_token_count: 50,
+            cached_content_token_count: 80,
+            total_token_count: 150,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'google');
+
+    expect(result).toEqual({
+      promptTokens: 100,
+      completionTokens: 50,
+      totalTokens: 150,
+      cacheReadTokens: 80,
+    });
+  });
+
+  it('should aggregate OpenRouter cost and cache_write_tokens from SSE', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 6497,
+            output_tokens: 87,
+            cache_write_tokens: 6494,
+            cost: 0.06713,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'openrouter');
+
+    expect(result).toEqual({
+      promptTokens: 6497,
+      completionTokens: 87,
+      totalTokens: 6584,
+      cacheCreationTokens: 6494,
+      upstreamCost: 0.06713,
+    });
+  });
+
+  it('should normalize Anthropic with zero cache tokens (no inflation)', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 500,
+            output_tokens: 100,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    // No cache_read_input_tokens → no normalization applied
+    expect(result).toEqual({
+      promptTokens: 500,
+      completionTokens: 100,
+      totalTokens: 600,
+    });
+  });
+
+  it('should normalize Anthropic with zero input_tokens but non-zero cache_read', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 0,
+            output_tokens: 50,
+            cache_read_input_tokens: 1000,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    expect(result).toEqual({
+      promptTokens: 1000,
+      completionTokens: 50,
+      totalTokens: 1050,
+      cacheReadTokens: 1000,
+    });
+  });
+
+  it('should omit totalTokens when only promptTokens is present', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: { input_tokens: 100 },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'openai');
+
+    expect(result).toEqual({ promptTokens: 100 });
+    expect(result?.totalTokens).toBeUndefined();
+  });
+
+  it('should aggregate ephemeral 5m/1h cache creation breakdown', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 556,
+            cache_read_input_tokens: 0,
+            ephemeral_5m_input_tokens: 456,
+            ephemeral_1h_input_tokens: 100,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    expect(result?.cacheCreationTokens).toBe(556);
+    expect(result?.cacheCreation5mTokens).toBe(456);
+    expect(result?.cacheCreation1hTokens).toBe(100);
+  });
+
+  it('should sum ephemeral breakdown across multiple messages', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 50,
+            output_tokens: 20,
+            cache_creation_input_tokens: 200,
+            ephemeral_5m_input_tokens: 150,
+            ephemeral_1h_input_tokens: 50,
+          },
+        },
+        {
+          messageStart: 2000,
+          events: [],
+          usage: {
+            input_tokens: 30,
+            output_tokens: 10,
+            cache_creation_input_tokens: 100,
+            ephemeral_5m_input_tokens: 60,
+            ephemeral_1h_input_tokens: 40,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    expect(result?.cacheCreationTokens).toBe(300);
+    expect(result?.cacheCreation5mTokens).toBe(210);
+    expect(result?.cacheCreation1hTokens).toBe(90);
+  });
+
+  it('should aggregate ephemeral fields from SSE events through processSSEEvent', () => {
+    const streamData: SSEStreamData = { messages: [] };
+
+    // Simulate Anthropic message_start with usage including ephemeral breakdown
+    const messageStartData = JSON.stringify({
+      type: 'message_start',
+      message: {
+        id: 'msg_123',
+        model: 'claude-sonnet-4-20250514',
+        usage: {
+          input_tokens: 100,
+          cache_creation_input_tokens: 600,
+          cache_read_input_tokens: 50,
+          ephemeral_5m_input_tokens: 400,
+          ephemeral_1h_input_tokens: 200,
+        },
+      },
+    });
+    processSSEEvent({ event: 'message_start', data: messageStartData }, 1000, streamData);
+
+    // Simulate message_delta with output tokens
+    const messageDeltaData = JSON.stringify({
+      type: 'message_delta',
+      usage: { output_tokens: 75 },
+    });
+    processSSEEvent({ event: 'message_delta', data: messageDeltaData }, 2000, streamData);
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    expect(result?.promptTokens).toBe(150); // 100 + 50 (Anthropic normalization)
+    expect(result?.completionTokens).toBe(75);
+    expect(result?.cacheCreationTokens).toBe(600);
+    expect(result?.cacheCreation5mTokens).toBe(400);
+    expect(result?.cacheCreation1hTokens).toBe(200);
+    expect(result?.cacheReadTokens).toBe(50);
+  });
+
+  it('should omit ephemeral fields when they are zero', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 200,
+            ephemeral_5m_input_tokens: 0,
+            ephemeral_1h_input_tokens: 0,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    expect(result?.cacheCreationTokens).toBe(200);
+    expect(result?.cacheCreation5mTokens).toBeUndefined();
+    expect(result?.cacheCreation1hTokens).toBeUndefined();
+  });
+
+  it('should omit totalTokens when only completionTokens is present', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: { output_tokens: 50 },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'anthropic');
+
+    expect(result).toEqual({ completionTokens: 50 });
+    expect(result?.totalTokens).toBeUndefined();
+  });
 });

@@ -72,7 +72,7 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
   }
 
   const totalDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
-  const cacheHitRate = calculateCacheHitRate(cacheReadTokens, cacheCreationTokens);
+  const cacheHitRate = calculateCacheHitRate(cacheReadTokens, cacheCreationTokens, promptTokens);
 
   return {
     promptTokens,

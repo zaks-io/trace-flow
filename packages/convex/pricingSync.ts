@@ -31,6 +31,7 @@ export const syncToKV = internalAction({
       completionCostPerMillion: pricing.completionCostPerMillion,
       cacheReadCostPerMillion: pricing.cacheReadCostPerMillion,
       cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
+      cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
       reasoningCostPerMillion: pricing.reasoningCostPerMillion,
       updatedAt: pricing.updatedAt,
       source: pricing.source,

@@ -40,6 +40,8 @@ const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
 const CACHE_CREATION_INPUT_TOKENS_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d+)/;
 const CACHE_READ_INPUT_TOKENS_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
 const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d+)/;
+const EPHEMERAL_5M_INPUT_TOKENS_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d+)/;
+const EPHEMERAL_1H_INPUT_TOKENS_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d+)/;
 const UPSTREAM_COST_PATTERN = /"cost"\s*:\s*([0-9.]+)/;
 
 /**
@@ -229,6 +231,8 @@ export function extractTokenUsageFromSSEData(data: string): {
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
   cache_write_tokens?: number;
+  ephemeral_5m_input_tokens?: number;
+  ephemeral_1h_input_tokens?: number;
   output_tokens?: number;
   reasoning_tokens?: number;
   cost?: number;
@@ -242,6 +246,8 @@ export function extractTokenUsageFromSSEData(data: string): {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     cache_write_tokens?: number;
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
     output_tokens?: number;
     reasoning_tokens?: number;
     cost?: number;
@@ -275,6 +281,16 @@ export function extractTokenUsageFromSSEData(data: string): {
   const cacheWriteMatch = CACHE_WRITE_TOKENS_PATTERN.exec(data);
   if (cacheWriteMatch?.[1]) {
     usage.cache_write_tokens = parseInt(cacheWriteMatch[1], 10);
+  }
+
+  const ephemeral5mMatch = EPHEMERAL_5M_INPUT_TOKENS_PATTERN.exec(data);
+  if (ephemeral5mMatch?.[1]) {
+    usage.ephemeral_5m_input_tokens = parseInt(ephemeral5mMatch[1], 10);
+  }
+
+  const ephemeral1hMatch = EPHEMERAL_1H_INPUT_TOKENS_PATTERN.exec(data);
+  if (ephemeral1hMatch?.[1]) {
+    usage.ephemeral_1h_input_tokens = parseInt(ephemeral1hMatch[1], 10);
   }
 
   const reasoningTokensMatch = OPENAI_REASONING_TOKENS_PATTERN.exec(data);

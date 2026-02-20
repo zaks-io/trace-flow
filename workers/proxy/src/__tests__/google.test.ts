@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTokenUsage } from '../parsers/tokens';
+import { parseTokenUsage } from '../parsers/providers';
 import { parseGoogleRequestBody } from '../parsers/request-body';
 import { extractGoogleMetadata, extractTokenUsageFromSSEData } from '../parsers/metadata-regex';
 
@@ -36,7 +36,7 @@ describe('Google Gemini API Support', () => {
       const tokens = parseTokenUsage(response);
       expect(tokens?.promptTokens).toBe(100);
       expect(tokens?.completionTokens).toBe(50);
-      expect(tokens?.cachedTokens).toBe(80);
+      expect(tokens?.cacheReadTokens).toBe(80);
       expect(tokens?.totalTokens).toBe(150);
     });
 

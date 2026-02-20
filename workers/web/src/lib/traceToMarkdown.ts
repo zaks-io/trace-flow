@@ -72,7 +72,7 @@ function aggregateTokens(spans: TraceSpan[]): TokenSummary {
 
   const wallClockDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
   const idleTime = Math.max(0, wallClockDuration - llmActiveDuration);
-  const cacheHitRate = calculateCacheHitRate(cacheReadTokens, cacheCreationTokens);
+  const cacheHitRate = calculateCacheHitRate(cacheReadTokens, cacheCreationTokens, promptTokens);
 
   return {
     promptTokens,
