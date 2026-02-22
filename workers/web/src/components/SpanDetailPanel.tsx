@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   Clock,
@@ -554,60 +554,6 @@ export function SpanDetailPanel({
     ([key]) => !displayedKeys.has(key),
   );
 
-  useEffect(() => {
-    // Only fetch bodies for LLM request spans
-    if (!isRootSpan || !span || !isLLMRequestSpan(span)) return;
-
-    // Extract requestId from span attributes - bodies are stored by requestId not traceId
-    const attrs = parseSpanAttributes(span.SpanAttributes);
-    const requestId = attrs['gen_ai.request_id'];
-    if (!requestId) {
-      // No requestId means body not available (e.g., OTLP traces from external systems)
-      return;
-    }
-
-    const fetchBodies = async () => {
-      try {
-        // Get ID token from our API endpoint
-        const tokenRes = await fetch('/api/token');
-        if (!tokenRes.ok) {
-          window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
-          return;
-        }
-        const { token: id_token } = await tokenRes.json();
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
-
-        setRequestBodyLoading(true);
-        setResponseBodyLoading(true);
-
-        const [reqRes, resRes] = await Promise.all([
-          fetch(`${apiUrl}/bodies/${requestId}/request`, {
-            headers: { Authorization: `Bearer ${id_token}` },
-          }),
-          fetch(`${apiUrl}/bodies/${requestId}/response`, {
-            headers: { Authorization: `Bearer ${id_token}` },
-          }),
-        ]);
-
-        if (reqRes.ok) {
-          const text = await reqRes.text();
-          setRequestBody(formatBodyForDisplay(text));
-        }
-        if (resRes.ok) {
-          const text = await resRes.text();
-          setResponseBody(formatBodyForDisplay(text));
-        }
-      } catch {
-        // Silently handle errors
-      } finally {
-        setRequestBodyLoading(false);
-        setResponseBodyLoading(false);
-      }
-    };
-
-    void fetchBodies();
-  }, [isRootSpan, span]);
-
   // Check if this is an output span (from response)
   // Matches: gen_ai.response.text, gen_ai.response.thinking, gen_ai.response.tool_use (with optional numeric suffix)
   const isOutputSpan =
@@ -617,65 +563,101 @@ export function SpanDetailPanel({
   const contentType = (() => {
     const attrType = spanAttributes['gen_ai.content.type'];
     if (attrType) return attrType;
-    // Infer from span name (e.g., "gen_ai.response.text.2" → "text")
     const spanMatch = span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i);
     return spanMatch?.[1]?.toLowerCase() ?? '';
   })();
 
-  // Fetch message content for output spans (gen_ai.response.*)
-  useEffect(() => {
-    const isTraceRoot = span?.ParentSpanId === '';
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-    if (isTraceRoot || !isOutputSpan || !span) {
+  // Fetch bodies for LLM request spans or message content for output spans
+  useEffect(() => {
+    abortControllerRef.current?.abort();
+
+    if (!span || !isOpen) {
+      setRequestBody(null);
+      setResponseBody(null);
       setMessageContent(null);
       return;
     }
 
-    const requestId = spanAttributes['gen_ai.request_id'];
-    if (!requestId) {
-      return;
-    }
+    const attrs = parseSpanAttributes(span.SpanAttributes);
+    const requestId = attrs['gen_ai.request_id'];
+    if (!requestId) return;
 
-    const fetchMessageContent = async () => {
-      setMessageContentLoading(true);
-      try {
-        // Get ID token from our API endpoint
-        const tokenRes = await fetch('/api/token');
-        if (!tokenRes.ok) {
-          setMessageContent(null);
-          return;
+    const isLLMRoot = isRootSpan && isLLMRequestSpan(span);
+    const isOutput = isOutputSpan && span.ParentSpanId !== '';
+
+    if (!isLLMRoot && !isOutput) return;
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const { signal } = controller;
+
+    setRequestBody(null);
+    setResponseBody(null);
+    setMessageContent(null);
+
+    const fetchBody = async (
+      id: string,
+      type: 'request' | 'response',
+      token: string,
+    ): Promise<FormattedBody | null> => {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+      const res = await fetch(`${apiUrl}/bodies/${id}/${type}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+      });
+      if (!res.ok) return null;
+      const text = await res.text();
+      return formatBodyForDisplay(text);
+    };
+
+    const run = async () => {
+      if (isLLMRoot) {
+        setRequestBodyLoading(true);
+        setResponseBodyLoading(true);
+      } else {
+        setMessageContentLoading(true);
+      }
+
+      const tokenRes = await fetch('/api/token', { signal });
+      if (!tokenRes.ok) {
+        if (isLLMRoot) {
+          window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
         }
-        const { token: id_token } = await tokenRes.json();
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+        return;
+      }
+      const { token } = await tokenRes.json();
 
-        const res = await fetch(`${apiUrl}/bodies/${requestId}/response`, {
-          headers: { Authorization: `Bearer ${id_token}` },
-        });
-
-        if (!res.ok) {
-          setMessageContent(null);
-          return;
+      if (isLLMRoot) {
+        const [reqBody, resBody] = await Promise.all([
+          fetchBody(requestId, 'request', token),
+          fetchBody(requestId, 'response', token),
+        ]);
+        if (signal.aborted) return;
+        setRequestBody(reqBody);
+        setResponseBody(resBody);
+        setRequestBodyLoading(false);
+        setResponseBodyLoading(false);
+      } else {
+        const resBody = await fetchBody(requestId, 'response', token);
+        if (signal.aborted) return;
+        if (resBody) {
+          setMessageContent(extractOutputContent(resBody, contentType, span.SpanName));
         }
-
-        const text = await res.text();
-        const body = formatBodyForDisplay(text);
-
-        if (!body) {
-          setMessageContent(null);
-          return;
-        }
-
-        const extracted = extractOutputContent(body, contentType, span.SpanName);
-        setMessageContent(extracted);
-      } catch {
-        setMessageContent(null);
-      } finally {
         setMessageContentLoading(false);
       }
     };
 
-    void fetchMessageContent();
-  }, [isOutputSpan, span, spanAttributes, contentType]);
+    void run().catch(() => {
+      if (signal.aborted) return;
+      setRequestBodyLoading(false);
+      setResponseBodyLoading(false);
+      setMessageContentLoading(false);
+    });
+
+    return () => controller.abort();
+  }, [span, isRootSpan, isOpen, isOutputSpan, contentType]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
