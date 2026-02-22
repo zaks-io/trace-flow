@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer, Key } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
@@ -112,22 +112,6 @@ export default function Usage() {
     params: forecastParams,
     transform: (r) => r as TinybirdResponse<CostForecastRow>,
   });
-
-  const isInitialRender = useRef(true);
-  useEffect(() => {
-    if (isInitialRender.current) {
-      isInitialRender.current = false;
-      return;
-    }
-    void summaryQuery.refetch();
-    void timeseriesQuery.refetch();
-    void modelsQuery.refetch();
-    void providersQuery.refetch();
-    void operationsQuery.refetch();
-    void apiKeysQuery.refetch();
-    void forecastQuery.refetch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange, providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
   const summary = summaryQuery.data?.data?.[0];
   const timeseries = timeseriesQuery.data?.data ?? [];

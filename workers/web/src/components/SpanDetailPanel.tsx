@@ -238,6 +238,24 @@ function AttributeCard({ icon, label, value, mono = false }: AttributeCardProps)
 }
 
 // Role badge colors for message breakdown
+const displayedKeys = new Set([
+  'gen_ai.system',
+  'gen_ai.request.model',
+  'gen_ai.usage.input_tokens',
+  'gen_ai.usage.output_tokens',
+  'gen_ai.usage.reasoning_tokens',
+  'gen_ai.usage.cache_read_input_tokens',
+  'gen_ai.usage.cache_creation_input_tokens',
+  'gen_ai.server.time_to_first_token',
+  'service.name',
+  'gen_ai.cost.input',
+  'gen_ai.cost.output',
+  'gen_ai.cost.total',
+  'gen_ai.cost.cache_read',
+  'gen_ai.cost.cache_creation',
+  'gen_ai.cost.reasoning',
+]);
+
 const roleBadgeColors: Record<string, string> = {
   system: 'bg-purple-500/15 text-purple-400',
   user: 'bg-blue-500/15 text-blue-400',
@@ -532,23 +550,6 @@ export function SpanDetailPanel({
     ? parseFloat(allAttributes['gen_ai.cost.total'])
     : null;
 
-  const displayedKeys = new Set([
-    'gen_ai.system',
-    'gen_ai.request.model',
-    'gen_ai.usage.input_tokens',
-    'gen_ai.usage.output_tokens',
-    'gen_ai.usage.reasoning_tokens',
-    'gen_ai.usage.cache_read_input_tokens',
-    'gen_ai.usage.cache_creation_input_tokens',
-    'gen_ai.server.time_to_first_token',
-    'service.name',
-    'gen_ai.cost.input',
-    'gen_ai.cost.output',
-    'gen_ai.cost.total',
-    'gen_ai.cost.cache_read',
-    'gen_ai.cost.cache_creation',
-    'gen_ai.cost.reasoning',
-  ]);
   const remainingAttributes = Object.entries(allAttributes).filter(
     ([key]) => !displayedKeys.has(key),
   );

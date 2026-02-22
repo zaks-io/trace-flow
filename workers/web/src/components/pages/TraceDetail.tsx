@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
@@ -9,7 +10,6 @@ import { validateTraceId } from '@trace-flow/utils';
 import { useLiveTraceDetail } from '@/hooks/useLiveTraceDetail';
 import { usePageHeader } from '@/components/PageHeaderContext';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
-import { AgentGanttChart } from '@/components/AgentGanttChart';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
 import { AlertBadge } from '@/components/alerts';
 import {
@@ -21,6 +21,11 @@ import {
 import { generateTraceMarkdown, estimateMarkdownTokens } from '@/lib/traceToMarkdown';
 import type { AlertSeverity } from '@/types/alerts';
 import { isLLMRequestSpan } from '@/lib/spans';
+
+const AgentGanttChart = dynamic(
+  () => import('@/components/AgentGanttChart').then((mod) => ({ default: mod.AgentGanttChart })),
+  { ssr: false },
+);
 
 interface TraceDetailProps {
   traceId?: string;
