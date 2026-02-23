@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { type Preloaded, usePreloadedQuery } from 'convex/react';
+import { type api } from '@convex/_generated/api';
 import { Activity, Zap, Hash, ChevronDown, Cpu, Server, DollarSign, Key } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { usePageHeader } from '@/components/PageHeaderContext';
@@ -185,9 +187,14 @@ function UsageTimeseriesChart({ data }: { data: TimeseriesData['data'] }) {
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({
+  preloadedApiKeys,
+}: {
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+}) {
   usePageHeader('Dashboard');
-  const apiKeyMap = useApiKeyMap();
+  const apiKeyList = usePreloadedQuery(preloadedApiKeys);
+  const apiKeyMap = useApiKeyMap(apiKeyList);
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dropdownOpen, setDropdownOpen] = useState(false);
 

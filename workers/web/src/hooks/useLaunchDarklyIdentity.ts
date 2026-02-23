@@ -2,13 +2,13 @@
 
 import { useEffect, useRef } from 'react';
 import { useLDClient } from 'launchdarkly-react-client-sdk';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import type { Doc } from '@convex/_generated/dataModel';
 
-export function useLaunchDarklyIdentity() {
+export function useLaunchDarklyIdentity(
+  user: Doc<'users'> | null,
+  subscription: Doc<'subscriptions'> | null,
+) {
   const ldClient = useLDClient();
-  const user = useQuery(api.users.getCurrentUserQuery);
-  const subscription = useQuery(api.subscriptions.getForCurrentUser);
   const identifiedKey = useRef<string | null>(null);
 
   useEffect(() => {

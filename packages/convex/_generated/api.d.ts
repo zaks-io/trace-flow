@@ -87,6 +87,9 @@ export declare const api: {
       any
     >;
   };
+  app: {
+    sessionContext: FunctionReference<"query", "public", any, any>;
+  };
   auth: {
     hasTraceFlowRole: FunctionReference<"query", "public", any, any>;
   };

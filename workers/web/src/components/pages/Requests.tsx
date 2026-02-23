@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { type Preloaded, usePreloadedQuery } from 'convex/react';
+import { type api } from '@convex/_generated/api';
 import { parseSpanAttributes } from '@trace-flow/utils';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
@@ -28,7 +28,12 @@ function getRequestId(row: RequestRow): string | undefined {
   return parseSpanAttributes(row.SpanAttributes)['gen_ai.request_id'];
 }
 
-export default function Requests() {
+interface RequestsProps {
+  preloadedAlerts: Preloaded<typeof api.alerts.listEnabled>;
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+}
+
+export default function Requests({ preloadedAlerts, preloadedApiKeys }: RequestsProps) {
   usePageHeader('Requests');
   const [selectedRequest, setSelectedRequest] = useState<RequestRow | null>(null);
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -43,8 +48,9 @@ export default function Requests() {
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
-  const apiKeyMap = useApiKeyMap();
-  const alerts = useQuery(api.alerts.listEnabled);
+  const apiKeys = usePreloadedQuery(preloadedApiKeys);
+  const apiKeyMap = useApiKeyMap(apiKeys);
+  const alerts = usePreloadedQuery(preloadedAlerts);
 
   const pipeParams = useMemo(() => {
     const params: Record<string, string | number | undefined> = { limit: 100 };

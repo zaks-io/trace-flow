@@ -15,8 +15,6 @@ import {
   DollarSign,
   UserPlus,
 } from 'lucide-react';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
 import {
   Sidebar,
   SidebarContent,
@@ -40,13 +38,12 @@ const navItems = [
   { title: 'Docs', href: '/docs', icon: BookOpen, external: true },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
-  const isUserAdmin = useQuery(api.users.isAdmin);
 
   const allNavItems = [
     ...navItems,
-    ...(isUserAdmin ? [{ title: 'Invites', href: '/app/admin/invites', icon: UserPlus }] : []),
+    ...(isAdmin ? [{ title: 'Invites', href: '/app/admin/invites', icon: UserPlus }] : []),
   ];
 
   const isActive = (href: string) => {
