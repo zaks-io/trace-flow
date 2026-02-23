@@ -80,7 +80,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./workers/
 
 - Self-documenting code. JSDoc only for "why" (architecture decisions, CF Workers gotchas), never for "what"
 - Stale comments are worse than no comments
-- Pre-commit hooks run eslint + prettier on staged files
+- Pre-commit runs lint + prettier check; pre-push runs knip, type-check, and tests
 
 ## Session Notes
 
