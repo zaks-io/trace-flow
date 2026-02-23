@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { type Preloaded, usePreloadedQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { type Doc } from '@convex/_generated/dataModel';
+import { useIsAdmin } from '@/components/AdminContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -125,7 +126,7 @@ function InvitesTable({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => revokeInvite({ inviteId: invite._id })}
+                  onClick={() => void revokeInvite({ inviteId: invite._id })}
                   className="text-destructive hover:text-destructive"
                 >
                   Revoke
@@ -207,17 +208,15 @@ function WaitlistTable({
 }
 
 interface AdminInvitesClientProps {
-  preloadedIsAdmin: Preloaded<typeof api.users.isAdmin>;
   preloadedInvites: Preloaded<typeof api.invites.listInvites>;
   preloadedWaitlist: Preloaded<typeof api.waitlist.listWaitlist>;
 }
 
 export default function AdminInvitesClient({
-  preloadedIsAdmin,
   preloadedInvites,
   preloadedWaitlist,
 }: AdminInvitesClientProps) {
-  const isAdmin = usePreloadedQuery(preloadedIsAdmin);
+  const isAdmin = useIsAdmin();
 
   if (!isAdmin) {
     return (

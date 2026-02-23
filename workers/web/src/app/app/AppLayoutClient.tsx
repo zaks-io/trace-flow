@@ -6,6 +6,7 @@ import { Providers } from '@/components/Providers';
 import { AppSidebar } from '@/components/AppSidebar';
 import { PageHeaderProvider } from '@/components/PageHeaderContext';
 import { PageHeader } from '@/components/PageHeader';
+import { AdminProvider } from '@/components/AdminContext';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { useUserInitialization } from '@/hooks/useUserInitialization';
 import { useLaunchDarklyIdentity } from '@/hooks/useLaunchDarklyIdentity';
@@ -34,15 +35,17 @@ function AppLayoutInner({ preloadedSessionContext, children }: AppLayoutInnerPro
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar isAdmin={isAdmin} />
-      <SidebarInset>
-        <PageHeaderProvider>
-          <PageHeader />
-          <main className="flex-1 p-6">{children}</main>
-        </PageHeaderProvider>
-      </SidebarInset>
-    </SidebarProvider>
+    <AdminProvider value={isAdmin}>
+      <SidebarProvider>
+        <AppSidebar isAdmin={isAdmin} />
+        <SidebarInset>
+          <PageHeaderProvider>
+            <PageHeader />
+            <main className="flex-1 p-6">{children}</main>
+          </PageHeaderProvider>
+        </SidebarInset>
+      </SidebarProvider>
+    </AdminProvider>
   );
 }
 
