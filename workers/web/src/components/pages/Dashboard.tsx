@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo } from 'react';
 import { Activity, Zap, Hash, ChevronDown, Cpu, Server, DollarSign, Key } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { usePageHeader } from '@/components/PageHeaderContext';
@@ -78,27 +78,27 @@ interface SummaryCardProps {
   accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'red' | 'green';
 }
 
+const accentColors = {
+  purple: 'from-purple-500/20 to-purple-500/5 border-purple-500/30',
+  blue: 'from-blue-500/20 to-blue-500/5 border-blue-500/30',
+  emerald: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
+  amber: 'from-amber-500/20 to-amber-500/5 border-amber-500/30',
+  zinc: 'from-zinc-500/20 to-zinc-500/5 border-zinc-500/30',
+  red: 'from-red-500/20 to-red-500/5 border-red-500/30',
+  green: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
+};
+
+const iconColors = {
+  purple: 'text-purple-400',
+  blue: 'text-blue-400',
+  emerald: 'text-emerald-400',
+  amber: 'text-amber-400',
+  zinc: 'text-zinc-400',
+  red: 'text-red-400',
+  green: 'text-emerald-400',
+};
+
 function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) {
-  const accentColors = {
-    purple: 'from-purple-500/20 to-purple-500/5 border-purple-500/30',
-    blue: 'from-blue-500/20 to-blue-500/5 border-blue-500/30',
-    emerald: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
-    amber: 'from-amber-500/20 to-amber-500/5 border-amber-500/30',
-    zinc: 'from-zinc-500/20 to-zinc-500/5 border-zinc-500/30',
-    red: 'from-red-500/20 to-red-500/5 border-red-500/30',
-    green: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
-  };
-
-  const iconColors = {
-    purple: 'text-purple-400',
-    blue: 'text-blue-400',
-    emerald: 'text-emerald-400',
-    amber: 'text-amber-400',
-    zinc: 'text-zinc-400',
-    red: 'text-red-400',
-    green: 'text-emerald-400',
-  };
-
   return (
     <div
       className={`relative overflow-hidden rounded-xl border bg-linear-to-br p-4 ${accentColors[accent]}`}
@@ -229,24 +229,6 @@ export default function Dashboard() {
     params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
     transform: (result) => result as TimeseriesData,
   });
-
-  // Track if this is the initial render to avoid double-fetching
-  const isInitialRender = useRef(true);
-
-  // Refetch all queries when time range changes
-  // Query params already derive from timeRange, triggering auto-refetch in useTinybirdPipe
-  useEffect(() => {
-    if (isInitialRender.current) {
-      isInitialRender.current = false;
-      return;
-    }
-    void summaryQuery.refetch();
-    void modelsQuery.refetch();
-    void providersQuery.refetch();
-    void apiKeysQuery.refetch();
-    void timeseriesQuery.refetch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeRange]);
 
   const summary = summaryQuery.data?.data?.[0];
   const models = modelsQuery.data?.data ?? [];

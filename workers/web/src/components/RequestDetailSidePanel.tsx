@@ -82,18 +82,13 @@ function BodySkeleton() {
 async function fetchBody(
   requestId: string,
   type: 'request' | 'response',
+  token: string,
   signal: AbortSignal,
 ): Promise<FormattedBody | null> {
-  const tokenRes = await fetch('/api/token', { signal });
-  if (!tokenRes.ok) {
-    window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
-    return null;
-  }
-  const { token: id_token } = await tokenRes.json();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
 
   const res = await fetch(`${apiUrl}/bodies/${requestId}/${type}`, {
-    headers: { Authorization: `Bearer ${id_token}` },
+    headers: { Authorization: `Bearer ${token}` },
     signal,
   });
 
@@ -184,35 +179,53 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
     setRequestBodyLoading(true);
     setResponseBodyLoading(true);
 
-    fetchBody(requestId, 'request', controller.signal)
-      .then((body) => {
-        if (!controller.signal.aborted) {
-          setRequestBody(body);
-          setRequestBodyLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted) {
-          setRequestBodyError(err instanceof Error ? err.message : 'Failed to fetch request body');
-          setRequestBodyLoading(false);
-        }
-      });
+    const fetchBodies = async () => {
+      const tokenRes = await fetch('/api/token', { signal: controller.signal });
+      if (!tokenRes.ok) {
+        window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
+        return;
+      }
+      const { token } = await tokenRes.json();
 
-    fetchBody(requestId, 'response', controller.signal)
-      .then((body) => {
-        if (!controller.signal.aborted) {
-          setResponseBody(body);
-          setResponseBodyLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted) {
-          setResponseBodyError(
-            err instanceof Error ? err.message : 'Failed to fetch response body',
-          );
-          setResponseBodyLoading(false);
-        }
-      });
+      const [reqResult, resResult] = await Promise.allSettled([
+        fetchBody(requestId, 'request', token, controller.signal),
+        fetchBody(requestId, 'response', token, controller.signal),
+      ]);
+
+      if (controller.signal.aborted) return;
+
+      if (reqResult.status === 'fulfilled') {
+        setRequestBody(reqResult.value);
+      } else {
+        setRequestBodyError(
+          reqResult.reason instanceof Error
+            ? reqResult.reason.message
+            : 'Failed to fetch request body',
+        );
+      }
+      setRequestBodyLoading(false);
+
+      if (resResult.status === 'fulfilled') {
+        setResponseBody(resResult.value);
+      } else {
+        setResponseBodyError(
+          resResult.reason instanceof Error
+            ? resResult.reason.message
+            : 'Failed to fetch response body',
+        );
+      }
+      setResponseBodyLoading(false);
+    };
+
+    fetchBodies().catch((err) => {
+      if (!controller.signal.aborted) {
+        const message = err instanceof Error ? err.message : 'Failed to fetch bodies';
+        setRequestBodyError(message);
+        setResponseBodyError(message);
+        setRequestBodyLoading(false);
+        setResponseBodyLoading(false);
+      }
+    });
 
     return () => {
       controller.abort();

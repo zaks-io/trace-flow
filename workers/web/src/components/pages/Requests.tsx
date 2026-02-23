@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { parseSpanAttributes } from '@trace-flow/utils';
@@ -68,8 +68,9 @@ export default function Requests() {
     pollInterval: isLiveMode ? 10000 : undefined,
   });
 
-  // Reset when filters change
-  useEffect(() => {
+  // Reset when filters change — useLayoutEffect ensures latestReceivedAt is
+  // cleared before useTinybirdPipe's useEffect fires, preventing a stale cursor.
+  useLayoutEffect(() => {
     const currentFilters = JSON.stringify(filters);
     if (prevFiltersRef.current !== currentFilters) {
       prevFiltersRef.current = currentFilters;
