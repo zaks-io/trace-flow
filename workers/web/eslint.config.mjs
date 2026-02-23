@@ -51,5 +51,5 @@ export default tseslint.config(
       '.open-next/**',
       'next-env.d.ts',
     ],
-  }
+  },
 );
