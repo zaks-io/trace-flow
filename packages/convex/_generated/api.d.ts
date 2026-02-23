@@ -20,6 +20,9 @@ import type { GenericId as Id } from "convex/values";
  * ```
  */
 export declare const api: {
+  admin: {
+    stats: FunctionReference<"query", "public", {}, any>;
+  };
   alerts: {
     create: FunctionReference<
       "mutation",
@@ -298,6 +301,7 @@ export declare const internal: {
       any
     >;
     getAllSyncData: FunctionReference<"query", "internal", {}, any>;
+    isCallerAdmin: FunctionReference<"query", "internal", {}, any>;
     syncKeyToKV: FunctionReference<
       "action",
       "internal",

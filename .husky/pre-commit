@@ -1,3 +1,2 @@
-bun run type-check
-bun run knip
-bunx lint-staged
+bun turbo run lint
+bun run prettier --check .

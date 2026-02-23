@@ -14,6 +14,7 @@ import {
   BookOpen,
   DollarSign,
   UserPlus,
+  Shield,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -28,27 +29,58 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 
-const navItems = [
+interface NavItem {
+  title: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const navItems: NavItem[] = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
   { title: 'Usage', href: '/app/usage', icon: DollarSign },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
   { title: 'API Keys', href: '/app/api-keys', icon: Key },
   { title: 'Alerts', href: '/app/alerts', icon: Bell },
-  { title: 'Docs', href: '/docs', icon: BookOpen, external: true },
+  { title: 'Docs', href: '/docs', icon: BookOpen },
 ];
+
+const adminNavItems: NavItem[] = [
+  { title: 'System', href: '/app/admin', icon: Shield },
+  { title: 'Invites', href: '/app/admin/invites', icon: UserPlus },
+];
+
+function NavMenuItem({ item, active, delay }: { item: NavItem; active: boolean; delay?: number }) {
+  return (
+    <SidebarMenuItem
+      className="animate-fade-in"
+      style={delay ? { animationDelay: `${delay}ms` } : undefined}
+    >
+      <SidebarMenuButton
+        asChild
+        isActive={active}
+        tooltip={item.title}
+        className="h-10 gap-3 rounded-lg px-3 transition-all duration-200 hover:bg-sidebar-accent data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
+      >
+        <Link href={item.href}>
+          <item.icon
+            className={`h-4 w-4 transition-colors ${active ? 'text-primary' : 'text-muted-foreground'}`}
+          />
+          <span className={`font-medium ${active ? 'text-primary' : 'text-foreground'}`}>
+            {item.title}
+          </span>
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
 
 export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
 
-  const allNavItems = [
-    ...navItems,
-    ...(isAdmin ? [{ title: 'Invites', href: '/app/admin/invites', icon: UserPlus }] : []),
-  ];
-
   const isActive = (href: string) => {
-    if (href === '/app') {
-      return pathname === '/app';
+    if (href === '/app' || href === '/app/admin') {
+      return pathname === href;
     }
     return pathname.startsWith(href);
   };
@@ -75,47 +107,35 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
-              {allNavItems.map((item, index) => (
-                <SidebarMenuItem
+              {navItems.map((item, index) => (
+                <NavMenuItem
                   key={item.href}
-                  className="animate-fade-in"
-                  style={{ animationDelay: `${index * 50}ms` }}
-                >
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.href)}
-                    tooltip={item.title}
-                    className="h-10 gap-3 rounded-lg px-3 transition-all duration-200 hover:bg-sidebar-accent data-[active=true]:bg-primary/10 data-[active=true]:text-primary"
-                  >
-                    {item.external ? (
-                      <Link href={item.href}>
-                        <item.icon
-                          className={`h-4 w-4 transition-colors ${isActive(item.href) ? 'text-primary' : 'text-muted-foreground'}`}
-                        />
-                        <span
-                          className={`font-medium ${isActive(item.href) ? 'text-primary' : 'text-foreground'}`}
-                        >
-                          {item.title}
-                        </span>
-                      </Link>
-                    ) : (
-                      <Link href={item.href}>
-                        <item.icon
-                          className={`h-4 w-4 transition-colors ${isActive(item.href) ? 'text-primary' : 'text-muted-foreground'}`}
-                        />
-                        <span
-                          className={`font-medium ${isActive(item.href) ? 'text-primary' : 'text-foreground'}`}
-                        >
-                          {item.title}
-                        </span>
-                      </Link>
-                    )}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                  item={item}
+                  active={isActive(item.href)}
+                  delay={index * 50}
+                />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {isAdmin && (
+          <>
+            <SidebarSeparator className="mx-2 my-2 opacity-50" />
+            <SidebarGroup>
+              <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                Admin
+              </p>
+              <SidebarGroupContent>
+                <SidebarMenu className="space-y-1">
+                  {adminNavItems.map((item) => (
+                    <NavMenuItem key={item.href} item={item} active={isActive(item.href)} />
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="mt-auto px-2 pb-4">

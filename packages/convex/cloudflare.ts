@@ -1,6 +1,7 @@
 import { internalAction, internalQuery, action } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
+import { requireTraceFlowRole } from './auth';
 
 function getCloudflareConfig() {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -85,6 +86,19 @@ export const checkKeyInKV = internalAction({
   },
 });
 
+export const isCallerAdmin = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return false;
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_token_identifier', (q) => q.eq('tokenIdentifier', identity.tokenIdentifier))
+      .first();
+    return user?.isAdmin === true;
+  },
+});
+
 export const getAllSyncData = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -97,6 +111,9 @@ export const getAllSyncData = internalQuery({
 export const syncAll = action({
   args: {},
   handler: async (ctx) => {
+    await requireTraceFlowRole(ctx);
+    const isAdmin = await ctx.runQuery(internal.cloudflare.isCallerAdmin);
+    if (!isAdmin) throw new Error('Admin access required');
     const { apiKeys, subscriptions } = await ctx.runQuery(internal.cloudflare.getAllSyncData);
 
     let keySynced = 0;
