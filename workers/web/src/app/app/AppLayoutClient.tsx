@@ -1,29 +1,27 @@
 'use client';
 
+import { type Preloaded, usePreloadedQuery } from 'convex/react';
+import { type api } from '@convex/_generated/api';
 import { Providers } from '@/components/Providers';
 import { AppSidebar } from '@/components/AppSidebar';
 import { PageHeaderProvider } from '@/components/PageHeaderContext';
 import { PageHeader } from '@/components/PageHeader';
+import { AdminProvider } from '@/components/AdminContext';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
 import { useUserInitialization } from '@/hooks/useUserInitialization';
 import { useLaunchDarklyIdentity } from '@/hooks/useLaunchDarklyIdentity';
 
-function AppLayoutInner({ children }: { children: React.ReactNode }) {
+interface AppLayoutInnerProps {
+  preloadedSessionContext: Preloaded<typeof api.app.sessionContext>;
+  children: React.ReactNode;
+}
+
+function AppLayoutInner({ preloadedSessionContext, children }: AppLayoutInnerProps) {
+  const { hasRole, user, isAdmin, subscription } = usePreloadedQuery(preloadedSessionContext);
   useUserInitialization();
-  useLaunchDarklyIdentity();
-  const hasRole = useQuery(api.auth.hasTraceFlowRole);
+  useLaunchDarklyIdentity(user, subscription);
 
-  if (hasRole === undefined) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
-
-  if (hasRole === false) {
+  if (!hasRole) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-8 text-center">
@@ -37,22 +35,29 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        <PageHeaderProvider>
-          <PageHeader />
-          <main className="flex-1 p-6">{children}</main>
-        </PageHeaderProvider>
-      </SidebarInset>
-    </SidebarProvider>
+    <AdminProvider value={isAdmin}>
+      <SidebarProvider>
+        <AppSidebar isAdmin={isAdmin} />
+        <SidebarInset>
+          <PageHeaderProvider>
+            <PageHeader />
+            <main className="flex-1 p-6">{children}</main>
+          </PageHeaderProvider>
+        </SidebarInset>
+      </SidebarProvider>
+    </AdminProvider>
   );
 }
 
-export function AppLayoutClient({ children }: { children: React.ReactNode }) {
+interface AppLayoutClientProps {
+  preloadedSessionContext: Preloaded<typeof api.app.sessionContext>;
+  children: React.ReactNode;
+}
+
+export function AppLayoutClient({ preloadedSessionContext, children }: AppLayoutClientProps) {
   return (
     <Providers>
-      <AppLayoutInner>{children}</AppLayoutInner>
+      <AppLayoutInner preloadedSessionContext={preloadedSessionContext}>{children}</AppLayoutInner>
     </Providers>
   );
 }

@@ -16,8 +16,6 @@ import {
   UserPlus,
   Shield,
 } from 'lucide-react';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
 import {
   Sidebar,
   SidebarContent,
@@ -77,9 +75,8 @@ function NavMenuItem({ item, active, delay }: { item: NavItem; active: boolean; 
   );
 }
 
-export function AppSidebar() {
+export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
-  const isUserAdmin = useQuery(api.users.isAdmin);
 
   const isActive = (href: string) => {
     if (href === '/app' || href === '/app/admin') {
@@ -122,7 +119,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {isUserAdmin && (
+        {isAdmin && (
           <>
             <SidebarSeparator className="mx-2 my-2 opacity-50" />
             <SidebarGroup>

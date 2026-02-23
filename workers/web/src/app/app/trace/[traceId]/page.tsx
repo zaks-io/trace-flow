@@ -1,10 +1,16 @@
-'use client';
-
-import { useParams } from 'next/navigation';
+import { preloadQuery } from 'convex/nextjs';
+import { api } from '@convex/_generated/api';
+import { getConvexToken } from '@/lib/convex';
 import TraceDetail from '@/components/pages/TraceDetail';
 
-export default function TraceDetailPage() {
-  const params = useParams();
-  const traceId = params.traceId as string;
-  return <TraceDetail traceId={traceId} />;
+export default async function TraceDetailPage({
+  params,
+}: {
+  params: Promise<{ traceId: string }>;
+}) {
+  const { traceId } = await params;
+  const token = await getConvexToken();
+  const preloadedAlerts = await preloadQuery(api.alerts.listEnabled, {}, { token });
+
+  return <TraceDetail traceId={traceId} preloadedAlerts={preloadedAlerts} />;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery, useMutation, useAction } from 'convex/react';
+import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useState } from 'react';
 import type { Id, Doc } from '@convex/_generated/dataModel';
@@ -31,9 +31,13 @@ function displayToDollarsPerMillion(display: string): number {
   return Math.round(value * 1_000_000);
 }
 
-export default function Pricing() {
+export default function Pricing({
+  preloadedPricing,
+}: {
+  preloadedPricing: Preloaded<typeof api.modelPricing.list>;
+}) {
   usePageHeader('Model Pricing');
-  const pricing = useQuery(api.modelPricing.list, {});
+  const pricing = usePreloadedQuery(preloadedPricing);
   const upsertPricing = useMutation(api.modelPricing.upsert);
   const deletePricing = useMutation(api.modelPricing.remove);
   const syncAllToKV = useAction(api.modelPricing.syncAllToKV);
@@ -427,14 +431,7 @@ export default function Pricing() {
         </select>
       </div>
 
-      {pricing === undefined ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            Loading pricing...
-          </div>
-        </div>
-      ) : filteredPricing?.length === 0 ? (
+      {filteredPricing?.length === 0 ? (
         <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
           <p className="text-muted-foreground">No pricing data found</p>
           <p className="mt-1 text-sm text-muted-foreground/70">

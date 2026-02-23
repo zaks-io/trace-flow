@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { type Preloaded, usePreloadedQuery } from 'convex/react';
+import { type api } from '@convex/_generated/api';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
@@ -27,7 +27,12 @@ interface AlertSpansResponse {
   data: RequestRow[];
 }
 
-export default function Traces() {
+interface TracesProps {
+  preloadedAlerts: Preloaded<typeof api.alerts.listEnabled>;
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+}
+
+export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProps) {
   usePageHeader('Traces');
   const router = useRouter();
   const [isLiveMode, setIsLiveMode] = useState(true);
@@ -42,7 +47,7 @@ export default function Traces() {
   const lastProcessedDataRef = useRef<SpanGroupRow[] | null>(null);
   const prevFiltersRef = useRef(JSON.stringify({}));
 
-  const alerts = useQuery(api.alerts.listEnabled);
+  const alerts = usePreloadedQuery(preloadedAlerts);
   const { visibility, setVisibility } = useColumnVisibility(
     defaultSpanGroupColumnVisibility,
     'trace-flow-traces-columns',
@@ -50,7 +55,8 @@ export default function Traces() {
 
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
-  const apiKeyMap = useApiKeyMap();
+  const apiKeys = usePreloadedQuery(preloadedApiKeys);
+  const apiKeyMap = useApiKeyMap(apiKeys);
 
   const pipeParams = useMemo(() => {
     const params: Record<string, string | number | undefined> = {

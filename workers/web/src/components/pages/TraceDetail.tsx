@@ -4,8 +4,8 @@ import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-react';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { type Preloaded, usePreloadedQuery } from 'convex/react';
+import { type api } from '@convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
 import { useLiveTraceDetail } from '@/hooks/useLiveTraceDetail';
 import { usePageHeader } from '@/components/PageHeaderContext';
@@ -39,9 +39,10 @@ const AgentGanttChart = dynamic(
 
 interface TraceDetailProps {
   traceId?: string;
+  preloadedAlerts: Preloaded<typeof api.alerts.listEnabled>;
 }
 
-export default function TraceDetail({ traceId }: TraceDetailProps) {
+export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailProps) {
   usePageHeader('Trace Details');
   const [copied, setCopied] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
@@ -49,7 +50,7 @@ export default function TraceDetail({ traceId }: TraceDetailProps) {
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
   const validatedTraceId = validateTraceId(traceId);
-  const alerts = useQuery(api.alerts.listEnabled);
+  const alerts = usePreloadedQuery(preloadedAlerts);
 
   const { spans, loading, error } = useLiveTraceDetail({
     traceId: validatedTraceId,

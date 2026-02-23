@@ -1,16 +1,19 @@
 'use client';
 
-import { useQuery, useMutation, useAction } from 'convex/react';
+import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useState, useMemo } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import { usePageHeader } from '@/components/PageHeaderContext';
 
-export default function ApiKeys() {
+export default function ApiKeys({
+  preloadedApiKeys,
+}: {
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+}) {
   usePageHeader('API Keys');
-  const apiKeys = useQuery(api.apiKeys.list);
+  const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const sortedApiKeys = useMemo(() => {
-    if (!apiKeys) return undefined;
     return [...apiKeys].sort((a, b) => {
       const nameA = a.name ?? '';
       const nameB = b.name ?? '';
@@ -225,14 +228,7 @@ export default function ApiKeys() {
         </div>
       )}
 
-      {sortedApiKeys === undefined ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            Loading API keys...
-          </div>
-        </div>
-      ) : sortedApiKeys.length === 0 ? (
+      {sortedApiKeys.length === 0 ? (
         <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
           <p className="text-muted-foreground">No API keys found</p>
           <p className="mt-1 text-sm text-muted-foreground/70">

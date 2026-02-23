@@ -5,6 +5,7 @@ import { useQuery, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Button } from '@/components/ui/button';
 import { usePageHeader } from '@/components/PageHeaderContext';
+import { useIsAdmin } from '@/components/AdminContext';
 import {
   Users,
   Building2,
@@ -146,24 +147,13 @@ function SyncActionRow({
 export default function AdminPage() {
   usePageHeader('System Overview');
 
-  const isAdmin = useQuery(api.users.isAdmin);
+  const isAdmin = useIsAdmin();
   const stats = useQuery(api.admin.stats, isAdmin ? {} : 'skip');
 
   const syncDefaults = useAction(api.modelPricing.syncDefaults);
   const importFromOpenRouter = useAction(api.modelPricing.importFromOpenRouter);
   const syncAllToKV = useAction(api.modelPricing.syncAllToKV);
   const syncAll = useAction(api.cloudflare.syncAll);
-
-  if (isAdmin === undefined) {
-    return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Loading...
-        </div>
-      </div>
-    );
-  }
 
   if (!isAdmin) {
     return (

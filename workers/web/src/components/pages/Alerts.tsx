@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery, useMutation } from 'convex/react';
+import { type Preloaded, usePreloadedQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useState } from 'react';
 import type { Id, Doc } from '@convex/_generated/dataModel';
@@ -110,9 +110,13 @@ function Select({ value, onChange, options, placeholder }: SelectProps) {
   );
 }
 
-export default function Alerts() {
+export default function Alerts({
+  preloadedAlerts,
+}: {
+  preloadedAlerts: Preloaded<typeof api.alerts.list>;
+}) {
   usePageHeader('Alerts');
-  const alerts = useQuery(api.alerts.list);
+  const alerts = usePreloadedQuery(preloadedAlerts);
   const createAlert = useMutation(api.alerts.create);
   const updateAlert = useMutation(api.alerts.update);
   const deleteAlert = useMutation(api.alerts.remove);
@@ -261,14 +265,7 @@ export default function Alerts() {
         </div>
       )}
 
-      {alerts === undefined ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            Loading alerts...
-          </div>
-        </div>
-      ) : alerts.length === 0 ? (
+      {alerts.length === 0 ? (
         <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
           <p className="text-muted-foreground">No alerts configured</p>
           <p className="mt-1 text-sm text-muted-foreground/70">

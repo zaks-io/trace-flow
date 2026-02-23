@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
+import { type Preloaded, usePreloadedQuery } from 'convex/react';
+import { type api } from '@convex/_generated/api';
 import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer, Key } from 'lucide-react';
 import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
@@ -30,7 +32,11 @@ import { ProviderBreakdownChart } from './ProviderBreakdownChart';
 import { ApiKeyBreakdownTable } from './ApiKeyBreakdownTable';
 import { FilterDropdown } from './FilterDropdown';
 
-export default function Usage() {
+export default function Usage({
+  preloadedApiKeys,
+}: {
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+}) {
   usePageHeader('Usage & Costs');
 
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
@@ -40,7 +46,8 @@ export default function Usage() {
   const [operationFilter, setOperationFilter] = useState('');
   const [apiKeyFilter, setApiKeyFilter] = useState('');
 
-  const apiKeyMap = useApiKeyMap();
+  const apiKeys = usePreloadedQuery(preloadedApiKeys);
+  const apiKeyMap = useApiKeyMap(apiKeys);
 
   const startTimeNs = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
