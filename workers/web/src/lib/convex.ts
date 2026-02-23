@@ -1,6 +1,6 @@
 import { getSession } from './auth0';
 
-export class ConvexTokenError extends Error {
+class ConvexTokenError extends Error {
   constructor() {
     super('No Convex token available');
     this.name = 'ConvexTokenError';
