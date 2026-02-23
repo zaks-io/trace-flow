@@ -623,7 +623,11 @@ export function SpanDetailPanel({
       const tokenRes = await fetch('/api/token', { signal });
       if (!tokenRes.ok) {
         if (isLLMRoot) {
+          setRequestBodyLoading(false);
+          setResponseBodyLoading(false);
           window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
+        } else {
+          setMessageContentLoading(false);
         }
         return;
       }
