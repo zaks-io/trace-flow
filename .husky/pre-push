@@ -1,0 +1,2 @@
+bun run knip
+bun turbo run type-check test
