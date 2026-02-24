@@ -48,6 +48,7 @@ export function useConvexAuthSession() {
   const refreshAttemptRef = useRef<number>(0);
   const lastRefreshFailureRef = useRef<number>(0);
   const redirectingToLoginRef = useRef(false);
+  const isMountedRef = useRef(true);
   const inFlightRef = useRef<{
     promise: Promise<string | null>;
     force: boolean;
@@ -97,6 +98,7 @@ export function useConvexAuthSession() {
               return retryData?.token ?? null;
             }
 
+            if (!isMountedRef.current) return null;
             setIsAuthenticated(false);
             if (!redirectingToLoginRef.current) {
               redirectingToLoginRef.current = true;
@@ -112,13 +114,14 @@ export function useConvexAuthSession() {
 
         // Reset retry counter on success
         refreshAttemptRef.current = 0;
-        setIsAuthenticated(true);
+        if (isMountedRef.current) setIsAuthenticated(true);
 
         const data = await parseTokenResponse(response);
         if (!data) return null;
 
-        // Schedule proactive refresh before token expires
-        if (data.expiresAt) {
+        // Schedule proactive refresh before token expires.
+        // Bail if unmounted — scheduling a new timer here would leak since cleanup already ran.
+        if (data.expiresAt && isMountedRef.current) {
           const expiresAtMs = data.expiresAt * 1000;
           tokenExpiresAtRef.current = expiresAtMs;
 
@@ -174,9 +177,10 @@ export function useConvexAuthSession() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [fetchAccessToken]);
 
-  // Cleanup scheduled refresh on unmount
+  // Cleanup scheduled refresh on unmount and prevent post-unmount timer scheduling
   useEffect(() => {
     return () => {
+      isMountedRef.current = false;
       if (refreshTimeoutRef.current) {
         clearTimeout(refreshTimeoutRef.current);
       }
