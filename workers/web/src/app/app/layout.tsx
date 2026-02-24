@@ -18,7 +18,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     redirect('/auth/login?returnTo=/app');
   }
 
-  const preloadedSessionContext = await preloadQuery(api.app.sessionContext, {}, { token });
+  const preloadedSessionContext = await preloadQuery(api.app.sessionContext, {}, { token }).catch(
+    (e: unknown) => {
+      console.warn('[SSR] Failed to preload sessionContext:', e);
+      return null;
+    },
+  );
 
   return (
     <AppLayoutClient preloadedSessionContext={preloadedSessionContext}>{children}</AppLayoutClient>

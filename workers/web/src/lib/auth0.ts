@@ -3,8 +3,15 @@ import { Auth0Client } from '@auth0/nextjs-auth0/server';
 export const auth0 = new Auth0Client({
   appBaseUrl: process.env.APP_BASE_URL,
   httpTimeout: 15000,
+  signInReturnToPath: '/app',
+  logoutStrategy: 'v2',
   authorizationParameters: {
     scope: 'openid profile email offline_access',
+  },
+  session: {
+    rolling: true,
+    absoluteDuration: 60 * 60 * 24 * 30, // 30 days
+    inactivityDuration: 60 * 60 * 24 * 7, // 7 days
   },
 });
 
