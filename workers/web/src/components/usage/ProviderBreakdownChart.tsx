@@ -32,9 +32,7 @@ export function ProviderBreakdownChart({ data }: { data: ProviderRow[] }) {
           tick={{ fontSize: 11 }}
         />
         <YAxis type="category" dataKey="provider" tick={{ fontSize: 12 }} width={75} />
-        <ChartTooltip
-          content={<ChartTooltipContent formatter={(value) => formatCurrency(Number(value))} />}
-        />
+        <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => formatCurrency(v)} />} />
         <Bar dataKey="total_cost_usd" radius={[0, 4, 4, 0]} />
       </BarChart>
     </ChartContainer>

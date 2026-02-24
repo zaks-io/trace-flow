@@ -57,10 +57,7 @@ export function CostBreakdownChart({ summary }: { summary: SummaryRow }) {
           />
           <ChartTooltip
             content={
-              <ChartTooltipContent
-                nameKey="name"
-                formatter={(value) => formatCurrency(Number(value))}
-              />
+              <ChartTooltipContent nameKey="name" valueFormatter={(v) => formatCurrency(v)} />
             }
           />
         </PieChart>

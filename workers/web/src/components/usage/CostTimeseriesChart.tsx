@@ -11,10 +11,30 @@ import {
 } from './types';
 import type { TimeseriesRow, TimeseriesMetric } from './types';
 
-function formatTickDate(value: string): string {
+function formatTickDate(value: string, includeTime: boolean): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
+  if (includeTime) {
+    return date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      hour12: true,
+    });
+  }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function formatTooltipDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
 }
 
 export function CostTimeseriesChart({
@@ -28,12 +48,23 @@ export function CostTimeseriesChart({
     return <p className="text-sm text-muted-foreground">No usage data available</p>;
   }
 
+  const hourly =
+    data.length > 1 &&
+    new Date(data[1].bucket_start).getTime() - new Date(data[0].bucket_start).getTime() <
+      86_400_000;
+  const tickFormatter = (v: string) => formatTickDate(v, hourly);
+
   if (metric === 'cost') {
     return (
       <ChartContainer config={costChartConfig} className="!aspect-auto h-[300px] w-full">
         <AreaChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="bucket_start" tickFormatter={formatTickDate} tick={{ fontSize: 11 }} />
+          <XAxis
+            dataKey="bucket_start"
+            tickFormatter={tickFormatter}
+            tick={{ fontSize: 11 }}
+            minTickGap={50}
+          />
           <YAxis
             tickFormatter={(v: number) => formatCurrency(v)}
             tick={{ fontSize: 11 }}
@@ -42,8 +73,8 @@ export function CostTimeseriesChart({
           <ChartTooltip
             content={
               <ChartTooltipContent
-                labelFormatter={(label) => formatTickDate(String(label))}
-                formatter={(value) => formatCurrency(Number(value))}
+                labelFormatter={(label) => formatTooltipDate(String(label))}
+                valueFormatter={(v) => formatCurrency(v)}
               />
             }
           />
@@ -97,7 +128,12 @@ export function CostTimeseriesChart({
       <ChartContainer config={latencyChartConfig} className="!aspect-auto h-[300px] w-full">
         <AreaChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="bucket_start" tickFormatter={formatTickDate} tick={{ fontSize: 11 }} />
+          <XAxis
+            dataKey="bucket_start"
+            tickFormatter={tickFormatter}
+            tick={{ fontSize: 11 }}
+            minTickGap={50}
+          />
           <YAxis
             tickFormatter={(v: number) => formatDuration(v)}
             tick={{ fontSize: 11 }}
@@ -106,8 +142,8 @@ export function CostTimeseriesChart({
           <ChartTooltip
             content={
               <ChartTooltipContent
-                labelFormatter={(label) => formatTickDate(String(label))}
-                formatter={(value) => formatDuration(Number(value))}
+                labelFormatter={(label) => formatTooltipDate(String(label))}
+                valueFormatter={(v) => formatDuration(v)}
               />
             }
           />
@@ -137,13 +173,18 @@ export function CostTimeseriesChart({
     <ChartContainer config={config} className="!aspect-auto h-[300px] w-full">
       <AreaChart data={data}>
         <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="bucket_start" tickFormatter={formatTickDate} tick={{ fontSize: 11 }} />
+        <XAxis
+          dataKey="bucket_start"
+          tickFormatter={tickFormatter}
+          tick={{ fontSize: 11 }}
+          minTickGap={50}
+        />
         <YAxis tickFormatter={(v: number) => formatNumber(v)} tick={{ fontSize: 11 }} width={60} />
         <ChartTooltip
           content={
             <ChartTooltipContent
-              labelFormatter={(label) => formatTickDate(String(label))}
-              formatter={(value) => formatNumber(Number(value))}
+              labelFormatter={(label) => formatTooltipDate(String(label))}
+              valueFormatter={(v) => formatNumber(v)}
             />
           }
         />
