@@ -1,13 +1,4 @@
-node_modules/
-dist/
-.wrangler/
-.turbo/
-coverage/
 _generated/
-*.tsbuildinfo
 package-lock.json
 yarn.lock
 bun.lock
-.next/
-.open-next/
-.claude/
