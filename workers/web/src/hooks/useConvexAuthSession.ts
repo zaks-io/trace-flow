@@ -82,9 +82,7 @@ export function useConvexAuthSession() {
         }
 
         const url = shouldForceRefreshEndpoint ? '/api/token?forceRefresh=1' : '/api/token';
-        const response = await fetch(url, {
-          cache: forceRefreshToken ? 'no-store' : 'default',
-        });
+        const response = await fetch(url, { cache: 'no-store' });
 
         if (!response.ok) {
           if (response.status === 401) {
