@@ -5,6 +5,8 @@ node_modules/
 
 # Build outputs
 dist/
+.next/
+.open-next/
 .wrangler/
 .turbo/
 .astro/
@@ -24,9 +26,10 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Editor
+# Editor / local config
 .vscode/
 .idea/
+.claude/settings.local.json
 *.swp
 *.swo
 *~
