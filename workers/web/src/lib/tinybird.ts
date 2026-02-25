@@ -1,4 +1,4 @@
-export class TinybirdAuthError extends Error {
+class TinybirdAuthError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TinybirdAuthError';
@@ -20,7 +20,7 @@ type GenerateTokenFn = (args: {
   ttl?: number;
 }) => Promise<{ token: string }>;
 
-export interface FetchTinybirdPipeOptions<T> {
+interface FetchTinybirdPipeOptions<T> {
   pipe: string;
   params?: Record<string, string | number | boolean | undefined>;
   ttl?: number;
