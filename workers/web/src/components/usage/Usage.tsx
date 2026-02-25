@@ -48,13 +48,13 @@ export default function Usage({
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
 
-  const startTimeNs = useMemo(() => {
+  const { startTimeNs, endTimeNs } = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
-    return snapToMinute(Date.now() - (range?.ms ?? 0)) * 1_000_000;
+    return {
+      startTimeNs: snapToMinute(Date.now() - (range?.ms ?? 0)) * 1_000_000,
+      endTimeNs: snapToMinute(Date.now()) * 1_000_000,
+    };
   }, [timeRange]);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally recalculate on timeRange change
-  const endTimeNs = useMemo(() => snapToMinute(Date.now()) * 1_000_000, [timeRange]);
 
   const filterParams = useMemo(() => {
     const p: Record<string, string | number> = {

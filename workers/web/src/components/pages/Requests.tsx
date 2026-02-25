@@ -68,7 +68,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
     return params;
   }, [filters, isLiveMode, latestReceivedAt]);
 
-  const { data, isLoading, error, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
     pipe: 'traces_list',
     params: pipeParams,
     pollInterval: isLiveMode ? 10000 : undefined,
@@ -199,6 +199,12 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
                 </p>
               )}
             </div>
+            <button
+              onClick={() => void refetch()}
+              className="ml-4 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
+            >
+              Retry
+            </button>
           </div>
         </div>
       )}

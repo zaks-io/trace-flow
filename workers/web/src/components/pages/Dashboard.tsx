@@ -198,13 +198,13 @@ export default function Dashboard({
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
-  const startTimeNs = useMemo(() => {
+  const { startTimeNs, endTimeNs } = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
-    return snapToMinute(Date.now() - (range?.ms ?? 0)) * 1_000_000;
+    return {
+      startTimeNs: snapToMinute(Date.now() - (range?.ms ?? 0)) * 1_000_000,
+      endTimeNs: snapToMinute(Date.now()) * 1_000_000,
+    };
   }, [timeRange]);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally recalculate on timeRange change
-  const endTimeNs = useMemo(() => snapToMinute(Date.now()) * 1_000_000, [timeRange]);
 
   // All queries now use Pipes with server-side API key filtering via JWT fixed_params
   const summaryQuery = useTinybirdQuery<SummaryData>({

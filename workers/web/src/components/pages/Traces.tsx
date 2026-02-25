@@ -41,7 +41,6 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
   const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
 
-  const latestReceivedAtRef = useRef<number | null>(null);
   const prevFiltersRef = useRef(JSON.stringify({}));
   const lastProcessedAtRef = useRef(0);
 
@@ -132,9 +131,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       // Initial load
       if (groups.length > 0) {
         setMergedSpanGroups(groups);
-        const newestReceivedAt = groups[0]!.LatestReceivedAt;
-        latestReceivedAtRef.current = newestReceivedAt;
-        setLatestReceivedAt(newestReceivedAt);
+        setLatestReceivedAt(groups[0]!.LatestReceivedAt);
       }
       setInitialLoadComplete(true);
       return;
@@ -144,9 +141,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       // Non-live: just show raw data
       setMergedSpanGroups(groups);
       if (groups.length > 0) {
-        const newestReceivedAt = groups[0]!.LatestReceivedAt;
-        latestReceivedAtRef.current = newestReceivedAt;
-        setLatestReceivedAt(newestReceivedAt);
+        setLatestReceivedAt(groups[0]!.LatestReceivedAt);
       }
       return;
     }
@@ -183,9 +178,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       );
 
       if (merged.length > 0) {
-        const newestReceivedAt = merged[0]!.LatestReceivedAt;
-        latestReceivedAtRef.current = newestReceivedAt;
-        setLatestReceivedAt(newestReceivedAt);
+        setLatestReceivedAt(merged[0]!.LatestReceivedAt);
       }
 
       return merged.slice(0, 100);

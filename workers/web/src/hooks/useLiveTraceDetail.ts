@@ -47,7 +47,7 @@ const PIPE_NAME = 'trace_detail';
 
 function shouldEnableLiveMode(spans: TraceSpan[]): boolean {
   if (spans.length === 0) return false;
-  const maxTimestamp = Math.max(...spans.map((s) => s.Timestamp));
+  const maxTimestamp = spans.reduce((max, s) => (s.Timestamp > max ? s.Timestamp : max), -Infinity);
   const nowNs = Date.now() * 1_000_000;
   return nowNs - maxTimestamp < FIVE_MINUTES_NS;
 }
@@ -148,7 +148,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
   useEffect(() => {
     if (query.dataUpdatedAt === 0 || spans.length === 0) return;
 
-    const maxTs = Math.max(...spans.map((s) => s.Timestamp));
+    const maxTs = spans.reduce((max, s) => (s.Timestamp > max ? s.Timestamp : max), -Infinity);
     const prevTimestamp = lastTimestampRef.current;
     const hasNewSpans = prevTimestamp !== null && maxTs > prevTimestamp;
 

@@ -34,8 +34,8 @@ export function useTinybirdQuery<T = unknown>(options: UseTinybirdQueryOptions<T
     enabled,
     refetchInterval: pollInterval ?? false,
     retry: false,
-    ...(staleTime !== undefined && { staleTime }),
-    ...(gcTime !== undefined && { gcTime }),
+    staleTime,
+    gcTime,
   });
 
   return {
