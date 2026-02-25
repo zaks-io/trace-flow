@@ -4,9 +4,9 @@ import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'conve
 import { api } from '@convex/_generated/api';
 import { useState } from 'react';
 import type { Id, Doc } from '@convex/_generated/dataModel';
+import { PageToolbar } from '@/components/PageToolbar';
 
 type ModelPricing = Doc<'modelPricing'>;
-import { usePageHeader } from '@/components/PageHeaderContext';
 
 interface PricingFormData {
   provider: string;
@@ -36,7 +36,6 @@ export default function Pricing({
 }: {
   preloadedPricing: Preloaded<typeof api.modelPricing.list>;
 }) {
-  usePageHeader('Model Pricing');
   const pricing = usePreloadedQuery(preloadedPricing);
   const upsertPricing = useMutation(api.modelPricing.upsert);
   const deletePricing = useMutation(api.modelPricing.remove);
@@ -175,8 +174,9 @@ export default function Pricing({
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+      <PageToolbar>
         <p className="text-sm text-muted-foreground">Manage model pricing for cost calculation</p>
+        <div className="flex-1" />
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => void handleSyncDefaults()}
@@ -236,7 +236,7 @@ export default function Pricing({
             Add Pricing
           </button>
         </div>
-      </div>
+      </PageToolbar>
 
       {error && (
         <div className="mb-4 rounded-xl border border-destructive/50 bg-destructive/10 p-4">

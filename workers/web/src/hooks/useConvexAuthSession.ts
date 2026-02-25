@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { clearTokenCache } from '@/lib/tinybird';
 
 // Refresh token 60 seconds before expiry to prevent failed requests
 const TOKEN_REFRESH_BUFFER_MS = 60 * 1000;
@@ -97,6 +98,7 @@ export function useConvexAuthSession() {
             }
 
             if (!isMountedRef.current) return null;
+            clearTokenCache();
             setIsAuthenticated(false);
             if (!redirectingToLoginRef.current) {
               redirectingToLoginRef.current = true;

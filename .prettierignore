@@ -2,3 +2,4 @@ _generated/
 package-lock.json
 yarn.lock
 bun.lock
+next-env.d.ts

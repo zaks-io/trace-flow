@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { fetchTinybirdPipe, tinybirdKeys } from '@/lib/tinybird';
 
 interface TraceSpan {
   ReceivedAt: number;
@@ -45,7 +47,7 @@ const PIPE_NAME = 'trace_detail';
 
 function shouldEnableLiveMode(spans: TraceSpan[]): boolean {
   if (spans.length === 0) return false;
-  const maxTimestamp = Math.max(...spans.map((s) => s.Timestamp));
+  const maxTimestamp = spans.reduce((max, s) => (s.Timestamp > max ? s.Timestamp : max), -Infinity);
   const nowNs = Date.now() * 1_000_000;
   return nowNs - maxTimestamp < FIVE_MINUTES_NS;
 }
@@ -71,245 +73,112 @@ function calculateNextInterval(currentInterval: number, newSpansReceived: boolea
 export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveTraceDetailResult {
   const { traceId, enabled = true } = options;
 
-  const [spans, setSpans] = useState<TraceSpan[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
   const [isLive, setIsLive] = useState(false);
-
-  const jwtRef = useRef<string | null>(null);
   const pollIntervalRef = useRef(MIN_POLL_INTERVAL);
   const lastTimestampRef = useRef<number | null>(null);
-  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isMountedRef = useRef(true);
-  const isPollingRef = useRef(false);
-  const shouldContinuePollingRef = useRef(false);
+  const isInitialFetchRef = useRef(true);
 
+  const queryClient = useQueryClient();
   const generateToken = useAction(api.tinybird.generateToken);
+  const prevTraceIdRef = useRef(traceId);
 
-  const fetchToken = useCallback(async (): Promise<string> => {
-    const result = await generateToken({
-      scopes: [{ type: 'PIPES:READ', resource: PIPE_NAME }],
-    });
-    jwtRef.current = result.token;
-    return result.token;
-  }, [generateToken]);
-
-  const fetchSpans = useCallback(
-    async (token: string, sinceTimestamp?: number): Promise<TraceSpan[]> => {
-      const apiUrl = process.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
-      const url = new URL(`${apiUrl}/v0/pipes/${PIPE_NAME}.json`);
-      url.searchParams.set('trace_id', traceId!);
-      if (sinceTimestamp !== undefined) {
-        url.searchParams.set('since_timestamp', String(sinceTimestamp));
-      }
-
-      const response = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        if (response.status === 403) {
-          jwtRef.current = null;
-          throw new Error('AUTH_ERROR');
-        }
-        throw new Error(`Tinybird query failed: ${response.status} - ${errorText}`);
-      }
-
-      const result: TinybirdResponse = await response.json();
-      return result.data;
-    },
+  const queryKey = useMemo(
+    () => tinybirdKeys.pipeWithParams(PIPE_NAME, { trace_id: traceId ?? '' }),
     [traceId],
   );
 
-  const doInitialFetch = useCallback(async () => {
-    if (!traceId || !enabled) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const token = jwtRef.current ?? (await fetchToken());
-      const data = await fetchSpans(token);
-
-      if (!isMountedRef.current) return;
-
-      setSpans(data);
-      setLoading(false);
-
-      if (data.length > 0) {
-        const maxTs = Math.max(...data.map((s) => s.Timestamp));
-        lastTimestampRef.current = maxTs;
-
-        if (shouldEnableLiveMode(data)) {
-          setIsLive(true);
-        }
-      }
-    } catch (err) {
-      if (!isMountedRef.current) return;
-
-      if (err instanceof Error && err.message === 'AUTH_ERROR') {
-        try {
-          const freshToken = await fetchToken();
-          if (!isMountedRef.current) return;
-          const data = await fetchSpans(freshToken);
-          if (!isMountedRef.current) return;
-          setSpans(data);
-          setLoading(false);
-          if (data.length > 0) {
-            const maxTs = Math.max(...data.map((s) => s.Timestamp));
-            lastTimestampRef.current = maxTs;
-            if (shouldEnableLiveMode(data)) {
-              setIsLive(true);
-            }
-          }
-          return;
-        } catch (retryErr) {
-          setError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)));
-          setLoading(false);
-          return;
-        }
-      }
-
-      setError(err instanceof Error ? err : new Error(String(err)));
-      setLoading(false);
-    }
-  }, [traceId, enabled, fetchToken, fetchSpans]);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    setSpans([]);
-    setLoading(true);
-    setError(null);
-    setIsLive(false);
-    pollIntervalRef.current = MIN_POLL_INTERVAL;
+  // Reset refs synchronously when traceId changes (before queryFn runs)
+  if (prevTraceIdRef.current !== traceId) {
+    prevTraceIdRef.current = traceId;
+    isInitialFetchRef.current = true;
     lastTimestampRef.current = null;
+    pollIntervalRef.current = MIN_POLL_INTERVAL;
+  }
 
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
+  const getRefetchInterval = useCallback((): number | false => {
+    if (!isLive) return false;
+    return pollIntervalRef.current;
+  }, [isLive]);
 
-    if (traceId && enabled) {
-      void doInitialFetch();
-    } else {
-      setLoading(false);
-    }
-  }, [traceId, enabled, doInitialFetch]);
+  const query = useQuery({
+    queryKey,
+    queryFn: async (): Promise<TraceSpan[]> => {
+      if (!traceId) return [];
 
+      const isInitial = isInitialFetchRef.current;
+      const sinceTimestamp = isInitial ? undefined : (lastTimestampRef.current ?? undefined);
+
+      const params: Record<string, string | number> = { trace_id: traceId };
+      if (sinceTimestamp !== undefined) {
+        params.since_timestamp = sinceTimestamp;
+      }
+
+      const result = await fetchTinybirdPipe<TinybirdResponse>({
+        pipe: PIPE_NAME,
+        params,
+        generateToken,
+      });
+
+      const incoming = result.data;
+
+      if (isInitial) {
+        isInitialFetchRef.current = false;
+        return incoming;
+      }
+
+      // Delta fetch: merge with existing cached spans.
+      // Reading our own cache key here is intentional — react-query replaces
+      // the cache entry with whatever queryFn returns, so we must read-then-merge
+      // in a single pass. This is safe because queryFn is never called concurrently
+      // for the same key, but be careful not to change queryKey without also
+      // resetting isInitialFetchRef (done above via the traceId guard).
+      const existing = queryClient.getQueryData<TraceSpan[]>(queryKey) ?? [];
+      return mergeSpans(existing, incoming);
+    },
+    enabled: enabled && !!traceId,
+    refetchInterval: getRefetchInterval,
+    staleTime: 0,
+    gcTime: 10 * 60 * 1000,
+    retry: false,
+  });
+
+  const spans = useMemo(() => query.data ?? [], [query.data]);
+
+  // Update live mode state and polling interval when data changes
   useEffect(() => {
-    if (!isLive || !traceId || loading || error) {
+    if (query.dataUpdatedAt === 0 || spans.length === 0) return;
+
+    const maxTs = spans.reduce((max, s) => (s.Timestamp > max ? s.Timestamp : max), -Infinity);
+    const prevTimestamp = lastTimestampRef.current;
+    const hasNewSpans = prevTimestamp !== null && maxTs > prevTimestamp;
+
+    lastTimestampRef.current = maxTs;
+
+    if (shouldStopLiveMode(maxTs)) {
+      setIsLive(false);
       return;
     }
 
-    shouldContinuePollingRef.current = true;
+    if (!isLive && shouldEnableLiveMode(spans)) {
+      setIsLive(true);
+      pollIntervalRef.current = MIN_POLL_INTERVAL;
+      return;
+    }
 
-    const poll = async () => {
-      if (!isMountedRef.current || !shouldContinuePollingRef.current || isPollingRef.current)
-        return;
+    if (isLive) {
+      pollIntervalRef.current = calculateNextInterval(pollIntervalRef.current, hasNewSpans);
+    }
+  }, [query.dataUpdatedAt, spans, isLive]);
 
-      isPollingRef.current = true;
+  // Reset live mode when traceId changes (refs are reset synchronously above)
+  useEffect(() => {
+    setIsLive(false);
+  }, [traceId]);
 
-      try {
-        const token = jwtRef.current ?? (await fetchToken());
-        const newSpansData = await fetchSpans(token, lastTimestampRef.current ?? undefined);
-
-        if (!isMountedRef.current) {
-          isPollingRef.current = false;
-          return;
-        }
-
-        if (newSpansData.length > 0) {
-          setSpans((prev) => mergeSpans(prev, newSpansData));
-          const maxTs = Math.max(...newSpansData.map((s) => s.Timestamp));
-          lastTimestampRef.current = maxTs;
-          pollIntervalRef.current = calculateNextInterval(pollIntervalRef.current, true);
-        } else {
-          pollIntervalRef.current = calculateNextInterval(pollIntervalRef.current, false);
-        }
-
-        if (lastTimestampRef.current && shouldStopLiveMode(lastTimestampRef.current)) {
-          setIsLive(false);
-          shouldContinuePollingRef.current = false;
-          isPollingRef.current = false;
-          return;
-        }
-
-        if (shouldContinuePollingRef.current && isMountedRef.current) {
-          pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
-        }
-      } catch (err) {
-        if (!isMountedRef.current) {
-          isPollingRef.current = false;
-          return;
-        }
-
-        if (err instanceof Error && err.message === 'AUTH_ERROR') {
-          try {
-            const freshToken = await fetchToken();
-            if (!isMountedRef.current || !shouldContinuePollingRef.current) {
-              isPollingRef.current = false;
-              return;
-            }
-            const newSpansData = await fetchSpans(
-              freshToken,
-              lastTimestampRef.current ?? undefined,
-            );
-            if (!isMountedRef.current || !shouldContinuePollingRef.current) {
-              isPollingRef.current = false;
-              return;
-            }
-
-            if (newSpansData.length > 0) {
-              setSpans((prev) => mergeSpans(prev, newSpansData));
-              const maxTs = Math.max(...newSpansData.map((s) => s.Timestamp));
-              lastTimestampRef.current = maxTs;
-              pollIntervalRef.current = calculateNextInterval(pollIntervalRef.current, true);
-            } else {
-              pollIntervalRef.current = calculateNextInterval(pollIntervalRef.current, false);
-            }
-
-            if (lastTimestampRef.current && shouldStopLiveMode(lastTimestampRef.current)) {
-              setIsLive(false);
-              shouldContinuePollingRef.current = false;
-              isPollingRef.current = false;
-              return;
-            }
-
-            if (shouldContinuePollingRef.current && isMountedRef.current) {
-              pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
-            }
-          } catch {
-            if (shouldContinuePollingRef.current && isMountedRef.current) {
-              pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
-            }
-          }
-        } else {
-          if (shouldContinuePollingRef.current && isMountedRef.current) {
-            pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
-          }
-        }
-      } finally {
-        isPollingRef.current = false;
-      }
-    };
-
-    pollTimeoutRef.current = setTimeout(() => void poll(), pollIntervalRef.current);
-
-    return () => {
-      shouldContinuePollingRef.current = false;
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-        pollTimeoutRef.current = null;
-      }
-    };
-  }, [isLive, traceId, loading, error, fetchToken, fetchSpans]);
-
-  return { spans, loading, error, isLive };
+  return {
+    spans,
+    loading: query.isLoading,
+    error: query.error,
+    isLive,
+  };
 }

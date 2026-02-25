@@ -5,8 +5,6 @@ import { type FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { Providers } from '@/components/Providers';
 import { AppSidebar } from '@/components/AppSidebar';
-import { PageHeaderProvider } from '@/components/PageHeaderContext';
-import { PageHeader } from '@/components/PageHeader';
 import { AdminProvider } from '@/components/AdminContext';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { useUserInitialization } from '@/hooks/useUserInitialization';
@@ -93,10 +91,7 @@ function AppLayoutContent({
       <SidebarProvider>
         <AppSidebar isAdmin={data.isAdmin} />
         <SidebarInset>
-          <PageHeaderProvider>
-            <PageHeader />
-            <main className="flex-1 p-6">{children}</main>
-          </PageHeaderProvider>
+          <main className="flex flex-1 flex-col overflow-hidden p-4 pt-3">{children}</main>
         </SidebarInset>
       </SidebarProvider>
     </AdminProvider>

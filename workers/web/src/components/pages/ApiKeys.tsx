@@ -4,14 +4,13 @@ import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'conve
 import { api } from '@convex/_generated/api';
 import { useState, useMemo } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { PageToolbar } from '@/components/PageToolbar';
 
 export default function ApiKeys({
   preloadedApiKeys,
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
-  usePageHeader('API Keys');
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const sortedApiKeys = useMemo(() => {
     return [...apiKeys].sort((a, b) => {
@@ -109,17 +108,18 @@ export default function ApiKeys({
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-6 flex items-center justify-between">
+      <PageToolbar>
         <p className="text-sm text-muted-foreground">
           Manage your API keys for accessing the proxy service
         </p>
+        <div className="flex-1" />
         <button
           onClick={() => setShowCreateDialog(true)}
           className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow-md hover:shadow-primary/20 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background"
         >
           Create API Key
         </button>
-      </div>
+      </PageToolbar>
 
       {showCreateDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
