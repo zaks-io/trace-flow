@@ -8,7 +8,7 @@ import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { type api } from '@convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
 import { useLiveTraceDetail } from '@/hooks/useLiveTraceDetail';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { PageToolbar } from '@/components/PageToolbar';
 import { TokenSummaryCards } from '@/components/TokenSummaryCards';
 import { SpanDetailPanel } from '@/components/SpanDetailPanel';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -43,7 +43,6 @@ interface TraceDetailProps {
 }
 
 export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailProps) {
-  usePageHeader('Trace Details');
   const [copied, setCopied] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
@@ -121,19 +120,25 @@ export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailPro
 
   if (!traceId || !validatedTraceId) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <div className="text-center">
-          <h1 className="mb-2 text-xl font-semibold text-foreground">
-            {traceId ? 'Invalid Trace ID' : 'No Trace ID Provided'}
-          </h1>
-          <p className="mb-4 text-sm text-muted-foreground">
-            {traceId
-              ? 'The provided trace ID is not a valid 32-character hex string.'
-              : 'Please select a trace from the traces list.'}
-          </p>
-          <Link href="/app/traces" className="text-sm text-primary underline hover:text-primary/80">
-            Go to Traces
-          </Link>
+      <div className="flex flex-1 min-h-0 flex-col">
+        <PageToolbar />
+        <div className="flex min-h-[400px] items-center justify-center">
+          <div className="text-center">
+            <h1 className="mb-2 text-xl font-semibold text-foreground">
+              {traceId ? 'Invalid Trace ID' : 'No Trace ID Provided'}
+            </h1>
+            <p className="mb-4 text-sm text-muted-foreground">
+              {traceId
+                ? 'The provided trace ID is not a valid 32-character hex string.'
+                : 'Please select a trace from the traces list.'}
+            </p>
+            <Link
+              href="/app/traces"
+              className="text-sm text-primary underline hover:text-primary/80"
+            >
+              Go to Traces
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -141,10 +146,13 @@ export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailPro
 
   if (loading) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Loading trace...
+      <div className="flex flex-1 min-h-0 flex-col">
+        <PageToolbar />
+        <div className="flex min-h-[400px] items-center justify-center">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            Loading trace...
+          </div>
         </div>
       </div>
     );
@@ -152,32 +160,40 @@ export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailPro
 
   if (error) {
     return (
-      <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-4">
-        <h3 className="mb-2 font-semibold text-destructive">Error loading trace</h3>
-        <p className="text-sm text-destructive/80">{error.message}</p>
+      <div className="flex flex-1 min-h-0 flex-col">
+        <PageToolbar />
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10 p-4">
+          <h3 className="mb-2 font-semibold text-destructive">Error loading trace</h3>
+          <p className="text-sm text-destructive/80">{error.message}</p>
+        </div>
       </div>
     );
   }
 
   if (spans.length === 0) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center">
-        <div className="text-center">
-          <h1 className="mb-2 text-xl font-semibold text-foreground">Trace Not Found</h1>
-          <p className="mb-4 text-sm text-muted-foreground">
-            The trace with ID {traceId} could not be found.
-          </p>
-          <Link href="/app/traces" className="text-sm text-primary underline hover:text-primary/80">
-            Go to Traces
-          </Link>
+      <div className="flex flex-1 min-h-0 flex-col">
+        <PageToolbar />
+        <div className="flex min-h-[400px] items-center justify-center">
+          <div className="text-center">
+            <h1 className="mb-2 text-xl font-semibold text-foreground">Trace Not Found</h1>
+            <p className="mb-4 text-sm text-muted-foreground">
+              The trace with ID {traceId} could not be found.
+            </p>
+            <Link
+              href="/app/traces"
+              className="text-sm text-primary underline hover:text-primary/80"
+            >
+              Go to Traces
+            </Link>
+          </div>
         </div>
       </div>
     );
   }
   return (
-    <div className="animate-fade-in flex h-[calc(100vh-120px)] flex-col">
-      {/* Header section */}
-      <div className="flex shrink-0 items-center justify-between">
+    <div className="animate-fade-in flex flex-1 min-h-0 flex-col">
+      <PageToolbar>
         <nav className="flex items-center space-x-2 text-sm">
           <Link
             href="/app/traces"
@@ -191,6 +207,8 @@ export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailPro
             <AlertBadge severity={highestSeverity} count={triggeredAlerts.length} size="md" />
           )}
         </nav>
+
+        <div className="flex-1" />
 
         <div className="flex items-center gap-2">
           {rootSpan?.ParentSpanId && rootSpan.ParentSpanId !== '' && (
@@ -265,7 +283,7 @@ export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailPro
             )}
           </button>
         </div>
-      </div>
+      </PageToolbar>
 
       <div className="mt-4 shrink-0">
         <TokenSummaryCards spans={spans} />

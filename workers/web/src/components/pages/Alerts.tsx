@@ -4,7 +4,7 @@ import { type Preloaded, usePreloadedQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useState } from 'react';
 import type { Id, Doc } from '@convex/_generated/dataModel';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { PageToolbar } from '@/components/PageToolbar';
 import {
   Dialog,
   DialogContent,
@@ -115,7 +115,6 @@ export default function Alerts({
 }: {
   preloadedAlerts: Preloaded<typeof api.alerts.list>;
 }) {
-  usePageHeader('Alerts');
   const alerts = usePreloadedQuery(preloadedAlerts);
   const createAlert = useMutation(api.alerts.create);
   const updateAlert = useMutation(api.alerts.update);
@@ -247,17 +246,18 @@ export default function Alerts({
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-6 flex items-center justify-between">
+      <PageToolbar>
         <p className="text-sm text-muted-foreground">
           Configure alerts to highlight traces matching specific conditions
         </p>
+        <div className="flex-1" />
         <button
           onClick={openCreateDialog}
           className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 hover:shadow-md hover:shadow-primary/20 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background"
         >
           New Alert
         </button>
-      </div>
+      </PageToolbar>
 
       {success && (
         <div className="mb-4 rounded-xl border border-emerald-500/50 bg-emerald-500/10 p-4">

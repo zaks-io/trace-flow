@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { type api } from '@convex/_generated/api';
 import { parseSpanAttributes } from '@trace-flow/utils';
-import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
+import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { PageToolbar } from '@/components/PageToolbar';
 import { RequestDetailSidePanel } from '@/components/RequestDetailSidePanel';
 import {
   DataTable,
@@ -34,15 +34,15 @@ interface RequestsProps {
 }
 
 export default function Requests({ preloadedAlerts, preloadedApiKeys }: RequestsProps) {
-  usePageHeader('Requests');
   const [selectedRequest, setSelectedRequest] = useState<RequestRow | null>(null);
   const [isLiveMode, setIsLiveMode] = useState(true);
+  const [autoStoppedLiveMode, setAutoStoppedLiveMode] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
   const [mergedRequests, setMergedRequests] = useState<RequestRow[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [latestReceivedAt, setLatestReceivedAt] = useState<number | null>(null);
 
-  const lastProcessedDataRef = useRef<RequestRow[] | null>(null);
+  const lastProcessedAtRef = useRef(0);
   const prevFiltersRef = useRef(JSON.stringify({}));
 
   const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
@@ -68,72 +68,69 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
     return params;
   }, [filters, isLiveMode, latestReceivedAt]);
 
-  const { data, loading, error } = useTinybirdPipe<TinybirdResponse>({
+  const { data, isLoading, error, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
     pipe: 'traces_list',
     params: pipeParams,
     pollInterval: isLiveMode ? 10000 : undefined,
+    staleTime: 0,
   });
 
-  // Reset when filters change — useLayoutEffect ensures latestReceivedAt is
-  // cleared before useTinybirdPipe's useEffect fires, preventing a stale cursor.
-  useLayoutEffect(() => {
+  // useEffect (not useLayoutEffect) is safe here because the data-processing
+  // effect below guards on dataUpdatedAt, preventing stale data from rendering.
+  useEffect(() => {
     const currentFilters = JSON.stringify(filters);
     if (prevFiltersRef.current !== currentFilters) {
       prevFiltersRef.current = currentFilters;
       setInitialLoadComplete(false);
       setLatestReceivedAt(null);
       setMergedRequests([]);
-      lastProcessedDataRef.current = data?.data ?? null;
+      lastProcessedAtRef.current = 0;
     }
   }, [filters]);
 
-  // Handle initial load
+  // Handle data updates — initial load + live merge + non-live sync
   useEffect(() => {
-    if (!initialLoadComplete && data?.data && data.data.length > 0) {
-      if (lastProcessedDataRef.current === data.data) {
-        return;
+    if (!data?.data || dataUpdatedAt === 0 || dataUpdatedAt === lastProcessedAtRef.current) return;
+    lastProcessedAtRef.current = dataUpdatedAt;
+
+    const rows = data.data;
+
+    if (!initialLoadComplete) {
+      if (rows.length > 0) {
+        setMergedRequests(rows);
+        setLatestReceivedAt(rows[0].ReceivedAt);
       }
-      setMergedRequests(data.data);
-      setLatestReceivedAt(data.data[0].ReceivedAt);
-      lastProcessedDataRef.current = data.data;
       setInitialLoadComplete(true);
+      return;
     }
-  }, [data, initialLoadComplete]);
 
-  // Handle live mode merge
-  useEffect(() => {
-    if (!isLiveMode || !data?.data || !initialLoadComplete) return;
-    if (data.data.length === 0) return;
-    if (lastProcessedDataRef.current === data.data) return;
+    if (!isLiveMode) {
+      setMergedRequests(rows);
+      if (rows.length > 0) {
+        setLatestReceivedAt(rows[0].ReceivedAt);
+      }
+      return;
+    }
 
-    lastProcessedDataRef.current = data.data;
+    // Live mode merge
+    if (rows.length === 0) return;
 
     setMergedRequests((prev) => {
-      const seen = new Set(data.data.map((r) => `${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
+      const seen = new Set(rows.map((r) => `${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
       const uniquePrev = prev.filter((r) => !seen.has(`${r.TraceId}-${r.SpanId}-${r.ReceivedAt}`));
-      const merged = [...data.data, ...uniquePrev].slice(0, 100);
+      const merged = [...rows, ...uniquePrev].slice(0, 100);
       if (merged.length > 0) {
         setLatestReceivedAt(merged[0].ReceivedAt);
       }
       return merged;
     });
-  }, [data, isLiveMode, initialLoadComplete]);
-
-  // Handle non-live mode - show raw data
-  useEffect(() => {
-    if (!isLiveMode && initialLoadComplete && data?.data) {
-      setMergedRequests(data.data);
-      if (data.data.length > 0) {
-        setLatestReceivedAt(data.data[0].ReceivedAt);
-      }
-    }
-  }, [isLiveMode, data, initialLoadComplete]);
+  }, [data, dataUpdatedAt, isLiveMode, initialLoadComplete]);
 
   const requests = useMemo(
     () => (isLiveMode && initialLoadComplete ? mergedRequests : (data?.data ?? [])),
     [isLiveMode, initialLoadComplete, mergedRequests, data?.data],
   );
-  const isLoading = loading && !initialLoadComplete;
+  const loading = isLoading && !initialLoadComplete;
 
   const handleRowClick = useCallback((row: RequestRow, event: React.MouseEvent) => {
     if (event.metaKey || event.ctrlKey) {
@@ -161,25 +158,46 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
     return evaluateAlertsForTraces(requests, alerts);
   }, [requests, alerts]);
 
-  if (isLoading && requests.length === 0) {
+  useEffect(() => {
+    if (error && isLiveMode) {
+      setAutoStoppedLiveMode(true);
+      setIsLiveMode(false);
+    } else if (!error) {
+      setAutoStoppedLiveMode(false);
+    }
+  }, [error, isLiveMode]);
+
+  if (loading && requests.length === 0) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Loading requests...
+      <>
+        <PageToolbar />
+        <div className="flex items-center justify-center py-12">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            Loading requests...
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
     <div className="animate-fade-in">
+      <PageToolbar>
+        <h1 className="text-sm font-medium text-foreground">Requests</h1>
+      </PageToolbar>
+
       {error && (
         <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
           <div className="flex items-start justify-between">
             <div>
               <h3 className="mb-2 font-semibold text-destructive">Error loading requests</h3>
               <p className="text-sm text-destructive/80">{error.message}</p>
+              {autoStoppedLiveMode && (
+                <p className="mt-2 text-sm text-destructive/80">
+                  Live mode has been stopped due to the error.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -205,7 +223,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
         onFilterChange={setFilter}
         onClearFilters={clearFilters}
         hasActiveFilters={hasActiveFilters}
-        loading={isLoading}
+        loading={loading}
         apiKeyMap={apiKeyMap}
       />
 

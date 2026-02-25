@@ -4,9 +4,10 @@ import { useState, useMemo } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { type api } from '@convex/_generated/api';
 import { Activity, Zap, Hash, ChevronDown, Cpu, Server, DollarSign, Key } from 'lucide-react';
-import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { snapToMinute } from '@/lib/tinybird';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
+import { PageToolbar } from '@/components/PageToolbar';
 import { formatNumber, formatCurrency } from '@/lib/format';
 
 type TimeRange = '24h' | '7d' | '30d';
@@ -192,7 +193,6 @@ export default function Dashboard({
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
-  usePageHeader('Dashboard');
   const apiKeyList = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeyList);
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
@@ -200,41 +200,36 @@ export default function Dashboard({
 
   const startTimeNs = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
-    return (Date.now() - (range?.ms ?? 0)) * 1_000_000;
+    return snapToMinute(Date.now() - (range?.ms ?? 0)) * 1_000_000;
   }, [timeRange]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally recalculate on timeRange change
-  const endTimeNs = useMemo(() => Date.now() * 1_000_000, [timeRange]);
+  const endTimeNs = useMemo(() => snapToMinute(Date.now()) * 1_000_000, [timeRange]);
 
   // All queries now use Pipes with server-side API key filtering via JWT fixed_params
-  const summaryQuery = useTinybirdPipe<SummaryData>({
+  const summaryQuery = useTinybirdQuery<SummaryData>({
     pipe: 'llm_usage_summary',
     params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
-    transform: (result) => result as SummaryData,
   });
 
-  const modelsQuery = useTinybirdPipe<ModelData>({
+  const modelsQuery = useTinybirdQuery<ModelData>({
     pipe: 'llm_usage_by_model',
     params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
-    transform: (result) => result as ModelData,
   });
 
-  const providersQuery = useTinybirdPipe<ProviderData>({
+  const providersQuery = useTinybirdQuery<ProviderData>({
     pipe: 'llm_usage_by_provider',
     params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
-    transform: (result) => result as ProviderData,
   });
 
-  const apiKeysQuery = useTinybirdPipe<ApiKeyData>({
+  const apiKeysQuery = useTinybirdQuery<ApiKeyData>({
     pipe: 'llm_usage_by_api_key',
     params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
-    transform: (result) => result as ApiKeyData,
   });
 
-  const timeseriesQuery = useTinybirdPipe<TimeseriesData>({
+  const timeseriesQuery = useTinybirdQuery<TimeseriesData>({
     pipe: 'llm_usage_timeseries',
     params: { start_time_ns: startTimeNs, end_time_ns: endTimeNs },
-    transform: (result) => result as TimeseriesData,
   });
 
   const summary = summaryQuery.data?.data?.[0];
@@ -244,11 +239,11 @@ export default function Dashboard({
   const timeseries = timeseriesQuery.data?.data ?? [];
 
   const isLoading =
-    summaryQuery.loading === true ||
-    modelsQuery.loading === true ||
-    providersQuery.loading === true ||
-    apiKeysQuery.loading === true ||
-    timeseriesQuery.loading === true;
+    summaryQuery.isLoading ||
+    modelsQuery.isLoading ||
+    providersQuery.isLoading ||
+    apiKeysQuery.isLoading ||
+    timeseriesQuery.isLoading;
   const hasError =
     summaryQuery.error ??
     modelsQuery.error ??
@@ -260,8 +255,9 @@ export default function Dashboard({
 
   return (
     <div className="animate-fade-in">
-      <div className="mb-6 flex items-center justify-between">
+      <PageToolbar>
         <p className="text-sm text-muted-foreground">LLM Request Analytics Overview</p>
+        <div className="flex-1" />
         <div className="relative">
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -289,7 +285,7 @@ export default function Dashboard({
             </div>
           )}
         </div>
-      </div>
+      </PageToolbar>
 
       {hasError && (
         <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">

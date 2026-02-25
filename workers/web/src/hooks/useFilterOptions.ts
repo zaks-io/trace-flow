@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
+import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 
 export interface FilterOptions {
   providers: string[];
@@ -13,7 +13,7 @@ interface UseFilterOptionsResult {
   options: FilterOptions;
   loading: boolean;
   error: Error | null;
-  refetch: () => Promise<void>;
+  refetch: () => void;
 }
 
 interface FilterOptionsResponse {
@@ -26,15 +26,10 @@ interface FilterOptionsResponse {
   }[];
 }
 
-/**
- * Hook to fetch filter options using the filter_options Pipe.
- * API key filtering is handled server-side via JWT fixed_params.
- */
 export function useFilterOptions(): UseFilterOptionsResult {
-  const { data, loading, error, refetch } = useTinybirdPipe<FilterOptionsResponse>({
+  const { data, isLoading, error, refetch } = useTinybirdQuery<FilterOptionsResponse>({
     pipe: 'filter_options',
     ttl: 600,
-    transform: (result) => result as FilterOptionsResponse,
   });
 
   const options: FilterOptions = useMemo(() => {
@@ -48,5 +43,5 @@ export function useFilterOptions(): UseFilterOptionsResult {
     };
   }, [data]);
 
-  return { options, loading, error, refetch };
+  return { options, loading: isLoading, error, refetch };
 }

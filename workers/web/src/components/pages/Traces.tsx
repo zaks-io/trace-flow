@@ -4,12 +4,12 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { type api } from '@convex/_generated/api';
-import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
+import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { PageToolbar } from '@/components/PageToolbar';
 import { DataTable, type AlertFilterValue } from '@/components/requests-table';
 import {
   spanGroupColumns,
@@ -33,7 +33,6 @@ interface TracesProps {
 }
 
 export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProps) {
-  usePageHeader('Traces');
   const router = useRouter();
   const [isLiveMode, setIsLiveMode] = useState(true);
   const [mergedSpanGroups, setMergedSpanGroups] = useState<SpanGroupRow[]>([]);
@@ -43,9 +42,8 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
   const [alertFilter, setAlertFilter] = useState<AlertFilterValue>('all');
 
   const latestReceivedAtRef = useRef<number | null>(null);
-  const prevLiveModeRef = useRef(false);
-  const lastProcessedDataRef = useRef<SpanGroupRow[] | null>(null);
   const prevFiltersRef = useRef(JSON.stringify({}));
+  const lastProcessedAtRef = useRef(0);
 
   const alerts = usePreloadedQuery(preloadedAlerts);
   const { visibility, setVisibility } = useColumnVisibility(
@@ -76,10 +74,11 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     return params;
   }, [filters, isLiveMode, latestReceivedAt]);
 
-  const { data, loading, error, refetch } = useTinybirdPipe<TinybirdResponse>({
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
     pipe: 'traces_grouped',
     params: pipeParams,
     pollInterval: isLiveMode ? 10000 : undefined,
+    staleTime: 0,
   });
 
   // Reset state when filters change
@@ -90,7 +89,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       setInitialLoadComplete(false);
       setLatestReceivedAt(null);
       setMergedSpanGroups([]);
-      lastProcessedDataRef.current = null;
+      lastProcessedAtRef.current = 0;
     }
   }, [filters]);
 
@@ -99,13 +98,13 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     return groups.map((g) => g.TraceId);
   }, [isLiveMode, initialLoadComplete, mergedSpanGroups, data?.data]);
 
-  // Fetch spans for alert evaluation using Pipe API
+  // Fetch spans for alert evaluation
   const alertSpansParams = useMemo(() => {
     if (traceIds.length === 0 || !alerts || alerts.length === 0) return undefined;
     return { trace_ids: traceIds.join(',') };
   }, [traceIds, alerts]);
 
-  const { data: alertSpansData } = useTinybirdPipe<AlertSpansResponse>({
+  const { data: alertSpansData } = useTinybirdQuery<AlertSpansResponse>({
     pipe: 'traces_for_alerts',
     params: alertSpansParams,
     enabled: alertSpansParams !== undefined,
@@ -122,49 +121,43 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     [router],
   );
 
+  // Handle data updates — initial load + live merge + non-live sync
   useEffect(() => {
-    if (!initialLoadComplete && data?.data && data.data.length > 0) {
-      const groups = data.data;
-      setMergedSpanGroups(groups);
-      const newestReceivedAt = groups[0]!.LatestReceivedAt;
-      latestReceivedAtRef.current = newestReceivedAt;
-      setLatestReceivedAt(newestReceivedAt);
-      lastProcessedDataRef.current = groups; // Mark this data as processed
+    if (!data?.data || dataUpdatedAt === 0 || dataUpdatedAt === lastProcessedAtRef.current) return;
+    lastProcessedAtRef.current = dataUpdatedAt;
+
+    const groups = data.data;
+
+    if (!initialLoadComplete) {
+      // Initial load
+      if (groups.length > 0) {
+        setMergedSpanGroups(groups);
+        const newestReceivedAt = groups[0]!.LatestReceivedAt;
+        latestReceivedAtRef.current = newestReceivedAt;
+        setLatestReceivedAt(newestReceivedAt);
+      }
       setInitialLoadComplete(true);
-    }
-  }, [data, initialLoadComplete]);
-
-  useEffect(() => {
-    if (
-      isLiveMode &&
-      !prevLiveModeRef.current &&
-      latestReceivedAt !== null &&
-      initialLoadComplete
-    ) {
-      void refetch();
-    }
-    prevLiveModeRef.current = isLiveMode;
-  }, [isLiveMode, latestReceivedAt, initialLoadComplete, refetch]);
-
-  useEffect(() => {
-    if (!isLiveMode || !data?.data || !initialLoadComplete) {
       return;
     }
 
-    if (data.data.length === 0) {
+    if (!isLiveMode) {
+      // Non-live: just show raw data
+      setMergedSpanGroups(groups);
+      if (groups.length > 0) {
+        const newestReceivedAt = groups[0]!.LatestReceivedAt;
+        latestReceivedAtRef.current = newestReceivedAt;
+        setLatestReceivedAt(newestReceivedAt);
+      }
       return;
     }
 
-    // Skip if this is the same data we already processed (prevents double-counting on initial load)
-    if (lastProcessedDataRef.current === data.data) {
-      return;
-    }
-    lastProcessedDataRef.current = data.data;
+    // Live mode merge
+    if (groups.length === 0) return;
 
     setMergedSpanGroups((prev): SpanGroupRow[] => {
       const existingMap = new Map(prev.map((g) => [g.TraceId, g]));
 
-      for (const newGroup of data.data) {
+      for (const newGroup of groups) {
         const existing = existingMap.get(newGroup.TraceId);
         if (existing) {
           existingMap.set(newGroup.TraceId, {
@@ -197,19 +190,16 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
 
       return merged.slice(0, 100);
     });
-  }, [data, isLiveMode, initialLoadComplete]);
+  }, [data, dataUpdatedAt, isLiveMode, initialLoadComplete]);
 
+  // Refetch when re-entering live mode
   useEffect(() => {
-    if (!isLiveMode && initialLoadComplete && data?.data) {
-      const groups = data.data;
-      setMergedSpanGroups(groups);
-      if (groups.length > 0) {
-        const newestReceivedAt = groups[0]!.LatestReceivedAt;
-        latestReceivedAtRef.current = newestReceivedAt;
-        setLatestReceivedAt(newestReceivedAt);
-      }
+    if (isLiveMode && initialLoadComplete) {
+      void refetch();
     }
-  }, [isLiveMode, data, initialLoadComplete]);
+    // Only trigger on isLiveMode transitions
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLiveMode]);
 
   const spanGroups = useMemo(
     (): SpanGroupRow[] =>
@@ -235,19 +225,26 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
 
   const getRowId = useCallback((row: SpanGroupRow): string => row.TraceId as string, []);
 
-  if (loading && !initialLoadComplete) {
+  if (isLoading && !initialLoadComplete) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Loading traces...
+      <>
+        <PageToolbar />
+        <div className="flex items-center justify-center py-12">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            Loading traces...
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
     <div className="animate-fade-in">
+      <PageToolbar>
+        <h1 className="text-sm font-medium text-foreground">Traces</h1>
+      </PageToolbar>
+
       {error && (
         <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
           <div className="flex items-start justify-between">

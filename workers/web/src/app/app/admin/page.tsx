@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useQuery, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Button } from '@/components/ui/button';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { PageToolbar } from '@/components/PageToolbar';
 import { useIsAdmin } from '@/components/AdminContext';
 import {
   Users,
@@ -145,8 +145,6 @@ function SyncActionRow({
 }
 
 export default function AdminPage() {
-  usePageHeader('System Overview');
-
   const isAdmin = useIsAdmin();
   const stats = useQuery(api.admin.stats, isAdmin ? {} : 'skip');
 
@@ -168,6 +166,10 @@ export default function AdminPage() {
 
   return (
     <div className="animate-fade-in space-y-8">
+      <PageToolbar>
+        <h1 className="text-sm font-medium text-foreground">System Overview</h1>
+      </PageToolbar>
+
       <section>
         <div className="mb-4 flex items-center gap-2">
           <Database className="h-4 w-4 text-muted-foreground" />

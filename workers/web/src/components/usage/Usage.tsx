@@ -4,9 +4,10 @@ import { useState, useMemo, useRef } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { type api } from '@convex/_generated/api';
 import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer, Key } from 'lucide-react';
-import { useTinybirdPipe } from '@/hooks/useTinybirdPipe';
+import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { snapToMinute } from '@/lib/tinybird';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
-import { usePageHeader } from '@/components/PageHeaderContext';
+import { PageToolbar } from '@/components/PageToolbar';
 import { formatNumber, formatCurrency, formatPercent, formatDuration } from '@/lib/format';
 import {
   TIME_RANGES,
@@ -37,8 +38,6 @@ export default function Usage({
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
-  usePageHeader('Usage & Costs');
-
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [metric, setMetric] = useState<TimeseriesMetric>('cost');
   const [providerFilter, setProviderFilter] = useState('');
@@ -51,11 +50,11 @@ export default function Usage({
 
   const startTimeNs = useMemo(() => {
     const range = TIME_RANGES.find((r) => r.value === timeRange);
-    return (Date.now() - (range?.ms ?? 0)) * 1_000_000;
+    return snapToMinute(Date.now() - (range?.ms ?? 0)) * 1_000_000;
   }, [timeRange]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally recalculate on timeRange change
-  const endTimeNs = useMemo(() => Date.now() * 1_000_000, [timeRange]);
+  const endTimeNs = useMemo(() => snapToMinute(Date.now()) * 1_000_000, [timeRange]);
 
   const filterParams = useMemo(() => {
     const p: Record<string, string | number> = {
@@ -78,46 +77,39 @@ export default function Usage({
     return p;
   }, [providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
-  const summaryQuery = useTinybirdPipe<TinybirdResponse<SummaryRow>>({
+  const summaryQuery = useTinybirdQuery<TinybirdResponse<SummaryRow>>({
     pipe: 'llm_usage_summary',
     params: filterParams,
-    transform: (r) => r as TinybirdResponse<SummaryRow>,
   });
 
-  const timeseriesQuery = useTinybirdPipe<TinybirdResponse<TimeseriesRow>>({
+  const timeseriesQuery = useTinybirdQuery<TinybirdResponse<TimeseriesRow>>({
     pipe: 'llm_usage_timeseries',
     params: filterParams,
-    transform: (r) => r as TinybirdResponse<TimeseriesRow>,
   });
 
-  const modelsQuery = useTinybirdPipe<TinybirdResponse<ModelRow>>({
+  const modelsQuery = useTinybirdQuery<TinybirdResponse<ModelRow>>({
     pipe: 'llm_usage_by_model',
     params: filterParams,
-    transform: (r) => r as TinybirdResponse<ModelRow>,
   });
 
-  const providersQuery = useTinybirdPipe<TinybirdResponse<ProviderRow>>({
+  const providersQuery = useTinybirdQuery<TinybirdResponse<ProviderRow>>({
     pipe: 'llm_usage_by_provider',
     params: filterParams,
-    transform: (r) => r as TinybirdResponse<ProviderRow>,
   });
 
-  const operationsQuery = useTinybirdPipe<TinybirdResponse<OperationRow>>({
+  const operationsQuery = useTinybirdQuery<TinybirdResponse<OperationRow>>({
     pipe: 'llm_usage_by_operation',
     params: filterParams,
-    transform: (r) => r as TinybirdResponse<OperationRow>,
   });
 
-  const apiKeysQuery = useTinybirdPipe<TinybirdResponse<ApiKeyRow>>({
+  const apiKeysQuery = useTinybirdQuery<TinybirdResponse<ApiKeyRow>>({
     pipe: 'llm_usage_by_api_key',
     params: filterParams,
-    transform: (r) => r as TinybirdResponse<ApiKeyRow>,
   });
 
-  const forecastQuery = useTinybirdPipe<TinybirdResponse<CostForecastRow>>({
+  const forecastQuery = useTinybirdQuery<TinybirdResponse<CostForecastRow>>({
     pipe: 'llm_cost_forecast',
     params: forecastParams,
-    transform: (r) => r as TinybirdResponse<CostForecastRow>,
   });
 
   const summary = summaryQuery.data?.data?.[0];
@@ -129,13 +121,13 @@ export default function Usage({
   const forecast = forecastQuery.data?.data?.[0] ?? null;
 
   const isLoading = [
-    summaryQuery.loading,
-    timeseriesQuery.loading,
-    modelsQuery.loading,
-    providersQuery.loading,
-    operationsQuery.loading,
-    apiKeysQuery.loading,
-    forecastQuery.loading,
+    summaryQuery.isLoading,
+    timeseriesQuery.isLoading,
+    modelsQuery.isLoading,
+    providersQuery.isLoading,
+    operationsQuery.isLoading,
+    apiKeysQuery.isLoading,
+    forecastQuery.isLoading,
   ].some(Boolean);
 
   const hasError =
@@ -182,11 +174,10 @@ export default function Usage({
 
   return (
     <div className="animate-fade-in">
-      {/* Header controls */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <PageToolbar>
         <p className="text-sm text-muted-foreground">Cost analytics deep-dive</p>
+        <div className="flex-1" />
         <div className="flex items-center gap-2">
-          {/* Time range toggle */}
           <div className="flex rounded-lg border border-border bg-card">
             {TIME_RANGES.map((range) => (
               <button
@@ -228,7 +219,7 @@ export default function Usage({
             labelMap={apiKeyMap}
           />
         </div>
-      </div>
+      </PageToolbar>
 
       {hasError && (
         <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
