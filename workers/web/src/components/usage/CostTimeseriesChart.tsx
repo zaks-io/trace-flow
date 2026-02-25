@@ -50,9 +50,11 @@ export function CostTimeseriesChart({
 
   const hourly =
     data.length > 1 &&
-    new Date(data[1].bucket_start).getTime() - new Date(data[0].bucket_start).getTime() <
+    Math.abs(new Date(data[1].bucket_start).getTime() - new Date(data[0].bucket_start).getTime()) <
       86_400_000;
   const tickFormatter = (v: string) => formatTickDate(v, hourly);
+  const tooltipLabelFormatter = (label: string) =>
+    hourly ? formatTooltipDate(String(label)) : formatTickDate(String(label), false);
 
   if (metric === 'cost') {
     return (
@@ -73,7 +75,7 @@ export function CostTimeseriesChart({
           <ChartTooltip
             content={
               <ChartTooltipContent
-                labelFormatter={(label) => formatTooltipDate(String(label))}
+                labelFormatter={tooltipLabelFormatter}
                 valueFormatter={(v) => formatCurrency(v)}
               />
             }
@@ -142,7 +144,7 @@ export function CostTimeseriesChart({
           <ChartTooltip
             content={
               <ChartTooltipContent
-                labelFormatter={(label) => formatTooltipDate(String(label))}
+                labelFormatter={tooltipLabelFormatter}
                 valueFormatter={(v) => formatDuration(v)}
               />
             }
@@ -183,7 +185,7 @@ export function CostTimeseriesChart({
         <ChartTooltip
           content={
             <ChartTooltipContent
-              labelFormatter={(label) => formatTooltipDate(String(label))}
+              labelFormatter={tooltipLabelFormatter}
               valueFormatter={(v) => formatNumber(v)}
             />
           }
