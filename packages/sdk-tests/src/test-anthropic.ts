@@ -12,7 +12,7 @@ const anthropic = createAnthropic({
   headers: proxyHeaders,
 });
 
-const model = anthropic('claude-3-5-haiku-latest');
+const model = anthropic('claude-haiku-4-5');
 
 async function testNonStreaming() {
   log('Anthropic', 'Testing non-streaming...');
