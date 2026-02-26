@@ -11,19 +11,51 @@ export default defineSchema({
     orgId: v.optional(v.id('organizations')),
     inviteId: v.optional(v.id('invites')),
     isAdmin: v.optional(v.boolean()),
-  }).index('by_token_identifier', ['tokenIdentifier']),
+  })
+    .index('by_token_identifier', ['tokenIdentifier'])
+    .index('by_org_id', ['orgId']),
 
   organizations: defineTable({
     name: v.string(),
     ownerId: v.id('users'),
-  }).index('by_owner_id', ['ownerId']),
+    stripeCustomerId: v.optional(v.string()),
+  })
+    .index('by_owner_id', ['ownerId'])
+    .index('by_stripe_customer_id', ['stripeCustomerId']),
 
   subscriptions: defineTable({
     orgId: v.id('organizations'),
     tier: v.union(v.literal('hobby'), v.literal('pro')),
+    status: v.union(
+      v.literal('active'),
+      v.literal('grace'),
+      v.literal('suspended'),
+      v.literal('canceled'),
+    ),
     monthlyUnits: v.number(),
     addonUnits: v.number(),
-  }).index('by_org_id', ['orgId']),
+    seatQuantity: v.number(),
+    currentPeriodStart: v.number(),
+    currentPeriodEnd: v.number(),
+    currentPeriodOverageSpentCents: v.number(),
+    addonPurchaseCount: v.number(),
+    // Stripe ownership (org-scoped, not set until checkout)
+    stripeCustomerId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    stripePlanItemId: v.optional(v.string()),
+    stripeSeatItemId: v.optional(v.string()),
+    cancelAtPeriodEnd: v.optional(v.boolean()),
+    // Overage controls (opt-in)
+    autoOverage: v.optional(v.boolean()),
+    overageCapCents: v.optional(v.number()),
+    // Grace period -> suspended scheduler (transient)
+    gracePeriodSchedulerId: v.optional(v.id('_scheduled_functions')),
+    // Auto-topup dedup (transient)
+    autoTopupPendingSince: v.optional(v.number()),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_stripe_subscription_id', ['stripeSubscriptionId'])
+    .index('by_stripe_customer_id', ['stripeCustomerId']),
 
   usage: defineTable({
     orgId: v.id('organizations'),
@@ -110,6 +142,7 @@ export default defineSchema({
   invites: defineTable({
     email: v.string(),
     invitedBy: v.id('users'),
+    orgId: v.optional(v.id('organizations')),
     status: v.union(v.literal('pending'), v.literal('accepted'), v.literal('expired')),
     token: v.string(),
     acceptedAt: v.optional(v.number()),
@@ -117,6 +150,45 @@ export default defineSchema({
   })
     .index('by_email', ['email'])
     .index('by_token', ['token'])
+    .index('by_status', ['status'])
+    .index('by_org_id_status', ['orgId', 'status']),
+
+  organizationMembers: defineTable({
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    role: v.union(v.literal('owner'), v.literal('member')),
+    status: v.union(v.literal('active'), v.literal('removed')),
+    invitedAt: v.optional(v.number()),
+    joinedAt: v.optional(v.number()),
+    removedAt: v.optional(v.number()),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_user_id', ['userId'])
+    .index('by_org_id_status', ['orgId', 'status']),
+
+  addonPurchases: defineTable({
+    orgId: v.id('organizations'),
+    triggeredByUserId: v.optional(v.id('users')),
+    units: v.number(),
+    amountCents: v.number(),
+    stripePaymentIntentId: v.string(),
+    stripeInvoiceId: v.optional(v.string()),
+    mode: v.union(v.literal('manual'), v.literal('auto')),
+    periodStart: v.number(),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_payment_intent', ['stripePaymentIntentId']),
+
+  stripeEvents: defineTable({
+    eventId: v.string(),
+    eventType: v.string(),
+    stripeObjectId: v.optional(v.string()),
+    status: v.union(v.literal('processing'), v.literal('processed'), v.literal('failed')),
+    processingStartedAt: v.optional(v.number()),
+    processedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+  })
+    .index('by_event_id', ['eventId'])
     .index('by_status', ['status']),
 
   waitlist: defineTable({

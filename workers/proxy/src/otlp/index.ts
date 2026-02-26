@@ -1,9 +1,9 @@
 import type { Context } from 'hono';
 import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
-import { validateApiKey, isAuthError } from '../auth';
+import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
 import type { ApiKeyData } from '../auth';
-import { checkUsage, type UsageCheckResult } from '../usage';
+import { checkUsage } from '../usage';
 import { transformOTLPToTraces } from './transform';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
 
@@ -163,7 +163,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
-  const apiKey = c.req.header('X-Trace-Flow-Api-Key')!;
+  const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';
   // Convert milliseconds to nanoseconds for OTLP spec compliance
   const receivedAtNano = getCurrentTimestamp() * 1_000_000;
   const traces = transformOTLPToTraces(body, apiKey, receivedAtNano);
@@ -186,21 +186,32 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
-  let usageCheck: UsageCheckResult;
-  try {
-    usageCheck = await checkUsage(c.env, keyData.orgId, traces.length);
-  } catch (error) {
-    console.error('Usage check failed:', error instanceof Error ? error.message : String(error));
-    return c.json(
-      {
-        error: {
-          code: 500,
-          message: 'Usage check failed due to misconfiguration',
-        },
+  const billing = await checkBillingStatus(c.env, keyData.orgId);
+
+  if (
+    billing.status === 'suspended' ||
+    billing.status === 'canceled' ||
+    billing.status === 'not_found' ||
+    billing.status === 'error'
+  ) {
+    const response: OTLPExportTraceServiceResponse = {
+      partialSuccess: {
+        rejectedSpans: traces.length,
+        errorMessage:
+          billing.status === 'suspended'
+            ? 'Account suspended'
+            : billing.status === 'canceled'
+              ? 'Account canceled'
+              : billing.status === 'not_found'
+                ? 'Subscription not found'
+                : 'Internal error',
       },
-      500,
-    );
+    };
+    c.header('X-Trace-Flow-Recording', 'false');
+    return c.json(response, 200);
   }
+
+  const usageCheck = await checkUsage(c.env, keyData.orgId, traces.length, billing.subscription);
 
   if (usageCheck.status === 'exceeded') {
     const response: OTLPExportTraceServiceResponse = {
@@ -209,6 +220,18 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
         errorMessage: 'Usage limit exceeded',
       },
     };
+    c.header('X-Trace-Flow-Recording', 'false');
+    return c.json(response, 200);
+  }
+
+  if (usageCheck.status === 'error') {
+    const response: OTLPExportTraceServiceResponse = {
+      partialSuccess: {
+        rejectedSpans: traces.length,
+        errorMessage: 'Usage check failed',
+      },
+    };
+    c.header('X-Trace-Flow-Recording', 'false');
     return c.json(response, 200);
   }
 
@@ -233,6 +256,6 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   );
 
   const response: OTLPExportTraceServiceResponse = { partialSuccess: {} };
-  c.header('X-Trace-Flow-Usage-Status', 'allowed');
+  c.header('X-Trace-Flow-Recording', 'true');
   return c.json(response, 200);
 }

@@ -1,8 +1,22 @@
-import { action, internalMutation, internalQuery, mutation, query } from './_generated/server';
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type ActionCtx,
+} from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
+import { requireAdmin } from './users';
 import { internal } from './_generated/api';
 import { DEFAULT_PRICING } from './defaultPricing';
+
+async function requireAdminAction(ctx: ActionCtx) {
+  await requireTraceFlowRole(ctx);
+  const isAdmin = await ctx.runQuery(internal.users.isAdminInternal);
+  if (!isAdmin) throw new Error('Admin access required');
+}
 
 export const list = query({
   args: {
@@ -67,7 +81,7 @@ export const upsert = mutation({
     source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAdmin(ctx);
 
     const existing = await ctx.db
       .query('modelPricing')
@@ -154,7 +168,7 @@ export const remove = mutation({
     id: v.id('modelPricing'),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAdmin(ctx);
 
     const pricing = await ctx.db.get(args.id);
     if (!pricing) {
@@ -172,7 +186,7 @@ export const remove = mutation({
 export const syncAllToKV = action({
   args: {},
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAdminAction(ctx);
 
     const allPricing = await ctx.runQuery(internal.modelPricing.listAll);
     let synced = 0;
@@ -256,7 +270,7 @@ function convertOpenRouterModel(orModel: OpenRouterModel): {
 export const importFromOpenRouter = action({
   args: {},
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAdminAction(ctx);
 
     const response = await fetch('https://openrouter.ai/api/v1/models');
     if (!response.ok) {
@@ -290,7 +304,7 @@ export const importFromOpenRouter = action({
 export const syncDefaults = action({
   args: {},
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAdminAction(ctx);
 
     let synced = 0;
     for (const pricing of DEFAULT_PRICING) {

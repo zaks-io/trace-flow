@@ -112,6 +112,12 @@ export declare const api: {
       { email: string },
       any
     >;
+    createOrgInvite: FunctionReference<
+      "mutation",
+      "public",
+      { email: string },
+      any
+    >;
     getInviteByToken: FunctionReference<
       "query",
       "public",
@@ -134,30 +140,10 @@ export declare const api: {
         { message: any; sessionId?: string },
         any
       >;
-      handleMessageWithUser: FunctionReference<
-        "action",
-        "public",
-        { message: any; sessionId?: string; userId: Id<"users"> },
-        any
-      >;
       terminateSession: FunctionReference<
         "action",
         "public",
         { sessionId: string },
-        any
-      >;
-    };
-    session: {
-      getSession: FunctionReference<
-        "query",
-        "public",
-        { sessionId: string },
-        any
-      >;
-      getUserSessions: FunctionReference<
-        "query",
-        "public",
-        { userId: Id<"users"> },
         any
       >;
     };
@@ -198,20 +184,51 @@ export declare const api: {
   };
   organizations: {
     get: FunctionReference<"query", "public", any, any>;
+    getMembers: FunctionReference<"query", "public", {}, any>;
     rename: FunctionReference<"mutation", "public", { name: string }, any>;
   };
   subscriptions: {
-    addAddonUnits: FunctionReference<
-      "mutation",
+    createAddonCheckoutSession: FunctionReference<
+      "action",
       "public",
-      { orgId: Id<"organizations">; units: number },
+      { cancelUrl?: string; quantity: number; successUrl?: string },
+      any
+    >;
+    createBillingPortalSession: FunctionReference<
+      "action",
+      "public",
+      { returnUrl?: string },
+      any
+    >;
+    createOrgCheckoutSession: FunctionReference<
+      "action",
+      "public",
+      { cancelUrl?: string; successUrl?: string },
+      any
+    >;
+    getBillingSummaryForCurrentUser: FunctionReference<
+      "query",
+      "public",
+      any,
       any
     >;
     getForCurrentUser: FunctionReference<"query", "public", any, any>;
-    setTier: FunctionReference<
+    reconcileCurrentOrgWithStripe: FunctionReference<
+      "action",
+      "public",
+      {},
+      any
+    >;
+    updateAutoOverageSettings: FunctionReference<
       "mutation",
       "public",
-      { orgId: Id<"organizations">; tier: "hobby" | "pro" },
+      { autoOverage: boolean; overageCapCents?: number },
+      any
+    >;
+    updateSeatQuantity: FunctionReference<
+      "action",
+      "public",
+      { seatQuantity: number },
       any
     >;
   };
@@ -311,7 +328,20 @@ export declare const internal: {
     syncSubscriptionToKV: FunctionReference<
       "action",
       "internal",
-      { addonUnits: number; monthlyUnits: number; orgId: string; tier: string },
+      {
+        addonUnits: number;
+        autoOverage?: boolean;
+        cancelAtPeriodEnd?: boolean;
+        currentPeriodEnd: number;
+        currentPeriodStart: number;
+        monthlyUnits: number;
+        orgId: string;
+        overageCapCents?: number;
+        retryCount?: number;
+        seatQuantity: number;
+        status: string;
+        tier: string;
+      },
       any
     >;
   };
@@ -344,6 +374,14 @@ export declare const internal: {
         any
       >;
     };
+    handler: {
+      handleMessageWithUser: FunctionReference<
+        "action",
+        "internal",
+        { message: any; sessionId?: string; userId: Id<"users"> },
+        any
+      >;
+    };
     session: {
       cleanupSession: FunctionReference<
         "mutation",
@@ -363,10 +401,22 @@ export declare const internal: {
         { sessionId: string },
         any
       >;
+      getSession: FunctionReference<
+        "query",
+        "internal",
+        { sessionId: string },
+        any
+      >;
       getSessionInternal: FunctionReference<
         "query",
         "internal",
         { sessionId: string },
+        any
+      >;
+      getUserSessions: FunctionReference<
+        "query",
+        "internal",
+        { userId: Id<"users"> },
         any
       >;
       updateSessionState: FunctionReference<
@@ -636,8 +686,20 @@ export declare const internal: {
     };
   };
   migrations: {
+    backfillAll: FunctionReference<"mutation", "internal", {}, any>;
+    backfillOrgBilling: {
+      backfillOrgBilling: FunctionReference<"mutation", "internal", any, any>;
+    };
     backfillOrgs: {
       backfillOrgs: FunctionReference<"mutation", "internal", any, any>;
+    };
+    backfillStripeCustomerIdToOrgs: {
+      backfillStripeCustomerIdToOrgs: FunctionReference<
+        "mutation",
+        "internal",
+        any,
+        any
+      >;
     };
   };
   modelPricing: {
@@ -666,10 +728,34 @@ export declare const internal: {
     >;
   };
   organizations: {
+    canAddMember: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
+    getActiveMemberCountInternal: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
     getByIdInternal: FunctionReference<
       "query",
       "internal",
       { id: Id<"organizations"> },
+      any
+    >;
+    getByStripeCustomerId: FunctionReference<
+      "query",
+      "internal",
+      { stripeCustomerId: string },
+      any
+    >;
+    setStripeCustomerId: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations">; stripeCustomerId: string },
       any
     >;
   };
@@ -687,11 +773,146 @@ export declare const internal: {
       any
     >;
   };
+  stripeEvents: {
+    cleanupOldEvents: FunctionReference<"mutation", "internal", any, any>;
+    getByEventId: FunctionReference<
+      "query",
+      "internal",
+      { eventId: string },
+      any
+    >;
+    markFailed: FunctionReference<
+      "mutation",
+      "internal",
+      { error: string; eventId: string },
+      any
+    >;
+    markProcessed: FunctionReference<
+      "mutation",
+      "internal",
+      { eventId: string },
+      any
+    >;
+    startProcessing: FunctionReference<
+      "mutation",
+      "internal",
+      { eventId: string; eventType: string; stripeObjectId?: string },
+      any
+    >;
+  };
   subscriptions: {
+    addAddonUnits: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations">; units: number },
+      any
+    >;
+    creditAddonPurchase: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        amountCents: number;
+        mode: "manual" | "auto";
+        orgId: Id<"organizations">;
+        stripeInvoiceId?: string;
+        stripePaymentIntentId: string;
+        triggeredByUserId?: Id<"users">;
+        units: number;
+      },
+      any
+    >;
     getByOrgId: FunctionReference<
       "query",
       "internal",
       { orgId: Id<"organizations"> },
+      any
+    >;
+    getByStripeCustomerId: FunctionReference<
+      "query",
+      "internal",
+      { stripeCustomerId: string },
+      any
+    >;
+    getByStripeSubscriptionId: FunctionReference<
+      "query",
+      "internal",
+      { stripeSubscriptionId: string },
+      any
+    >;
+    releaseAutoTopupReservation: FunctionReference<
+      "mutation",
+      "internal",
+      { amountCents: number; orgId: Id<"organizations"> },
+      any
+    >;
+    reserveAutoTopup: FunctionReference<
+      "mutation",
+      "internal",
+      { amountCents: number; orgId: Id<"organizations"> },
+      any
+    >;
+    revertToHobby: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
+    revokeAddonPurchase: FunctionReference<
+      "mutation",
+      "internal",
+      { stripePaymentIntentId: string },
+      any
+    >;
+    scheduleGraceSuspension: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
+    setStripeCustomerId: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations">; stripeCustomerId: string },
+      any
+    >;
+    setTier: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations">; tier: "hobby" | "pro" },
+      any
+    >;
+    transitionGraceToSuspended: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
+    triggerAutoTopup: FunctionReference<
+      "action",
+      "internal",
+      {
+        amountCents: number;
+        orgId: Id<"organizations">;
+        quantity?: number;
+        reason?: string;
+      },
+      any
+    >;
+    upsertStripeSubscriptionState: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        cancelAtPeriodEnd?: boolean;
+        currentPeriodEnd?: number;
+        currentPeriodStart?: number;
+        orgId: Id<"organizations">;
+        seatQuantity?: number;
+        status: "active" | "grace" | "suspended" | "canceled";
+        stripeCustomerId?: string;
+        stripePlanItemId?: string;
+        stripeSeatItemId?: string;
+        stripeSubscriptionId?: string;
+      },
       any
     >;
   };
@@ -715,6 +936,16 @@ export declare const internal: {
     >;
   };
   usage: {
+    checkAutoTopup: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        addonUnitsUsed: number;
+        orgId: Id<"organizations">;
+        subscriptionUnitsUsed: number;
+      },
+      any
+    >;
     getForOrgInternal: FunctionReference<
       "query",
       "internal",
@@ -752,6 +983,13 @@ export declare const internal: {
       { id: Id<"users"> },
       any
     >;
+    getUserByTokenIdentifier: FunctionReference<
+      "query",
+      "internal",
+      { tokenIdentifier: string },
+      any
+    >;
+    isAdminInternal: FunctionReference<"query", "internal", {}, any>;
   };
 };
 

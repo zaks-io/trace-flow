@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { checkUsage } from '../usage';
 
-function createMockEnv(kvData: string | null, doResponse: { allowed: boolean }) {
+function createMockEnv(
+  kvData: string | null,
+  doResponse: { allowed: boolean; periodEnd?: number },
+) {
   const mockFetch = vi.fn().mockResolvedValue(Response.json(doResponse));
   const mockStub = { fetch: mockFetch };
   const mockIdFromName = vi.fn().mockReturnValue('do-id-123');
@@ -23,11 +26,10 @@ function createMockEnv(kvData: string | null, doResponse: { allowed: boolean }) 
 }
 
 describe('checkUsage', () => {
-  it('throws when no subscription config in KV', async () => {
+  it('returns error when no subscription config in KV', async () => {
     const { env } = createMockEnv(null, { allowed: false });
-    await expect(checkUsage(env, 'org-1', 1)).rejects.toThrow(
-      'No subscription config found in KV for org: org-1',
-    );
+    const result = await checkUsage(env, 'org-1', 1);
+    expect(result).toEqual({ status: 'error', reason: 'no_subscription_config' });
   });
 
   it('returns allowed with tier when DO responds allowed: true', async () => {
@@ -41,7 +43,19 @@ describe('checkUsage', () => {
     expect(result).toEqual({ status: 'allowed', tier: 'pro' });
   });
 
-  it('returns exceeded with tier when DO responds allowed: false', async () => {
+  it('returns exceeded with tier and periodEnd when DO responds allowed: false', async () => {
+    const periodEnd = Date.now() + 86400000;
+    const kvData = JSON.stringify({
+      tier: 'hobby',
+      monthlyUnits: 100,
+      addonUnits: 0,
+    });
+    const { env } = createMockEnv(kvData, { allowed: false, periodEnd });
+    const result = await checkUsage(env, 'org-1', 1);
+    expect(result).toEqual({ status: 'exceeded', tier: 'hobby', periodEnd });
+  });
+
+  it('returns error when DO responds exceeded without periodEnd', async () => {
     const kvData = JSON.stringify({
       tier: 'hobby',
       monthlyUnits: 100,
@@ -49,7 +63,7 @@ describe('checkUsage', () => {
     });
     const { env } = createMockEnv(kvData, { allowed: false });
     const result = await checkUsage(env, 'org-1', 1);
-    expect(result).toEqual({ status: 'exceeded', tier: 'hobby' });
+    expect(result).toEqual({ status: 'error', reason: 'do_missing_period_end' });
   });
 
   it('passes correct subscription config and count to DO', async () => {
@@ -85,5 +99,43 @@ describe('checkUsage', () => {
     await checkUsage(env, 'org-abc', 1);
 
     expect(mockIdFromName).toHaveBeenCalledWith('org-abc');
+  });
+
+  it('returns error when DO fetch fails', async () => {
+    const kvData = JSON.stringify({ tier: 'pro', monthlyUnits: 10000, addonUnits: 0 });
+    const mockStub = { fetch: vi.fn().mockRejectedValue(new Error('DO unreachable')) };
+    const env = {
+      API_KEYS: { get: vi.fn().mockResolvedValue(kvData) } as unknown as KVNamespace,
+      USAGE_TRACKER: {
+        idFromName: vi.fn().mockReturnValue('do-id'),
+        get: vi.fn().mockReturnValue(mockStub),
+      } as unknown as DurableObjectNamespace,
+    };
+    const result = await checkUsage(env, 'org-1', 1);
+    expect(result).toEqual({ status: 'error', reason: 'do_unreachable' });
+  });
+
+  it('skips KV read when prefetched subscription is provided', async () => {
+    const prefetched = {
+      tier: 'pro' as const,
+      monthlyUnits: 10000,
+      addonUnits: 0,
+      status: 'active' as const,
+    };
+    const { env } = createMockEnv(null, { allowed: true });
+    const result = await checkUsage(env, 'org-1', 1, prefetched);
+    expect(result).toEqual({ status: 'allowed', tier: 'pro' });
+    // KV should not have been called
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(env.API_KEYS.get).not.toHaveBeenCalled();
+  });
+
+  it('returns error when KV data is not valid JSON', async () => {
+    const env = {
+      API_KEYS: { get: vi.fn().mockResolvedValue('not json') } as unknown as KVNamespace,
+      USAGE_TRACKER: {} as unknown as DurableObjectNamespace,
+    };
+    const result = await checkUsage(env, 'org-1', 1);
+    expect(result).toEqual({ status: 'error', reason: 'invalid_subscription_config' });
   });
 });

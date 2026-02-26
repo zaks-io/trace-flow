@@ -17,12 +17,35 @@ export const backfillOrgs = internalMutation({
 
       await ctx.db.patch(user._id, { orgId });
 
+      const existingMembership = await ctx.db
+        .query('organizationMembers')
+        .withIndex('by_user_id', (q) => q.eq('userId', user._id))
+        .filter((q) => q.eq(q.field('orgId'), orgId))
+        .first();
+
+      if (!existingMembership) {
+        await ctx.db.insert('organizationMembers', {
+          orgId,
+          userId: user._id,
+          role: 'owner',
+          status: 'active',
+          joinedAt: Date.now(),
+        });
+      }
+
       const hobbyConfig = TIER_CONFIG.hobby;
+      const now = Date.now();
       await ctx.db.insert('subscriptions', {
         orgId,
         tier: 'hobby',
+        status: 'active',
         monthlyUnits: hobbyConfig.monthlyUnits,
         addonUnits: 0,
+        seatQuantity: 1,
+        currentPeriodStart: now,
+        currentPeriodEnd: now + 30 * 24 * 60 * 60 * 1000,
+        currentPeriodOverageSpentCents: 0,
+        addonPurchaseCount: 0,
       });
 
       // Re-sync all API keys for this user with orgId
@@ -45,6 +68,10 @@ export const backfillOrgs = internalMutation({
         tier: 'hobby',
         monthlyUnits: hobbyConfig.monthlyUnits,
         addonUnits: 0,
+        status: 'active',
+        seatQuantity: 1,
+        currentPeriodStart: now,
+        currentPeriodEnd: now + 30 * 24 * 60 * 60 * 1000,
       });
 
       migrated++;

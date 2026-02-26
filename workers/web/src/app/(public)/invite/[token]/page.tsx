@@ -66,6 +66,15 @@ export default function InviteAcceptPage({ params }: { params: Promise<{ token: 
           <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-8">
             <h2 className="mb-2 text-xl font-semibold text-destructive">Invalid Invite</h2>
             <p className="text-destructive/80">{errorMessage}</p>
+            {errorMessage.includes('seat limit') && (
+              <p className="mt-3 text-sm text-destructive/80">
+                Org owners can increase seats in{' '}
+                <a className="underline" href="/app/settings/billing">
+                  billing settings
+                </a>
+                .
+              </p>
+            )}
           </div>
         )}
       </div>

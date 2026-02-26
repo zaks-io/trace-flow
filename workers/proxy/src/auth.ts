@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import type { SubscriptionKVData } from '@trace-flow/types';
 
 export interface ApiKeyData {
   expiresAt: number;
@@ -65,4 +66,39 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
 
 export function isAuthError(result: Response | ApiKeyData): result is Response {
   return result instanceof Response;
+}
+
+export interface BillingCheckResult {
+  status: 'active' | 'grace' | 'suspended' | 'canceled' | 'not_found' | 'error';
+  subscription?: SubscriptionKVData;
+}
+
+export async function checkBillingStatus(
+  env: { API_KEYS: KVNamespace },
+  orgId: string,
+): Promise<BillingCheckResult> {
+  const subRaw = await env.API_KEYS.get(`sub:${orgId}`);
+  if (!subRaw) {
+    return { status: 'not_found' };
+  }
+
+  let sub: SubscriptionKVData;
+  try {
+    sub = JSON.parse(subRaw) as SubscriptionKVData;
+  } catch {
+    console.error('Failed to parse subscription KV data', { orgId });
+    return { status: 'error' };
+  }
+
+  if (
+    sub.status === 'active' ||
+    sub.status === 'grace' ||
+    sub.status === 'suspended' ||
+    sub.status === 'canceled'
+  ) {
+    return { status: sub.status, subscription: sub };
+  }
+
+  console.error('Unrecognized billing status in KV', { orgId, status: sub.status });
+  return { status: 'error' };
 }

@@ -14,23 +14,26 @@ interface Env {
   CF_VERSION_METADATA?: { id: string };
 }
 
-const ALLOWED_ORIGINS = [
-  'http://localhost:3000',
-  'http://localhost:8788',
+const PRODUCTION_ORIGINS = [
   'https://trace-flow.dev',
   'https://trace-flow-web-dev.isaac-a46.workers.dev',
 ];
 
+const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
+
 const app = new Hono<{ Bindings: Env }>();
 
-app.use(
-  '*',
-  cors({
-    origin: (origin) => (ALLOWED_ORIGINS.includes(origin) ? origin : null),
+app.use('*', async (c, next) => {
+  const isDev = c.env.SENTRY_ENVIRONMENT !== 'production';
+  const allowed = isDev ? [...PRODUCTION_ORIGINS, ...DEV_ORIGINS] : PRODUCTION_ORIGINS;
+  const mw = cors({
+    origin: (origin) => (allowed.includes(origin) ? origin : null),
     allowMethods: ['GET', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
-  }),
-);
+  });
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+  return mw(c, next);
+});
 
 app.get('/bodies/:requestId/:type', async (c) => {
   const authError = await validateAuth0JWT(c);

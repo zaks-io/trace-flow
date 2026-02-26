@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { computePeriod } from '@trace-flow/utils';
 
 /**
@@ -488,6 +488,326 @@ describe('UsageTracker Durable Object', () => {
     it('returns 404 for unknown paths', async () => {
       const res = await doFetch(new Request('http://do/unknown'));
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('alarm handler', () => {
+    let mockCtx: ReturnType<typeof createMockDO>['ctx'];
+    let mockEnv: ReturnType<typeof createMockDO>['env'];
+
+    beforeEach(() => {
+      sqlMock = createSqlMock();
+      const mock = createMockDO(sqlMock);
+      mockCtx = mock.ctx;
+      mockEnv = mock.env;
+      doFetch = createDoFetch(sqlMock, mockCtx);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function pushToConvex(orgId: string, periodStart: number, periodEnd: number) {
+      const counters = sqlMock._getCounters();
+      const url = `${mockEnv.CONVEX_SITE_URL}/usage/record`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${mockEnv.USAGE_SYNC_SECRET}`,
+        },
+        body: JSON.stringify({
+          orgId,
+          periodStart,
+          periodEnd,
+          subscriptionUnitsUsed: counters.subscription_units_used,
+          addonUnitsUsed: counters.addon_units_used - counters.addon_baseline,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`pushToConvex failed: ${response.status}`);
+      }
+    }
+
+    async function runAlarm() {
+      const config = sqlMock._getConfig();
+      if (!config) throw new Error('UsageTracker alarm: no config row found');
+
+      const counters = sqlMock._getCounters();
+      if (
+        counters.subscription_units_used !== counters.last_pushed_subscription ||
+        counters.addon_units_used !== counters.last_pushed_addon
+      ) {
+        try {
+          await pushToConvex('org-test-123', config.period_start, config.period_end);
+        } catch {
+          await mockCtx.storage.setAlarm(Date.now() + 60_000);
+          return;
+        }
+        const freshCounters = sqlMock._getCounters();
+        sqlMock.exec(
+          'UPDATE counters SET last_pushed_subscription = ?, last_pushed_addon = ?',
+          freshCounters.subscription_units_used,
+          freshCounters.addon_units_used,
+        );
+      }
+    }
+
+    it('pushes deltas to Convex when counters changed', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+
+      await callCheck(doFetch, 5, defaultConfig);
+      await runAlarm();
+
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const [url, opts] = fetchSpy.mock.calls[0]!;
+      expect(url).toBe('https://test-convex.example.com/usage/record');
+      const body = JSON.parse((opts as RequestInit).body as string);
+      expect(body.subscriptionUnitsUsed).toBe(5);
+      expect(body.addonUnitsUsed).toBe(0);
+
+      const counters = sqlMock._getCounters();
+      expect(counters.last_pushed_subscription).toBe(5);
+    });
+
+    it('reschedules alarm on pushToConvex failure', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('error', { status: 500 })));
+
+      await callCheck(doFetch, 3, defaultConfig);
+      mockCtx.storage.setAlarm.mockClear();
+
+      await runAlarm();
+
+      expect(mockCtx.storage.setAlarm).toHaveBeenCalledOnce();
+      const counters = sqlMock._getCounters();
+      expect(counters.last_pushed_subscription).toBe(0);
+    });
+
+    it('is a no-op when counters have not changed since last push', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+
+      await callCheck(doFetch, 5, defaultConfig);
+      await runAlarm();
+      expect(fetchSpy).toHaveBeenCalledOnce();
+
+      fetchSpy.mockClear();
+      await runAlarm();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handlePeriodRollover', () => {
+    let mockCtx: ReturnType<typeof createMockDO>['ctx'];
+    let mockEnv: ReturnType<typeof createMockDO>['env'];
+
+    beforeEach(() => {
+      sqlMock = createSqlMock();
+      const mock = createMockDO(sqlMock);
+      mockCtx = mock.ctx;
+      mockEnv = mock.env;
+      doFetch = createDoFetch(sqlMock, mockCtx);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 })),
+      );
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function handlePeriodRollover() {
+      const config = sqlMock._getConfig();
+      if (!config) throw new Error('no config row found');
+      if (Date.now() < config.period_end) return;
+
+      await mockCtx.blockConcurrencyWhile(async () => {
+        try {
+          const counters = sqlMock._getCounters();
+          await fetch(`${mockEnv.CONVEX_SITE_URL}/usage/record`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${mockEnv.USAGE_SYNC_SECRET}`,
+            },
+            body: JSON.stringify({
+              orgId: 'org-test-123',
+              periodStart: config.period_start,
+              periodEnd: config.period_end,
+              subscriptionUnitsUsed: counters.subscription_units_used,
+              addonUnitsUsed: counters.addon_units_used - counters.addon_baseline,
+            }),
+          });
+        } catch {
+          // Proceed with reset even on push failure
+        }
+      });
+
+      const periodDuration = Math.max(1, config.period_end - config.period_start);
+      let periodStart = config.period_start;
+      let periodEnd = config.period_end;
+      while (Date.now() >= periodEnd) {
+        periodStart = periodEnd;
+        periodEnd = periodEnd + periodDuration;
+      }
+
+      const counters = sqlMock._getCounters();
+      sqlMock.exec('UPDATE config SET period_start = ?, period_end = ?', periodStart, periodEnd);
+      sqlMock.exec(
+        'UPDATE counters SET subscription_units_used = 0, addon_baseline = ?, last_pushed_subscription = 0, last_pushed_addon = 0',
+        counters.addon_units_used,
+      );
+    }
+
+    it('resets subscription counters and preserves addon baseline', async () => {
+      const config = { tier: 'pro', monthlyUnits: 10, addonUnits: 20 };
+      await callCheck(doFetch, 10, config);
+      await callCheck(doFetch, 5, config);
+
+      const currentConfig = sqlMock._getConfig()!;
+      sqlMock._setConfig({ ...currentConfig, period_end: Date.now() - 1000 });
+
+      await handlePeriodRollover();
+
+      const counters = sqlMock._getCounters();
+      expect(counters.subscription_units_used).toBe(0);
+      expect(counters.addon_baseline).toBe(5);
+      expect(counters.last_pushed_subscription).toBe(0);
+      expect(counters.last_pushed_addon).toBe(0);
+    });
+
+    it('rolls forward multiple periods when clock is far ahead', async () => {
+      await callCheck(doFetch, 1, defaultConfig);
+
+      const currentConfig = sqlMock._getConfig()!;
+      const periodDuration = currentConfig.period_end - currentConfig.period_start;
+      // Shift both start and end 3 periods into the past
+      sqlMock._setConfig({
+        ...currentConfig,
+        period_start: currentConfig.period_start - periodDuration * 3,
+        period_end: currentConfig.period_end - periodDuration * 3,
+      });
+
+      await handlePeriodRollover();
+
+      const newConfig = sqlMock._getConfig()!;
+      expect(newConfig.period_end).toBeGreaterThan(Date.now());
+      expect(newConfig.period_start).toBeLessThan(newConfig.period_end);
+    });
+
+    it('proceeds with reset when pushToConvex fails during rollover', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
+
+      await callCheck(doFetch, 5, defaultConfig);
+      const currentConfig = sqlMock._getConfig()!;
+      sqlMock._setConfig({ ...currentConfig, period_end: Date.now() - 1000 });
+
+      await handlePeriodRollover();
+
+      const counters = sqlMock._getCounters();
+      expect(counters.subscription_units_used).toBe(0);
+    });
+  });
+
+  describe('pushToConvex', () => {
+    let mockEnv: ReturnType<typeof createMockDO>['env'];
+
+    beforeEach(() => {
+      sqlMock = createSqlMock();
+      const mock = createMockDO(sqlMock);
+      mockEnv = mock.env;
+      doFetch = createDoFetch(sqlMock, mock.ctx);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function pushToConvex(orgId: string, periodStart: number, periodEnd: number) {
+      const counters = sqlMock._getCounters();
+      const url = `${mockEnv.CONVEX_SITE_URL}/usage/record`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${mockEnv.USAGE_SYNC_SECRET}`,
+        },
+        body: JSON.stringify({
+          orgId,
+          periodStart,
+          periodEnd,
+          subscriptionUnitsUsed: counters.subscription_units_used,
+          addonUnitsUsed: counters.addon_units_used - counters.addon_baseline,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`pushToConvex failed: ${response.status}`);
+      }
+    }
+
+    it('sends correct request body to Convex', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const config = { tier: 'pro', monthlyUnits: 10, addonUnits: 5 };
+      await callCheck(doFetch, 10, config);
+      await callCheck(doFetch, 3, config);
+
+      const currentConfig = sqlMock._getConfig()!;
+      await pushToConvex('org-123', currentConfig.period_start, currentConfig.period_end);
+
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const [url, opts] = fetchSpy.mock.calls[0]!;
+      const reqOpts = opts as RequestInit & { headers: Record<string, string> };
+      expect(url).toBe('https://test-convex.example.com/usage/record');
+      expect(reqOpts.method).toBe('POST');
+      expect(reqOpts.headers.Authorization).toBe('Bearer test-secret');
+      const body = JSON.parse(reqOpts.body as string);
+      expect(body.orgId).toBe('org-123');
+      expect(body.subscriptionUnitsUsed).toBe(10);
+      expect(body.addonUnitsUsed).toBe(3);
+    });
+
+    it('throws on non-ok response', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response('Internal Server Error', { status: 500 })),
+      );
+
+      await callCheck(doFetch, 1, defaultConfig);
+      const currentConfig = sqlMock._getConfig()!;
+
+      await expect(
+        pushToConvex('org-123', currentConfig.period_start, currentConfig.period_end),
+      ).rejects.toThrow('pushToConvex failed: 500');
+    });
+
+    it('subtracts addon_baseline for incremental reporting', async () => {
+      const fetchSpy = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const config = { tier: 'pro', monthlyUnits: 10, addonUnits: 20 };
+      await callCheck(doFetch, 10, config);
+      await callCheck(doFetch, 5, config);
+
+      // Trigger rollover via createDoFetch's built-in period check
+      const currentConfig = sqlMock._getConfig()!;
+      sqlMock._setConfig({ ...currentConfig, period_end: Date.now() - 1000 });
+      await callCheck(doFetch, 1, config);
+
+      // After rollover, addon_baseline = 5, addon_units_used = 5 still
+      // Use more addon units
+      await callCheck(doFetch, 10, config);
+      await callCheck(doFetch, 2, config);
+
+      const newConfig = sqlMock._getConfig()!;
+      await pushToConvex('org-123', newConfig.period_start, newConfig.period_end);
+
+      const body = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
+      const counters = sqlMock._getCounters();
+      expect(body.addonUnitsUsed).toBe(counters.addon_units_used - counters.addon_baseline);
     });
   });
 });

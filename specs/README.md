@@ -60,6 +60,15 @@ What each part of the system does.
 - [Web](components/web.md) - Dashboard frontend
 - [Convex](components/convex.md) - Backend services
 
+### Features
+
+Planned and implemented feature specs.
+
+- [Invite System](features/invite-system.md) - Admin invites and public waitlist
+- [Stripe Billing](features/stripe-billing.md) - Subscriptions, payments, and usage billing
+- [LLM Usage Reporting](features/llm-usage-reporting.md) - Usage and cost analytics
+- [Signup & Onboarding](features/signup-onboarding.md) - User registration flow
+
 ### Integrations
 
 How we connect to external services.

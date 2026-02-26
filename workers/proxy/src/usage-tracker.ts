@@ -1,5 +1,4 @@
 import type { SubscriptionKVData } from '@trace-flow/types';
-import { computePeriod } from '@trace-flow/utils';
 import { DurableObject } from 'cloudflare:workers';
 
 interface Env {
@@ -101,7 +100,8 @@ export class UsageTracker extends DurableObject<Env> {
   }
 
   private seedConfig(subConfig: SubscriptionKVData, orgId: string) {
-    const { periodStart, periodEnd } = computePeriod(new Date());
+    const periodStart = subConfig.currentPeriodStart ?? Date.now();
+    const periodEnd = subConfig.currentPeriodEnd ?? periodStart + 30 * 24 * 60 * 60 * 1000;
 
     this.ctx.storage.sql.exec(
       'INSERT OR REPLACE INTO config (id, org_id, tier, monthly_units, addon_units, period_start, period_end) VALUES (1, ?, ?, ?, ?, ?, ?)',
@@ -119,11 +119,15 @@ export class UsageTracker extends DurableObject<Env> {
   }
 
   private updateConfig(subConfig: SubscriptionKVData) {
+    const nextPeriodStart = subConfig.currentPeriodStart ?? this.requireConfig().period_start;
+    const nextPeriodEnd = subConfig.currentPeriodEnd ?? this.requireConfig().period_end;
     this.ctx.storage.sql.exec(
-      'UPDATE config SET tier = ?, monthly_units = ?, addon_units = ? WHERE id = 1',
+      'UPDATE config SET tier = ?, monthly_units = ?, addon_units = ?, period_start = ?, period_end = ? WHERE id = 1',
       subConfig.tier,
       subConfig.monthlyUnits,
       subConfig.addonUnits,
+      nextPeriodStart,
+      nextPeriodEnd,
     );
   }
 
@@ -147,7 +151,14 @@ export class UsageTracker extends DurableObject<Env> {
       }
     });
 
-    const { periodStart, periodEnd } = computePeriod(new Date());
+    // If Stripe sync lags, roll period forward by prior duration so requests keep flowing.
+    const periodDuration = Math.max(1, config.period_end - config.period_start);
+    let periodStart = config.period_start;
+    let periodEnd = config.period_end;
+    while (Date.now() >= periodEnd) {
+      periodStart = periodEnd;
+      periodEnd = periodEnd + periodDuration;
+    }
 
     // Reset subscription counters; addon_units_used does NOT reset (addon units persist until used)
     // Snapshot current addon_units_used as baseline so pushToConvex reports only incremental usage per period
@@ -169,7 +180,10 @@ export class UsageTracker extends DurableObject<Env> {
     return (
       current.tier !== incoming.tier ||
       current.monthly_units !== incoming.monthlyUnits ||
-      current.addon_units !== incoming.addonUnits
+      current.addon_units !== incoming.addonUnits ||
+      (incoming.currentPeriodStart !== undefined &&
+        current.period_start !== incoming.currentPeriodStart) ||
+      (incoming.currentPeriodEnd !== undefined && current.period_end !== incoming.currentPeriodEnd)
     );
   }
 
@@ -188,13 +202,23 @@ export class UsageTracker extends DurableObject<Env> {
         this.seedConfig(subscriptionConfig, orgId);
         config = this.requireConfig();
       } else {
-        await this.handlePeriodRollover();
-        config = this.requireConfig();
-
         if (this.configChanged(config, subscriptionConfig)) {
+          const prevPeriodStart = config.period_start;
           this.updateConfig(subscriptionConfig);
           config = this.requireConfig();
+
+          if (config.period_start !== prevPeriodStart) {
+            // New billing period arrived from Stripe sync.
+            const counters = this.getCounters();
+            this.ctx.storage.sql.exec(
+              'UPDATE counters SET subscription_units_used = 0, addon_baseline = ?, last_pushed_subscription = 0, last_pushed_addon = 0 WHERE id = 1',
+              counters.addon_units_used,
+            );
+          }
         }
+
+        await this.handlePeriodRollover();
+        config = this.requireConfig();
       }
 
       const counters = this.getCounters();
@@ -205,7 +229,7 @@ export class UsageTracker extends DurableObject<Env> {
       const totalRemaining = Math.max(0, subscriptionRemaining) + Math.max(0, addonRemaining);
 
       if (count > totalRemaining) {
-        return Response.json({ allowed: false });
+        return Response.json({ allowed: false, periodEnd: config.period_end });
       }
 
       // Decrement subscription units first, then addon

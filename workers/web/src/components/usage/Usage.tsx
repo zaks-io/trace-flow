@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
-import { type Preloaded, usePreloadedQuery } from 'convex/react';
-import { type api } from '@convex/_generated/api';
+import { type Preloaded, usePreloadedQuery, useQuery } from 'convex/react';
+import { api } from '@convex/_generated/api';
 import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer, Key } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { snapToMinute } from '@/lib/tinybird';
@@ -38,6 +38,7 @@ export default function Usage({
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
+  const billingSummary = useQuery(api.subscriptions.getBillingSummaryForCurrentUser);
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [metric, setMetric] = useState<TimeseriesMetric>('cost');
   const [providerFilter, setProviderFilter] = useState('');
@@ -224,6 +225,55 @@ export default function Usage({
       {hasError && (
         <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
           Failed to load usage data. Please try refreshing.
+        </div>
+      )}
+
+      {billingSummary?.subscription && (
+        <div className="mb-6 rounded-lg border border-border bg-card p-4 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-muted-foreground">
+              Billing status:{' '}
+              <span className="font-medium text-foreground">
+                {billingSummary.subscription.status ?? 'active'}
+              </span>
+              {' • '}Seats: {billingSummary.activeMembers}/
+              {billingSummary.subscription.seatQuantity ?? 1}
+              {' • '}Included units: {billingSummary.subscription.monthlyUnits.toLocaleString()}
+              {billingSummary.currentPeriodEnd > 0 && (
+                <>
+                  {' • '}Resets: {new Date(billingSummary.currentPeriodEnd).toLocaleDateString()}
+                </>
+              )}
+            </div>
+            <a className="text-primary hover:underline" href="/app/settings/billing">
+              Manage billing
+            </a>
+          </div>
+          {billingSummary.totalAvailable > 0 && (
+            <div className="mt-3">
+              <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                <span>
+                  {billingSummary.totalUsed.toLocaleString()} /{' '}
+                  {billingSummary.totalAvailable.toLocaleString()} units used
+                </span>
+                <span>{billingSummary.remaining.toLocaleString()} remaining</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    billingSummary.totalUsed / billingSummary.totalAvailable > 0.9
+                      ? 'bg-red-500'
+                      : billingSummary.totalUsed / billingSummary.totalAvailable > 0.7
+                        ? 'bg-amber-500'
+                        : 'bg-primary'
+                  }`}
+                  style={{
+                    width: `${Math.min(100, (billingSummary.totalUsed / billingSummary.totalAvailable) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
 
