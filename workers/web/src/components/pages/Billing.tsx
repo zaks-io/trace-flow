@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { usePageHeader } from '@/components/PageHeaderContext';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,6 @@ function formatCents(cents?: number): string {
 }
 
 export default function Billing() {
-  usePageHeader('Billing');
   const summary = useQuery(api.subscriptions.getBillingSummaryForCurrentUser);
   const createPortal = useAction(api.subscriptions.createBillingPortalSession);
   const createCheckout = useAction(api.subscriptions.createOrgCheckoutSession);
