@@ -157,6 +157,14 @@ app.all('*', async (c) => {
 
   const decision = resolveTracingDecision(billing, usageCheck);
 
+  if (decision.reason === 'internal_error') {
+    console.error('Tracing disabled due to internal error — DO or billing check failed', {
+      orgId: keyData.orgId,
+      billingStatus: billing.status,
+      usageStatus: usageCheck.status,
+    });
+  }
+
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
 

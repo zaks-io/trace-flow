@@ -172,6 +172,12 @@ export const getBillingSummaryForCurrentUser = query({
     const totalUsed = (usage?.subscriptionUnitsUsed ?? 0) + (usage?.addonUnitsUsed ?? 0);
     const totalAvailable = subscription.monthlyUnits + subscription.addonUnits;
 
+    const membership = await ctx.db
+      .query('organizationMembers')
+      .withIndex('by_user_id', (q) => q.eq('userId', user._id))
+      .filter((q) => q.eq(q.field('orgId'), user.orgId!))
+      .first();
+
     return {
       subscription,
       activeMembers: members.length,
@@ -180,6 +186,7 @@ export const getBillingSummaryForCurrentUser = query({
       totalAvailable,
       remaining: Math.max(0, totalAvailable - totalUsed),
       currentPeriodEnd: subscription.currentPeriodEnd,
+      role: membership?.role ?? 'member',
     };
   },
 });
@@ -337,7 +344,9 @@ export const createOrgCheckoutSession = action({
           },
         },
       },
-      { idempotencyKey: `checkout-sub:${user.orgId}:${Math.floor(Date.now() / 60000)}` },
+      {
+        idempotencyKey: `checkout-sub:${user.orgId}:${seatQuantity}:${Math.floor(Date.now() / 60000)}`,
+      },
     );
 
     return { url: session.url };

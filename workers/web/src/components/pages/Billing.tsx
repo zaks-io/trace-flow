@@ -39,6 +39,8 @@ export default function Billing() {
     }
   }, [summary?.subscription]);
 
+  const isOwner = summary?.role === 'owner';
+
   const usageCopy = useMemo(() => {
     if (!summary?.subscription) return null;
     return `${summary.activeMembers} active members / ${summary.subscription.seatQuantity ?? 1} seats`;
@@ -97,39 +99,43 @@ export default function Billing() {
           )}
           <div className="text-sm text-muted-foreground">{usageCopy}</div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium">Seat quantity</label>
-              <Input
-                type="number"
-                min={1}
-                value={seatQuantity}
-                onChange={(e) => setSeatQuantity(e.target.value)}
-              />
-            </div>
-            <div className="flex items-end gap-2">
-              <Button
-                onClick={() =>
-                  void withBusy('seats', async () => {
-                    await updateSeats({ seatQuantity: Math.max(1, Number(seatQuantity) || 1) });
-                  })
-                }
-                disabled={busy !== null}
-              >
-                {busy === 'seats' ? 'Updating...' : 'Update Seats'}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  void withBusy('portal', async () => {
-                    const res = await createPortal({});
-                    if (res.url) window.location.href = res.url;
-                  })
-                }
-                disabled={busy !== null}
-              >
-                {busy === 'portal' ? 'Opening...' : 'Manage Billing'}
-              </Button>
-            </div>
+            {isOwner && (
+              <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium">Seat quantity</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={seatQuantity}
+                    onChange={(e) => setSeatQuantity(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-end gap-2">
+                  <Button
+                    onClick={() =>
+                      void withBusy('seats', async () => {
+                        await updateSeats({ seatQuantity: Math.max(1, Number(seatQuantity) || 1) });
+                      })
+                    }
+                    disabled={busy !== null}
+                  >
+                    {busy === 'seats' ? 'Updating...' : 'Update Seats'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      void withBusy('portal', async () => {
+                        const res = await createPortal({});
+                        if (res.url) window.location.href = res.url;
+                      })
+                    }
+                    disabled={busy !== null}
+                  >
+                    {busy === 'portal' ? 'Opening...' : 'Manage Billing'}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -143,39 +149,46 @@ export default function Billing() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button
-            onClick={() =>
-              void withBusy('upgrade', async () => {
-                const res = await createCheckout({});
-                if (res.url) window.location.href = res.url;
-              })
-            }
-            disabled={busy !== null}
-          >
-            {busy === 'upgrade' ? 'Opening...' : 'Start / Upgrade Subscription'}
-          </Button>
-          <Input
-            type="number"
-            min={1}
-            value={addonPackages}
-            onChange={(e) => setAddonPackages(e.target.value)}
-            className="w-44"
-            placeholder="Packages (100k units each)"
-          />
-          <Button
-            variant="outline"
-            onClick={() =>
-              void withBusy('addon', async () => {
-                const res = await createAddonCheckout({
-                  quantity: Math.max(1, Math.floor(Number(addonPackages) || 1)),
-                });
-                if (res.url) window.location.href = res.url;
-              })
-            }
-            disabled={busy !== null || summary.subscription.tier !== 'pro'}
-          >
-            {busy === 'addon' ? 'Opening...' : 'Buy Addon Pack'}
-          </Button>
+          {isOwner &&
+            !(summary.subscription.tier === 'pro' && summary.subscription.status === 'active') && (
+              <Button
+                onClick={() =>
+                  void withBusy('upgrade', async () => {
+                    const res = await createCheckout({});
+                    if (res.url) window.location.href = res.url;
+                  })
+                }
+                disabled={busy !== null}
+              >
+                {busy === 'upgrade' ? 'Opening...' : 'Start / Upgrade Subscription'}
+              </Button>
+            )}
+          {isOwner && (
+            <>
+              <Input
+                type="number"
+                min={1}
+                value={addonPackages}
+                onChange={(e) => setAddonPackages(e.target.value)}
+                className="w-44"
+                placeholder="Packages (100k units each)"
+              />
+              <Button
+                variant="outline"
+                onClick={() =>
+                  void withBusy('addon', async () => {
+                    const res = await createAddonCheckout({
+                      quantity: Math.max(1, Math.floor(Number(addonPackages) || 1)),
+                    });
+                    if (res.url) window.location.href = res.url;
+                  })
+                }
+                disabled={busy !== null || summary.subscription.tier !== 'pro'}
+              >
+                {busy === 'addon' ? 'Opening...' : 'Buy Addon Pack'}
+              </Button>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -188,58 +201,70 @@ export default function Billing() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex items-center gap-3">
-            <Switch checked={autoOverage} onCheckedChange={setAutoOverage} />
-            <span className="text-sm text-muted-foreground">Enable auto-topup</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={overageCap}
-              onChange={(e) => setOverageCap(e.target.value)}
-              className="w-44"
-            />
-            <Button
-              variant="outline"
-              onClick={() =>
-                void withBusy('overage', async () => {
-                  await updateAutoOverage({
-                    autoOverage,
-                    overageCapCents: Math.max(0, Math.round((Number(overageCap) || 0) * 100)),
-                  });
-                })
-              }
-              disabled={busy !== null || summary.subscription.tier !== 'pro'}
-            >
-              {busy === 'overage' ? 'Saving...' : 'Save Auto-topup'}
-            </Button>
-          </div>
+          {isOwner ? (
+            <>
+              <div className="flex items-center gap-3">
+                <Switch checked={autoOverage} onCheckedChange={setAutoOverage} />
+                <span className="text-sm text-muted-foreground">Enable auto-topup</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={overageCap}
+                  onChange={(e) => setOverageCap(e.target.value)}
+                  className="w-44"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    void withBusy('overage', async () => {
+                      await updateAutoOverage({
+                        autoOverage,
+                        overageCapCents: Math.max(0, Math.round((Number(overageCap) || 0) * 100)),
+                      });
+                    })
+                  }
+                  disabled={busy !== null || summary.subscription.tier !== 'pro'}
+                >
+                  {busy === 'overage' ? 'Saving...' : 'Save Auto-topup'}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Auto-topup: {summary.subscription.autoOverage ? 'enabled' : 'disabled'} (cap:{' '}
+              {formatCents(summary.subscription.overageCapCents)}). Contact your org owner to
+              change.
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recovery</CardTitle>
-          <CardDescription>
-            Force a Stripe reconciliation if local billing state looks stale.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            variant="outline"
-            onClick={() =>
-              void withBusy('reconcile', async () => {
-                await reconcile({});
-              })
-            }
-            disabled={busy !== null}
-          >
-            {busy === 'reconcile' ? 'Reconciling...' : 'Reconcile Billing State'}
-          </Button>
-        </CardContent>
-      </Card>
+      {isOwner && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Recovery</CardTitle>
+            <CardDescription>
+              Force a Stripe reconciliation if local billing state looks stale.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              variant="outline"
+              onClick={() =>
+                void withBusy('reconcile', async () => {
+                  await reconcile({});
+                })
+              }
+              disabled={busy !== null}
+            >
+              {busy === 'reconcile' ? 'Reconciling...' : 'Reconcile Billing State'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
