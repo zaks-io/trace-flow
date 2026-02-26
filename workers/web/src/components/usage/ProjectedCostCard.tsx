@@ -11,13 +11,13 @@ const trendConfig = {
 export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | null }) {
   if (!forecast || forecast.insufficient_data) {
     return (
-      <div className="relative overflow-hidden rounded-xl border border-rose-500/30 bg-linear-to-br from-rose-500/20 to-rose-500/5 p-4">
+      <div className="relative overflow-hidden rounded-xl bg-linear-to-br from-chart-6/20 to-chart-6/5 p-5">
         <div>
-          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">
             Projected Monthly Cost
           </p>
-          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">-</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">Not enough data</p>
+          <p className="mt-2 font-mono text-3xl font-medium tabular-nums text-foreground">-</p>
+          <p className="mt-1 text-xs text-muted-foreground">Not enough data</p>
         </div>
       </div>
     );
@@ -27,16 +27,16 @@ export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | nu
   const { icon: TrendIcon, color: trendColor } = trendConfig[trend] ?? trendConfig.stable;
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-rose-500/30 bg-linear-to-br from-rose-500/20 to-rose-500/5 p-4">
+    <div className="relative overflow-hidden rounded-xl bg-linear-to-br from-chart-6/20 to-chart-6/5 p-5">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">
             Projected Monthly Cost
           </p>
-          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
+          <p className="mt-2 font-mono text-3xl font-medium tabular-nums text-foreground">
             {formatCurrency(forecast.projected_monthly_cost)}
           </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             {formatCurrency(forecast.confidence_low)} &ndash;{' '}
             {formatCurrency(forecast.confidence_high)}
           </p>

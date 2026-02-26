@@ -229,7 +229,7 @@ export default function Usage({
       )}
 
       {billingSummary?.subscription && (
-        <div className="mb-6 rounded-lg border border-border bg-card p-4 text-sm">
+        <div className="mb-6 rounded-lg bg-card/40 p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-muted-foreground">
               Billing status:{' '}
@@ -324,7 +324,7 @@ export default function Usage({
           </div>
 
           {/* Cost Over Time */}
-          <div className="rounded-xl border border-border bg-card p-6">
+          <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
@@ -361,7 +361,7 @@ export default function Usage({
 
           {/* Cost Breakdown + Operations (side by side) */}
           <div className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border border-border bg-card p-6">
+            <div className="rounded-xl bg-card/40 p-6">
               <div className="mb-4 flex items-center gap-2">
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">Cost Breakdown</h2>
@@ -373,7 +373,7 @@ export default function Usage({
               )}
             </div>
 
-            <div className="rounded-xl border border-border bg-card p-6">
+            <div className="rounded-xl bg-card/40 p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Layers className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">By Operation</h2>
@@ -383,7 +383,7 @@ export default function Usage({
           </div>
 
           {/* Model Comparison */}
-          <div className="rounded-xl border border-border bg-card p-6">
+          <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center gap-2">
               <Cpu className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-base font-medium text-foreground">Model Comparison</h2>
@@ -393,7 +393,7 @@ export default function Usage({
 
           {/* Provider Breakdown + API Key Breakdown (side by side) */}
           <div className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border border-border bg-card p-6">
+            <div className="rounded-xl bg-card/40 p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Server className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">Provider Breakdown</h2>
@@ -401,7 +401,7 @@ export default function Usage({
               <ProviderBreakdownChart data={providers} />
             </div>
 
-            <div className="rounded-xl border border-border bg-card p-6">
+            <div className="rounded-xl bg-card/40 p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Key className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">By API Key</h2>

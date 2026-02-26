@@ -166,7 +166,7 @@ export function DataTable<TData>({
         apiKeyMap={apiKeyMap}
       />
 
-      <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card relative">
+      <div className="card-elevated overflow-hidden rounded-xl bg-card/40 relative">
         {/* Loading overlay */}
         {loading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/80 backdrop-blur-[1px]">
@@ -202,7 +202,7 @@ export function DataTable<TData>({
                 </tr>
               ))}
             </thead>
-            <tbody className="divide-y divide-border bg-card">
+            <tbody className="divide-y divide-border/50 bg-transparent">
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
                   <td
