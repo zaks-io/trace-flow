@@ -11,7 +11,6 @@
   "dependencies": {
     "@trace-flow/emails": "workspace:*",
     "@trace-flow/types": "workspace:*",
-    "@trace-flow/utils": "workspace:*",
     "@react-email/components": "^1.0.8",
     "convex-helpers": "^0.1.113",
     "convex": "^1.32.0",

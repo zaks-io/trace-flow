@@ -28,7 +28,6 @@
         "@react-email/components": "^1.0.8",
         "@trace-flow/emails": "workspace:*",
         "@trace-flow/types": "workspace:*",
-        "@trace-flow/utils": "workspace:*",
         "convex": "^1.32.0",
         "convex-helpers": "^0.1.113",
         "hono": "^4.10.2",
