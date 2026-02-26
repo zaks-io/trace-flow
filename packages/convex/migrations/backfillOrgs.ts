@@ -17,6 +17,22 @@ export const backfillOrgs = internalMutation({
 
       await ctx.db.patch(user._id, { orgId });
 
+      const existingMembership = await ctx.db
+        .query('organizationMembers')
+        .withIndex('by_user_id', (q) => q.eq('userId', user._id))
+        .filter((q) => q.eq(q.field('orgId'), orgId))
+        .first();
+
+      if (!existingMembership) {
+        await ctx.db.insert('organizationMembers', {
+          orgId,
+          userId: user._id,
+          role: 'owner',
+          status: 'active',
+          joinedAt: Date.now(),
+        });
+      }
+
       const hobbyConfig = TIER_CONFIG.hobby;
       const now = Date.now();
       await ctx.db.insert('subscriptions', {

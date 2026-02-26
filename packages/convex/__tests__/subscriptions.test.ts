@@ -307,10 +307,10 @@ describe('upsertStripeSubscriptionState handler logic', () => {
     ctx.db.query = vi.fn().mockReturnValue(makeQueryReturning(sub));
 
     const subscription = await ctx.db.query('subscriptions').withIndex('by_org_id').first();
-    const newStatus = 'grace';
+    const newStatus = 'grace' as string;
 
-    if (newStatus === 'active' && subscription!.gracePeriodSchedulerId) {
-      await ctx.scheduler.cancel(subscription!.gracePeriodSchedulerId);
+    if (newStatus === 'active' && subscription?.gracePeriodSchedulerId) {
+      await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
     }
 
     expect(ctx._schedulerCancel).not.toHaveBeenCalled();

@@ -685,6 +685,7 @@ export declare const internal: {
     };
   };
   migrations: {
+    backfillAll: FunctionReference<"mutation", "internal", {}, any>;
     backfillOrgBilling: {
       backfillOrgBilling: FunctionReference<"mutation", "internal", any, any>;
     };

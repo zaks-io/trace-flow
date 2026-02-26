@@ -46,9 +46,10 @@ export const createOrgInvite = mutation({
   args: { email: v.string() },
   handler: async (ctx, args) => {
     const user = await requireEnabledUser(ctx);
-    if (!user.orgId) throw new Error('No organization found');
+    const orgId = user.orgId;
+    if (!orgId) throw new Error('No organization found');
 
-    const org = await ctx.db.get(user.orgId);
+    const org = await ctx.db.get(orgId);
     if (!org) throw new Error('Organization not found');
     if (org.ownerId !== user._id) {
       throw new Error('Only organization owners can invite members');
@@ -68,7 +69,7 @@ export const createOrgInvite = mutation({
     // Check seat limits before creating the invite
     const subscription = await ctx.db
       .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
+      .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
       .first();
     if (!subscription) {
       throw new Error('Organization subscription not found');
@@ -76,12 +77,12 @@ export const createOrgInvite = mutation({
 
     const activeMembers = await ctx.db
       .query('organizationMembers')
-      .withIndex('by_org_id_status', (q) => q.eq('orgId', user.orgId).eq('status', 'active'))
+      .withIndex('by_org_id_status', (q) => q.eq('orgId', orgId).eq('status', 'active'))
       .collect();
 
     const pendingInvites = await ctx.db
       .query('invites')
-      .withIndex('by_org_id_status', (q) => q.eq('orgId', user.orgId).eq('status', 'pending'))
+      .withIndex('by_org_id_status', (q) => q.eq('orgId', orgId).eq('status', 'pending'))
       .collect();
 
     if (activeMembers.length + pendingInvites.length >= subscription.seatQuantity) {
@@ -95,7 +96,7 @@ export const createOrgInvite = mutation({
     const inviteId = await ctx.db.insert('invites', {
       email,
       invitedBy: user._id,
-      orgId: user.orgId,
+      orgId,
       status: 'pending',
       token,
       expiresAt,
@@ -145,10 +146,11 @@ export const acceptInvite = mutation({
       throw new Error('Invite has expired');
     }
 
-    if (invite.orgId) {
+    const inviteOrgId = invite.orgId;
+    if (inviteOrgId) {
       const subscription = await ctx.db
         .query('subscriptions')
-        .withIndex('by_org_id', (q) => q.eq('orgId', invite.orgId))
+        .withIndex('by_org_id', (q) => q.eq('orgId', inviteOrgId))
         .first();
       if (!subscription) {
         throw new Error('Organization subscription not found');
@@ -157,12 +159,12 @@ export const acceptInvite = mutation({
       const seatLimit = subscription.seatQuantity;
       const activeMembers = await ctx.db
         .query('organizationMembers')
-        .withIndex('by_org_id_status', (q) => q.eq('orgId', invite.orgId).eq('status', 'active'))
+        .withIndex('by_org_id_status', (q) => q.eq('orgId', inviteOrgId).eq('status', 'active'))
         .collect();
 
       const pendingInvites = await ctx.db
         .query('invites')
-        .withIndex('by_org_id_status', (q) => q.eq('orgId', invite.orgId).eq('status', 'pending'))
+        .withIndex('by_org_id_status', (q) => q.eq('orgId', inviteOrgId).eq('status', 'pending'))
         .collect();
 
       // Use > because the current invite being accepted is one of the pending invites
