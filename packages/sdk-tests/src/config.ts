@@ -1,13 +1,25 @@
 export const PROXY_URL = process.env.PROXY_URL ?? 'http://localhost:8787';
-export const TRACE_FLOW_API_KEY = process.env.TRACE_FLOW_API_KEY;
+const TRACE_FLOW_API_KEY = process.env.TRACE_FLOW_API_KEY;
 
-if (!TRACE_FLOW_API_KEY) {
-  console.error('Error: TRACE_FLOW_API_KEY environment variable is required');
-  console.error('Set it in packages/sdk-tests/.env or export it in your shell');
-  process.exit(1);
+export function ensureTraceFlowKey(): void {
+  if (!TRACE_FLOW_API_KEY) {
+    console.error('Error: TRACE_FLOW_API_KEY environment variable is required');
+    console.error('Set it in packages/sdk-tests/.env or export it in your shell');
+    process.exit(1);
+  }
 }
 
-export const proxyHeaders = { 'X-Trace-Flow-Api-Key': TRACE_FLOW_API_KEY };
+export function getProxyHeaders(): Record<string, string> {
+  ensureTraceFlowKey();
+  return { 'X-Trace-Flow-Api-Key': TRACE_FLOW_API_KEY! };
+}
+
+export const proxyHeaders: Record<string, string> = {
+  get ['X-Trace-Flow-Api-Key']() {
+    ensureTraceFlowKey();
+    return TRACE_FLOW_API_KEY!;
+  },
+};
 
 export function requireEnv(name: string): string {
   const value = process.env[name];

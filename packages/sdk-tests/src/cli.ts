@@ -1,0 +1,132 @@
+#!/usr/bin/env bun
+import { program } from 'commander';
+import { PROXY_URL } from './config';
+import { getProviders, getProvidersByIds } from './providers';
+import { getAllScenarios, getScenario } from './scenarios';
+import { generateTraceId, validateTraceId } from './trace';
+
+interface RunOptions {
+  providers?: string[];
+  scenario?: string;
+  json?: boolean;
+  interactive?: boolean;
+  requests?: number;
+  concurrency?: number;
+  traceId?: string;
+}
+
+program.name('sdk-tests').description('Trace Flow SDK integration test CLI').version('0.0.1');
+
+program
+  .command('run')
+  .description('Run test scenarios against configured providers')
+  .option(
+    '-p, --providers <ids>',
+    'Comma-separated provider ids (e.g. openai,anthropic). Omit for all available.',
+    (v: string) => v.split(',').map((s) => s.trim()),
+  )
+  .option('-s, --scenario <id>', 'Scenario id (default: basic)', 'basic')
+  .option('--json', 'Output results as JSON')
+  .option('-i, --interactive', 'Interactive provider/scenario selection')
+  .option('--requests <n>', 'Number of requests for multi-request scenarios', parseInt)
+  .option('--concurrency <n>', 'Max concurrent requests', parseInt)
+  .option('--trace-id <id>', 'Override trace ID for shared-trace scenarios')
+  .action(async (opts: RunOptions) => {
+    if (opts.interactive) {
+      const { runInteractive } = await import('./cli-interactive');
+      await runInteractive(opts);
+      return;
+    }
+
+    const scenario = getScenario(opts.scenario ?? 'basic');
+    if (!scenario) {
+      console.error(`Unknown scenario: ${opts.scenario}`);
+      process.exit(1);
+    }
+
+    let providerConfigs: ReturnType<typeof getProviders>;
+    if (opts.providers?.length) {
+      providerConfigs = getProvidersByIds(opts.providers);
+      if (providerConfigs.length === 0) {
+        console.error(`No valid providers found for: ${opts.providers.join(', ')}`);
+        process.exit(1);
+      }
+    } else {
+      providerConfigs = getProviders().filter((p) => process.env[p.envKey]);
+      if (providerConfigs.length === 0) {
+        console.error('No providers have API keys set. Set env vars or use --providers.');
+        process.exit(1);
+      }
+    }
+
+    const traceId =
+      opts.traceId && validateTraceId(opts.traceId) ? opts.traceId : generateTraceId();
+
+    const ctx = {
+      providerConfigs,
+      proxyUrl: PROXY_URL,
+      jsonMode: !!opts.json,
+      traceId,
+    };
+    const scenarioOpts: Record<string, unknown> = {};
+    if (opts.requests != null) scenarioOpts.requests = opts.requests;
+    if (opts.concurrency != null) scenarioOpts.concurrency = opts.concurrency;
+
+    const result = await scenario.run(ctx, scenarioOpts);
+    const { printSummary } = await import('./output');
+    printSummary(result, Boolean(opts.json));
+
+    const allPassed = result.failed === 0;
+    process.exit(allPassed ? 0 : 1);
+  });
+
+program
+  .command('providers')
+  .description('List configured providers and API key status')
+  .option('--json', 'Output as JSON')
+  .action((opts: { json?: boolean }) => {
+    const all = getProviders();
+    const rows = all.map((p) => ({
+      id: p.id,
+      name: p.name,
+      envKey: p.envKey,
+      configured: !!process.env[p.envKey],
+    }));
+
+    if (opts.json) {
+      console.log(JSON.stringify(rows, null, 2));
+      return;
+    }
+
+    console.log('Providers:');
+    console.log('-'.repeat(50));
+    for (const r of rows) {
+      const status = r.configured ? '✓' : '○';
+      console.log(`  ${status} ${r.id.padEnd(12)} (${r.envKey})`);
+    }
+  });
+
+program
+  .command('scenarios')
+  .description('List available scenario ids')
+  .option('--json', 'Output as JSON')
+  .action((opts: { json?: boolean }) => {
+    const all = getAllScenarios();
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          all.map((s) => ({ id: s.id, name: s.name, description: s.description })),
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    console.log('Scenarios:');
+    console.log('-'.repeat(50));
+    for (const s of all) {
+      console.log(`  ${s.id.padEnd(28)} ${s.description}`);
+    }
+  });
+
+program.parse();
