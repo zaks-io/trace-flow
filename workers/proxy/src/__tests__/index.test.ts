@@ -501,8 +501,8 @@ describe('Proxy Worker Integration', () => {
     });
   });
 
-  describe('Usage Exceeded', () => {
-    it('should return 429 before proxying when usage is denied', async () => {
+  describe('Soft Enforcement', () => {
+    it('should proxy request and set recording=false when usage is exceeded', async () => {
       const key = 'usage-exceeded-key';
       const orgId = 'org-exhausted';
       const keyData = {
@@ -512,7 +512,6 @@ describe('Proxy Worker Integration', () => {
       };
       await env.API_KEYS.put(key, JSON.stringify(keyData));
 
-      // Set subscription with 0 units so usage is immediately denied
       const subConfig = {
         tier: 'hobby',
         status: 'active',
@@ -520,6 +519,15 @@ describe('Proxy Worker Integration', () => {
         addonUnits: 0,
       };
       await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
+
+      const mockResponse = { id: 'chatcmpl-123', choices: [{ message: { content: 'Hello!' } }] };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -531,11 +539,175 @@ describe('Proxy Worker Integration', () => {
         body: JSON.stringify({ model: 'gpt-4', messages: [] }),
       });
 
-      expect(res.status).toBe(429);
-      const body: { error: string; code: string; details?: { resetAt?: string } } =
-        await res.json();
-      expect(body.code).toBe('USAGE_LIMIT_EXCEEDED');
-      expect(body.details?.resetAt).toBeDefined();
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
+      expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('exceeded');
+
+      const body = await res.json();
+      expect(body).toEqual(mockResponse);
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+      // No R2 storage should happen when not recording
+      const stored = await env.STORAGE.list({ prefix: `requests/` });
+      expect(stored.objects.length).toBe(0);
+    });
+
+    it('should proxy request when account is suspended', async () => {
+      const key = 'suspended-key';
+      const orgId = 'org-suspended';
+      const keyData = {
+        expiresAt: Date.now() + 86400000,
+        createdAt: Date.now(),
+        orgId,
+      };
+      await env.API_KEYS.put(key, JSON.stringify(keyData));
+
+      const subConfig = {
+        tier: 'pro',
+        status: 'suspended',
+        monthlyUnits: 100000,
+        addonUnits: 0,
+      };
+      await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
+
+      const mockResponse = { id: 'chatcmpl-456', choices: [{ message: { content: 'Hi!' } }] };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': key,
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
+      expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('suspended');
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+    });
+
+    it('should proxy request when account is canceled', async () => {
+      const key = 'canceled-key';
+      const orgId = 'org-canceled';
+      const keyData = {
+        expiresAt: Date.now() + 86400000,
+        createdAt: Date.now(),
+        orgId,
+      };
+      await env.API_KEYS.put(key, JSON.stringify(keyData));
+
+      const subConfig = {
+        tier: 'pro',
+        status: 'canceled',
+        monthlyUnits: 100000,
+        addonUnits: 0,
+      };
+      await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
+
+      const mockResponse = { id: 'chatcmpl-789', choices: [{ message: { content: 'Hey!' } }] };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': key,
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
+      expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('canceled');
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+    });
+
+    it('should proxy request when subscription KV data is corrupt', async () => {
+      const key = 'corrupt-sub-key';
+      const orgId = 'org-corrupt-sub';
+      const keyData = {
+        expiresAt: Date.now() + 86400000,
+        createdAt: Date.now(),
+        orgId,
+      };
+      await env.API_KEYS.put(key, JSON.stringify(keyData));
+      await env.API_KEYS.put(`sub:${orgId}`, 'not valid json');
+
+      const mockResponse = { id: 'chatcmpl-corrupt', choices: [{ message: { content: 'Hi!' } }] };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': key,
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
+      expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('internal_error');
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+    });
+
+    it('should set recording=true header on successful proxied requests', async () => {
+      await setupValidApiKey('test-key-recording');
+
+      const mockResponse = {
+        id: 'chatcmpl-123',
+        choices: [{ message: { content: 'Hello!' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      };
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'test-key-recording',
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Trace-Flow-Recording')).toBe('true');
+
+      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
     });
   });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { validateApiKey, isAuthError } from '../auth';
+import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
 import type { Context } from 'hono';
 
 function createMockContext(
@@ -160,5 +160,57 @@ describe('validateApiKey', () => {
     expect(isAuthError(result)).toBe(false);
 
     vi.restoreAllMocks();
+  });
+});
+
+describe('checkBillingStatus', () => {
+  function createMockKV(data: string | null) {
+    return { get: vi.fn().mockResolvedValue(data) } as unknown as KVNamespace;
+  }
+
+  it('returns active with subscription data', async () => {
+    const sub = { status: 'active', tier: 'pro', monthlyUnits: 100000, addonUnits: 0 };
+    const env = { API_KEYS: createMockKV(JSON.stringify(sub)) };
+    const result = await checkBillingStatus(env, 'org-1');
+    expect(result).toEqual({ status: 'active', subscription: sub });
+  });
+
+  it('returns grace with subscription data', async () => {
+    const sub = { status: 'grace', tier: 'pro', monthlyUnits: 100000, addonUnits: 0 };
+    const env = { API_KEYS: createMockKV(JSON.stringify(sub)) };
+    const result = await checkBillingStatus(env, 'org-1');
+    expect(result).toEqual({ status: 'grace', subscription: sub });
+  });
+
+  it('returns suspended with subscription data', async () => {
+    const sub = { status: 'suspended', tier: 'pro', monthlyUnits: 100000, addonUnits: 0 };
+    const env = { API_KEYS: createMockKV(JSON.stringify(sub)) };
+    const result = await checkBillingStatus(env, 'org-1');
+    expect(result).toEqual({ status: 'suspended', subscription: sub });
+  });
+
+  it('returns canceled with subscription data', async () => {
+    const sub = { status: 'canceled', tier: 'pro', monthlyUnits: 100000, addonUnits: 0 };
+    const env = { API_KEYS: createMockKV(JSON.stringify(sub)) };
+    const result = await checkBillingStatus(env, 'org-1');
+    expect(result).toEqual({ status: 'canceled', subscription: sub });
+  });
+
+  it('returns not_found when KV has no entry', async () => {
+    const env = { API_KEYS: createMockKV(null) };
+    const result = await checkBillingStatus(env, 'org-1');
+    expect(result).toEqual({ status: 'not_found' });
+  });
+
+  it('returns error when KV data is not valid JSON', async () => {
+    const env = { API_KEYS: createMockKV('not json') };
+    const result = await checkBillingStatus(env, 'org-1');
+    expect(result).toEqual({ status: 'error' });
+  });
+
+  it('returns error for unrecognized status', async () => {
+    const env = { API_KEYS: createMockKV(JSON.stringify({ status: 'unknown_status' })) };
+    const result = await checkBillingStatus(env, 'org-1');
+    expect(result).toEqual({ status: 'error' });
   });
 });

@@ -68,69 +68,37 @@ export function isAuthError(result: Response | ApiKeyData): result is Response {
   return result instanceof Response;
 }
 
-export async function validateOrgBillingStatus<E extends { API_KEYS: KVNamespace }>(
-  c: Context<{ Bindings: E }>,
+export interface BillingCheckResult {
+  status: 'active' | 'grace' | 'suspended' | 'canceled' | 'not_found' | 'error';
+  subscription?: SubscriptionKVData;
+}
+
+export async function checkBillingStatus(
+  env: { API_KEYS: KVNamespace },
   orgId: string,
-): Promise<Response | null> {
-  const subRaw = await c.env.API_KEYS.get(`sub:${orgId}`);
+): Promise<BillingCheckResult> {
+  const subRaw = await env.API_KEYS.get(`sub:${orgId}`);
   if (!subRaw) {
-    return c.json(
-      {
-        error: 'Subscription not found',
-        code: 'SUBSCRIPTION_NOT_FOUND',
-        message: 'Organization subscription is not configured.',
-      },
-      500,
-    );
+    return { status: 'not_found' };
   }
 
   let sub: SubscriptionKVData;
   try {
     sub = JSON.parse(subRaw) as SubscriptionKVData;
   } catch {
-    return c.json(
-      {
-        error: 'Invalid subscription config',
-        code: 'SUBSCRIPTION_CONFIG_INVALID',
-        message: 'Organization subscription is misconfigured.',
-      },
-      500,
-    );
+    console.error('Failed to parse subscription KV data', { orgId });
+    return { status: 'error' };
   }
 
-  if (sub.status === 'active' || sub.status === 'grace') {
-    return null;
+  if (
+    sub.status === 'active' ||
+    sub.status === 'grace' ||
+    sub.status === 'suspended' ||
+    sub.status === 'canceled'
+  ) {
+    return { status: sub.status, subscription: sub };
   }
 
-  if (sub.status === 'suspended') {
-    return c.json(
-      {
-        error: 'Account suspended',
-        code: 'ACCOUNT_SUSPENDED',
-        message:
-          'Your organization is suspended due to a billing issue. Update your payment method in billing settings.',
-      },
-      402,
-    );
-  }
-
-  if (sub.status === 'canceled') {
-    return c.json(
-      {
-        error: 'Account canceled',
-        code: 'ACCOUNT_CANCELED',
-        message: 'This organization subscription has been canceled. Contact support to reactivate.',
-      },
-      402,
-    );
-  }
-
-  return c.json(
-    {
-      error: 'Unknown billing status',
-      code: 'BILLING_STATUS_UNKNOWN',
-      message: 'Organization billing status is unrecognized. Contact support.',
-    },
-    402,
-  );
+  console.error('Unrecognized billing status in KV', { orgId, status: sub.status });
+  return { status: 'error' };
 }

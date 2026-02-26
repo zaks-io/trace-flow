@@ -32,9 +32,10 @@ import type {
   LLMResponseMetadata,
   LLMTokenUsage,
   InputMessage,
+  SubscriptionTier,
 } from '@trace-flow/types';
-import { validateApiKey, isAuthError, validateOrgBillingStatus } from './auth';
-import type { ApiKeyData } from './auth';
+import { validateApiKey, isAuthError, checkBillingStatus } from './auth';
+import type { ApiKeyData, BillingCheckResult } from './auth';
 import { checkUsage, type UsageCheckResult } from './usage';
 import { parseTokenUsage } from './parsers/providers';
 import { parseError } from './parsers/errors';
@@ -52,6 +53,29 @@ import { resolveRoute, PROVIDERS } from './providers';
 import { handleOTLPTraces } from './otlp';
 import { otlpTracesRoute } from './otlp/routes';
 export { UsageTracker } from './usage-tracker';
+
+interface TracingDecision {
+  record: boolean;
+  reason: 'ok' | 'exceeded' | 'suspended' | 'canceled' | 'no_subscription' | 'internal_error';
+  tier?: SubscriptionTier;
+  periodEnd?: number;
+}
+
+function resolveTracingDecision(
+  billing: BillingCheckResult,
+  usage: UsageCheckResult,
+): TracingDecision {
+  if (billing.status === 'suspended') return { record: false, reason: 'suspended' };
+  if (billing.status === 'canceled') return { record: false, reason: 'canceled' };
+  if (billing.status === 'not_found') return { record: false, reason: 'no_subscription' };
+  if (billing.status === 'error') return { record: false, reason: 'internal_error' };
+
+  if (usage.status === 'allowed') return { record: true, reason: 'ok', tier: usage.tier };
+  if (usage.status === 'exceeded')
+    return { record: false, reason: 'exceeded', tier: usage.tier, periodEnd: usage.periodEnd };
+
+  return { record: false, reason: 'internal_error' };
+}
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
@@ -118,39 +142,20 @@ app.all('*', async (c) => {
     );
   }
 
-  const statusCheck = await validateOrgBillingStatus(c, keyData.orgId);
-  if (statusCheck) {
-    return statusCheck;
-  }
+  const billing = await checkBillingStatus(c.env, keyData.orgId);
 
-  let usageCheck: UsageCheckResult;
-  try {
-    usageCheck = await checkUsage(c.env, keyData.orgId, 1);
-  } catch (error) {
-    console.error('Usage check failed:', error instanceof Error ? error.message : String(error));
-    return c.json(
-      {
-        error: 'Internal error',
-        message: 'Usage check failed due to misconfiguration',
-      },
-      500,
-    );
-  }
+  // Skip DO round-trip when billing is definitively bad
+  const skipUsageCheck =
+    billing.status === 'suspended' ||
+    billing.status === 'canceled' ||
+    billing.status === 'not_found' ||
+    billing.status === 'error';
 
-  if (usageCheck.status === 'exceeded') {
-    return c.json(
-      {
-        error: 'Usage limit exceeded',
-        code: 'USAGE_LIMIT_EXCEEDED',
-        message:
-          'Your organization has used all available units for this billing period. Increase seats or purchase addon units.',
-        details: {
-          resetAt: new Date(usageCheck.periodEnd).toISOString(),
-        },
-      },
-      429,
-    );
-  }
+  const usageCheck: UsageCheckResult = skipUsageCheck
+    ? { status: 'error', reason: 'billing_not_active' }
+    : await checkUsage(c.env, keyData.orgId, 1, billing.subscription);
+
+  const decision = resolveTracingDecision(billing, usageCheck);
 
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
@@ -239,146 +244,169 @@ app.all('*', async (c) => {
 
   const pipePromise = response.body?.pipeTo(writable);
 
-  c.executionCtx.waitUntil(
-    (async () => {
-      try {
-        const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
-        await pipePromise;
+  if (decision.record) {
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
+          await pipePromise;
 
-        const responseComplete = getCurrentTimestamp();
-        const latency = responseComplete - requestStart;
+          const responseComplete = getCurrentTimestamp();
+          const latency = responseComplete - requestStart;
 
-        const responseCapturedChunks = capture.getCapturedChunks();
-        const firstTokenReceived = capture.getFirstTokenTime();
-        const isTruncated = capture.isTruncated();
-        const totalSize = capture.getTotalSize();
-        const responseBody = chunksToString(responseCapturedChunks);
+          const responseCapturedChunks = capture.getCapturedChunks();
+          const firstTokenReceived = capture.getFirstTokenTime();
+          const isTruncated = capture.isTruncated();
+          const totalSize = capture.getTotalSize();
+          const responseBody = chunksToString(responseCapturedChunks);
 
-        if (isTruncated) {
-          console.warn('Response truncated for storage:', {
+          if (isTruncated) {
+            console.warn('Response truncated for storage:', {
+              requestId,
+              totalSize,
+              capturedSize: responseBody.length,
+            });
+          }
+
+          // Extract tokens from response body (non-streaming) or SSE stream data (streaming)
+          // For SSE responses, only use aggregated SSE tokens — running parseTokenUsage on raw
+          // SSE text would match partial data from individual events and could leak stale fields.
+          let tokens: LLMTokenUsage | undefined;
+          if (isSSE && sseStreamData.messages.length > 0) {
+            tokens = aggregateSSETokens(sseStreamData, route.provider.id);
+          } else if (response.status < 400) {
+            tokens = parseTokenUsage(responseBody, route.provider.id);
+          }
+          const error =
+            response.status >= 400 ? parseError(responseBody, response.status) : undefined;
+
+          // Extract response metadata
+          let responseMetadata: Partial<LLMResponseMetadata> | undefined;
+          if (response.status < 400) {
+            if (isSSE && sseStreamData.messages.length > 0) {
+              const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
+              responseMetadata = lastMessage?.metadata;
+            } else {
+              responseMetadata = extractMetadataFromResponseBody(responseBody);
+            }
+          }
+
+          // Parse input messages based on provider
+          const isAnthropic = targetUrl.includes('anthropic.com');
+          const isGoogle = targetUrl.includes('generativelanguage.googleapis.com');
+          const isOpenAIStyle =
+            targetUrl.includes('openai.com') ||
+            targetUrl.includes('groq.com') ||
+            targetUrl.includes('openrouter.ai');
+
+          let inputMessages: InputMessage[] | undefined;
+
+          if (requestBody) {
+            try {
+              if (isAnthropic) {
+                inputMessages = parseAnthropicRequestBody(requestBody) ?? undefined;
+              } else if (isGoogle) {
+                inputMessages = parseGoogleRequestBody(requestBody) ?? undefined;
+              } else if (isOpenAIStyle) {
+                inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
+              }
+            } catch (error) {
+              console.error('Failed to parse request body:', {
+                requestId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
+          const tier = usageCheck.status !== 'error' ? usageCheck.tier : undefined;
+
+          let requestBodyKey: string | undefined;
+          let responseBodyKey: string | undefined;
+          let stored = false;
+
+          if (!omitBody) {
+            const result = await storeRequestResponse(
+              c.env.STORAGE,
+              requestId,
+              requestBody,
+              responseBody,
+              tier,
+              keyData.orgId,
+            );
+            requestBodyKey = result.requestBodyKey;
+            responseBodyKey = result.responseBodyKey;
+            stored = result.stored;
+
+            if (!stored) {
+              console.warn('R2 storage failed, queuing message without body keys:', { requestId });
+            }
+          }
+
+          const queueMessage = createQueueMessage({
             requestId,
-            totalSize,
-            capturedSize: responseBody.length,
+            traceId,
+            parentSpanId: parentSpanId ?? undefined,
+            traceFlags,
+            traceState: traceState || undefined,
+            baggage: Object.keys(baggage).length > 0 ? baggage : undefined,
+            operationName,
+            apiKey,
+            targetUrl,
+            responseStatus: response.status,
+            requestStart,
+            requestSent,
+            firstTokenReceived,
+            responseComplete,
+            latency,
+            requestBodyKey: stored ? requestBodyKey : undefined,
+            responseBodyKey: stored ? responseBodyKey : undefined,
+            tokens,
+            error,
+            truncated: isTruncated,
+            sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
+            responseMetadata,
+            receivedAt: requestStart * 1_000_000,
+            inputMessages,
+            tier,
+            orgId: keyData.orgId,
+          });
+
+          await c.env.REQUEST_QUEUE.send(queueMessage);
+        } catch (error) {
+          console.error('Failed to complete observability capture:', {
+            requestId,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
-
-        // Extract tokens from response body (non-streaming) or SSE stream data (streaming)
-        // For SSE responses, only use aggregated SSE tokens — running parseTokenUsage on raw
-        // SSE text would match partial data from individual events and could leak stale fields.
-        let tokens: LLMTokenUsage | undefined;
-        if (isSSE && sseStreamData.messages.length > 0) {
-          tokens = aggregateSSETokens(sseStreamData, route.provider.id);
-        } else if (response.status < 400) {
-          tokens = parseTokenUsage(responseBody, route.provider.id);
-        }
-        const error =
-          response.status >= 400 ? parseError(responseBody, response.status) : undefined;
-
-        // Extract response metadata
-        let responseMetadata: Partial<LLMResponseMetadata> | undefined;
-        if (response.status < 400) {
-          if (isSSE && sseStreamData.messages.length > 0) {
-            // For SSE responses, extract metadata from the last message (accumulated across events)
-            const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
-            responseMetadata = lastMessage?.metadata;
-          } else {
-            // For non-streaming responses, extract from response body using regex
-            responseMetadata = extractMetadataFromResponseBody(responseBody);
-          }
-        }
-
-        // Parse input messages based on provider
-        const isAnthropic = targetUrl.includes('anthropic.com');
-        const isGoogle = targetUrl.includes('generativelanguage.googleapis.com');
-        const isOpenAIStyle =
-          targetUrl.includes('openai.com') ||
-          targetUrl.includes('groq.com') ||
-          targetUrl.includes('openrouter.ai');
-
-        let inputMessages: InputMessage[] | undefined;
-
-        if (requestBody) {
-          try {
-            if (isAnthropic) {
-              inputMessages = parseAnthropicRequestBody(requestBody) ?? undefined;
-            } else if (isGoogle) {
-              inputMessages = parseGoogleRequestBody(requestBody) ?? undefined;
-            } else if (isOpenAIStyle) {
-              inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
-            }
-          } catch (error) {
-            console.error('Failed to parse request body:', {
+      })(),
+    );
+  } else {
+    // Not recording — cancel the tee'd capture stream to prevent backpressure hanging the proxy
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          await streamToCapture?.cancel();
+          await pipePromise;
+        } catch (error) {
+          if (error instanceof Error && error.name !== 'AbortError') {
+            console.error('Stream cleanup failed (not recording):', {
               requestId,
-              error: error instanceof Error ? error.message : String(error),
+              error: error.message,
             });
           }
         }
-
-        const tier = usageCheck.tier;
-
-        let requestBodyKey: string | undefined;
-        let responseBodyKey: string | undefined;
-        let stored = false;
-
-        if (!omitBody) {
-          const result = await storeRequestResponse(
-            c.env.STORAGE,
-            requestId,
-            requestBody,
-            responseBody,
-            tier,
-            keyData.orgId,
-          );
-          requestBodyKey = result.requestBodyKey;
-          responseBodyKey = result.responseBodyKey;
-          stored = result.stored;
-
-          if (!stored) {
-            console.warn('R2 storage failed, queuing message without body keys:', { requestId });
-          }
-        }
-
-        const queueMessage = createQueueMessage({
-          requestId,
-          traceId,
-          parentSpanId: parentSpanId ?? undefined,
-          traceFlags,
-          traceState: traceState || undefined,
-          baggage: Object.keys(baggage).length > 0 ? baggage : undefined,
-          operationName,
-          apiKey,
-          targetUrl,
-          responseStatus: response.status,
-          requestStart,
-          requestSent,
-          firstTokenReceived,
-          responseComplete,
-          latency,
-          requestBodyKey: stored ? requestBodyKey : undefined,
-          responseBodyKey: stored ? responseBodyKey : undefined,
-          tokens,
-          error,
-          truncated: isTruncated,
-          sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
-          responseMetadata,
-          receivedAt: requestStart * 1_000_000,
-          inputMessages,
-          tier,
-          orgId: keyData.orgId,
-        });
-
-        await c.env.REQUEST_QUEUE.send(queueMessage);
-      } catch (error) {
-        console.error('Failed to complete observability capture:', {
-          requestId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    })(),
-  );
+      })(),
+    );
+  }
 
   const responseHeaders = new Headers(response.headers);
-  responseHeaders.set('X-Trace-Flow-Usage-Status', 'allowed');
+  responseHeaders.set('X-Trace-Flow-Recording', String(decision.record));
+  if (!decision.record) {
+    responseHeaders.set('X-Trace-Flow-Recording-Reason', decision.reason);
+    if (decision.reason === 'exceeded' && decision.periodEnd) {
+      responseHeaders.set('X-Trace-Flow-Period-Reset', new Date(decision.periodEnd).toISOString());
+    }
+  }
 
   return new Response(readable, {
     status: response.status,

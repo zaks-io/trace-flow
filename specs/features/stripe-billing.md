@@ -7,7 +7,7 @@ Integrate Stripe in an **org-first** model:
 - One Stripe Customer per organization
 - One Stripe Subscription per organization
 - Per-seat billing via subscription item `quantity`
-- Shared org usage limits with hard enforcement in proxy
+- Shared org usage limits with soft enforcement in proxy (always proxy, conditionally record)
 - Manual addon packs plus optional auto-topup
 
 Organizations are the billing boundary. Users are members of an org and can access org data according to app auth rules. Solo users still get a personal org with one seat.
@@ -16,7 +16,7 @@ Organizations are the billing boundary. Users are members of an org and can acce
 
 - **Billing authority is org-level.**
 - **Per-seat billing** uses Stripe licensed pricing (`quantity = seat count`).
-- **Hard limits only** at proxy (429 when blocked).
+- **Soft limits** — proxy always forwards to LLM provider, record traces conditionally based on billing/usage status.
 - **Overage model v1**: prepaid top-up packs + optional auto-topup with spend cap.
 - **Seat policy**: seat updates via `updateSeatQuantity` action (validates against active member count). Stripe Portal used for billing management only.
 - **Seat gate**: invite acceptance is blocked when org is at seat limit.
@@ -97,12 +97,12 @@ Auto-topup guardrails:
 
 Stripe is source of truth for billing lifecycle. Internal state mirrors a simplified enforcement state:
 
-| Internal State | Stripe Basis                                 | Proxy Behavior       |
-| -------------- | -------------------------------------------- | -------------------- |
-| `active`       | `active`, `trialing` (if enabled in future)  | Allow                |
-| `grace`        | `past_due` during configured grace window    | Allow                |
-| `suspended`    | unpaid after grace (or `unpaid` if used)     | 429 all org requests |
-| `canceled`     | `canceled` / `customer.subscription.deleted` | 429 all org requests |
+| Internal State | Stripe Basis                                 | Proxy Behavior        |
+| -------------- | -------------------------------------------- | --------------------- |
+| `active`       | `active`, `trialing` (if enabled in future)  | Proxy + record traces |
+| `grace`        | `past_due` during configured grace window    | Proxy + record traces |
+| `suspended`    | unpaid after grace (or `unpaid` if used)     | Proxy, no recording   |
+| `canceled`     | `canceled` / `customer.subscription.deleted` | Proxy, no recording   |
 
 Notes:
 
@@ -209,55 +209,34 @@ All webhook handlers must be idempotent and replay-safe.
 
 ## Proxy Enforcement
 
-### Hard Limit Behavior
+### Soft Enforcement
+
+The proxy never blocks LLM requests due to billing or usage. It always forwards to the provider and conditionally records traces based on a `TracingDecision`.
 
 Request flow:
 
-1. API key validation (`validateApiKey` -- checks KV for key existence and expiry)
-2. Org billing status check (`validateOrgBillingStatus` -- reads `sub:{orgId}` from KV)
-3. Usage check via Durable Object (`checkUsage` -- passes `SubscriptionKVData` to `UsageTracker`)
-4. Proxy or return 429
+1. API key validation (`validateApiKey` -- checks KV for key existence and expiry) → **hard 401** on failure
+2. Org ID check → **hard 403** if API key has no org
+3. Billing status check (`checkBillingStatus` -- reads `sub:{orgId}` from KV) → returns status object
+4. Usage check via Durable Object (`checkUsage` -- reuses subscription data from step 3) → skipped when billing is suspended/canceled/not_found/error
+5. `resolveTracingDecision(billing, usage)` → `{ record: boolean, reason, tier?, periodEnd? }`
+6. **Always proxy** request to LLM provider
+7. `waitUntil`: if `decision.record` → capture streams, store to R2, enqueue; else → cancel capture stream
+8. Set response headers
 
-Block conditions:
+### Response Headers
 
-- `suspended` / `canceled` / unknown status -- 429
-- `usage exceeded` (total remaining < requested count) -- 429
-- Missing subscription config -- 500
+All proxied responses include:
 
-### 429 Payloads
+- `X-Trace-Flow-Recording: true|false`
+- `X-Trace-Flow-Recording-Reason: <reason>` (only when `false`)
+- `X-Trace-Flow-Period-Reset: <ISO date>` (only when reason is `exceeded`)
 
-Usage exceeded:
+Reasons: `ok`, `exceeded`, `suspended`, `canceled`, `no_subscription`, `internal_error`
 
-```json
-{
-  "error": "Usage limit exceeded",
-  "code": "USAGE_LIMIT_EXCEEDED",
-  "message": "Your organization has used all available units for this billing period. Increase seats or purchase addon units.",
-  "details": {
-    "resetAt": "2025-02-01T00:00:00Z"
-  }
-}
-```
+### OTLP Endpoint (`/v1/traces`)
 
-Suspended:
-
-```json
-{
-  "error": "Account suspended",
-  "code": "ACCOUNT_SUSPENDED",
-  "message": "Your organization is suspended due to a billing issue. Update your payment method in billing settings."
-}
-```
-
-Canceled:
-
-```json
-{
-  "error": "Account canceled",
-  "code": "ACCOUNT_CANCELED",
-  "message": "This organization subscription has been canceled. Contact support to reactivate."
-}
-```
+No upstream to proxy — OTLP is direct trace ingestion. Billing and usage checks return standard OTLP `partialSuccess` with `rejectedSpans` when traces cannot be recorded. The `X-Trace-Flow-Recording` header is set on all responses.
 
 ## Dunning and Recovery
 
