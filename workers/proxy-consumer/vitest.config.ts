@@ -3,7 +3,7 @@ import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
 export default defineWorkersConfig({
   test: {
     globals: true,
-    reporters: [['verbose', { summary: true }]],
+    reporters: ['dot'],
     passWithNoTests: true,
     include: ['src/__tests__/**/*.test.ts'],
     coverage: {

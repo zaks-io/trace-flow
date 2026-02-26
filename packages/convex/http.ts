@@ -171,9 +171,23 @@ export function createApp(
           const addonUnitsRaw = invoice.metadata?.addonUnits;
           if (addonUnitsRaw) {
             const orgIdRaw = invoice.metadata?.orgId as Id<'organizations'> | undefined;
-            if (!orgIdRaw) break;
+            if (!orgIdRaw) {
+              console.error('invoice.paid: addon invoice missing orgId metadata', {
+                invoiceId: invoice.id,
+                addonUnits: addonUnitsRaw,
+              });
+              break;
+            }
             const units = Number(addonUnitsRaw);
-            if (!Number.isFinite(units) || units <= 0 || units % UNITS_PER_ADDON !== 0) break;
+            if (!Number.isFinite(units) || units <= 0 || units % UNITS_PER_ADDON !== 0) {
+              console.error('invoice.paid: addon invoice has invalid units', {
+                invoiceId: invoice.id,
+                orgId: orgIdRaw,
+                addonUnitsRaw,
+                parsedUnits: units,
+              });
+              break;
+            }
             const mode = invoice.metadata?.mode === 'auto' ? 'auto' : 'manual';
 
             // In Stripe v20+, payment_intent is on invoice payments, not top-level
@@ -188,7 +202,18 @@ export function createApp(
                   ? payment.payment_intent
                   : payment.payment_intent?.id
                 : undefined;
-            if (!paymentIntentId) break;
+            if (!paymentIntentId) {
+              console.error(
+                'invoice.paid: addon invoice has no payment_intent — credits NOT applied',
+                {
+                  invoiceId: invoice.id,
+                  orgId: orgIdRaw,
+                  units,
+                  paymentData: payment ? { type: payment.type } : 'no_payments',
+                },
+              );
+              break;
+            }
 
             const ownerUserId = invoice.metadata?.ownerUserId as Id<'users'> | undefined;
 

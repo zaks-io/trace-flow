@@ -82,6 +82,7 @@ export default tseslint.config(
       '**/.wrangler/**',
       '**/node_modules/**',
       '**/.turbo/**',
+      '**/coverage/**',
       '**/packages/convex/_generated/**',
     ],
   },

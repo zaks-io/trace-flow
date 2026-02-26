@@ -87,3 +87,24 @@ export const markFailed = internalMutation({
     });
   },
 });
+
+export const cleanupOldEvents = internalMutation({
+  handler: async (ctx) => {
+    const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    let deleted = 0;
+
+    for (const status of ['processed', 'failed'] as const) {
+      const old = await ctx.db
+        .query('stripeEvents')
+        .withIndex('by_status', (q) => q.eq('status', status))
+        .filter((q) => q.lt(q.field('processedAt'), cutoff))
+        .take(500);
+      for (const event of old) {
+        await ctx.db.delete(event._id);
+        deleted++;
+      }
+    }
+
+    return { deleted };
+  },
+});

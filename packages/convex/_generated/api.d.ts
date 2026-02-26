@@ -337,6 +337,7 @@ export declare const internal: {
         monthlyUnits: number;
         orgId: string;
         overageCapCents?: number;
+        retryCount?: number;
         seatQuantity: number;
         status: string;
         tier: string;
@@ -773,6 +774,7 @@ export declare const internal: {
     >;
   };
   stripeEvents: {
+    cleanupOldEvents: FunctionReference<"mutation", "internal", any, any>;
     getByEventId: FunctionReference<
       "query",
       "internal",

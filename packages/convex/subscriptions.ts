@@ -383,7 +383,9 @@ export const createAddonCheckoutSession = action({
           },
         },
       },
-      { idempotencyKey: `checkout-addon:${user.orgId}:${Math.floor(Date.now() / 60000)}` },
+      {
+        idempotencyKey: `checkout-addon:${user.orgId}:${quantity}:${Math.floor(Date.now() / 60000)}`,
+      },
     );
     return { url: session.url };
   },
@@ -581,28 +583,42 @@ export const triggerAutoTopup = internalAction({
         description: `Auto top-up: ${units.toLocaleString()} units`,
       });
 
-      const invoice = await stripe.invoices.create(
-        {
-          customer: stripeCustomerId,
-          auto_advance: true,
-          metadata: {
-            orgId: args.orgId,
-            reason: args.reason ?? 'usage_threshold',
-            mode: 'auto',
-            addonUnits: String(units),
-            invoiceItemId: invoiceItem.id,
+      try {
+        const invoice = await stripe.invoices.create(
+          {
+            customer: stripeCustomerId,
+            auto_advance: true,
+            metadata: {
+              orgId: args.orgId,
+              reason: args.reason ?? 'usage_threshold',
+              mode: 'auto',
+              addonUnits: String(units),
+              invoiceItemId: invoiceItem.id,
+            },
           },
-        },
-        { idempotencyKey: reservation.idempotencyKey },
-      );
+          { idempotencyKey: reservation.idempotencyKey },
+        );
 
-      const paid = await stripe.invoices.pay(invoice.id);
-      if (paid.status !== 'paid') {
-        throw new Error(`Auto-topup invoice payment did not succeed (${paid.status})`);
+        const paid = await stripe.invoices.pay(invoice.id);
+        if (paid.status !== 'paid') {
+          throw new Error(`Auto-topup invoice payment did not succeed (${paid.status})`);
+        }
+
+        paymentSucceeded = true;
+        invoiceId = invoice.id;
+      } catch (e) {
+        // Clean up orphaned invoice item to prevent it attaching to
+        // the next subscription renewal and silently overcharging
+        try {
+          await stripe.invoiceItems.del(invoiceItem.id);
+        } catch (cleanupErr) {
+          console.error('Failed to clean up orphaned invoice item', {
+            invoiceItemId: invoiceItem.id,
+            error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          });
+        }
+        throw e;
       }
-
-      paymentSucceeded = true;
-      invoiceId = invoice.id;
     } catch (e) {
       if (!paymentSucceeded) {
         // Pre-payment failure (invoice creation or charge declined).

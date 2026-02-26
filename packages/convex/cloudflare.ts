@@ -67,8 +67,9 @@ export const syncSubscriptionToKV = internalAction({
     autoOverage: v.optional(v.boolean()),
     overageCapCents: v.optional(v.number()),
     cancelAtPeriodEnd: v.optional(v.boolean()),
+    retryCount: v.optional(v.number()),
   },
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     const value = JSON.stringify({
       tier: args.tier,
       monthlyUnits: args.monthlyUnits,
@@ -82,7 +83,24 @@ export const syncSubscriptionToKV = internalAction({
       cancelAtPeriodEnd: args.cancelAtPeriodEnd,
     });
 
-    await putKV(`sub:${args.orgId}`, value);
+    try {
+      await putKV(`sub:${args.orgId}`, value);
+    } catch (e) {
+      const attempt = args.retryCount ?? 0;
+      console.error('syncSubscriptionToKV failed', {
+        orgId: args.orgId,
+        attempt,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      if (attempt < 3) {
+        await ctx.scheduler.runAfter(30_000, internal.cloudflare.syncSubscriptionToKV, {
+          ...args,
+          retryCount: attempt + 1,
+        });
+        return;
+      }
+      throw e;
+    }
   },
 });
 
