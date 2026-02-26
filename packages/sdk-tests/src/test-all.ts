@@ -24,7 +24,7 @@ const providers: ProviderConfig[] = [
     envKey: 'ANTHROPIC_API_KEY',
     createProvider: (apiKey) =>
       createAnthropic({ baseURL: `${PROXY_URL}/anthropic/v1`, apiKey, headers: proxyHeaders }),
-    model: 'claude-3-5-haiku-latest',
+    model: 'claude-haiku-4-5',
   },
   {
     name: 'Google',
