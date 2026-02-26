@@ -1,14 +1,12 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
-import { type Preloaded, usePreloadedQuery } from 'convex/react';
-import { type api } from '@convex/_generated/api';
+import { type Preloaded, usePreloadedQuery, useQuery } from 'convex/react';
+import { api } from '@convex/_generated/api';
 import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer, Key } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { snapToMinute } from '@/lib/tinybird';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
-import { useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
 import { PageToolbar } from '@/components/PageToolbar';
 import { formatNumber, formatCurrency, formatPercent, formatDuration } from '@/lib/format';
 import {
