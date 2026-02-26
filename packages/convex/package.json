@@ -6,7 +6,8 @@
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@trace-flow/emails": "workspace:*",
@@ -21,6 +22,7 @@
     "stripe": "^20.3.1"
   },
   "devDependencies": {
-    "vitest": "^3.2.4"
+    "@vitest/coverage-v8": "^4.0.18",
+    "vitest": "^4.0.18"
   }
 }
