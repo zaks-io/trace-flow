@@ -65,6 +65,31 @@ export const createOrgInvite = mutation({
       throw new Error('A pending invite already exists for this email');
     }
 
+    // Check seat limits before creating the invite
+    const subscription = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
+      .first();
+    if (!subscription) {
+      throw new Error('Organization subscription not found');
+    }
+
+    const activeMembers = await ctx.db
+      .query('organizationMembers')
+      .withIndex('by_org_id_status', (q) => q.eq('orgId', user.orgId).eq('status', 'active'))
+      .collect();
+
+    const pendingInvites = await ctx.db
+      .query('invites')
+      .withIndex('by_org_id_status', (q) => q.eq('orgId', user.orgId).eq('status', 'pending'))
+      .collect();
+
+    if (activeMembers.length + pendingInvites.length >= subscription.seatQuantity) {
+      throw new Error(
+        'Organization has reached its seat limit. Upgrade your plan to add more members.',
+      );
+    }
+
     const token = crypto.randomUUID();
     const expiresAt = Date.now() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
     const inviteId = await ctx.db.insert('invites', {
@@ -123,7 +148,7 @@ export const acceptInvite = mutation({
     if (invite.orgId) {
       const subscription = await ctx.db
         .query('subscriptions')
-        .withIndex('by_org_id', (q) => q.eq('orgId', invite.orgId!))
+        .withIndex('by_org_id', (q) => q.eq('orgId', invite.orgId))
         .first();
       if (!subscription) {
         throw new Error('Organization subscription not found');
@@ -132,10 +157,16 @@ export const acceptInvite = mutation({
       const seatLimit = subscription.seatQuantity;
       const activeMembers = await ctx.db
         .query('organizationMembers')
-        .withIndex('by_org_id_status', (q) => q.eq('orgId', invite.orgId!).eq('status', 'active'))
+        .withIndex('by_org_id_status', (q) => q.eq('orgId', invite.orgId).eq('status', 'active'))
         .collect();
 
-      if (activeMembers.length >= seatLimit) {
+      const pendingInvites = await ctx.db
+        .query('invites')
+        .withIndex('by_org_id_status', (q) => q.eq('orgId', invite.orgId).eq('status', 'pending'))
+        .collect();
+
+      // Use > because the current invite being accepted is one of the pending invites
+      if (activeMembers.length + pendingInvites.length > seatLimit) {
         throw new Error(
           'Organization has reached its seat limit. Ask the owner to increase seats in billing settings.',
         );

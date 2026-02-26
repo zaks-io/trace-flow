@@ -110,7 +110,7 @@ export async function validateOrgBillingStatus<E extends { API_KEYS: KVNamespace
         message:
           'Your organization is suspended due to a billing issue. Update your payment method in billing settings.',
       },
-      429,
+      402,
     );
   }
 
@@ -121,7 +121,7 @@ export async function validateOrgBillingStatus<E extends { API_KEYS: KVNamespace
         code: 'ACCOUNT_CANCELED',
         message: 'This organization subscription has been canceled. Contact support to reactivate.',
       },
-      429,
+      402,
     );
   }
 
@@ -131,6 +131,6 @@ export async function validateOrgBillingStatus<E extends { API_KEYS: KVNamespace
       code: 'BILLING_STATUS_UNKNOWN',
       message: 'Organization billing status is unrecognized. Contact support.',
     },
-    429,
+    402,
   );
 }

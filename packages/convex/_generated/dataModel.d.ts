@@ -306,7 +306,7 @@ export type DataModel = {
       orgId: Id<"organizations">;
       removedAt?: number;
       role: "owner" | "member";
-      status: "active" | "invited" | "removed";
+      status: "active" | "removed";
       userId: Id<"users">;
       _id: Id<"organizationMembers">;
       _creationTime: number;
@@ -360,6 +360,7 @@ export type DataModel = {
       eventId: string;
       eventType: string;
       processedAt?: number;
+      processingStartedAt?: number;
       status: "processing" | "processed" | "failed";
       stripeObjectId?: string;
       _id: Id<"stripeEvents">;
@@ -372,6 +373,7 @@ export type DataModel = {
       | "eventId"
       | "eventType"
       | "processedAt"
+      | "processingStartedAt"
       | "status"
       | "stripeObjectId";
     indexes: {

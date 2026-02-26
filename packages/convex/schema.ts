@@ -157,7 +157,7 @@ export default defineSchema({
     orgId: v.id('organizations'),
     userId: v.id('users'),
     role: v.union(v.literal('owner'), v.literal('member')),
-    status: v.union(v.literal('active'), v.literal('invited'), v.literal('removed')),
+    status: v.union(v.literal('active'), v.literal('removed')),
     invitedAt: v.optional(v.number()),
     joinedAt: v.optional(v.number()),
     removedAt: v.optional(v.number()),
@@ -184,6 +184,7 @@ export default defineSchema({
     eventType: v.string(),
     stripeObjectId: v.optional(v.string()),
     status: v.union(v.literal('processing'), v.literal('processed'), v.literal('failed')),
+    processingStartedAt: v.optional(v.number()),
     processedAt: v.optional(v.number()),
     error: v.optional(v.string()),
   })

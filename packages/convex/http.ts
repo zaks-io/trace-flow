@@ -4,28 +4,18 @@ import { HttpRouterWithHono } from 'convex-helpers/server/hono';
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
 import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
-import Stripe from 'stripe';
+import type Stripe from 'stripe';
+import { UNITS_PER_ADDON } from '@trace-flow/types';
 import { mapStripeStatusToInternal, findSubscriptionItems } from './subscriptions';
+import { getStripeClient, stripeWebhookSecret } from './stripe';
 
 // Dependencies that can be injected for testing
 export interface HttpDeps {
   oauth: typeof oauthModule;
   tokens: typeof tokensModule;
-}
-
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-const STRIPE_API_VERSION = '2026-01-28.clover';
-
-function stripeClient() {
-  if (!stripeSecretKey) {
-    throw new Error('STRIPE_SECRET_KEY environment variable is not set');
-  }
-  return new Stripe(stripeSecretKey, { apiVersion: STRIPE_API_VERSION });
 }
 
 async function resolveOrgSubscription(ctx: ActionCtx, customerId: string, subscriptionId?: string) {
@@ -80,7 +70,7 @@ export function createApp(
     }
 
     const rawBody = await c.req.text();
-    const stripe = stripeClient();
+    const stripe = getStripeClient();
 
     let event: Stripe.Event;
     try {
@@ -183,7 +173,7 @@ export function createApp(
             const orgIdRaw = invoice.metadata?.orgId as Id<'organizations'> | undefined;
             if (!orgIdRaw) break;
             const units = Number(addonUnitsRaw);
-            if (!Number.isFinite(units) || units <= 0) break;
+            if (!Number.isFinite(units) || units <= 0 || units % UNITS_PER_ADDON !== 0) break;
             const mode = invoice.metadata?.mode === 'auto' ? 'auto' : 'manual';
 
             // In Stripe v20+, payment_intent is on invoice payments, not top-level
@@ -242,21 +232,22 @@ export function createApp(
             currentPeriodEnd: periodItem?.current_period_end
               ? periodItem.current_period_end * 1000
               : existing.currentPeriodEnd,
+            cancelAtPeriodEnd: false,
           });
           break;
         }
         case 'invoice.payment_failed': {
           const invoice = event.data.object;
+
+          // One-time addon invoices have no subscription parent — don't touch subscription status
+          const parentSub = invoice.parent?.subscription_details?.subscription;
+          if (!parentSub) break;
+
           const customerId =
             typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
           if (!customerId) break;
-          const existing = await resolveOrgSubscription(
-            ctx,
-            customerId,
-            typeof invoice.parent?.subscription_details?.subscription === 'string'
-              ? invoice.parent.subscription_details.subscription
-              : invoice.parent?.subscription_details?.subscription?.id,
-          );
+          const subscriptionId = typeof parentSub === 'string' ? parentSub : parentSub.id;
+          const existing = await resolveOrgSubscription(ctx, customerId, subscriptionId);
           if (!existing) break;
           await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
@@ -641,7 +632,7 @@ export function createApp(
       );
     }
 
-    const result = await ctx.runAction(api.mcp.handler.handleMessageWithUser, {
+    const result = await ctx.runAction(internal.mcp.handler.handleMessageWithUser, {
       message: body,
       sessionId,
       userId: user._id,

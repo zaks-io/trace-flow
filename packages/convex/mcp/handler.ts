@@ -1,4 +1,4 @@
-import { action } from '../_generated/server';
+import { action, internalAction } from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
@@ -83,7 +83,7 @@ export const handleMessage = action({
   },
 });
 
-export const handleMessageWithUser = action({
+export const handleMessageWithUser = internalAction({
   args: {
     message: v.any(),
     sessionId: v.optional(v.string()),

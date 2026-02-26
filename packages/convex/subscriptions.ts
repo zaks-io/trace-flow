@@ -6,51 +6,24 @@ import {
   internalAction,
   internalMutation,
 } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { MutationCtx, ActionCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
 import { getCurrentUser, requireEnabledUser } from './users';
 import { internal } from './_generated/api';
-import { TIER_CONFIG } from '@trace-flow/types';
+import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
 import type { SubscriptionTier } from '@trace-flow/types';
 import type { Id } from './_generated/dataModel';
-import Stripe from 'stripe';
-
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-const stripeProPriceId = process.env.STRIPE_PRICE_ID_PRO;
-const stripeSeatPriceId = process.env.STRIPE_PRICE_ID_SEAT;
-const stripeAddonPriceId = process.env.STRIPE_PRICE_ID_ADDON;
-const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
-
-const STRIPE_API_VERSION = '2026-01-28.clover';
-
-function getStripeClient() {
-  if (!stripeSecretKey) {
-    throw new Error('STRIPE_SECRET_KEY environment variable is not set');
-  }
-  return new Stripe(stripeSecretKey, { apiVersion: STRIPE_API_VERSION });
-}
-
-function getProPriceId(): string {
-  if (!stripeProPriceId) {
-    throw new Error('STRIPE_PRICE_ID_PRO environment variable is not set');
-  }
-  return stripeProPriceId;
-}
-
-function getSeatPriceId(): string {
-  if (!stripeSeatPriceId) {
-    throw new Error('STRIPE_PRICE_ID_SEAT environment variable is not set');
-  }
-  return stripeSeatPriceId;
-}
-
-function getAddonPriceId(): string {
-  if (!stripeAddonPriceId) {
-    throw new Error('STRIPE_PRICE_ID_ADDON environment variable is not set');
-  }
-  return stripeAddonPriceId;
-}
+import type Stripe from 'stripe';
+import {
+  getStripeClient,
+  stripeProPriceId,
+  stripeSeatPriceId,
+  getProPriceId,
+  getSeatPriceId,
+  getAddonPriceId,
+  appUrl,
+} from './stripe';
 
 /**
  * Matches subscription items to plan vs seat by their price ID.
@@ -74,6 +47,16 @@ export function findSubscriptionItems(items: Stripe.SubscriptionItem[]): {
 
   // If only one item and no match by price ID, treat it as the plan item (legacy)
   if (!planItem && !seatItem && items.length === 1) {
+    planItem = items[0];
+  }
+
+  // Multi-item subscription where no price ID matched — use first item so period data is not lost
+  if (!planItem && !seatItem && items.length > 1) {
+    console.warn(
+      `findSubscriptionItems: no price ID match for any of ${items.length} items ` +
+        `(expected proPriceId=${proPriceId}, seatPriceId=${seatPriceId}). ` +
+        `Falling back to items[0] for period data.`,
+    );
     planItem = items[0];
   }
 
@@ -109,6 +92,25 @@ async function requireOrgOwner(ctx: Parameters<typeof requireEnabledUser>[0]) {
     throw new Error('Only organization owners can manage billing');
   }
   return { user, org };
+}
+
+async function requireOrgOwnerAction(ctx: ActionCtx) {
+  await requireTraceFlowRole(ctx);
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error('Authentication required');
+  const user = await ctx.runQuery(internal.users.getUserByTokenIdentifier, {
+    tokenIdentifier: identity.tokenIdentifier,
+  });
+  if (!user?.orgId) throw new Error('Organization not found');
+  const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: user.orgId });
+  if (!org) throw new Error('Organization not found');
+  if (org.ownerId !== user._id) {
+    throw new Error('Only organization owners can manage billing');
+  }
+  const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
+    orgId: user.orgId,
+  });
+  return { user, org, subscription };
 }
 
 export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subscriptions'>) {
@@ -274,18 +276,7 @@ export const createOrgCheckoutSession = action({
     cancelUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
-    const user = await ctx.runQuery(internal.users.getUserByTokenIdentifier, {
-      tokenIdentifier: (await ctx.auth.getUserIdentity())!.tokenIdentifier,
-    });
-    if (!user?.orgId) throw new Error('Organization not found');
-    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: user.orgId });
-    if (!org) throw new Error('Organization not found');
-    if (org.ownerId !== user._id) throw new Error('Only organization owners can manage billing');
-
-    const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
-      orgId: user.orgId,
-    });
+    const { user, org, subscription } = await requireOrgOwnerAction(ctx);
     if (
       subscription?.stripeSubscriptionId &&
       (subscription.status === 'active' || subscription.status === 'grace')
@@ -355,28 +346,14 @@ export const createOrgCheckoutSession = action({
 
 export const createAddonCheckoutSession = action({
   args: {
-    units: v.number(),
-    quantity: v.optional(v.number()),
+    quantity: v.number(),
     successUrl: v.optional(v.string()),
     cancelUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
-    if (args.units <= 0) throw new Error('units must be positive');
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('Authentication required');
-    const user = await ctx.runQuery(internal.users.getUserByTokenIdentifier, {
-      tokenIdentifier: identity.tokenIdentifier,
-    });
-    if (!user?.orgId) throw new Error('Organization not found');
-    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: user.orgId });
-    if (!org || org.ownerId !== user._id) {
-      throw new Error('Only organization owners can manage billing');
-    }
-
-    const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
-      orgId: user.orgId,
-    });
+    const { user, org, subscription } = await requireOrgOwnerAction(ctx);
+    const quantity = Math.max(1, Math.floor(args.quantity));
+    const units = quantity * UNITS_PER_ADDON;
     if (subscription?.tier !== 'pro') {
       throw new Error('Addons require a Pro subscription');
     }
@@ -385,7 +362,6 @@ export const createAddonCheckoutSession = action({
       throw new Error('Organization is missing Stripe customer');
     }
 
-    const quantity = Math.max(1, args.quantity ?? 1);
     const stripe = getStripeClient();
     const session = await stripe.checkout.sessions.create(
       {
@@ -401,7 +377,7 @@ export const createAddonCheckoutSession = action({
             metadata: {
               orgId: user.orgId,
               ownerUserId: user._id,
-              addonUnits: String(args.units),
+              addonUnits: String(units),
               mode: 'manual',
             },
           },
@@ -418,21 +394,7 @@ export const createBillingPortalSession = action({
     returnUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('Authentication required');
-    const user = await ctx.runQuery(internal.users.getUserByTokenIdentifier, {
-      tokenIdentifier: identity.tokenIdentifier,
-    });
-    if (!user?.orgId) throw new Error('Organization not found');
-    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: user.orgId });
-    if (!org || org.ownerId !== user._id) {
-      throw new Error('Only organization owners can manage billing');
-    }
-
-    const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
-      orgId: user.orgId,
-    });
+    const { org, subscription } = await requireOrgOwnerAction(ctx);
     const stripeCustomerId = org.stripeCustomerId ?? subscription?.stripeCustomerId;
     if (!stripeCustomerId) {
       throw new Error('Organization is missing Stripe customer');
@@ -452,22 +414,8 @@ export const updateSeatQuantity = action({
     seatQuantity: v.number(),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
     if (args.seatQuantity < 1) throw new Error('seatQuantity must be at least 1');
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('Authentication required');
-    const user = await ctx.runQuery(internal.users.getUserByTokenIdentifier, {
-      tokenIdentifier: identity.tokenIdentifier,
-    });
-    if (!user?.orgId) throw new Error('Organization not found');
-    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: user.orgId });
-    if (!org || org.ownerId !== user._id) {
-      throw new Error('Only organization owners can manage billing');
-    }
-
-    const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
-      orgId: user.orgId,
-    });
+    const { user, subscription } = await requireOrgOwnerAction(ctx);
     if (!subscription?.stripeSubscriptionId || !subscription.stripeSeatItemId) {
       throw new Error('Stripe subscription is not configured');
     }
@@ -591,13 +539,15 @@ export const releaseAutoTopupReservation = internalMutation({
 export const triggerAutoTopup = internalAction({
   args: {
     orgId: v.id('organizations'),
-    units: v.number(),
+    quantity: v.optional(v.number()),
     amountCents: v.number(),
     reason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (args.units <= 0 || args.amountCents <= 0) {
-      throw new Error('units and amountCents must be positive');
+    const quantity = Math.max(1, Math.floor(args.quantity ?? 1));
+    const units = quantity * UNITS_PER_ADDON;
+    if (args.amountCents <= 0) {
+      throw new Error('amountCents must be positive');
     }
 
     const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: args.orgId });
@@ -617,18 +567,21 @@ export const triggerAutoTopup = internalAction({
     }
 
     const stripe = getStripeClient();
-    let invoiceItem: Stripe.InvoiceItem;
-    let invoice: Stripe.Invoice;
+    let invoiceId: string;
+    // Track whether payment succeeded so we know if the reservation
+    // can safely be released on error. Once payment goes through, the
+    // invoice.paid webhook owns crediting and the reservation must stay.
+    let paymentSucceeded = false;
 
     try {
-      invoiceItem = await stripe.invoiceItems.create({
+      const invoiceItem = await stripe.invoiceItems.create({
         customer: stripeCustomerId,
         amount: args.amountCents,
         currency: 'usd',
-        description: `Auto top-up: ${args.units.toLocaleString()} units`,
+        description: `Auto top-up: ${units.toLocaleString()} units`,
       });
 
-      invoice = await stripe.invoices.create(
+      const invoice = await stripe.invoices.create(
         {
           customer: stripeCustomerId,
           auto_advance: true,
@@ -636,7 +589,7 @@ export const triggerAutoTopup = internalAction({
             orgId: args.orgId,
             reason: args.reason ?? 'usage_threshold',
             mode: 'auto',
-            addonUnits: String(args.units),
+            addonUnits: String(units),
             invoiceItemId: invoiceItem.id,
           },
         },
@@ -647,59 +600,36 @@ export const triggerAutoTopup = internalAction({
       if (paid.status !== 'paid') {
         throw new Error(`Auto-topup invoice payment did not succeed (${paid.status})`);
       }
+
+      paymentSucceeded = true;
+      invoiceId = invoice.id;
     } catch (e) {
-      // Stripe charge failed — release the reservation
-      await ctx.runMutation(internal.subscriptions.releaseAutoTopupReservation, {
-        orgId: args.orgId,
-        amountCents: args.amountCents,
-      });
+      if (!paymentSucceeded) {
+        // Pre-payment failure (invoice creation or charge declined).
+        // No money moved, so release the reservation.
+        await ctx.runMutation(internal.subscriptions.releaseAutoTopupReservation, {
+          orgId: args.orgId,
+          amountCents: args.amountCents,
+        });
+      }
+      // Post-payment failures: money moved, invoice.paid webhook will
+      // credit units via creditAddonPurchase. Do NOT release the
+      // reservation — the spend tracking must stay accurate.
       throw e;
     }
 
-    // In Stripe v20+, payment_intent is on the invoice payments, not top-level
-    const invoicePayments = await stripe.invoicePayments.list({ invoice: invoice.id, limit: 1 });
-    const payment = invoicePayments.data[0]?.payment;
-    const paymentIntentId =
-      payment?.type === 'payment_intent'
-        ? typeof payment.payment_intent === 'string'
-          ? payment.payment_intent
-          : payment.payment_intent?.id
-        : undefined;
-    if (!paymentIntentId) {
-      throw new Error('Auto-topup invoice missing payment_intent');
-    }
-
-    await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
-      orgId: args.orgId,
-      units: args.units,
-      amountCents: args.amountCents,
-      stripePaymentIntentId: paymentIntentId,
-      stripeInvoiceId: invoice.id,
-      mode: 'auto',
-    });
-
-    return { ok: true, invoiceId: invoice.id };
+    // Let the invoice.paid webhook handle creditAddonPurchase.
+    // The reservation holds currentPeriodOverageSpentCents in place,
+    // and creditAddonPurchase (called by the webhook) adds the addon
+    // units idempotently via stripePaymentIntentId deduplication.
+    return { ok: true, invoiceId };
   },
 });
 
 export const reconcileCurrentOrgWithStripe = action({
   args: {},
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('Authentication required');
-    const user = await ctx.runQuery(internal.users.getUserByTokenIdentifier, {
-      tokenIdentifier: identity.tokenIdentifier,
-    });
-    if (!user?.orgId) throw new Error('Organization not found');
-    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: user.orgId });
-    if (!org || org.ownerId !== user._id) {
-      throw new Error('Only organization owners can reconcile billing');
-    }
-
-    const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
-      orgId: user.orgId,
-    });
+    const { user, subscription } = await requireOrgOwnerAction(ctx);
     if (!subscription?.stripeSubscriptionId) {
       return { reconciled: false, reason: 'missing_stripe_subscription' };
     }
@@ -789,7 +719,7 @@ export const upsertStripeSubscriptionState = internalMutation({
         args.currentPeriodStart && args.currentPeriodStart !== subscription.currentPeriodStart
           ? 0
           : subscription.currentPeriodOverageSpentCents,
-      cancelAtPeriodEnd: args.cancelAtPeriodEnd,
+      ...(args.cancelAtPeriodEnd !== undefined && { cancelAtPeriodEnd: args.cancelAtPeriodEnd }),
       ...(args.status === 'active' ? { gracePeriodSchedulerId: undefined } : {}),
     });
 
@@ -808,6 +738,10 @@ export const creditAddonPurchase = internalMutation({
     triggeredByUserId: v.optional(v.id('users')),
   },
   handler: async (ctx, args) => {
+    if (args.units <= 0 || args.units % UNITS_PER_ADDON !== 0) {
+      throw new Error(`units must be a positive multiple of ${UNITS_PER_ADDON}`);
+    }
+
     const existing = await ctx.db
       .query('addonPurchases')
       .withIndex('by_payment_intent', (q) =>
@@ -864,6 +798,7 @@ export const revokeAddonPurchase = internalMutation({
 
     const newAddonUnits = Math.max(0, subscription.addonUnits - purchase.units);
     await ctx.db.patch(subscription._id, { addonUnits: newAddonUnits });
+    await ctx.db.delete(purchase._id);
     await scheduleKVSync(ctx, subscription._id);
   },
 });
@@ -886,14 +821,18 @@ export const revertToHobby = internalMutation({
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     const hobbyConfig = TIER_CONFIG.hobby;
 
+    // stripeCustomerId intentionally retained so the customer can re-subscribe
+    // without creating a duplicate Stripe customer
     await ctx.db.patch(subscription._id, {
       tier: 'hobby',
       status: 'active',
       monthlyUnits: hobbyConfig.monthlyUnits,
       addonUnits: 0,
+      addonPurchaseCount: 0,
       currentPeriodOverageSpentCents: 0,
-      autoOverage: undefined,
+      autoOverage: false,
       overageCapCents: undefined,
+      seatQuantity: 1,
       currentPeriodStart: now,
       currentPeriodEnd: now + thirtyDaysMs,
       stripeSubscriptionId: undefined,

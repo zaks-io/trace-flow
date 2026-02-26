@@ -1,4 +1,4 @@
-import { query, internalMutation, internalQuery } from '../_generated/server';
+import { internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
 import { SESSION_TTL_MS } from './protocol';
 import { type Doc } from '../_generated/dataModel';
@@ -29,7 +29,7 @@ export const createSession = internalMutation({
   },
 });
 
-export const getSession = query({
+export const getSession = internalQuery({
   args: { sessionId: v.string() },
   handler: async (ctx, args): Promise<Doc<'mcpSessions'> | null> => {
     const session = await ctx.db
@@ -98,7 +98,7 @@ export const deleteSession = internalMutation({
   },
 });
 
-export const getUserSessions = query({
+export const getUserSessions = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, args): Promise<Doc<'mcpSessions'>[]> => {
     return await ctx.db

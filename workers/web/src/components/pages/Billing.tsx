@@ -25,7 +25,7 @@ export default function Billing() {
   const updateAutoOverage = useMutation(api.subscriptions.updateAutoOverageSettings);
 
   const [seatQuantity, setSeatQuantity] = useState('1');
-  const [addonUnits, setAddonUnits] = useState('100000');
+  const [addonPackages, setAddonPackages] = useState('1');
   const [autoOverage, setAutoOverage] = useState(false);
   const [overageCap, setOverageCap] = useState('50');
   const [busy, setBusy] = useState<string | null>(null);
@@ -158,16 +158,17 @@ export default function Billing() {
           <Input
             type="number"
             min={1}
-            value={addonUnits}
-            onChange={(e) => setAddonUnits(e.target.value)}
+            value={addonPackages}
+            onChange={(e) => setAddonPackages(e.target.value)}
             className="w-44"
+            placeholder="Packages (100k units each)"
           />
           <Button
             variant="outline"
             onClick={() =>
               void withBusy('addon', async () => {
                 const res = await createAddonCheckout({
-                  units: Math.max(1, Number(addonUnits) || 1),
+                  quantity: Math.max(1, Math.floor(Number(addonPackages) || 1)),
                 });
                 if (res.url) window.location.href = res.url;
               })

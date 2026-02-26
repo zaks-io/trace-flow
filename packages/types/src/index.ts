@@ -6,6 +6,8 @@ export const TIER_CONFIG = {
   pro: { monthlyUnits: 100_000, overagePer100kCents: 800 },
 } as const;
 
+export const UNITS_PER_ADDON = 100_000;
+
 export const RETENTION_DAYS = {
   hobby: 7,
   pro: 30,

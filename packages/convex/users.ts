@@ -233,7 +233,13 @@ export const getCurrentUserQuery = query({
 export const getUser = query({
   args: { id: v.id('users') },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
+    const currentUser = await getCurrentUser(ctx);
+    if (!currentUser) throw new Error('Authentication required');
+    const target = await ctx.db.get(args.id);
+    if (!target) return null;
+    // Only allow viewing users in the same org
+    if (target.orgId !== currentUser.orgId) return null;
+    return target;
   },
 });
 
@@ -262,8 +268,14 @@ export const findOrCreateUser = internalMutation({
           picture: args.picture,
         });
       }
-      if (!existingUser.orgId) {
-        await ensureOrg(ctx, existingUser._id, existingUser.name);
+      const orgId =
+        existingUser.orgId ?? (await ensureOrg(ctx, existingUser._id, existingUser.name));
+      const existingSub = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+        .first();
+      if (!existingSub) {
+        await createHobbySubscription(ctx, orgId);
       }
       return existingUser._id;
     }
@@ -276,7 +288,8 @@ export const findOrCreateUser = internalMutation({
       enabled: false,
     });
 
-    await ensureOrg(ctx, userId, args.name);
+    const orgId = await ensureOrg(ctx, userId, args.name);
+    await createHobbySubscription(ctx, orgId);
 
     return userId;
   },
@@ -300,6 +313,14 @@ export const getUserByTokenIdentifier = internalQuery({
 });
 
 export const isAdmin = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx);
+    return user?.isAdmin === true;
+  },
+});
+
+export const isAdminInternal = internalQuery({
   args: {},
   handler: async (ctx) => {
     const user = await getCurrentUser(ctx);

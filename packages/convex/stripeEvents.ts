@@ -29,8 +29,12 @@ export const startProcessing = internalMutation({
       // Allow reprocessing stuck events after 5 minutes
       if (existing.status === 'processing') {
         const staleAfterMs = 5 * 60 * 1000;
-        if (Date.now() - existing._creationTime > staleAfterMs) {
-          await ctx.db.patch(existing._id, { status: 'processing' });
+        const startedAt = existing.processingStartedAt ?? existing._creationTime;
+        if (Date.now() - startedAt > staleAfterMs) {
+          await ctx.db.patch(existing._id, {
+            status: 'processing',
+            processingStartedAt: Date.now(),
+          });
           return { alreadyProcessed: false, eventDocId: existing._id };
         }
         return { alreadyProcessed: true, eventDocId: existing._id };
@@ -43,6 +47,7 @@ export const startProcessing = internalMutation({
       eventType: args.eventType,
       stripeObjectId: args.stripeObjectId,
       status: 'processing',
+      processingStartedAt: Date.now(),
     });
     return { alreadyProcessed: false, eventDocId: id };
   },

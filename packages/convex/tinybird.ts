@@ -95,9 +95,18 @@ export const generateToken = action({
   },
 });
 
+// Validate API keys are UUIDs before interpolating into JWT fixed_params (defense in depth).
+// Matches the same pattern used in extendRetention. Exported for unit testing.
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Exported for unit testing.
+export function sanitizeApiKeys(keys: string[]): string[] {
+  return keys.filter((k) => UUID_PATTERN.test(k));
+}
+
 async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
   const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
-  return apiKeys.map((k: { key: string }) => k.key).join(',');
+  return sanitizeApiKeys(apiKeys.map((k: { key: string }) => k.key)).join(',');
 }
 
 // Internal action for MCP - bypasses Convex auth, requires apiKeys parameter
@@ -109,8 +118,10 @@ export const generateTokenInternal = internalAction({
     ttl: v.optional(v.number()),
   },
   handler: async (_, args) => {
+    // Validate API keys are UUIDs before inclusion in JWT (defense in depth)
+    const validKeys = sanitizeApiKeys(args.apiKeys);
     // Use sentinel value when no keys to prevent matching empty strings
-    const apiKeyString = args.apiKeys.join(',') || '__NO_KEYS__';
+    const apiKeyString = validKeys.join(',') || '__NO_KEYS__';
 
     // Add api_keys and retention_days to fixed_params for row-level security
     const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
@@ -160,8 +171,7 @@ export const extendRetention = internalAction({
     const nowNanos = Date.now() * 1_000_000;
 
     // Validate API keys are UUIDs before interpolating into SQL (defense in depth)
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const validKeys = apiKeyStrings.filter((k: string) => uuidPattern.test(k));
+    const validKeys = apiKeyStrings.filter((k: string) => UUID_PATTERN.test(k));
     if (validKeys.length === 0) {
       return { updated: false, reason: 'No valid API keys found for organization' };
     }

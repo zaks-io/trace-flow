@@ -140,30 +140,10 @@ export declare const api: {
         { message: any; sessionId?: string },
         any
       >;
-      handleMessageWithUser: FunctionReference<
-        "action",
-        "public",
-        { message: any; sessionId?: string; userId: Id<"users"> },
-        any
-      >;
       terminateSession: FunctionReference<
         "action",
         "public",
         { sessionId: string },
-        any
-      >;
-    };
-    session: {
-      getSession: FunctionReference<
-        "query",
-        "public",
-        { sessionId: string },
-        any
-      >;
-      getUserSessions: FunctionReference<
-        "query",
-        "public",
-        { userId: Id<"users"> },
         any
       >;
     };
@@ -211,12 +191,7 @@ export declare const api: {
     createAddonCheckoutSession: FunctionReference<
       "action",
       "public",
-      {
-        cancelUrl?: string;
-        quantity?: number;
-        successUrl?: string;
-        units: number;
-      },
+      { cancelUrl?: string; quantity: number; successUrl?: string },
       any
     >;
     createBillingPortalSession: FunctionReference<
@@ -398,6 +373,14 @@ export declare const internal: {
         any
       >;
     };
+    handler: {
+      handleMessageWithUser: FunctionReference<
+        "action",
+        "internal",
+        { message: any; sessionId?: string; userId: Id<"users"> },
+        any
+      >;
+    };
     session: {
       cleanupSession: FunctionReference<
         "mutation",
@@ -417,10 +400,22 @@ export declare const internal: {
         { sessionId: string },
         any
       >;
+      getSession: FunctionReference<
+        "query",
+        "internal",
+        { sessionId: string },
+        any
+      >;
       getSessionInternal: FunctionReference<
         "query",
         "internal",
         { sessionId: string },
+        any
+      >;
+      getUserSessions: FunctionReference<
+        "query",
+        "internal",
+        { userId: Id<"users"> },
         any
       >;
       updateSessionState: FunctionReference<
@@ -895,8 +890,8 @@ export declare const internal: {
       {
         amountCents: number;
         orgId: Id<"organizations">;
+        quantity?: number;
         reason?: string;
-        units: number;
       },
       any
     >;
@@ -991,6 +986,7 @@ export declare const internal: {
       { tokenIdentifier: string },
       any
     >;
+    isAdminInternal: FunctionReference<"query", "internal", {}, any>;
   };
 };
 

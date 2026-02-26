@@ -120,7 +120,7 @@ export const checkAutoTopup = internalMutation({
 
     await ctx.scheduler.runAfter(0, internal.subscriptions.triggerAutoTopup, {
       orgId: args.orgId,
-      units: 100_000,
+      quantity: 1,
       amountCents: addonAmountCents,
       reason: 'usage_threshold',
     });
