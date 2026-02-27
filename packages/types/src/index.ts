@@ -163,6 +163,7 @@ export interface SSEMessage {
     candidates_token_count?: number;
     cached_content_token_count?: number;
     total_token_count?: number;
+    thoughts_token_count?: number;
   };
   metadata?: Partial<LLMResponseMetadata>;
   contentBlocks?: AnthropicContentBlock[];

@@ -290,10 +290,6 @@ function buildThroughputSegments(tpsSpans: { tps: number; outputTokens: number }
     tpsValues.reduce((sum, v) => sum + (v - avg) ** 2, 0) / tpsValues.length,
   );
 
-  if (tpsSpans.length === 1) {
-    return { segments: [], total: 0, min, avg, max, stddev };
-  }
-
   // Sort slow→fast, sized by output tokens so width = impact
   const sorted = [...tpsSpans].sort((a, b) => a.tps - b.tps);
   const total = sorted.reduce((a, b) => a + b.outputTokens, 0);
@@ -366,7 +362,7 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
         formatter={formatTokensPerSecond}
         showPercent={false}
         inlineLabels={
-          throughput && throughput.segments.length > 0
+          throughput
             ? [
                 {
                   label: 'Min',

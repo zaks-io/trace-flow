@@ -52,6 +52,23 @@ describe('Google Gemini API Support', () => {
       expect(tokens?.completionTokens).toBeUndefined();
     });
 
+    it('should parse Google thoughtsTokenCount as reasoningTokens', () => {
+      const response = JSON.stringify({
+        usageMetadata: {
+          promptTokenCount: 50,
+          candidatesTokenCount: 200,
+          totalTokenCount: 250,
+          thoughtsTokenCount: 150,
+        },
+      });
+
+      const tokens = parseTokenUsage(response);
+      expect(tokens?.promptTokens).toBe(50);
+      expect(tokens?.completionTokens).toBe(200);
+      expect(tokens?.totalTokens).toBe(250);
+      expect(tokens?.reasoningTokens).toBe(150);
+    });
+
     it('should extract Google tokens from SSE data', () => {
       const sseData = JSON.stringify({
         usageMetadata: {
@@ -65,6 +82,22 @@ describe('Google Gemini API Support', () => {
       expect(usage.prompt_token_count).toBe(20);
       expect(usage.candidates_token_count).toBe(30);
       expect(usage.total_token_count).toBe(50);
+    });
+
+    it('should extract Google thoughtsTokenCount from SSE data', () => {
+      const sseData = JSON.stringify({
+        usageMetadata: {
+          promptTokenCount: 50,
+          candidatesTokenCount: 200,
+          totalTokenCount: 250,
+          thoughtsTokenCount: 150,
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(sseData);
+      expect(usage.prompt_token_count).toBe(50);
+      expect(usage.candidates_token_count).toBe(200);
+      expect(usage.thoughts_token_count).toBe(150);
     });
   });
 

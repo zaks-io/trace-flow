@@ -254,6 +254,7 @@ const displayedKeys = new Set([
   'gen_ai.cost.cache_read',
   'gen_ai.cost.cache_creation',
   'gen_ai.cost.reasoning',
+  'baggage.operation',
 ]);
 
 const roleBadgeColors: Record<string, string> = {
@@ -549,6 +550,7 @@ export function SpanDetailPanel({
   const totalCost = allAttributes['gen_ai.cost.total']
     ? parseFloat(allAttributes['gen_ai.cost.total'])
     : null;
+  const operation = allAttributes['baggage.operation'] ?? '';
 
   const remainingAttributes = Object.entries(allAttributes).filter(
     ([key]) => !displayedKeys.has(key),
@@ -682,6 +684,14 @@ export function SpanDetailPanel({
                     >
                       {span.StatusCode}
                     </span>
+                    {operation && (
+                      <>
+                        <span>·</span>
+                        <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-medium text-teal-400">
+                          {operation}
+                        </span>
+                      </>
+                    )}
                   </>
                 )}
               </DialogDescription>

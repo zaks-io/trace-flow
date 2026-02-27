@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef } from 'react';
 import { parseSpanAttributes } from '@trace-flow/utils';
-import { formatDuration as formatDurationMs, formatNumber } from '@/lib/format';
+import { formatDuration as formatDurationMs, formatNumber, formatCurrency } from '@/lib/format';
 import {
   Bot,
   Activity,
@@ -79,6 +79,8 @@ type SpanType =
   | 'synthetic' // Synthetic grouping span for orphan parents
   | 'internal'; // Fallback
 
+type TimelineMode = 'duration' | 'tokens' | 'cost';
+
 interface SpanRow {
   span: TraceSpan;
   depth: number;
@@ -90,12 +92,15 @@ interface SpanRow {
   tokensPerSecond: number | null;
   messageIndex: number | null;
   cost: number | null;
+  model: string | null;
+  operationName: string | null;
   baggage: Record<string, string>;
   isCacheHit: boolean;
   subtreeTokens: number;
   subtreeCost: number;
   subtreeModels: Set<string>;
   subtreeOperations: Set<string>;
+  subtreeTps: number | null;
   hasErrorDescendant: boolean;
 }
 
@@ -123,6 +128,38 @@ function shortenModelName(model: string): string {
     'o3-mini': 'o3-mini',
   };
   return shorts[withoutDate] ?? withoutDate;
+}
+
+function getPrimaryLabel(row: SpanRow): {
+  text: string;
+  isOperation: boolean;
+  originalName: string;
+} {
+  // LLM spans: always show the model name
+  if (row.type === 'llm' && row.model) {
+    return {
+      text: shortenModelName(row.model),
+      isOperation: false,
+      originalName: row.span.SpanName,
+    };
+  }
+
+  // User-provided operation label
+  if (row.baggage.operation) {
+    return { text: row.baggage.operation, isOperation: true, originalName: row.span.SpanName };
+  }
+
+  // Parent/root rows: show subtree operations or operation name
+  if (row.subtreeOperations.size > 0) {
+    const ops = [...row.subtreeOperations];
+    const text = ops.length === 1 ? ops[0] : `${ops[0]} +${ops.length - 1}`;
+    return { text, isOperation: true, originalName: row.span.SpanName };
+  }
+  if (row.depth === 0 && row.operationName) {
+    return { text: row.operationName, isOperation: false, originalName: row.span.SpanName };
+  }
+
+  return { text: row.span.SpanName, isOperation: false, originalName: row.span.SpanName };
 }
 
 function getSpanType(span: TraceSpan, attrs: Record<string, string>): SpanType {
@@ -169,17 +206,9 @@ function getSpanTokens(attrs: Record<string, string>): number | null {
   return total > 0 ? total : null;
 }
 
-function getSpanTokensPerSecond(span: TraceSpan, attrs: Record<string, string>): number | null {
-  // Use pre-calculated TPS if available
-  if (attrs['gen_ai.tokens_per_second']) {
-    return parseFloat(attrs['gen_ai.tokens_per_second']);
-  }
-
-  // Fallback for older spans without pre-calculated TPS
-  const completion = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
-
-  const durationSeconds = span.Duration / 1_000_000_000;
-  return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
+function getSpanTokensPerSecond(_span: TraceSpan, attrs: Record<string, string>): number | null {
+  const tps = attrs['gen_ai.tokens_per_second'];
+  return tps ? parseFloat(tps) : null;
 }
 
 function getSpanCost(attrs: Record<string, string>): number | null {
@@ -193,11 +222,6 @@ function getBaggageAttributes(attrs: Record<string, string>): Record<string, str
     if (key.startsWith('baggage.')) {
       baggage[key.replace('baggage.', '')] = value;
     }
-  }
-  // Include gen_ai.operation.name as 'operation' (with fallback to baggage.operation)
-  const genAiOperation = attrs['gen_ai.operation.name'];
-  if (genAiOperation && !baggage.operation) {
-    baggage.operation = genAiOperation;
   }
   return baggage;
 }
@@ -437,6 +461,21 @@ function getAdaptiveInterval(totalDurationNs: number): number {
   return selected * 1_000_000;
 }
 
+function getMetricInterval(maxValue: number): number {
+  const intervals = [
+    1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, 250000,
+    500000, 1000000,
+  ];
+  const targetTicks = 8;
+  const idealInterval = maxValue / targetTicks;
+  let selected = intervals[0];
+  for (const interval of intervals) {
+    if (interval <= idealInterval) selected = interval;
+    else break;
+  }
+  return selected;
+}
+
 export function AgentGanttChart({
   spans,
   selectedSpanId,
@@ -444,6 +483,7 @@ export function AgentGanttChart({
   parentSpanId,
   spanAlertSummary,
 }: AgentGanttChartProps) {
+  const [timelineMode, setTimelineMode] = useState<TimelineMode>('duration');
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
   const [mousePos, setMousePos] = useState<{
     x: number;
@@ -501,7 +541,6 @@ export function AgentGanttChart({
           SpanAttributes: JSON.stringify({
             synthetic: 'true',
             'gen_ai.operation.name': operation,
-            'baggage.operation': operation,
           }),
         });
       }
@@ -512,17 +551,17 @@ export function AgentGanttChart({
     const allSpanIds = new Set(allSpans.map((s) => s.SpanId));
 
     // Build a map of spans that have children (using combined spans)
-    const childrenMap = new Map<string, boolean>();
+    const childrenMap = new Map<string, number>();
     for (const span of allSpans) {
       if (span.ParentSpanId) {
-        childrenMap.set(span.ParentSpanId, true);
+        childrenMap.set(span.ParentSpanId, (childrenMap.get(span.ParentSpanId) ?? 0) + 1);
       }
     }
 
     // Find ALL root spans (spans whose parent is not in the span set or is empty)
     const rootSpans = allSpans
       .filter((s) => s.ParentSpanId === '' || !allSpanIds.has(s.ParentSpanId))
-      .sort((a, b) => a.Timestamp - b.Timestamp);
+      .sort((a, b) => a.Timestamp - b.Timestamp || a.SpanId.localeCompare(b.SpanId));
 
     // Fallback to earliest span if no roots found
     const effectiveRoots =
@@ -558,6 +597,7 @@ export function AgentGanttChart({
         models: Set<string>;
         operations: Set<string>;
         hasError: boolean;
+        tpsSpans: { tps: number; outputTokens: number }[];
       }
     >();
 
@@ -573,13 +613,20 @@ export function AgentGanttChart({
       const models = new Set<string>();
       const operations = new Set<string>();
       let hasError = span?.StatusCode === 'ERROR';
+      const tpsSpans: { tps: number; outputTokens: number }[] = [];
 
       if (span) {
         const model = getSpanModel(attrs);
         if (model) models.add(model);
 
-        const op = attrs['gen_ai.operation.name'] || attrs['baggage.operation'];
+        const op = attrs['baggage.operation'];
         if (op) operations.add(op);
+
+        const tps = getSpanTokensPerSecond(span, attrs);
+        const outputTokens = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+        if (tps !== null && outputTokens > 0) {
+          tpsSpans.push({ tps, outputTokens });
+        }
       }
 
       for (const child of children) {
@@ -589,9 +636,10 @@ export function AgentGanttChart({
         for (const m of childMetrics.models) models.add(m);
         for (const o of childMetrics.operations) operations.add(o);
         hasError = hasError || childMetrics.hasError;
+        tpsSpans.push(...childMetrics.tpsSpans);
       }
 
-      const result = { tokens, cost, models, operations, hasError };
+      const result = { tokens, cost, models, operations, hasError, tpsSpans };
       subtreeMetrics.set(spanId, result);
       return result;
     };
@@ -616,6 +664,8 @@ export function AgentGanttChart({
         startOffset,
         width: Math.max(width, 0.5),
         type: getSpanType(span, attrs),
+        model: getSpanModel(attrs),
+        operationName: attrs['gen_ai.operation.name'] || null,
         tokens: getSpanTokens(attrs),
         tokensPerSecond: getSpanTokensPerSecond(span, attrs),
         messageIndex: getMessageIndex(attrs),
@@ -626,6 +676,11 @@ export function AgentGanttChart({
         subtreeCost: metrics.cost,
         subtreeModels: metrics.models,
         subtreeOperations: metrics.operations,
+        subtreeTps:
+          metrics.tpsSpans.length > 0
+            ? metrics.tpsSpans.reduce((sum, s) => sum + s.outputTokens, 0) /
+              metrics.tpsSpans.reduce((sum, s) => sum + s.outputTokens / s.tps, 0)
+            : null,
         hasErrorDescendant: metrics.hasError,
       };
     };
@@ -658,13 +713,16 @@ export function AgentGanttChart({
           if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
           if (aIndex !== null) return -1;
           if (bIndex !== null) return 1;
-          return 0;
+          return a.SpanId.localeCompare(b.SpanId);
         });
       }
 
       // Order groups by when their first span occurred
       const sortedGroups = [...groups.entries()].sort(([, spansA], [, spansB]) => {
-        return spansA[0].Timestamp - spansB[0].Timestamp;
+        return (
+          spansA[0].Timestamp - spansB[0].Timestamp ||
+          spansA[0].SpanId.localeCompare(spansB[0].SpanId)
+        );
       });
 
       // Flatten groups into rows
@@ -718,8 +776,51 @@ export function AgentGanttChart({
     });
   }, [spanRows, expandedSpans]);
 
-  // Adaptive tick lines based on trace duration
+  // Compute bar layout for tokens/cost modes
+  const barLayout = useMemo(() => {
+    if (timelineMode === 'duration') return null;
+
+    const getValue = (row: SpanRow): number => {
+      const hasChildren = childrenMap.has(row.span.SpanId);
+      const isExpanded = expandedSpans.has(row.span.SpanId);
+
+      if (timelineMode === 'tokens') {
+        if (row.tokens !== null) return row.tokens;
+        if (hasChildren && !isExpanded) return row.subtreeTokens;
+        return 0;
+      } else {
+        if (row.cost !== null) return row.cost;
+        if (hasChildren && !isExpanded) return row.subtreeCost;
+        return 0;
+      }
+    };
+
+    const maxValue = Math.max(...visibleRows.map(getValue), Number.EPSILON);
+    const layout = new Map<string, { left: number; width: number }>();
+    for (const row of visibleRows) {
+      const value = getValue(row);
+      const widthPct = value > 0 ? (value / maxValue) * 100 : 0;
+      layout.set(row.span.SpanId, { left: 0, width: widthPct > 0 ? Math.max(widthPct, 0.5) : 0 });
+    }
+
+    return { layout, maxValue };
+  }, [timelineMode, visibleRows, expandedSpans, childrenMap]);
+
+  // Adaptive tick lines based on trace duration or metric mode
   const tickLines = useMemo(() => {
+    if (timelineMode !== 'duration') {
+      const maxValue = barLayout?.maxValue ?? 0;
+      if (maxValue === 0) return [];
+      const interval = getMetricInterval(maxValue);
+      const lines: number[] = [];
+      let position = interval;
+      while (position < maxValue) {
+        lines.push((position / maxValue) * 100);
+        position += interval;
+      }
+      return lines;
+    }
+
     if (totalDuration === 0) return [];
     const intervalNs = getAdaptiveInterval(totalDuration);
     const lines: number[] = [];
@@ -729,7 +830,7 @@ export function AgentGanttChart({
       position += intervalNs;
     }
     return lines;
-  }, [totalDuration]);
+  }, [totalDuration, timelineMode, barLayout]);
 
   const toggleExpand = (spanId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -764,11 +865,18 @@ export function AgentGanttChart({
     return null;
   }
 
-  // Time markers aligned with tick lines (0%, tick positions, 100%)
-  const timeMarkers = [0, ...tickLines, 100].map((pct) => ({
-    position: pct,
-    label: formatDuration((pct / 100) * totalDuration),
-  }));
+  // Markers aligned with tick lines (0%, tick positions, 100%)
+  const timeMarkers = [0, ...tickLines, 100].map((pct) => {
+    if (timelineMode === 'duration') {
+      return { position: pct, label: formatDuration((pct / 100) * totalDuration) };
+    }
+    const maxValue = barLayout?.maxValue ?? 0;
+    const value = (pct / 100) * maxValue;
+    return {
+      position: pct,
+      label: timelineMode === 'tokens' ? formatNumber(Math.round(value)) : formatCurrency(value),
+    };
+  });
 
   const handleMouseMove = (e: React.MouseEvent, spanId: string) => {
     if (containerRef.current) {
@@ -799,7 +907,7 @@ export function AgentGanttChart({
     >
       {/* Sticky header */}
       <div className="sticky top-0 z-20 flex border-b border-border/30 bg-muted/80 backdrop-blur-sm">
-        <div className="flex w-[500px] shrink-0 items-center justify-between border-r border-border/30 px-4 py-2">
+        <div className="flex w-[500px] shrink-0 items-center border-r border-border/30 px-4 py-2">
           <div className="flex flex-1 items-center justify-between pr-4">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Span
@@ -814,26 +922,46 @@ export function AgentGanttChart({
               </button>
             )}
           </div>
-          <div className="w-16 text-right">
+          <div className="flex w-16 shrink-0 items-center justify-end">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Duration
             </span>
           </div>
-          <div className="w-20 text-right">
+          <div className="flex w-20 shrink-0 items-center justify-end">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Tokens
             </span>
           </div>
-          <div className="w-20 text-right">
+          <div className="flex w-20 shrink-0 items-center justify-end">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Cost
             </span>
           </div>
         </div>
         <div className="relative flex-1 px-4 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Timeline
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground leading-none">
+              Timeline
+            </span>
+            <div className="flex rounded-md bg-muted/60 p-0.5">
+              {(['duration', 'tokens', 'cost'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTimelineMode(mode);
+                  }}
+                  className={`rounded px-2 py-0.5 text-[10px] font-medium capitalize transition-colors ${
+                    timelineMode === mode
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="absolute inset-x-4 bottom-0 flex justify-between">
             {timeMarkers.map((marker, i) => (
               <div
@@ -895,17 +1023,22 @@ export function AgentGanttChart({
               }`}
               onClick={() => {
                 if (hasChildren) {
-                  setExpandedSpans((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(row.span.SpanId)) next.delete(row.span.SpanId);
-                    else next.add(row.span.SpanId);
-                    return next;
-                  });
+                  if (isExpanded) {
+                    // Already expanded — select it to open the detail panel
+                    onSpanSelect?.(row.span.SpanId);
+                  } else {
+                    setExpandedSpans((prev) => {
+                      const next = new Set(prev);
+                      next.add(row.span.SpanId);
+                      return next;
+                    });
+                  }
                 } else {
                   onSpanSelect?.(row.span.SpanId);
                 }
               }}
               onMouseMove={(e) => handleMouseMove(e, row.span.SpanId)}
+              onMouseLeave={handleMouseLeave}
             >
               <div className="flex w-[500px] shrink-0 items-center border-r border-border/30 py-2 pr-4">
                 <div className="flex flex-1 items-center min-w-0 pl-4 pr-3">
@@ -948,31 +1081,27 @@ export function AgentGanttChart({
                     <span className={`shrink-0 ${getTypeIconColor(row.type, row.span)}`}>
                       {getTypeIcon(row.type)}
                     </span>
-                    <span
-                      className={`truncate text-xs ${isError ? 'text-red-400 font-medium' : 'text-foreground'}`}
-                      title={row.span.SpanName}
-                    >
-                      {row.span.SpanName}
-                    </span>
+                    {(() => {
+                      const label = getPrimaryLabel(row);
+                      return (
+                        <span
+                          className={`text-xs ${label.isOperation ? 'shrink-0' : 'truncate'} ${
+                            isError
+                              ? 'text-red-400 font-medium'
+                              : label.isOperation
+                                ? 'text-teal-400 font-medium'
+                                : 'text-foreground'
+                          }`}
+                          title={
+                            label.isOperation ? `${label.originalName} — ${label.text}` : label.text
+                          }
+                        >
+                          {label.text}
+                        </span>
+                      );
+                    })()}
                     {isError && <AlertCircle className="ml-1 h-3 w-3 shrink-0 text-red-500" />}
                   </div>
-                  {hasChildren && !isExpanded && row.subtreeModels.size > 0 && (
-                    <div className="ml-auto flex shrink-0 gap-1 pl-2">
-                      {[...row.subtreeModels].slice(0, 1).map((m) => (
-                        <span
-                          key={m}
-                          className="whitespace-nowrap rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-medium text-indigo-400"
-                        >
-                          {shortenModelName(m)}
-                        </span>
-                      ))}
-                      {row.subtreeModels.size > 1 && (
-                        <span className="text-[9px] text-muted-foreground/60">
-                          +{row.subtreeModels.size - 1}
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
 
                 {/* Data Columns — same structure for all rows */}
@@ -1006,8 +1135,8 @@ export function AgentGanttChart({
                 </div>
               </div>
 
-              <div className="relative flex-1 px-4 py-2">
-                <div className="relative h-5">
+              <div className="relative flex flex-1 items-center px-4 py-2">
+                <div className="relative h-5 w-full">
                   {(() => {
                     const barHeight =
                       row.depth === 0 ? 'h-full' : row.depth === 1 ? 'h-3' : 'h-1.5';
@@ -1024,8 +1153,12 @@ export function AgentGanttChart({
                           row.depth,
                         )} ${alertStyles?.glow ?? ''} ${row.isCacheHit ? 'bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.05)_4px,rgba(255,255,255,0.05)_8px)]' : ''}`}
                         style={{
-                          left: `${row.startOffset}%`,
-                          width: `${row.width}%`,
+                          left: barLayout
+                            ? `${barLayout.layout.get(row.span.SpanId)?.left ?? 0}%`
+                            : `${row.startOffset}%`,
+                          width: barLayout
+                            ? `${barLayout.layout.get(row.span.SpanId)?.width ?? 0.5}%`
+                            : `${row.width}%`,
                           minWidth: '4px',
                         }}
                       >
@@ -1081,25 +1214,32 @@ export function AgentGanttChart({
               : { top: mousePos.y + 12 }),
           }}
         >
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-foreground">{hoveredRow.span.SpanName}</span>
-            <span className="text-muted-foreground">·</span>
-            <span className="tabular-nums text-muted-foreground">
-              {formatDuration(hoveredRow.span.Duration)}
-            </span>
-          </div>
+          {(() => {
+            const label = getPrimaryLabel(hoveredRow);
+            return (
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`font-medium ${label.isOperation ? 'text-teal-400' : 'text-foreground'}`}
+                  >
+                    {label.text}
+                  </span>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {formatDuration(hoveredRow.span.Duration)}
+                  </span>
+                </div>
+                {label.isOperation && (
+                  <div className="text-[10px] text-muted-foreground/60">{label.originalName}</div>
+                )}
+              </div>
+            );
+          })()}
           {childrenMap.has(hoveredRow.span.SpanId) ? (
             <>
               {hoveredRow.subtreeModels.size > 0 && (
-                <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  {[...hoveredRow.subtreeModels].map((m) => (
-                    <span
-                      key={m}
-                      className="whitespace-nowrap rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-400"
-                    >
-                      {shortenModelName(m)}
-                    </span>
-                  ))}
+                <div className="mt-1 font-mono text-[10px] text-muted-foreground/70">
+                  {[...hoveredRow.subtreeModels].map((m) => shortenModelName(m)).join(', ')}
                 </div>
               )}
               <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -1107,6 +1247,14 @@ export function AgentGanttChart({
                   <span className="tabular-nums text-muted-foreground">
                     {formatNumber(hoveredRow.subtreeTokens)} tokens
                   </span>
+                )}
+                {hoveredRow.subtreeTps !== null && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {hoveredRow.subtreeTps.toFixed(1)} tok/s avg
+                    </span>
+                  </>
                 )}
                 {hoveredRow.subtreeCost > 0 && (
                   <>
@@ -1116,25 +1264,18 @@ export function AgentGanttChart({
                     </span>
                   </>
                 )}
-                {(childrenMap.get(hoveredRow.span.SpanId)?.length ?? 0) > 0 && (
+                {(childrenMap.get(hoveredRow.span.SpanId) ?? 0) > 0 && (
                   <>
                     <span className="text-muted-foreground">·</span>
                     <span className="text-muted-foreground">
-                      {childrenMap.get(hoveredRow.span.SpanId)!.length} spans
+                      {childrenMap.get(hoveredRow.span.SpanId)} spans
                     </span>
                   </>
                 )}
               </div>
               {hoveredRow.subtreeOperations.size > 0 && (
-                <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  {[...hoveredRow.subtreeOperations].map((op) => (
-                    <span
-                      key={op}
-                      className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-medium text-teal-400"
-                    >
-                      {op}
-                    </span>
-                  ))}
+                <div className="mt-1 text-[10px] text-teal-400">
+                  {[...hoveredRow.subtreeOperations].join(', ')}
                 </div>
               )}
             </>
@@ -1161,14 +1302,6 @@ export function AgentGanttChart({
                     <span className="text-muted-foreground">·</span>
                     <span className="tabular-nums text-emerald-400">
                       ${hoveredRow.cost.toFixed(6)}
-                    </span>
-                  </>
-                )}
-                {hoveredRow.baggage.operation && (
-                  <>
-                    <span className="text-muted-foreground">·</span>
-                    <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-medium text-teal-400">
-                      {hoveredRow.baggage.operation}
                     </span>
                   </>
                 )}

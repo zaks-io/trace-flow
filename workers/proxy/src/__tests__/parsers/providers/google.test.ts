@@ -51,8 +51,46 @@ describe('parseGoogleTokens', () => {
     expect(result?.completionTokens).toBeUndefined();
   });
 
+  it('should map thoughtsTokenCount to reasoningTokens', () => {
+    const body = JSON.stringify({
+      usageMetadata: {
+        promptTokenCount: 50,
+        candidatesTokenCount: 200,
+        totalTokenCount: 250,
+        thoughtsTokenCount: 150,
+      },
+    });
+
+    const result = parseGoogleTokens(body);
+
+    expect(result).toEqual({
+      promptTokens: 50,
+      completionTokens: 200,
+      totalTokens: 250,
+      reasoningTokens: 150,
+    });
+  });
+
   it('should return undefined when no Google token fields found', () => {
     const body = JSON.stringify({ candidates: [{ content: {} }] });
     expect(parseGoogleTokens(body)).toBeUndefined();
+  });
+
+  it('should match last occurrence in multi-chunk SSE body text', () => {
+    // Simulates raw SSE text from a streaming response where candidatesTokenCount
+    // starts at 0 and increases cumulatively across chunks
+    const body = [
+      `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 } })}`,
+      `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 3, totalTokenCount: 11 } })}`,
+      `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 7, totalTokenCount: 15 } })}`,
+    ].join('\n\n');
+
+    const result = parseGoogleTokens(body);
+
+    expect(result).toEqual({
+      promptTokens: 8,
+      completionTokens: 7,
+      totalTokens: 15,
+    });
   });
 });

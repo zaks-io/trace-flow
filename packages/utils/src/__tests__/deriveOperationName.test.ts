@@ -27,13 +27,15 @@ describe('deriveOperationName', () => {
   });
 
   describe('Google Gemini patterns', () => {
-    it('should identify generateContent', () => {
-      expect(deriveOperationName('/google/v1beta/models/gemini-pro:generateContent')).toBe(
-        'generate_content',
-      );
-      expect(deriveOperationName('/v1beta/models/gemini-1.5-flash:generateContent')).toBe(
-        'generate_content',
-      );
+    it('should identify generateContent as chat', () => {
+      expect(deriveOperationName('/google/v1beta/models/gemini-pro:generateContent')).toBe('chat');
+      expect(deriveOperationName('/v1beta/models/gemini-1.5-flash:generateContent')).toBe('chat');
+    });
+
+    it('should identify streamGenerateContent as chat', () => {
+      expect(
+        deriveOperationName('/google/v1beta/models/gemini-2.0-flash:streamGenerateContent'),
+      ).toBe('chat');
     });
 
     it('should identify embedContent', () => {
@@ -64,9 +66,7 @@ describe('deriveOperationName', () => {
     it('should handle uppercase paths', () => {
       expect(deriveOperationName('/OpenAI/V1/Chat/Completions')).toBe('chat');
       expect(deriveOperationName('/V1/EMBEDDINGS')).toBe('embeddings');
-      expect(deriveOperationName('/GOOGLE/V1BETA/MODELS/GEMINI:GENERATECONTENT')).toBe(
-        'generate_content',
-      );
+      expect(deriveOperationName('/GOOGLE/V1BETA/MODELS/GEMINI:GENERATECONTENT')).toBe('chat');
     });
 
     it('should handle mixed case paths', () => {

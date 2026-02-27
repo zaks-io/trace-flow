@@ -35,7 +35,7 @@ export async function runNonStreaming(
 ): Promise<RequestResult> {
   const { model, providerName, providerId } = ctx;
   const prompt = config.prompt ?? 'Say hello in 3 words.';
-  const maxTokens = config.maxTokens ?? 50;
+  const maxTokens = config.maxTokens ?? 250;
   const { headers, spanId } = buildTraceHeaders(ctx);
   const start = Date.now();
 
@@ -80,7 +80,7 @@ export async function runStreaming(
 ): Promise<RequestResult> {
   const { model, providerName, providerId } = ctx;
   const prompt = config.prompt ?? 'Count to 3.';
-  const maxTokens = config.maxTokens ?? 50;
+  const maxTokens = config.maxTokens ?? 250;
   const { headers, spanId } = buildTraceHeaders(ctx);
   const start = Date.now();
   let ttft: number | undefined;

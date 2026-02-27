@@ -33,6 +33,7 @@ const GOOGLE_PROMPT_TOKEN_COUNT_PATTERN = /"promptTokenCount"\s*:\s*(\d+)/;
 const GOOGLE_CANDIDATES_TOKEN_COUNT_PATTERN = /"candidatesTokenCount"\s*:\s*(\d+)/;
 const GOOGLE_CACHED_TOKEN_COUNT_PATTERN = /"cachedContentTokenCount"\s*:\s*(\d+)/;
 const GOOGLE_TOTAL_TOKEN_COUNT_PATTERN = /"totalTokenCount"\s*:\s*(\d+)/;
+const GOOGLE_THOUGHTS_TOKEN_COUNT_PATTERN = /"thoughtsTokenCount"\s*:\s*(\d+)/;
 
 // Token usage patterns (used by both OpenAI and Anthropic)
 const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
@@ -240,6 +241,7 @@ export function extractTokenUsageFromSSEData(data: string): {
   candidates_token_count?: number;
   cached_content_token_count?: number;
   total_token_count?: number;
+  thoughts_token_count?: number;
 } {
   const usage: {
     input_tokens?: number;
@@ -255,6 +257,7 @@ export function extractTokenUsageFromSSEData(data: string): {
     candidates_token_count?: number;
     cached_content_token_count?: number;
     total_token_count?: number;
+    thoughts_token_count?: number;
   } = {};
 
   // OpenAI/Anthropic patterns
@@ -322,6 +325,11 @@ export function extractTokenUsageFromSSEData(data: string): {
   const totalTokenCountMatch = GOOGLE_TOTAL_TOKEN_COUNT_PATTERN.exec(data);
   if (totalTokenCountMatch?.[1]) {
     usage.total_token_count = parseInt(totalTokenCountMatch[1], 10);
+  }
+
+  const thoughtsTokenCountMatch = GOOGLE_THOUGHTS_TOKEN_COUNT_PATTERN.exec(data);
+  if (thoughtsTokenCountMatch?.[1]) {
+    usage.thoughts_token_count = parseInt(thoughtsTokenCountMatch[1], 10);
   }
 
   return usage;

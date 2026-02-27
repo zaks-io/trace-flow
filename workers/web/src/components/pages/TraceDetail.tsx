@@ -291,7 +291,6 @@ export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailPro
 
       {/* Span Timeline */}
       <div className="mt-4 flex min-h-0 flex-1 flex-col">
-        <h2 className="mb-3 shrink-0 text-lg font-semibold text-foreground">Span Timeline</h2>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <AgentGanttChart
             spans={spans}
