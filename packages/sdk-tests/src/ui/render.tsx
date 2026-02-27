@@ -3,7 +3,7 @@ import type { ProviderConfig } from '../providers';
 import type { Scenario } from '../scenarios/types';
 import { App } from './App';
 
-export interface RenderOptions {
+interface RenderOptions {
   mode: 'interactive' | 'run';
   scenario?: Scenario;
   providerConfigs?: ProviderConfig[];

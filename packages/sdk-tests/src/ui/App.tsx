@@ -14,7 +14,7 @@ import { ResultsScreen } from './screens/ResultsScreen';
 
 type AppPhase = 'select' | 'run' | 'results';
 
-export interface AppProps {
+interface AppProps {
   mode: 'interactive' | 'run';
   scenario?: Scenario;
   providerConfigs?: ProviderConfig[];
