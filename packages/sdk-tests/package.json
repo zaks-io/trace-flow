@@ -6,14 +6,14 @@
   "scripts": {
     "lint": "eslint src",
     "type-check": "tsc --noEmit",
-    "test": "bun run src/cli.ts run",
-    "test:openai": "bun run src/cli.ts run -p openai",
-    "test:anthropic": "bun run src/cli.ts run -p anthropic",
-    "test:google": "bun run src/cli.ts run -p google",
-    "test:openrouter": "bun run src/cli.ts run -p openrouter",
-    "test:groq": "bun run src/cli.ts run -p groq",
-    "test:groq-tools": "bun run src/cli.ts run -p groq -s tools",
-    "test:all": "bun run src/cli.ts run"
+    "integration": "bun run src/cli.ts run",
+    "integration:openai": "bun run src/cli.ts run -p openai",
+    "integration:anthropic": "bun run src/cli.ts run -p anthropic",
+    "integration:google": "bun run src/cli.ts run -p google",
+    "integration:openrouter": "bun run src/cli.ts run -p openrouter",
+    "integration:groq": "bun run src/cli.ts run -p groq",
+    "integration:groq-tools": "bun run src/cli.ts run -p groq -s tools",
+    "integration:all": "bun run src/cli.ts run"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "latest",
