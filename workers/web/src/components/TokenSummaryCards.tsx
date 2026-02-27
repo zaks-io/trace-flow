@@ -6,6 +6,7 @@ import {
   formatCacheHitRate,
   getCacheHitRateAccent,
 } from '@/lib/cacheMetrics';
+import { SummaryCard } from '@/components/usage/SummaryCard';
 
 interface TraceSpan {
   SpanAttributes: string;
@@ -122,53 +123,6 @@ function formatCost(dollars: number): string {
     return `$${dollars.toFixed(3)}`;
   }
   return `$${dollars.toFixed(2)}`;
-}
-
-interface SummaryCardProps {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'green' | 'red';
-}
-
-function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) {
-  const accentColors = {
-    purple: 'from-purple-500/20 to-purple-500/5 border-purple-500/30',
-    blue: 'from-blue-500/20 to-blue-500/5 border-blue-500/30',
-    emerald: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
-    amber: 'from-amber-500/20 to-amber-500/5 border-amber-500/30',
-    zinc: 'from-zinc-500/20 to-zinc-500/5 border-zinc-500/30',
-    green: 'from-green-500/20 to-green-500/5 border-green-500/30',
-    red: 'from-red-500/20 to-red-500/5 border-red-500/30',
-  };
-
-  const iconColors = {
-    purple: 'text-purple-400',
-    blue: 'text-blue-400',
-    emerald: 'text-emerald-400',
-    amber: 'text-amber-400',
-    zinc: 'text-zinc-400',
-    green: 'text-green-400',
-    red: 'text-red-400',
-  };
-
-  return (
-    <div
-      className={`relative overflow-hidden rounded-xl border bg-gradient-to-br p-4 ${accentColors[accent]}`}
-    >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            {label}
-          </p>
-          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
-            {value}
-          </p>
-        </div>
-        <div className={`rounded-lg bg-background/50 p-2 ${iconColors[accent]}`}>{icon}</div>
-      </div>
-    </div>
-  );
 }
 
 export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {

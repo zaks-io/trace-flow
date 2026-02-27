@@ -88,8 +88,8 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   };
 
   return (
-    <Sidebar className="border-r border-sidebar-border/50">
-      <SidebarHeader className="border-b border-sidebar-border/50 px-4 py-4">
+    <Sidebar variant="inset" className="border-none bg-transparent">
+      <SidebarHeader className="px-4 py-6">
         <Link href="/app" className="flex items-center gap-3 transition-opacity hover:opacity-80">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 ring-1 ring-primary/20">
             <Zap className="h-5 w-5 text-primary" />

@@ -1,5 +1,6 @@
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import { parseSpanAttributes } from '@trace-flow/utils';
+import { formatDuration as formatDurationMs, formatNumber } from '@/lib/format';
 import {
   Bot,
   Activity,
@@ -81,6 +82,7 @@ type SpanType =
 interface SpanRow {
   span: TraceSpan;
   depth: number;
+  isLastPath: boolean[];
   startOffset: number;
   width: number;
   type: SpanType;
@@ -89,11 +91,41 @@ interface SpanRow {
   messageIndex: number | null;
   cost: number | null;
   baggage: Record<string, string>;
+  isCacheHit: boolean;
+  subtreeTokens: number;
+  subtreeCost: number;
+  subtreeModels: Set<string>;
+  subtreeOperations: Set<string>;
+  hasErrorDescendant: boolean;
 }
 
-function getSpanType(span: TraceSpan): SpanType {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getSpanModel(attrs: Record<string, string>): string | null {
+  return (
+    attrs['gen_ai.request.model'] || attrs['llm.request.model'] || attrs['gen_ai.system'] || null
+  );
+}
 
+function shortenModelName(model: string): string {
+  const withoutDate = model.replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
+  const shorts: Record<string, string> = {
+    'claude-sonnet-4': 'sonnet-4',
+    'claude-opus-4': 'opus-4',
+    'claude-3-5-sonnet': 'sonnet-3.5',
+    'claude-3-5-haiku': 'haiku-3.5',
+    'claude-3-opus': 'opus-3',
+    'claude-3-haiku': 'haiku-3',
+    'gpt-4o-mini': '4o-mini',
+    'gpt-4o': '4o',
+    'gpt-4-turbo': '4-turbo',
+    'gpt-4.1': '4.1',
+    'gpt-4.1-mini': '4.1-mini',
+    'gpt-4.1-nano': '4.1-nano',
+    'o3-mini': 'o3-mini',
+  };
+  return shorts[withoutDate] ?? withoutDate;
+}
+
+function getSpanType(span: TraceSpan, attrs: Record<string, string>): SpanType {
   // Synthetic grouping spans
   if (attrs.synthetic === 'true') return 'synthetic';
 
@@ -129,8 +161,7 @@ function getSpanType(span: TraceSpan): SpanType {
   return 'internal';
 }
 
-function getSpanTokens(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getSpanTokens(attrs: Record<string, string>): number | null {
   const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
   const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
   const total = input + output;
@@ -138,9 +169,7 @@ function getSpanTokens(span: TraceSpan): number | null {
   return total > 0 ? total : null;
 }
 
-function getSpanTokensPerSecond(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
-
+function getSpanTokensPerSecond(span: TraceSpan, attrs: Record<string, string>): number | null {
   // Use pre-calculated TPS if available
   if (attrs['gen_ai.tokens_per_second']) {
     return parseFloat(attrs['gen_ai.tokens_per_second']);
@@ -153,14 +182,12 @@ function getSpanTokensPerSecond(span: TraceSpan): number | null {
   return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
 }
 
-function getSpanCost(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getSpanCost(attrs: Record<string, string>): number | null {
   const cost = attrs['gen_ai.cost.total'];
   return cost ? parseFloat(cost) : null;
 }
 
-function getBaggageAttributes(span: TraceSpan): Record<string, string> {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getBaggageAttributes(attrs: Record<string, string>): Record<string, string> {
   const baggage: Record<string, string> = {};
   for (const [key, value] of Object.entries(attrs)) {
     if (key.startsWith('baggage.')) {
@@ -175,8 +202,7 @@ function getBaggageAttributes(span: TraceSpan): Record<string, string> {
   return baggage;
 }
 
-function getMessageIndex(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getMessageIndex(attrs: Record<string, string>): number | null {
   const index = attrs['gen_ai.message.index'];
   return index !== undefined ? parseInt(index, 10) : null;
 }
@@ -187,14 +213,54 @@ function isHollowType(type: SpanType): boolean {
 
 // Color palette for synthetic spans based on operation name
 const syntheticColorPalette = [
-  { border: 'border-teal-400', bg: 'bg-teal-500/15', text: 'text-teal-400' },
-  { border: 'border-rose-400', bg: 'bg-rose-500/15', text: 'text-rose-400' },
-  { border: 'border-amber-400', bg: 'bg-amber-500/15', text: 'text-amber-400' },
-  { border: 'border-sky-400', bg: 'bg-sky-500/15', text: 'text-sky-400' },
-  { border: 'border-purple-400', bg: 'bg-purple-500/15', text: 'text-purple-400' },
-  { border: 'border-lime-400', bg: 'bg-lime-500/15', text: 'text-lime-400' },
-  { border: 'border-pink-400', bg: 'bg-pink-500/15', text: 'text-pink-400' },
-  { border: 'border-cyan-400', bg: 'bg-cyan-500/15', text: 'text-cyan-400' },
+  {
+    border: 'border-teal-400',
+    bg: 'bg-teal-500/15',
+    bgStrong: 'bg-teal-500/40',
+    text: 'text-teal-400',
+  },
+  {
+    border: 'border-rose-400',
+    bg: 'bg-rose-500/15',
+    bgStrong: 'bg-rose-500/40',
+    text: 'text-rose-400',
+  },
+  {
+    border: 'border-amber-400',
+    bg: 'bg-amber-500/15',
+    bgStrong: 'bg-amber-500/40',
+    text: 'text-amber-400',
+  },
+  {
+    border: 'border-sky-400',
+    bg: 'bg-sky-500/15',
+    bgStrong: 'bg-sky-500/40',
+    text: 'text-sky-400',
+  },
+  {
+    border: 'border-purple-400',
+    bg: 'bg-purple-500/15',
+    bgStrong: 'bg-purple-500/40',
+    text: 'text-purple-400',
+  },
+  {
+    border: 'border-lime-400',
+    bg: 'bg-lime-500/15',
+    bgStrong: 'bg-lime-500/40',
+    text: 'text-lime-400',
+  },
+  {
+    border: 'border-pink-400',
+    bg: 'bg-pink-500/15',
+    bgStrong: 'bg-pink-500/40',
+    text: 'text-pink-400',
+  },
+  {
+    border: 'border-cyan-400',
+    bg: 'bg-cyan-500/15',
+    bgStrong: 'bg-cyan-500/40',
+    text: 'text-cyan-400',
+  },
 ];
 
 function getSyntheticColorIndex(spanName: string): number {
@@ -206,35 +272,39 @@ function getSyntheticColorIndex(spanName: string): number {
   return Math.abs(hash) % syntheticColorPalette.length;
 }
 
-function getSyntheticColor(span: TraceSpan): { border: string; bg: string; text: string } {
+function getSyntheticColor(span: TraceSpan): {
+  border: string;
+  bg: string;
+  bgStrong: string;
+  text: string;
+} {
   const index = getSyntheticColorIndex(span.SpanName);
   return syntheticColorPalette[index];
 }
 
-function getInternalColor(span: TraceSpan): string {
+function getInternalColor(span: TraceSpan, depth?: number): string {
   const index = getSyntheticColorIndex(span.SpanName);
   const colors = syntheticColorPalette[index];
-  return `${colors.border} ${colors.bg}`;
+  return `${colors.border} ${depth === 0 ? colors.bgStrong : colors.bg}`;
 }
 
-function getTypeColor(type: SpanType, status: string, span?: TraceSpan): string {
+function getTypeColor(type: SpanType, status: string, span?: TraceSpan, depth?: number): string {
   if (status === 'ERROR') return 'bg-red-500';
 
-  switch (type) {
-    // Infrastructure - hollow style (handled separately in JSX)
-    case 'llm':
-      return 'border-violet-400 bg-violet-500/10';
+  const isRoot = depth === 0;
 
-    // Synthetic grouping spans - hollow style with dynamic colors
+  switch (type) {
+    case 'llm':
+      return isRoot ? 'border-violet-400 bg-violet-500/40' : 'border-violet-400 bg-violet-500/10';
+
     case 'synthetic': {
       if (span) {
         const colors = getSyntheticColor(span);
-        return `${colors.border} ${colors.bg}`;
+        return `${colors.border} ${isRoot ? colors.bgStrong : colors.bg}`;
       }
-      return 'border-zinc-500/70 bg-zinc-500/5';
+      return isRoot ? 'border-zinc-500/70 bg-zinc-500/20' : 'border-zinc-500/70 bg-zinc-500/5';
     }
 
-    // Input messages - warm/earth tones
     case 'system':
       return 'bg-slate-500';
     case 'user':
@@ -244,7 +314,6 @@ function getTypeColor(type: SpanType, status: string, span?: TraceSpan): string 
     case 'tool_result':
       return 'bg-amber-500';
 
-    // Output spans - cool/vibrant tones
     case 'assistant_text':
       return 'bg-indigo-500';
     case 'assistant_thinking':
@@ -252,16 +321,14 @@ function getTypeColor(type: SpanType, status: string, span?: TraceSpan): string 
     case 'assistant_tool_use':
       return 'bg-cyan-500';
 
-    // Tool execution - accent
     case 'tool_execution':
       return 'bg-orange-500';
 
-    // Internal/custom spans - hollow style with dynamic colors
     case 'internal':
       if (span) {
-        return getInternalColor(span);
+        return getInternalColor(span, depth);
       }
-      return 'border-zinc-500/70 bg-zinc-500/5';
+      return isRoot ? 'border-zinc-500/70 bg-zinc-500/20' : 'border-zinc-500/70 bg-zinc-500/5';
 
     default:
       return 'bg-zinc-500';
@@ -353,21 +420,7 @@ function getTypeIconColor(type: SpanType, span?: TraceSpan): string {
 }
 
 function formatDuration(nanoseconds: number): string {
-  const ms = nanoseconds / 1_000_000;
-  if (ms < 1) {
-    return `${(ms * 1000).toFixed(0)}μs`;
-  }
-  if (ms < 1000) {
-    return `${ms.toFixed(1)}ms`;
-  }
-  return `${(ms / 1000).toFixed(2)}s`;
-}
-
-function formatNumber(num: number): string {
-  if (num >= 1000) {
-    return `${(num / 1000).toFixed(1)}k`;
-  }
-  return num.toString();
+  return formatDurationMs(nanoseconds / 1_000_000);
 }
 
 function getAdaptiveInterval(totalDurationNs: number): number {
@@ -401,189 +454,253 @@ export function AgentGanttChart({
   const [hoveredSpanId, setHoveredSpanId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { spanRows, totalDuration, childrenMap, syntheticSpanIds, syntheticChildrenMap } =
-    useMemo(() => {
-      if (spans.length === 0)
-        return {
-          spanRows: [],
-          totalDuration: 0,
-          childrenMap: new Map(),
-          syntheticSpanIds: new Set<string>(),
-          syntheticChildrenMap: new Map<string, TraceSpan[]>(),
-        };
-
-      const spanIds = new Set(spans.map((s) => s.SpanId));
-
-      // Find orphan parent IDs (ParentSpanIds that don't exist in our span set)
-      const orphanParentIds = new Map<string, TraceSpan[]>();
-      for (const span of spans) {
-        if (span.ParentSpanId && !spanIds.has(span.ParentSpanId)) {
-          const group = orphanParentIds.get(span.ParentSpanId) ?? [];
-          group.push(span);
-          orphanParentIds.set(span.ParentSpanId, group);
-        }
-      }
-
-      // Create synthetic parent spans for orphan groups
-      const syntheticSpans: TraceSpan[] = [];
-      for (const [parentId, childSpans] of orphanParentIds) {
-        if (childSpans.length > 0) {
-          const earliestStart = Math.min(...childSpans.map((s) => s.Timestamp));
-          const latestEnd = Math.max(...childSpans.map((s) => s.Timestamp + s.Duration));
-
-          // Get operation from first child's gen_ai.operation.name or baggage for labeling
-          const firstChildAttrs = parseSpanAttributes(childSpans[0].SpanAttributes);
-          const operation =
-            firstChildAttrs['gen_ai.operation.name'] ??
-            firstChildAttrs['baggage.operation'] ??
-            'group';
-
-          syntheticSpans.push({
-            Timestamp: earliestStart,
-            TraceId: childSpans[0].TraceId,
-            SpanId: parentId,
-            ParentSpanId: '',
-            SpanName: operation,
-            ServiceName: childSpans[0].ServiceName,
-            Duration: latestEnd - earliestStart,
-            StatusCode: 'OK',
-            SpanAttributes: JSON.stringify({
-              synthetic: 'true',
-              'gen_ai.operation.name': operation,
-              'baggage.operation': operation,
-            }),
-          });
-        }
-      }
-
-      // Combine synthetic and real spans
-      const allSpans = [...syntheticSpans, ...spans];
-      const allSpanIds = new Set(allSpans.map((s) => s.SpanId));
-
-      // Build a map of spans that have children (using combined spans)
-      const childrenMap = new Map<string, boolean>();
-      for (const span of allSpans) {
-        if (span.ParentSpanId) {
-          childrenMap.set(span.ParentSpanId, true);
-        }
-      }
-
-      // Find ALL root spans (spans whose parent is not in the span set or is empty)
-      const rootSpans = allSpans
-        .filter((s) => s.ParentSpanId === '' || !allSpanIds.has(s.ParentSpanId))
-        .sort((a, b) => a.Timestamp - b.Timestamp);
-
-      // Fallback to earliest span if no roots found
-      const effectiveRoots =
-        rootSpans.length > 0
-          ? rootSpans
-          : [allSpans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
-
-      const traceStart = Math.min(...effectiveRoots.map((s) => s.Timestamp));
-      const traceEndTime = Math.max(...allSpans.map((s) => s.Timestamp + s.Duration));
-      const total = traceEndTime - traceStart;
-
-      const buildSpanTree = (parentId: string, depth = 0): SpanRow[] => {
-        const children = allSpans.filter((s) => s.ParentSpanId === parentId);
-
-        // Group children by type:
-        // - ai.* spans group by their exact name (e.g., all ai.request together)
-        // - Other spans (named agents) are their own group
-        const groups = new Map<string, TraceSpan[]>();
-        for (const child of children) {
-          const name = child.SpanName.toLowerCase();
-          const groupKey = name.startsWith('gen_ai.') ? child.SpanName : child.SpanId;
-          if (!groups.has(groupKey)) {
-            groups.set(groupKey, []);
-          }
-          groups.get(groupKey)!.push(child);
-        }
-
-        // Sort spans within each group by timestamp, then message index
-        for (const groupSpans of groups.values()) {
-          groupSpans.sort((a, b) => {
-            const timeDiff = a.Timestamp - b.Timestamp;
-            if (timeDiff !== 0) return timeDiff;
-            const aIndex = getMessageIndex(a);
-            const bIndex = getMessageIndex(b);
-            if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
-            if (aIndex !== null) return -1;
-            if (bIndex !== null) return 1;
-            return 0;
-          });
-        }
-
-        // Order groups by when their first span occurred
-        const sortedGroups = [...groups.entries()].sort(([, spansA], [, spansB]) => {
-          return spansA[0].Timestamp - spansB[0].Timestamp;
-        });
-
-        // Flatten groups into rows
-        const rows: SpanRow[] = [];
-        for (const [, groupSpans] of sortedGroups) {
-          for (const span of groupSpans) {
-            const startOffset = ((span.Timestamp - traceStart) / total) * 100;
-            const width = (span.Duration / total) * 100;
-            rows.push({
-              span,
-              depth,
-              startOffset,
-              width: Math.max(width, 0.5),
-              type: getSpanType(span),
-              tokens: getSpanTokens(span),
-              tokensPerSecond: getSpanTokensPerSecond(span),
-              messageIndex: getMessageIndex(span),
-              cost: getSpanCost(span),
-              baggage: getBaggageAttributes(span),
-            });
-            rows.push(...buildSpanTree(span.SpanId, depth + 1));
-          }
-        }
-        return rows;
+  const { spanRows, totalDuration, childrenMap, syntheticChildrenMap } = useMemo(() => {
+    if (spans.length === 0)
+      return {
+        spanRows: [],
+        totalDuration: 0,
+        childrenMap: new Map(),
+        syntheticChildrenMap: new Map<string, TraceSpan[]>(),
       };
 
-      const allRows: SpanRow[] = [];
-      for (const rootSpan of effectiveRoots) {
-        const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
-        allRows.push({
-          span: rootSpan,
-          depth: 0,
-          startOffset,
-          width: Math.max((rootSpan.Duration / total) * 100, 0.5),
-          type: getSpanType(rootSpan),
-          tokens: getSpanTokens(rootSpan),
-          tokensPerSecond: getSpanTokensPerSecond(rootSpan),
-          messageIndex: getMessageIndex(rootSpan),
-          cost: getSpanCost(rootSpan),
-          baggage: getBaggageAttributes(rootSpan),
+    const spanIds = new Set(spans.map((s) => s.SpanId));
+
+    // Find orphan parent IDs (ParentSpanIds that don't exist in our span set)
+    const orphanParentIds = new Map<string, TraceSpan[]>();
+    for (const span of spans) {
+      if (span.ParentSpanId && !spanIds.has(span.ParentSpanId)) {
+        const group = orphanParentIds.get(span.ParentSpanId) ?? [];
+        group.push(span);
+        orphanParentIds.set(span.ParentSpanId, group);
+      }
+    }
+
+    // Create synthetic parent spans for orphan groups
+    const syntheticSpans: TraceSpan[] = [];
+    for (const [parentId, childSpans] of orphanParentIds) {
+      if (childSpans.length > 0) {
+        const earliestStart = Math.min(...childSpans.map((s) => s.Timestamp));
+        const latestEnd = Math.max(...childSpans.map((s) => s.Timestamp + s.Duration));
+
+        // Get operation from first child's gen_ai.operation.name or baggage for labeling
+        const firstChildAttrs = parseSpanAttributes(childSpans[0].SpanAttributes);
+        const operation =
+          firstChildAttrs['gen_ai.operation.name'] ??
+          firstChildAttrs['baggage.operation'] ??
+          'group';
+
+        syntheticSpans.push({
+          Timestamp: earliestStart,
+          TraceId: childSpans[0].TraceId,
+          SpanId: parentId,
+          ParentSpanId: '',
+          SpanName: operation,
+          ServiceName: childSpans[0].ServiceName,
+          Duration: latestEnd - earliestStart,
+          StatusCode: 'OK',
+          SpanAttributes: JSON.stringify({
+            synthetic: 'true',
+            'gen_ai.operation.name': operation,
+            'baggage.operation': operation,
+          }),
         });
-        allRows.push(...buildSpanTree(rootSpan.SpanId, 1));
+      }
+    }
+
+    // Combine synthetic and real spans
+    const allSpans = [...syntheticSpans, ...spans];
+    const allSpanIds = new Set(allSpans.map((s) => s.SpanId));
+
+    // Build a map of spans that have children (using combined spans)
+    const childrenMap = new Map<string, boolean>();
+    for (const span of allSpans) {
+      if (span.ParentSpanId) {
+        childrenMap.set(span.ParentSpanId, true);
+      }
+    }
+
+    // Find ALL root spans (spans whose parent is not in the span set or is empty)
+    const rootSpans = allSpans
+      .filter((s) => s.ParentSpanId === '' || !allSpanIds.has(s.ParentSpanId))
+      .sort((a, b) => a.Timestamp - b.Timestamp);
+
+    // Fallback to earliest span if no roots found
+    const effectiveRoots =
+      rootSpans.length > 0
+        ? rootSpans
+        : [allSpans.reduce((a, b) => (a.Timestamp < b.Timestamp ? a : b))];
+
+    const traceStart = Math.min(...effectiveRoots.map((s) => s.Timestamp));
+    const traceEndTime = Math.max(...allSpans.map((s) => s.Timestamp + s.Duration));
+    const total = traceEndTime - traceStart;
+
+    // Pre-compute lookup maps: O(n) instead of O(n²) find/filter in recursive traversals
+    const spanById = new Map<string, TraceSpan>();
+    const childrenByParent = new Map<string, TraceSpan[]>();
+    const parsedAttrs = new Map<string, Record<string, string>>();
+    for (const span of allSpans) {
+      spanById.set(span.SpanId, span);
+      parsedAttrs.set(span.SpanId, parseSpanAttributes(span.SpanAttributes));
+      const siblings = childrenByParent.get(span.ParentSpanId);
+      if (siblings) {
+        siblings.push(span);
+      } else {
+        childrenByParent.set(span.ParentSpanId, [span]);
+      }
+    }
+
+    // --- Pre-compute subtree metrics ---
+    const subtreeMetrics = new Map<
+      string,
+      {
+        tokens: number;
+        cost: number;
+        models: Set<string>;
+        operations: Set<string>;
+        hasError: boolean;
+      }
+    >();
+
+    const computeMetrics = (spanId: string) => {
+      if (subtreeMetrics.has(spanId)) return subtreeMetrics.get(spanId)!;
+
+      const span = spanById.get(spanId);
+      const children = childrenByParent.get(spanId) ?? [];
+      const attrs = span ? parsedAttrs.get(spanId)! : {};
+
+      let tokens = span ? (getSpanTokens(attrs) ?? 0) : 0;
+      let cost = span ? (getSpanCost(attrs) ?? 0) : 0;
+      const models = new Set<string>();
+      const operations = new Set<string>();
+      let hasError = span?.StatusCode === 'ERROR';
+
+      if (span) {
+        const model = getSpanModel(attrs);
+        if (model) models.add(model);
+
+        const op = attrs['gen_ai.operation.name'] || attrs['baggage.operation'];
+        if (op) operations.add(op);
       }
 
-      // Collect synthetic span IDs for auto-expansion
-      const syntheticSpanIds = new Set(syntheticSpans.map((s) => s.SpanId));
+      for (const child of children) {
+        const childMetrics = computeMetrics(child.SpanId);
+        tokens += childMetrics.tokens;
+        cost += childMetrics.cost;
+        for (const m of childMetrics.models) models.add(m);
+        for (const o of childMetrics.operations) operations.add(o);
+        hasError = hasError || childMetrics.hasError;
+      }
+
+      const result = { tokens, cost, models, operations, hasError };
+      subtreeMetrics.set(spanId, result);
+      return result;
+    };
+
+    for (const span of allSpans) {
+      computeMetrics(span.SpanId);
+    }
+
+    // -----------------------------------
+
+    const buildSpanRow = (span: TraceSpan, depth: number, isLastPath: boolean[]): SpanRow => {
+      const attrs = parsedAttrs.get(span.SpanId)!;
+      const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
+      const metrics = subtreeMetrics.get(span.SpanId)!;
+      const startOffset = ((span.Timestamp - traceStart) / total) * 100;
+      const width = (span.Duration / total) * 100;
 
       return {
-        spanRows: allRows,
-        totalDuration: total,
-        childrenMap,
-        syntheticSpanIds,
-        syntheticChildrenMap: orphanParentIds,
+        span,
+        depth,
+        isLastPath,
+        startOffset,
+        width: Math.max(width, 0.5),
+        type: getSpanType(span, attrs),
+        tokens: getSpanTokens(attrs),
+        tokensPerSecond: getSpanTokensPerSecond(span, attrs),
+        messageIndex: getMessageIndex(attrs),
+        cost: getSpanCost(attrs),
+        baggage: getBaggageAttributes(attrs),
+        isCacheHit: cacheRead > 0,
+        subtreeTokens: metrics.tokens,
+        subtreeCost: metrics.cost,
+        subtreeModels: metrics.models,
+        subtreeOperations: metrics.operations,
+        hasErrorDescendant: metrics.hasError,
       };
-    }, [spans]);
+    };
 
-  // Auto-expand synthetic spans by default
-  useEffect(() => {
-    if (syntheticSpanIds.size > 0) {
-      setExpandedSpans((prev) => {
-        const next = new Set(prev);
-        for (const id of syntheticSpanIds) {
-          next.add(id);
+    const buildSpanTree = (parentId: string, depth = 0, isLastPath: boolean[] = []): SpanRow[] => {
+      const children = childrenByParent.get(parentId) ?? [];
+
+      // Group children by type:
+      // - ai.* spans group by their exact name (e.g., all ai.request together)
+      // - Other spans (named agents) are their own group
+      const groups = new Map<string, TraceSpan[]>();
+      for (const child of children) {
+        const name = child.SpanName.toLowerCase();
+        const groupKey = name.startsWith('gen_ai.') ? child.SpanName : child.SpanId;
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, []);
         }
-        return next;
+        groups.get(groupKey)!.push(child);
+      }
+
+      // Sort spans within each group by timestamp, then message index
+      for (const groupSpans of groups.values()) {
+        groupSpans.sort((a, b) => {
+          const timeDiff = a.Timestamp - b.Timestamp;
+          if (timeDiff !== 0) return timeDiff;
+          const aAttrs = parsedAttrs.get(a.SpanId)!;
+          const bAttrs = parsedAttrs.get(b.SpanId)!;
+          const aIndex = getMessageIndex(aAttrs);
+          const bIndex = getMessageIndex(bAttrs);
+          if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
+          if (aIndex !== null) return -1;
+          if (bIndex !== null) return 1;
+          return 0;
+        });
+      }
+
+      // Order groups by when their first span occurred
+      const sortedGroups = [...groups.entries()].sort(([, spansA], [, spansB]) => {
+        return spansA[0].Timestamp - spansB[0].Timestamp;
       });
+
+      // Flatten groups into rows
+      const rows: SpanRow[] = [];
+      for (let g = 0; g < sortedGroups.length; g++) {
+        const groupSpans = sortedGroups[g][1];
+        for (let s = 0; s < groupSpans.length; s++) {
+          const span = groupSpans[s];
+          const isLastInGroup = s === groupSpans.length - 1;
+          const isLastGroup = g === sortedGroups.length - 1;
+          const isLastChild = isLastInGroup && isLastGroup;
+          const childPath = [...isLastPath, isLastChild];
+
+          rows.push(buildSpanRow(span, depth, childPath));
+          rows.push(...buildSpanTree(span.SpanId, depth + 1, childPath));
+        }
+      }
+      return rows;
+    };
+
+    const allRows: SpanRow[] = [];
+    for (let r = 0; r < effectiveRoots.length; r++) {
+      const rootSpan = effectiveRoots[r];
+      const isLastRoot = r === effectiveRoots.length - 1;
+
+      allRows.push(buildSpanRow(rootSpan, 0, [isLastRoot]));
+      allRows.push(...buildSpanTree(rootSpan.SpanId, 1, [isLastRoot]));
     }
-  }, [syntheticSpanIds]);
+
+    return {
+      spanRows: allRows,
+      totalDuration: total,
+      childrenMap,
+      syntheticChildrenMap: orphanParentIds,
+    };
+  }, [spans]);
 
   // Filter to visible rows based on expansion state
   const visibleRows = useMemo(() => {
@@ -643,8 +760,9 @@ export function AgentGanttChart({
     let tokens = 0;
     let cost = 0;
     for (const child of children) {
-      tokens += getSpanTokens(child) ?? 0;
-      cost += getSpanCost(child) ?? 0;
+      const attrs = parseSpanAttributes(child.SpanAttributes);
+      tokens += getSpanTokens(attrs) ?? 0;
+      cost += getSpanCost(attrs) ?? 0;
     }
     return { tokens, cost, count: children.length };
   }, [hoveredRow, syntheticChildrenMap]);
@@ -688,19 +806,36 @@ export function AgentGanttChart({
     >
       {/* Sticky header */}
       <div className="sticky top-0 z-20 flex border-b border-border/30 bg-muted/80 backdrop-blur-sm">
-        <div className="flex w-56 shrink-0 items-center justify-between border-r border-border/30 px-4 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Span
-          </span>
-          {childrenMap.size > 0 && (
-            <button
-              onClick={expandedSpans.size > 0 ? collapseAll : expandAll}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              title={expandedSpans.size > 0 ? 'Collapse all' : 'Expand all'}
-            >
-              <ChevronsUpDown className="h-3 w-3" />
-            </button>
-          )}
+        <div className="flex w-[500px] shrink-0 items-center justify-between border-r border-border/30 px-4 py-2">
+          <div className="flex flex-1 items-center justify-between pr-4">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Span
+            </span>
+            {childrenMap.size > 0 && (
+              <button
+                onClick={expandedSpans.size > 0 ? collapseAll : expandAll}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title={expandedSpans.size > 0 ? 'Collapse all' : 'Expand all'}
+              >
+                <ChevronsUpDown className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <div className="w-16 text-right">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Duration
+            </span>
+          </div>
+          <div className="w-20 text-right">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Tokens
+            </span>
+          </div>
+          <div className="w-20 text-right">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Cost
+            </span>
+          </div>
         </div>
         <div className="relative flex-1 px-4 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -720,7 +855,7 @@ export function AgentGanttChart({
 
       {parentSpanId && (
         <div className="flex border-b border-border/30 bg-muted/30">
-          <div className="w-56 shrink-0 border-r border-border/30 px-4 py-2">
+          <div className="flex w-[500px] shrink-0 items-center border-r border-border/30 px-4 py-2">
             <span className="text-xs text-muted-foreground">Parent Span</span>
           </div>
           <div className="relative flex-1 px-4 py-2">
@@ -733,7 +868,7 @@ export function AgentGanttChart({
         {/* Background tick lines - full height solid lines */}
         <div
           className="pointer-events-none absolute inset-y-0 right-4"
-          style={{ left: 'calc(224px + 16px)' }}
+          style={{ left: 'calc(500px + 16px)' }}
         >
           {tickLines.map((pct, i) => (
             <div
@@ -751,63 +886,151 @@ export function AgentGanttChart({
           const alertStyles = alertSummary?.highestSeverity
             ? alertSeverityStyles[alertSummary.highestSeverity]
             : null;
+          const isError =
+            row.span.StatusCode === 'ERROR' ||
+            (hasChildren && !isExpanded && row.hasErrorDescendant);
 
           return (
             <div
               key={row.span.SpanId}
-              className={`group flex border-b border-border/20 transition-colors hover:bg-muted/30 ${
-                selectedSpanId === row.span.SpanId ? 'bg-primary/5' : ''
-              } ${onSpanSelect ? 'cursor-pointer' : ''}`}
+              className={`group flex border-b transition-colors ${
+                isError
+                  ? 'border-red-500/20 bg-red-500/5 hover:bg-red-500/10'
+                  : 'border-border/20 hover:bg-muted/30'
+              } ${selectedSpanId === row.span.SpanId ? 'bg-primary/5' : ''} ${
+                onSpanSelect ? 'cursor-pointer' : ''
+              }`}
               onClick={() => onSpanSelect?.(row.span.SpanId)}
               onMouseMove={(e) => handleMouseMove(e, row.span.SpanId)}
             >
-              <div
-                className="flex w-56 shrink-0 items-center gap-1 border-r border-border/30 py-2 pr-2"
-                style={{ paddingLeft: `${8 + row.depth * 16}px` }}
-              >
-                {hasChildren ? (
-                  <button
-                    onClick={(e) => toggleExpand(row.span.SpanId, e)}
-                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              <div className="flex w-[500px] shrink-0 items-center border-r border-border/30 py-2 pr-4">
+                <div className="flex flex-1 items-center gap-1.5 min-w-0 pl-4 pr-3">
+                  {/* Tree lines */}
+                  {Array.from({ length: row.depth }).map((_, i) => {
+                    const isLast = row.isLastPath[i];
+                    const isCurrentDepth = i === row.depth - 1;
+                    return (
+                      <div key={i} className="relative w-4 shrink-0 self-stretch">
+                        {(!isLast || isCurrentDepth) && (
+                          <div
+                            className={`absolute left-1/2 w-px bg-border/60 ${
+                              isLast && isCurrentDepth
+                                ? 'top-[-8px] h-[calc(50%+8px)]'
+                                : 'top-[-8px] bottom-[-8px]'
+                            }`}
+                          />
+                        )}
+                        {isCurrentDepth && (
+                          <div className="absolute top-1/2 left-1/2 right-0 h-px bg-border/60" />
+                        )}
+                      </div>
+                    );
+                  })}
+                  {hasChildren ? (
+                    <button
+                      onClick={(e) => toggleExpand(row.span.SpanId, e)}
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded z-10 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground bg-card"
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" />
+                      )}
+                    </button>
+                  ) : (
+                    <div className="h-4 w-4 shrink-0" />
+                  )}
+                  <span className={`shrink-0 ${getTypeIconColor(row.type, row.span)}`}>
+                    {getTypeIcon(row.type)}
+                  </span>
+                  <span
+                    className={`truncate text-xs ${isError ? 'text-red-400 font-medium' : 'text-foreground'}`}
+                    title={row.span.SpanName}
                   >
-                    {isExpanded ? (
-                      <ChevronDown className="h-3 w-3" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3" />
-                    )}
-                  </button>
-                ) : (
-                  <div className="h-4 w-4 shrink-0" />
-                )}
-                <span className={`shrink-0 ${getTypeIconColor(row.type, row.span)}`}>
-                  {getTypeIcon(row.type)}
-                </span>
-                <span className="truncate text-xs text-foreground" title={row.span.SpanName}>
-                  {row.span.SpanName}
-                </span>
+                    {row.span.SpanName}
+                  </span>
+                  {isError && <AlertCircle className="ml-1 h-3 w-3 shrink-0 text-red-500" />}
+                  {hasChildren && (
+                    <div className="ml-1 flex shrink-0 gap-1 overflow-hidden">
+                      {[...row.subtreeModels].slice(0, 1).map((m) => (
+                        <span
+                          key={m}
+                          className="whitespace-nowrap rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-medium text-indigo-400"
+                        >
+                          {shortenModelName(m)}
+                        </span>
+                      ))}
+                      {row.subtreeModels.size > 1 && (
+                        <span className="text-[9px] text-muted-foreground/60">
+                          +{row.subtreeModels.size - 1}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Data Columns — same structure for all rows */}
+                <div className="w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {formatDuration(row.span.Duration)}
+                </div>
+                <div className="flex w-20 shrink-0 flex-col items-end justify-center text-right text-xs tabular-nums">
+                  {row.tokens !== null ? (
+                    <span className="text-muted-foreground">{formatNumber(row.tokens)}</span>
+                  ) : hasChildren && row.subtreeTokens > 0 ? (
+                    <span className="text-muted-foreground/60">
+                      {formatNumber(row.subtreeTokens)}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground/40">-</span>
+                  )}
+                  {row.isCacheHit && (
+                    <span className="mt-px text-[9px] font-medium leading-none uppercase text-amber-500">
+                      Cache
+                    </span>
+                  )}
+                </div>
+                <div className="flex w-20 shrink-0 flex-col items-end justify-center text-right text-xs tabular-nums">
+                  {row.cost !== null ? (
+                    <span className="text-emerald-400/90">${row.cost.toFixed(4)}</span>
+                  ) : hasChildren && row.subtreeCost > 0 ? (
+                    <span className="text-emerald-400/50">${row.subtreeCost.toFixed(4)}</span>
+                  ) : (
+                    <span className="text-muted-foreground/40">-</span>
+                  )}
+                </div>
               </div>
 
               <div className="relative flex-1 px-4 py-2">
                 <div className="relative h-5">
-                  <div
-                    className={`absolute h-full rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(row.type, row.span.StatusCode, row.span)} ${alertStyles?.glow ?? ''}`}
-                    style={{
-                      left: `${row.startOffset}%`,
-                      width: `${row.width}%`,
-                      minWidth: '4px',
-                    }}
-                  >
-                    {alertStyles && (
+                  {(() => {
+                    const barHeight =
+                      row.depth === 0 ? 'h-full' : row.depth === 1 ? 'h-3' : 'h-1.5';
+                    const barCenter =
+                      row.depth === 0 ? '' : row.depth === 1 ? 'top-[4px]' : 'top-[7px]';
+                    const barOpacity =
+                      row.depth === 0 ? '' : row.depth === 1 ? 'opacity-70' : 'opacity-45';
+                    return (
                       <div
-                        className={`absolute left-0 top-0 h-full w-[3px] rounded-l ${alertStyles.edge}`}
-                      />
-                    )}
-                    {row.tokens !== null && row.width > 8 && (
-                      <span className="absolute inset-0 flex items-center justify-center text-[9px] font-medium text-white/90">
-                        {formatNumber(row.tokens)}
-                      </span>
-                    )}
-                  </div>
+                        className={`absolute ${barHeight} ${barCenter} ${barOpacity} rounded transition-opacity group-hover:opacity-90 ${isHollowType(row.type) ? 'border' : ''} ${getTypeColor(
+                          row.type,
+                          row.span.StatusCode,
+                          row.span,
+                          row.depth,
+                        )} ${alertStyles?.glow ?? ''} ${row.isCacheHit ? 'bg-[repeating-linear-gradient(45deg,transparent,transparent_4px,rgba(255,255,255,0.05)_4px,rgba(255,255,255,0.05)_8px)]' : ''}`}
+                        style={{
+                          left: `${row.startOffset}%`,
+                          width: `${row.width}%`,
+                          minWidth: '4px',
+                        }}
+                      >
+                        {alertStyles && (
+                          <div
+                            className={`absolute left-0 top-0 h-full w-[3px] rounded-l ${alertStyles.edge}`}
+                          />
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
@@ -817,7 +1040,7 @@ export function AgentGanttChart({
 
       {/* Sticky footer */}
       <div className="sticky bottom-0 z-20 flex border-t border-border/30 bg-card/95 backdrop-blur-sm">
-        <div className="w-56 shrink-0 border-r border-border/30" />
+        <div className="w-[500px] shrink-0 border-r border-border/30" />
         <div className="relative flex h-8 flex-1 justify-between px-4 py-3">
           {timeMarkers.map((marker, i) => (
             <span

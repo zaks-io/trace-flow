@@ -10,7 +10,8 @@ import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/PageToolbar';
-import { DataTable, type AlertFilterValue } from '@/components/requests-table';
+import type { ColumnDef } from '@tanstack/react-table';
+import { DataTable, TableToolbar, type AlertFilterValue } from '@/components/requests-table';
 import {
   spanGroupColumns,
   defaultSpanGroupColumnVisibility,
@@ -128,7 +129,6 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     const groups = data.data;
 
     if (!initialLoadComplete) {
-      // Initial load
       if (groups.length > 0) {
         setMergedSpanGroups(groups);
         setLatestReceivedAt(groups[0]!.LatestReceivedAt);
@@ -138,7 +138,6 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     }
 
     if (!isLiveMode) {
-      // Non-live: just show raw data
       setMergedSpanGroups(groups);
       if (groups.length > 0) {
         setLatestReceivedAt(groups[0]!.LatestReceivedAt);
@@ -166,6 +165,9 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
               (existing.ChildSpanCount + newGroup.ChildSpanCount),
             ErrorCount: existing.ErrorCount + newGroup.ErrorCount,
             Models: [...new Set([...existing.Models, ...newGroup.Models])],
+            Operations: [
+              ...new Set([...(existing.Operations ?? []), ...(newGroup.Operations ?? [])]),
+            ],
             TotalCost: existing.TotalCost + newGroup.TotalCost,
           });
         } else {
@@ -218,6 +220,12 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
 
   const getRowId = useCallback((row: SpanGroupRow): string => row.TraceId as string, []);
 
+  const getRowClassName = useCallback(
+    (row: SpanGroupRow) =>
+      row.ErrorCount > 0 ? 'border-l-4 border-l-red-500/70' : 'border-l-4 border-l-transparent',
+    [],
+  );
+
   if (isLoading && !initialLoadComplete) {
     return (
       <>
@@ -239,20 +247,17 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       </PageToolbar>
 
       {error && (
-        <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
-          <div className="flex items-start justify-between">
-            <div>
-              <h3 className="mb-2 font-semibold text-destructive">Error loading traces</h3>
-              <p className="text-sm text-destructive/80">{error.message}</p>
+        <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-destructive">{error.message}</p>
               {autoStoppedLiveMode && (
-                <p className="mt-2 text-sm text-destructive/80">
-                  Live mode has been stopped due to the error.
-                </p>
+                <span className="text-xs text-destructive/70">Live mode stopped.</span>
               )}
             </div>
             <button
               onClick={() => void refetch()}
-              className="ml-4 rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
+              className="rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground transition-colors hover:bg-destructive/90"
             >
               Retry
             </button>
@@ -260,28 +265,53 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
         </div>
       )}
 
-      <DataTable
-        columns={spanGroupColumns}
-        data={spanGroups}
-        columnVisibility={visibility}
-        onColumnVisibilityChange={setVisibility}
-        onRowClick={handleRowClick}
-        getRowId={getRowId}
-        isLiveMode={isLiveMode}
-        onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
-        alertSummary={alertSummary}
-        alerts={alerts ?? []}
-        alertFilter={alertFilter}
-        onAlertFilterChange={setAlertFilter}
-        filters={filters}
-        filterOptions={filterOptions}
-        filterOptionsLoading={filterOptionsLoading}
-        onFilterChange={setFilter}
-        onClearFilters={clearFilters}
-        hasActiveFilters={hasActiveFilters}
-        emptyMessage="No traces found"
-        apiKeyMap={apiKeyMap}
-      />
+      {/* Sticky filter bar — horizontal negative margins extend it edge-to-edge */}
+      <div className="sticky top-0 z-20 -mx-6 lg:-mx-8 px-6 lg:px-8 py-3 bg-background border-b border-border/50">
+        <TableToolbar
+          columnDefs={spanGroupColumns as ColumnDef<unknown>[]}
+          columnVisibility={visibility}
+          onColumnVisibilityChange={setVisibility}
+          filters={filters}
+          filterOptions={filterOptions}
+          filterOptionsLoading={filterOptionsLoading}
+          onFilterChange={setFilter}
+          onClearFilters={clearFilters}
+          hasActiveFilters={hasActiveFilters}
+          alerts={alerts ?? []}
+          alertFilter={alertFilter}
+          onAlertFilterChange={setAlertFilter}
+          isLiveMode={isLiveMode}
+          onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+          apiKeyMap={apiKeyMap}
+        />
+      </div>
+
+      <div className="pt-4">
+        <DataTable
+          columns={spanGroupColumns}
+          data={spanGroups}
+          columnVisibility={visibility}
+          onColumnVisibilityChange={setVisibility}
+          onRowClick={handleRowClick}
+          getRowId={getRowId}
+          isLiveMode={isLiveMode}
+          onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+          alertSummary={alertSummary}
+          alerts={alerts ?? []}
+          alertFilter={alertFilter}
+          onAlertFilterChange={setAlertFilter}
+          filters={filters}
+          filterOptions={filterOptions}
+          filterOptionsLoading={filterOptionsLoading}
+          onFilterChange={setFilter}
+          onClearFilters={clearFilters}
+          hasActiveFilters={hasActiveFilters}
+          emptyMessage="No traces found"
+          apiKeyMap={apiKeyMap}
+          hideToolbar
+          rowClassName={getRowClassName}
+        />
+      </div>
     </div>
   );
 }

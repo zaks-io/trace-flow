@@ -236,7 +236,7 @@ export default function ApiKeys({
           </p>
         </div>
       ) : (
-        <div className="card-elevated overflow-hidden rounded-xl border border-border bg-card">
+        <div className="card-elevated overflow-hidden rounded-xl bg-card/40">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-border">
               <thead className="bg-muted/30">

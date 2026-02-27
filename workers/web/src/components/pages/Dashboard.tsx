@@ -9,6 +9,7 @@ import { snapToMinute } from '@/lib/tinybird';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/PageToolbar';
 import { formatNumber, formatCurrency } from '@/lib/format';
+import { SummaryCard } from '@/components/usage/SummaryCard';
 
 type TimeRange = '24h' | '7d' | '30d';
 
@@ -74,53 +75,6 @@ interface TimeseriesData {
   }[];
 }
 
-interface SummaryCardProps {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'red' | 'green';
-}
-
-const accentColors = {
-  purple: 'from-purple-500/20 to-purple-500/5 border-purple-500/30',
-  blue: 'from-blue-500/20 to-blue-500/5 border-blue-500/30',
-  emerald: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
-  amber: 'from-amber-500/20 to-amber-500/5 border-amber-500/30',
-  zinc: 'from-zinc-500/20 to-zinc-500/5 border-zinc-500/30',
-  red: 'from-red-500/20 to-red-500/5 border-red-500/30',
-  green: 'from-emerald-500/20 to-emerald-500/5 border-emerald-500/30',
-};
-
-const iconColors = {
-  purple: 'text-purple-400',
-  blue: 'text-blue-400',
-  emerald: 'text-emerald-400',
-  amber: 'text-amber-400',
-  zinc: 'text-zinc-400',
-  red: 'text-red-400',
-  green: 'text-emerald-400',
-};
-
-function SummaryCard({ icon, label, value, accent = 'zinc' }: SummaryCardProps) {
-  return (
-    <div
-      className={`relative overflow-hidden rounded-xl border bg-linear-to-br p-4 ${accentColors[accent]}`}
-    >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            {label}
-          </p>
-          <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
-            {value}
-          </p>
-        </div>
-        <div className={`rounded-lg bg-background/50 p-2 ${iconColors[accent]}`}>{icon}</div>
-      </div>
-    </div>
-  );
-}
-
 function formatBucketLabel(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -168,17 +122,17 @@ function UsageTimeseriesChart({ data }: { data: TimeseriesData['data'] }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
+          <span className="inline-block h-2 w-2 rounded-full bg-chart-3" />
           Tokens
         </span>
         <span className="flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+          <span className="inline-block h-2 w-2 rounded-full bg-chart-2" />
           Cost
         </span>
       </div>
       <svg className="h-40 w-full" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <polyline points={tokenPoints} fill="none" stroke="rgb(16 185 129)" strokeWidth="2" />
-        <polyline points={costPoints} fill="none" stroke="rgb(251 191 36)" strokeWidth="2" />
+        <polyline points={tokenPoints} fill="none" stroke="var(--color-chart-3)" strokeWidth="2" />
+        <polyline points={costPoints} fill="none" stroke="var(--color-chart-2)" strokeWidth="2" />
       </svg>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{startLabel}</span>
@@ -340,7 +294,7 @@ export default function Dashboard({
             />
           </div>
 
-          <div className="rounded-xl border border-border bg-card p-6">
+          <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center gap-2">
               <Activity className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-base font-medium text-foreground">Usage Over Time</h2>
@@ -351,7 +305,7 @@ export default function Dashboard({
           {/* Breakdown Sections */}
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Models Breakdown */}
-            <div className="rounded-xl border border-border bg-card p-6">
+            <div className="rounded-xl bg-card/40 p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">Models by Cost</h2>
@@ -376,7 +330,7 @@ export default function Dashboard({
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-muted">
                           <div
-                            className="h-full rounded-full bg-purple-500 transition-all"
+                            className="h-full rounded-full bg-chart-5 transition-all"
                             style={{ width: `${percentage}%` }}
                           />
                         </div>
@@ -388,7 +342,7 @@ export default function Dashboard({
             </div>
 
             {/* Provider Breakdown */}
-            <div className="rounded-xl border border-border bg-card p-6">
+            <div className="rounded-xl bg-card/40 p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Server className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">Providers by Cost</h2>
@@ -413,7 +367,7 @@ export default function Dashboard({
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-muted">
                           <div
-                            className="h-full rounded-full bg-blue-500 transition-all"
+                            className="h-full rounded-full bg-chart-4 transition-all"
                             style={{ width: `${percentage}%` }}
                           />
                         </div>
@@ -425,7 +379,7 @@ export default function Dashboard({
             </div>
 
             {/* API Keys Breakdown */}
-            <div className="rounded-xl border border-border bg-card p-6">
+            <div className="rounded-xl bg-card/40 p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Key className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">API Keys by Cost</h2>
@@ -449,7 +403,7 @@ export default function Dashboard({
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-muted">
                           <div
-                            className="h-full rounded-full bg-amber-500 transition-all"
+                            className="h-full rounded-full bg-chart-2 transition-all"
                             style={{ width: `${percentage}%` }}
                           />
                         </div>

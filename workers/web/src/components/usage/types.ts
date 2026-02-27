@@ -11,39 +11,45 @@ export const TIME_RANGES: { value: TimeRange; label: string; ms: number }[] = [
 export type TimeseriesMetric = 'cost' | 'tokens' | 'requests' | 'latency';
 
 export const costChartConfig = {
-  input_cost_usd: { label: 'Input', color: '#8b5cf6' },
-  output_cost_usd: { label: 'Output', color: '#3b82f6' },
-  cache_read_cost_usd: { label: 'Cache Read', color: '#10b981' },
-  cache_creation_cost_usd: { label: 'Cache Write', color: '#f59e0b' },
-  reasoning_cost_usd: { label: 'Reasoning', color: '#ef4444' },
+  input_cost_usd: { label: 'Input', color: 'var(--color-chart-1)' },
+  output_cost_usd: { label: 'Output', color: 'var(--color-chart-2)' },
+  cache_read_cost_usd: { label: 'Cache Read', color: 'var(--color-chart-3)' },
+  cache_creation_cost_usd: { label: 'Cache Write', color: 'var(--color-chart-4)' },
+  reasoning_cost_usd: { label: 'Reasoning', color: 'var(--color-chart-5)' },
 } satisfies ChartConfig;
 
 export const latencyChartConfig = {
-  avg_duration_ms: { label: 'Avg', color: '#f59e0b' },
-  p95_duration_ms: { label: 'P95', color: '#ef4444' },
+  avg_duration_ms: { label: 'Avg', color: 'var(--color-chart-3)' },
+  p95_duration_ms: { label: 'P95', color: 'var(--color-chart-6)' },
 } satisfies ChartConfig;
 
 export const tokensChartConfig = {
-  total_tokens: { label: 'Tokens', color: '#10b981' },
+  total_tokens: { label: 'Tokens', color: 'var(--color-chart-4)' },
 } satisfies ChartConfig;
 
 export const requestsChartConfig = {
-  request_count: { label: 'Requests', color: '#8b5cf6' },
+  request_count: { label: 'Requests', color: 'var(--color-chart-1)' },
 } satisfies ChartConfig;
 
-export const PIE_COLORS = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'] as const;
+export const PIE_COLORS = [
+  'var(--color-chart-1)',
+  'var(--color-chart-2)',
+  'var(--color-chart-3)',
+  'var(--color-chart-4)',
+  'var(--color-chart-5)',
+] as const;
 
 export const pieChartConfig = {
   value: { label: 'Cost' },
-  input: { label: 'Input', color: '#8b5cf6' },
-  output: { label: 'Output', color: '#3b82f6' },
-  cache_read: { label: 'Cache Read', color: '#10b981' },
-  cache_write: { label: 'Cache Write', color: '#f59e0b' },
-  reasoning: { label: 'Reasoning', color: '#ef4444' },
+  input: { label: 'Input', color: 'var(--color-chart-1)' },
+  output: { label: 'Output', color: 'var(--color-chart-2)' },
+  cache_read: { label: 'Cache Read', color: 'var(--color-chart-3)' },
+  cache_write: { label: 'Cache Write', color: 'var(--color-chart-4)' },
+  reasoning: { label: 'Reasoning', color: 'var(--color-chart-5)' },
 } satisfies ChartConfig;
 
 export const providerChartConfig = {
-  total_cost_usd: { label: 'Cost', color: '#8b5cf6' },
+  total_cost_usd: { label: 'Cost', color: 'var(--color-chart-1)' },
 } satisfies ChartConfig;
 
 interface CostBreakdownRow {
@@ -128,7 +134,7 @@ export interface SummaryCardProps {
   label: string;
   value: string;
   subtitle?: string;
-  accent?: 'purple' | 'blue' | 'emerald' | 'amber';
+  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'red' | 'green';
 }
 
 export type ModelSortKey =

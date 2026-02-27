@@ -91,7 +91,9 @@ function AppLayoutContent({
       <SidebarProvider>
         <AppSidebar isAdmin={data.isAdmin} />
         <SidebarInset>
-          <main className="flex flex-1 flex-col overflow-hidden p-4 pt-3">{children}</main>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-6 lg:p-8">
+            {children}
+          </div>
         </SidebarInset>
       </SidebarProvider>
     </AdminProvider>
