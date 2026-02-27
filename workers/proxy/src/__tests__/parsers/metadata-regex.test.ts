@@ -328,6 +328,8 @@ describe('extractTokenUsageFromSSEData', () => {
 
       const usage = extractTokenUsageFromSSEData(data);
 
+      expect(usage.input_tokens).toBe(6497);
+      expect(usage.output_tokens).toBe(87);
       expect(usage.cache_write_tokens).toBe(6494);
       expect(usage.cost).toBe(0.06713);
     });
@@ -354,6 +356,63 @@ describe('extractTokenUsageFromSSEData', () => {
       const usage = extractTokenUsageFromSSEData(data);
 
       expect(usage.cost).toBe(1);
+    });
+
+    it('should extract tokens from OpenRouter Gemini SSE usage chunk', () => {
+      const data = JSON.stringify({
+        id: 'gen-1772222552-RPwzb2L2fYlTtrBqiAqY',
+        provider: 'Google',
+        model: 'google/gemini-2.5-flash-lite',
+        object: 'chat.completion.chunk',
+        created: 1772222552,
+        choices: [
+          {
+            index: 0,
+            delta: { role: 'assistant', content: '' },
+            finish_reason: null,
+            native_finish_reason: null,
+            logprobs: null,
+          },
+        ],
+        usage: {
+          prompt_tokens: 5,
+          completion_tokens: 7,
+          total_tokens: 12,
+          cost: 0.0000033,
+          is_byok: false,
+          prompt_tokens_details: {
+            cached_tokens: 0,
+            cache_write_tokens: 0,
+            audio_tokens: 0,
+            video_tokens: 0,
+          },
+          cost_details: {
+            upstream_inference_cost: 0.0000033,
+            upstream_inference_prompt_cost: 5e-7,
+            upstream_inference_completions_cost: 0.0000028,
+          },
+          completion_tokens_details: {
+            reasoning_tokens: 0,
+            image_tokens: 0,
+          },
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.input_tokens).toBe(5);
+      expect(usage.output_tokens).toBe(7);
+      expect(usage.cost).toBe(0.0000033);
+      expect(usage.reasoning_tokens).toBe(0);
+    });
+
+    it('should prefer input_tokens over prompt_tokens when both present', () => {
+      const data = '{"input_tokens":10,"prompt_tokens":5,"output_tokens":20,"completion_tokens":7}';
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.input_tokens).toBe(10);
+      expect(usage.output_tokens).toBe(20);
     });
   });
 

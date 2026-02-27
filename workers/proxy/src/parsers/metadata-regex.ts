@@ -38,6 +38,9 @@ const GOOGLE_THOUGHTS_TOKEN_COUNT_PATTERN = /"thoughtsTokenCount"\s*:\s*(\d+)/;
 // Token usage patterns (used by both OpenAI and Anthropic)
 const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
 const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
+// OpenAI-style naming (used by OpenRouter, OpenAI, Groq)
+const PROMPT_TOKENS_PATTERN = /"prompt_tokens"\s*:\s*(\d+)/;
+const COMPLETION_TOKENS_PATTERN = /"completion_tokens"\s*:\s*(\d+)/;
 const CACHE_CREATION_INPUT_TOKENS_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d+)/;
 const CACHE_READ_INPUT_TOKENS_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
 const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d+)/;
@@ -269,6 +272,20 @@ export function extractTokenUsageFromSSEData(data: string): {
   const outputTokensMatch = OUTPUT_TOKENS_PATTERN.exec(data);
   if (outputTokensMatch?.[1]) {
     usage.output_tokens = parseInt(outputTokensMatch[1], 10);
+  }
+
+  // OpenAI-style prompt_tokens/completion_tokens (fallback when input_tokens/output_tokens absent)
+  if (usage.input_tokens === undefined) {
+    const promptTokensMatch = PROMPT_TOKENS_PATTERN.exec(data);
+    if (promptTokensMatch?.[1]) {
+      usage.input_tokens = parseInt(promptTokensMatch[1], 10);
+    }
+  }
+  if (usage.output_tokens === undefined) {
+    const completionTokensMatch = COMPLETION_TOKENS_PATTERN.exec(data);
+    if (completionTokensMatch?.[1]) {
+      usage.output_tokens = parseInt(completionTokensMatch[1], 10);
+    }
   }
 
   const cacheCreationMatch = CACHE_CREATION_INPUT_TOKENS_PATTERN.exec(data);
