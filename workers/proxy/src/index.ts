@@ -208,7 +208,8 @@ app.all('*', async (c) => {
   // Derive gen_ai.operation.name from the API endpoint path
   const operationName = deriveOperationName(c.req.path);
 
-  const { targetUrl } = route;
+  const query = new URL(c.req.url).search;
+  const targetUrl = route.targetUrl + query;
 
   // Duplicate request body stream: one for proxying to provider, one for capture
   // tee() creates two independent readers from the same source without buffering the entire body

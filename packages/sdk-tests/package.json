@@ -6,25 +6,32 @@
   "scripts": {
     "lint": "eslint src",
     "type-check": "tsc --noEmit",
-    "test:openai": "bun run src/test-openai.ts",
-    "test:anthropic": "bun run src/test-anthropic.ts",
-    "test:google": "bun run src/test-google.ts",
-    "test:openrouter": "bun run src/test-openrouter.ts",
-    "test:groq": "bun run src/test-groq.ts",
-    "test:groq-tools": "bun run src/test-groq-tools.ts",
-    "test:all": "bun run src/test-all.ts"
+    "test": "bun run src/cli.ts run",
+    "test:openai": "bun run src/cli.ts run -p openai",
+    "test:anthropic": "bun run src/cli.ts run -p anthropic",
+    "test:google": "bun run src/cli.ts run -p google",
+    "test:openrouter": "bun run src/cli.ts run -p openrouter",
+    "test:groq": "bun run src/cli.ts run -p groq",
+    "test:groq-tools": "bun run src/cli.ts run -p groq -s tools",
+    "test:all": "bun run src/cli.ts run"
   },
   "dependencies": {
-    "zod": "^3.25.51",
-    "ai": "latest",
-    "@ai-sdk/openai": "latest",
     "@ai-sdk/anthropic": "latest",
     "@ai-sdk/google": "latest",
     "@ai-sdk/groq": "latest",
-    "@openrouter/ai-sdk-provider": "latest"
+    "@ai-sdk/openai": "latest",
+    "@inkjs/ui": "^2.0.0",
+    "@openrouter/ai-sdk-provider": "latest",
+    "@trace-flow/utils": "workspace:*",
+    "ai": "latest",
+    "commander": "^12.0.0",
+    "ink": "^6.8.0",
+    "react": "^19.2.4",
+    "zod": "^3.25.51"
   },
   "devDependencies": {
     "@types/node": "^22",
+    "@types/react": "^19.2.14",
     "typescript": "^5"
   }
 }

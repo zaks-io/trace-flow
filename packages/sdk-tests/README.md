@@ -1,10 +1,118 @@
 # SDK Integration Tests
 
-Test scripts for verifying AI SDK compatibility with the proxy gateway.
+Test scripts for verifying AI SDK compatibility with the proxy gateway. Uses a unified CLI to run any provider and scenario from a single entrypoint.
+
+## Quick Start
+
+```bash
+cd packages/sdk-tests
+bun install
+cp .env.example .env
+# Edit .env with your API keys
+```
+
+Start the proxy (from repo root):
+
+```bash
+bun run dev:all
+```
+
+Run tests:
+
+```bash
+bun run test              # All configured providers, basic scenario
+bun run test:openai       # Single provider
+bun run test:all          # All providers
+```
+
+## CLI
+
+The canonical entrypoint is `src/cli.ts`. Run with:
+
+```bash
+bun run src/cli.ts <command> [options]
+```
+
+### Commands
+
+**`run`** — Execute test scenarios
+
+```bash
+bun run src/cli.ts run -p openai              # Single provider
+bun run src/cli.ts run -p openai,anthropic    # Multiple providers
+bun run src/cli.ts run -s basic                # Default: non-streaming + streaming
+bun run src/cli.ts run -s tools -p groq       # Tool-calling scenario (Groq)
+bun run src/cli.ts run -s shared-trace-multi-stream -p anthropic --requests 3
+bun run src/cli.ts run --json                 # JSON output for CI
+bun run src/cli.ts run -i                     # Interactive mode
+```
+
+**`providers`** — List providers and API key status
+
+```bash
+bun run src/cli.ts providers
+bun run src/cli.ts providers --json
+```
+
+**`scenarios`** — List available scenarios
+
+```bash
+bun run src/cli.ts scenarios
+```
+
+### Run Options
+
+| Option                  | Description                                                                |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `-p, --providers <ids>` | Comma-separated provider ids (openai, anthropic, google, openrouter, groq) |
+| `-s, --scenario <id>`   | Scenario id (default: basic)                                               |
+| `--json`                | Output results as JSON                                                     |
+| `-i, --interactive`     | Interactive provider/scenario selection                                    |
+| `--requests <n>`        | Number of requests for multi-request scenarios                             |
+| `--concurrency <n>`     | Max concurrent requests for shared-trace scenario                          |
+| `--trace-id <id>`       | Override trace ID for shared-trace scenarios                               |
+
+### Scenarios
+
+| Id                          | Description                                                |
+| --------------------------- | ---------------------------------------------------------- |
+| `basic`                     | Non-streaming + streaming requests (default)               |
+| `tools`                     | Tool-calling with `streamText` (Groq)                      |
+| `shared-trace-multi-stream` | Multiple concurrent streamed requests sharing one trace ID |
+
+### Shared Trace Multi-Stream
+
+Use `shared-trace-multi-stream` to generate multiple concurrent requests that share a single trace ID. Useful for testing trace correlation and dashboard grouping.
+
+**Single-provider** (multiple requests, one provider):
+
+```bash
+bun run src/cli.ts run -p anthropic -s shared-trace-multi-stream --requests 4
+```
+
+**Cross-provider** (multiple requests across providers, all under one trace):
+
+```bash
+bun run src/cli.ts run -p openai,anthropic,groq -s shared-trace-multi-stream --requests 2
+```
+
+The summary includes a "Trace Correlation" block with the trace ID for dashboard lookup.
+
+## Legacy Script Mapping
+
+Existing npm scripts now invoke the CLI:
+
+| Script            | New equivalent                            |
+| ----------------- | ----------------------------------------- |
+| `test:openai`     | `bun run src/cli.ts run -p openai`        |
+| `test:anthropic`  | `bun run src/cli.ts run -p anthropic`     |
+| `test:google`     | `bun run src/cli.ts run -p google`        |
+| `test:openrouter` | `bun run src/cli.ts run -p openrouter`    |
+| `test:groq`       | `bun run src/cli.ts run -p groq`          |
+| `test:groq-tools` | `bun run src/cli.ts run -p groq -s tools` |
+| `test:all`        | `bun run src/cli.ts run`                  |
 
 ## Proxy Path Structure
-
-The proxy uses `/{provider}/...` paths that forward to the provider's API:
 
 | Gateway Path                      | Target URL                                                    |
 | --------------------------------- | ------------------------------------------------------------- |
@@ -14,144 +122,22 @@ The proxy uses `/{provider}/...` paths that forward to the provider's API:
 | `/openrouter/v1/chat/completions` | `https://openrouter.ai/api/v1/chat/completions`               |
 | `/groq/v1/chat/completions`       | `https://api.groq.com/openai/v1/chat/completions`             |
 
-## AI SDK Usage
-
-```typescript
-import { createOpenAI } from '@ai-sdk/openai';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-
-const PROXY_URL = 'https://your-proxy.workers.dev';
-const proxyHeaders = { 'X-Trace-Flow-Api-Key': 'your-trace-flow-key' };
-
-// OpenAI
-const openai = createOpenAI({
-  baseURL: `${PROXY_URL}/openai/v1`,
-  apiKey: 'your-openai-key',
-  headers: proxyHeaders,
-});
-
-// Anthropic
-const anthropic = createAnthropic({
-  baseURL: `${PROXY_URL}/anthropic/v1`,
-  apiKey: 'your-anthropic-key',
-  headers: proxyHeaders,
-});
-
-// Google Gemini
-const google = createGoogleGenerativeAI({
-  baseURL: `${PROXY_URL}/google/v1beta`,
-  apiKey: 'your-google-key',
-  headers: proxyHeaders,
-});
-
-// OpenRouter (uses OpenAI-compatible SDK)
-const openrouter = createOpenAI({
-  baseURL: `${PROXY_URL}/openrouter/v1`,
-  apiKey: 'your-openrouter-key',
-  headers: proxyHeaders,
-});
-
-// Groq (uses OpenAI-compatible SDK)
-const groq = createOpenAI({
-  baseURL: `${PROXY_URL}/groq/v1`,
-  apiKey: 'your-groq-key',
-  headers: proxyHeaders,
-});
-```
-
-## Setup
-
-1. Install dependencies:
-
-```bash
-cd packages/sdk-tests
-bun install
-```
-
-2. Create a `.env` file with your API keys:
-
-```bash
-cp .env.example .env
-# Edit .env with your keys
-```
-
-3. Start the proxy worker locally:
-
-```bash
-# From repo root
-bun run dev:all
-```
-
 ## Environment Variables
 
-| Variable                       | Required             | Description                                  |
-| ------------------------------ | -------------------- | -------------------------------------------- |
-| `TRACE_FLOW_API_KEY`           | Yes                  | Your proxy gateway API key                   |
-| `OPENAI_API_KEY`               | For OpenAI tests     | OpenAI API key                               |
-| `ANTHROPIC_API_KEY`            | For Anthropic tests  | Anthropic API key                            |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | For Google tests     | Google Gemini API key                        |
-| `OPENROUTER_API_KEY`           | For OpenRouter tests | OpenRouter API key                           |
-| `GROQ_API_KEY`                 | For Groq tests       | Groq API key                                 |
-| `PROXY_URL`                    | No                   | Proxy URL (default: `http://localhost:8787`) |
-
-## Running Tests
-
-Test individual providers:
-
-```bash
-bun run test:openai
-bun run test:anthropic
-bun run test:google
-bun run test:openrouter
-bun run test:groq
-```
-
-Test all configured providers:
-
-```bash
-bun run test:all
-```
-
-Or run directly with bun:
-
-```bash
-bun run src/test-openai.ts
-bun run src/test-all.ts
-```
+| Variable                       | Required       | Description                                  |
+| ------------------------------ | -------------- | -------------------------------------------- |
+| `TRACE_FLOW_API_KEY`           | Yes            | Your proxy gateway API key                   |
+| `OPENAI_API_KEY`               | For OpenAI     | OpenAI API key                               |
+| `ANTHROPIC_API_KEY`            | For Anthropic  | Anthropic API key                            |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | For Google     | Google Gemini API key                        |
+| `OPENROUTER_API_KEY`           | For OpenRouter | OpenRouter API key                           |
+| `GROQ_API_KEY`                 | For Groq       | Groq API key                                 |
+| `PROXY_URL`                    | No             | Proxy URL (default: `http://localhost:8787`) |
 
 ## What the Tests Verify
-
-Each test runs two scenarios:
-
-1. **Non-streaming**: Uses `generateText()` to get a complete response
-2. **Streaming**: Uses `streamText()` to receive chunks incrementally
-
-Both tests verify:
 
 - Request is properly proxied to the provider
 - Response is returned correctly
 - Token usage is tracked
 - Streaming timing (TTFT) is measured
-
-## Example Output
-
-```
-==================================================
-OpenAI Proxy Test
-Proxy URL: http://localhost:8787/openai/v1
-==================================================
-[OpenAI] Testing non-streaming...
-[OpenAI] ✓ Response (847ms): "Hello from the proxy today!"
-  Tokens: 18 input, 6 output
-[OpenAI] Testing streaming...
-  1
-  2
-  3
-  4
-  5
-[OpenAI] ✓ Stream complete (1203ms, TTFT: 412ms)
-  Tokens: 14 input, 15 output
-
-✓ All tests passed
-```
+- Trace ID propagation (when using `traceparent` headers)
