@@ -27,18 +27,20 @@ async function getPricingForMessage(
   const provider = data.request.provider;
   const model = data.responseMetadata?.model ?? data.request.model;
 
-  // Try KV first
-  let pricing = await getPricing(kv, provider, model);
+  // Try KV first (exact match or prefix without date suffix)
+  const pricing = await getPricing(kv, provider, model);
   if (pricing) return pricing;
 
-  // For OpenRouter, auto-fetch pricing if not in KV
+  // For OpenRouter, the model ID is already in OpenRouter format
   if (provider === 'openrouter') {
-    pricing = await fetchOpenRouterPricing(model, kv);
-    if (pricing) return pricing;
+    return fetchOpenRouterPricing(model, kv);
   }
 
-  // For other providers, skip cost if not in KV
-  return null;
+  // Fallback: fetch pricing from OpenRouter for any provider.
+  // OpenRouter model IDs are "{provider}/{model}" (e.g., "google/gemini-2.5-pro").
+  // Cache under the original provider key so future KV lookups hit directly.
+  const cacheKey = `pricing:${provider}:${model}`;
+  return fetchOpenRouterPricing(`${provider}/${model}`, kv, cacheKey);
 }
 
 async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: Env): Promise<void> {

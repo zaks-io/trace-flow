@@ -33,6 +33,7 @@ interface AggregatedSummary {
   ttftValues: number[];
   totalDuration: number;
   tpsSpans: { tps: number; outputTokens: number }[];
+  models: string[];
 }
 
 const SEGMENT_CONFIG = {
@@ -55,8 +56,10 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
     ttftValues: [],
     totalDuration: 0,
     tpsSpans: [],
+    models: [],
   };
 
+  const modelSet = new Set<string>();
   let minTimestamp = Infinity;
   let maxEndTimestamp = 0;
 
@@ -96,11 +99,15 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
       }
     }
 
+    const model = attrs['gen_ai.request.model'];
+    if (model) modelSet.add(model);
+
     minTimestamp = Math.min(minTimestamp, span.Timestamp);
     maxEndTimestamp = Math.max(maxEndTimestamp, span.Timestamp + span.Duration);
   }
 
   summary.totalDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
+  summary.models = Array.from(modelSet).sort();
   return summary;
 }
 
@@ -197,68 +204,78 @@ export function TokenSummaryCards({ spans }: TokenSummaryCardsProps) {
   const gridCols = hasCost ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-3';
 
   return (
-    <div className={`grid min-w-0 gap-3 ${gridCols}`}>
-      <BarCard
-        label="Tokens"
-        value={totalTokens > 0 ? formatCompact(totalTokens) : '-'}
-        segments={tokenSegments}
-        total={totalTokens}
-        accent="from-chart-3/20 to-chart-3/5"
-        formatter={formatCompact}
-      />
-      {hasCost && (
+    <div className="space-y-3">
+      <div className={`grid min-w-0 gap-3 ${gridCols}`}>
         <BarCard
-          label="Cost"
-          value={formatCostCompact(totalCost)}
-          segments={costSegments}
-          total={totalCost}
-          accent="from-chart-7/20 to-chart-7/5"
-          formatter={formatCostCompact}
+          label="Tokens"
+          value={totalTokens > 0 ? formatCompact(totalTokens) : '-'}
+          segments={tokenSegments}
+          total={totalTokens}
+          accent="from-chart-3/20 to-chart-3/5"
+          formatter={formatCompact}
         />
+        {hasCost && (
+          <BarCard
+            label="Cost"
+            value={formatCostCompact(totalCost)}
+            segments={costSegments}
+            total={totalCost}
+            accent="from-chart-7/20 to-chart-7/5"
+            formatter={formatCostCompact}
+          />
+        )}
+        <BarCard
+          label="Duration"
+          value={summary.totalDuration > 0 ? formatDuration(summary.totalDuration) : '-'}
+          segments={durationSegments}
+          total={summary.totalDuration}
+          accent="from-chart-2/20 to-chart-2/5"
+          formatter={formatDuration}
+        />
+        <BarCard
+          label="Throughput"
+          value={throughput ? formatTokensPerSecond(throughput.avg) : '-'}
+          segments={throughput?.segments ?? []}
+          total={throughput?.total ?? 0}
+          accent="from-chart-4/20 to-chart-4/5"
+          formatter={formatTokensPerSecond}
+          showPercent={false}
+          inlineLabels={
+            throughput
+              ? [
+                  {
+                    label: 'Min',
+                    value: formatTokensPerSecond(throughput.min),
+                    color: tpsColor(throughput.min, throughput.avg, throughput.stddev),
+                  },
+                  {
+                    label: 'Avg',
+                    value: formatTokensPerSecond(throughput.avg),
+                    color: 'var(--color-chart-2)',
+                  },
+                  {
+                    label: 'Max',
+                    value: formatTokensPerSecond(throughput.max),
+                    color: tpsColor(throughput.max, throughput.avg, throughput.stddev),
+                  },
+                  {
+                    label: 'σ',
+                    value: formatTokensPerSecond(throughput.stddev),
+                    color: 'var(--color-muted-foreground)',
+                  },
+                ]
+              : undefined
+          }
+        />
+      </div>
+      {summary.models.length > 0 && (
+        <div className="flex items-baseline gap-2 rounded-xl bg-linear-to-br from-chart-5/20 to-chart-5/5 px-5 py-3">
+          <span className="shrink-0 text-xs font-medium tracking-wide text-muted-foreground">
+            Models
+          </span>
+          <span className="font-mono text-xs text-foreground">{summary.models.join(' · ')}</span>
+        </div>
       )}
-      <BarCard
-        label="Duration"
-        value={summary.totalDuration > 0 ? formatDuration(summary.totalDuration) : '-'}
-        segments={durationSegments}
-        total={summary.totalDuration}
-        accent="from-chart-2/20 to-chart-2/5"
-        formatter={formatDuration}
-      />
-      <BarCard
-        label="Throughput"
-        value={throughput ? formatTokensPerSecond(throughput.avg) : '-'}
-        segments={throughput?.segments ?? []}
-        total={throughput?.total ?? 0}
-        accent="from-chart-4/20 to-chart-4/5"
-        formatter={formatTokensPerSecond}
-        showPercent={false}
-        inlineLabels={
-          throughput
-            ? [
-                {
-                  label: 'Min',
-                  value: formatTokensPerSecond(throughput.min),
-                  color: tpsColor(throughput.min, throughput.avg, throughput.stddev),
-                },
-                {
-                  label: 'Avg',
-                  value: formatTokensPerSecond(throughput.avg),
-                  color: 'var(--color-chart-2)',
-                },
-                {
-                  label: 'Max',
-                  value: formatTokensPerSecond(throughput.max),
-                  color: tpsColor(throughput.max, throughput.avg, throughput.stddev),
-                },
-                {
-                  label: 'σ',
-                  value: formatTokensPerSecond(throughput.stddev),
-                  color: 'var(--color-muted-foreground)',
-                },
-              ]
-            : undefined
-        }
-      />
     </div>
   );
 }
