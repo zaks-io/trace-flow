@@ -53,7 +53,12 @@ export const toolsScenario: Scenario = {
             getCurrentTime: tool({
               description: 'Get the current time',
               inputSchema: z.object({ timezone: z.string().optional().describe('IANA timezone') }),
-              execute: () => new Date().toISOString(),
+              execute: ({ timezone }) =>
+                new Intl.DateTimeFormat('en-US', {
+                  dateStyle: 'full',
+                  timeStyle: 'long',
+                  timeZone: timezone ?? 'UTC',
+                }).format(new Date()),
             }),
           },
           toolChoice: 'required',

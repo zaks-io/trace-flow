@@ -55,6 +55,11 @@ program
       }
     }
 
+    if (opts.json && opts.interactive) {
+      console.error('--json and --interactive cannot be used together.');
+      process.exit(1);
+    }
+
     // JSON mode: no Ink, plain output for CI
     if (opts.json) {
       const traceId =

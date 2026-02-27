@@ -10,29 +10,31 @@ interface TimingBarProps {
 const BAR_WIDTH = 30;
 
 export function TimingBar({ results, modelMap }: TimingBarProps) {
-  // Group by provider, take max duration per provider
-  const providerDurations = new Map<string, { model: string; id: string; maxDuration: number }>();
+  // Group by provider, sum total duration across all requests
+  const providerDurations = new Map<string, { model: string; id: string; totalDuration: number }>();
   for (const r of results) {
     if (r.status === 'skipped') continue;
     const existing = providerDurations.get(r.providerId);
-    if (!existing || r.duration > existing.maxDuration) {
+    if (existing) {
+      existing.totalDuration += r.duration;
+    } else {
       providerDurations.set(r.providerId, {
         model: modelMap.get(r.providerId) ?? r.provider,
         id: r.providerId,
-        maxDuration: r.duration,
+        totalDuration: r.duration,
       });
     }
   }
 
-  const entries = [...providerDurations.values()].sort((a, b) => b.maxDuration - a.maxDuration);
+  const entries = [...providerDurations.values()].sort((a, b) => b.totalDuration - a.totalDuration);
   if (entries.length === 0) return null;
 
-  const maxDuration = entries[0]!.maxDuration;
+  const maxDuration = entries[0]!.totalDuration;
 
   return (
     <Box flexDirection="column" gap={0}>
       {entries.map((entry) => {
-        const ratio = maxDuration > 0 ? entry.maxDuration / maxDuration : 0;
+        const ratio = maxDuration > 0 ? entry.totalDuration / maxDuration : 0;
         const filled = Math.max(1, Math.round(ratio * BAR_WIDTH));
         const empty = BAR_WIDTH - filled;
         const color = getProviderColor(entry.id);
@@ -47,9 +49,9 @@ export function TimingBar({ results, modelMap }: TimingBarProps) {
               <Text dimColor>{'\u2591'.repeat(empty)}</Text>
             </Text>
             <Text color="#94a3b8">
-              {entry.maxDuration >= 1000
-                ? `${(entry.maxDuration / 1000).toFixed(1)}s`
-                : `${entry.maxDuration}ms`}
+              {entry.totalDuration >= 1000
+                ? `${(entry.totalDuration / 1000).toFixed(1)}s`
+                : `${entry.totalDuration}ms`}
             </Text>
           </Box>
         );

@@ -70,7 +70,7 @@ export function ResultsScreen({ state, proxyUrl }: ResultsScreenProps) {
       {results.length > 0 && (
         <Box paddingX={1} flexDirection="column" gap={1}>
           <Text bold dimColor>
-            Duration
+            Total Duration
           </Text>
           <TimingBar results={results} modelMap={modelMap} />
         </Box>
@@ -96,7 +96,7 @@ export function ResultsScreen({ state, proxyUrl }: ResultsScreenProps) {
         </Box>
       )}
 
-      <Box paddingX={1}>
+      <Box paddingX={1} gap={2}>
         {allPassed ? (
           <Text color="#22c55e" bold>
             {'\u2713'} All tests passed
@@ -106,6 +106,7 @@ export function ResultsScreen({ state, proxyUrl }: ResultsScreenProps) {
             {'\u2717'} {failed} test{failed !== 1 ? 's' : ''} failed
           </Text>
         )}
+        <Text dimColor>Press any key to exit</Text>
       </Box>
     </Box>
   );

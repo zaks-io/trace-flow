@@ -11,7 +11,7 @@ interface ModelPricing {
 const pricing: Record<string, ModelPricing> = {
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
   'claude-haiku-4-5': { input: 0.8, output: 4.0, cacheWrite: 1.0, cacheRead: 0.08 },
-  'gemini-2.0-flash': { input: 0.1, output: 0.4 },
+  'gemini-2.5-flash': { input: 0.15, output: 0.6 },
   'google/gemini-2.5-flash-lite': { input: 0.075, output: 0.3 },
   'openai/gpt-oss-20b': { input: 0.1, output: 0.1 },
 };

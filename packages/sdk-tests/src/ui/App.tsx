@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useApp } from 'ink';
+import { useApp, useInput } from 'ink';
 import type { ProviderConfig } from '../providers';
 import { getProvidersByIds } from '../providers';
 import { getScenario } from '../scenarios';
@@ -36,6 +36,14 @@ export function App({
   const engine = useMemo(() => new TestEngine(), []);
   const state = useEngine(engine);
   const hasStarted = useRef(false);
+  const pendingExitCode = useRef<number | null>(null);
+
+  useInput(() => {
+    if (phase === 'results' && pendingExitCode.current !== null) {
+      onExit(pendingExitCode.current);
+      exit();
+    }
+  });
 
   const startRun = useCallback(
     (scenario: Scenario, providerConfigs: ProviderConfig[], traceId: string) => {
@@ -52,19 +60,12 @@ export function App({
           scenarioOpts,
         })
         .then((result) => {
+          pendingExitCode.current = result.failed === 0 ? 0 : 1;
           setPhase('results');
-          // Small delay so the user sees results before exit
-          setTimeout(() => {
-            onExit(result.failed === 0 ? 0 : 1);
-            exit();
-          }, 100);
         })
         .catch(() => {
+          pendingExitCode.current = 1;
           setPhase('results');
-          setTimeout(() => {
-            onExit(1);
-            exit();
-          }, 100);
         });
     },
     [engine, scenarioOpts, onExit, exit],
