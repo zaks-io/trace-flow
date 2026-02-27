@@ -135,6 +135,196 @@ export const DEFAULT_PRICING: DefaultPricing[] = [
     cacheReadCostPerMillion: 30_000,
   },
 
+  // Google Gemini models
+  // Gemini 3.x
+  {
+    provider: 'google',
+    model: 'gemini-3.1-pro-preview',
+    promptCostPerMillion: 2_000_000,
+    completionCostPerMillion: 12_000_000,
+    cacheReadCostPerMillion: 200_000,
+  },
+  {
+    provider: 'google',
+    model: 'gemini-3-pro-preview',
+    promptCostPerMillion: 2_000_000,
+    completionCostPerMillion: 12_000_000,
+    cacheReadCostPerMillion: 200_000,
+  },
+  {
+    provider: 'google',
+    model: 'gemini-3-flash-preview',
+    promptCostPerMillion: 500_000,
+    completionCostPerMillion: 3_000_000,
+    cacheReadCostPerMillion: 50_000,
+  },
+  // Gemini 2.5
+  {
+    provider: 'google',
+    model: 'gemini-2.5-pro',
+    promptCostPerMillion: 1_250_000,
+    completionCostPerMillion: 10_000_000,
+    cacheReadCostPerMillion: 125_000,
+  },
+  {
+    provider: 'google',
+    model: 'gemini-2.5-flash',
+    promptCostPerMillion: 300_000,
+    completionCostPerMillion: 2_500_000,
+    cacheReadCostPerMillion: 30_000,
+  },
+  {
+    provider: 'google',
+    model: 'gemini-2.5-flash-lite',
+    promptCostPerMillion: 100_000,
+    completionCostPerMillion: 400_000,
+    cacheReadCostPerMillion: 10_000,
+  },
+  // Gemini 2.0
+  {
+    provider: 'google',
+    model: 'gemini-2.0-flash',
+    promptCostPerMillion: 100_000,
+    completionCostPerMillion: 400_000,
+    cacheReadCostPerMillion: 25_000,
+  },
+  {
+    provider: 'google',
+    model: 'gemini-2.0-flash-lite',
+    promptCostPerMillion: 75_000,
+    completionCostPerMillion: 300_000,
+  },
+
+  // OpenAI models
+  // GPT-5.x
+  {
+    provider: 'openai',
+    model: 'gpt-5.3-codex',
+    promptCostPerMillion: 1_750_000,
+    completionCostPerMillion: 14_000_000,
+    cacheReadCostPerMillion: 175_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5.2',
+    promptCostPerMillion: 1_750_000,
+    completionCostPerMillion: 14_000_000,
+    cacheReadCostPerMillion: 175_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5.1',
+    promptCostPerMillion: 1_250_000,
+    completionCostPerMillion: 10_000_000,
+    cacheReadCostPerMillion: 125_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5.1-codex',
+    promptCostPerMillion: 1_250_000,
+    completionCostPerMillion: 10_000_000,
+    cacheReadCostPerMillion: 125_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5.1-codex-mini',
+    promptCostPerMillion: 250_000,
+    completionCostPerMillion: 2_000_000,
+    cacheReadCostPerMillion: 25_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5',
+    promptCostPerMillion: 1_250_000,
+    completionCostPerMillion: 10_000_000,
+    cacheReadCostPerMillion: 125_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5-mini',
+    promptCostPerMillion: 250_000,
+    completionCostPerMillion: 2_000_000,
+    cacheReadCostPerMillion: 25_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5-nano',
+    promptCostPerMillion: 50_000,
+    completionCostPerMillion: 400_000,
+    cacheReadCostPerMillion: 5_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5-codex',
+    promptCostPerMillion: 1_250_000,
+    completionCostPerMillion: 10_000_000,
+    cacheReadCostPerMillion: 125_000,
+  },
+  // Reasoning models
+  {
+    provider: 'openai',
+    model: 'o4-mini',
+    promptCostPerMillion: 1_100_000,
+    completionCostPerMillion: 4_400_000,
+    cacheReadCostPerMillion: 275_000,
+  },
+  {
+    provider: 'openai',
+    model: 'o3-pro',
+    promptCostPerMillion: 20_000_000,
+    completionCostPerMillion: 80_000_000,
+  },
+  {
+    provider: 'openai',
+    model: 'o3',
+    promptCostPerMillion: 2_000_000,
+    completionCostPerMillion: 8_000_000,
+    cacheReadCostPerMillion: 500_000,
+  },
+  {
+    provider: 'openai',
+    model: 'o3-mini',
+    promptCostPerMillion: 1_100_000,
+    completionCostPerMillion: 4_400_000,
+    cacheReadCostPerMillion: 550_000,
+  },
+  // GPT-4.x
+  {
+    provider: 'openai',
+    model: 'gpt-4.1',
+    promptCostPerMillion: 2_000_000,
+    completionCostPerMillion: 8_000_000,
+    cacheReadCostPerMillion: 500_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-4.1-mini',
+    promptCostPerMillion: 400_000,
+    completionCostPerMillion: 1_600_000,
+    cacheReadCostPerMillion: 100_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-4.1-nano',
+    promptCostPerMillion: 100_000,
+    completionCostPerMillion: 400_000,
+    cacheReadCostPerMillion: 25_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-4o',
+    promptCostPerMillion: 2_500_000,
+    completionCostPerMillion: 10_000_000,
+    cacheReadCostPerMillion: 1_250_000,
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+    promptCostPerMillion: 150_000,
+    completionCostPerMillion: 600_000,
+    cacheReadCostPerMillion: 75_000,
+  },
+
   // Groq models - Production
   {
     provider: 'groq',

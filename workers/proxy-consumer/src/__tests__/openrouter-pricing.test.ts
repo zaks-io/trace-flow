@@ -164,6 +164,18 @@ describe('openrouter-pricing', () => {
       expect(result).toBeNull();
     });
 
+    it('should cache with custom key when cacheKey is provided', async () => {
+      await fetchOpenRouterPricing(
+        'anthropic/claude-3-5-sonnet',
+        mockKV as unknown as KVNamespace,
+        'pricing:google:gemini-2.5-pro',
+      );
+
+      expect(mockKV.put).toHaveBeenCalledWith('pricing:google:gemini-2.5-pro', expect.any(String), {
+        expirationTtl: 31536000,
+      });
+    });
+
     it('should set updatedAt timestamp', async () => {
       const beforeTime = Date.now();
 

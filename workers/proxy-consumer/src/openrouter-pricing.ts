@@ -74,6 +74,7 @@ function convertPricing(orModel: OpenRouterModel): ModelPricing {
 export async function fetchOpenRouterPricing(
   model: string,
   kv: KVNamespace,
+  cacheKey?: string,
 ): Promise<ModelPricing | null> {
   try {
     const models = await fetchOpenRouterModels();
@@ -98,7 +99,7 @@ export async function fetchOpenRouterPricing(
     const pricing = convertPricing(orModel);
 
     // Cache the fetched pricing in KV for future requests (1 year TTL)
-    const key = `pricing:openrouter:${model}`;
+    const key = cacheKey ?? `pricing:openrouter:${model}`;
     await kv.put(key, JSON.stringify(pricing), { expirationTtl: KV_CACHE_TTL_SECONDS });
 
     return pricing;
