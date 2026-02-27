@@ -705,10 +705,7 @@ export function SpanDetailPanel({
           {/* Model + Provider */}
           {model && (
             <div className="flex items-center gap-2">
-              <ModelPill model={model} />
-              {provider && !model.toLowerCase().includes(provider.toLowerCase()) && (
-                <span className="text-[11px] text-muted-foreground">{provider}</span>
-              )}
+              <ModelPill model={model} provider={provider ?? undefined} />
             </div>
           )}
 

@@ -53,7 +53,15 @@ SQL >
         avg(Duration) as AvgDuration,
         max(Duration) as MaxDuration,
         countIf(StatusCode = 'ERROR') as ErrorCount,
-        groupArray(DISTINCT JSONExtractString(SpanAttributes, 'gen_ai.request.model')) as Models,
+        groupArray(DISTINCT
+          if(JSONExtractString(SpanAttributes, 'gen_ai.system') != '',
+            concat(JSONExtractString(SpanAttributes, 'gen_ai.system'), '/',
+              if(position(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), '/') > 0,
+                substringUTF8(JSONExtractString(SpanAttributes, 'gen_ai.request.model'),
+                  position(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), '/') + 1),
+                JSONExtractString(SpanAttributes, 'gen_ai.request.model'))),
+            JSONExtractString(SpanAttributes, 'gen_ai.request.model'))
+        ) as Models,
         groupArray(DISTINCT JSONExtractString(SpanAttributes, 'baggage.operation')) as Operations,
         sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) + toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) as TotalTokens,
         sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))) as PromptTokens,

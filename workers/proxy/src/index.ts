@@ -240,7 +240,7 @@ app.all('*', async (c) => {
 
   const parser = isSSE ? createSSEParser(sseStreamData) : null;
 
-  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: false });
 
   const capture = createResponseCapture((chunk) => {
     if (isSSE && parser) {

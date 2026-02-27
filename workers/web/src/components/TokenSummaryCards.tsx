@@ -117,8 +117,13 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
       }
     }
 
-    const model = attrs['gen_ai.request.model'];
-    if (model) modelCosts.set(model, (modelCosts.get(model) ?? 0) + spanCost);
+    const rawModel = attrs['gen_ai.request.model'];
+    if (rawModel) {
+      const provider = attrs['gen_ai.system'];
+      const name = rawModel.includes('/') ? rawModel.split('/').slice(1).join('/') : rawModel;
+      const display = provider ? `${provider}/${name}` : rawModel;
+      modelCosts.set(display, (modelCosts.get(display) ?? 0) + spanCost);
+    }
 
     minTimestamp = Math.min(minTimestamp, span.Timestamp);
     maxEndTimestamp = Math.max(maxEndTimestamp, span.Timestamp + span.Duration);

@@ -34,7 +34,7 @@ SQL >
         quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
     FROM (
         SELECT
-            Model AS model,
+            concat(Provider, '/', if(position(Model, '/') > 0, substringUTF8(Model, position(Model, '/') + 1), Model)) AS model,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -74,7 +74,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT
-            Model AS model,
+            concat(Provider, '/', if(position(Model, '/') > 0, substringUTF8(Model, position(Model, '/') + 1), Model)) AS model,
             RequestCount,
             InputTokens,
             OutputTokens,
@@ -115,7 +115,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT
-            Model AS model,
+            concat(Provider, '/', if(position(Model, '/') > 0, substringUTF8(Model, position(Model, '/') + 1), Model)) AS model,
             RequestCount,
             InputTokens,
             OutputTokens,

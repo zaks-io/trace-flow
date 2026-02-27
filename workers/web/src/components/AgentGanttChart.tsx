@@ -105,13 +105,18 @@ interface SpanRow {
 }
 
 function getSpanModel(attrs: Record<string, string>): string | null {
-  return (
-    attrs['gen_ai.request.model'] || attrs['llm.request.model'] || attrs['gen_ai.system'] || null
-  );
+  const raw =
+    attrs['gen_ai.request.model'] || attrs['llm.request.model'] || attrs['gen_ai.system'] || null;
+  if (!raw) return null;
+  const provider = attrs['gen_ai.system'];
+  if (!provider) return raw;
+  const name = raw.includes('/') ? raw.split('/').slice(1).join('/') : raw;
+  return `${provider}/${name}`;
 }
 
 function shortenModelName(model: string): string {
-  const withoutDate = model.replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
+  const bare = model.includes('/') ? model.split('/').slice(1).join('/') : model;
+  const withoutDate = bare.replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
   const shorts: Record<string, string> = {
     'claude-sonnet-4': 'sonnet-4',
     'claude-opus-4': 'opus-4',
