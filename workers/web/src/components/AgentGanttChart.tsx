@@ -454,7 +454,7 @@ export function AgentGanttChart({
   const [hoveredSpanId, setHoveredSpanId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { spanRows, totalDuration, childrenMap, syntheticChildrenMap } = useMemo(() => {
+  const { spanRows, totalDuration, childrenMap } = useMemo(() => {
     if (spans.length === 0)
       return {
         spanRows: [],
@@ -698,16 +698,23 @@ export function AgentGanttChart({
       spanRows: allRows,
       totalDuration: total,
       childrenMap,
-      syntheticChildrenMap: orphanParentIds,
     };
   }, [spans]);
 
   // Filter to visible rows based on expansion state
   const visibleRows = useMemo(() => {
+    const visibleIds = new Set<string>();
     return spanRows.filter((row) => {
-      if (row.depth === 0) return true; // Always show root spans
-      // For non-root spans, check if immediate parent is expanded
-      return expandedSpans.has(row.span.ParentSpanId);
+      if (row.depth === 0) {
+        visibleIds.add(row.span.SpanId);
+        return true;
+      }
+      // Parent must be both visible and expanded for children to show
+      if (visibleIds.has(row.span.ParentSpanId) && expandedSpans.has(row.span.ParentSpanId)) {
+        visibleIds.add(row.span.SpanId);
+        return true;
+      }
+      return false;
     });
   }, [spanRows, expandedSpans]);
 
@@ -752,20 +759,6 @@ export function AgentGanttChart({
   const hoveredRow = hoveredSpanId
     ? visibleRows.find((r) => r.span.SpanId === hoveredSpanId)
     : null;
-
-  // Compute aggregated metrics for synthetic spans
-  const syntheticAggregates = useMemo(() => {
-    if (hoveredRow?.type !== 'synthetic') return { tokens: 0, cost: 0, count: 0 };
-    const children = syntheticChildrenMap.get(hoveredRow.span.SpanId) ?? [];
-    let tokens = 0;
-    let cost = 0;
-    for (const child of children) {
-      const attrs = parseSpanAttributes(child.SpanAttributes);
-      tokens += getSpanTokens(attrs) ?? 0;
-      cost += getSpanCost(attrs) ?? 0;
-    }
-    return { tokens, cost, count: children.length };
-  }, [hoveredRow, syntheticChildrenMap]);
 
   if (spanRows.length === 0) {
     return null;
@@ -898,60 +891,73 @@ export function AgentGanttChart({
                   ? 'border-red-500/20 bg-red-500/5 hover:bg-red-500/10'
                   : 'border-border/20 hover:bg-muted/30'
               } ${selectedSpanId === row.span.SpanId ? 'bg-primary/5' : ''} ${
-                onSpanSelect ? 'cursor-pointer' : ''
+                hasChildren || onSpanSelect ? 'cursor-pointer' : ''
               }`}
-              onClick={() => onSpanSelect?.(row.span.SpanId)}
+              onClick={() => {
+                if (hasChildren) {
+                  setExpandedSpans((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(row.span.SpanId)) next.delete(row.span.SpanId);
+                    else next.add(row.span.SpanId);
+                    return next;
+                  });
+                } else {
+                  onSpanSelect?.(row.span.SpanId);
+                }
+              }}
               onMouseMove={(e) => handleMouseMove(e, row.span.SpanId)}
             >
               <div className="flex w-[500px] shrink-0 items-center border-r border-border/30 py-2 pr-4">
-                <div className="flex flex-1 items-center gap-1.5 min-w-0 pl-4 pr-3">
-                  {/* Tree lines */}
-                  {Array.from({ length: row.depth }).map((_, i) => {
-                    const isLast = row.isLastPath[i];
-                    const isCurrentDepth = i === row.depth - 1;
-                    return (
-                      <div key={i} className="relative w-4 shrink-0 self-stretch">
-                        {(!isLast || isCurrentDepth) && (
-                          <div
-                            className={`absolute left-1/2 w-px bg-border/60 ${
-                              isLast && isCurrentDepth
-                                ? 'top-[-8px] h-[calc(50%+8px)]'
-                                : 'top-[-8px] bottom-[-8px]'
-                            }`}
-                          />
+                <div className="flex flex-1 items-center min-w-0 pl-4 pr-3">
+                  <div className="flex flex-1 items-center gap-1.5 min-w-0">
+                    {/* Tree lines */}
+                    {Array.from({ length: row.depth }).map((_, i) => {
+                      const isLast = row.isLastPath[i];
+                      const isCurrentDepth = i === row.depth - 1;
+                      return (
+                        <div key={i} className="relative w-4 shrink-0 self-stretch">
+                          {(!isLast || isCurrentDepth) && (
+                            <div
+                              className={`absolute left-1/2 w-px bg-border/60 ${
+                                isLast && isCurrentDepth
+                                  ? 'top-[-8px] h-[calc(50%+8px)]'
+                                  : 'top-[-8px] bottom-[-8px]'
+                              }`}
+                            />
+                          )}
+                          {isCurrentDepth && (
+                            <div className="absolute top-1/2 left-1/2 right-0 h-px bg-border/60" />
+                          )}
+                        </div>
+                      );
+                    })}
+                    {hasChildren ? (
+                      <button
+                        onClick={(e) => toggleExpand(row.span.SpanId, e)}
+                        className="flex h-4 w-4 shrink-0 items-center justify-center rounded z-10 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground bg-card"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-3 w-3" />
+                        ) : (
+                          <ChevronRight className="h-3 w-3" />
                         )}
-                        {isCurrentDepth && (
-                          <div className="absolute top-1/2 left-1/2 right-0 h-px bg-border/60" />
-                        )}
-                      </div>
-                    );
-                  })}
-                  {hasChildren ? (
-                    <button
-                      onClick={(e) => toggleExpand(row.span.SpanId, e)}
-                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded z-10 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground bg-card"
+                      </button>
+                    ) : (
+                      <div className="h-4 w-4 shrink-0" />
+                    )}
+                    <span className={`shrink-0 ${getTypeIconColor(row.type, row.span)}`}>
+                      {getTypeIcon(row.type)}
+                    </span>
+                    <span
+                      className={`truncate text-xs ${isError ? 'text-red-400 font-medium' : 'text-foreground'}`}
+                      title={row.span.SpanName}
                     >
-                      {isExpanded ? (
-                        <ChevronDown className="h-3 w-3" />
-                      ) : (
-                        <ChevronRight className="h-3 w-3" />
-                      )}
-                    </button>
-                  ) : (
-                    <div className="h-4 w-4 shrink-0" />
-                  )}
-                  <span className={`shrink-0 ${getTypeIconColor(row.type, row.span)}`}>
-                    {getTypeIcon(row.type)}
-                  </span>
-                  <span
-                    className={`truncate text-xs ${isError ? 'text-red-400 font-medium' : 'text-foreground'}`}
-                    title={row.span.SpanName}
-                  >
-                    {row.span.SpanName}
-                  </span>
-                  {isError && <AlertCircle className="ml-1 h-3 w-3 shrink-0 text-red-500" />}
-                  {hasChildren && (
-                    <div className="ml-1 flex shrink-0 gap-1 overflow-hidden">
+                      {row.span.SpanName}
+                    </span>
+                    {isError && <AlertCircle className="ml-1 h-3 w-3 shrink-0 text-red-500" />}
+                  </div>
+                  {hasChildren && !isExpanded && row.subtreeModels.size > 0 && (
+                    <div className="ml-auto flex shrink-0 gap-1 pl-2">
                       {[...row.subtreeModels].slice(0, 1).map((m) => (
                         <span
                           key={m}
@@ -1081,53 +1087,109 @@ export function AgentGanttChart({
             <span className="tabular-nums text-muted-foreground">
               {formatDuration(hoveredRow.span.Duration)}
             </span>
-            {hoveredRow.tokens !== null && (
-              <>
-                <span className="text-muted-foreground">·</span>
-                <span className="tabular-nums text-muted-foreground">
-                  {formatNumber(hoveredRow.tokens)} tokens
-                </span>
-              </>
-            )}
-            {hoveredRow.tokensPerSecond !== null && (
-              <>
-                <span className="text-muted-foreground">·</span>
-                <span className="tabular-nums text-muted-foreground">
-                  {hoveredRow.tokensPerSecond.toFixed(1)} tok/s
-                </span>
-              </>
-            )}
-            {hoveredRow.type === 'llm' && hoveredRow.cost !== null && (
-              <>
-                <span className="text-muted-foreground">·</span>
-                <span className="tabular-nums text-emerald-400">${hoveredRow.cost.toFixed(6)}</span>
-              </>
-            )}
-            {hoveredRow.type === 'llm' && hoveredRow.baggage.operation && (
-              <>
-                <span className="text-muted-foreground">·</span>
-                <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-medium text-teal-400">
-                  {hoveredRow.baggage.operation}
-                </span>
-              </>
-            )}
           </div>
-          {hoveredRow.type === 'llm' &&
-            Object.keys(hoveredRow.baggage).filter((k) => k !== 'operation').length > 0 && (
-              <div className="mt-1.5 border-t border-border/30 pt-1.5">
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                  {Object.entries(hoveredRow.baggage)
-                    .filter(([k]) => k !== 'operation')
-                    .map(([key, value]) => (
-                      <span key={key} className="whitespace-nowrap text-[10px]">
-                        <span className="text-muted-foreground/70">{key}:</span>{' '}
-                        <span className="text-foreground/80">{value}</span>
-                      </span>
-                    ))}
+          {childrenMap.has(hoveredRow.span.SpanId) ? (
+            <>
+              {hoveredRow.subtreeModels.size > 0 && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {[...hoveredRow.subtreeModels].map((m) => (
+                    <span
+                      key={m}
+                      className="whitespace-nowrap rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-400"
+                    >
+                      {shortenModelName(m)}
+                    </span>
+                  ))}
                 </div>
+              )}
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                {hoveredRow.subtreeTokens > 0 && (
+                  <span className="tabular-nums text-muted-foreground">
+                    {formatNumber(hoveredRow.subtreeTokens)} tokens
+                  </span>
+                )}
+                {hoveredRow.subtreeCost > 0 && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="tabular-nums text-emerald-400">
+                      ${hoveredRow.subtreeCost.toFixed(6)}
+                    </span>
+                  </>
+                )}
+                {(childrenMap.get(hoveredRow.span.SpanId)?.length ?? 0) > 0 && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="text-muted-foreground">
+                      {childrenMap.get(hoveredRow.span.SpanId)!.length} spans
+                    </span>
+                  </>
+                )}
               </div>
-            )}
-          {hoveredRow.type === 'llm' && hoveredTriggeredAlerts.length > 0 && (
+              {hoveredRow.subtreeOperations.size > 0 && (
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {[...hoveredRow.subtreeOperations].map((op) => (
+                    <span
+                      key={op}
+                      className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-medium text-teal-400"
+                    >
+                      {op}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            (hoveredRow.tokens !== null ||
+              hoveredRow.tokensPerSecond !== null ||
+              hoveredRow.cost !== null) && (
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                {hoveredRow.tokens !== null && (
+                  <span className="tabular-nums text-muted-foreground">
+                    {formatNumber(hoveredRow.tokens)} tokens
+                  </span>
+                )}
+                {hoveredRow.tokensPerSecond !== null && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {hoveredRow.tokensPerSecond.toFixed(1)} tok/s
+                    </span>
+                  </>
+                )}
+                {hoveredRow.cost !== null && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="tabular-nums text-emerald-400">
+                      ${hoveredRow.cost.toFixed(6)}
+                    </span>
+                  </>
+                )}
+                {hoveredRow.baggage.operation && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-medium text-teal-400">
+                      {hoveredRow.baggage.operation}
+                    </span>
+                  </>
+                )}
+              </div>
+            )
+          )}
+          {Object.keys(hoveredRow.baggage).filter((k) => k !== 'operation').length > 0 && (
+            <div className="mt-1.5 border-t border-border/30 pt-1.5">
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                {Object.entries(hoveredRow.baggage)
+                  .filter(([k]) => k !== 'operation')
+                  .map(([key, value]) => (
+                    <span key={key} className="whitespace-nowrap text-[10px]">
+                      <span className="text-muted-foreground/70">{key}:</span>{' '}
+                      <span className="text-foreground/80">{value}</span>
+                    </span>
+                  ))}
+              </div>
+            </div>
+          )}
+          {hoveredTriggeredAlerts.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1.5 border-t border-border/30 pt-1.5">
               {hoveredTriggeredAlerts.map((ta, idx) => {
                 const severity = ta.alert.severity as AlertSeverity;
@@ -1143,27 +1205,6 @@ export function AgentGanttChart({
                   </span>
                 );
               })}
-            </div>
-          )}
-          {hoveredRow.type === 'synthetic' && syntheticAggregates.count > 0 && (
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-              <span>{syntheticAggregates.count} spans</span>
-              {syntheticAggregates.tokens > 0 && (
-                <>
-                  <span>·</span>
-                  <span className="tabular-nums">
-                    {formatNumber(syntheticAggregates.tokens)} tokens
-                  </span>
-                </>
-              )}
-              {syntheticAggregates.cost > 0 && (
-                <>
-                  <span>·</span>
-                  <span className="tabular-nums text-emerald-400">
-                    ${syntheticAggregates.cost.toFixed(6)}
-                  </span>
-                </>
-              )}
             </div>
           )}
         </div>
