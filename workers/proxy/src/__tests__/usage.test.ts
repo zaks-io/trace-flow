@@ -126,7 +126,6 @@ describe('checkUsage', () => {
     const result = await checkUsage(env, 'org-1', 1, prefetched);
     expect(result).toEqual({ status: 'allowed', tier: 'pro' });
     // KV should not have been called
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(env.API_KEYS.get).not.toHaveBeenCalled();
   });
 

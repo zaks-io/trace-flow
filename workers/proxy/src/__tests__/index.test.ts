@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { env, fetchMock, SELF } from 'cloudflare:test';
 
-const WAIT_UNTIL_DELAY = 100; // Time for waitUntil operations to complete
+const WAIT_UNTIL_DELAY = 100;
+const waitForAsyncOps = () => new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
 
 async function setupValidApiKey(key: string, orgId = 'org-test-123'): Promise<void> {
   const keyData = {
@@ -160,7 +161,7 @@ describe('Proxy Worker Integration', () => {
       expect(body).toEqual(mockResponse);
 
       // Wait for async operations (waitUntil)
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
 
       // Verify R2 storage
       const stored = await env.STORAGE.list();
@@ -200,7 +201,7 @@ describe('Proxy Worker Integration', () => {
       const body = await res.json();
       expect(body).toEqual(mockResponse);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should proxy successful request to OpenRouter', async () => {
@@ -232,7 +233,7 @@ describe('Proxy Worker Integration', () => {
       const body = await res.json();
       expect(body).toEqual(mockResponse);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should proxy successful request to Groq', async () => {
@@ -264,7 +265,7 @@ describe('Proxy Worker Integration', () => {
       const body = await res.json();
       expect(body).toEqual(mockResponse);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should handle error responses (4xx)', async () => {
@@ -295,7 +296,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(400);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should handle error responses (5xx)', async () => {
@@ -326,7 +327,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(500);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should detect and handle SSE streams', async () => {
@@ -358,7 +359,7 @@ describe('Proxy Worker Integration', () => {
       const text = await res.text();
       expect(text).toContain('message_start');
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should strip proxy auth header and pass through provider auth headers', async () => {
@@ -395,7 +396,7 @@ describe('Proxy Worker Integration', () => {
         body: JSON.stringify({ model: 'gpt-4' }),
       });
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
 
       expect(capturedHeaders).not.toBeNull();
       const headers = capturedHeaders!;
@@ -430,7 +431,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
 
       // Verify request body was stored
       const requestKeys = await env.STORAGE.list({ prefix: 'requests/' });
@@ -546,7 +547,7 @@ describe('Proxy Worker Integration', () => {
       const body = await res.json();
       expect(body).toEqual(mockResponse);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
 
       // No R2 storage should happen when not recording
       const stored = await env.STORAGE.list({ prefix: `requests/` });
@@ -594,7 +595,7 @@ describe('Proxy Worker Integration', () => {
       expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
       expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('suspended');
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should proxy request when account is canceled', async () => {
@@ -638,7 +639,7 @@ describe('Proxy Worker Integration', () => {
       expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
       expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('canceled');
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should proxy request when subscription KV data is corrupt', async () => {
@@ -675,7 +676,7 @@ describe('Proxy Worker Integration', () => {
       expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
       expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('internal_error');
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
 
     it('should set recording=true header on successful proxied requests', async () => {
@@ -707,7 +708,7 @@ describe('Proxy Worker Integration', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('X-Trace-Flow-Recording')).toBe('true');
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
     });
   });
 
@@ -747,7 +748,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
 
       // Verify NO bodies were stored
       const stored = await env.STORAGE.list();
@@ -788,7 +789,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(200);
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
 
       // Verify bodies WERE stored
       const stored = await env.STORAGE.list();
@@ -828,7 +829,7 @@ describe('Proxy Worker Integration', () => {
         body: JSON.stringify({ model: 'gpt-4' }),
       });
 
-      await new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+      await waitForAsyncOps();
 
       expect(capturedHeaders).not.toBeNull();
       const headers = capturedHeaders!;

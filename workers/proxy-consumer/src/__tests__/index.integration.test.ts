@@ -1,20 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { env } from 'cloudflare:test';
 import type { QueueMessage } from '@trace-flow/types';
 import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
 
 describe('Queue Handler Integration', () => {
-  beforeEach(() => {
-    // Reset Durable Object state between tests
-    const shards = Array.from({ length: 10 }, (_, i) => i);
-    shards.forEach((shardId) => {
-      const id = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
-      const stub = env.TRACE_BATCHER.get(id);
-      void stub.fetch('http://test/__reset__');
-    });
-  });
-
   const createMockQueueMessage = (requestId: string, apiKey: string): QueueMessage => ({
     requestId,
     apiKey,
@@ -113,7 +103,6 @@ describe('Queue Handler Integration', () => {
   it('should handle message with invalid trace data gracefully', async () => {
     const invalidMessage = createMockQueueMessage('test-invalid', 'api-key-invalid');
     // Remove required fields to trigger error
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (invalidMessage as any).timing;
 
     const ackCalled = { value: false };

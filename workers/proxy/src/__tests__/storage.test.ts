@@ -13,15 +13,14 @@ describe('storeRequestResponse', () => {
 
     await storeRequestResponse(mockStorage, requestId, requestBody, responseBody, 'pro');
 
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledTimes(2);
-    // eslint-disable-next-line @typescript-eslint/unbound-method
+
     expect(mockStorage.put).toHaveBeenCalledWith(
       'requests/pro/test-request-id',
       'request body content',
       {},
     );
-    // eslint-disable-next-line @typescript-eslint/unbound-method
+
     expect(mockStorage.put).toHaveBeenCalledWith(
       'responses/pro/test-request-id',
       'response body content',
@@ -88,7 +87,6 @@ describe('storeRequestResponse', () => {
     await storeRequestResponse(mockStorage, requestId, requestBody, responseBody, 'hobby');
     const endTime = Date.now();
 
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledTimes(2);
     expect(endTime - startTime).toBeLessThan(20);
   });
@@ -110,9 +108,8 @@ describe('storeRequestResponse', () => {
       'hobby',
     );
 
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledWith('requests/hobby/empty-test', '', {});
-    // eslint-disable-next-line @typescript-eslint/unbound-method
+
     expect(mockStorage.put).toHaveBeenCalledWith('responses/hobby/empty-test', '', {});
     expect(result).toEqual({
       requestBodyKey: 'requests/hobby/empty-test',
@@ -132,9 +129,8 @@ describe('storeRequestResponse', () => {
 
     await storeRequestResponse(mockStorage, requestId, largeRequestBody, largeResponseBody, 'pro');
 
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/large-test', largeRequestBody, {});
-    // eslint-disable-next-line @typescript-eslint/unbound-method
+
     expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/large-test', largeResponseBody, {});
   });
 
@@ -145,11 +141,10 @@ describe('storeRequestResponse', () => {
 
     await storeRequestResponse(mockStorage, 'meta-test', 'req', 'res', 'pro', 'org_123');
 
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/meta-test', 'req', {
       customMetadata: { orgId: 'org_123' },
     });
-    // eslint-disable-next-line @typescript-eslint/unbound-method
+
     expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/meta-test', 'res', {
       customMetadata: { orgId: 'org_123' },
     });
