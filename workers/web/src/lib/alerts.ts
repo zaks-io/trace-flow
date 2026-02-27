@@ -19,6 +19,7 @@ interface TraceSpanInput {
   StatusCode: string;
   SpanAttributes: string;
   ReceivedAt?: number;
+  BaggageOperation?: string;
 }
 
 export function traceSpanToRequestRow(span: TraceSpanInput): RequestRow {
@@ -32,6 +33,7 @@ export function traceSpanToRequestRow(span: TraceSpanInput): RequestRow {
     Duration: span.Duration,
     StatusCode: span.StatusCode,
     SpanAttributes: span.SpanAttributes,
+    BaggageOperation: span.BaggageOperation ?? '',
   };
 }
 

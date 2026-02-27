@@ -15,7 +15,8 @@ SQL >
         ServiceName,
         Duration,
         StatusCode,
-        SpanAttributes
+        SpanAttributes,
+        BaggageOperation
     FROM otel_traces_genai
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})

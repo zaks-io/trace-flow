@@ -45,7 +45,10 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
   const lastProcessedAtRef = useRef(0);
   const prevFiltersRef = useRef(JSON.stringify({}));
 
-  const { visibility, setVisibility } = useColumnVisibility(defaultColumnVisibility);
+  const { visibility, setVisibility } = useColumnVisibility(
+    defaultColumnVisibility,
+    'trace-flow-requests-columns-v2',
+  );
   const { filters, setFilter, clearFilters, hasActiveFilters } = useTableFilters();
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
