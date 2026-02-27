@@ -10,6 +10,7 @@ import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/PageToolbar';
+import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable, TableToolbar, type AlertFilterValue } from '@/components/requests-table';
 import {
   spanGroupColumns,
@@ -267,7 +268,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
       {/* Sticky filter bar — horizontal negative margins extend it edge-to-edge */}
       <div className="sticky top-0 z-20 -mx-6 lg:-mx-8 px-6 lg:px-8 py-3 bg-background border-b border-border/50">
         <TableToolbar
-          columnDefs={spanGroupColumns as never}
+          columnDefs={spanGroupColumns as ColumnDef<unknown>[]}
           columnVisibility={visibility}
           onColumnVisibilityChange={setVisibility}
           filters={filters}

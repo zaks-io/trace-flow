@@ -16,7 +16,7 @@ import type { FilterOptions } from '@/hooks/useFilterOptions';
 
 export type { AlertFilterValue };
 
-const NEW_ROW_THRESHOLD_MS = 30_000; // 30 seconds for testing (change to 60_000 for production)
+const NEW_ROW_THRESHOLD_MS = 60_000;
 
 function isNewRow(row: unknown): boolean {
   const data = row as { ReceivedAt?: number; LatestReceivedAt?: number };

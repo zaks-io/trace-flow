@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef } from 'react';
 import { parseSpanAttributes } from '@trace-flow/utils';
+import { formatDuration as formatDurationMs, formatNumber } from '@/lib/format';
 import {
   Bot,
   Activity,
@@ -98,8 +99,7 @@ interface SpanRow {
   hasErrorDescendant: boolean;
 }
 
-function getSpanModel(span: TraceSpan): string | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getSpanModel(attrs: Record<string, string>): string | null {
   return (
     attrs['gen_ai.request.model'] || attrs['llm.request.model'] || attrs['gen_ai.system'] || null
   );
@@ -125,9 +125,7 @@ function shortenModelName(model: string): string {
   return shorts[withoutDate] ?? withoutDate;
 }
 
-function getSpanType(span: TraceSpan): SpanType {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
-
+function getSpanType(span: TraceSpan, attrs: Record<string, string>): SpanType {
   // Synthetic grouping spans
   if (attrs.synthetic === 'true') return 'synthetic';
 
@@ -163,8 +161,7 @@ function getSpanType(span: TraceSpan): SpanType {
   return 'internal';
 }
 
-function getSpanTokens(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getSpanTokens(attrs: Record<string, string>): number | null {
   const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
   const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
   const total = input + output;
@@ -172,9 +169,7 @@ function getSpanTokens(span: TraceSpan): number | null {
   return total > 0 ? total : null;
 }
 
-function getSpanTokensPerSecond(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
-
+function getSpanTokensPerSecond(span: TraceSpan, attrs: Record<string, string>): number | null {
   // Use pre-calculated TPS if available
   if (attrs['gen_ai.tokens_per_second']) {
     return parseFloat(attrs['gen_ai.tokens_per_second']);
@@ -187,14 +182,12 @@ function getSpanTokensPerSecond(span: TraceSpan): number | null {
   return durationSeconds > 0 && completion > 0 ? completion / durationSeconds : null;
 }
 
-function getSpanCost(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getSpanCost(attrs: Record<string, string>): number | null {
   const cost = attrs['gen_ai.cost.total'];
   return cost ? parseFloat(cost) : null;
 }
 
-function getBaggageAttributes(span: TraceSpan): Record<string, string> {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getBaggageAttributes(attrs: Record<string, string>): Record<string, string> {
   const baggage: Record<string, string> = {};
   for (const [key, value] of Object.entries(attrs)) {
     if (key.startsWith('baggage.')) {
@@ -209,8 +202,7 @@ function getBaggageAttributes(span: TraceSpan): Record<string, string> {
   return baggage;
 }
 
-function getMessageIndex(span: TraceSpan): number | null {
-  const attrs = parseSpanAttributes(span.SpanAttributes);
+function getMessageIndex(attrs: Record<string, string>): number | null {
   const index = attrs['gen_ai.message.index'];
   return index !== undefined ? parseInt(index, 10) : null;
 }
@@ -428,21 +420,7 @@ function getTypeIconColor(type: SpanType, span?: TraceSpan): string {
 }
 
 function formatDuration(nanoseconds: number): string {
-  const ms = nanoseconds / 1_000_000;
-  if (ms < 1) {
-    return `${(ms * 1000).toFixed(0)}μs`;
-  }
-  if (ms < 1000) {
-    return `${ms.toFixed(1)}ms`;
-  }
-  return `${(ms / 1000).toFixed(2)}s`;
-}
-
-function formatNumber(num: number): string {
-  if (num >= 1000) {
-    return `${(num / 1000).toFixed(1)}k`;
-  }
-  return num.toString();
+  return formatDurationMs(nanoseconds / 1_000_000);
 }
 
 function getAdaptiveInterval(totalDurationNs: number): number {
@@ -556,6 +534,21 @@ export function AgentGanttChart({
     const traceEndTime = Math.max(...allSpans.map((s) => s.Timestamp + s.Duration));
     const total = traceEndTime - traceStart;
 
+    // Pre-compute lookup maps: O(n) instead of O(n²) find/filter in recursive traversals
+    const spanById = new Map<string, TraceSpan>();
+    const childrenByParent = new Map<string, TraceSpan[]>();
+    const parsedAttrs = new Map<string, Record<string, string>>();
+    for (const span of allSpans) {
+      spanById.set(span.SpanId, span);
+      parsedAttrs.set(span.SpanId, parseSpanAttributes(span.SpanAttributes));
+      const siblings = childrenByParent.get(span.ParentSpanId);
+      if (siblings) {
+        siblings.push(span);
+      } else {
+        childrenByParent.set(span.ParentSpanId, [span]);
+      }
+    }
+
     // --- Pre-compute subtree metrics ---
     const subtreeMetrics = new Map<
       string,
@@ -571,20 +564,20 @@ export function AgentGanttChart({
     const computeMetrics = (spanId: string) => {
       if (subtreeMetrics.has(spanId)) return subtreeMetrics.get(spanId)!;
 
-      const span = allSpans.find((s) => s.SpanId === spanId);
-      const children = allSpans.filter((s) => s.ParentSpanId === spanId);
+      const span = spanById.get(spanId);
+      const children = childrenByParent.get(spanId) ?? [];
+      const attrs = span ? parsedAttrs.get(spanId)! : {};
 
-      let tokens = span ? (getSpanTokens(span) ?? 0) : 0;
-      let cost = span ? (getSpanCost(span) ?? 0) : 0;
+      let tokens = span ? (getSpanTokens(attrs) ?? 0) : 0;
+      let cost = span ? (getSpanCost(attrs) ?? 0) : 0;
       const models = new Set<string>();
       const operations = new Set<string>();
       let hasError = span?.StatusCode === 'ERROR';
 
       if (span) {
-        const model = getSpanModel(span);
+        const model = getSpanModel(attrs);
         if (model) models.add(model);
 
-        const attrs = parseSpanAttributes(span.SpanAttributes);
         const op = attrs['gen_ai.operation.name'] || attrs['baggage.operation'];
         if (op) operations.add(op);
       }
@@ -609,8 +602,36 @@ export function AgentGanttChart({
 
     // -----------------------------------
 
+    const buildSpanRow = (span: TraceSpan, depth: number, isLastPath: boolean[]): SpanRow => {
+      const attrs = parsedAttrs.get(span.SpanId)!;
+      const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
+      const metrics = subtreeMetrics.get(span.SpanId)!;
+      const startOffset = ((span.Timestamp - traceStart) / total) * 100;
+      const width = (span.Duration / total) * 100;
+
+      return {
+        span,
+        depth,
+        isLastPath,
+        startOffset,
+        width: Math.max(width, 0.5),
+        type: getSpanType(span, attrs),
+        tokens: getSpanTokens(attrs),
+        tokensPerSecond: getSpanTokensPerSecond(span, attrs),
+        messageIndex: getMessageIndex(attrs),
+        cost: getSpanCost(attrs),
+        baggage: getBaggageAttributes(attrs),
+        isCacheHit: cacheRead > 0,
+        subtreeTokens: metrics.tokens,
+        subtreeCost: metrics.cost,
+        subtreeModels: metrics.models,
+        subtreeOperations: metrics.operations,
+        hasErrorDescendant: metrics.hasError,
+      };
+    };
+
     const buildSpanTree = (parentId: string, depth = 0, isLastPath: boolean[] = []): SpanRow[] => {
-      const children = allSpans.filter((s) => s.ParentSpanId === parentId);
+      const children = childrenByParent.get(parentId) ?? [];
 
       // Group children by type:
       // - ai.* spans group by their exact name (e.g., all ai.request together)
@@ -630,8 +651,10 @@ export function AgentGanttChart({
         groupSpans.sort((a, b) => {
           const timeDiff = a.Timestamp - b.Timestamp;
           if (timeDiff !== 0) return timeDiff;
-          const aIndex = getMessageIndex(a);
-          const bIndex = getMessageIndex(b);
+          const aAttrs = parsedAttrs.get(a.SpanId)!;
+          const bAttrs = parsedAttrs.get(b.SpanId)!;
+          const aIndex = getMessageIndex(aAttrs);
+          const bIndex = getMessageIndex(bAttrs);
           if (aIndex !== null && bIndex !== null) return aIndex - bIndex;
           if (aIndex !== null) return -1;
           if (bIndex !== null) return 1;
@@ -653,34 +676,10 @@ export function AgentGanttChart({
           const isLastInGroup = s === groupSpans.length - 1;
           const isLastGroup = g === sortedGroups.length - 1;
           const isLastChild = isLastInGroup && isLastGroup;
+          const childPath = [...isLastPath, isLastChild];
 
-          const startOffset = ((span.Timestamp - traceStart) / total) * 100;
-          const width = (span.Duration / total) * 100;
-
-          const attrs = parseSpanAttributes(span.SpanAttributes);
-          const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
-          const metrics = subtreeMetrics.get(span.SpanId)!;
-
-          rows.push({
-            span,
-            depth,
-            isLastPath: [...isLastPath, isLastChild],
-            startOffset,
-            width: Math.max(width, 0.5),
-            type: getSpanType(span),
-            tokens: getSpanTokens(span),
-            tokensPerSecond: getSpanTokensPerSecond(span),
-            messageIndex: getMessageIndex(span),
-            cost: getSpanCost(span),
-            baggage: getBaggageAttributes(span),
-            isCacheHit: cacheRead > 0,
-            subtreeTokens: metrics.tokens,
-            subtreeCost: metrics.cost,
-            subtreeModels: metrics.models,
-            subtreeOperations: metrics.operations,
-            hasErrorDescendant: metrics.hasError,
-          });
-          rows.push(...buildSpanTree(span.SpanId, depth + 1, [...isLastPath, isLastChild]));
+          rows.push(buildSpanRow(span, depth, childPath));
+          rows.push(...buildSpanTree(span.SpanId, depth + 1, childPath));
         }
       }
       return rows;
@@ -690,31 +689,8 @@ export function AgentGanttChart({
     for (let r = 0; r < effectiveRoots.length; r++) {
       const rootSpan = effectiveRoots[r];
       const isLastRoot = r === effectiveRoots.length - 1;
-      const startOffset = ((rootSpan.Timestamp - traceStart) / total) * 100;
 
-      const attrs = parseSpanAttributes(rootSpan.SpanAttributes);
-      const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
-      const metrics = subtreeMetrics.get(rootSpan.SpanId)!;
-
-      allRows.push({
-        span: rootSpan,
-        depth: 0,
-        isLastPath: [isLastRoot],
-        startOffset,
-        width: Math.max((rootSpan.Duration / total) * 100, 0.5),
-        type: getSpanType(rootSpan),
-        tokens: getSpanTokens(rootSpan),
-        tokensPerSecond: getSpanTokensPerSecond(rootSpan),
-        messageIndex: getMessageIndex(rootSpan),
-        cost: getSpanCost(rootSpan),
-        baggage: getBaggageAttributes(rootSpan),
-        isCacheHit: cacheRead > 0,
-        subtreeTokens: metrics.tokens,
-        subtreeCost: metrics.cost,
-        subtreeModels: metrics.models,
-        subtreeOperations: metrics.operations,
-        hasErrorDescendant: metrics.hasError,
-      });
+      allRows.push(buildSpanRow(rootSpan, 0, [isLastRoot]));
       allRows.push(...buildSpanTree(rootSpan.SpanId, 1, [isLastRoot]));
     }
 
@@ -784,8 +760,9 @@ export function AgentGanttChart({
     let tokens = 0;
     let cost = 0;
     for (const child of children) {
-      tokens += getSpanTokens(child) ?? 0;
-      cost += getSpanCost(child) ?? 0;
+      const attrs = parseSpanAttributes(child.SpanAttributes);
+      tokens += getSpanTokens(attrs) ?? 0;
+      cost += getSpanCost(attrs) ?? 0;
     }
     return { tokens, cost, count: children.length };
   }, [hoveredRow, syntheticChildrenMap]);
