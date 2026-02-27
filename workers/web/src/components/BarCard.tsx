@@ -9,13 +9,13 @@ export interface Segment {
   color: string;
 }
 
-export interface InlineLabel {
+interface InlineLabel {
   label: string;
   value: string;
   color: string;
 }
 
-export interface BarCardProps {
+interface BarCardProps {
   label: string;
   value: string;
   segments: Segment[];
