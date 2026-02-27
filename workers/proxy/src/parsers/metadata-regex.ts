@@ -46,7 +46,9 @@ const CACHE_READ_INPUT_TOKENS_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
 const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d+)/;
 const EPHEMERAL_5M_INPUT_TOKENS_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d+)/;
 const EPHEMERAL_1H_INPUT_TOKENS_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d+)/;
-const UPSTREAM_COST_PATTERN = /"cost"\s*:\s*([0-9.]+)/;
+// Scoped to usage context — only matches "cost" that appears after "usage" in the data.
+// Prevents false-positives from unrelated "cost" fields in model response content.
+const UPSTREAM_COST_PATTERN = /"usage"[\s\S]*?"cost"\s*:\s*([0-9.eE+-]+)/;
 
 /**
  * Extracts OpenAI-compatible metadata from SSE event data string.

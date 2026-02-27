@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { parseSpanAttributes } from '@trace-flow/utils';
 import { BarCard, type Segment, formatCompact, formatCostCompact } from '@/components/BarCard';
+import { formatModelDisplay } from '@/lib/format';
 
 interface TraceSpan {
   SpanAttributes: string;
@@ -119,9 +120,7 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
 
     const rawModel = attrs['gen_ai.request.model'];
     if (rawModel) {
-      const provider = attrs['gen_ai.system'];
-      const name = rawModel.includes('/') ? rawModel.split('/').slice(1).join('/') : rawModel;
-      const display = provider ? `${provider}/${name}` : rawModel;
+      const display = formatModelDisplay(rawModel, attrs['gen_ai.system']);
       modelCosts.set(display, (modelCosts.get(display) ?? 0) + spanCost);
     }
 

@@ -43,7 +43,7 @@ export function BarCard({
 
   return (
     <div
-      className={`relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br ${accent} ${compact ? 'p-3' : 'p-5'}`}
+      className={`relative min-w-0 rounded-xl bg-linear-to-br ${accent} ${compact ? 'p-3' : 'p-5'}`}
     >
       <div>
         <p className="text-xs font-medium tracking-wide text-muted-foreground">{label}</p>

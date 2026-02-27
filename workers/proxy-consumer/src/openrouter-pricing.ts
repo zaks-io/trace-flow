@@ -83,11 +83,16 @@ export async function fetchOpenRouterPricing(
     let orModel = models.get(model);
 
     if (!orModel) {
-      // Try matching by suffix for versioned models or partial matches
+      // Try matching by suffix — prefer the longest (most specific) match
+      let bestLen = 0;
       for (const [id, m] of models) {
-        if (id.endsWith(model) || model.endsWith(id.split('/').pop() ?? '')) {
-          orModel = m;
-          break;
+        const idName = id.split('/').pop() ?? '';
+        if (id.endsWith(model) || model.endsWith(idName)) {
+          const matchLen = Math.max(model.length, id.length);
+          if (matchLen > bestLen) {
+            bestLen = matchLen;
+            orModel = m;
+          }
         }
       }
     }
