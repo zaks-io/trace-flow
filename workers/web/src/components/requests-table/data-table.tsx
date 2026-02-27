@@ -19,17 +19,19 @@ export type { AlertFilterValue };
 const NEW_ROW_THRESHOLD_MS = 30_000; // 30 seconds for testing (change to 60_000 for production)
 
 function isNewRow(row: unknown): boolean {
-  const data = row as { ReceivedAt?: number };
-  if (typeof data.ReceivedAt !== 'number') return false;
-  const receivedAt = new Date(data.ReceivedAt / 1_000_000);
+  const data = row as { ReceivedAt?: number; LatestReceivedAt?: number };
+  const timestamp = data.ReceivedAt ?? data.LatestReceivedAt;
+  if (typeof timestamp !== 'number') return false;
+  const receivedAt = new Date(timestamp / 1_000_000);
   const now = new Date();
   const ageMs = now.getTime() - receivedAt.getTime();
   return ageMs < NEW_ROW_THRESHOLD_MS;
 }
 
 function getReceivedAt(row: unknown): number | null {
-  const data = row as { ReceivedAt?: number };
-  return typeof data.ReceivedAt === 'number' ? data.ReceivedAt : null;
+  const data = row as { ReceivedAt?: number; LatestReceivedAt?: number };
+  const timestamp = data.ReceivedAt ?? data.LatestReceivedAt;
+  return typeof timestamp === 'number' ? timestamp : null;
 }
 
 interface DataTableProps<TData> {
@@ -57,6 +59,8 @@ interface DataTableProps<TData> {
   loading?: boolean;
   emptyMessage?: string;
   apiKeyMap?: Map<string, string>;
+  hideToolbar?: boolean;
+  rowClassName?: (row: TData) => string | undefined;
 }
 
 export function DataTable<TData>({
@@ -82,6 +86,8 @@ export function DataTable<TData>({
   loading,
   emptyMessage = 'No results found',
   apiKeyMap,
+  hideToolbar,
+  rowClassName,
 }: DataTableProps<TData>) {
   const filteredData = useMemo(() => {
     if (!alertSummary || alertFilter === 'all') {
@@ -148,23 +154,24 @@ export function DataTable<TData>({
   });
 
   return (
-    <div className="space-y-4">
-      {/* Unified Toolbar */}
-      <TableToolbar
-        table={table}
-        filters={filters}
-        filterOptions={filterOptions}
-        filterOptionsLoading={filterOptionsLoading}
-        onFilterChange={onFilterChange}
-        onClearFilters={onClearFilters}
-        hasActiveFilters={hasActiveFilters}
-        alerts={alerts}
-        alertFilter={alertFilter}
-        onAlertFilterChange={onAlertFilterChange}
-        isLiveMode={isLiveMode}
-        onLiveModeToggle={onLiveModeToggle}
-        apiKeyMap={apiKeyMap}
-      />
+    <div className={hideToolbar ? '' : 'space-y-4'}>
+      {!hideToolbar && (
+        <TableToolbar
+          table={table}
+          filters={filters}
+          filterOptions={filterOptions}
+          filterOptionsLoading={filterOptionsLoading}
+          onFilterChange={onFilterChange}
+          onClearFilters={onClearFilters}
+          hasActiveFilters={hasActiveFilters}
+          alerts={alerts}
+          alertFilter={alertFilter}
+          onAlertFilterChange={onAlertFilterChange}
+          isLiveMode={isLiveMode}
+          onLiveModeToggle={onLiveModeToggle}
+          apiKeyMap={apiKeyMap}
+        />
+      )}
 
       <div className="card-elevated overflow-hidden rounded-xl bg-card/40 relative">
         {/* Loading overlay */}
@@ -186,7 +193,7 @@ export function DataTable<TData>({
                       key={header.id}
                       className={cn(
                         'px-6 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground',
-                        header.id === 'alerts' && 'w-10 px-2',
+                        header.id === 'trace' && 'py-3 pl-4 pr-6',
                       )}
                       style={
                         header.column.columnDef.size
@@ -220,6 +227,7 @@ export function DataTable<TData>({
                       'table-row-interactive cursor-pointer',
                       selectedRowId === row.id && 'bg-primary/5',
                       isNewRow(row.original) && 'table-row-new',
+                      rowClassName?.(row.original),
                     )}
                     onClick={(e) => onRowClick?.(row.original, e)}
                   >
@@ -228,7 +236,7 @@ export function DataTable<TData>({
                         key={cell.id}
                         className={cn(
                           'whitespace-nowrap px-6 py-4 text-sm text-foreground',
-                          cell.column.id === 'alerts' && 'w-10 px-2',
+                          cell.column.id === 'trace' && 'whitespace-normal py-3 pl-4 pr-6',
                         )}
                         style={
                           cell.column.columnDef.size

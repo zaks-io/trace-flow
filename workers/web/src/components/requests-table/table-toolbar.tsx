@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
 import type { Alert } from '@/types/alerts';
-import type { Table } from '@tanstack/react-table';
+import type { Table, ColumnDef, VisibilityState } from '@tanstack/react-table';
 
 export type AlertFilterValue = string;
 
@@ -143,23 +143,75 @@ const categoryLabels: Record<string, string> = {
 
 const categoryOrder = ['standard', 'ai', 'http'];
 
-interface ColumnToggleProps<TData> {
+interface ColumnToggleWithTableProps<TData> {
   table: Table<TData>;
+  columnDefs?: never;
+  columnVisibility?: never;
+  onColumnVisibilityChange?: never;
 }
 
-function ColumnToggleDropdown<TData>({ table }: ColumnToggleProps<TData>) {
-  const columns = table.getAllLeafColumns();
+interface ColumnToggleStandaloneProps {
+  table?: never;
+  columnDefs: ColumnDef<unknown>[];
+  columnVisibility: VisibilityState;
+  onColumnVisibilityChange: (
+    updater: VisibilityState | ((prev: VisibilityState) => VisibilityState),
+  ) => void;
+}
 
-  const grouped = columns.reduce(
-    (acc, column) => {
-      const meta = column.columnDef.meta as { category?: string; label?: string } | undefined;
-      const category = meta?.category ?? 'standard';
-      acc[category] ??= [];
-      acc[category].push(column);
-      return acc;
-    },
-    {} as Record<string, typeof columns>,
-  );
+type ColumnToggleProps<TData> = ColumnToggleWithTableProps<TData> | ColumnToggleStandaloneProps;
+
+function ColumnToggleDropdown<TData>(props: ColumnToggleProps<TData>) {
+  let items: {
+    id: string;
+    label: string;
+    category: string;
+    canHide: boolean;
+    isVisible: boolean;
+    toggle: (v: boolean) => void;
+  }[];
+
+  if (props.table) {
+    const columns = props.table.getAllLeafColumns();
+    items = columns.map((col) => {
+      const meta = col.columnDef.meta as { category?: string; label?: string } | undefined;
+      return {
+        id: col.id,
+        label: meta?.label ?? col.id,
+        category: meta?.category ?? 'standard',
+        canHide: col.getCanHide(),
+        isVisible: col.getIsVisible(),
+        toggle: (v: boolean) => col.toggleVisibility(v),
+      };
+    });
+  } else {
+    const { columnDefs, columnVisibility, onColumnVisibilityChange } = props;
+    items = columnDefs
+      .filter((col): col is ColumnDef<unknown> & { id: string } => !!col.id)
+      .map((col) => {
+        const meta = col.meta as { category?: string; label?: string } | undefined;
+        const id = col.id!;
+        return {
+          id,
+          label: meta?.label ?? id,
+          category: meta?.category ?? 'standard',
+          canHide: col.enableHiding !== false,
+          isVisible: columnVisibility[id] !== false,
+          toggle: (v: boolean) => onColumnVisibilityChange((prev) => ({ ...prev, [id]: v })),
+        };
+      });
+  }
+
+  const grouped = items
+    .filter((item) => item.canHide)
+    .reduce(
+      (acc, item) => {
+        acc[item.category] ??= [];
+        acc[item.category].push(item);
+        return acc;
+      },
+      {} as Record<string, typeof items>,
+    );
 
   const sortedCategories = categoryOrder.filter((cat) => (grouped[cat]?.length ?? 0) > 0);
 
@@ -182,18 +234,15 @@ function ColumnToggleDropdown<TData>({ table }: ColumnToggleProps<TData>) {
             <div key={category}>
               {index > 0 && <DropdownMenuSeparator />}
               <DropdownMenuLabel>{categoryLabels[category] ?? category}</DropdownMenuLabel>
-              {cols.map((column) => {
-                const meta = column.columnDef.meta as { label?: string } | undefined;
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={column.id}
-                    checked={column.getIsVisible()}
-                    onCheckedChange={(checked) => column.toggleVisibility(checked)}
-                  >
-                    {meta?.label ?? column.id}
-                  </DropdownMenuCheckboxItem>
-                );
-              })}
+              {cols.map((item) => (
+                <DropdownMenuCheckboxItem
+                  key={item.id}
+                  checked={item.isVisible}
+                  onCheckedChange={(checked) => item.toggle(!!checked)}
+                >
+                  {item.label}
+                </DropdownMenuCheckboxItem>
+              ))}
             </div>
           );
         })}
@@ -203,7 +252,12 @@ function ColumnToggleDropdown<TData>({ table }: ColumnToggleProps<TData>) {
 }
 
 interface TableToolbarProps<TData> {
-  table: Table<TData>;
+  table?: Table<TData>;
+  columnDefs?: ColumnDef<unknown>[];
+  columnVisibility?: VisibilityState;
+  onColumnVisibilityChange?: (
+    updater: VisibilityState | ((prev: VisibilityState) => VisibilityState),
+  ) => void;
   filters?: TableFilters;
   filterOptions?: FilterOptions;
   filterOptionsLoading?: boolean;
@@ -220,6 +274,9 @@ interface TableToolbarProps<TData> {
 
 export function TableToolbar<TData>({
   table,
+  columnDefs,
+  columnVisibility,
+  onColumnVisibilityChange,
   filters,
   filterOptions,
   filterOptionsLoading,
@@ -365,7 +422,15 @@ export function TableToolbar<TData>({
           </button>
         )}
 
-        <ColumnToggleDropdown table={table} />
+        {table ? (
+          <ColumnToggleDropdown table={table} />
+        ) : columnDefs && columnVisibility && onColumnVisibilityChange ? (
+          <ColumnToggleDropdown
+            columnDefs={columnDefs}
+            columnVisibility={columnVisibility}
+            onColumnVisibilityChange={onColumnVisibilityChange}
+          />
+        ) : null}
 
         {onLiveModeToggle && (
           <button
