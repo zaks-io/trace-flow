@@ -387,7 +387,8 @@ async function runPromptCachingPhase(
   };
 
   // Sequential: write must complete before read to populate the cache
-  const writeResult = await runOne('cache-write');
-  const readResult = await runOne('cache-read');
+  const isAnthropicProvider = config.id === 'anthropic';
+  const writeResult = await runOne(isAnthropicProvider ? 'cache-write' : 'large-prompt-1');
+  const readResult = await runOne(isAnthropicProvider ? 'cache-read' : 'large-prompt-2');
   return [writeResult, readResult];
 }

@@ -68,7 +68,7 @@ export function App({
           setPhase('results');
         });
     },
-    [engine, scenarioOpts, onExit, exit],
+    [engine, scenarioOpts],
   );
 
   // Auto-start for non-interactive mode

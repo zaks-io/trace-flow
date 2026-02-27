@@ -64,13 +64,27 @@ export const promptCachingScenario: Scenario = {
       const model = config.createModel(apiKey);
       const system = buildSystemMessage(systemPrompt, config.id);
 
-      // Request 1: cache write
-      const writeResult = await runCacheRequest(config, model, system, traceId, 'cache-write');
+      const isAnthropic = config.id === 'anthropic';
+
+      // Request 1: cache write (Anthropic) / large prompt baseline (others)
+      const writeResult = await runCacheRequest(
+        config,
+        model,
+        system,
+        traceId,
+        isAnthropic ? 'cache-write' : 'large-prompt-1',
+      );
       results.push(writeResult);
       ctx.onResult?.(writeResult);
 
-      // Request 2: cache read (same system prompt — should hit cache)
-      const readResult = await runCacheRequest(config, model, system, traceId, 'cache-read');
+      // Request 2: cache read (Anthropic) / large prompt repeat (others)
+      const readResult = await runCacheRequest(
+        config,
+        model,
+        system,
+        traceId,
+        isAnthropic ? 'cache-read' : 'large-prompt-2',
+      );
       results.push(readResult);
       ctx.onResult?.(readResult);
     }
