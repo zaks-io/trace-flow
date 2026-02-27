@@ -59,7 +59,7 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
     models: [],
   };
 
-  const modelSet = new Set<string>();
+  const modelCosts = new Map<string, number>();
   let minTimestamp = Infinity;
   let maxEndTimestamp = 0;
 
@@ -78,14 +78,32 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
     summary.tokens.output += outputTokens;
     summary.tokens.reasoning += reasoning;
 
-    if (attrs['gen_ai.cost.input']) summary.cost.input += parseFloat(attrs['gen_ai.cost.input']);
-    if (attrs['gen_ai.cost.output']) summary.cost.output += parseFloat(attrs['gen_ai.cost.output']);
-    if (attrs['gen_ai.cost.cache_read'])
-      summary.cost.cacheRead += parseFloat(attrs['gen_ai.cost.cache_read']);
-    if (attrs['gen_ai.cost.cache_creation'])
-      summary.cost.cacheWrite += parseFloat(attrs['gen_ai.cost.cache_creation']);
-    if (attrs['gen_ai.cost.reasoning'])
-      summary.cost.reasoning += parseFloat(attrs['gen_ai.cost.reasoning']);
+    let spanCost = 0;
+    if (attrs['gen_ai.cost.input']) {
+      const v = parseFloat(attrs['gen_ai.cost.input']);
+      summary.cost.input += v;
+      spanCost += v;
+    }
+    if (attrs['gen_ai.cost.output']) {
+      const v = parseFloat(attrs['gen_ai.cost.output']);
+      summary.cost.output += v;
+      spanCost += v;
+    }
+    if (attrs['gen_ai.cost.cache_read']) {
+      const v = parseFloat(attrs['gen_ai.cost.cache_read']);
+      summary.cost.cacheRead += v;
+      spanCost += v;
+    }
+    if (attrs['gen_ai.cost.cache_creation']) {
+      const v = parseFloat(attrs['gen_ai.cost.cache_creation']);
+      summary.cost.cacheWrite += v;
+      spanCost += v;
+    }
+    if (attrs['gen_ai.cost.reasoning']) {
+      const v = parseFloat(attrs['gen_ai.cost.reasoning']);
+      summary.cost.reasoning += v;
+      spanCost += v;
+    }
 
     if (attrs['gen_ai.tokens_per_second']) {
       const tps = parseFloat(attrs['gen_ai.tokens_per_second']);
@@ -100,14 +118,16 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
     }
 
     const model = attrs['gen_ai.request.model'];
-    if (model) modelSet.add(model);
+    if (model) modelCosts.set(model, (modelCosts.get(model) ?? 0) + spanCost);
 
     minTimestamp = Math.min(minTimestamp, span.Timestamp);
     maxEndTimestamp = Math.max(maxEndTimestamp, span.Timestamp + span.Duration);
   }
 
   summary.totalDuration = spans.length > 0 ? maxEndTimestamp - minTimestamp : 0;
-  summary.models = Array.from(modelSet).sort();
+  summary.models = Array.from(modelCosts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([model]) => model);
   return summary;
 }
 
