@@ -783,16 +783,17 @@ export function AgentGanttChart({
     const getValue = (row: SpanRow): number => {
       const hasChildren = childrenMap.has(row.span.SpanId);
       const isExpanded = expandedSpans.has(row.span.SpanId);
+      const own = timelineMode === 'tokens' ? row.tokens : row.cost;
+      const subtree = timelineMode === 'tokens' ? row.subtreeTokens : row.subtreeCost;
 
-      if (timelineMode === 'tokens') {
-        if (row.tokens !== null) return row.tokens;
-        if (hasChildren && !isExpanded) return row.subtreeTokens;
-        return 0;
-      } else {
-        if (row.cost !== null) return row.cost;
-        if (hasChildren && !isExpanded) return row.subtreeCost;
-        return 0;
+      // When collapsed with children, show subtree total.
+      // When expanded, show the larger of own value or subtree so
+      // the parent bar is never smaller than any child bar.
+      if (hasChildren) {
+        if (!isExpanded) return subtree;
+        return Math.max(own ?? 0, subtree);
       }
+      return own ?? 0;
     };
 
     const maxValue = Math.max(...visibleRows.map(getValue), Number.EPSILON);
