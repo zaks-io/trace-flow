@@ -1,4 +1,4 @@
-import type { ScenarioResult } from '../output';
+import type { RequestResult, ScenarioResult } from '../output';
 import type { ProviderConfig } from '../providers';
 
 export interface ScenarioContext {
@@ -6,6 +6,7 @@ export interface ScenarioContext {
   proxyUrl: string;
   jsonMode: boolean;
   traceId: string;
+  onResult?: (result: RequestResult) => void;
 }
 
 export interface Scenario {

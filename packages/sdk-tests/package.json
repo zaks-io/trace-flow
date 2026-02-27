@@ -16,18 +16,22 @@
     "test:all": "bun run src/cli.ts run"
   },
   "dependencies": {
-    "@trace-flow/utils": "workspace:*",
-    "zod": "^3.25.51",
-    "ai": "latest",
-    "@ai-sdk/openai": "latest",
     "@ai-sdk/anthropic": "latest",
     "@ai-sdk/google": "latest",
     "@ai-sdk/groq": "latest",
+    "@ai-sdk/openai": "latest",
+    "@inkjs/ui": "^2.0.0",
     "@openrouter/ai-sdk-provider": "latest",
-    "commander": "^12.0.0"
+    "@trace-flow/utils": "workspace:*",
+    "ai": "latest",
+    "commander": "^12.0.0",
+    "ink": "^6.8.0",
+    "react": "^19.2.4",
+    "zod": "^3.25.51"
   },
   "devDependencies": {
     "@types/node": "^22",
+    "@types/react": "^19.2.14",
     "typescript": "^5"
   }
 }

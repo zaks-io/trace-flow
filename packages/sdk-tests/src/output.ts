@@ -15,6 +15,7 @@ export interface RequestResult {
   outputTokens?: number;
   cacheCreationTokens?: number;
   cacheReadTokens?: number;
+  debug?: unknown;
 }
 
 export interface ScenarioResult {

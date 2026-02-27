@@ -134,10 +134,11 @@ export const sharedTraceMultiStreamScenario: Scenario = {
       for (let i = 0; i < chunk.length; i++) {
         const r = settled[i];
         const task = chunk[i]!;
+        let result: RequestResult;
         if (r?.status === 'fulfilled') {
-          results[task.index] = r.value;
+          result = r.value;
         } else {
-          results[task.index] = {
+          result = {
             provider: task.config.name,
             providerId: task.config.id,
             scenario: 'shared-trace-multi-stream',
@@ -150,6 +151,8 @@ export const sharedTraceMultiStreamScenario: Scenario = {
             error: r?.reason instanceof Error ? r.reason.message : String(r?.reason),
           };
         }
+        results[task.index] = result;
+        ctx.onResult?.(result);
       }
     }
 

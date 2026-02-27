@@ -22,14 +22,16 @@ export const comprehensiveScenario: Scenario = {
     for (const config of ctx.providerConfigs) {
       const apiKey = process.env[config.envKey];
       if (!apiKey) {
-        results.push({
+        const skipped = {
           provider: config.name,
           providerId: config.id,
           scenario: 'comprehensive',
           duration: 0,
-          status: 'skipped',
+          status: 'skipped' as const,
           error: `${config.envKey} not set`,
-        });
+        };
+        results.push(skipped);
+        ctx.onResult?.(skipped);
         continue;
       }
 
@@ -38,21 +40,26 @@ export const comprehensiveScenario: Scenario = {
       // --- Phase 1: Non-streaming ---
       const nonStreamResult = await runNonStreamingPhase(config, model, traceId);
       results.push(nonStreamResult);
+      ctx.onResult?.(nonStreamResult);
 
       // --- Phase 2: Streaming ---
       const streamResult = await runStreamingPhase(config, model, traceId);
       results.push(streamResult);
+      ctx.onResult?.(streamResult);
 
       // --- Phase 3: Tool call ---
       const toolResult = await runToolPhase(config, model, traceId);
       results.push(toolResult);
+      ctx.onResult?.(toolResult);
 
       // --- Phase 4: Concurrent multi-stream (3 parallel requests) ---
       const concurrentResults = await runConcurrentPhase(config, model, traceId, 3);
+      for (const r of concurrentResults) ctx.onResult?.(r);
       results.push(...concurrentResults);
 
       // --- Phase 5: Prompt caching (write then read) ---
       const cacheResults = await runPromptCachingPhase(config, model, traceId);
+      for (const r of cacheResults) ctx.onResult?.(r);
       results.push(...cacheResults);
     }
 
@@ -202,16 +209,18 @@ async function runToolPhase(
       tools: {
         getCurrentTime: tool({
           description: 'Get the current time',
-          inputSchema: z.object({}),
+          inputSchema: z.object({ timezone: z.string().optional().describe('IANA timezone') }),
           execute: () => new Date().toISOString(),
         }),
       },
+      toolChoice: 'required',
       stopWhen: stepCountIs(2),
       headers: { traceparent, baggage },
     });
 
     const text = await result.text;
     const steps = await result.steps;
+    const usage = await result.usage;
     const toolCalls = steps.flatMap((s) => s.toolCalls).length;
     return {
       provider: config.name,
@@ -223,6 +232,8 @@ async function runToolPhase(
       duration: Date.now() - start,
       status: 'passed',
       text: text?.trim(),
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
     };
   } catch (e: unknown) {
     return {

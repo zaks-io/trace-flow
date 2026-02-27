@@ -24,14 +24,16 @@ export const toolsScenario: Scenario = {
     for (const config of ctx.providerConfigs) {
       const apiKey = process.env[config.envKey];
       if (!apiKey) {
-        results.push({
+        const skipped = {
           provider: config.name,
           providerId: config.id,
           scenario: 'tools',
           duration: 0,
-          status: 'skipped',
+          status: 'skipped' as const,
           error: `${config.envKey} not set`,
-        });
+        };
+        results.push(skipped);
+        ctx.onResult?.(skipped);
         continue;
       }
 
@@ -42,7 +44,7 @@ export const toolsScenario: Scenario = {
       const reqStart = Date.now();
 
       try {
-        const result = streamText({
+        const stream = streamText({
           model,
           system:
             'You are a helpful assistant. When asked for the current time, use the getCurrentTime tool and return the result.',
@@ -50,17 +52,19 @@ export const toolsScenario: Scenario = {
           tools: {
             getCurrentTime: tool({
               description: 'Get the current time',
-              inputSchema: z.object({}),
+              inputSchema: z.object({ timezone: z.string().optional().describe('IANA timezone') }),
               execute: () => new Date().toISOString(),
             }),
           },
+          toolChoice: 'required',
           stopWhen: stepCountIs(2),
           headers: { traceparent, baggage },
         });
-        const text = await result.text;
-        const steps = await result.steps;
+        const text = await stream.text;
+        const steps = await stream.steps;
+        const usage = await stream.usage;
         const duration = Date.now() - reqStart;
-        results.push({
+        const reqResult: RequestResult = {
           provider: config.name,
           providerId: config.id,
           scenario: 'tools',
@@ -70,9 +74,31 @@ export const toolsScenario: Scenario = {
           status: 'passed',
           text: text?.trim(),
           label: `tools (${steps.flatMap((s) => s.toolCalls).length} calls)`,
-        });
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          debug: ctx.jsonMode
+            ? {
+                stepCount: steps.length,
+                steps: steps.map((s, i) => ({
+                  step: i,
+                  text: s.text,
+                  toolCalls: s.toolCalls.map((tc) => ({
+                    name: tc.toolName,
+                    input: tc.input,
+                  })),
+                  toolResults: s.toolResults.map((tr) => ({
+                    name: tr.toolName,
+                    output: tr.output,
+                  })),
+                  usage: s.usage,
+                })),
+              }
+            : undefined,
+        };
+        results.push(reqResult);
+        ctx.onResult?.(reqResult);
       } catch (e: unknown) {
-        results.push({
+        const reqResult: RequestResult = {
           provider: config.name,
           providerId: config.id,
           scenario: 'tools',
@@ -81,7 +107,9 @@ export const toolsScenario: Scenario = {
           duration: Date.now() - reqStart,
           status: 'failed',
           error: e instanceof Error ? e.message : String(e),
-        });
+        };
+        results.push(reqResult);
+        ctx.onResult?.(reqResult);
       }
     }
 

@@ -13,14 +13,16 @@ export const basicScenario: Scenario = {
     for (const config of ctx.providerConfigs) {
       const apiKey = process.env[config.envKey];
       if (!apiKey) {
-        results.push({
+        const skipped = {
           provider: config.name,
           providerId: config.id,
           scenario: 'basic',
           duration: 0,
-          status: 'skipped',
+          status: 'skipped' as const,
           error: `${config.envKey} not set`,
-        });
+        };
+        results.push(skipped);
+        ctx.onResult?.(skipped);
         continue;
       }
 
@@ -33,11 +35,17 @@ export const basicScenario: Scenario = {
       };
 
       const [nonStream, stream] = await Promise.all([
-        runNonStreaming({ ...base, operation: 'non-streaming' }),
-        runStreaming({ ...base, operation: 'streaming' }),
+        runNonStreaming({ ...base, operation: 'non-streaming' }).then((r) => {
+          r.label = 'non-streaming';
+          ctx.onResult?.(r);
+          return r;
+        }),
+        runStreaming({ ...base, operation: 'streaming' }).then((r) => {
+          r.label = 'streaming';
+          ctx.onResult?.(r);
+          return r;
+        }),
       ]);
-      nonStream.label = 'non-streaming';
-      stream.label = 'streaming';
       results.push(nonStream, stream);
     }
 

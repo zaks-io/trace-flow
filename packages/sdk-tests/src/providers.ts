@@ -47,13 +47,13 @@ const providers: ProviderConfig[] = [
     name: 'Google',
     envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
     basePath: '/google/v1beta',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     createModel: (apiKey) =>
       createGoogleGenerativeAI({
         baseURL: `${PROXY_URL}/google/v1beta`,
         apiKey,
         headers: getProxyHeaders(),
-      })('gemini-2.0-flash'),
+      })('gemini-2.5-flash'),
   },
   {
     id: 'openrouter',

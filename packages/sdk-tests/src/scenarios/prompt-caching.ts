@@ -48,14 +48,16 @@ export const promptCachingScenario: Scenario = {
     for (const config of ctx.providerConfigs) {
       const apiKey = process.env[config.envKey];
       if (!apiKey) {
-        results.push({
+        const skipped = {
           provider: config.name,
           providerId: config.id,
           scenario: 'prompt-caching',
           duration: 0,
-          status: 'skipped',
+          status: 'skipped' as const,
           error: `${config.envKey} not set`,
-        });
+        };
+        results.push(skipped);
+        ctx.onResult?.(skipped);
         continue;
       }
 
@@ -65,10 +67,12 @@ export const promptCachingScenario: Scenario = {
       // Request 1: cache write
       const writeResult = await runCacheRequest(config, model, system, traceId, 'cache-write');
       results.push(writeResult);
+      ctx.onResult?.(writeResult);
 
       // Request 2: cache read (same system prompt — should hit cache)
       const readResult = await runCacheRequest(config, model, system, traceId, 'cache-read');
       results.push(readResult);
+      ctx.onResult?.(readResult);
     }
 
     const passed = results.filter((r) => r.status === 'passed').length;

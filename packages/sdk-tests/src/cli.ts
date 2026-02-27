@@ -32,52 +32,63 @@ program
   .option('--concurrency <n>', 'Max concurrent requests', parseInt)
   .option('--trace-id <id>', 'Override trace ID for shared-trace scenarios')
   .action(async (opts: RunOptions) => {
-    if (opts.interactive) {
-      const { runInteractive } = await import('./cli-interactive');
-      await runInteractive(opts);
-      return;
-    }
-
-    const scenario = getScenario(opts.scenario ?? 'basic');
-    if (!scenario) {
+    const scenario = opts.interactive ? undefined : getScenario(opts.scenario ?? 'basic');
+    if (!opts.interactive && !scenario) {
       console.error(`Unknown scenario: ${opts.scenario}`);
       process.exit(1);
     }
 
-    let providerConfigs: ReturnType<typeof getProviders>;
-    if (opts.providers?.length) {
-      providerConfigs = getProvidersByIds(opts.providers);
-      if (providerConfigs.length === 0) {
-        console.error(`No valid providers found for: ${opts.providers.join(', ')}`);
-        process.exit(1);
-      }
-    } else {
-      providerConfigs = getProviders().filter((p) => process.env[p.envKey]);
-      if (providerConfigs.length === 0) {
-        console.error('No providers have API keys set. Set env vars or use --providers.');
-        process.exit(1);
+    let providerConfigs: ReturnType<typeof getProviders> | undefined;
+    if (!opts.interactive) {
+      if (opts.providers?.length) {
+        providerConfigs = getProvidersByIds(opts.providers);
+        if (providerConfigs.length === 0) {
+          console.error(`No valid providers found for: ${opts.providers.join(', ')}`);
+          process.exit(1);
+        }
+      } else {
+        providerConfigs = getProviders().filter((p) => process.env[p.envKey]);
+        if (providerConfigs.length === 0) {
+          console.error('No providers have API keys set. Set env vars or use --providers.');
+          process.exit(1);
+        }
       }
     }
 
-    const traceId =
-      opts.traceId && validateTraceId(opts.traceId) ? opts.traceId : generateTraceId();
+    // JSON mode: no Ink, plain output for CI
+    if (opts.json) {
+      const traceId =
+        opts.traceId && validateTraceId(opts.traceId) ? opts.traceId : generateTraceId();
+      const ctx = {
+        providerConfigs: providerConfigs!,
+        proxyUrl: PROXY_URL,
+        jsonMode: true,
+        traceId,
+      };
+      const scenarioOpts: Record<string, unknown> = {};
+      if (opts.requests != null) scenarioOpts.requests = opts.requests;
+      if (opts.concurrency != null) scenarioOpts.concurrency = opts.concurrency;
 
-    const ctx = {
-      providerConfigs,
-      proxyUrl: PROXY_URL,
-      jsonMode: !!opts.json,
-      traceId,
-    };
+      const result = await scenario!.run(ctx, scenarioOpts);
+      const { printSummary } = await import('./output');
+      printSummary(result, true);
+      process.exit(result.failed === 0 ? 0 : 1);
+    }
+
+    // Ink UI for interactive and standard run modes
+    const { renderUI } = await import('./ui/render');
     const scenarioOpts: Record<string, unknown> = {};
     if (opts.requests != null) scenarioOpts.requests = opts.requests;
     if (opts.concurrency != null) scenarioOpts.concurrency = opts.concurrency;
 
-    const result = await scenario.run(ctx, scenarioOpts);
-    const { printSummary } = await import('./output');
-    printSummary(result, Boolean(opts.json));
-
-    const allPassed = result.failed === 0;
-    process.exit(allPassed ? 0 : 1);
+    const { exitCode } = await renderUI({
+      mode: opts.interactive ? 'interactive' : 'run',
+      scenario: scenario ?? undefined,
+      providerConfigs,
+      traceId: opts.traceId,
+      scenarioOpts,
+    });
+    process.exit(exitCode);
   });
 
 program
