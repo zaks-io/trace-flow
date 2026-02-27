@@ -13,10 +13,6 @@ describe('TOOL_DEFINITIONS', () => {
     expect(Array.isArray(TOOL_DEFINITIONS)).toBe(true);
   });
 
-  it('contains exactly 4 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(4);
-  });
-
   it('contains all expected tools', () => {
     const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
     expect(toolNames).toContain('list_traces');

@@ -61,7 +61,6 @@ describe('getCurrentUser', () => {
   });
 
   it('returns null when user not found in db', async () => {
-    const _ctx = makeAuthCtx();
     const ctx2 = makeAuthCtx();
     ctx2.db.query = vi.fn().mockReturnValue({
       withIndex: vi.fn().mockReturnThis(),

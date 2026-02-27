@@ -64,7 +64,6 @@ describe('validateApiKey', () => {
     if (!isAuthError(result)) {
       expect(result.orgId).toBe('org123');
     }
-    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(context.env.API_KEYS.get).toHaveBeenCalledWith('valid-api-key');
   });
 

@@ -42,10 +42,6 @@ describe('SESSION_TTL_MS', () => {
   it('equals 24 hours in milliseconds', () => {
     expect(SESSION_TTL_MS).toBe(86400000);
   });
-
-  it('is a positive number', () => {
-    expect(SESSION_TTL_MS).toBeGreaterThan(0);
-  });
 });
 
 describe('JsonRpcErrorCode', () => {
