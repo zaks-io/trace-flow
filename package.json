@@ -20,7 +20,7 @@
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
     "test:coverage": "turbo run test:coverage",
-    "check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css}\" && turbo run lint type-check test build",
+    "check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\" && turbo run lint type-check test build",
     "knip": "knip",
     "prepare": "husky"
   },

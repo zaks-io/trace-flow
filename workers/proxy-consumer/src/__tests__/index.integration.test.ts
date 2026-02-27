@@ -36,13 +36,15 @@ describe('Queue Handler Integration', () => {
 
   it('should process single message and route to correct shard', async () => {
     const message = createMockQueueMessage('test-1', 'api-key-123');
+    const ackCalled = { value: false };
+
     const mockMessage: Message<QueueMessage> = {
       id: '1',
       timestamp: new Date(),
       body: message,
       attempts: 0,
       ack: () => {
-        /* noop */
+        ackCalled.value = true;
       },
       retry: () => {
         /* noop */
@@ -62,8 +64,7 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // Verify message was processed (no throw)
-    expect(true).toBe(true);
+    expect(ackCalled.value).toBe(true);
   });
 
   it('should distribute messages across shards by API key', async () => {
@@ -319,9 +320,6 @@ describe('Queue Handler Integration', () => {
     };
 
     await worker.queue(batch, env);
-
-    // Should complete without error
-    expect(true).toBe(true);
   });
 
   it('should handle messages with SSE timing data', async () => {
@@ -340,13 +338,15 @@ describe('Queue Handler Integration', () => {
       ],
     };
 
+    const ackCalled = { value: false };
+
     const mockMessage: Message<QueueMessage> = {
       id: '1',
       timestamp: new Date(),
       body: message,
       attempts: 0,
       ack: () => {
-        /* noop */
+        ackCalled.value = true;
       },
       retry: () => {
         /* noop */
@@ -366,8 +366,7 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // Should process SSE timing data correctly
-    expect(true).toBe(true);
+    expect(ackCalled.value).toBe(true);
   });
 
   it('should handle messages with token usage data', async () => {
@@ -378,13 +377,15 @@ describe('Queue Handler Integration', () => {
       totalTokens: 150,
     };
 
+    const ackCalled = { value: false };
+
     const mockMessage: Message<QueueMessage> = {
       id: '1',
       timestamp: new Date(),
       body: message,
       attempts: 0,
       ack: () => {
-        /* noop */
+        ackCalled.value = true;
       },
       retry: () => {
         /* noop */
@@ -404,8 +405,7 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // Should process token data correctly
-    expect(true).toBe(true);
+    expect(ackCalled.value).toBe(true);
   });
 
   it('should handle messages with error data', async () => {
@@ -417,13 +417,15 @@ describe('Queue Handler Integration', () => {
     };
     message.response.status = 401;
 
+    const ackCalled = { value: false };
+
     const mockMessage: Message<QueueMessage> = {
       id: '1',
       timestamp: new Date(),
       body: message,
       attempts: 0,
       ack: () => {
-        /* noop */
+        ackCalled.value = true;
       },
       retry: () => {
         /* noop */
@@ -443,7 +445,6 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // Should process error data correctly
-    expect(true).toBe(true);
+    expect(ackCalled.value).toBe(true);
   });
 });
