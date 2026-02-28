@@ -3,7 +3,17 @@
 import { useState, useMemo, useRef } from 'react';
 import { type Preloaded, usePreloadedQuery, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { Activity, DollarSign, Layers, Server, Cpu, TrendingDown, Timer, Key } from 'lucide-react';
+import {
+  Activity,
+  DollarSign,
+  Hash,
+  Layers,
+  Server,
+  Cpu,
+  TrendingDown,
+  Timer,
+  Key,
+} from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { snapToMinute } from '@/lib/tinybird';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
@@ -12,6 +22,9 @@ import { formatNumber, formatCurrency, formatPercent, formatDuration } from '@/l
 import {
   TIME_RANGES,
   costChartConfig,
+  tokensChartConfig,
+  requestsChartConfig,
+  latencyChartConfig,
   type TimeRange,
   type TimeseriesMetric,
   type TinybirdResponse,
@@ -32,6 +45,20 @@ import { ModelComparisonTable } from './ModelComparisonTable';
 import { ProviderBreakdownChart } from './ProviderBreakdownChart';
 import { ApiKeyBreakdownTable } from './ApiKeyBreakdownTable';
 import { FilterDropdown } from './FilterDropdown';
+
+const METRIC_META = {
+  cost: { label: 'Cost Over Time', icon: DollarSign, config: costChartConfig },
+  tokens: { label: 'Tokens Over Time', icon: Hash, config: tokensChartConfig },
+  requests: { label: 'Requests Over Time', icon: Activity, config: requestsChartConfig },
+  latency: { label: 'Latency Over Time', icon: Timer, config: latencyChartConfig },
+} satisfies Record<
+  TimeseriesMetric,
+  {
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    config: Record<string, { label: string; color: string }>;
+  }
+>;
 
 export default function Usage({
   preloadedApiKeys,
@@ -327,8 +354,13 @@ export default function Usage({
           <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-base font-medium text-foreground">Cost Over Time</h2>
+                {(() => {
+                  const Icon = METRIC_META[metric].icon;
+                  return <Icon className="h-4 w-4 text-muted-foreground" />;
+                })()}
+                <h2 className="text-base font-medium text-foreground">
+                  {METRIC_META[metric].label}
+                </h2>
               </div>
               <div className="flex rounded-lg border border-border bg-background">
                 {(['cost', 'tokens', 'requests', 'latency'] as TimeseriesMetric[]).map((m) => (
@@ -346,16 +378,14 @@ export default function Usage({
                 ))}
               </div>
             </div>
-            {metric === 'cost' && (
-              <div className="mb-3 flex flex-wrap gap-3 text-xs">
-                {Object.entries(costChartConfig).map(([key, cfg]) => (
-                  <span key={key} className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: cfg.color }} />
-                    <span className="text-muted-foreground">{String(cfg.label)}</span>
-                  </span>
-                ))}
-              </div>
-            )}
+            <div className="mb-3 flex flex-wrap gap-3 text-xs">
+              {Object.entries(METRIC_META[metric].config).map(([key, cfg]) => (
+                <span key={key} className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: cfg.color }} />
+                  <span className="text-muted-foreground">{String(cfg.label)}</span>
+                </span>
+              ))}
+            </div>
             <CostTimeseriesChart data={timeseries} metric={metric} />
           </div>
 
