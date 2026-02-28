@@ -80,6 +80,7 @@ app.get('/bodies/:requestId/:type', async (c) => {
   return new Response(object.body, {
     headers: {
       'Content-Type': object.httpMetadata?.contentType ?? 'text/plain',
+      'Cache-Control': 'private, max-age=3600',
     },
   });
 });
