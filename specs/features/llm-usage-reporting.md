@@ -78,27 +78,27 @@ All pipes were updated to SELECT the individual cost columns (`InputCostMicrodol
 | `ProviderBreakdownChart` | Recharts `<BarChart>` horizontal bars by provider              |
 | `FilterDropdown`         | Reusable dropdown for provider/model/operation filters         |
 
-All components are defined in `workers/web/src/components/pages/Usage.tsx`.
+All components are defined in `apps/web/src/components/pages/Usage.tsx`.
 
 ### Shared Utilities
 
-`formatNumber`, `formatCurrency`, `formatPercent` extracted to `workers/web/src/lib/format.ts` and imported by both Dashboard and Usage pages.
+`formatNumber`, `formatCurrency`, `formatPercent` extracted to `apps/web/src/lib/format.ts` and imported by both Dashboard and Usage pages.
 
 ## Files
 
-| File                                             | Change                                           |
-| ------------------------------------------------ | ------------------------------------------------ |
-| `pipes/llm_usage_summary.pipe`                   | Add 5 cost breakdown columns                     |
-| `pipes/llm_usage_timeseries.pipe`                | Add 5 cost breakdown columns                     |
-| `pipes/llm_usage_by_model.pipe`                  | Add cost breakdown + `cost_per_1k_output_tokens` |
-| `pipes/llm_usage_by_provider.pipe`               | Add 5 cost breakdown columns                     |
-| `pipes/llm_usage_by_operation.pipe`              | **New** — group by BaggageOperation              |
-| `workers/web/src/components/pages/Usage.tsx`     | **New** — Usage page + all sub-components        |
-| `workers/web/src/app/app/usage/page.tsx`         | **New** — Next.js route                          |
-| `workers/web/src/lib/format.ts`                  | **New** — extracted format utils                 |
-| `workers/web/src/components/pages/Dashboard.tsx` | Import from shared format utils                  |
-| `workers/web/src/components/AppSidebar.tsx`      | Add Usage nav entry                              |
-| `workers/web/package.json`                       | Add recharts dependency                          |
+| File                                          | Change                                           |
+| --------------------------------------------- | ------------------------------------------------ |
+| `pipes/llm_usage_summary.pipe`                | Add 5 cost breakdown columns                     |
+| `pipes/llm_usage_timeseries.pipe`             | Add 5 cost breakdown columns                     |
+| `pipes/llm_usage_by_model.pipe`               | Add cost breakdown + `cost_per_1k_output_tokens` |
+| `pipes/llm_usage_by_provider.pipe`            | Add 5 cost breakdown columns                     |
+| `pipes/llm_usage_by_operation.pipe`           | **New** — group by BaggageOperation              |
+| `apps/web/src/components/pages/Usage.tsx`     | **New** — Usage page + all sub-components        |
+| `apps/web/src/app/app/usage/page.tsx`         | **New** — Next.js route                          |
+| `apps/web/src/lib/format.ts`                  | **New** — extracted format utils                 |
+| `apps/web/src/components/pages/Dashboard.tsx` | Import from shared format utils                  |
+| `apps/web/src/components/AppSidebar.tsx`      | Add Usage nav entry                              |
+| `apps/web/package.json`                       | Add recharts dependency                          |
 
 ## Deferred (Separate Tickets)
 

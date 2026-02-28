@@ -50,7 +50,7 @@ Simple OpenAI-compatible format. `prompt_tokens` includes cached tokens. Support
 ## Module Structure
 
 ```
-workers/proxy/src/parsers/providers/
+apps/proxy/src/parsers/providers/
   anthropic.ts    — parseAnthropicTokens()
   openai.ts       — parseOpenAITokens()
   openrouter.ts   — parseOpenRouterTokens()

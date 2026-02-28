@@ -182,8 +182,8 @@ Tokens are stored in localStorage with refresh token support.
 
 ## Key Files
 
-- `workers/web/src/components/App.tsx` - Root app with providers
-- `workers/web/src/components/routes.tsx` - Route definitions
-- `workers/web/src/hooks/useTinybirdPipe.ts` - Tinybird data hook
-- `workers/web/src/components/pages/` - Page components
-- `workers/web/src/components/ui/` - Shadcn components
+- `apps/web/src/components/App.tsx` - Root app with providers
+- `apps/web/src/components/routes.tsx` - Route definitions
+- `apps/web/src/hooks/useTinybirdPipe.ts` - Tinybird data hook
+- `apps/web/src/components/pages/` - Page components
+- `apps/web/src/components/ui/` - Shadcn components

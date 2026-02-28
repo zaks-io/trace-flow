@@ -33,21 +33,21 @@ else
   echo "⚠ Warning: $MAIN_WORKTREE/.env.local not found, skipping .env.local copy"
 fi
 
-if [ -f "$MAIN_WORKTREE/workers/proxy-consumer/.dev.vars" ]; then
-  echo "Copying workers/proxy-consumer/.dev.vars from main worktree..."
-  cp "$MAIN_WORKTREE/workers/proxy-consumer/.dev.vars" workers/proxy-consumer/.dev.vars
-  echo "✓ workers/proxy-consumer/.dev.vars file copied"
+if [ -f "$MAIN_WORKTREE/apps/proxy-consumer/.dev.vars" ]; then
+  echo "Copying apps/proxy-consumer/.dev.vars from main worktree..."
+  cp "$MAIN_WORKTREE/apps/proxy-consumer/.dev.vars" apps/proxy-consumer/.dev.vars
+  echo "✓ apps/proxy-consumer/.dev.vars file copied"
 else
-  echo "⚠ Warning: $MAIN_WORKTREE/workers/proxy-consumer/.dev.vars not found, skipping copy"
+  echo "⚠ Warning: $MAIN_WORKTREE/apps/proxy-consumer/.dev.vars not found, skipping copy"
 fi
 
 
-if [ -f "$MAIN_WORKTREE/workers/web/.env.local" ]; then
-  echo "Copying workers/web/.env.local from main worktree..."
-  cp "$MAIN_WORKTREE/workers/web/.env.local" workers/web/.env.local
-  echo "✓ workers/web/.env.local file copied"
+if [ -f "$MAIN_WORKTREE/apps/web/.env.local" ]; then
+  echo "Copying apps/web/.env.local from main worktree..."
+  cp "$MAIN_WORKTREE/apps/web/.env.local" apps/web/.env.local
+  echo "✓ apps/web/.env.local file copied"
 else
-  echo "⚠ Warning: $MAIN_WORKTREE/workers/web/.env.local not found, skipping copy"
+  echo "⚠ Warning: $MAIN_WORKTREE/apps/web/.env.local not found, skipping copy"
 fi
 
 if [ -f "$MAIN_WORKTREE/packages/sdk-tests/.env" ]; then
@@ -55,7 +55,7 @@ if [ -f "$MAIN_WORKTREE/packages/sdk-tests/.env" ]; then
   cp "$MAIN_WORKTREE/packages/sdk-tests/.env" packages/sdk-tests/.env
   echo "✓ packages/sdk-tests/.env file copied"
 else
-  echo "⚠ Warning: $MAIN_WORKTREE/workers/web/.env.local not found, skipping copy"
+  echo "⚠ Warning: $MAIN_WORKTREE/apps/web/.env.local not found, skipping copy"
 fi
 
 echo "✓ Worktree setup complete!"

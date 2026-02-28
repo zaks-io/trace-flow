@@ -111,5 +111,5 @@ The worker is wrapped with Sentry for error monitoring. All unhandled exceptions
 
 ## Key Files
 
-- `workers/api/src/index.ts` - Hono application with single endpoint
-- `workers/api/src/auth.ts` - JWT validation with JWKS caching
+- `apps/api/src/index.ts` - Hono application with single endpoint
+- `apps/api/src/auth.ts` - JWT validation with JWKS caching

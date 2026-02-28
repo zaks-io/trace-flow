@@ -12,13 +12,13 @@
     "packages/sdk-tests": {
       "entry": ["src/**/*.ts"]
     },
-    "workers/proxy": {
+    "apps/proxy": {
       "ignoreDependencies": ["@vitest/coverage-v8"]
     },
-    "workers/proxy-consumer": {
+    "apps/proxy-consumer": {
       "ignoreDependencies": ["@vitest/coverage-v8"]
     },
-    "workers/web": {
+    "apps/web": {
       "entry": ["src/worker-entry.ts", "open-next.config.ts"],
       "ignoreDependencies": ["postcss"]
     }

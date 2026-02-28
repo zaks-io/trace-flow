@@ -2,7 +2,7 @@
 
 LLM observability platform on Cloudflare Workers. Four workers: **Proxy** (streaming capture), **Consumer** (queue → Tinybird), **API** (R2 body retrieval), **Web** (Next.js dashboard via OpenNext).
 
-Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./workers/web/public/agents.md)
+Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web/public/agents.md)
 
 ## Architecture & Data Flow
 

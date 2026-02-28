@@ -15,7 +15,7 @@ Splitting into focused workers provides isolation, independent scaling, and clea
 
 ## Proxy Worker
 
-**Location**: `workers/proxy/`
+**Location**: `apps/proxy/`
 
 **Responsibility**: Accept client LLM requests, forward to providers, stream responses, and capture data without adding latency.
 
@@ -52,7 +52,7 @@ The proxy is stateless and scales horizontally. Each request is independent. The
 
 ### Configuration
 
-Defined in `workers/proxy/wrangler.toml`:
+Defined in `apps/proxy/wrangler.toml`:
 
 ```toml
 [[queues.producers]]
@@ -70,7 +70,7 @@ id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 
 ## Consumer Worker
 
-**Location**: `workers/proxy-consumer/`
+**Location**: `apps/proxy-consumer/`
 
 **Responsibility**: Process queue batches, transform into OpenTelemetry traces, calculate costs, and batch insert to Tinybird.
 
@@ -105,7 +105,7 @@ Queue consumers scale based on queue depth. Cloudflare automatically adjusts con
 
 ### Configuration
 
-Defined in `workers/proxy-consumer/wrangler.toml`:
+Defined in `apps/proxy-consumer/wrangler.toml`:
 
 ```toml
 [[queues.consumers]]
@@ -140,7 +140,7 @@ const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
 
 ## API Worker
 
-**Location**: `workers/api/`
+**Location**: `apps/api/`
 
 **Responsibility**: Serve request/response bodies from R2 to the web dashboard.
 
@@ -171,7 +171,7 @@ The API worker exists because:
 
 ### Configuration
 
-Defined in `workers/api/wrangler.toml`:
+Defined in `apps/api/wrangler.toml`:
 
 ```toml
 [[r2_buckets]]
@@ -185,7 +185,7 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 
 ## Web Worker (OpenNext)
 
-**Location**: `workers/web/`
+**Location**: `apps/web/`
 
 **Responsibility**: Serve the static dashboard and provide the user interface.
 

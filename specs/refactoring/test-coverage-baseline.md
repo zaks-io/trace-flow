@@ -8,14 +8,14 @@ Tool: `bunx turbo run test:coverage --filter='*' --force`
 
 ## Summary
 
-| Package                | Test Files | Tests   | Stmt %                   | Branch % | Func % | Status       |
-| ---------------------- | ---------- | ------- | ------------------------ | -------- | ------ | ------------ |
-| packages/utils         | 12         | 130     | 56.77%                   | 94.83%   | 80%    | Needs work   |
-| packages/convex        | 9          | unknown | N/A (no coverage script) | N/A      | N/A    | Critical gap |
-| workers/proxy          | 21         | 270     | 87.13%                   | 80.4%    | 89.85% | Good         |
-| workers/proxy-consumer | 7          | 131     | 83.36%                   | 72.17%   | 87.5%  | Good         |
-| workers/api            | 2          | 12      | 54.05%                   | 88.88%   | 50%    | Critical gap |
-| workers/web            | 1          | unknown | ~4% stmts                | mixed    | ~36%   | Critical gap |
+| Package             | Test Files | Tests   | Stmt %                   | Branch % | Func % | Status       |
+| ------------------- | ---------- | ------- | ------------------------ | -------- | ------ | ------------ |
+| packages/utils      | 12         | 130     | 56.77%                   | 94.83%   | 80%    | Needs work   |
+| packages/convex     | 9          | unknown | N/A (no coverage script) | N/A      | N/A    | Critical gap |
+| apps/proxy          | 21         | 270     | 87.13%                   | 80.4%    | 89.85% | Good         |
+| apps/proxy-consumer | 7          | 131     | 83.36%                   | 72.17%   | 87.5%  | Good         |
+| apps/api            | 2          | 12      | 54.05%                   | 88.88%   | 50%    | Critical gap |
+| apps/web            | 1          | unknown | ~4% stmts                | mixed    | ~36%   | Critical gap |
 
 Total test files: **52**
 
@@ -113,7 +113,7 @@ This is the largest untested surface area in the codebase. All Convex mutations 
 
 ---
 
-### workers/proxy
+### apps/proxy
 
 **Test files (21):**
 
@@ -165,7 +165,7 @@ This is the largest untested surface area in the codebase. All Convex mutations 
 
 ---
 
-### workers/proxy-consumer
+### apps/proxy-consumer
 
 **Test files (7):**
 
@@ -197,7 +197,7 @@ This is the largest untested surface area in the codebase. All Convex mutations 
 
 ---
 
-### workers/api
+### apps/api
 
 **Test files (2):**
 
@@ -215,7 +215,7 @@ This is the largest untested surface area in the codebase. All Convex mutations 
 
 ---
 
-### workers/web
+### apps/web
 
 **Test files (1):**
 
@@ -257,19 +257,19 @@ Components: No component-level tests exist at all (pages, charts, tables, cards)
 
 1. **`packages/convex` business logic** — All mutations and queries for users, API keys, subscriptions, orgs, usage, invites, Stripe events, alerts, and tinybird JWT generation have zero tests. This is ~15 source files covering the entire backend business layer.
 
-2. **`workers/api/src/index.ts`** — The R2 body retrieval handler (0% coverage). Every trace body fetch call goes through this; untested failure modes could silently return corrupt data.
+2. **`apps/api/src/index.ts`** — The R2 body retrieval handler (0% coverage). Every trace body fetch call goes through this; untested failure modes could silently return corrupt data.
 
-3. **`workers/web` hooks and lib** — `useConvexAuthSession`, `useTinybirdPipe`, `traceToMarkdown` are complex, high-value functions with zero coverage.
+3. **`apps/web` hooks and lib** — `useConvexAuthSession`, `useTinybirdPipe`, `traceToMarkdown` are complex, high-value functions with zero coverage.
 
 ### Priority 2 — High (important runtime paths partially tested)
 
-4. **`workers/proxy/src/usage-tracker.ts`** (40% stmts) — Durable Object HTTP handler, alarm logic, and period rollover are untested. Billing correctness depends on this.
+4. **`apps/proxy/src/usage-tracker.ts`** (40% stmts) — Durable Object HTTP handler, alarm logic, and period rollover are untested. Billing correctness depends on this.
 
-5. **`workers/proxy/src/auth.ts`** `validateOrgBillingStatus` (lines 77–128) — All billing-status gating paths (suspended, canceled, grace) are untested.
+5. **`apps/proxy/src/auth.ts`** `validateOrgBillingStatus` (lines 77–128) — All billing-status gating paths (suspended, canceled, grace) are untested.
 
-6. **`workers/proxy-consumer/src/batcher.ts`** (63% stmts, 45% branch) — Queue batch retry and error handling untested.
+6. **`apps/proxy-consumer/src/batcher.ts`** (63% stmts, 45% branch) — Queue batch retry and error handling untested.
 
-7. **`workers/proxy/src/otlp/index.ts`** (59% stmts) — OTLP span ingestion handler.
+7. **`apps/proxy/src/otlp/index.ts`** (59% stmts) — OTLP span ingestion handler.
 
 ### Priority 3 — Medium (utility functions with partial coverage)
 
@@ -277,13 +277,13 @@ Components: No component-level tests exist at all (pages, charts, tables, cards)
 
 9. **`packages/utils`** `estimateTokens` (~line 517) — Token estimation used in billing approximation.
 
-10. **`workers/proxy-consumer/src/traces.ts`** (lines 195–230) — Trace assembly tail logic.
+10. **`apps/proxy-consumer/src/traces.ts`** (lines 195–230) — Trace assembly tail logic.
 
 ---
 
 ## Test Infrastructure Notes
 
 - `packages/convex` has no `test:coverage` script — only `test`. Add `"test:coverage": "vitest run --coverage"` to get metrics.
-- `workers/web` runs vitest but coverage is misleading because most code is React components that require a browser/jsdom environment and cannot easily run in node vitest.
-- `workers/proxy` and `workers/proxy-consumer` use `@cloudflare/vitest-pool-workers` which runs inside the Workers runtime — this adds some test setup overhead but enables accurate DO and KV mocking.
+- `apps/web` runs vitest but coverage is misleading because most code is React components that require a browser/jsdom environment and cannot easily run in node vitest.
+- `apps/proxy` and `apps/proxy-consumer` use `@cloudflare/vitest-pool-workers` which runs inside the Workers runtime — this adds some test setup overhead but enables accurate DO and KV mocking.
 - All tests pass (1 skipped in proxy-consumer for statistical distribution test).

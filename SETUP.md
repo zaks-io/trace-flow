@@ -37,7 +37,7 @@ wrangler queues create trace-flow-requests-dlq-prod
 Set the following secrets for the proxy-consumer worker for each environment:
 
 ```bash
-cd workers/proxy-consumer
+cd apps/proxy-consumer
 
 # Development environment
 wrangler secret put TINYBIRD_TOKEN
@@ -70,9 +70,9 @@ After creating the queues and setting the secrets, deploy the workers to your ch
 bun run deploy:dev
 
 # Or deploy individual workers
-cd workers/proxy && bun run deploy:dev
-cd workers/proxy-consumer && bun run deploy:dev
-cd workers/web && bun run deploy:dev
+cd apps/proxy && bun run deploy:dev
+cd apps/proxy-consumer && bun run deploy:dev
+cd apps/web && bun run deploy:dev
 
 # For staging
 bun run deploy:staging
@@ -109,13 +109,13 @@ Custom domains are configured in `wrangler.toml` and connected through the Cloud
 **Note:** After adding routes to `wrangler.toml`, redeploy the worker for the routes to take effect:
 
 ```bash
-cd workers/api && wrangler deploy --env production
-cd workers/proxy && wrangler deploy --env production
+cd apps/api && wrangler deploy --env production
+cd apps/proxy && wrangler deploy --env production
 ```
 
 ## Testing Locally
 
-To test locally, you'll need to set up environment variables. Create a `.dev.vars` file in `workers/proxy-consumer/`:
+To test locally, you'll need to set up environment variables. Create a `.dev.vars` file in `apps/proxy-consumer/`:
 
 ```
 TINYBIRD_TOKEN=your-dev-token-here
@@ -127,7 +127,7 @@ Then run the workers in development mode:
 
 ```bash
 # From the root of the project (runs proxy + consumer together)
-wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml --persist-to .wrangler/state
+wrangler dev -c apps/proxy/wrangler.toml -c apps/proxy-consumer/wrangler.toml --persist-to .wrangler/state
 ```
 
 ## Verifying the Setup

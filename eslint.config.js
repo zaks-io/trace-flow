@@ -19,7 +19,7 @@ export default tseslint.config(
         ...globals.node,
       },
       parserOptions: {
-        project: ['./tsconfig.json', './packages/*/tsconfig.json', './workers/*/tsconfig.json'],
+        project: ['./tsconfig.json', './packages/*/tsconfig.json', './apps/*/tsconfig.json'],
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -42,7 +42,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['workers/web/**/*.{ts,tsx}'],
+    files: ['apps/web/**/*.{ts,tsx}'],
     plugins: {
       'react-hooks': reactHooks,
     },

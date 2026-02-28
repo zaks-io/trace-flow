@@ -12,7 +12,7 @@ Based on code analysis, cache metrics are tracked in OpenTelemetry span attribut
 - `gen_ai.usage.cache_creation_input_tokens` - tokens added to cache
 - `gen_ai.usage.input_tokens` - total input tokens
 
-**File**: `workers/web/src/lib/traceToMarkdown.ts`
+**File**: `apps/web/src/lib/traceToMarkdown.ts`
 
 Current calculation pattern:
 
@@ -38,7 +38,7 @@ Search for cache hit rate display in:
 
 ### 1. Add Helper Function
 
-**File**: `workers/web/src/lib/metrics.ts`
+**File**: `apps/web/src/lib/metrics.ts`
 
 ```typescript
 /**
@@ -67,7 +67,7 @@ export function calculateCacheHitRate(
 
 ### 2. Update Display Components
 
-**File**: `workers/web/src/components/TokenSummaryCards.tsx`
+**File**: `apps/web/src/components/TokenSummaryCards.tsx`
 
 ```typescript
 import { calculateCacheHitRate } from '@/lib/metrics';
@@ -112,7 +112,7 @@ export function CacheRateBadge(props: CacheRateBadgeProps) {
 
 ### 4. Update Markdown Export
 
-**File**: `workers/web/src/lib/traceToMarkdown.ts`
+**File**: `apps/web/src/lib/traceToMarkdown.ts`
 
 ```typescript
 // Current (line 349-353):
@@ -142,7 +142,7 @@ if (summary.cacheReadTokens > 0 || summary.cacheCreationTokens > 0) {
 
 ### Unit Tests
 
-**File**: `workers/web/src/lib/__tests__/metrics.test.ts`
+**File**: `apps/web/src/lib/__tests__/metrics.test.ts`
 
 ```typescript
 import { calculateCacheHitRate } from '../metrics';

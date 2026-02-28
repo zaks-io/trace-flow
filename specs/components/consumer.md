@@ -131,10 +131,10 @@ Common failure scenarios:
 
 ## Key Files
 
-- `workers/proxy-consumer/src/index.ts` - Queue handler and message routing
-- `workers/proxy-consumer/src/batcher.ts` - TraceBatcher Durable Object
-- `workers/proxy-consumer/src/traces.ts` - OpenTelemetry trace construction
-- `workers/proxy-consumer/src/sharding.ts` - Consistent hashing for shards
-- `workers/proxy-consumer/src/pricing.ts` - Cost calculation logic
-- `workers/proxy-consumer/src/openrouter-pricing.ts` - OpenRouter API fallback
-- `workers/proxy-consumer/src/tinybird.ts` - Tinybird API client with retry
+- `apps/proxy-consumer/src/index.ts` - Queue handler and message routing
+- `apps/proxy-consumer/src/batcher.ts` - TraceBatcher Durable Object
+- `apps/proxy-consumer/src/traces.ts` - OpenTelemetry trace construction
+- `apps/proxy-consumer/src/sharding.ts` - Consistent hashing for shards
+- `apps/proxy-consumer/src/pricing.ts` - Cost calculation logic
+- `apps/proxy-consumer/src/openrouter-pricing.ts` - OpenRouter API fallback
+- `apps/proxy-consumer/src/tinybird.ts` - Tinybird API client with retry

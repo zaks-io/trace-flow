@@ -158,7 +158,7 @@ const token = await new SignJWT(payload)
 
 ## Data Ingestion
 
-The consumer worker sends traces to Tinybird via the Events API. See `workers/proxy-consumer/src/tinybird.ts`.
+The consumer worker sends traces to Tinybird via the Events API. See `apps/proxy-consumer/src/tinybird.ts`.
 
 ```typescript
 const url = `${host}/v0/events?name=${datasource}`;
@@ -189,7 +189,7 @@ tb dev
 tb datasource data otel_traces --limit 10
 ```
 
-Create `workers/proxy-consumer/.dev.vars`:
+Create `apps/proxy-consumer/.dev.vars`:
 
 ```bash
 TINYBIRD_HOST=http://localhost:7181

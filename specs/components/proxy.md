@@ -104,9 +104,9 @@ In addition to LLM proxying, the worker exposes a `/v1/traces` endpoint for dire
 
 ## Key Files
 
-- `workers/proxy/src/index.ts` - Main Hono application and request handler
-- `workers/proxy/src/providers.ts` - Provider routing configuration
-- `workers/proxy/src/streaming/capture.ts` - Stream duplication and capture logic
-- `workers/proxy/src/streaming/sse.ts` - SSE event parsing
-- `workers/proxy/src/queue.ts` - Queue message construction
-- `workers/proxy/src/storage.ts` - R2 storage operations
+- `apps/proxy/src/index.ts` - Main Hono application and request handler
+- `apps/proxy/src/providers.ts` - Provider routing configuration
+- `apps/proxy/src/streaming/capture.ts` - Stream duplication and capture logic
+- `apps/proxy/src/streaming/sse.ts` - SSE event parsing
+- `apps/proxy/src/queue.ts` - Queue message construction
+- `apps/proxy/src/storage.ts` - R2 storage operations
