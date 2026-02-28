@@ -5,7 +5,7 @@ import { formatNumber, formatCurrency, formatDuration } from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import {
   costChartConfig,
-  latencyChartConfig,
+  durationChartConfig,
   tokensChartConfig,
   requestsChartConfig,
 } from './types';
@@ -125,9 +125,9 @@ export function CostTimeseriesChart({
     );
   }
 
-  if (metric === 'latency') {
+  if (metric === 'duration') {
     return (
-      <ChartContainer config={latencyChartConfig} className="!aspect-auto h-[300px] w-full">
+      <ChartContainer config={durationChartConfig} className="!aspect-auto h-[300px] w-full">
         <AreaChart data={data}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis

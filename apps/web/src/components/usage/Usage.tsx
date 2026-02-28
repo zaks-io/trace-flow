@@ -3,28 +3,17 @@
 import { useState, useMemo, useRef } from 'react';
 import { type Preloaded, usePreloadedQuery, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import {
-  Activity,
-  DollarSign,
-  Hash,
-  Layers,
-  Server,
-  Cpu,
-  TrendingDown,
-  Timer,
-  Key,
-} from 'lucide-react';
+import { Activity, DollarSign, Hash, Layers, Server, Cpu, Timer, Key } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { snapToMinute } from '@/lib/tinybird';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/PageToolbar';
-import { formatNumber, formatCurrency, formatPercent, formatDuration } from '@/lib/format';
 import {
   TIME_RANGES,
   costChartConfig,
   tokensChartConfig,
   requestsChartConfig,
-  latencyChartConfig,
+  durationChartConfig,
   type TimeRange,
   type TimeseriesMetric,
   type TinybirdResponse,
@@ -35,9 +24,9 @@ import {
   type OperationRow,
   type ApiKeyRow,
   type CostForecastRow,
+  type RequestStatsRow,
 } from './types';
-import { SummaryCard } from './SummaryCard';
-import { ProjectedCostCard } from './ProjectedCostCard';
+import { SummaryCards } from './SummaryCards';
 import { CostTimeseriesChart } from './CostTimeseriesChart';
 import { CostBreakdownChart } from './CostBreakdownChart';
 import { OperationTable } from './OperationTable';
@@ -50,7 +39,7 @@ const METRIC_META = {
   cost: { label: 'Cost Over Time', icon: DollarSign, config: costChartConfig },
   tokens: { label: 'Tokens Over Time', icon: Hash, config: tokensChartConfig },
   requests: { label: 'Requests Over Time', icon: Activity, config: requestsChartConfig },
-  latency: { label: 'Latency Over Time', icon: Timer, config: latencyChartConfig },
+  duration: { label: 'Duration Over Time', icon: Timer, config: durationChartConfig },
 } satisfies Record<
   TimeseriesMetric,
   {
@@ -84,6 +73,15 @@ export default function Usage({
     };
   }, [timeRange]);
 
+  const { prevStartTimeNs, prevEndTimeNs } = useMemo(() => {
+    const range = TIME_RANGES.find((r) => r.value === timeRange);
+    const rangeMs = range?.ms ?? 0;
+    return {
+      prevStartTimeNs: snapToMinute(Date.now() - rangeMs * 2) * 1_000_000,
+      prevEndTimeNs: snapToMinute(Date.now() - rangeMs) * 1_000_000,
+    };
+  }, [timeRange]);
+
   const filterParams = useMemo(() => {
     const p: Record<string, string | number> = {
       start_time_ns: startTimeNs,
@@ -96,6 +94,18 @@ export default function Usage({
     return p;
   }, [startTimeNs, endTimeNs, providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
+  const prevFilterParams = useMemo(() => {
+    const p: Record<string, string | number> = {
+      start_time_ns: prevStartTimeNs,
+      end_time_ns: prevEndTimeNs,
+    };
+    if (providerFilter) p.provider = providerFilter;
+    if (modelFilter) p.model = modelFilter;
+    if (operationFilter) p.baggage_operation = operationFilter;
+    if (apiKeyFilter) p.api_key_filter = apiKeyFilter;
+    return p;
+  }, [prevStartTimeNs, prevEndTimeNs, providerFilter, modelFilter, operationFilter, apiKeyFilter]);
+
   const forecastParams = useMemo(() => {
     const p: Record<string, string> = {};
     if (providerFilter) p.provider = providerFilter;
@@ -107,6 +117,16 @@ export default function Usage({
 
   const summaryQuery = useTinybirdQuery<TinybirdResponse<SummaryRow>>({
     pipe: 'llm_usage_summary',
+    params: filterParams,
+  });
+
+  const prevSummaryQuery = useTinybirdQuery<TinybirdResponse<SummaryRow>>({
+    pipe: 'llm_usage_summary',
+    params: prevFilterParams,
+  });
+
+  const requestStatsQuery = useTinybirdQuery<TinybirdResponse<RequestStatsRow>>({
+    pipe: 'llm_request_stats',
     params: filterParams,
   });
 
@@ -141,6 +161,8 @@ export default function Usage({
   });
 
   const summary = summaryQuery.data?.data?.[0];
+  const prevSummary = prevSummaryQuery.data?.data?.[0];
+  const requestStats = requestStatsQuery.data?.data?.[0];
   const timeseries = timeseriesQuery.data?.data ?? [];
   const models = modelsQuery.data?.data ?? [];
   const providers = providersQuery.data?.data ?? [];
@@ -191,14 +213,6 @@ export default function Usage({
   const modelOptions = Array.from(seenModels.current).sort();
   const operationOptions = Array.from(seenOperations.current).sort();
   const apiKeyOptions = Array.from(seenApiKeys.current).sort();
-
-  const costPerRequest =
-    summary && summary.request_count > 0 ? summary.total_cost_usd / summary.request_count : null;
-
-  const cacheReadPercent =
-    summary && summary.total_cost_usd > 0
-      ? (summary.cache_read_cost_usd / summary.total_cost_usd) * 100
-      : 0;
 
   return (
     <div className="animate-fade-in">
@@ -312,45 +326,14 @@ export default function Usage({
       ) : (
         <div className="space-y-8">
           {/* Summary Cards */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <SummaryCard
-              icon={<Activity className="h-4 w-4" />}
-              label="Requests"
-              value={summary ? formatNumber(summary.request_count) : '-'}
-              accent="purple"
-            />
-            <SummaryCard
-              icon={<DollarSign className="h-4 w-4" />}
-              label="Total Cost"
-              value={summary ? formatCurrency(summary.total_cost_usd) : '-'}
-              accent="blue"
-            />
-            <ProjectedCostCard forecast={forecast} />
-            <SummaryCard
-              icon={<TrendingDown className="h-4 w-4" />}
-              label="Cache Read Cost"
-              value={summary ? formatCurrency(summary.cache_read_cost_usd) : '-'}
-              subtitle={
-                cacheReadPercent > 0 ? `${formatPercent(cacheReadPercent)} of spend` : undefined
-              }
-              accent="emerald"
-            />
-            <SummaryCard
-              icon={<Layers className="h-4 w-4" />}
-              label="Cost / Request"
-              value={costPerRequest !== null ? formatCurrency(costPerRequest) : '-'}
-              accent="amber"
-            />
-            <SummaryCard
-              icon={<Timer className="h-4 w-4" />}
-              label="Avg Latency"
-              value={summary ? formatDuration(summary.avg_duration_ms) : '-'}
-              subtitle={summary ? `P95: ${formatDuration(summary.p95_duration_ms)}` : undefined}
-              accent="purple"
-            />
-          </div>
+          <SummaryCards
+            summary={summary}
+            prevSummary={prevSummary}
+            requestStats={requestStats}
+            forecast={forecast}
+          />
 
-          {/* Cost Over Time */}
+          {/* Timeseries Chart */}
           <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -363,7 +346,7 @@ export default function Usage({
                 </h2>
               </div>
               <div className="flex rounded-lg border border-border bg-background">
-                {(['cost', 'tokens', 'requests', 'latency'] as TimeseriesMetric[]).map((m) => (
+                {(['cost', 'tokens', 'requests', 'duration'] as TimeseriesMetric[]).map((m) => (
                   <button
                     key={m}
                     onClick={() => setMetric(m)}
