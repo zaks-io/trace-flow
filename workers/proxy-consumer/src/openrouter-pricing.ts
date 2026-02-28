@@ -74,6 +74,7 @@ function convertPricing(orModel: OpenRouterModel): ModelPricing {
 export async function fetchOpenRouterPricing(
   model: string,
   kv: KVNamespace,
+  cacheKey?: string,
 ): Promise<ModelPricing | null> {
   try {
     const models = await fetchOpenRouterModels();
@@ -82,11 +83,16 @@ export async function fetchOpenRouterPricing(
     let orModel = models.get(model);
 
     if (!orModel) {
-      // Try matching by suffix for versioned models or partial matches
+      // Try matching by suffix — prefer the longest (most specific) match
+      let bestLen = 0;
       for (const [id, m] of models) {
-        if (id.endsWith(model) || model.endsWith(id.split('/').pop() ?? '')) {
-          orModel = m;
-          break;
+        const idName = id.split('/').pop() ?? '';
+        if (id.endsWith(model) || model.endsWith(idName)) {
+          const matchLen = Math.max(model.length, id.length);
+          if (matchLen > bestLen) {
+            bestLen = matchLen;
+            orModel = m;
+          }
         }
       }
     }
@@ -98,7 +104,7 @@ export async function fetchOpenRouterPricing(
     const pricing = convertPricing(orModel);
 
     // Cache the fetched pricing in KV for future requests (1 year TTL)
-    const key = `pricing:openrouter:${model}`;
+    const key = cacheKey ?? `pricing:openrouter:${model}`;
     await kv.put(key, JSON.stringify(pricing), { expirationTtl: KV_CACHE_TTL_SECONDS });
 
     return pricing;

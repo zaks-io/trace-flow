@@ -108,7 +108,13 @@ function extractLLMCalls(spans: TraceSpan[], traceStart: number): LLMCall[] {
       index: index + 1,
       spanId: span.SpanId,
       provider: attrs['gen_ai.system'] ?? 'unknown',
-      model: attrs['gen_ai.request.model'] ?? 'unknown',
+      model: (() => {
+        const raw = attrs['gen_ai.request.model'] ?? 'unknown';
+        const prov = attrs['gen_ai.system'];
+        if (!prov) return raw;
+        const name = raw.includes('/') ? raw.split('/').slice(1).join('/') : raw;
+        return `${prov}/${name}`;
+      })(),
       promptTokens,
       completionTokens,
       totalTokens: promptTokens + completionTokens,

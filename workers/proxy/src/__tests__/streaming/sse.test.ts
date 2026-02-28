@@ -970,6 +970,118 @@ describe('aggregateSSETokens', () => {
     expect(result?.cacheCreation1hTokens).toBeUndefined();
   });
 
+  it('should persist Google tokens from processSSEEvent (no event type)', () => {
+    const streamData: SSEStreamData = { messages: [] };
+
+    // Google SSE chunk with usageMetadata (no event type, like OpenAI-style)
+    const googleChunk = JSON.stringify({
+      candidates: [{ content: { parts: [{ text: 'Hello' }] }, finishReason: 'STOP' }],
+      usageMetadata: {
+        promptTokenCount: 20,
+        candidatesTokenCount: 10,
+        totalTokenCount: 30,
+      },
+      modelVersion: 'gemini-2.0-flash',
+    });
+
+    processSSEEvent({ data: googleChunk }, 1000, streamData);
+
+    expect(streamData.messages.length).toBe(1);
+    expect(streamData.messages[0]?.usage).toBeDefined();
+    expect(streamData.messages[0]?.usage?.prompt_token_count).toBe(20);
+    expect(streamData.messages[0]?.usage?.candidates_token_count).toBe(10);
+    expect(streamData.messages[0]?.usage?.total_token_count).toBe(30);
+  });
+
+  it('should aggregate Google tokens end-to-end through processSSEEvent (no [DONE])', () => {
+    const streamData: SSEStreamData = { messages: [] };
+
+    // First chunk (content, no tokens yet — Google doesn't send [DONE])
+    processSSEEvent(
+      { data: JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Hi' }] } }] }) },
+      1000,
+      streamData,
+    );
+
+    // Last chunk with usage (stream ends after this — no [DONE])
+    processSSEEvent(
+      {
+        data: JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '!' }] }, finishReason: 'STOP' }],
+          usageMetadata: {
+            promptTokenCount: 50,
+            candidatesTokenCount: 25,
+            totalTokenCount: 75,
+            cachedContentTokenCount: 10,
+          },
+        }),
+      },
+      2000,
+      streamData,
+    );
+
+    const result = aggregateSSETokens(streamData, 'google');
+    expect(result).toEqual({
+      promptTokens: 50,
+      completionTokens: 25,
+      totalTokens: 75,
+      cacheReadTokens: 10,
+    });
+  });
+
+  it('should aggregate Google thoughtsTokenCount as reasoningTokens', () => {
+    const streamData: SSEStreamData = {
+      messages: [
+        {
+          messageStart: 1000,
+          events: [],
+          usage: {
+            prompt_token_count: 100,
+            candidates_token_count: 200,
+            thoughts_token_count: 150,
+            total_token_count: 300,
+          },
+        },
+      ],
+    };
+
+    const result = aggregateSSETokens(streamData, 'google');
+
+    expect(result).toEqual({
+      promptTokens: 100,
+      completionTokens: 200,
+      totalTokens: 300,
+      reasoningTokens: 150,
+    });
+  });
+
+  it('should use Google totalTokenCount (includes thinking) over computed sum', () => {
+    const streamData: SSEStreamData = { messages: [] };
+    const parser = createSSEParser(streamData);
+
+    // Simulates gemini-2.5-flash single-chunk response with thinking tokens
+    const chunk = JSON.stringify({
+      candidates: [{ content: { parts: [{ text: '1, 2, 3' }] }, finishReason: 'STOP' }],
+      usageMetadata: {
+        promptTokenCount: 6,
+        candidatesTokenCount: 7,
+        totalTokenCount: 36,
+        thoughtsTokenCount: 23,
+      },
+      modelVersion: 'gemini-2.5-flash',
+    });
+
+    parser.feed(`data: ${chunk}\n\n`);
+
+    const result = aggregateSSETokens(streamData, 'google');
+    expect(result).toEqual({
+      promptTokens: 6,
+      completionTokens: 7,
+      totalTokens: 36, // Google's total includes thinking (6+7+23), NOT just 6+7=13
+      reasoningTokens: 23,
+    });
+  });
+
   it('should omit totalTokens when only completionTokens is present', () => {
     const streamData: SSEStreamData = {
       messages: [
@@ -985,5 +1097,67 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({ completionTokens: 50 });
     expect(result?.totalTokens).toBeUndefined();
+  });
+
+  it('should extract Google tokens through createSSEParser (with trailing blank line)', () => {
+    const streamData: SSEStreamData = { messages: [] };
+    const parser = createSSEParser(streamData);
+
+    const chunk1 = JSON.stringify({
+      candidates: [{ content: { parts: [{ text: 'Hello' }] } }],
+      usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 },
+    });
+    const chunk2 = JSON.stringify({
+      candidates: [{ content: { parts: [{ text: ' world' }] }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 5, totalTokenCount: 13 },
+      modelVersion: 'gemini-2.0-flash',
+    });
+
+    // Feed raw SSE text with proper formatting (trailing blank line)
+    parser.feed(`data: ${chunk1}\n\ndata: ${chunk2}\n\n`);
+
+    expect(streamData.messages.length).toBe(1);
+
+    const result = aggregateSSETokens(streamData, 'google');
+    expect(result).toEqual({
+      promptTokens: 8,
+      completionTokens: 5,
+      totalTokens: 13,
+    });
+  });
+
+  it('should extract Google tokens through createSSEParser (no trailing blank line, requires flush)', () => {
+    const streamData: SSEStreamData = { messages: [] };
+    const parser = createSSEParser(streamData);
+
+    const chunk1 = JSON.stringify({
+      candidates: [{ content: { parts: [{ text: 'Hello' }] } }],
+      usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 },
+    });
+    const chunk2 = JSON.stringify({
+      candidates: [{ content: { parts: [{ text: ' world' }] }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 5, totalTokenCount: 13 },
+    });
+
+    // Feed raw SSE text WITHOUT trailing blank line — last event is buffered
+    parser.feed(`data: ${chunk1}\n\ndata: ${chunk2}\n`);
+
+    // Without flush, last event's tokens are stuck in parser buffer
+    // Only first chunk's data was dispatched
+    expect(streamData.messages.length).toBe(1);
+    expect(streamData.messages[0]?.usage?.candidates_token_count).toBe(0);
+
+    // Flush the parser — simulates what index.ts does after pipePromise resolves
+    parser.feed('\n\n');
+
+    // Now the last event should be dispatched with the final cumulative tokens
+    expect(streamData.messages[0]?.usage?.candidates_token_count).toBe(5);
+
+    const result = aggregateSSETokens(streamData, 'google');
+    expect(result).toEqual({
+      promptTokens: 8,
+      completionTokens: 5,
+      totalTokens: 13,
+    });
   });
 });

@@ -41,7 +41,7 @@ OpenAI-compatible with additional fields: `cache_write_tokens` in `prompt_tokens
 
 ### Google
 
-Uses camelCase fields in `usageMetadata`. `promptTokenCount` includes cached tokens. `cachedContentTokenCount` maps to `cacheReadTokens`.
+Uses camelCase fields in `usageMetadata`. `promptTokenCount` includes cached tokens. `cachedContentTokenCount` maps to `cacheReadTokens`. `thoughtsTokenCount` maps to `reasoningTokens` (parity with OpenAI `reasoning_tokens` and Anthropic thinking estimation).
 
 ### Groq
 

@@ -27,6 +27,12 @@ export function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
+export function formatModelDisplay(model: string, provider?: string): string {
+  if (!provider) return model;
+  const name = model.includes('/') ? model.split('/').slice(1).join('/') : model;
+  return `${provider}/${name}`;
+}
+
 export function formatRelativeTime(nanoseconds: number): string {
   const ms = nanoseconds / 1_000_000;
   const seconds = Math.floor((Date.now() - ms) / 1000);

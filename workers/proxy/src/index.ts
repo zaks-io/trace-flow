@@ -240,11 +240,11 @@ app.all('*', async (c) => {
 
   const parser = isSSE ? createSSEParser(sseStreamData) : null;
 
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: false });
 
   const capture = createResponseCapture((chunk) => {
     if (isSSE && parser) {
-      const text = decoder.decode(chunk);
+      const text = decoder.decode(chunk, { stream: true });
       parser.feed(text);
     }
   });
@@ -260,7 +260,22 @@ app.all('*', async (c) => {
           const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
           await pipePromise;
 
+          // Flush any pending SSE event — some providers (Google) may not send
+          // a trailing blank line after the final data: line, leaving the last
+          // event (with final token totals) stuck in the parser's buffer
+          if (isSSE && parser) {
+            parser.feed('\n\n');
+          }
+
           const responseComplete = getCurrentTimestamp();
+
+          // Set messageStop for providers that don't send [DONE] (e.g. Google)
+          if (isSSE && sseStreamData.messages.length > 0) {
+            const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
+            if (lastMessage && !lastMessage.messageStop) {
+              lastMessage.messageStop = responseComplete;
+            }
+          }
           const latency = responseComplete - requestStart;
 
           const responseCapturedChunks = capture.getCapturedChunks();

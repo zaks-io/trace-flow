@@ -125,7 +125,10 @@ export function processSSEEvent(
       if (extractedUsage) {
         const mergedUsage = { ...currentMessage.usage, ...extractedUsage };
         const hasUsageData =
-          mergedUsage.input_tokens !== undefined || mergedUsage.output_tokens !== undefined;
+          mergedUsage.input_tokens !== undefined ||
+          mergedUsage.output_tokens !== undefined ||
+          mergedUsage.prompt_token_count !== undefined ||
+          mergedUsage.candidates_token_count !== undefined;
         if (hasUsageData) currentMessage.usage = mergedUsage;
       }
 
@@ -299,6 +302,7 @@ export function aggregateSSETokens(
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
   let totalCacheCreation5mTokens = 0;
+  let googleTotalTokenCount = 0;
   let totalCacheCreation1hTokens = 0;
   let totalGoogleCachedTokens = 0;
   let totalThinkingChars = 0;
@@ -368,6 +372,13 @@ export function aggregateSSETokens(
       totalGoogleCachedTokens += message.usage.cached_content_token_count;
       hasAnyTokens = true;
     }
+    if (message.usage.thoughts_token_count !== undefined) {
+      totalReasoningTokens += message.usage.thoughts_token_count;
+      hasAnyTokens = true;
+    }
+    if (message.usage.total_token_count !== undefined) {
+      googleTotalTokenCount = message.usage.total_token_count;
+    }
   }
 
   if (!hasAnyTokens) {
@@ -414,8 +425,10 @@ export function aggregateSSETokens(
     result.upstreamCost = lastUpstreamCost;
   }
 
-  // Calculate total if we have both prompt and completion tokens
-  if (result.promptTokens !== undefined && result.completionTokens !== undefined) {
+  // Prefer provider-reported total (Google's includes thinking tokens)
+  if (googleTotalTokenCount > 0) {
+    result.totalTokens = googleTotalTokenCount;
+  } else if (result.promptTokens !== undefined && result.completionTokens !== undefined) {
     result.totalTokens = result.promptTokens + result.completionTokens;
   }
 

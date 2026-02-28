@@ -45,7 +45,7 @@ export function deriveOperationName(path: string): string {
   if (normalizedPath.includes('/messages')) return 'chat';
 
   // Google Gemini patterns
-  if (normalizedPath.includes(':generatecontent')) return 'generate_content';
+  if (normalizedPath.includes(':generatecontent')) return 'chat';
   if (normalizedPath.includes(':embedcontent')) return 'embeddings';
 
   return 'chat';

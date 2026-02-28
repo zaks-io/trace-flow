@@ -173,7 +173,13 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   // This excludes network latency and provider processing time
   if (data.tokens?.completionTokens && data.tokens.completionTokens > 0) {
     const generationStartMs = data.timing.firstTokenReceived ?? data.timing.requestSent;
-    const generationDurationMs = data.timing.responseComplete - generationStartMs;
+    let generationDurationMs = data.timing.responseComplete - generationStartMs;
+
+    // Single-chunk responses (thinking models like gemini-2.5-flash) can have
+    // firstTokenReceived ≈ responseComplete (0ms). Fall back to full request latency.
+    if (generationDurationMs <= 0) {
+      generationDurationMs = data.timing.responseComplete - data.timing.requestSent;
+    }
 
     if (generationDurationMs > 0) {
       const tokensPerSecond = data.tokens.completionTokens / (generationDurationMs / 1000);

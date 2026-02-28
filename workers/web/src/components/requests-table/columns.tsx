@@ -92,12 +92,15 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'aiModel',
-    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.request.model'),
+    accessorFn: (row) => {
+      const attrs = parseSpanAttributes(row.SpanAttributes);
+      return { model: attrs['gen_ai.request.model'], provider: attrs['gen_ai.system'] };
+    },
     header: 'Model',
     cell: ({ getValue }) => {
-      const value = getValue<string | undefined>();
-      return value ? (
-        <ModelPill model={value} />
+      const { model, provider } = getValue<{ model?: string; provider?: string }>();
+      return model ? (
+        <ModelPill model={model} provider={provider} />
       ) : (
         <span className="text-muted-foreground/50">-</span>
       );

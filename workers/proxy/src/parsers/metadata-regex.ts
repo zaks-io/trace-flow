@@ -33,16 +33,22 @@ const GOOGLE_PROMPT_TOKEN_COUNT_PATTERN = /"promptTokenCount"\s*:\s*(\d+)/;
 const GOOGLE_CANDIDATES_TOKEN_COUNT_PATTERN = /"candidatesTokenCount"\s*:\s*(\d+)/;
 const GOOGLE_CACHED_TOKEN_COUNT_PATTERN = /"cachedContentTokenCount"\s*:\s*(\d+)/;
 const GOOGLE_TOTAL_TOKEN_COUNT_PATTERN = /"totalTokenCount"\s*:\s*(\d+)/;
+const GOOGLE_THOUGHTS_TOKEN_COUNT_PATTERN = /"thoughtsTokenCount"\s*:\s*(\d+)/;
 
 // Token usage patterns (used by both OpenAI and Anthropic)
 const INPUT_TOKENS_PATTERN = /"input_tokens"\s*:\s*(\d+)/;
 const OUTPUT_TOKENS_PATTERN = /"output_tokens"\s*:\s*(\d+)/;
+// OpenAI-style naming (used by OpenRouter, OpenAI, Groq)
+const PROMPT_TOKENS_PATTERN = /"prompt_tokens"\s*:\s*(\d+)/;
+const COMPLETION_TOKENS_PATTERN = /"completion_tokens"\s*:\s*(\d+)/;
 const CACHE_CREATION_INPUT_TOKENS_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d+)/;
 const CACHE_READ_INPUT_TOKENS_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
 const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d+)/;
 const EPHEMERAL_5M_INPUT_TOKENS_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d+)/;
 const EPHEMERAL_1H_INPUT_TOKENS_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d+)/;
-const UPSTREAM_COST_PATTERN = /"cost"\s*:\s*([0-9.]+)/;
+// Scoped to usage context — only matches "cost" that appears after "usage" in the data.
+// Prevents false-positives from unrelated "cost" fields in model response content.
+const UPSTREAM_COST_PATTERN = /"usage"[\s\S]*?"cost"\s*:\s*([0-9.eE+-]+)/;
 
 /**
  * Extracts OpenAI-compatible metadata from SSE event data string.
@@ -240,6 +246,7 @@ export function extractTokenUsageFromSSEData(data: string): {
   candidates_token_count?: number;
   cached_content_token_count?: number;
   total_token_count?: number;
+  thoughts_token_count?: number;
 } {
   const usage: {
     input_tokens?: number;
@@ -255,6 +262,7 @@ export function extractTokenUsageFromSSEData(data: string): {
     candidates_token_count?: number;
     cached_content_token_count?: number;
     total_token_count?: number;
+    thoughts_token_count?: number;
   } = {};
 
   // OpenAI/Anthropic patterns
@@ -266,6 +274,20 @@ export function extractTokenUsageFromSSEData(data: string): {
   const outputTokensMatch = OUTPUT_TOKENS_PATTERN.exec(data);
   if (outputTokensMatch?.[1]) {
     usage.output_tokens = parseInt(outputTokensMatch[1], 10);
+  }
+
+  // OpenAI-style prompt_tokens/completion_tokens (fallback when input_tokens/output_tokens absent)
+  if (usage.input_tokens === undefined) {
+    const promptTokensMatch = PROMPT_TOKENS_PATTERN.exec(data);
+    if (promptTokensMatch?.[1]) {
+      usage.input_tokens = parseInt(promptTokensMatch[1], 10);
+    }
+  }
+  if (usage.output_tokens === undefined) {
+    const completionTokensMatch = COMPLETION_TOKENS_PATTERN.exec(data);
+    if (completionTokensMatch?.[1]) {
+      usage.output_tokens = parseInt(completionTokensMatch[1], 10);
+    }
   }
 
   const cacheCreationMatch = CACHE_CREATION_INPUT_TOKENS_PATTERN.exec(data);
@@ -322,6 +344,11 @@ export function extractTokenUsageFromSSEData(data: string): {
   const totalTokenCountMatch = GOOGLE_TOTAL_TOKEN_COUNT_PATTERN.exec(data);
   if (totalTokenCountMatch?.[1]) {
     usage.total_token_count = parseInt(totalTokenCountMatch[1], 10);
+  }
+
+  const thoughtsTokenCountMatch = GOOGLE_THOUGHTS_TOKEN_COUNT_PATTERN.exec(data);
+  if (thoughtsTokenCountMatch?.[1]) {
+    usage.thoughts_token_count = parseInt(thoughtsTokenCountMatch[1], 10);
   }
 
   return usage;

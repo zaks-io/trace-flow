@@ -33,6 +33,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { AlertBadge, AlertList } from '@/components/alerts';
 import { evaluateAlertsForTraces, getHighestSeverity } from '@/lib/alerts';
+import { formatModelDisplay } from '@/lib/format';
 import type { AlertSeverity } from '@/types/alerts';
 import type { RequestRow } from '@/components/requests-table';
 
@@ -388,7 +389,7 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
                   <AttributeCard
                     icon={<Server className="h-3.5 w-3.5" />}
                     label="Model"
-                    value={model}
+                    value={formatModelDisplay(model, provider ?? undefined)}
                     mono
                   />
                 )}
