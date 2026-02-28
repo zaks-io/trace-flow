@@ -95,7 +95,7 @@ export const updateOnboardingStatus = mutation({
 
 ### 2. Onboarding Wrapper
 
-**File**: `workers/web/src/components/OnboardingGuard.tsx`
+**File**: `apps/web/src/components/OnboardingGuard.tsx`
 
 ```typescript
 export function OnboardingGuard({ children }: { children: React.ReactNode }) {
@@ -113,7 +113,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
 
 ### 3. Onboarding Wizard Component
 
-**File**: `workers/web/src/components/OnboardingWizard.tsx`
+**File**: `apps/web/src/components/OnboardingWizard.tsx`
 
 ```typescript
 export function OnboardingWizard({ initialStatus }) {
@@ -148,7 +148,7 @@ export function OnboardingWizard({ initialStatus }) {
 
 ### 4. Welcome Step
 
-**File**: `workers/web/src/components/onboarding/WelcomeStep.tsx`
+**File**: `apps/web/src/components/onboarding/WelcomeStep.tsx`
 
 ```typescript
 export function WelcomeStep({ onNext }) {
@@ -173,7 +173,7 @@ export function WelcomeStep({ onNext }) {
 
 ### 5. API Key Step
 
-**File**: `workers/web/src/components/onboarding/ApiKeyStep.tsx`
+**File**: `apps/web/src/components/onboarding/ApiKeyStep.tsx`
 
 ```typescript
 export function ApiKeyStep({ onNext }) {
@@ -223,7 +223,7 @@ export function ApiKeyStep({ onNext }) {
 
 ### 6. First Request Step
 
-**File**: `workers/web/src/components/onboarding/FirstRequestStep.tsx`
+**File**: `apps/web/src/components/onboarding/FirstRequestStep.tsx`
 
 ```typescript
 export function FirstRequestStep({ onNext, onSkip }) {
@@ -284,7 +284,7 @@ const response = await client.messages.create({
 
 ### 7. Complete Step
 
-**File**: `workers/web/src/components/onboarding/CompleteStep.tsx`
+**File**: `apps/web/src/components/onboarding/CompleteStep.tsx`
 
 ```typescript
 export function CompleteStep() {
@@ -311,7 +311,7 @@ export function CompleteStep() {
 
 ### App Layout
 
-**File**: `workers/web/src/components/AppLayout.tsx`
+**File**: `apps/web/src/components/AppLayout.tsx`
 
 Wrap authenticated content with onboarding guard:
 

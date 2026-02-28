@@ -12,7 +12,7 @@ Trace Flow proxies requests to multiple LLM providers while capturing observabil
 | OpenRouter | `/openrouter/*` | `https://openrouter.ai/api`                 |
 | Groq       | `/groq/*`       | `https://api.groq.com/openai`               |
 
-Provider configuration lives in `workers/proxy/src/providers.ts`.
+Provider configuration lives in `apps/proxy/src/providers.ts`.
 
 ## Routing
 
@@ -48,7 +48,7 @@ The proxy modifies headers before forwarding to providers:
 
 ### Token Extraction
 
-The proxy extracts token counts from response bodies using regex (avoiding full JSON parse for performance). See `workers/proxy/src/parsers/tokens.ts`.
+The proxy extracts token counts from response bodies using regex (avoiding full JSON parse for performance). See `apps/proxy/src/parsers/tokens.ts`.
 
 **OpenAI/Groq/OpenRouter format:**
 
@@ -82,7 +82,7 @@ Parsers extract message structure without storing content, enabling observabilit
 
 ## Streaming (SSE)
 
-SSE parsing differs significantly between providers. See `workers/proxy/src/streaming/sse.ts`.
+SSE parsing differs significantly between providers. See `apps/proxy/src/streaming/sse.ts`.
 
 ### OpenAI/Groq/OpenRouter Style
 

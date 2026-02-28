@@ -82,4 +82,4 @@ How we connect to external services.
 - [README.md](../README.md) - Project overview and quick start
 - [CLAUDE.md](../CLAUDE.md) - Development commands and patterns
 - [SETUP.md](../SETUP.md) - Cloudflare resources setup
-- [agents.md](../workers/web/public/agents.md) - Integration guide for AI agents
+- [agents.md](../apps/web/public/agents.md) - Integration guide for AI agents

@@ -6,7 +6,7 @@ Request and response bodies are currently stored unencrypted in Cloudflare R2. T
 
 ## Current Architecture
 
-**Storage flow** (`workers/proxy/src/storage.ts`):
+**Storage flow** (`apps/proxy/src/storage.ts`):
 
 ```
 Client Request -> Proxy Worker -> R2 Bucket
@@ -16,7 +16,7 @@ Client Request -> Proxy Worker -> R2 Bucket
               - responses/{requestId}
 ```
 
-**Retrieval flow** (`workers/api/src/index.ts`):
+**Retrieval flow** (`apps/api/src/index.ts`):
 
 ```
 Dashboard -> API Worker -> R2 Bucket -> Plain text response
@@ -49,7 +49,7 @@ interface EncryptedPayload {
 
 ### Encryption Module
 
-**File**: `workers/proxy/src/crypto.ts`
+**File**: `apps/proxy/src/crypto.ts`
 
 ```typescript
 const ALGORITHM = 'AES-GCM';
@@ -109,7 +109,7 @@ export async function decrypt(encrypted: string, env: EncryptionEnv): Promise<st
 
 ### Update Storage Module
 
-**File**: `workers/proxy/src/storage.ts`
+**File**: `apps/proxy/src/storage.ts`
 
 ```typescript
 import { encrypt } from './crypto';
@@ -146,7 +146,7 @@ export async function storeRequestResponse(
 
 ### Update API Worker
 
-**File**: `workers/api/src/index.ts`
+**File**: `apps/api/src/index.ts`
 
 ```typescript
 import { decrypt } from '../../proxy/src/crypto';
@@ -228,7 +228,7 @@ Future enhancement for key rotation:
 
 ### Unit Tests
 
-**File**: `workers/proxy/src/__tests__/crypto.test.ts`
+**File**: `apps/proxy/src/__tests__/crypto.test.ts`
 
 ```typescript
 describe('Encryption', () => {

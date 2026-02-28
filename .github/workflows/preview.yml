@@ -31,7 +31,7 @@ jobs:
 
       # Deploy workers to preview environment
       - name: Deploy Preview Workers
-        run: bunx turbo run deploy:preview --filter='./workers/*' --filter='!@trace-flow/web' --env-mode=loose
+        run: bunx turbo run deploy:preview --filter='./apps/*' --filter='!@trace-flow/web' --env-mode=loose
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -40,7 +40,7 @@ jobs:
       - name: Deploy Convex Preview and Build Web
         run: |
           npx convex deploy --preview-create "$BRANCH_NAME" \
-            --cmd 'bunx turbo run build --filter=@trace-flow/web && cd workers/web && bunx opennextjs-cloudflare build' \
+            --cmd 'bunx turbo run build --filter=@trace-flow/web && cd apps/web && bunx opennextjs-cloudflare build' \
             --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
         env:
           BRANCH_NAME: ${{ github.head_ref }}
@@ -58,7 +58,7 @@ jobs:
 
       # Deploy web to Workers preview
       - name: Deploy Web Preview
-        run: cd workers/web && bunx opennextjs-cloudflare deploy --env development
+        run: cd apps/web && bunx opennextjs-cloudflare deploy --env development
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

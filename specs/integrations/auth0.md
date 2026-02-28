@@ -27,7 +27,7 @@ Both use domain `auth0.zaks.io`.
 
 ### Web App Configuration
 
-`workers/web/.env.local`:
+`apps/web/.env.local`:
 
 ```bash
 NEXT_PUBLIC_AUTH0_DOMAIN=auth0.zaks.io
@@ -37,7 +37,7 @@ NEXT_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
 
 ### API Worker Configuration
 
-`workers/api/wrangler.toml`:
+`apps/api/wrangler.toml`:
 
 ```toml
 [vars]
@@ -69,7 +69,7 @@ npx convex env set AUTH0_CLIENT_ID iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W
 
 ## Web Authentication
 
-The React app uses Auth0 React SDK wrapped with Convex integration. See `workers/web/src/components/App.tsx`.
+The React app uses Auth0 React SDK wrapped with Convex integration. See `apps/web/src/components/App.tsx`.
 
 ```tsx
 <Auth0Provider
@@ -94,7 +94,7 @@ The React app uses Auth0 React SDK wrapped with Convex integration. See `workers
 
 ## API Worker Authentication
 
-The API worker validates Auth0 JWTs using JWKS public key verification. See `workers/api/src/auth.ts`.
+The API worker validates Auth0 JWTs using JWKS public key verification. See `apps/api/src/auth.ts`.
 
 ```typescript
 const JWKS = createRemoteJWKSet(new URL(`https://${domain}/.well-known/jwks.json`));
@@ -133,7 +133,7 @@ export async function requireTraceFlowRole(ctx: AuthContext): Promise<void> {
 
 ### API Worker Role Check
 
-`workers/api/src/auth.ts`:
+`apps/api/src/auth.ts`:
 
 ```typescript
 const roles = payload['neuron/roles'] ?? [];

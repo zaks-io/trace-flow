@@ -24,10 +24,10 @@ Next.js is optimized for Vercel. Running it on Cloudflare Workers requires an ad
 ```bash
 # Build Next.js, then compile for Cloudflare
 bunx turbo run build --filter=@trace-flow/web
-cd workers/web && bunx opennextjs-cloudflare build
+cd apps/web && bunx opennextjs-cloudflare build
 
 # Deploy
-cd workers/web && bunx opennextjs-cloudflare deploy --env production
+cd apps/web && bunx opennextjs-cloudflare deploy --env production
 ```
 
 The OpenNext build reads the Next.js `.next` output and produces a `.open-next` directory containing the Worker entry point and static assets.

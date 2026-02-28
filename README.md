@@ -6,10 +6,10 @@ LLM request proxy and analytics platform built on Cloudflare Workers.
 
 This monorepo contains four Cloudflare Workers:
 
-- **Proxy** (`workers/proxy`) - LLM request proxy that logs requests and enqueues them for processing
-- **Proxy Consumer** (`workers/proxy-consumer`) - Queue consumer that writes traces to Tinybird and stores bodies in R2
-- **API** (`workers/api`) - Provides R2 access for fetching request/response bodies
-- **Web** (`workers/web`) - Next.js analytics dashboard (Cloudflare Workers via OpenNext)
+- **Proxy** (`apps/proxy`) - LLM request proxy that logs requests and enqueues them for processing
+- **Proxy Consumer** (`apps/proxy-consumer`) - Queue consumer that writes traces to Tinybird and stores bodies in R2
+- **API** (`apps/api`) - Provides R2 access for fetching request/response bodies
+- **Web** (`apps/web`) - Next.js analytics dashboard (Cloudflare Workers via OpenNext)
 
 ### How It Works
 
@@ -45,7 +45,7 @@ trace-flow/
 ├── packages/
 │   ├── types/               # Shared TypeScript types
 │   └── utils/               # Shared utilities
-└── workers/
+└── apps/
     ├── proxy/               # LLM proxy worker
     ├── proxy-consumer/      # Queue consumer worker
     ├── api/                 # API worker for R2 body access
@@ -102,7 +102,7 @@ const { text } = await generateText({
 
 The proxy automatically captures request/response bodies, token usage, performance metrics, errors, and streaming events.
 
-**For complete integration guide, see [agents.md](./workers/web/public/agents.md).**
+**For complete integration guide, see [agents.md](./apps/web/public/agents.md).**
 
 ## Development
 
@@ -118,7 +118,7 @@ bun run dev:all
 bunx convex dev
 
 # Terminal 3: Web UI
-cd workers/web && bun run dev
+cd apps/web && bun run dev
 ```
 
 ### Running Proxy + Consumer + API Together
@@ -126,7 +126,7 @@ cd workers/web && bun run dev
 To test the complete message flow from proxy → queue → consumer locally:
 
 ```bash
-wrangler dev -c workers/proxy/wrangler.toml -c workers/proxy-consumer/wrangler.toml -c workers/api/wrangler.toml --persist-to .wrangler/state
+wrangler dev -c apps/proxy/wrangler.toml -c apps/proxy-consumer/wrangler.toml -c apps/api/wrangler.toml --persist-to .wrangler/state
 ```
 
 This runs all workers in a single process with shared local R2 bucket and queue.
@@ -140,12 +140,12 @@ The web worker uses Next.js and requires Convex backend:
 bunx convex dev
 
 # Terminal 2: Start web UI
-cd workers/web && bun run dev
+cd apps/web && bun run dev
 ```
 
 On first run, Convex will prompt you to login and create a project.
 
-Create `workers/web/.env.local`:
+Create `apps/web/.env.local`:
 
 ```bash
 NEXT_PUBLIC_CONVEX_URL=https://your-deployment-url.convex.cloud
@@ -160,16 +160,16 @@ You can also run workers separately:
 
 ```bash
 # Proxy only
-cd workers/proxy && bun run dev
+cd apps/proxy && bun run dev
 
 # Consumer only
-cd workers/proxy-consumer && bun run dev
+cd apps/proxy-consumer && bun run dev
 
 # API only
-cd workers/api && bun run dev
+cd apps/api && bun run dev
 
 # Web only (still requires Convex)
-cd workers/web && bun run dev
+cd apps/web && bun run dev
 ```
 
 ## Building
@@ -206,7 +206,7 @@ The project has two environments:
 bun run deploy:dev
 
 # Deploy individual workers to dev
-cd workers/proxy && bun run deploy:dev
+cd apps/proxy && bun run deploy:dev
 ```
 
 ## Configuration

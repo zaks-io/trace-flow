@@ -6,7 +6,7 @@ Implement an invite-only access system for the initial launch. This includes adm
 
 ## Current Auth Architecture
 
-- **Auth provider**: Auth0 (via `workers/web/src/components/AuthButton.tsx`)
+- **Auth provider**: Auth0 (via `apps/web/src/components/AuthButton.tsx`)
 - **User storage**: Convex `users` table (via `convex/users.ts`)
 - **User initialization**: `useInitializeUser` hook syncs Auth0 users to Convex
 
@@ -233,7 +233,7 @@ export const acceptInvite = mutation({
 });
 ```
 
-**File**: `workers/web/src/pages/InviteAccept.tsx`
+**File**: `apps/web/src/pages/InviteAccept.tsx`
 
 ```typescript
 export function InviteAccept() {
@@ -378,7 +378,7 @@ export const sendConfirmationEmail = internalAction({
 
 ### 5. Landing Page Update
 
-**File**: `workers/web/src/pages/Landing.tsx`
+**File**: `apps/web/src/pages/Landing.tsx`
 
 ```typescript
 export function Landing() {
@@ -421,7 +421,7 @@ export function Landing() {
 
 ### 6. Admin UI
 
-**File**: `workers/web/src/pages/AdminInvites.tsx`
+**File**: `apps/web/src/pages/AdminInvites.tsx`
 
 Simple admin page to manage invites:
 
@@ -453,7 +453,7 @@ Use **Resend** for transactional emails with **React Email** for templates:
 
 ### Waitlist Confirmation Page
 
-**File**: `workers/web/src/pages/WaitlistConfirm.tsx`
+**File**: `apps/web/src/pages/WaitlistConfirm.tsx`
 
 ```typescript
 export function WaitlistConfirm() {
