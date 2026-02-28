@@ -176,7 +176,7 @@ export default function Usage({
   return (
     <div className="animate-fade-in">
       <PageToolbar>
-        <p className="text-sm text-muted-foreground">Cost analytics deep-dive</p>
+        <p className="text-sm text-muted-foreground">LLM Request Analytics</p>
         <div className="flex-1" />
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg border border-border bg-card">

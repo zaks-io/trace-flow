@@ -12,7 +12,6 @@ import {
   User,
   Zap,
   BookOpen,
-  DollarSign,
   UserPlus,
   Shield,
   CreditCard,
@@ -38,7 +37,6 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
-  { title: 'Usage', href: '/app/usage', icon: DollarSign },
   { title: 'Billing', href: '/app/settings/billing', icon: CreditCard },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
