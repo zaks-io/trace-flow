@@ -52,14 +52,6 @@ app.get('/bodies/:requestId/:type', async (c) => {
     return c.json({ error: 'Invalid type. Must be "request" or "response"' }, 400);
   }
 
-  // Check edge cache (per-datacenter, post-auth)
-  const cache = caches.default;
-  const cacheKey = new Request(c.req.url, { method: 'GET' });
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
   // Try all possible key formats in parallel: tier-prefixed (new) and legacy
   const [pro, hobby, legacy] = await Promise.all([
     c.env.STORAGE.get(`${type}s/pro/${requestId}`),
@@ -85,20 +77,12 @@ app.get('/bodies/:requestId/:type', async (c) => {
     }
   }
 
-  const response = new Response(object.body, {
+  return new Response(object.body, {
     headers: {
       'Content-Type': object.httpMetadata?.contentType ?? 'text/plain',
       'Cache-Control': 'private, max-age=3600',
     },
   });
-
-  c.executionCtx.waitUntil(
-    cache.put(cacheKey, response.clone()).catch((err) => {
-      console.error('Edge cache put failed:', err);
-    }),
-  );
-
-  return response;
 });
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
