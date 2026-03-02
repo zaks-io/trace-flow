@@ -10,7 +10,7 @@ export interface Segment {
   color: string;
 }
 
-export interface InlineLabel {
+interface InlineLabel {
   label: string;
   value: string;
   color: string;
