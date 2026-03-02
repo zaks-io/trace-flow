@@ -29,10 +29,12 @@ SQL >
         greatest(sumMerge(InputTokens) - sumMerge(CacheReadInputTokens), 0) AS new_input_tokens,
         avgMerge(AvgDurationNano) / 1000000 AS avg_duration_ms,
         maxMerge(MaxDurationNano) / 1000000 AS max_duration_ms,
-        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
+        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms,
+        countMergeIf(RequestCount, StatusCode = 'STATUS_CODE_ERROR') AS error_count
     FROM (
         SELECT
             RequestCount,
+            StatusCode,
             InputTokens,
             OutputTokens,
             CacheReadInputTokens,
@@ -71,6 +73,7 @@ SQL >
         UNION ALL
         SELECT
             RequestCount,
+            StatusCode,
             InputTokens,
             OutputTokens,
             CacheReadInputTokens,
@@ -110,6 +113,7 @@ SQL >
         UNION ALL
         SELECT
             RequestCount,
+            StatusCode,
             InputTokens,
             OutputTokens,
             CacheReadInputTokens,
@@ -141,84 +145,6 @@ SQL >
             {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
-            {% end %}
-            {% if defined(api_key_filter) %}
-            AND ApiKey = {{ String(api_key_filter) }}
-            {% end %}
-    )
-
-NODE error_statuses
-SQL >
-    %
-    WITH
-        {{ Int64(start_time_ns, 0) }} AS start_ns,
-        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
-        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
-        toDateTime(start_ns / 1000000000) AS start_dt,
-        toDateTime(end_ns / 1000000000) AS end_dt,
-        dateDiff('day', start_dt, end_dt) AS range_days
-    SELECT
-        countMerge(RequestCount) AS error_count
-    FROM (
-        SELECT RequestCount
-        FROM llm_usage_1h
-        WHERE range_days <= 30
-            AND BucketStart >= start_dt
-            AND BucketStart <= end_dt
-            AND StatusCode = 'STATUS_CODE_ERROR'
-            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(provider) %}
-            AND Provider = {{ String(provider) }}
-            {% end %}
-            {% if defined(model) %}
-            AND Model = {{ String(model) }}
-            {% end %}
-            {% if defined(baggage_operation) %}
-            AND BaggageOperation = {{ String(baggage_operation) }}
-            {% end %}
-            {% if defined(api_key_filter) %}
-            AND ApiKey = {{ String(api_key_filter) }}
-            {% end %}
-        UNION ALL
-        SELECT RequestCount
-        FROM llm_usage_1d
-        WHERE range_days > 30
-            AND range_days <= 180
-            AND BucketStart >= start_dt
-            AND BucketStart <= end_dt
-            AND StatusCode = 'STATUS_CODE_ERROR'
-            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(provider) %}
-            AND Provider = {{ String(provider) }}
-            {% end %}
-            {% if defined(model) %}
-            AND Model = {{ String(model) }}
-            {% end %}
-            {% if defined(baggage_operation) %}
-            AND BaggageOperation = {{ String(baggage_operation) }}
-            {% end %}
-            {% if defined(api_key_filter) %}
-            AND ApiKey = {{ String(api_key_filter) }}
-            {% end %}
-        UNION ALL
-        SELECT RequestCount
-        FROM llm_usage_1mo
-        WHERE range_days > 180
-            AND BucketStart >= start_dt
-            AND BucketStart <= end_dt
-            AND StatusCode = 'STATUS_CODE_ERROR'
-            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(provider) %}
-            AND Provider = {{ String(provider) }}
-            {% end %}
-            {% if defined(model) %}
-            AND Model = {{ String(model) }}
-            {% end %}
-            {% if defined(baggage_operation) %}
-            AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
             {% if defined(api_key_filter) %}
             AND ApiKey = {{ String(api_key_filter) }}
@@ -227,8 +153,6 @@ SQL >
 
 NODE endpoint
 SQL >
-    SELECT a.*, COALESCE(e.error_count, 0) AS error_count
-    FROM all_statuses a
-    CROSS JOIN error_statuses e
+    SELECT * FROM all_statuses
 
 TYPE ENDPOINT

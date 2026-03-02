@@ -186,7 +186,7 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
         accent="from-chart-7/20 to-chart-7/5"
         segments={[]}
         total={0}
-        formatter={(n) => formatDuration(n)}
+        formatter={formatDuration}
         inlineLabels={
           requestStats
             ? [
