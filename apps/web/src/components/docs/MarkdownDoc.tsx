@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import rehypeSlug from 'rehype-slug';
 import remarkGfm from 'remark-gfm';
 import { CodeBlock } from '@/components/docs/CodeBlock';
 
@@ -7,59 +8,31 @@ type MarkdownDocProps = {
   content: string;
 };
 
-function extractText(value: unknown): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(extractText).join('');
-  }
-  if (value && typeof value === 'object' && 'props' in value) {
-    // react-markdown element shape
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return extractText((value as any).props?.children);
-  }
-  return '';
-}
-
-function slugifyHeading(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-');
-}
-
 export function MarkdownDoc({ content }: MarkdownDocProps) {
   return (
     <div className="space-y-6">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSlug]}
         components={{
           h1: ({ children }) => (
             <h1 className="bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl">
               {children}
             </h1>
           ),
-          h2: ({ children }) => {
-            const id = slugifyHeading(extractText(children));
-            return (
-              <h2
-                id={id}
-                className="mt-12 scroll-mt-20 text-2xl font-semibold tracking-tight text-foreground"
-              >
-                {children}
-              </h2>
-            );
-          },
-          h3: ({ children }) => {
-            const id = slugifyHeading(extractText(children));
-            return (
-              <h3 id={id} className="mt-10 scroll-mt-20 text-xl font-semibold text-foreground">
-                {children}
-              </h3>
-            );
-          },
+          h2: ({ children, ...props }) => (
+            <h2
+              className="mt-12 scroll-mt-20 text-2xl font-semibold tracking-tight text-foreground"
+              {...props}
+            >
+              {children}
+            </h2>
+          ),
+          h3: ({ children, ...props }) => (
+            <h3 className="mt-10 scroll-mt-20 text-xl font-semibold text-foreground" {...props}>
+              {children}
+            </h3>
+          ),
           p: ({ children }) => <p className="leading-7 text-foreground/90">{children}</p>,
           a: ({ href, children }) => (
             <a

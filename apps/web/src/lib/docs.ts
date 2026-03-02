@@ -67,12 +67,21 @@ export function getDocMarkdownPath(slug: string): string {
 }
 
 function getDocsMarkdownFilePath(slug: string): string {
-  return path.join(process.cwd(), 'public', 'docs', `${slug}.md`);
+  return path.resolve(process.cwd(), 'public', 'docs', `${slug}.md`);
 }
 
 export async function readDocMarkdown(slug: string): Promise<string | null> {
+  const docsDir = path.resolve(process.cwd(), 'public', 'docs');
+  const filePath = getDocsMarkdownFilePath(slug);
+  const relativePath = path.relative(docsDir, filePath);
+
+  // Guard against path traversal even if callers pass unvalidated slugs.
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return null;
+  }
+
   try {
-    return await fs.readFile(getDocsMarkdownFilePath(slug), 'utf8');
+    return await fs.readFile(filePath, 'utf8');
   } catch {
     return null;
   }

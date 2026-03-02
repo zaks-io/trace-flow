@@ -1,13 +1,11 @@
 import { getDocMarkdownPath, getDocs } from '@/lib/docs';
 
-const SITE_URL = 'https://trace-flow.dev';
-
-function buildLlmsTxt() {
+function buildLlmsTxt(siteUrl: string) {
   const docs = getDocs();
 
   const docLinks = docs
     .map((doc) => {
-      const markdownUrl = `${SITE_URL}${getDocMarkdownPath(doc.slug)}`;
+      const markdownUrl = `${siteUrl}${getDocMarkdownPath(doc.slug)}`;
       return `- [${doc.title}](${markdownUrl}): ${doc.description}`;
     })
     .join('\n');
@@ -24,16 +22,19 @@ ${docLinks}
 
 ## Agent Bootstrap
 
-- [Agent Bootstrap Markdown](${SITE_URL}/agents.md): Canonical instructions for AI assistants
+- [Agent Bootstrap Markdown](${siteUrl}/agents.md): Canonical instructions for AI assistants
 
 ## Optional
 
-- [Documentation Index](${SITE_URL}/docs): Human-friendly docs landing page
+- [Documentation Index](${siteUrl}/docs): Human-friendly docs landing page
 `;
 }
 
-export async function GET() {
-  return new Response(buildLlmsTxt(), {
+export async function GET(request: Request) {
+  const envSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  const siteUrl = envSiteUrl ?? new URL(request.url).origin;
+
+  return new Response(buildLlmsTxt(siteUrl), {
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'public, max-age=300, s-maxage=300',
