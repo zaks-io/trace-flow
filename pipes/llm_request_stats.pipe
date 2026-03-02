@@ -1,0 +1,48 @@
+DESCRIPTION >
+    Per-request distribution statistics for cost and duration.
+    Queries llm_requests directly for exact percentiles and stddev.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns
+    SELECT
+        min(DurationNano) / 1000000 AS min_duration_ms,
+        avg(DurationNano) / 1000000 AS avg_duration_ms,
+        max(DurationNano) / 1000000 AS max_duration_ms,
+        stddevSamp(DurationNano) / 1000000 AS stddev_duration_ms,
+        quantile(0.95)(DurationNano) / 1000000 AS p95_duration_ms,
+        quantile(0.99)(DurationNano) / 1000000 AS p99_duration_ms,
+        min(TotalCostMicrodollars) / 1000000 AS min_cost_usd,
+        avg(TotalCostMicrodollars) / 1000000 AS avg_cost_usd,
+        max(TotalCostMicrodollars) / 1000000 AS max_cost_usd,
+        stddevSamp(toFloat64(TotalCostMicrodollars)) / 1000000 AS stddev_cost_usd,
+        quantile(0.95)(TotalCostMicrodollars) / 1000000 AS p95_cost_usd,
+        quantile(0.99)(TotalCostMicrodollars) / 1000000 AS p99_cost_usd
+    FROM llm_requests
+    WHERE ReceivedAt >= start_ns
+        AND ReceivedAt <= end_ns
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        {% if defined(provider) %}
+        AND Provider = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND Model = {{ String(model) }}
+        {% end %}
+        {% if defined(baggage_operation) %}
+        AND BaggageOperation = {{ String(baggage_operation) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
+    HAVING count() > 0
+
+TYPE ENDPOINT

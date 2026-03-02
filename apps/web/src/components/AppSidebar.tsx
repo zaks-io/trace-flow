@@ -12,7 +12,6 @@ import {
   User,
   Zap,
   BookOpen,
-  DollarSign,
   UserPlus,
   Shield,
   CreditCard,
@@ -38,13 +37,15 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
-  { title: 'Usage', href: '/app/usage', icon: DollarSign },
-  { title: 'Billing', href: '/app/settings/billing', icon: CreditCard },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
+  { title: 'Docs', href: '/docs', icon: BookOpen },
+];
+
+const settingsItems: NavItem[] = [
+  { title: 'Billing', href: '/app/settings/billing', icon: CreditCard },
   { title: 'API Keys', href: '/app/api-keys', icon: Key },
   { title: 'Alerts', href: '/app/alerts', icon: Bell },
-  { title: 'Docs', href: '/docs', icon: BookOpen },
 ];
 
 const adminNavItems: NavItem[] = [
@@ -105,7 +106,7 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
         </Link>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 py-4">
+      <SidebarContent className="overflow-x-hidden px-2 py-4">
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
@@ -121,9 +122,23 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        <SidebarSeparator className="my-2 opacity-50" />
+        <SidebarGroup>
+          <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+            Settings
+          </p>
+          <SidebarGroupContent>
+            <SidebarMenu className="space-y-1">
+              {settingsItems.map((item) => (
+                <NavMenuItem key={item.href} item={item} active={isActive(item.href)} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         {isAdmin && (
           <>
-            <SidebarSeparator className="mx-2 my-2 opacity-50" />
+            <SidebarSeparator className="my-2 opacity-50" />
             <SidebarGroup>
               <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                 Admin

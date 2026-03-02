@@ -8,7 +8,7 @@ export const TIME_RANGES: { value: TimeRange; label: string; ms: number }[] = [
   { value: '90d', label: '90d', ms: 90 * 24 * 60 * 60 * 1000 },
 ];
 
-export type TimeseriesMetric = 'cost' | 'tokens' | 'requests' | 'latency';
+export type TimeseriesMetric = 'cost' | 'tokens' | 'requests' | 'duration';
 
 export const costChartConfig = {
   input_cost_usd: { label: 'Input', color: 'var(--color-chart-1)' },
@@ -18,7 +18,7 @@ export const costChartConfig = {
   reasoning_cost_usd: { label: 'Reasoning', color: 'var(--color-chart-5)' },
 } satisfies ChartConfig;
 
-export const latencyChartConfig = {
+export const durationChartConfig = {
   avg_duration_ms: { label: 'Avg', color: 'var(--color-chart-3)' },
   p95_duration_ms: { label: 'P95', color: 'var(--color-chart-6)' },
 } satisfies ChartConfig;
@@ -68,6 +68,7 @@ interface LatencyRow {
 
 export interface SummaryRow extends CostBreakdownRow, LatencyRow {
   request_count: number;
+  error_count: number;
   input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens: number;
@@ -129,12 +130,19 @@ export interface TinybirdResponse<T> {
   data: T[];
 }
 
-export interface SummaryCardProps {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  subtitle?: string;
-  accent?: 'purple' | 'blue' | 'emerald' | 'amber' | 'zinc' | 'red' | 'green';
+export interface RequestStatsRow {
+  min_duration_ms: number;
+  avg_duration_ms: number;
+  max_duration_ms: number;
+  stddev_duration_ms: number;
+  p95_duration_ms: number;
+  p99_duration_ms: number;
+  min_cost_usd: number;
+  avg_cost_usd: number;
+  max_cost_usd: number;
+  stddev_cost_usd: number;
+  p95_cost_usd: number;
+  p99_cost_usd: number;
 }
 
 export type ModelSortKey =

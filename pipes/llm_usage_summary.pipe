@@ -2,7 +2,7 @@ DESCRIPTION >
     Summary of LLM usage and cost for a time range.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
-NODE endpoint
+NODE all_statuses
 SQL >
     %
     WITH
@@ -29,10 +29,12 @@ SQL >
         greatest(sumMerge(InputTokens) - sumMerge(CacheReadInputTokens), 0) AS new_input_tokens,
         avgMerge(AvgDurationNano) / 1000000 AS avg_duration_ms,
         maxMerge(MaxDurationNano) / 1000000 AS max_duration_ms,
-        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
+        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms,
+        countMergeIf(RequestCount, StatusCode = 'STATUS_CODE_ERROR') AS error_count
     FROM (
         SELECT
             RequestCount,
+            StatusCode,
             InputTokens,
             OutputTokens,
             CacheReadInputTokens,
@@ -59,9 +61,6 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
@@ -74,6 +73,7 @@ SQL >
         UNION ALL
         SELECT
             RequestCount,
+            StatusCode,
             InputTokens,
             OutputTokens,
             CacheReadInputTokens,
@@ -101,9 +101,6 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
@@ -116,6 +113,7 @@ SQL >
         UNION ALL
         SELECT
             RequestCount,
+            StatusCode,
             InputTokens,
             OutputTokens,
             CacheReadInputTokens,
@@ -142,9 +140,6 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
@@ -155,5 +150,9 @@ SQL >
             AND ApiKey = {{ String(api_key_filter) }}
             {% end %}
     )
+
+NODE endpoint
+SQL >
+    SELECT * FROM all_statuses
 
 TYPE ENDPOINT
