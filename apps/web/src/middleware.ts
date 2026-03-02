@@ -4,6 +4,17 @@ import { auth0 } from '@/lib/auth0';
 import { clearAuthCookies } from '@/lib/auth-cookies';
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  const isPublicMarkdownPath =
+    pathname === '/llms.txt' ||
+    pathname === '/agents.md' ||
+    (pathname.startsWith('/docs/') && pathname.endsWith('.md'));
+
+  if (isPublicMarkdownPath) {
+    return NextResponse.next();
+  }
+
   try {
     // Type assertion needed for Next.js 16 compatibility with Auth0 SDK
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -11,7 +22,6 @@ export async function middleware(request: NextRequest) {
 
     // Proactively refresh for protected routes to persist rotated refresh tokens.
     // Server Components cannot set cookies - middleware must do this.
-    const pathname = request.nextUrl.pathname;
     const shouldTouchTokens = pathname.startsWith('/app');
 
     if (shouldTouchTokens) {
