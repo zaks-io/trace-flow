@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { FlowingTraces } from '@/components/landing/FlowingTraces';
 import { WaitlistForm } from '@/components/landing/WaitlistForm';
+import { EmailContactLink } from '@/components/EmailContactLink';
 import { getSession } from '@/lib/auth0';
 
 export default async function HomePage() {
@@ -81,6 +82,15 @@ export default async function HomePage() {
             </svg>
             View Docs
           </Link>
+          <p className="text-sm text-muted-foreground">
+            Questions? Email{' '}
+            <EmailContactLink
+              localPart="info"
+              domainParts={['trace-flow', 'dev']}
+              label="Email the Trace Flow team"
+              className="font-medium text-foreground decoration-foreground/60 hover:text-primary hover:decoration-primary"
+            />
+          </p>
         </div>
       </div>
     </div>

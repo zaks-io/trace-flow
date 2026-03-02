@@ -28,6 +28,7 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from '@/components/ui/sidebar';
+import { EmailContactLink } from '@/components/EmailContactLink';
 
 interface NavItem {
   title: string;
@@ -166,6 +167,17 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-sm font-medium text-foreground">User</span>
               </div>
+            </div>
+          </SidebarMenuItem>
+          <SidebarMenuItem className="mt-1">
+            <div className="rounded-lg px-3 py-2 text-sm text-muted-foreground">
+              Need help?{' '}
+              <EmailContactLink
+                localPart="support"
+                domainParts={['trace-flow', 'dev']}
+                label="Contact Trace Flow support"
+                className="h-auto p-0 text-sm font-medium text-foreground decoration-foreground/50 hover:text-primary hover:decoration-primary"
+              />
             </div>
           </SidebarMenuItem>
           <SidebarMenuItem className="mt-1">
