@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-export type DocDefinition = {
+type DocDefinition = {
   slug: string;
   title: string;
   description: string;
@@ -66,7 +66,7 @@ export function getDocMarkdownPath(slug: string): string {
   return `/docs/${slug}.md`;
 }
 
-export function getDocsMarkdownFilePath(slug: string): string {
+function getDocsMarkdownFilePath(slug: string): string {
   return path.join(process.cwd(), 'public', 'docs', `${slug}.md`);
 }
 
