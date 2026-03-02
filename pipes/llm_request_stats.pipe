@@ -34,9 +34,6 @@ SQL >
         {% if defined(model) %}
         AND Model = {{ String(model) }}
         {% end %}
-        {% if defined(operation_name) %}
-        AND OperationName = {{ String(operation_name) }}
-        {% end %}
         {% if defined(baggage_operation) %}
         AND BaggageOperation = {{ String(baggage_operation) }}
         {% end %}
@@ -46,5 +43,6 @@ SQL >
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
         {% end %}
+    HAVING count() > 0
 
 TYPE ENDPOINT

@@ -39,13 +39,13 @@ const navItems: NavItem[] = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
+  { title: 'Docs', href: '/docs', icon: BookOpen },
 ];
 
 const settingsItems: NavItem[] = [
   { title: 'Billing', href: '/app/settings/billing', icon: CreditCard },
   { title: 'API Keys', href: '/app/api-keys', icon: Key },
   { title: 'Alerts', href: '/app/alerts', icon: Bell },
-  { title: 'Docs', href: '/docs', icon: BookOpen },
 ];
 
 const adminNavItems: NavItem[] = [

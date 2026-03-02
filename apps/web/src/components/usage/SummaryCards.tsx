@@ -257,7 +257,15 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
                         color: 'var(--color-chart-3)',
                       },
                     ]
-                  : []),
+                  : summary.cache_read_input_tokens > 0 && summary.new_input_tokens === 0
+                    ? [
+                        {
+                          label: 'Est. Savings',
+                          value: 'N/A',
+                          color: 'var(--color-muted-foreground)',
+                        },
+                      ]
+                    : []),
                 {
                   label: 'Read Cost',
                   value: formatCurrency(summary.cache_read_cost_usd),

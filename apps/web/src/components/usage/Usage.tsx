@@ -65,20 +65,14 @@ export default function Usage({
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
 
-  const { startTimeNs, endTimeNs } = useMemo(() => {
-    const range = TIME_RANGES.find((r) => r.value === timeRange);
+  const { startTimeNs, endTimeNs, prevStartTimeNs, prevEndTimeNs } = useMemo(() => {
+    const rangeMs = TIME_RANGES.find((r) => r.value === timeRange)?.ms ?? 0;
+    const now = Date.now();
     return {
-      startTimeNs: snapToMinute(Date.now() - (range?.ms ?? 0)) * 1_000_000,
-      endTimeNs: snapToMinute(Date.now()) * 1_000_000,
-    };
-  }, [timeRange]);
-
-  const { prevStartTimeNs, prevEndTimeNs } = useMemo(() => {
-    const range = TIME_RANGES.find((r) => r.value === timeRange);
-    const rangeMs = range?.ms ?? 0;
-    return {
-      prevStartTimeNs: snapToMinute(Date.now() - rangeMs * 2) * 1_000_000,
-      prevEndTimeNs: snapToMinute(Date.now() - rangeMs) * 1_000_000,
+      startTimeNs: snapToMinute(now - rangeMs) * 1_000_000,
+      endTimeNs: snapToMinute(now) * 1_000_000,
+      prevStartTimeNs: snapToMinute(now - rangeMs * 2) * 1_000_000,
+      prevEndTimeNs: snapToMinute(now - rangeMs) * 1_000_000,
     };
   }, [timeRange]);
 
@@ -172,6 +166,8 @@ export default function Usage({
 
   const isLoading = [
     summaryQuery.isLoading,
+    prevSummaryQuery.isLoading,
+    requestStatsQuery.isLoading,
     timeseriesQuery.isLoading,
     modelsQuery.isLoading,
     providersQuery.isLoading,
@@ -213,6 +209,7 @@ export default function Usage({
   const modelOptions = Array.from(seenModels.current).sort();
   const operationOptions = Array.from(seenOperations.current).sort();
   const apiKeyOptions = Array.from(seenApiKeys.current).sort();
+  const MetricIcon = METRIC_META[metric].icon;
 
   return (
     <div className="animate-fade-in">
@@ -337,10 +334,7 @@ export default function Usage({
           <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                {(() => {
-                  const Icon = METRIC_META[metric].icon;
-                  return <Icon className="h-4 w-4 text-muted-foreground" />;
-                })()}
+                <MetricIcon className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">
                   {METRIC_META[metric].label}
                 </h2>

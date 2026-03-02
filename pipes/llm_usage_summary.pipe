@@ -59,9 +59,6 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
@@ -101,9 +98,6 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
@@ -141,9 +135,6 @@ SQL >
             {% end %}
             {% if defined(model) %}
             AND Model = {{ String(model) }}
-            {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
             {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
@@ -183,9 +174,6 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
@@ -208,9 +196,6 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
@@ -231,9 +216,6 @@ SQL >
             {% end %}
             {% if defined(model) %}
             AND Model = {{ String(model) }}
-            {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
             {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
