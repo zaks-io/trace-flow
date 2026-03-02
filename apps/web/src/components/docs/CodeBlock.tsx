@@ -1,30 +1,26 @@
-'use client';
-
-import { useEffect, useState } from 'react';
 import { codeToHtml } from 'shiki';
-import { Copy, Check } from 'lucide-react';
+import { CopyCodeButton } from '@/components/docs/CopyCodeButton';
 
 interface CodeBlockProps {
   code: string;
   lang?: string;
 }
 
-export function CodeBlock({ code, lang = 'typescript' }: CodeBlockProps) {
-  const [html, setHtml] = useState<string>('');
-  const [copied, setCopied] = useState(false);
+const LANGUAGE_ALIASES: Record<string, string> = {
+  sh: 'bash',
+  shell: 'bash',
+  ts: 'typescript',
+  js: 'javascript',
+  yml: 'yaml',
+};
 
-  useEffect(() => {
-    void codeToHtml(code, {
-      lang: lang === 'bash' ? 'bash' : lang,
-      theme: 'github-dark-default',
-    }).then(setHtml);
-  }, [code, lang]);
+export async function CodeBlock({ code, lang = 'typescript' }: CodeBlockProps) {
+  const resolvedLang = LANGUAGE_ALIASES[lang] ?? lang;
 
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const html = await codeToHtml(code, {
+    lang: resolvedLang,
+    theme: 'github-dark-default',
+  });
 
   return (
     <div className="code-block group relative">
@@ -37,24 +33,9 @@ export function CodeBlock({ code, lang = 'typescript' }: CodeBlockProps) {
               <div className="h-3 w-3 rounded-full bg-[oklch(0.75_0.15_85)]" />
               <div className="h-3 w-3 rounded-full bg-[oklch(0.7_0.18_145)]" />
             </div>
-            <span className="ml-2 font-mono text-xs text-muted-foreground">{lang}</span>
+            <span className="ml-2 font-mono text-xs text-muted-foreground">{resolvedLang}</span>
           </div>
-          <button
-            onClick={handleCopy}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
-          >
-            {copied ? (
-              <>
-                <Check className="h-3.5 w-3.5 text-[oklch(0.7_0.18_145)]" />
-                <span>Copied</span>
-              </>
-            ) : (
-              <>
-                <Copy className="h-3.5 w-3.5" />
-                <span>Copy</span>
-              </>
-            )}
-          </button>
+          <CopyCodeButton code={code} />
         </div>
         <div
           className="overflow-x-auto p-4 text-sm leading-relaxed [&_pre]:!bg-transparent [&_code]:!bg-transparent"

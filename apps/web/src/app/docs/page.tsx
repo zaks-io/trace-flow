@@ -1,45 +1,10 @@
 import Link from 'next/link';
-import { Terminal, ExternalLink, Gauge, KeyRound, Layers } from 'lucide-react';
-
-const GUIDES = [
-  {
-    title: 'Quick Start',
-    description:
-      'Get full LLM observability in minutes. See user events, API calls, and LLM requests in one unified trace.',
-    href: '/docs/quick-start',
-    tag: 'Start Here',
-  },
-  {
-    title: 'SDK Reference',
-    description:
-      'Provider-specific examples for OpenAI, Anthropic, OpenRouter, and Groq with Vercel AI SDK and native SDKs.',
-    href: '/docs/sdk-reference',
-    tag: 'Reference',
-  },
-  {
-    title: 'OpenTelemetry',
-    description:
-      'Advanced setup for custom spans, events, and attributes. Full control over your trace hierarchy.',
-    href: '/docs/opentelemetry',
-    tag: 'Advanced',
-  },
-  {
-    title: 'AI Agents',
-    description:
-      'Bootstrap Claude Code, Cursor, or any AI assistant with Trace Flow knowledge. Copy-paste ready.',
-    href: '/docs/agents',
-    tag: 'Agents',
-  },
-  {
-    title: 'MCP Server',
-    description:
-      'Give AI agents direct access to your trace data. Query traces, analyze costs, and debug issues.',
-    href: '/docs/mcp',
-    tag: 'MCP',
-  },
-];
+import { Terminal, ExternalLink, Gauge, KeyRound, Layers, FileCode } from 'lucide-react';
+import { getDocs, getDocPath } from '@/lib/docs';
 
 export default function DocsIndexPage() {
+  const guides = getDocs();
+
   return (
     <>
       {/* Hero */}
@@ -63,8 +28,8 @@ export default function DocsIndexPage() {
           Integration Guides
         </h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          {GUIDES.map((card) => (
-            <Link key={card.href} href={card.href} className="group">
+          {guides.map((card) => (
+            <Link key={card.slug} href={getDocPath(card.slug)} className="group">
               <div className="relative flex h-full flex-col rounded-xl border border-border/50 bg-card/50 p-6 transition-all duration-200 hover:border-primary/30 hover:bg-card">
                 <div className="absolute -inset-px rounded-xl bg-gradient-to-b from-primary/10 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                 <div className="relative flex flex-1 flex-col">
@@ -130,6 +95,13 @@ export default function DocsIndexPage() {
             >
               <Layers className="h-4 w-4 text-primary" />
               <span>Traces</span>
+            </Link>
+            <Link
+              href="/llms.txt"
+              className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-background px-4 py-2 text-sm text-foreground transition-colors hover:border-primary/30 hover:bg-primary/5"
+            >
+              <FileCode className="h-4 w-4 text-primary" />
+              <span>llms.txt</span>
             </Link>
           </div>
         </div>
