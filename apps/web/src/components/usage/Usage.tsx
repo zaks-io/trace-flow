@@ -178,6 +178,8 @@ export default function Usage({
 
   const hasError =
     summaryQuery.error ??
+    prevSummaryQuery.error ??
+    requestStatsQuery.error ??
     timeseriesQuery.error ??
     modelsQuery.error ??
     providersQuery.error ??

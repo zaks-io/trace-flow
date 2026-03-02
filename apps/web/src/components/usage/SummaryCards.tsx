@@ -22,7 +22,7 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
   const costDelta = computeDelta(summary?.total_cost_usd, prevSummary?.total_cost_usd);
 
   const errorCount = summary?.error_count ?? 0;
-  const successCount = summary ? summary.request_count - errorCount : 0;
+  const successCount = summary ? Math.max(0, summary.request_count - errorCount) : 0;
   const errorRate =
     summary && summary.request_count > 0 ? (errorCount / summary.request_count) * 100 : 0;
 
