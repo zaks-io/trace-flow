@@ -1,6 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
+import { _clearAll } from '../cache';
 import type { Context } from 'hono';
+
+beforeEach(async () => {
+  await _clearAll();
+});
 
 function createMockContext(
   headers: Record<string, string>,
@@ -83,12 +88,12 @@ describe('validateApiKey', () => {
       const body = await result.json();
       expect(body).toEqual({
         error: 'Invalid API key',
-        message: 'The provided API key is not valid',
+        message: 'The provided API key is not valid or has expired',
       });
     }
   });
 
-  it('should return error when API key is expired', async () => {
+  it('should return error when API key is already expired', async () => {
     const expiredKeyData = JSON.stringify({
       expiresAt: Date.now() - 10000,
       createdAt: Date.now() - 100000,
@@ -104,15 +109,48 @@ describe('validateApiKey', () => {
 
     const result = await validateApiKey(context);
 
+    // Already-expired keys are not cached — fetcher resolves to null
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
       expect(result.status).toBe(401);
       const body = await result.json();
       expect(body).toEqual({
+        error: 'Invalid API key',
+        message: 'The provided API key is not valid or has expired',
+      });
+    }
+  });
+
+  it('should evict and reject key that expires after being cached', async () => {
+    const expiresAt = Date.now() + 100;
+    const keyData = JSON.stringify({
+      expiresAt,
+      createdAt: Date.now(),
+      orgId: 'org123',
+    });
+
+    const context = createMockContext({ 'x-trace-flow-api-key': 'about-to-expire' }, keyData);
+
+    // First call: key is valid, gets cached
+    const first = await validateApiKey(context);
+    expect(isAuthError(first)).toBe(false);
+
+    // Simulate time passing past expiry
+    vi.spyOn(Date, 'now').mockReturnValue(expiresAt + 1);
+
+    // Second call: cache returns the key, but re-check detects expiry → evict + reject
+    const second = await validateApiKey(context);
+    expect(isAuthError(second)).toBe(true);
+    if (isAuthError(second)) {
+      expect(second.status).toBe(401);
+      const body = await second.json();
+      expect(body).toEqual({
         error: 'Expired API key',
         message: 'The provided API key has expired',
       });
     }
+
+    vi.restoreAllMocks();
   });
 
   it('should return error when API key data is corrupted', async () => {
@@ -125,13 +163,14 @@ describe('validateApiKey', () => {
 
     const result = await validateApiKey(context);
 
+    // Corrupted keys are not cached — fetcher catches parse error and resolves to null
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
       expect(result.status).toBe(401);
       const body = await result.json();
       expect(body).toEqual({
-        error: 'Invalid API key data',
-        message: 'The API key data is corrupted',
+        error: 'Invalid API key',
+        message: 'The provided API key is not valid or has expired',
       });
     }
   });
@@ -201,15 +240,16 @@ describe('checkBillingStatus', () => {
     expect(result).toEqual({ status: 'not_found' });
   });
 
-  it('returns error when KV data is not valid JSON', async () => {
+  it('returns not_found when KV data is not valid JSON', async () => {
     const env = { API_KEYS: createMockKV('not json') };
     const result = await checkBillingStatus(env, 'org-1');
-    expect(result).toEqual({ status: 'error' });
+    // Corrupt data resolves to not_found inside the cache fetcher (not cached as error)
+    expect(result).toEqual({ status: 'not_found' });
   });
 
-  it('returns error for unrecognized status', async () => {
+  it('returns not_found for unrecognized status', async () => {
     const env = { API_KEYS: createMockKV(JSON.stringify({ status: 'unknown_status' })) };
     const result = await checkBillingStatus(env, 'org-1');
-    expect(result).toEqual({ status: 'error' });
+    expect(result).toEqual({ status: 'not_found' });
   });
 });

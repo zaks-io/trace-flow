@@ -74,7 +74,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(401);
       const body = await res.json();
-      expect(body).toHaveProperty('error', 'Expired API key');
+      expect(body).toHaveProperty('error', 'Invalid API key');
     });
   });
 
@@ -674,7 +674,8 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get('X-Trace-Flow-Recording')).toBe('false');
-      expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('internal_error');
+      // Corrupt billing data resolves to not_found in the cache fetcher
+      expect(res.headers.get('X-Trace-Flow-Recording-Reason')).toBe('no_subscription');
 
       await waitForAsyncOps();
     });

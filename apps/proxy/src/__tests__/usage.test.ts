@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
-import { checkUsage } from '../usage';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { checkUsage, _clearUsageCache } from '../usage';
+import { _clearAll } from '../cache';
+
+beforeEach(async () => {
+  await _clearAll();
+  _clearUsageCache();
+});
 
 function createMockEnv(
   kvData: string | null,
@@ -136,5 +142,51 @@ describe('checkUsage', () => {
     };
     const result = await checkUsage(env, 'org-1', 1);
     expect(result).toEqual({ status: 'error', reason: 'invalid_subscription_config' });
+  });
+
+  it('caches exceeded result — second call skips DO', async () => {
+    const periodEnd = Date.now() + 86400000;
+    const kvData = JSON.stringify({ tier: 'hobby', monthlyUnits: 100, addonUnits: 0 });
+    const { env, mockFetch } = createMockEnv(kvData, { allowed: false, periodEnd });
+
+    await checkUsage(env, 'org-cache-exceeded', 1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+
+    // Second call should return cached exceeded without hitting DO
+    const result = await checkUsage(env, 'org-cache-exceeded', 1);
+    expect(result).toEqual({ status: 'exceeded', tier: 'hobby', periodEnd });
+    expect(mockFetch).toHaveBeenCalledOnce(); // Still 1 — DO was not called again
+  });
+
+  it('does NOT cache error results — second call retries DO', async () => {
+    const kvData = JSON.stringify({ tier: 'pro', monthlyUnits: 10000, addonUnits: 0 });
+    const mockStub = { fetch: vi.fn().mockRejectedValue(new Error('DO unreachable')) };
+    const env = {
+      API_KEYS: { get: vi.fn().mockResolvedValue(kvData) } as unknown as KVNamespace,
+      USAGE_TRACKER: {
+        idFromName: vi.fn().mockReturnValue('do-id'),
+        get: vi.fn().mockReturnValue(mockStub),
+      } as unknown as DurableObjectNamespace,
+    };
+
+    const first = await checkUsage(env, 'org-cache-error', 1);
+    expect(first).toEqual({ status: 'error', reason: 'do_unreachable' });
+    expect(mockStub.fetch).toHaveBeenCalledOnce();
+
+    // Second call should retry the DO, not return cached error
+    await checkUsage(env, 'org-cache-error', 1);
+    expect(mockStub.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT cache allowed results — every call hits DO', async () => {
+    const kvData = JSON.stringify({ tier: 'pro', monthlyUnits: 10000, addonUnits: 0 });
+    const { env, mockFetch } = createMockEnv(kvData, { allowed: true });
+
+    await checkUsage(env, 'org-cache-allowed', 1);
+    await checkUsage(env, 'org-cache-allowed', 1);
+    await checkUsage(env, 'org-cache-allowed', 1);
+
+    // DO must be called every time to increment the counter
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 });
