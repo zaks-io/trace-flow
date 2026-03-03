@@ -1,6 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
+import { _clearAll } from '../cache';
 import type { Context } from 'hono';
+
+beforeEach(async () => {
+  await _clearAll();
+});
 
 function createMockContext(
   headers: Record<string, string>,

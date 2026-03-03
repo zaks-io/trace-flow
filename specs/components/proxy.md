@@ -102,9 +102,16 @@ In addition to LLM proxying, the worker exposes a `/v1/traces` endpoint for dire
 | `STORAGE`       | R2 Bucket    | Stores request/response bodies         |
 | `API_KEYS`      | KV Namespace | Validates API keys                     |
 
+## Caching
+
+API key validation and billing status KV reads use a two-layer cache (module-scope Map + Cache API) to avoid per-request KV billing. See [Proxy KV Caching](../decisions/proxy-kv-caching.md) for the full cost analysis and architecture.
+
 ## Key Files
 
 - `apps/proxy/src/index.ts` - Main Hono application and request handler
+- `apps/proxy/src/cache.ts` - Two-layer cache (L1 module-scope + L2 Cache API)
+- `apps/proxy/src/auth.ts` - API key validation and billing status checks
+- `apps/proxy/src/usage.ts` - Durable Object usage quota checks
 - `apps/proxy/src/providers.ts` - Provider routing configuration
 - `apps/proxy/src/streaming/capture.ts` - Stream duplication and capture logic
 - `apps/proxy/src/streaming/sse.ts` - SSE event parsing

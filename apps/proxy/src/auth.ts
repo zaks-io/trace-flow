@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import type { SubscriptionKVData } from '@trace-flow/types';
+import { getCached } from './cache';
 
 export interface ApiKeyData {
   expiresAt: number;
@@ -27,7 +28,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
     );
   }
 
-  const keyData = await c.env.API_KEYS.get(apiKey);
+  const keyData = await getCached(`apikey:${apiKey}`, () => c.env.API_KEYS.get(apiKey));
 
   if (!keyData) {
     return c.json(
@@ -77,7 +78,7 @@ export async function checkBillingStatus(
   env: { API_KEYS: KVNamespace },
   orgId: string,
 ): Promise<BillingCheckResult> {
-  const subRaw = await env.API_KEYS.get(`sub:${orgId}`);
+  const subRaw = await getCached(`sub:${orgId}`, () => env.API_KEYS.get(`sub:${orgId}`));
   if (!subRaw) {
     return { status: 'not_found' };
   }

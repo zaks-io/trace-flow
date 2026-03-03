@@ -49,6 +49,7 @@ Why we chose specific technologies and patterns.
 - [OpenTelemetry Conventions](decisions/otel-semantic-conventions.md) - GenAI semantic conventions
 - [JWT Tinybird Auth](decisions/jwt-tinybird-auth.md) - Frontend-direct queries with scoped tokens
 - [Next.js + OpenNext Frontend](decisions/nextjs-opennext-frontend.md) - Next.js on Cloudflare Workers
+- [Proxy KV Caching](decisions/proxy-kv-caching.md) - Two-layer cache for KV/DO cost control
 
 ### Components
 
