@@ -240,15 +240,16 @@ describe('checkBillingStatus', () => {
     expect(result).toEqual({ status: 'not_found' });
   });
 
-  it('returns error when KV data is not valid JSON', async () => {
+  it('returns not_found when KV data is not valid JSON', async () => {
     const env = { API_KEYS: createMockKV('not json') };
     const result = await checkBillingStatus(env, 'org-1');
-    expect(result).toEqual({ status: 'error' });
+    // Corrupt data resolves to not_found inside the cache fetcher (not cached as error)
+    expect(result).toEqual({ status: 'not_found' });
   });
 
-  it('returns error for unrecognized status', async () => {
+  it('returns not_found for unrecognized status', async () => {
     const env = { API_KEYS: createMockKV(JSON.stringify({ status: 'unknown_status' })) };
     const result = await checkBillingStatus(env, 'org-1');
-    expect(result).toEqual({ status: 'error' });
+    expect(result).toEqual({ status: 'not_found' });
   });
 });

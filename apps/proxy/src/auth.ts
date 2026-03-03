@@ -81,28 +81,32 @@ export async function checkBillingStatus(
   env: { API_KEYS: KVNamespace },
   orgId: string,
 ): Promise<BillingCheckResult> {
-  const subRaw = await getCached(`sub:${orgId}`, () => env.API_KEYS.get(`sub:${orgId}`));
-  if (!subRaw) {
+  // Cache the parsed BillingCheckResult (not the raw JSON string).
+  // Corrupt or unrecognized data resolves to null so it isn't cached as valid.
+  return getCached<BillingCheckResult>(`billing:${orgId}`, async () => {
+    const subRaw = await env.API_KEYS.get(`sub:${orgId}`);
+    if (!subRaw) {
+      return { status: 'not_found' };
+    }
+
+    let sub: SubscriptionKVData;
+    try {
+      sub = JSON.parse(subRaw) as SubscriptionKVData;
+    } catch {
+      console.error('Failed to parse subscription KV data', { orgId });
+      return { status: 'not_found' };
+    }
+
+    if (
+      sub.status === 'active' ||
+      sub.status === 'grace' ||
+      sub.status === 'suspended' ||
+      sub.status === 'canceled'
+    ) {
+      return { status: sub.status, subscription: sub };
+    }
+
+    console.error('Unrecognized billing status in KV', { orgId, status: sub.status });
     return { status: 'not_found' };
-  }
-
-  let sub: SubscriptionKVData;
-  try {
-    sub = JSON.parse(subRaw) as SubscriptionKVData;
-  } catch {
-    console.error('Failed to parse subscription KV data', { orgId });
-    return { status: 'error' };
-  }
-
-  if (
-    sub.status === 'active' ||
-    sub.status === 'grace' ||
-    sub.status === 'suspended' ||
-    sub.status === 'canceled'
-  ) {
-    return { status: sub.status, subscription: sub };
-  }
-
-  console.error('Unrecognized billing status in KV', { orgId, status: sub.status });
-  return { status: 'error' };
+  });
 }
