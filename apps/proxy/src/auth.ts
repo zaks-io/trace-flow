@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { SubscriptionKVData } from '@trace-flow/types';
-import { getCached } from './cache';
+import { getCached, invalidate } from './cache';
 
 export interface ApiKeyData {
   expiresAt: number;
@@ -28,41 +28,44 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
     );
   }
 
-  const keyData = await getCached(`apikey:${apiKey}`, () => c.env.API_KEYS.get(apiKey));
+  // Cache the parsed ApiKeyData (not the raw JSON string) to skip JSON.parse on hits.
+  // Already-expired or corrupt keys resolve to null so they aren't cached as valid data.
+  const parsed = await getCached<ApiKeyData | null>(`apikey:${apiKey}`, async () => {
+    const raw = await c.env.API_KEYS.get(apiKey);
+    if (!raw) return null;
+    try {
+      const data = JSON.parse(raw) as ApiKeyData;
+      // Don't cache already-expired keys — return null so the cache holds "not found"
+      if (data.expiresAt < Date.now()) return null;
+      return data;
+    } catch {
+      return null;
+    }
+  });
 
-  if (!keyData) {
+  if (!parsed) {
     return c.json(
       {
         error: 'Invalid API key',
-        message: 'The provided API key is not valid',
+        message: 'The provided API key is not valid or has expired',
       },
       401,
     );
   }
 
-  try {
-    const parsed = JSON.parse(keyData) as ApiKeyData;
-
-    if (parsed.expiresAt < Date.now()) {
-      return c.json(
-        {
-          error: 'Expired API key',
-          message: 'The provided API key has expired',
-        },
-        401,
-      );
-    }
-
-    return parsed;
-  } catch {
+  // Re-check expiry on cache hits (key may have expired since it was cached)
+  if (parsed.expiresAt < Date.now()) {
+    await invalidate(`apikey:${apiKey}`);
     return c.json(
       {
-        error: 'Invalid API key data',
-        message: 'The API key data is corrupted',
+        error: 'Expired API key',
+        message: 'The provided API key has expired',
       },
       401,
     );
   }
+
+  return parsed;
 }
 
 export function isAuthError(result: Response | ApiKeyData): result is Response {

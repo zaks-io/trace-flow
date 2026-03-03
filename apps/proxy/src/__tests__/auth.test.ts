@@ -88,12 +88,12 @@ describe('validateApiKey', () => {
       const body = await result.json();
       expect(body).toEqual({
         error: 'Invalid API key',
-        message: 'The provided API key is not valid',
+        message: 'The provided API key is not valid or has expired',
       });
     }
   });
 
-  it('should return error when API key is expired', async () => {
+  it('should return error when API key is already expired', async () => {
     const expiredKeyData = JSON.stringify({
       expiresAt: Date.now() - 10000,
       createdAt: Date.now() - 100000,
@@ -109,15 +109,48 @@ describe('validateApiKey', () => {
 
     const result = await validateApiKey(context);
 
+    // Already-expired keys are not cached — fetcher resolves to null
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
       expect(result.status).toBe(401);
       const body = await result.json();
       expect(body).toEqual({
+        error: 'Invalid API key',
+        message: 'The provided API key is not valid or has expired',
+      });
+    }
+  });
+
+  it('should evict and reject key that expires after being cached', async () => {
+    const expiresAt = Date.now() + 100;
+    const keyData = JSON.stringify({
+      expiresAt,
+      createdAt: Date.now(),
+      orgId: 'org123',
+    });
+
+    const context = createMockContext({ 'x-trace-flow-api-key': 'about-to-expire' }, keyData);
+
+    // First call: key is valid, gets cached
+    const first = await validateApiKey(context);
+    expect(isAuthError(first)).toBe(false);
+
+    // Simulate time passing past expiry
+    vi.spyOn(Date, 'now').mockReturnValue(expiresAt + 1);
+
+    // Second call: cache returns the key, but re-check detects expiry → evict + reject
+    const second = await validateApiKey(context);
+    expect(isAuthError(second)).toBe(true);
+    if (isAuthError(second)) {
+      expect(second.status).toBe(401);
+      const body = await second.json();
+      expect(body).toEqual({
         error: 'Expired API key',
         message: 'The provided API key has expired',
       });
     }
+
+    vi.restoreAllMocks();
   });
 
   it('should return error when API key data is corrupted', async () => {
@@ -130,13 +163,14 @@ describe('validateApiKey', () => {
 
     const result = await validateApiKey(context);
 
+    // Corrupted keys are not cached — fetcher catches parse error and resolves to null
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
       expect(result.status).toBe(401);
       const body = await result.json();
       expect(body).toEqual({
-        error: 'Invalid API key data',
-        message: 'The API key data is corrupted',
+        error: 'Invalid API key',
+        message: 'The provided API key is not valid or has expired',
       });
     }
   });

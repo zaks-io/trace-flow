@@ -1,5 +1,5 @@
 const DEFAULT_TTL_MS = 60_000;
-const MAX_L1_ENTRIES = 1_000;
+export const MAX_L1_ENTRIES = 1_000;
 const CACHE_URL_PREFIX = 'https://cache.internal/';
 
 interface L1Entry<T> {

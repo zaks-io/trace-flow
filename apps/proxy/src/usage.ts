@@ -79,6 +79,7 @@ export async function checkUsage(
 }
 
 const USAGE_CACHE_TTL_MS = 60_000;
+const MAX_USAGE_CACHE_ENTRIES = 1_000;
 
 // Module-scope cache for exceeded state only.
 // Not using the two-layer cache here because DO results contain org-specific
@@ -90,10 +91,27 @@ function cacheUsageResult(orgId: string, result: UsageCheckResult): void {
   // "allowed" must never be cached (DO call increments the counter).
   // "error" must never be cached (transient — DO cold start, network blip).
   if (result.status !== 'exceeded') return;
+
+  // Cap size: evict expired first, then FIFO oldest entries
+  if (usageCache.size >= MAX_USAGE_CACHE_ENTRIES) {
+    const now = Date.now();
+    for (const [k, v] of usageCache) {
+      if (v.expiry <= now) usageCache.delete(k);
+    }
+    if (usageCache.size >= MAX_USAGE_CACHE_ENTRIES) {
+      const first = usageCache.keys().next();
+      if (!first.done) usageCache.delete(first.value);
+    }
+  }
+
   usageCache.set(orgId, { result, expiry: Date.now() + USAGE_CACHE_TTL_MS });
 }
 
 /** Visible for testing */
-export function _clearUsageCache(): void {
-  usageCache.clear();
+export function _clearUsageCache(orgId?: string): void {
+  if (orgId) {
+    usageCache.delete(orgId);
+  } else {
+    usageCache.clear();
+  }
 }
