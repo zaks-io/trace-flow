@@ -176,8 +176,8 @@ export const extendRetention = internalAction({
       return { updated: false, reason: 'No valid API keys found for organization' };
     }
 
-    // Format API keys for SQL IN clause
-    const apiKeysInClause = validKeys.map((k: string) => `'${k.replace(/'/g, "''")}'`).join(',');
+    // Format API keys for SQL IN clause (safe: UUID_PATTERN guarantees only hex + dashes)
+    const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
 
     // Datasources to update
     const datasources = ['otel_traces', 'otel_traces_genai', 'llm_requests'];

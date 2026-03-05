@@ -18,6 +18,9 @@ function l1Get<T>(key: string): T | undefined {
     l1.delete(key);
     return undefined;
   }
+  // LRU touch: move to end of Map iteration order
+  l1.delete(key);
+  l1.set(key, entry);
   return entry.value;
 }
 
@@ -28,7 +31,7 @@ function l1Set<T>(key: string, value: T, ttlMs: number): void {
     for (const [k, v] of l1) {
       if (v.expiry <= now) l1.delete(k);
     }
-    // Still over limit? Drop oldest entries
+    // Still over limit? Drop least recently used entries
     if (l1.size >= MAX_L1_ENTRIES) {
       const overflow = l1.size - MAX_L1_ENTRIES + 1;
       const keys = l1.keys();
@@ -74,7 +77,7 @@ async function l2Set<T>(key: string, value: T, ttlSeconds: number): Promise<void
  * L1 is instant and free. L2 is free and survives isolate recycling.
  * Only the fetcher call triggers a billed operation (KV read, DO request, etc).
  */
-export async function getCached<T>(
+export async function getCached<T extends object | null>(
   key: string,
   fetcher: () => Promise<T>,
   ttlMs: number = DEFAULT_TTL_MS,
@@ -109,13 +112,13 @@ export async function invalidate(key: string): Promise<void> {
   }
 }
 
-/** Visible for testing — clears both cache layers */
+/** Visible for testing — clears L1 and best-effort clears L2 for keys known to L1 */
 export async function _clearAll(): Promise<void> {
-  const keys = [...l1.keys()];
+  const allKeys = [...l1.keys()];
   l1.clear();
   try {
     const cache = caches.default;
-    await Promise.all(keys.map((k) => cache.delete(new Request(CACHE_URL_PREFIX + k))));
+    await Promise.all(allKeys.map((k) => cache.delete(new Request(CACHE_URL_PREFIX + k))));
   } catch {
     // Non-fatal in test teardown
   }

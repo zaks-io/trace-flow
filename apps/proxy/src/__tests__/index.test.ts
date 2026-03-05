@@ -113,7 +113,7 @@ describe('Proxy Worker Integration', () => {
   });
 
   describe('CORS', () => {
-    it('should include CORS headers', async () => {
+    it('should not include CORS headers (server-to-server only)', async () => {
       const res = await SELF.fetch('http://localhost/', {
         method: 'OPTIONS',
         headers: {
@@ -121,7 +121,7 @@ describe('Proxy Worker Integration', () => {
         },
       });
 
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
     });
   });
 

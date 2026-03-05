@@ -191,8 +191,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   if (
     billing.status === 'suspended' ||
     billing.status === 'canceled' ||
-    billing.status === 'not_found' ||
-    billing.status === 'error'
+    billing.status === 'not_found'
   ) {
     const response: OTLPExportTraceServiceResponse = {
       partialSuccess: {
@@ -202,9 +201,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
             ? 'Account suspended'
             : billing.status === 'canceled'
               ? 'Account canceled'
-              : billing.status === 'not_found'
-                ? 'Subscription not found'
-                : 'Internal error',
+              : 'Subscription not found',
       },
     };
     c.header('X-Trace-Flow-Recording', 'false');

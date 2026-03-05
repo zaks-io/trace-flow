@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import type { SubscriptionKVData } from '@trace-flow/types';
+import { sha256Hex } from '@trace-flow/utils';
 import { getCached, invalidate } from './cache';
 
 export interface ApiKeyData {
@@ -30,7 +31,8 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
 
   // Cache the parsed ApiKeyData (not the raw JSON string) to skip JSON.parse on hits.
   // Already-expired or corrupt keys resolve to null so they aren't cached as valid data.
-  const parsed = await getCached<ApiKeyData | null>(`apikey:${apiKey}`, async () => {
+  const cacheKey = `apikey:${await sha256Hex(apiKey)}`;
+  const parsed = await getCached<ApiKeyData | null>(cacheKey, async () => {
     const raw = await c.env.API_KEYS.get(apiKey);
     if (!raw) return null;
     try {
@@ -55,7 +57,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
 
   // Re-check expiry on cache hits (key may have expired since it was cached)
   if (parsed.expiresAt < Date.now()) {
-    await invalidate(`apikey:${apiKey}`);
+    await invalidate(cacheKey);
     return c.json(
       {
         error: 'Expired API key',
@@ -73,7 +75,7 @@ export function isAuthError(result: Response | ApiKeyData): result is Response {
 }
 
 export interface BillingCheckResult {
-  status: 'active' | 'grace' | 'suspended' | 'canceled' | 'not_found' | 'error';
+  status: 'active' | 'grace' | 'suspended' | 'canceled' | 'not_found';
   subscription?: SubscriptionKVData;
 }
 

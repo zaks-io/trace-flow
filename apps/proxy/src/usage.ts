@@ -1,6 +1,4 @@
 import type { SubscriptionKVData, SubscriptionTier } from '@trace-flow/types';
-import { getCached } from './cache';
-
 interface UsageEnv {
   API_KEYS: KVNamespace;
   USAGE_TRACKER: DurableObjectNamespace;
@@ -17,7 +15,7 @@ export async function checkUsage(
   count: number,
   prefetchedSubscription?: SubscriptionKVData,
 ): Promise<UsageCheckResult> {
-  // Check cache for terminal states (exceeded/error) before hitting the DO.
+  // Check cache for exceeded state before hitting the DO.
   // "allowed" is NEVER cached — the DO call both checks AND increments the counter.
   const cached = usageCache.get(orgId);
   if (cached && cached.expiry > Date.now()) {
@@ -30,7 +28,7 @@ export async function checkUsage(
   if (prefetchedSubscription) {
     subscriptionConfig = prefetchedSubscription;
   } else {
-    const subConfigRaw = await getCached(`sub:${orgId}`, () => env.API_KEYS.get(`sub:${orgId}`));
+    const subConfigRaw = await env.API_KEYS.get(`sub:${orgId}`);
     if (!subConfigRaw) {
       return { status: 'error', reason: 'no_subscription_config' };
     }
@@ -104,7 +102,10 @@ function cacheUsageResult(orgId: string, result: UsageCheckResult): void {
     }
   }
 
-  usageCache.set(orgId, { result, expiry: Date.now() + USAGE_CACHE_TTL_MS });
+  const now = Date.now();
+  const ttl = Math.max(0, Math.min(USAGE_CACHE_TTL_MS, result.periodEnd - now));
+  if (ttl === 0) return;
+  usageCache.set(orgId, { result, expiry: now + ttl });
 }
 
 /** Visible for testing */

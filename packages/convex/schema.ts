@@ -113,12 +113,13 @@ export default defineSchema({
     .index('by_user_id', ['userId']),
 
   mcpRefreshTokens: defineTable({
-    tokenId: v.string(),
+    tokenId: v.optional(v.string()),
+    hashedTokenId: v.string(),
     userId: v.id('users'),
     auth0RefreshToken: v.string(),
     expiresAt: v.number(),
   })
-    .index('by_token_id', ['tokenId'])
+    .index('by_token_id', ['hashedTokenId'])
     .index('by_user_id', ['userId']),
 
   mcpClients: defineTable({

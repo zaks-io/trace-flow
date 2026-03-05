@@ -118,10 +118,10 @@ export const getInviteByToken = query({
     if (!invite) return null;
 
     if (invite.status === 'pending' && invite.expiresAt < Date.now()) {
-      return { ...invite, status: 'expired' as const };
+      return { status: 'expired' as const };
     }
 
-    return invite;
+    return { status: invite.status };
   },
 });
 

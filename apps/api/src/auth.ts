@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 
 interface JWTPayload {
+  sub: string;
   iss: string;
   aud: string | string[];
   exp: number;
@@ -22,9 +23,10 @@ const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
  *
  * Returns null on success, or an error Response with appropriate status code.
  */
-export async function validateAuth0JWT<E extends { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string }>(
-  c: Context<{ Bindings: E }>,
-): Promise<Response | null> {
+export async function validateAuth0JWT<
+  E extends { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string },
+  V extends { userSub: string },
+>(c: Context<{ Bindings: E; Variables: V }>): Promise<Response | null> {
   const authHeader = c.req.header('Authorization');
 
   if (!authHeader) {
@@ -77,7 +79,8 @@ export async function validateAuth0JWT<E extends { AUTH0_DOMAIN: string; AUTH0_C
       audience: clientId,
     });
 
-    const roles = (payload as JWTPayload)['neuron/roles'] ?? [];
+    const jwtPayload = payload as JWTPayload;
+    const roles = jwtPayload['neuron/roles'] ?? [];
 
     if (!roles.includes('Trace Flow')) {
       return c.json(
@@ -88,6 +91,8 @@ export async function validateAuth0JWT<E extends { AUTH0_DOMAIN: string; AUTH0_C
         403,
       );
     }
+
+    c.set('userSub', jwtPayload.sub);
 
     return null;
   } catch (error) {

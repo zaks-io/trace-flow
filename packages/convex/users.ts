@@ -3,9 +3,27 @@ import { v } from 'convex/values';
 import { type QueryCtx, type MutationCtx } from './_generated/server';
 import { type Doc, type Id } from './_generated/dataModel';
 import { TIER_CONFIG } from '@trace-flow/types';
+import { internal } from './_generated/api';
 import { scheduleKVSync } from './subscriptions';
 
 type AuthContext = QueryCtx | MutationCtx;
+
+/**
+ * Extracts the Auth0 `sub` claim from Convex's tokenIdentifier.
+ * tokenIdentifier format: "<issuer>|<subject>" e.g. "https://domain.auth0.com/|auth0|12345"
+ * Auth0 sub format: "auth0|12345"
+ */
+export function extractSub(tokenIdentifier: string): string | null {
+  // Split on the issuer separator (URL ending with /|)
+  const idx = tokenIdentifier.indexOf('/|');
+  if (idx === -1) {
+    console.warn('extractSub: unexpected tokenIdentifier format', {
+      tokenIdentifier: `${tokenIdentifier.slice(0, 20)}...`,
+    });
+    return null;
+  }
+  return tokenIdentifier.slice(idx + 2);
+}
 
 interface UserInfo {
   tokenIdentifier: string;
@@ -22,7 +40,12 @@ function hasUserDataChanged(existingUser: Doc<'users'>, newUserInfo: UserInfo): 
   );
 }
 
-async function ensureOrg(ctx: MutationCtx, userId: Id<'users'>, name?: string) {
+async function ensureOrg(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  name?: string,
+  tokenIdentifier?: string,
+) {
   const orgId = await ctx.db.insert('organizations', {
     name: `${name ? `${name}'s Org` : 'My Organization'}`,
     ownerId: userId,
@@ -35,7 +58,31 @@ async function ensureOrg(ctx: MutationCtx, userId: Id<'users'>, name?: string) {
     status: 'active',
     joinedAt: Date.now(),
   });
+  if (tokenIdentifier) {
+    await scheduleUserOrgSync(ctx, tokenIdentifier, orgId);
+  }
   return orgId;
+}
+
+async function scheduleUserOrgSync(
+  ctx: MutationCtx,
+  tokenIdentifier: string,
+  orgId: Id<'organizations'>,
+) {
+  const sub = extractSub(tokenIdentifier);
+  if (sub) {
+    await ctx.scheduler.runAfter(0, internal.cloudflare.syncUserOrgToKV, {
+      sub,
+      orgId,
+    });
+  }
+}
+
+async function scheduleUserOrgRemoval(ctx: MutationCtx, tokenIdentifier: string) {
+  const sub = extractSub(tokenIdentifier);
+  if (sub) {
+    await ctx.scheduler.runAfter(0, internal.cloudflare.deleteUserOrgFromKV, { sub });
+  }
 }
 
 async function createHobbySubscription(ctx: MutationCtx, orgId: Id<'organizations'>) {
@@ -127,6 +174,46 @@ export async function requireAdmin(ctx: AuthContext): Promise<Doc<'users'>> {
   return user;
 }
 
+export const removeMember = mutation({
+  args: { memberId: v.id('organizationMembers') },
+  handler: async (ctx, args) => {
+    const caller = await requireEnabledUser(ctx);
+    if (!caller.orgId) throw new Error('No organization');
+
+    // Verify caller is an active owner before revealing anything about the target
+    const callerMembership = await ctx.db
+      .query('organizationMembers')
+      .withIndex('by_user_id', (q) => q.eq('userId', caller._id))
+      .filter((q) => q.eq(q.field('orgId'), caller.orgId!))
+      .first();
+    if (callerMembership?.role !== 'owner' || callerMembership?.status !== 'active') {
+      throw new Error('Only the organization owner can remove members');
+    }
+
+    const membership = await ctx.db.get(args.memberId);
+    if (membership?.orgId !== caller.orgId) {
+      throw new Error('Member not found');
+    }
+    if (membership.role === 'owner') {
+      throw new Error('Cannot remove the organization owner');
+    }
+
+    await ctx.db.patch(args.memberId, {
+      status: 'removed',
+      removedAt: Date.now(),
+    });
+
+    // Clear the removed user's orgId and revoke their KV mapping
+    const removedUser = await ctx.db.get(membership.userId);
+    if (removedUser) {
+      await ctx.db.patch(removedUser._id, { orgId: undefined });
+      if (removedUser.tokenIdentifier) {
+        await scheduleUserOrgRemoval(ctx, removedUser.tokenIdentifier);
+      }
+    }
+  },
+});
+
 export const initializeUser = mutation({
   args: {},
   handler: async (ctx) => {
@@ -156,7 +243,7 @@ export const initializeUser = mutation({
         await ctx.db.patch(existingUser._id, userInfo);
       }
       if (!existingUser.orgId) {
-        await ensureOrg(ctx, existingUser._id, existingUser.name);
+        await ensureOrg(ctx, existingUser._id, existingUser.name, userInfo.tokenIdentifier);
       }
       // Enable user if they have an accepted invite and aren't enabled yet
       if (!existingUser.enabled && !existingUser.inviteId) {
@@ -183,6 +270,7 @@ export const initializeUser = mutation({
           }
 
           if (nextOrgId) {
+            await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, nextOrgId);
             const existingSub = await ctx.db
               .query('subscriptions')
               .withIndex('by_org_id', (q) => q.eq('orgId', nextOrgId))
@@ -212,8 +300,9 @@ export const initializeUser = mutation({
     if (acceptedInvite?.orgId) {
       await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
       await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+      await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, acceptedInvite.orgId);
     } else {
-      const orgId = await ensureOrg(ctx, userId, userInfo.name);
+      const orgId = await ensureOrg(ctx, userId, userInfo.name, userInfo.tokenIdentifier);
       if (acceptedInvite) {
         await createHobbySubscription(ctx, orgId);
       }
@@ -269,7 +358,8 @@ export const findOrCreateUser = internalMutation({
         });
       }
       const orgId =
-        existingUser.orgId ?? (await ensureOrg(ctx, existingUser._id, existingUser.name));
+        existingUser.orgId ??
+        (await ensureOrg(ctx, existingUser._id, existingUser.name, args.tokenIdentifier));
       const existingSub = await ctx.db
         .query('subscriptions')
         .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
@@ -288,7 +378,7 @@ export const findOrCreateUser = internalMutation({
       enabled: false,
     });
 
-    const orgId = await ensureOrg(ctx, userId, args.name);
+    const orgId = await ensureOrg(ctx, userId, args.name, args.tokenIdentifier);
     await createHobbySubscription(ctx, orgId);
 
     return userId;

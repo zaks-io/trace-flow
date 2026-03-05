@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { checkUsage, _clearUsageCache } from '../usage';
-import { _clearAll } from '../cache';
 
-beforeEach(async () => {
-  await _clearAll();
+beforeEach(() => {
   _clearUsageCache();
 });
 

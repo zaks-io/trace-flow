@@ -14,6 +14,10 @@ interface Env {
   CF_VERSION_METADATA?: { id: string };
 }
 
+interface Variables {
+  userSub: string;
+}
+
 const PRODUCTION_ORIGINS = [
   'https://trace-flow.dev',
   'https://trace-flow-web-dev.isaac-a46.workers.dev',
@@ -21,7 +25,7 @@ const PRODUCTION_ORIGINS = [
 
 const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use('*', async (c, next) => {
   const isDev = c.env.SENTRY_ENVIRONMENT !== 'production';
@@ -64,17 +68,30 @@ app.get('/bodies/:requestId/:type', async (c) => {
     return c.json({ error: `${type} body not found` }, 404);
   }
 
-  // Enforce retention based on current subscription tier
+  // Verify the requesting user belongs to the org that owns this object
   const orgId = object.customMetadata?.orgId;
-  if (orgId) {
-    const subData = await c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json');
-    const tier = subData?.tier ?? 'hobby';
-    const retentionMs = RETENTION_DAYS[tier] * 86_400_000;
-    const expiresAt = object.uploaded.getTime() + retentionMs;
+  if (!orgId) {
+    // Legacy objects without orgId metadata are inaccessible
+    return c.json({ error: 'Forbidden' }, 403);
+  }
 
-    if (Date.now() > expiresAt) {
-      return c.json({ error: 'Body expired under current retention policy' }, 403);
-    }
+  const userSub = c.get('userSub');
+  const userOrgData = userSub
+    ? await c.env.API_KEYS.get<{ orgId: string }>(`user-org:${userSub}`, 'json')
+    : null;
+
+  if (userOrgData?.orgId !== orgId) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  // Enforce retention based on current subscription tier
+  const subData = await c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json');
+  const tier = subData?.tier ?? 'hobby';
+  const retentionMs = RETENTION_DAYS[tier] * 86_400_000;
+  const expiresAt = object.uploaded.getTime() + retentionMs;
+
+  if (Date.now() > expiresAt) {
+    return c.json({ error: 'Body expired under current retention policy' }, 403);
   }
 
   return new Response(object.body, {

@@ -17,7 +17,6 @@
  */
 import * as Sentry from '@sentry/cloudflare';
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { cors } from 'hono/cors';
 import {
   generateId,
   generateTraceId,
@@ -68,7 +67,6 @@ function resolveTracingDecision(
   if (billing.status === 'suspended') return { record: false, reason: 'suspended' };
   if (billing.status === 'canceled') return { record: false, reason: 'canceled' };
   if (billing.status === 'not_found') return { record: false, reason: 'no_subscription' };
-  if (billing.status === 'error') return { record: false, reason: 'internal_error' };
 
   if (usage.status === 'allowed') return { record: true, reason: 'ok', tier: usage.tier };
   if (usage.status === 'exceeded')
@@ -90,8 +88,6 @@ interface Env {
 }
 
 const app = new OpenAPIHono<{ Bindings: Env }>();
-
-app.use('*', cors());
 
 // Register security scheme for API key authentication
 app.openAPIRegistry.registerComponent('securitySchemes', 'apiKey', {
@@ -148,8 +144,7 @@ app.all('*', async (c) => {
   const skipUsageCheck =
     billing.status === 'suspended' ||
     billing.status === 'canceled' ||
-    billing.status === 'not_found' ||
-    billing.status === 'error';
+    billing.status === 'not_found';
 
   const usageCheck: UsageCheckResult = skipUsageCheck
     ? { status: 'error', reason: 'billing_not_active' }
