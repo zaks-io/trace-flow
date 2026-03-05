@@ -1,4 +1,6 @@
 import type { SubscriptionKVData, SubscriptionTier } from '@trace-flow/types';
+import { getCached } from './cache';
+
 interface UsageEnv {
   API_KEYS: KVNamespace;
   USAGE_TRACKER: DurableObjectNamespace;
@@ -28,7 +30,7 @@ export async function checkUsage(
   if (prefetchedSubscription) {
     subscriptionConfig = prefetchedSubscription;
   } else {
-    const subConfigRaw = await env.API_KEYS.get(`sub:${orgId}`);
+    const subConfigRaw = await getCached(`sub:${orgId}`, () => env.API_KEYS.get(`sub:${orgId}`));
     if (!subConfigRaw) {
       return { status: 'error', reason: 'no_subscription_config' };
     }

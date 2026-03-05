@@ -77,7 +77,7 @@ async function l2Set<T>(key: string, value: T, ttlSeconds: number): Promise<void
  * L1 is instant and free. L2 is free and survives isolate recycling.
  * Only the fetcher call triggers a billed operation (KV read, DO request, etc).
  */
-export async function getCached<T extends object | null>(
+export async function getCached<T>(
   key: string,
   fetcher: () => Promise<T>,
   ttlMs: number = DEFAULT_TTL_MS,
