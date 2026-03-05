@@ -214,7 +214,8 @@ export type DataModel = {
     document: {
       auth0RefreshToken: string;
       expiresAt: number;
-      tokenId: string;
+      hashedTokenId: string;
+      tokenId?: string;
       userId: Id<"users">;
       _id: Id<"mcpRefreshTokens">;
       _creationTime: number;
@@ -224,12 +225,13 @@ export type DataModel = {
       | "_id"
       | "auth0RefreshToken"
       | "expiresAt"
+      | "hashedTokenId"
       | "tokenId"
       | "userId";
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
-      by_token_id: ["tokenId", "_creationTime"];
+      by_token_id: ["hashedTokenId", "_creationTime"];
       by_user_id: ["userId", "_creationTime"];
     };
     searchIndexes: {};

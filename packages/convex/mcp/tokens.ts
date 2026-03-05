@@ -2,6 +2,7 @@ import { SignJWT, jwtVerify } from 'jose';
 import { internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
+import { sha256Hex } from '@trace-flow/utils';
 
 const ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -51,16 +52,19 @@ export const createRefreshToken = internalMutation({
   },
   handler: async (ctx, args): Promise<string> => {
     const tokenId = crypto.randomUUID();
+    const hashedTokenId = await sha256Hex(tokenId);
     const expiresAt = Date.now() + REFRESH_TOKEN_TTL_MS;
 
     await ctx.db.insert('mcpRefreshTokens', {
-      tokenId,
+      hashedTokenId,
       userId: args.userId,
       auth0RefreshToken: args.auth0RefreshToken,
       expiresAt,
     });
 
-    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, { tokenId });
+    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
+      hashedTokenId,
+    });
 
     return tokenId;
   },
@@ -69,9 +73,10 @@ export const createRefreshToken = internalMutation({
 export const getRefreshToken = internalQuery({
   args: { tokenId: v.string() },
   handler: async (ctx, args) => {
+    const hashed = await sha256Hex(args.tokenId);
     const token = await ctx.db
       .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('tokenId', args.tokenId))
+      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
       .first();
 
     if (!token) {
@@ -89,9 +94,10 @@ export const getRefreshToken = internalQuery({
 export const deleteRefreshToken = internalMutation({
   args: { tokenId: v.string() },
   handler: async (ctx, args): Promise<void> => {
+    const hashed = await sha256Hex(args.tokenId);
     const token = await ctx.db
       .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('tokenId', args.tokenId))
+      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
       .first();
 
     if (token) {
@@ -106,9 +112,10 @@ export const updateRefreshToken = internalMutation({
     auth0RefreshToken: v.string(),
   },
   handler: async (ctx, args): Promise<void> => {
+    const hashed = await sha256Hex(args.tokenId);
     const token = await ctx.db
       .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('tokenId', args.tokenId))
+      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
       .first();
 
     if (token) {
@@ -118,7 +125,7 @@ export const updateRefreshToken = internalMutation({
         expiresAt,
       });
       await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
-        tokenId: args.tokenId,
+        hashedTokenId: hashed,
       });
     }
   },
@@ -225,16 +232,19 @@ export const exchangeAuthCode = internalMutation({
 
     // Create refresh token
     const tokenId = crypto.randomUUID();
+    const hashedTokenId = await sha256Hex(tokenId);
     const expiresAt = Date.now() + REFRESH_TOKEN_TTL_MS;
 
     await ctx.db.insert('mcpRefreshTokens', {
-      tokenId,
+      hashedTokenId,
       userId: authCode.userId,
       auth0RefreshToken: authCode.auth0RefreshToken,
       expiresAt,
     });
 
-    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, { tokenId });
+    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
+      hashedTokenId,
+    });
 
     return {
       userId: authCode.userId,
@@ -246,11 +256,11 @@ export const exchangeAuthCode = internalMutation({
 export { ACCESS_TOKEN_TTL_SECONDS };
 
 export const cleanupRefreshToken = internalMutation({
-  args: { tokenId: v.string() },
+  args: { hashedTokenId: v.string() },
   handler: async (ctx, args): Promise<void> => {
     const token = await ctx.db
       .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('tokenId', args.tokenId))
+      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', args.hashedTokenId))
       .first();
 
     if (token && token.expiresAt <= Date.now()) {

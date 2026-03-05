@@ -8,8 +8,8 @@
  * @module
  */
 
-import type { FunctionReference } from "convex/server";
-import type { GenericId as Id } from "convex/values";
+import type { FunctionReference } from 'convex/server';
+import type { GenericId as Id } from 'convex/values';
 
 /**
  * A utility for referencing Convex functions in your app's public API.
@@ -21,153 +21,103 @@ import type { GenericId as Id } from "convex/values";
  */
 export declare const api: {
   admin: {
-    stats: FunctionReference<"query", "public", {}, any>;
+    stats: FunctionReference<'query', 'public', {}, any>;
   };
   alerts: {
     create: FunctionReference<
-      "mutation",
-      "public",
+      'mutation',
+      'public',
       {
         field:
-          | "duration_ms"
-          | "tokens_per_second"
-          | "total_tokens"
-          | "prompt_tokens"
-          | "completion_tokens"
-          | "ttft_ms"
-          | "is_error"
-          | "http_status_code"
-          | "cost_total";
+          | 'duration_ms'
+          | 'tokens_per_second'
+          | 'total_tokens'
+          | 'prompt_tokens'
+          | 'completion_tokens'
+          | 'ttft_ms'
+          | 'is_error'
+          | 'http_status_code'
+          | 'cost_total';
         name: string;
-        operator: "gt" | "gte" | "lt" | "lte" | "eq" | "neq";
-        severity: "info" | "warning" | "error";
+        operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq';
+        severity: 'info' | 'warning' | 'error';
         value: number | string | boolean;
       },
       any
     >;
-    list: FunctionReference<"query", "public", any, any>;
-    listEnabled: FunctionReference<"query", "public", any, any>;
-    remove: FunctionReference<"mutation", "public", { id: Id<"alerts"> }, any>;
-    toggle: FunctionReference<"mutation", "public", { id: Id<"alerts"> }, any>;
+    list: FunctionReference<'query', 'public', any, any>;
+    listEnabled: FunctionReference<'query', 'public', any, any>;
+    remove: FunctionReference<'mutation', 'public', { id: Id<'alerts'> }, any>;
+    toggle: FunctionReference<'mutation', 'public', { id: Id<'alerts'> }, any>;
     update: FunctionReference<
-      "mutation",
-      "public",
+      'mutation',
+      'public',
       {
         field?:
-          | "duration_ms"
-          | "tokens_per_second"
-          | "total_tokens"
-          | "prompt_tokens"
-          | "completion_tokens"
-          | "ttft_ms"
-          | "is_error"
-          | "http_status_code"
-          | "cost_total";
-        id: Id<"alerts">;
+          | 'duration_ms'
+          | 'tokens_per_second'
+          | 'total_tokens'
+          | 'prompt_tokens'
+          | 'completion_tokens'
+          | 'ttft_ms'
+          | 'is_error'
+          | 'http_status_code'
+          | 'cost_total';
+        id: Id<'alerts'>;
         name?: string;
-        operator?: "gt" | "gte" | "lt" | "lte" | "eq" | "neq";
-        severity?: "info" | "warning" | "error";
+        operator?: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq';
+        severity?: 'info' | 'warning' | 'error';
         value?: number | string | boolean;
       },
       any
     >;
   };
   apiKeys: {
-    create: FunctionReference<
-      "mutation",
-      "public",
-      { expiresAt: number; name?: string },
-      any
-    >;
-    getByKey: FunctionReference<"query", "public", { key: string }, any>;
-    list: FunctionReference<"query", "public", any, any>;
-    remove: FunctionReference<"mutation", "public", { id: Id<"apiKeys"> }, any>;
-    syncToKV: FunctionReference<"action", "public", { id: Id<"apiKeys"> }, any>;
-    update: FunctionReference<
-      "mutation",
-      "public",
-      { id: Id<"apiKeys">; name?: string },
-      any
-    >;
+    create: FunctionReference<'mutation', 'public', { expiresAt: number; name?: string }, any>;
+    getByKey: FunctionReference<'query', 'public', { key: string }, any>;
+    list: FunctionReference<'query', 'public', any, any>;
+    remove: FunctionReference<'mutation', 'public', { id: Id<'apiKeys'> }, any>;
+    syncToKV: FunctionReference<'action', 'public', { id: Id<'apiKeys'> }, any>;
+    update: FunctionReference<'mutation', 'public', { id: Id<'apiKeys'>; name?: string }, any>;
   };
   app: {
-    sessionContext: FunctionReference<"query", "public", any, any>;
+    sessionContext: FunctionReference<'query', 'public', any, any>;
   };
   auth: {
-    hasTraceFlowRole: FunctionReference<"query", "public", any, any>;
+    hasTraceFlowRole: FunctionReference<'query', 'public', any, any>;
   };
   cloudflare: {
-    syncAll: FunctionReference<"action", "public", {}, any>;
+    syncAll: FunctionReference<'action', 'public', {}, any>;
   };
   invites: {
-    acceptInvite: FunctionReference<
-      "mutation",
-      "public",
-      { token: string },
-      any
-    >;
-    createInvite: FunctionReference<
-      "mutation",
-      "public",
-      { email: string },
-      any
-    >;
-    createOrgInvite: FunctionReference<
-      "mutation",
-      "public",
-      { email: string },
-      any
-    >;
-    getInviteByToken: FunctionReference<
-      "query",
-      "public",
-      { token: string },
-      any
-    >;
-    listInvites: FunctionReference<"query", "public", {}, any>;
-    revokeInvite: FunctionReference<
-      "mutation",
-      "public",
-      { inviteId: Id<"invites"> },
-      any
-    >;
+    acceptInvite: FunctionReference<'mutation', 'public', { token: string }, any>;
+    createInvite: FunctionReference<'mutation', 'public', { email: string }, any>;
+    createOrgInvite: FunctionReference<'mutation', 'public', { email: string }, any>;
+    getInviteByToken: FunctionReference<'query', 'public', { token: string }, any>;
+    listInvites: FunctionReference<'query', 'public', {}, any>;
+    revokeInvite: FunctionReference<'mutation', 'public', { inviteId: Id<'invites'> }, any>;
   };
   mcp: {
     handler: {
       handleMessage: FunctionReference<
-        "action",
-        "public",
+        'action',
+        'public',
         { message: any; sessionId?: string },
         any
       >;
-      terminateSession: FunctionReference<
-        "action",
-        "public",
-        { sessionId: string },
-        any
-      >;
+      terminateSession: FunctionReference<'action', 'public', { sessionId: string }, any>;
     };
   };
   modelPricing: {
-    get: FunctionReference<
-      "query",
-      "public",
-      { model: string; provider: string },
-      any
-    >;
-    importFromOpenRouter: FunctionReference<"action", "public", {}, any>;
-    list: FunctionReference<"query", "public", { provider?: string }, any>;
-    remove: FunctionReference<
-      "mutation",
-      "public",
-      { id: Id<"modelPricing"> },
-      any
-    >;
-    syncAllToKV: FunctionReference<"action", "public", {}, any>;
-    syncDefaults: FunctionReference<"action", "public", {}, any>;
+    get: FunctionReference<'query', 'public', { model: string; provider: string }, any>;
+    importFromOpenRouter: FunctionReference<'action', 'public', {}, any>;
+    list: FunctionReference<'query', 'public', { provider?: string }, any>;
+    remove: FunctionReference<'mutation', 'public', { id: Id<'modelPricing'> }, any>;
+    syncAllToKV: FunctionReference<'action', 'public', {}, any>;
+    syncDefaults: FunctionReference<'action', 'public', {}, any>;
     upsert: FunctionReference<
-      "mutation",
-      "public",
+      'mutation',
+      'public',
       {
         cacheReadCostPerMillion?: number;
         cacheWrite1hCostPerMillion?: number;
@@ -177,65 +127,45 @@ export declare const api: {
         promptCostPerMillion: number;
         provider: string;
         reasoningCostPerMillion?: number;
-        source: "manual" | "openrouter" | "default";
+        source: 'manual' | 'openrouter' | 'default';
       },
       any
     >;
   };
   organizations: {
-    get: FunctionReference<"query", "public", any, any>;
-    getMembers: FunctionReference<"query", "public", {}, any>;
-    rename: FunctionReference<"mutation", "public", { name: string }, any>;
+    get: FunctionReference<'query', 'public', any, any>;
+    getMembers: FunctionReference<'query', 'public', {}, any>;
+    rename: FunctionReference<'mutation', 'public', { name: string }, any>;
   };
   subscriptions: {
     createAddonCheckoutSession: FunctionReference<
-      "action",
-      "public",
+      'action',
+      'public',
       { cancelUrl?: string; quantity: number; successUrl?: string },
       any
     >;
-    createBillingPortalSession: FunctionReference<
-      "action",
-      "public",
-      { returnUrl?: string },
-      any
-    >;
+    createBillingPortalSession: FunctionReference<'action', 'public', { returnUrl?: string }, any>;
     createOrgCheckoutSession: FunctionReference<
-      "action",
-      "public",
+      'action',
+      'public',
       { cancelUrl?: string; successUrl?: string },
       any
     >;
-    getBillingSummaryForCurrentUser: FunctionReference<
-      "query",
-      "public",
-      any,
-      any
-    >;
-    getForCurrentUser: FunctionReference<"query", "public", any, any>;
-    reconcileCurrentOrgWithStripe: FunctionReference<
-      "action",
-      "public",
-      {},
-      any
-    >;
+    getBillingSummaryForCurrentUser: FunctionReference<'query', 'public', any, any>;
+    getForCurrentUser: FunctionReference<'query', 'public', any, any>;
+    reconcileCurrentOrgWithStripe: FunctionReference<'action', 'public', {}, any>;
     updateAutoOverageSettings: FunctionReference<
-      "mutation",
-      "public",
+      'mutation',
+      'public',
       { autoOverage: boolean; overageCapCents?: number },
       any
     >;
-    updateSeatQuantity: FunctionReference<
-      "action",
-      "public",
-      { seatQuantity: number },
-      any
-    >;
+    updateSeatQuantity: FunctionReference<'action', 'public', { seatQuantity: number }, any>;
   };
   tinybird: {
     generateToken: FunctionReference<
-      "action",
-      "public",
+      'action',
+      'public',
       {
         name?: string;
         scopes: Array<{
@@ -249,34 +179,30 @@ export declare const api: {
     >;
   };
   usage: {
-    getCurrentUsage: FunctionReference<"query", "public", any, any>;
+    getCurrentUsage: FunctionReference<'query', 'public', any, any>;
   };
   users: {
-    getCurrentUserQuery: FunctionReference<"query", "public", {}, any>;
-    getUser: FunctionReference<"query", "public", { id: Id<"users"> }, any>;
-    initializeUser: FunctionReference<"mutation", "public", {}, any>;
-    isAdmin: FunctionReference<"query", "public", {}, any>;
+    getCurrentUserQuery: FunctionReference<'query', 'public', {}, any>;
+    getUser: FunctionReference<'query', 'public', { id: Id<'users'> }, any>;
+    initializeUser: FunctionReference<'mutation', 'public', {}, any>;
+    isAdmin: FunctionReference<'query', 'public', {}, any>;
+    removeMember: FunctionReference<
+      'mutation',
+      'public',
+      { memberId: Id<'organizationMembers'> },
+      any
+    >;
   };
   waitlist: {
     bulkInviteFromWaitlist: FunctionReference<
-      "mutation",
-      "public",
-      { waitlistIds: Array<Id<"waitlist">> },
+      'mutation',
+      'public',
+      { waitlistIds: Array<Id<'waitlist'>> },
       any
     >;
-    confirmEmail: FunctionReference<
-      "mutation",
-      "public",
-      { token: string },
-      any
-    >;
-    joinWaitlist: FunctionReference<
-      "mutation",
-      "public",
-      { email: string; source?: string },
-      any
-    >;
-    listWaitlist: FunctionReference<"query", "public", {}, any>;
+    confirmEmail: FunctionReference<'mutation', 'public', { token: string }, any>;
+    joinWaitlist: FunctionReference<'mutation', 'public', { email: string; source?: string }, any>;
+    listWaitlist: FunctionReference<'query', 'public', {}, any>;
   };
 };
 
@@ -290,44 +216,24 @@ export declare const api: {
  */
 export declare const internal: {
   apiKeys: {
-    getByIdInternal: FunctionReference<
-      "query",
-      "internal",
-      { id: Id<"apiKeys"> },
-      any
-    >;
-    listByOrgId: FunctionReference<
-      "query",
-      "internal",
-      { orgId: Id<"organizations"> },
-      any
-    >;
-    listByUserId: FunctionReference<
-      "query",
-      "internal",
-      { userId: Id<"users"> },
-      any
-    >;
+    getByIdInternal: FunctionReference<'query', 'internal', { id: Id<'apiKeys'> }, any>;
+    listByOrgId: FunctionReference<'query', 'internal', { orgId: Id<'organizations'> }, any>;
+    listByUserId: FunctionReference<'query', 'internal', { userId: Id<'users'> }, any>;
   };
   cloudflare: {
-    checkKeyInKV: FunctionReference<"action", "internal", { key: string }, any>;
-    deleteKeyFromKV: FunctionReference<
-      "action",
-      "internal",
-      { key: string },
-      any
-    >;
-    getAllSyncData: FunctionReference<"query", "internal", {}, any>;
-    isCallerAdmin: FunctionReference<"query", "internal", {}, any>;
+    checkKeyInKV: FunctionReference<'action', 'internal', { key: string }, any>;
+    deleteKeyFromKV: FunctionReference<'action', 'internal', { key: string }, any>;
+    getAllSyncData: FunctionReference<'query', 'internal', {}, any>;
+    isCallerAdmin: FunctionReference<'query', 'internal', {}, any>;
     syncKeyToKV: FunctionReference<
-      "action",
-      "internal",
+      'action',
+      'internal',
       { expiresAt: number; key: string; orgId?: string },
       any
     >;
     syncSubscriptionToKV: FunctionReference<
-      "action",
-      "internal",
+      'action',
+      'internal',
       {
         addonUnits: number;
         autoOverage?: boolean;
@@ -344,169 +250,131 @@ export declare const internal: {
       },
       any
     >;
+    syncUserOrgToKV: FunctionReference<
+      'action',
+      'internal',
+      { orgId: string; retryCount?: number; sub: string },
+      any
+    >;
+    deleteUserOrgFromKV: FunctionReference<
+      'action',
+      'internal',
+      { retryCount?: number; sub: string },
+      any
+    >;
   };
   emails: {
     sendConfirmationEmail: FunctionReference<
-      "action",
-      "internal",
+      'action',
+      'internal',
       { confirmationToken: string; email: string },
       any
     >;
-    sendInviteEmail: FunctionReference<
-      "action",
-      "internal",
-      { email: string; token: string },
-      any
-    >;
+    sendInviteEmail: FunctionReference<'action', 'internal', { email: string; token: string }, any>;
   };
   mcp: {
     clients: {
-      getClient: FunctionReference<
-        "query",
-        "internal",
-        { clientId: string },
-        any
-      >;
+      getClient: FunctionReference<'query', 'internal', { clientId: string }, any>;
       registerClient: FunctionReference<
-        "mutation",
-        "internal",
+        'mutation',
+        'internal',
         { clientId: string; clientName?: string; redirectUris: Array<string> },
         any
       >;
     };
     handler: {
       handleMessageWithUser: FunctionReference<
-        "action",
-        "internal",
-        { message: any; sessionId?: string; userId: Id<"users"> },
+        'action',
+        'internal',
+        { message: any; sessionId?: string; userId: Id<'users'> },
         any
       >;
     };
     session: {
-      cleanupSession: FunctionReference<
-        "mutation",
-        "internal",
-        { sessionId: string },
-        any
-      >;
+      cleanupSession: FunctionReference<'mutation', 'internal', { sessionId: string }, any>;
       createSession: FunctionReference<
-        "mutation",
-        "internal",
-        { protocolVersion: string; userId: Id<"users"> },
+        'mutation',
+        'internal',
+        { protocolVersion: string; userId: Id<'users'> },
         any
       >;
-      deleteSession: FunctionReference<
-        "mutation",
-        "internal",
-        { sessionId: string },
-        any
-      >;
-      getSession: FunctionReference<
-        "query",
-        "internal",
-        { sessionId: string },
-        any
-      >;
-      getSessionInternal: FunctionReference<
-        "query",
-        "internal",
-        { sessionId: string },
-        any
-      >;
-      getUserSessions: FunctionReference<
-        "query",
-        "internal",
-        { userId: Id<"users"> },
-        any
-      >;
+      deleteSession: FunctionReference<'mutation', 'internal', { sessionId: string }, any>;
+      getSession: FunctionReference<'query', 'internal', { sessionId: string }, any>;
+      getSessionInternal: FunctionReference<'query', 'internal', { sessionId: string }, any>;
+      getUserSessions: FunctionReference<'query', 'internal', { userId: Id<'users'> }, any>;
       updateSessionState: FunctionReference<
-        "mutation",
-        "internal",
-        { sessionId: string; state: "initializing" | "ready" | "shutdown" },
+        'mutation',
+        'internal',
+        { sessionId: string; state: 'initializing' | 'ready' | 'shutdown' },
         any
       >;
     };
     tokens: {
-      cleanupAuthCode: FunctionReference<
-        "mutation",
-        "internal",
-        { code: string },
-        any
-      >;
+      cleanupAuthCode: FunctionReference<'mutation', 'internal', { code: string }, any>;
       cleanupRefreshToken: FunctionReference<
-        "mutation",
-        "internal",
-        { tokenId: string },
+        'mutation',
+        'internal',
+        { hashedTokenId: string },
         any
       >;
       createAuthCode: FunctionReference<
-        "mutation",
-        "internal",
+        'mutation',
+        'internal',
         {
           auth0RefreshToken: string;
           clientId?: string;
           codeChallenge?: string;
           codeChallengeMethod?: string;
           redirectUri: string;
-          userId: Id<"users">;
+          userId: Id<'users'>;
         },
         any
       >;
       createRefreshToken: FunctionReference<
-        "mutation",
-        "internal",
-        { auth0RefreshToken: string; userId: Id<"users"> },
+        'mutation',
+        'internal',
+        { auth0RefreshToken: string; userId: Id<'users'> },
         any
       >;
-      deleteRefreshToken: FunctionReference<
-        "mutation",
-        "internal",
-        { tokenId: string },
-        any
-      >;
+      deleteRefreshToken: FunctionReference<'mutation', 'internal', { tokenId: string }, any>;
       deleteUserRefreshTokens: FunctionReference<
-        "mutation",
-        "internal",
-        { userId: Id<"users"> },
+        'mutation',
+        'internal',
+        { userId: Id<'users'> },
         any
       >;
       exchangeAuthCode: FunctionReference<
-        "mutation",
-        "internal",
+        'mutation',
+        'internal',
         { code: string; codeVerifier?: string; redirectUri: string },
         any
       >;
-      getRefreshToken: FunctionReference<
-        "query",
-        "internal",
-        { tokenId: string },
-        any
-      >;
+      getRefreshToken: FunctionReference<'query', 'internal', { tokenId: string }, any>;
       updateRefreshToken: FunctionReference<
-        "mutation",
-        "internal",
+        'mutation',
+        'internal',
         { auth0RefreshToken: string; tokenId: string },
         any
       >;
     };
     tools: {
       getTrace: FunctionReference<
-        "action",
-        "internal",
+        'action',
+        'internal',
         { apiKeys: Array<string>; params: { trace_id: string } },
         any
       >;
       getTraceAction: {
         getTrace: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           { apiKeys: Array<string>; params: { trace_id: string } },
           any
         >;
       };
       getTraceEvents: FunctionReference<
-        "action",
-        "internal",
+        'action',
+        'internal',
         {
           apiKeys: Array<string>;
           params: {
@@ -523,8 +391,8 @@ export declare const internal: {
       >;
       getTraceEventsAction: {
         getTraceEvents: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           {
             apiKeys: Array<string>;
             params: {
@@ -541,8 +409,8 @@ export declare const internal: {
         >;
       };
       getTraceSpans: FunctionReference<
-        "action",
-        "internal",
+        'action',
+        'internal',
         {
           apiKeys: Array<string>;
           params: {
@@ -562,8 +430,8 @@ export declare const internal: {
       >;
       getTraceSpansAction: {
         getTraceSpans: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           {
             apiKeys: Array<string>;
             params: {
@@ -584,14 +452,14 @@ export declare const internal: {
       };
       index: {
         getTrace: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           { apiKeys: Array<string>; params: { trace_id: string } },
           any
         >;
         getTraceEvents: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           {
             apiKeys: Array<string>;
             params: {
@@ -607,8 +475,8 @@ export declare const internal: {
           any
         >;
         getTraceSpans: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           {
             apiKeys: Array<string>;
             params: {
@@ -627,8 +495,8 @@ export declare const internal: {
           any
         >;
         listTraces: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           {
             apiKeys: Array<string>;
             params: {
@@ -646,8 +514,8 @@ export declare const internal: {
         >;
       };
       listTraces: FunctionReference<
-        "action",
-        "internal",
+        'action',
+        'internal',
         {
           apiKeys: Array<string>;
           params: {
@@ -665,8 +533,8 @@ export declare const internal: {
       >;
       listTracesAction: {
         listTraces: FunctionReference<
-          "action",
-          "internal",
+          'action',
+          'internal',
           {
             apiKeys: Array<string>;
             params: {
@@ -686,33 +554,24 @@ export declare const internal: {
     };
   };
   migrations: {
-    backfillAll: FunctionReference<"mutation", "internal", {}, any>;
+    backfillAll: FunctionReference<'mutation', 'internal', {}, any>;
+    backfillHashedTokenIds: FunctionReference<'mutation', 'internal', {}, any>;
     backfillOrgBilling: {
-      backfillOrgBilling: FunctionReference<"mutation", "internal", any, any>;
+      backfillOrgBilling: FunctionReference<'mutation', 'internal', any, any>;
     };
     backfillOrgs: {
-      backfillOrgs: FunctionReference<"mutation", "internal", any, any>;
+      backfillOrgs: FunctionReference<'mutation', 'internal', any, any>;
     };
     backfillStripeCustomerIdToOrgs: {
-      backfillStripeCustomerIdToOrgs: FunctionReference<
-        "mutation",
-        "internal",
-        any,
-        any
-      >;
+      backfillStripeCustomerIdToOrgs: FunctionReference<'mutation', 'internal', any, any>;
     };
   };
   modelPricing: {
-    getInternal: FunctionReference<
-      "query",
-      "internal",
-      { model: string; provider: string },
-      any
-    >;
-    listAll: FunctionReference<"query", "internal", any, any>;
+    getInternal: FunctionReference<'query', 'internal', { model: string; provider: string }, any>;
+    listAll: FunctionReference<'query', 'internal', any, any>;
     upsertInternal: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       {
         cacheReadCostPerMillion?: number;
         cacheWrite1hCostPerMillion?: number;
@@ -722,192 +581,147 @@ export declare const internal: {
         promptCostPerMillion: number;
         provider: string;
         reasoningCostPerMillion?: number;
-        source: "manual" | "openrouter" | "default";
+        source: 'manual' | 'openrouter' | 'default';
       },
       any
     >;
   };
   organizations: {
-    canAddMember: FunctionReference<
-      "query",
-      "internal",
-      { orgId: Id<"organizations"> },
-      any
-    >;
+    canAddMember: FunctionReference<'query', 'internal', { orgId: Id<'organizations'> }, any>;
     getActiveMemberCountInternal: FunctionReference<
-      "query",
-      "internal",
-      { orgId: Id<"organizations"> },
+      'query',
+      'internal',
+      { orgId: Id<'organizations'> },
       any
     >;
-    getByIdInternal: FunctionReference<
-      "query",
-      "internal",
-      { id: Id<"organizations"> },
-      any
-    >;
+    getByIdInternal: FunctionReference<'query', 'internal', { id: Id<'organizations'> }, any>;
     getByStripeCustomerId: FunctionReference<
-      "query",
-      "internal",
+      'query',
+      'internal',
       { stripeCustomerId: string },
       any
     >;
     setStripeCustomerId: FunctionReference<
-      "mutation",
-      "internal",
-      { orgId: Id<"organizations">; stripeCustomerId: string },
+      'mutation',
+      'internal',
+      { orgId: Id<'organizations'>; stripeCustomerId: string },
       any
     >;
   };
   pricingSync: {
-    deleteFromKV: FunctionReference<
-      "action",
-      "internal",
-      { model: string; provider: string },
-      any
-    >;
-    syncToKV: FunctionReference<
-      "action",
-      "internal",
-      { model: string; provider: string },
-      any
-    >;
+    deleteFromKV: FunctionReference<'action', 'internal', { model: string; provider: string }, any>;
+    syncToKV: FunctionReference<'action', 'internal', { model: string; provider: string }, any>;
   };
   stripeEvents: {
-    cleanupOldEvents: FunctionReference<"mutation", "internal", any, any>;
-    getByEventId: FunctionReference<
-      "query",
-      "internal",
-      { eventId: string },
-      any
-    >;
-    markFailed: FunctionReference<
-      "mutation",
-      "internal",
-      { error: string; eventId: string },
-      any
-    >;
-    markProcessed: FunctionReference<
-      "mutation",
-      "internal",
-      { eventId: string },
-      any
-    >;
+    cleanupOldEvents: FunctionReference<'mutation', 'internal', any, any>;
+    getByEventId: FunctionReference<'query', 'internal', { eventId: string }, any>;
+    markFailed: FunctionReference<'mutation', 'internal', { error: string; eventId: string }, any>;
+    markProcessed: FunctionReference<'mutation', 'internal', { eventId: string }, any>;
     startProcessing: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       { eventId: string; eventType: string; stripeObjectId?: string },
       any
     >;
   };
   subscriptions: {
     addAddonUnits: FunctionReference<
-      "mutation",
-      "internal",
-      { orgId: Id<"organizations">; units: number },
+      'mutation',
+      'internal',
+      { orgId: Id<'organizations'>; units: number },
       any
     >;
     creditAddonPurchase: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       {
         amountCents: number;
-        mode: "manual" | "auto";
-        orgId: Id<"organizations">;
+        mode: 'manual' | 'auto';
+        orgId: Id<'organizations'>;
         stripeInvoiceId?: string;
         stripePaymentIntentId: string;
-        triggeredByUserId?: Id<"users">;
+        triggeredByUserId?: Id<'users'>;
         units: number;
       },
       any
     >;
-    getByOrgId: FunctionReference<
-      "query",
-      "internal",
-      { orgId: Id<"organizations"> },
-      any
-    >;
+    getByOrgId: FunctionReference<'query', 'internal', { orgId: Id<'organizations'> }, any>;
     getByStripeCustomerId: FunctionReference<
-      "query",
-      "internal",
+      'query',
+      'internal',
       { stripeCustomerId: string },
       any
     >;
     getByStripeSubscriptionId: FunctionReference<
-      "query",
-      "internal",
+      'query',
+      'internal',
       { stripeSubscriptionId: string },
       any
     >;
     releaseAutoTopupReservation: FunctionReference<
-      "mutation",
-      "internal",
-      { amountCents: number; orgId: Id<"organizations"> },
+      'mutation',
+      'internal',
+      { amountCents: number; orgId: Id<'organizations'> },
       any
     >;
     reserveAutoTopup: FunctionReference<
-      "mutation",
-      "internal",
-      { amountCents: number; orgId: Id<"organizations"> },
+      'mutation',
+      'internal',
+      { amountCents: number; orgId: Id<'organizations'> },
       any
     >;
-    revertToHobby: FunctionReference<
-      "mutation",
-      "internal",
-      { orgId: Id<"organizations"> },
-      any
-    >;
+    revertToHobby: FunctionReference<'mutation', 'internal', { orgId: Id<'organizations'> }, any>;
     revokeAddonPurchase: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       { stripePaymentIntentId: string },
       any
     >;
     scheduleGraceSuspension: FunctionReference<
-      "mutation",
-      "internal",
-      { orgId: Id<"organizations"> },
+      'mutation',
+      'internal',
+      { orgId: Id<'organizations'> },
       any
     >;
     setStripeCustomerId: FunctionReference<
-      "mutation",
-      "internal",
-      { orgId: Id<"organizations">; stripeCustomerId: string },
+      'mutation',
+      'internal',
+      { orgId: Id<'organizations'>; stripeCustomerId: string },
       any
     >;
     setTier: FunctionReference<
-      "mutation",
-      "internal",
-      { orgId: Id<"organizations">; tier: "hobby" | "pro" },
+      'mutation',
+      'internal',
+      { orgId: Id<'organizations'>; tier: 'hobby' | 'pro' },
       any
     >;
     transitionGraceToSuspended: FunctionReference<
-      "mutation",
-      "internal",
-      { orgId: Id<"organizations"> },
+      'mutation',
+      'internal',
+      { orgId: Id<'organizations'> },
       any
     >;
     triggerAutoTopup: FunctionReference<
-      "action",
-      "internal",
+      'action',
+      'internal',
       {
         amountCents: number;
-        orgId: Id<"organizations">;
+        orgId: Id<'organizations'>;
         quantity?: number;
         reason?: string;
       },
       any
     >;
     upsertStripeSubscriptionState: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       {
         cancelAtPeriodEnd?: boolean;
         currentPeriodEnd?: number;
         currentPeriodStart?: number;
-        orgId: Id<"organizations">;
+        orgId: Id<'organizations'>;
         seatQuantity?: number;
-        status: "active" | "grace" | "suspended" | "canceled";
+        status: 'active' | 'grace' | 'suspended' | 'canceled';
         stripeCustomerId?: string;
         stripePlanItemId?: string;
         stripeSeatItemId?: string;
@@ -917,15 +731,10 @@ export declare const internal: {
     >;
   };
   tinybird: {
-    extendRetention: FunctionReference<
-      "action",
-      "internal",
-      { orgId: Id<"organizations"> },
-      any
-    >;
+    extendRetention: FunctionReference<'action', 'internal', { orgId: Id<'organizations'> }, any>;
     generateTokenInternal: FunctionReference<
-      "action",
-      "internal",
+      'action',
+      'internal',
       {
         apiKeys: Array<string>;
         retentionDays?: number;
@@ -937,27 +746,22 @@ export declare const internal: {
   };
   usage: {
     checkAutoTopup: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       {
         addonUnitsUsed: number;
-        orgId: Id<"organizations">;
+        orgId: Id<'organizations'>;
         subscriptionUnitsUsed: number;
       },
       any
     >;
-    getForOrgInternal: FunctionReference<
-      "query",
-      "internal",
-      { orgId: Id<"organizations"> },
-      any
-    >;
+    getForOrgInternal: FunctionReference<'query', 'internal', { orgId: Id<'organizations'> }, any>;
     recordUsage: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       {
         addonUnitsUsed: number;
-        orgId: Id<"organizations">;
+        orgId: Id<'organizations'>;
         periodEnd: number;
         periodStart: number;
         subscriptionUnitsUsed: number;
@@ -967,8 +771,8 @@ export declare const internal: {
   };
   users: {
     findOrCreateUser: FunctionReference<
-      "mutation",
-      "internal",
+      'mutation',
+      'internal',
       {
         email: string;
         name?: string;
@@ -977,19 +781,14 @@ export declare const internal: {
       },
       any
     >;
-    getUserById: FunctionReference<
-      "query",
-      "internal",
-      { id: Id<"users"> },
-      any
-    >;
+    getUserById: FunctionReference<'query', 'internal', { id: Id<'users'> }, any>;
     getUserByTokenIdentifier: FunctionReference<
-      "query",
-      "internal",
+      'query',
+      'internal',
       { tokenIdentifier: string },
       any
     >;
-    isAdminInternal: FunctionReference<"query", "internal", {}, any>;
+    isAdminInternal: FunctionReference<'query', 'internal', {}, any>;
   };
 };
 

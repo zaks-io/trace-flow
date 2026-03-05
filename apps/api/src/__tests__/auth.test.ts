@@ -9,10 +9,16 @@ vi.mock('jose', () => ({
 
 import { jwtVerify } from 'jose';
 
+interface MockEnv {
+  Bindings: { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string };
+  Variables: { userSub: string };
+}
+
 function createMockContext(
   headers: Record<string, string>,
   env: { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string },
-): Context<{ Bindings: { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string } }> {
+): Context<MockEnv> {
+  const vars: Record<string, unknown> = {};
   return {
     req: {
       header: (name: string) => headers[name.toLowerCase()],
@@ -24,7 +30,11 @@ function createMockContext(
         headers: { 'Content-Type': 'application/json' },
       });
     },
-  } as unknown as Context<{ Bindings: { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string } }>;
+    set: (key: string, value: unknown) => {
+      vars[key] = value;
+    },
+    get: (key: string) => vars[key],
+  } as unknown as Context<MockEnv>;
 }
 
 describe('validateAuth0JWT', () => {

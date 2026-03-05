@@ -1,5 +1,34 @@
 import { internalMutation } from './_generated/server';
+import { sha256Hex } from '@trace-flow/utils';
 import { scheduleKVSync } from './subscriptions';
+
+// One-shot migration: backfill hashedTokenId for existing mcpRefreshTokens.
+// Run: npx convex run migrations:backfillHashedTokenIds
+// Delete after running.
+export const backfillHashedTokenIds = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const tokens = await ctx.db.query('mcpRefreshTokens').collect();
+    let patched = 0;
+    for (const token of tokens) {
+      // Skip tokens that already have hashedTokenId
+      if (token.hashedTokenId) continue;
+      // Old rows have tokenId but no hashedTokenId — hash and backfill
+      const rawTokenId = (token as unknown as Record<string, unknown>).tokenId as
+        | string
+        | undefined;
+      if (!rawTokenId) {
+        // Token has neither field — delete as orphaned
+        await ctx.db.delete(token._id);
+        continue;
+      }
+      const hashedTokenId = await sha256Hex(rawTokenId);
+      await ctx.db.patch(token._id, { hashedTokenId });
+      patched++;
+    }
+    return { total: tokens.length, patched };
+  },
+});
 
 // One-shot migration: backfill ALL tables to match the current schema.
 // Run: bunx convex run migrations:backfillAll

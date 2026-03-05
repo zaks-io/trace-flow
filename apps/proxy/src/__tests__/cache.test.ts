@@ -61,19 +61,24 @@ describe('getCached', () => {
   });
 
   it('L1 expired entries fall through to L2', async () => {
-    const fetcher = vi.fn().mockResolvedValue('v1');
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn().mockResolvedValue('v1');
 
-    // Use a very short TTL — L1 expires after 1ms but L2 min is 1 second
-    await getCached('key-ttl', fetcher, 1);
+      // Use a very short TTL — L1 expires after 1ms but L2 min is 1 second
+      await getCached('key-ttl', fetcher, 1);
 
-    // Wait for L1 expiry
-    await new Promise((r) => setTimeout(r, 10));
+      // Advance past L1 expiry
+      vi.advanceTimersByTime(10);
 
-    // L1 expired, should fall through to L2 which still has the value
-    const result = await getCached('key-ttl', fetcher, 1);
-    expect(result).toBe('v1');
-    // Fetcher should NOT be called again because L2 still has the value
-    expect(fetcher).toHaveBeenCalledOnce();
+      // L1 expired, should fall through to L2 which still has the value
+      const result = await getCached('key-ttl', fetcher, 1);
+      expect(result).toBe('v1');
+      // Fetcher should NOT be called again because L2 still has the value
+      expect(fetcher).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses different cache entries for different keys', async () => {
@@ -112,17 +117,19 @@ describe('L1 eviction at MAX_L1_ENTRIES', () => {
       await getCached(`evict-${i}`, fetcher);
     }
 
-    // Add one more — should evict the oldest (evict-0)
+    // Add one more — should evict the least recently used (evict-0)
     const newFetcher = vi.fn().mockResolvedValue('new-val');
     await getCached('evict-new', newFetcher);
     expect(newFetcher).toHaveBeenCalledOnce();
 
-    // evict-0 should have been evicted — fetcher is called again
+    // Clear L2 for evict-0 so only L1 or a fresh fetch can serve it
+    await invalidate('evict-0');
+
+    // evict-0 was evicted from L1 and we just cleared L2, so fetcher must be called
     const evictedFetcher = vi.fn().mockResolvedValue('re-fetched');
     const result = await getCached('evict-0', evictedFetcher);
-    // L2 still has it, so fetcher may not be called (L2 survives)
-    // But the key WAS evicted from L1 — that's the invariant
-    expect(result).toBeDefined();
+    expect(result).toBe('re-fetched');
+    expect(evictedFetcher).toHaveBeenCalledOnce();
 
     // A key near the end should still be in L1 (not evicted)
     const keptFetcher = vi.fn().mockResolvedValue('should-not-call');
