@@ -6,14 +6,16 @@ Last updated: 2026-03-06
 
 ### Fixed Monthly Costs (Base Fees)
 
-| Service                 | Role                              | Base Cost                |
-| ----------------------- | --------------------------------- | ------------------------ |
-| Cloudflare Workers Paid | Proxy, Consumer, API, Web runtime | $5/mo                    |
-| Tinybird Developer 1    | Trace analytics (ClickHouse)      | $99/mo                   |
-| Convex Professional     | Backend DB, auth, billing logic   | $25/dev/mo               |
-| Sentry Team             | Error monitoring across 4 workers | $26/mo                   |
-| Domain (trace-flow.dev) | DNS                               | ~$1/mo                   |
-| **Total fixed**         |                                   | **$156/mo** (single dev) |
+| Service                 | Role                              | Base Cost               |
+| ----------------------- | --------------------------------- | ----------------------- |
+| Cloudflare Workers Paid | Proxy, Consumer, API, Web runtime | $5/mo                   |
+| Tinybird Developer 0.25 | Trace analytics (ClickHouse)      | $25/mo                  |
+| Convex Professional     | Backend DB, auth, billing logic   | $25/dev/mo              |
+| Sentry Team             | Error monitoring across 4 workers | $26/mo                  |
+| Domain (trace-flow.dev) | DNS                               | ~$1/mo                  |
+| **Total fixed**         |                                   | **$82/mo** (single dev) |
+
+Tinybird tier scales with concurrent dashboard users (QPS is the binding constraint, not storage or ingestion). Upgrade path: Dev 0.5 ($49) at ~10 users, Dev 1 ($99) at ~30 users, Dev 2 ($199) at ~50+ users. See `blind-spots.md` for full QPS analysis.
 
 Auth0 (free to 25K MAU), GitHub Actions (free to 3K min/mo), and Stripe (no base fee) have no fixed costs at reasonable scale.
 
@@ -194,7 +196,7 @@ All scenarios include fixed base fees + variable usage at overage rates.
 | ---------------------------------------- | ------------- |
 | **Fixed costs**                          |               |
 | Cloudflare Workers Paid                  | $5.00         |
-| Tinybird Developer 1                     | $99.00        |
+| Tinybird Developer 0.5                   | $49.00        |
 | Convex Pro (1 dev)                       | $25.00        |
 | Sentry Team                              | $26.00        |
 | Domain                                   | $1.00         |
@@ -209,8 +211,8 @@ All scenarios include fixed base fees + variable usage at overage rates.
 | Tinybird Storage (~84 GB, 59 GB overage) | $3.42         |
 | Convex calls (~150K)                     | $0.30         |
 |                                          |               |
-| **Total**                                | **~$196/mo**  |
-| **Per user**                             | **~$3.93/mo** |
+| **Total**                                | **~$146/mo**  |
+| **Per user**                             | **~$2.93/mo** |
 | **Per Pro user (variable only)**         | **~$3.37/mo** |
 | **Per Hobby user (variable only)**       | **~$0.85/mo** |
 
@@ -284,7 +286,7 @@ Small transactions have disproportionately high Stripe fees due to the $0.30 fix
 At scale, these are the dominant costs:
 
 1. **R2 PUT operations** -- $4.50/M operations, 2 per trace = $9/M traces. This is 60% of per-trace cost. Consider batching or compressing bodies.
-2. **Tinybird plan + storage** -- Fixed plan cost ($99-299) + storage grows with retention. At 90-day TTL, storage accumulates 3x monthly ingestion.
+2. **Tinybird plan + storage** -- Fixed plan cost ($25-299 depending on QPS needs) + storage grows with retention. At 90-day TTL, storage accumulates 3x monthly ingestion. QPS is the binding constraint — tier upgrades driven by concurrent dashboard users, not trace volume.
 3. **KV reads** -- $0.50/M, 2-3 per request. The two-layer cache helps but every cache miss hits KV. At scale this adds up.
 4. **Convex plan** -- $25/dev/mo is a fixed cost that kicks in once you exceed free tier limits.
 5. **DO SQLite writes** -- $1.00/M, 3 per trace. Small but grows linearly.
@@ -392,17 +394,19 @@ At 150% of allowance, the proxy starts returning 429s. This isn't a revenue mech
 
 ### Break-Even Analysis
 
-Monthly fixed costs: **$156/mo** (CF Workers $5 + Tinybird $99 + Convex $25 + Sentry $26 + Domain $1)
+Monthly fixed costs: **$82/mo** (CF Workers $5 + Tinybird Dev 0.25 $25 + Convex $25 + Sentry $26 + Domain $1)
+
+Note: Tinybird will need upgrading as users grow. At ~30 users, add $74/mo for Dev 1 ($99 total). Factor tier jumps into growth planning.
 
 | Scenario                        | Revenue/mo | Variable Cost | Stripe Fees | Net     | Covers Fixed? |
 | ------------------------------- | ---------- | ------------- | ----------- | ------- | ------------- |
-| 5 Pro seats, no packs           | $100       | $8.50         | $4.90       | $86.60  | No (-$69)     |
-| 8 Pro seats, no packs           | $160       | $13.60        | $7.84       | $138.56 | No (-$17)     |
-| 10 Pro seats, no packs          | $200       | $17.00        | $9.80       | $173.20 | Yes (+$17)    |
-| 5 Pro seats + avg 2 packs each  | $150       | $18.50        | $7.15       | $124.35 | No (-$32)     |
-| 10 Pro seats + avg 2 packs each | $300       | $37.00        | $14.30      | $248.70 | Yes (+$93)    |
+| 3 Pro seats, no packs           | $60        | $5.10         | $2.94       | $51.96  | No (-$30)     |
+| 5 Pro seats, no packs           | $100       | $8.50         | $4.90       | $86.60  | Yes (+$5)     |
+| 5 Pro seats + avg 2 packs each  | $150       | $18.50        | $7.15       | $124.35 | Yes (+$42)    |
+| 10 Pro seats, no packs          | $200       | $17.00        | $9.80       | $173.20 | Yes (+$91)    |
+| 10 Pro seats + avg 2 packs each | $300       | $37.00        | $14.30      | $248.70 | Yes (+$167)   |
 
-**Break-even: ~10 Pro seats at $20/mo** assuming moderate trace pack revenue. With active trace pack buyers, it drops to ~8 seats.
+**Break-even: ~5 Pro seats at $20/mo.** At ~30 users you'll need Tinybird Dev 1 ($99), pushing break-even back to ~8 seats.
 
 ---
 
@@ -436,6 +440,80 @@ Monthly fixed costs: **$156/mo** (CF Workers $5 + Tinybird $99 + Convex $25 + Se
 
 ---
 
+## Optimized Scenario: Backblaze B2 + Combined Bodies
+
+Two changes applied together:
+
+1. **Combine request + response into a single object** — 1 PUT per trace instead of 2
+2. **Swap R2 for Backblaze B2** — $0.40/M PUTs (vs $4.50/M), $0.005/GB storage (vs $0.015/GB), free egress through Cloudflare (Bandwidth Alliance)
+
+Bodies are write-heavy, rarely-read, and always accessed via `waitUntil()` (no user-facing latency). B2's S3-compatible API means the code change is swapping the client endpoint + auth credentials.
+
+### Optimized Per-Trace Breakdown
+
+| Service         | Operation                              | Count/Trace   | Unit Price     | Cost/Trace     | vs Current         |
+| --------------- | -------------------------------------- | ------------- | -------------- | -------------- | ------------------ |
+| Workers         | Proxy invocation                       | 1             | $0.30/M        | $0.0000003     |                    |
+| Workers         | Consumer invocation                    | 0.1 (batched) | $0.30/M        | $0.00000003    |                    |
+| KV              | Reads (auth + billing + pricing)       | 3             | $0.50/M        | $0.0000015     |                    |
+| **B2**          | **PUT (combined req+res body)**        | **1**         | **$0.40/M**    | **$0.0000004** | was $0.0000090     |
+| **B2**          | **Storage (15KB avg, 30-day)**         | 15KB          | **$0.005/GB**  | **$0.0000001** | was $0.00000023    |
+| Queues          | Operations (send + receive)            | 2             | $0.40/M        | $0.0000008     |                    |
+| Durable Objects | Requests (UsageTracker + TraceBatcher) | 1.1           | $0.15/M        | $0.00000017    |                    |
+| DO SQLite       | Row writes (counters + trace inserts)  | 3             | $1.00/M        | $0.0000030     |                    |
+| DO SQLite       | Row reads (config + counters)          | 5             | $0.001/M       | $0.000000005   |                    |
+| Tinybird        | Ingestion                              | N/A           | $0 (unlimited) | $0             |                    |
+| Tinybird        | Storage (~10KB/trace, 90-day TTL)      | 10KB          | $0.058/GB-mo   | $0.0000006     |                    |
+| Convex          | Usage push (amortized)                 | 0.017         | $2.20/M        | $0.00000004    |                    |
+| **Total**       |                                        |               |                | **$0.0000069** | **was $0.0000150** |
+
+**Optimized cost: ~$0.007 per 1K traces ($6.90/million).** Down from $0.015/1K — a 54% reduction.
+
+The dominant cost shifts from body storage ops to **DO SQLite writes** (43% of per-trace cost), followed by **KV reads** (22%).
+
+### Optimized User Cost Summary
+
+| User Type    | Traces/mo | Current Cost | Optimized Cost | Savings |
+| ------------ | --------- | ------------ | -------------- | ------- |
+| Hobby        | 50K       | $0.85        | $0.39          | 54%     |
+| Moderate Pro | 100K      | $1.68        | $0.78          | 54%     |
+| Heavy Pro    | 1M        | $16.87       | $7.77          | 54%     |
+| Extreme      | 5M        | $84.31       | $38.81         | 54%     |
+
+### Impact on $30K MRR Scenario (~250M traces/mo)
+
+| Component                | Current (R2)            | Optimized (B2)        | Savings     |
+| ------------------------ | ----------------------- | --------------------- | ----------- |
+| Body PUTs                | 500M × $4.50/M = $2,250 | 250M × $0.40/M = $100 | **$2,150**  |
+| Body Storage (3.75 TB)   | $0.015/GB = $56         | $0.005/GB = $19       | $37         |
+| DO SQLite Writes         | $750                    | $750                  | $0          |
+| KV Reads                 | $375                    | $375                  | $0          |
+| Everything else          | $437                    | $437                  | $0          |
+| Tinybird (Dev 0.25+ovg)  | $30-50                  | $30-50                | $0          |
+| **Total infrastructure** | **~$3,900/mo**          | **~$1,710/mo**        | **~$2,190** |
+| **Gross margin**         | **87%**                 | **94%**               |             |
+
+### Impact on Unit Economics
+
+| Metric                        | Current | Optimized |
+| ----------------------------- | ------- | --------- |
+| Cost per 1K traces            | $0.017  | $0.007    |
+| Pro user variable cost (100K) | $1.68   | $0.78     |
+| Net profit per Pro seat       | $17.32  | $18.24    |
+| Trace pack margin ($5/100K)   | 57%     | 80%       |
+| Break-even seats              | ~5      | ~5        |
+
+Break-even doesn't change much (fixed costs dominate at small scale), but trace pack margins jump from 57% to 80% — making the growth engine significantly more profitable.
+
+### Tradeoffs
+
+- **Added dependency.** B2 is an external service vs R2's native Worker binding. Need S3 auth credentials in env, HTTP calls instead of `env.BUCKET.put()`.
+- **Latency.** External HTTP call vs native binding. Irrelevant — bodies are written in `waitUntil()`, never on the user's critical path.
+- **Retrieval path.** API worker fetches bodies on dashboard click. B2 GET through Cloudflare is free (Bandwidth Alliance) but adds ~10-50ms vs native R2. Acceptable for on-demand body viewing.
+- **Operational complexity.** One more service to monitor, credential rotate, and handle outages for.
+
+---
+
 ## Service Pricing Reference
 
 Detailed pricing for each service is documented in:
@@ -444,3 +522,4 @@ Detailed pricing for each service is documented in:
 - [Tinybird Pricing](./tinybird-pricing.md)
 - [Convex Pricing](./convex-pricing.md)
 - [Third-Party Services Pricing](./third-party-pricing.md)
+- [Cost Model Blind Spots](./blind-spots.md)
