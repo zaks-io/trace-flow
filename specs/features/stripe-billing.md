@@ -39,16 +39,38 @@ Organizations are the billing boundary. Users are members of an org and can acce
 
 ### Tiers
 
-|                | Hobby (Free)   | Pro (Paid)                    |
-| -------------- | -------------- | ----------------------------- |
-| Price          | $0             | $TBD per seat per month       |
-| Included units | 50,000 per org | 100,000 per org               |
-| Overage        | Hard blocked   | Top-up packs / auto-topup     |
-| Addons         | Not allowed    | Allowed ($8 per 100k units)   |
-| Seats          | 1              | `quantity` on Stripe sub item |
-| Retention      | 7 days         | 30 days                       |
+|                 | Hobby (Free)   | Pro (Paid)                    |
+| --------------- | -------------- | ----------------------------- |
+| Price           | $0             | $20 per seat per month        |
+| Included traces | 50,000 per org | 100,000 per org               |
+| Proxy requests  | 2,500,000/mo   | 5,000,000/mo (base)           |
+| Overage         | Hard blocked   | Top-up packs / auto-topup     |
+| Addons          | Not allowed    | Allowed ($5 per 100k traces)  |
+| Seats           | 1              | `quantity` on Stripe sub item |
+| Retention       | 7 days         | 30 days                       |
 
 Config is defined in `@trace-flow/types` as `TIER_CONFIG` and `RETENTION_DAYS`.
+
+### Proxy Request Allowance
+
+Every tier includes a proxy request allowance that limits total requests routed through the gateway, regardless of whether traces are recorded. This is a cost protection mechanism, not a revenue stream.
+
+- **Hobby:** 2.5M requests/month (50:1 ratio to included traces)
+- **Pro base:** 5M requests/month (50:1 ratio to included traces)
+- **Each trace pack (+100K traces):** adds 500K proxy requests (5:1 ratio)
+
+Example: Pro org with 10 trace packs (1M total traces) gets 5M base + 5M from packs = 10M proxy requests/month.
+
+**Enforcement:** Soft limit. When an org exceeds its proxy request allowance:
+
+1. Proxy continues forwarding requests (never blocks LLM calls)
+2. Response header `X-Trace-Flow-Proxy-Limited: true` is set
+3. Dashboard shows a warning nudging the user to purchase trace packs
+4. At 150% of allowance, proxy returns 429 for new requests
+
+Request counters are tracked by the UsageTracker DO alongside trace counters and reset on Stripe period rollover.
+
+**Rationale:** Our passthrough cost is ~$1.50/million requests (KV reads + Worker invocations). At 5M included requests, worst case cost is $7.50/mo -- well within the $18.82 net revenue from a Pro seat. The allowance prevents abuse where someone routes tens of millions of requests through us as a free proxy without buying traces.
 
 ### Addons and Auto-Topup (Pro)
 
@@ -56,6 +78,7 @@ Pro organizations can:
 
 1. Buy manual addon packs via one-time Checkout (`createAddonCheckoutSession`). Takes `quantity` (number of 100k-unit packs); units are derived server-side as `quantity * UNITS_PER_ADDON`.
 2. Enable auto-topup when remaining units cross 90% threshold (`checkAutoTopup` in `usage.ts`).
+3. Each trace pack also adds 500K to the org's proxy request allowance for the current period.
 
 Auto-topup guardrails:
 
