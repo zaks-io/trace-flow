@@ -4,6 +4,7 @@ import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
 import { parseSpanAttributes } from '@trace-flow/utils';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber, formatRelativeTime } from '@/lib/format';
+import { calculateCacheHitRate } from '@/lib/cacheMetrics';
 import { AlertIndicator } from '@/components/alerts';
 import { ModelPill } from '@/components/spans-table/ModelPill';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -188,14 +189,14 @@ export const allColumns: ColumnDef<RequestRow>[] = [
       const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10) || 0;
       const cacheCreation =
         parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10) || 0;
-      if (cacheRead === 0 && cacheCreation === 0) return null;
-      return cacheRead / (cacheRead + cacheCreation);
+      const promptTotal = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) || 0;
+      return calculateCacheHitRate(cacheRead, cacheCreation, promptTotal);
     },
     header: 'Cache',
     cell: ({ getValue }) => {
       const value = getValue<number | null>();
       if (value === null) return <span className="text-muted-foreground/50">-</span>;
-      const percent = Math.round(value * 100);
+      const percent = Math.round(value);
       return (
         <span
           className={cn(

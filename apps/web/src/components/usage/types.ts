@@ -58,6 +58,9 @@ interface CostBreakdownRow {
   cache_read_cost_usd: number;
   cache_creation_cost_usd: number;
   reasoning_cost_usd: number;
+  prompt_baseline_cost_usd: number;
+  cache_impact_cost_usd: number;
+  upstream_cost_usd: number;
 }
 
 interface LatencyRow {
@@ -70,32 +73,36 @@ export interface SummaryRow extends CostBreakdownRow, LatencyRow {
   request_count: number;
   error_count: number;
   input_tokens: number;
+
+  uncached_input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens: number;
   cache_creation_input_tokens: number;
   reasoning_tokens: number;
   total_cost_usd: number;
   total_tokens: number;
-  new_input_tokens: number;
 }
 
 export interface TimeseriesRow extends CostBreakdownRow, LatencyRow {
   bucket_start: string;
   request_count: number;
   input_tokens: number;
+
+  uncached_input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens: number;
   cache_creation_input_tokens: number;
   reasoning_tokens: number;
   total_cost_usd: number;
   total_tokens: number;
-  new_input_tokens: number;
 }
 
 export interface ModelRow extends CostBreakdownRow, LatencyRow {
   model: string;
   request_count: number;
   input_tokens: number;
+
+  uncached_input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens: number;
   cache_creation_input_tokens: number;
@@ -108,6 +115,13 @@ export interface ModelRow extends CostBreakdownRow, LatencyRow {
 export interface ProviderRow extends CostBreakdownRow, LatencyRow {
   provider: string;
   request_count: number;
+  input_tokens: number;
+
+  uncached_input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  reasoning_tokens: number;
   total_cost_usd: number;
   total_tokens: number;
 }
@@ -115,6 +129,13 @@ export interface ProviderRow extends CostBreakdownRow, LatencyRow {
 export interface OperationRow extends CostBreakdownRow, LatencyRow {
   operation: string;
   request_count: number;
+  input_tokens: number;
+
+  uncached_input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  reasoning_tokens: number;
   total_cost_usd: number;
   total_tokens: number;
 }
@@ -122,6 +143,13 @@ export interface OperationRow extends CostBreakdownRow, LatencyRow {
 export interface ApiKeyRow extends CostBreakdownRow, LatencyRow {
   api_key: string;
   request_count: number;
+  input_tokens: number;
+
+  uncached_input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  reasoning_tokens: number;
   total_cost_usd: number;
   total_tokens: number;
 }

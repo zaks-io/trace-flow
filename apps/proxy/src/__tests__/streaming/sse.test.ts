@@ -482,6 +482,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 100,
       completionTokens: 50,
       totalTokens: 150,
     });
@@ -507,6 +508,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 60,
       completionTokens: 50,
       totalTokens: 150,
       cacheReadTokens: 30,
@@ -540,6 +542,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 300,
+      uncachedInputTokens: 300,
       completionTokens: 150,
       totalTokens: 450,
     });
@@ -602,6 +605,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 150,
+      uncachedInputTokens: 150,
       completionTokens: 75,
       totalTokens: 225,
     });
@@ -626,6 +630,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 100,
       completionTokens: 500,
       totalTokens: 600,
       reasoningTokens: 350,
@@ -678,7 +683,7 @@ describe('aggregateSSETokens', () => {
     expect(result?.reasoningTokens).toBe(350);
   });
 
-  it('should normalize Anthropic: promptTokens = input_tokens + cache_read_input_tokens', () => {
+  it('should normalize Anthropic: promptTokens = uncached + cache_read + cache_write', () => {
     const streamData: SSEStreamData = {
       messages: [
         {
@@ -698,6 +703,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 3208, // 972 + 2236
+      uncachedInputTokens: 972,
       completionTokens: 150,
       totalTokens: 3358,
       cacheReadTokens: 2236,
@@ -724,6 +730,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 70,
       completionTokens: 50,
       totalTokens: 150,
       cacheReadTokens: 30,
@@ -750,6 +757,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 20,
       completionTokens: 50,
       totalTokens: 150,
       cacheReadTokens: 80,
@@ -776,6 +784,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 6497,
+      uncachedInputTokens: 3,
       completionTokens: 87,
       totalTokens: 6584,
       cacheCreationTokens: 6494,
@@ -802,6 +811,7 @@ describe('aggregateSSETokens', () => {
     // No cache_read_input_tokens → no normalization applied
     expect(result).toEqual({
       promptTokens: 500,
+      uncachedInputTokens: 500,
       completionTokens: 100,
       totalTokens: 600,
     });
@@ -826,6 +836,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 1000,
+      uncachedInputTokens: 0,
       completionTokens: 50,
       totalTokens: 1050,
       cacheReadTokens: 1000,
@@ -845,7 +856,7 @@ describe('aggregateSSETokens', () => {
 
     const result = aggregateSSETokens(streamData, 'openai');
 
-    expect(result).toEqual({ promptTokens: 100 });
+    expect(result).toEqual({ promptTokens: 100, uncachedInputTokens: 100 });
     expect(result?.totalTokens).toBeUndefined();
   });
 
@@ -938,7 +949,8 @@ describe('aggregateSSETokens', () => {
 
     const result = aggregateSSETokens(streamData, 'anthropic');
 
-    expect(result?.promptTokens).toBe(150); // 100 + 50 (Anthropic normalization)
+    expect(result?.promptTokens).toBe(750); // 100 + 50 + 600
+    expect(result?.uncachedInputTokens).toBe(100);
     expect(result?.completionTokens).toBe(75);
     expect(result?.cacheCreationTokens).toBe(600);
     expect(result?.cacheCreation5mTokens).toBe(400);
@@ -1023,6 +1035,7 @@ describe('aggregateSSETokens', () => {
     const result = aggregateSSETokens(streamData, 'google');
     expect(result).toEqual({
       promptTokens: 50,
+      uncachedInputTokens: 40,
       completionTokens: 25,
       totalTokens: 75,
       cacheReadTokens: 10,
@@ -1049,6 +1062,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 100,
       completionTokens: 200,
       totalTokens: 300,
       reasoningTokens: 150,
@@ -1076,6 +1090,7 @@ describe('aggregateSSETokens', () => {
     const result = aggregateSSETokens(streamData, 'google');
     expect(result).toEqual({
       promptTokens: 6,
+      uncachedInputTokens: 6,
       completionTokens: 7,
       totalTokens: 36, // Google's total includes thinking (6+7+23), NOT just 6+7=13
       reasoningTokens: 23,
@@ -1121,6 +1136,7 @@ describe('aggregateSSETokens', () => {
     const result = aggregateSSETokens(streamData, 'google');
     expect(result).toEqual({
       promptTokens: 8,
+      uncachedInputTokens: 8,
       completionTokens: 5,
       totalTokens: 13,
     });
@@ -1156,6 +1172,7 @@ describe('aggregateSSETokens', () => {
     const result = aggregateSSETokens(streamData, 'google');
     expect(result).toEqual({
       promptTokens: 8,
+      uncachedInputTokens: 8,
       completionTokens: 5,
       totalTokens: 13,
     });

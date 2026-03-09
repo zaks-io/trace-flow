@@ -68,12 +68,16 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
     const attrs = parseSpanAttributes(span.SpanAttributes);
 
     const inputTokens = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
+    const uncachedInputTokens = parseInt(attrs['gen_ai.usage.input_tokens_uncached'] ?? '0', 10);
     const outputTokens = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
     const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
     const cacheWrite = parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
     const reasoning = parseInt(attrs['gen_ai.usage.reasoning_tokens'] ?? '0', 10);
 
-    summary.tokens.input += Math.max(0, inputTokens - cacheRead - cacheWrite);
+    summary.tokens.input +=
+      uncachedInputTokens > 0
+        ? uncachedInputTokens
+        : Math.max(0, inputTokens - cacheRead - cacheWrite);
     summary.tokens.cacheRead += cacheRead;
     summary.tokens.cacheWrite += cacheWrite;
     summary.tokens.output += outputTokens;

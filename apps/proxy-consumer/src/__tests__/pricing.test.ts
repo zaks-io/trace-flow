@@ -123,6 +123,8 @@ describe('pricing', () => {
       expect(result.inputCostMicrodollars).toBe(3000);
       // 500 * 15000000 / 1_000_000 = 7500 microdollars
       expect(result.outputCostMicrodollars).toBe(7500);
+      expect(result.promptBaselineCostMicrodollars).toBe(3000);
+      expect(result.cacheImpactCostMicrodollars).toBe(0);
       expect(result.totalCostMicrodollars).toBe(10500);
     });
 
@@ -134,9 +136,10 @@ describe('pricing', () => {
         reasoningCostPerMillion: 15000000, // $15 per million
       };
 
-      // promptTokens includes cacheReadTokens (3000 total = 1000 non-cached + 2000 cached)
+      // Canonical prompt total = uncached + cache reads + cache writes.
       const tokens: LLMTokenUsage = {
-        promptTokens: 3000,
+        promptTokens: 3100,
+        uncachedInputTokens: 1000,
         completionTokens: 500,
         cacheReadTokens: 2000,
         cacheCreationTokens: 100,
@@ -145,12 +148,14 @@ describe('pricing', () => {
 
       const result = calculateCost(tokens, pricing);
 
-      // Non-cached input: (3000 - 2000) * 3M / 1M = 3000
+      // Uncached input: 1000 * 3M / 1M = 3000
       expect(result.inputCostMicrodollars).toBe(3000);
       expect(result.outputCostMicrodollars).toBe(7500); // 500 * 15M / 1M
       expect(result.cacheReadCostMicrodollars).toBe(600); // 2000 * 300K / 1M
       expect(result.cacheWriteCostMicrodollars).toBe(375); // 100 * 3.75M / 1M
       expect(result.reasoningCostMicrodollars).toBe(3000); // 200 * 15M / 1M
+      expect(result.promptBaselineCostMicrodollars).toBe(9300); // 3100 * 3M / 1M
+      expect(result.cacheImpactCostMicrodollars).toBe(5325); // 9300 - (3000 + 600 + 375)
       expect(result.totalCostMicrodollars).toBe(14475);
     });
 
@@ -166,6 +171,8 @@ describe('pricing', () => {
       expect(result.cacheReadCostMicrodollars).toBe(0);
       expect(result.cacheWriteCostMicrodollars).toBe(0);
       expect(result.reasoningCostMicrodollars).toBe(0);
+      expect(result.promptBaselineCostMicrodollars).toBe(3000);
+      expect(result.cacheImpactCostMicrodollars).toBe(0);
       expect(result.totalCostMicrodollars).toBe(3000);
     });
 
@@ -212,6 +219,8 @@ describe('pricing', () => {
       expect(result.cacheReadCostMicrodollars).toBe(0);
       expect(result.cacheWriteCostMicrodollars).toBe(0);
       expect(result.reasoningCostMicrodollars).toBe(0);
+      expect(result.promptBaselineCostMicrodollars).toBe(0);
+      expect(result.cacheImpactCostMicrodollars).toBe(0);
       expect(result.totalCostMicrodollars).toBe(0);
     });
 

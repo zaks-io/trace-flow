@@ -105,10 +105,15 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   };
 
   if (data.tokens) {
-    if (data.tokens.promptTokens) {
+    if (data.tokens.promptTokens !== undefined) {
       rootSpan.SpanAttributes['gen_ai.usage.input_tokens'] = String(data.tokens.promptTokens);
     }
-    if (data.tokens.completionTokens) {
+    if (data.tokens.uncachedInputTokens !== undefined) {
+      rootSpan.SpanAttributes['gen_ai.usage.input_tokens_uncached'] = String(
+        data.tokens.uncachedInputTokens,
+      );
+    }
+    if (data.tokens.completionTokens !== undefined) {
       rootSpan.SpanAttributes['gen_ai.usage.output_tokens'] = String(data.tokens.completionTokens);
     }
     if (data.tokens.reasoningTokens !== undefined) {
@@ -162,6 +167,12 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
           cost.reasoningCostMicrodollars,
         );
       }
+      rootSpan.SpanAttributes['gen_ai.cost.prompt_baseline'] = formatCostAsString(
+        cost.promptBaselineCostMicrodollars,
+      );
+      rootSpan.SpanAttributes['gen_ai.cost.cache_impact'] = formatCostAsString(
+        cost.cacheImpactCostMicrodollars,
+      );
     }
 
     if (data.tokens.upstreamCost !== undefined) {

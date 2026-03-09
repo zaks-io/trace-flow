@@ -2,6 +2,7 @@
 
 import { BarCard, formatCostCompact } from '@/components/BarCard';
 import { formatNumber, formatCurrency, formatDuration, formatPercent } from '@/lib/format';
+import { formatCacheHitRate, getPromptCacheMetrics } from '@/lib/cacheMetrics';
 import { ProjectedCostCard } from './ProjectedCostCard';
 import type { SummaryRow, RequestStatsRow, CostForecastRow } from './types';
 
@@ -29,16 +30,19 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
   const costPerRequest =
     summary && summary.request_count > 0 ? summary.total_cost_usd / summary.request_count : null;
 
-  const cacheHitRate =
-    summary && summary.input_tokens > 0
-      ? (summary.cache_read_input_tokens / summary.input_tokens) * 100
-      : 0;
-
-  // Estimated savings: what cached tokens would have cost at full input rate minus what they actually cost
-  const effectiveInputRate =
-    summary && summary.new_input_tokens > 0 ? summary.input_cost_usd / summary.new_input_tokens : 0;
-  const fullPriceForCached = summary ? summary.cache_read_input_tokens * effectiveInputRate : 0;
-  const cacheSavings = fullPriceForCached - (summary?.cache_read_cost_usd ?? 0);
+  const cacheMetrics = summary
+    ? getPromptCacheMetrics({
+        promptTotalTokens: summary.input_tokens,
+        uncachedInputTokens: summary.uncached_input_tokens,
+        cacheReadTokens: summary.cache_read_input_tokens,
+        cacheCreationTokens: summary.cache_creation_input_tokens,
+        inputCostUsd: summary.input_cost_usd,
+        cacheReadCostUsd: summary.cache_read_cost_usd,
+        cacheWriteCostUsd: summary.cache_creation_cost_usd,
+        promptBaselineCostUsd: summary.prompt_baseline_cost_usd,
+        cacheImpactCostUsd: summary.cache_impact_cost_usd,
+      })
+    : null;
 
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
@@ -129,6 +133,26 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
         }
         total={summary?.total_cost_usd ?? 0}
         formatter={formatCostCompact}
+        inlineLabels={
+          summary
+            ? [
+                ...(summary.upstream_cost_usd > 0
+                  ? [
+                      {
+                        label: 'Upstream',
+                        value: formatCurrency(summary.upstream_cost_usd),
+                        color: 'var(--color-chart-6)',
+                      },
+                      {
+                        label: 'Delta',
+                        value: formatCurrency(summary.total_cost_usd - summary.upstream_cost_usd),
+                        color: 'var(--color-muted-foreground)',
+                      },
+                    ]
+                  : []),
+              ]
+            : undefined
+        }
         delta={
           costDelta !== undefined ? { percent: costDelta, label: 'vs prior period' } : undefined
         }
@@ -223,49 +247,72 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
       {/* Caching */}
       <BarCard
         label="Caching"
-        value={summary ? formatPercent(cacheHitRate) + ' hit rate' : '-'}
+        value={
+          summary && cacheMetrics?.cacheHitRate !== null && cacheMetrics?.cacheHitRate !== undefined
+            ? `${formatCacheHitRate(cacheMetrics.cacheHitRate)} hit rate`
+            : '-'
+        }
         accent="from-chart-3/20 to-chart-3/5"
         segments={
-          summary && summary.input_tokens > 0
+          cacheMetrics && cacheMetrics.promptTotalTokens > 0
             ? [
                 {
                   key: 'cached',
                   label: 'Cached',
-                  value: summary.cache_read_input_tokens,
+                  value: cacheMetrics.cacheReadTokens,
                   color: 'var(--color-chart-3)',
+                },
+                {
+                  key: 'warming',
+                  label: 'Warmup',
+                  value: cacheMetrics.cacheCreationTokens,
+                  color: 'var(--color-chart-4)',
                 },
                 {
                   key: 'uncached',
                   label: 'Uncached',
-                  value: summary.new_input_tokens,
+                  value: cacheMetrics.uncachedInputTokens,
                   color: 'var(--color-chart-8, var(--color-muted-foreground))',
                 },
               ]
             : []
         }
-        total={summary?.input_tokens ?? 0}
+        total={cacheMetrics?.promptTotalTokens ?? 0}
         formatter={formatNumber}
         showPercent
         inlineLabels={
-          summary
+          cacheMetrics && summary
             ? [
-                ...(cacheSavings > 0
+                ...(cacheMetrics.cacheCreationTokens > 0 && cacheMetrics.cacheWriteRate !== null
                   ? [
                       {
-                        label: 'Est. Savings',
-                        value: formatCurrency(cacheSavings),
-                        color: 'var(--color-chart-3)',
+                        label: 'Write Rate',
+                        value: formatPercent(cacheMetrics.cacheWriteRate),
+                        color: 'var(--color-chart-4)',
                       },
                     ]
-                  : summary.cache_read_input_tokens > 0 && summary.new_input_tokens === 0
-                    ? [
-                        {
-                          label: 'Est. Savings',
-                          value: 'N/A',
-                          color: 'var(--color-muted-foreground)',
-                        },
-                      ]
-                    : []),
+                  : []),
+                ...(cacheMetrics.cacheImpactCostUsd !== null
+                  ? [
+                      {
+                        label: 'Cache Impact',
+                        value: formatCurrency(cacheMetrics.cacheImpactCostUsd),
+                        color:
+                          cacheMetrics.cacheImpactCostUsd >= 0
+                            ? 'var(--color-chart-3)'
+                            : 'var(--color-chart-6)',
+                      },
+                    ]
+                  : []),
+                ...(cacheMetrics.promptBaselineCostUsd !== null
+                  ? [
+                      {
+                        label: 'Prompt Baseline',
+                        value: formatCurrency(cacheMetrics.promptBaselineCostUsd),
+                        color: 'var(--color-muted-foreground)',
+                      },
+                    ]
+                  : []),
                 {
                   label: 'Read Cost',
                   value: formatCurrency(summary.cache_read_cost_usd),

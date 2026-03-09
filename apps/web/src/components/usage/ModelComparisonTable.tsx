@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react';
 import { formatNumber, formatCurrency, formatPercent, formatDuration } from '@/lib/format';
+import { calculateCacheHitRate } from '@/lib/cacheMetrics';
 import type { ModelRow, ModelSortKey } from './types';
 
 export function ModelComparisonTable({ data }: { data: ModelRow[] }) {
@@ -89,8 +90,11 @@ export function ModelComparisonTable({ data }: { data: ModelRow[] }) {
         </thead>
         <tbody>
           {sorted.map((row) => {
-            const cachePercent =
-              row.input_tokens > 0 ? (row.cache_read_input_tokens / row.input_tokens) * 100 : 0;
+            const cachePercent = calculateCacheHitRate(
+              row.cache_read_input_tokens,
+              row.cache_creation_input_tokens,
+              row.input_tokens,
+            );
             const reasoningPercent =
               row.output_tokens > 0 ? (row.reasoning_tokens / row.output_tokens) * 100 : 0;
             return (
@@ -114,7 +118,7 @@ export function ModelComparisonTable({ data }: { data: ModelRow[] }) {
                   {formatDuration(row.p95_duration_ms)}
                 </td>
                 <td className="py-2 text-right font-mono text-muted-foreground">
-                  {cachePercent > 0 ? formatPercent(cachePercent) : '-'}
+                  {cachePercent !== null ? formatPercent(cachePercent) : '-'}
                 </td>
                 <td className="py-2 text-right font-mono text-muted-foreground">
                   {reasoningPercent > 0 ? formatPercent(reasoningPercent) : '-'}

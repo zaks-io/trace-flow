@@ -33,6 +33,7 @@ describe('parseOpenRouterTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 6497,
+      uncachedInputTokens: 3,
       completionTokens: 87,
       totalTokens: 6584,
       cacheReadTokens: 0,

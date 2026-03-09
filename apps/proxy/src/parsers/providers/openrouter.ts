@@ -26,6 +26,13 @@ export function parseOpenRouterTokens(body: string): LLMTokenUsage | undefined {
   const cacheWriteMatch = /"cache_write_tokens"\s*:\s*(\d+)/.exec(body);
   if (cacheWriteMatch?.[1]) result.cacheCreationTokens = parseInt(cacheWriteMatch[1], 10);
 
+  if (result.promptTokens !== undefined) {
+    result.uncachedInputTokens = Math.max(
+      0,
+      result.promptTokens - (result.cacheReadTokens ?? 0) - (result.cacheCreationTokens ?? 0),
+    );
+  }
+
   const reasoningMatch = /"reasoning_tokens"\s*:\s*(\d+)/.exec(body);
   if (reasoningMatch?.[1]) result.reasoningTokens = parseInt(reasoningMatch[1], 10);
 

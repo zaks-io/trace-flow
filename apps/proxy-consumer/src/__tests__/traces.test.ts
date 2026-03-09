@@ -77,6 +77,7 @@ describe('buildTraces', () => {
         ...baseQueueMessage,
         tokens: {
           promptTokens: 100,
+          uncachedInputTokens: 75,
           completionTokens: 50,
           totalTokens: 150,
         },
@@ -86,6 +87,7 @@ describe('buildTraces', () => {
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens']).toBe('100');
+      expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens_uncached']).toBe('75');
       expect(rootSpan.SpanAttributes['gen_ai.usage.output_tokens']).toBe('50');
     });
 
@@ -139,6 +141,32 @@ describe('buildTraces', () => {
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens']).toBe('30');
       expect(rootSpan.SpanAttributes['gen_ai.usage.cache_creation_input_tokens']).toBe('10');
+    });
+
+    it('should include cache baseline and impact costs when pricing is available', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        tokens: {
+          promptTokens: 100,
+          uncachedInputTokens: 20,
+          completionTokens: 50,
+          cacheReadTokens: 70,
+          cacheCreationTokens: 10,
+        },
+      };
+
+      const traces = buildTraces(message, {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheReadCostPerMillion: 300_000,
+        cacheWriteCostPerMillion: 3_750_000,
+        updatedAt: Date.now(),
+        source: 'manual',
+      });
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['gen_ai.cost.prompt_baseline']).toBe('0.0003');
+      expect(rootSpan.SpanAttributes['gen_ai.cost.cache_impact']).toBe('0.000181');
     });
 
     it('should include cache creation 5m/1h breakdown when present', () => {

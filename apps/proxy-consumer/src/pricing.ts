@@ -17,6 +17,8 @@ interface CostBreakdown {
   cacheReadCostMicrodollars: number;
   cacheWriteCostMicrodollars: number;
   reasoningCostMicrodollars: number;
+  promptBaselineCostMicrodollars: number;
+  cacheImpactCostMicrodollars: number;
   totalCostMicrodollars: number;
 }
 
@@ -57,15 +59,13 @@ export async function getPricing(
 
 export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): CostBreakdown {
   const promptTokens = tokens.promptTokens ?? 0;
+  const uncachedInputTokens =
+    tokens.uncachedInputTokens ??
+    Math.max(0, promptTokens - (tokens.cacheReadTokens ?? 0) - (tokens.cacheCreationTokens ?? 0));
   const completionTokens = tokens.completionTokens ?? 0;
   const cacheReadTokens = tokens.cacheReadTokens ?? 0;
   const cacheCreationTokens = tokens.cacheCreationTokens ?? 0;
   const reasoningTokens = tokens.reasoningTokens ?? 0;
-
-  // For Anthropic (and some other providers), input_tokens includes cache_read_input_tokens.
-  // We subtract cached tokens to avoid double-charging: once at full input rate, once at cache rate.
-  // Use Math.max to handle edge cases where data might be inconsistent.
-  const nonCachedPromptTokens = Math.max(0, promptTokens - cacheReadTokens);
 
   const cacheReadCostPerMillion = pricing.cacheReadCostPerMillion ?? pricing.promptCostPerMillion;
   const cacheWriteCostPerMillion = pricing.cacheWriteCostPerMillion ?? pricing.promptCostPerMillion;
@@ -75,7 +75,7 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
   // Calculate costs in microdollars
   // Formula: (tokens * pricePerMillion) / 1_000_000
   const inputCostMicrodollars = Math.round(
-    (nonCachedPromptTokens * pricing.promptCostPerMillion) / 1_000_000,
+    (uncachedInputTokens * pricing.promptCostPerMillion) / 1_000_000,
   );
   const outputCostMicrodollars = Math.round(
     (completionTokens * pricing.completionCostPerMillion) / 1_000_000,
@@ -104,6 +104,15 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
     (reasoningTokens * reasoningCostPerMillion) / 1_000_000,
   );
 
+  const promptBaselineCostMicrodollars = Math.round(
+    (promptTokens * pricing.promptCostPerMillion) / 1_000_000,
+  );
+  // Positive values mean caching reduced prompt-side spend; negative values mean warmup writes
+  // cost more than the no-cache baseline for this request.
+  const cacheImpactCostMicrodollars =
+    promptBaselineCostMicrodollars -
+    (inputCostMicrodollars + cacheReadCostMicrodollars + cacheWriteCostMicrodollars);
+
   const totalCostMicrodollars =
     inputCostMicrodollars +
     outputCostMicrodollars +
@@ -117,6 +126,8 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
     cacheReadCostMicrodollars,
     cacheWriteCostMicrodollars,
     reasoningCostMicrodollars,
+    promptBaselineCostMicrodollars,
+    cacheImpactCostMicrodollars,
     totalCostMicrodollars,
   };
 }

@@ -15,6 +15,7 @@ describe('parseOpenAITokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 100,
       completionTokens: 50,
       totalTokens: 150,
     });
@@ -36,6 +37,7 @@ describe('parseOpenAITokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 75,
       completionTokens: 50,
       totalTokens: 150,
       cacheReadTokens: 25,
@@ -58,6 +60,7 @@ describe('parseOpenAITokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 100,
       completionTokens: 50,
       totalTokens: 150,
       reasoningTokens: 20,

@@ -16,6 +16,7 @@ export function parseGroqTokens(body: string): LLMTokenUsage | undefined {
   const result: LLMTokenUsage = {};
 
   if (promptMatch?.[1]) result.promptTokens = parseInt(promptMatch[1], 10);
+  if (result.promptTokens !== undefined) result.uncachedInputTokens = result.promptTokens;
   if (completionMatch?.[1]) result.completionTokens = parseInt(completionMatch[1], 10);
   if (totalMatch?.[1]) result.totalTokens = parseInt(totalMatch[1], 10);
 
