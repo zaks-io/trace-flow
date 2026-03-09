@@ -1,7 +1,7 @@
 import { formatBodyForDisplay, type FormattedBody } from '@trace-flow/utils';
 import type { StoredBodiesPayload } from '@trace-flow/types';
 
-export interface FormattedStoredBodies {
+interface FormattedStoredBodies {
   requestBody: FormattedBody | null;
   responseBody: FormattedBody | null;
   truncated: boolean;

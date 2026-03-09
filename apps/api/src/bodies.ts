@@ -50,7 +50,7 @@ export function parseStoredBodiesPayload(raw: string): StoredBodiesPayload {
   };
 }
 
-export interface StoredBodiesResult {
+interface StoredBodiesResult {
   payload: StoredBodiesPayload;
   orgId?: string;
   uploaded: Date;
