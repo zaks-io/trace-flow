@@ -1,32 +1,11 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import { Section } from '../components';
 
 export const metadata: Metadata = {
   title: 'Privacy Policy',
   description: 'Privacy Policy for Trace Flow — how we collect, use, and protect your data.',
 };
-
-function Section({
-  number,
-  title,
-  children,
-}: {
-  number: number;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-3">
-      <h2 className="flex items-baseline gap-3 text-sm font-semibold text-foreground">
-        <span className="font-mono text-[11px] tabular-nums text-primary/40">
-          {String(number).padStart(2, '0')}
-        </span>
-        {title}
-      </h2>
-      <div className="space-y-3 pl-8 text-sm leading-relaxed text-muted-foreground">{children}</div>
-    </section>
-  );
-}
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
