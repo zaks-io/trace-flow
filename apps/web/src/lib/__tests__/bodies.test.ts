@@ -51,7 +51,7 @@ describe('body helpers', () => {
     expect(result).toBeNull();
   });
 
-  it('throws on 403 Forbidden', async () => {
+  it('returns null on 403 for legacy objects without org metadata', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ error: 'Forbidden' }), {
         status: 403,
@@ -59,9 +59,8 @@ describe('body helpers', () => {
       }),
     );
 
-    await expect(
-      fetchStoredBodies('req_123', 'token_123', new AbortController().signal),
-    ).rejects.toThrow('Forbidden');
+    const result = await fetchStoredBodies('req_123', 'token_123', new AbortController().signal);
+    expect(result).toBeNull();
   });
 
   it('returns the combined body payload on success', async () => {

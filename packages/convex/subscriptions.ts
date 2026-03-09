@@ -9,7 +9,7 @@ import {
 import type { MutationCtx, ActionCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
-import { getCurrentUser, requireEnabledUser } from './users';
+import { getCurrentUser, requireEnabledUser } from './userHelpers';
 import { internal } from './_generated/api';
 import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
 import type { SubscriptionTier } from '@trace-flow/types';

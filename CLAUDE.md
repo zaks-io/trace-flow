@@ -57,7 +57,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 - **Shared types**: `@trace-flow/types` — defines contract between workers
 - **Shared utils**: `@trace-flow/utils`
-- **R2 keys**: `requests/${requestId}` and `responses/${requestId}`
+- **R2 keys**: `bodies/${requestId}` (single object with request + response)
 - **Stream handling**: Always `tee()`, both streams must be consumed
 - **Queue consumer**: Must call `message.ack()` after processing
 - **OTel**: Consumer uses `@microlabs/otel-cf-workers`

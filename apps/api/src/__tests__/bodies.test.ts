@@ -75,7 +75,7 @@ describe('bodies helpers', () => {
     ).toBe(true);
   });
 
-  it('prefers the combined body object when present', async () => {
+  it('returns stored bodies from combined key', async () => {
     const combined = createObjectBody(
       JSON.stringify({
         requestBody: 'request body',
