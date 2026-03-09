@@ -51,12 +51,7 @@ The proxy captures request/response data and enqueues metadata:
 
 ```typescript
 // Store bodies in R2 (fast, local to edge)
-const { requestBodyKey, responseBodyKey } = await storeRequestResponse(
-  storage,
-  requestId,
-  requestBody,
-  responseBody,
-);
+await storeBodies(storage, requestId, requestBody, responseBody, truncated, orgId);
 
 // Enqueue lightweight metadata (no bodies in queue)
 const queueMessage = {
@@ -67,14 +62,12 @@ const queueMessage = {
   responseStatus,
   timing: { requestStart, responseComplete },
   tokens,
-  requestBodyKey,
-  responseBodyKey,
 };
 
 await c.env.REQUEST_QUEUE.send(queueMessage);
 ```
 
-The queue message is small (under 1KB typically). Bodies are stored in R2 with keys referenced in the message. This keeps queue operations fast and within Cloudflare Queues' 128KB message limit.
+The queue message is small (under 1KB typically). Bodies are stored in R2 separately under `bodies/{requestId}` and fetched later by the API worker. This keeps queue operations fast and within Cloudflare Queues' 128KB message limit.
 
 ### Consumer Worker (Processor)
 

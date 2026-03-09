@@ -46,7 +46,7 @@ import {
 } from './parsers/request-body';
 import { captureStream, createResponseCapture, chunksToString } from './streaming/capture';
 import { createSSEParser, aggregateSSETokens } from './streaming/sse';
-import { storeRequestResponse } from './storage';
+import { storeBodies } from './storage';
 import { createQueueMessage } from './queue';
 import { resolveRoute, PROVIDERS } from './providers';
 import { handleOTLPTraces } from './otlp';
@@ -338,26 +338,23 @@ app.all('*', async (c) => {
           }
 
           const tier = usageCheck.status !== 'error' ? usageCheck.tier : undefined;
-
-          let requestBodyKey: string | undefined;
-          let responseBodyKey: string | undefined;
           let stored = false;
 
           if (!omitBody) {
-            const result = await storeRequestResponse(
+            const result = await storeBodies(
               c.env.STORAGE,
               requestId,
               requestBody,
               responseBody,
-              tier,
+              isTruncated,
               keyData.orgId,
             );
-            requestBodyKey = result.requestBodyKey;
-            responseBodyKey = result.responseBodyKey;
             stored = result.stored;
 
             if (!stored) {
-              console.warn('R2 storage failed, queuing message without body keys:', { requestId });
+              console.warn('R2 storage failed, queuing message without stored bodies:', {
+                requestId,
+              });
             }
           }
 
@@ -377,8 +374,6 @@ app.all('*', async (c) => {
             firstTokenReceived,
             responseComplete,
             latency,
-            requestBodyKey: stored ? requestBodyKey : undefined,
-            responseBodyKey: stored ? responseBodyKey : undefined,
             tokens,
             error,
             truncated: isTruncated,

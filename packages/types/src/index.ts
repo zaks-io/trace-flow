@@ -173,14 +173,18 @@ export interface SSEStreamData {
   messages: SSEMessage[];
 }
 
+export interface StoredBodiesPayload {
+  requestBody: string | null;
+  responseBody: string | null;
+  truncated?: boolean;
+}
+
 export interface QueueMessage {
   requestId: string;
   apiKey: string;
   targetUrl: string;
   request: LLMRequest;
   response: LLMResponse;
-  requestBodyKey?: string;
-  responseBodyKey?: string;
   timing: LLMTiming;
   tokens?: LLMTokenUsage;
   error?: LLMError;

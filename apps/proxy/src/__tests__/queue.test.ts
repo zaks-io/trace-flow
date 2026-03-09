@@ -13,8 +13,6 @@ describe('createQueueMessage', () => {
     firstTokenReceived: 1200,
     responseComplete: 1500,
     latency: 500,
-    requestBodyKey: 'requests/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
-    responseBodyKey: 'responses/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
     tokens: {
       promptTokens: 100,
       completionTokens: 50,
@@ -32,8 +30,6 @@ describe('createQueueMessage', () => {
       traceId: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
       apiKey: 'api-key-123',
       targetUrl: 'https://api.openai.com/v1/chat/completions',
-      requestBodyKey: 'requests/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
-      responseBodyKey: 'responses/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6',
       tokens: {
         promptTokens: 100,
         completionTokens: 50,
@@ -234,8 +230,6 @@ describe('createQueueMessage', () => {
     expect(result).toHaveProperty('targetUrl');
     expect(result).toHaveProperty('request');
     expect(result).toHaveProperty('response');
-    expect(result).toHaveProperty('requestBodyKey');
-    expect(result).toHaveProperty('responseBodyKey');
     expect(result).toHaveProperty('timing');
     expect(result).toHaveProperty('tokens');
     expect(result).toHaveProperty('error');
@@ -269,29 +263,10 @@ describe('createQueueMessage', () => {
     expect(result.truncated).toBe(false);
   });
 
-  it('should handle missing R2 keys when storage fails', () => {
-    const params = {
-      ...baseParams,
-      requestBodyKey: undefined,
-      responseBodyKey: undefined,
-    };
+  it('should no longer include body keys in queue messages', () => {
+    const result = createQueueMessage(baseParams);
 
-    const result = createQueueMessage(params);
-
-    expect(result.requestBodyKey).toBeUndefined();
-    expect(result.responseBodyKey).toBeUndefined();
-  });
-
-  it('should include R2 keys when storage succeeds', () => {
-    const params = {
-      ...baseParams,
-      requestBodyKey: 'requests/test-123',
-      responseBodyKey: 'responses/test-123',
-    };
-
-    const result = createQueueMessage(params);
-
-    expect(result.requestBodyKey).toBe('requests/test-123');
-    expect(result.responseBodyKey).toBe('responses/test-123');
+    expect(result).not.toHaveProperty('requestBodyKey');
+    expect(result).not.toHaveProperty('responseBodyKey');
   });
 });

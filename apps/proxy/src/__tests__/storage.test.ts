@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { storeRequestResponse } from '../storage';
+import { storeBodies } from '../storage';
 
-describe('storeRequestResponse', () => {
-  it('should store both request and response bodies with tier prefix', async () => {
+describe('storeBodies', () => {
+  it('should store request and response bodies in a single object', async () => {
     const mockStorage = {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
@@ -11,84 +11,38 @@ describe('storeRequestResponse', () => {
     const requestBody = 'request body content';
     const responseBody = 'response body content';
 
-    await storeRequestResponse(mockStorage, requestId, requestBody, responseBody, 'pro');
+    await storeBodies(mockStorage, requestId, requestBody, responseBody, false);
 
-    expect(mockStorage.put).toHaveBeenCalledTimes(2);
-
+    expect(mockStorage.put).toHaveBeenCalledTimes(1);
     expect(mockStorage.put).toHaveBeenCalledWith(
-      'requests/pro/test-request-id',
-      'request body content',
-      {},
-    );
-
-    expect(mockStorage.put).toHaveBeenCalledWith(
-      'responses/pro/test-request-id',
-      'response body content',
-      {},
-    );
-  });
-
-  it('should default to hobby tier when tier not provided', async () => {
-    const mockStorage = {
-      put: vi.fn().mockResolvedValue(undefined),
-    } as unknown as R2Bucket;
-
-    const requestId = 'my-request-123';
-    const requestBody = 'test request';
-    const responseBody = 'test response';
-
-    const result = await storeRequestResponse(mockStorage, requestId, requestBody, responseBody);
-
-    expect(result).toEqual({
-      requestBodyKey: 'requests/hobby/my-request-123',
-      responseBodyKey: 'responses/hobby/my-request-123',
-      stored: true,
-    });
-  });
-
-  it('should return correct keys with tier prefix', async () => {
-    const mockStorage = {
-      put: vi.fn().mockResolvedValue(undefined),
-    } as unknown as R2Bucket;
-
-    const requestId = 'my-request-123';
-    const requestBody = 'test request';
-    const responseBody = 'test response';
-
-    const result = await storeRequestResponse(
-      mockStorage,
-      requestId,
-      requestBody,
-      responseBody,
-      'pro',
-    );
-
-    expect(result).toEqual({
-      requestBodyKey: 'requests/pro/my-request-123',
-      responseBodyKey: 'responses/pro/my-request-123',
-      stored: true,
-    });
-  });
-
-  it('should handle concurrent uploads', async () => {
-    const mockStorage = {
-      put: vi.fn().mockImplementation((_key: string) => {
-        return new Promise((resolve) => {
-          setTimeout(() => resolve(undefined), 10);
-        });
+      'bodies/test-request-id',
+      JSON.stringify({
+        requestBody: 'request body content',
+        responseBody: 'response body content',
       }),
+      {
+        httpMetadata: { contentType: 'application/json' },
+      },
+    );
+  });
+
+  it('should return the combined body key on success', async () => {
+    const mockStorage = {
+      put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
 
-    const requestId = 'concurrent-test';
-    const requestBody = 'request';
-    const responseBody = 'response';
+    const result = await storeBodies(
+      mockStorage,
+      'my-request-123',
+      'test request',
+      'test response',
+      false,
+    );
 
-    const startTime = Date.now();
-    await storeRequestResponse(mockStorage, requestId, requestBody, responseBody, 'hobby');
-    const endTime = Date.now();
-
-    expect(mockStorage.put).toHaveBeenCalledTimes(2);
-    expect(endTime - startTime).toBeLessThan(20);
+    expect(result).toEqual({
+      bodyKey: 'bodies/my-request-123',
+      stored: true,
+    });
   });
 
   it('should handle empty bodies', async () => {
@@ -100,20 +54,20 @@ describe('storeRequestResponse', () => {
     const requestBody = '';
     const responseBody = '';
 
-    const result = await storeRequestResponse(
-      mockStorage,
-      requestId,
-      requestBody,
-      responseBody,
-      'hobby',
+    const result = await storeBodies(mockStorage, requestId, requestBody, responseBody, false);
+
+    expect(mockStorage.put).toHaveBeenCalledWith(
+      'bodies/empty-test',
+      JSON.stringify({
+        requestBody: '',
+        responseBody: '',
+      }),
+      {
+        httpMetadata: { contentType: 'application/json' },
+      },
     );
-
-    expect(mockStorage.put).toHaveBeenCalledWith('requests/hobby/empty-test', '', {});
-
-    expect(mockStorage.put).toHaveBeenCalledWith('responses/hobby/empty-test', '', {});
     expect(result).toEqual({
-      requestBodyKey: 'requests/hobby/empty-test',
-      responseBodyKey: 'responses/hobby/empty-test',
+      bodyKey: 'bodies/empty-test',
       stored: true,
     });
   });
@@ -127,11 +81,18 @@ describe('storeRequestResponse', () => {
     const largeRequestBody = 'a'.repeat(100000);
     const largeResponseBody = 'b'.repeat(200000);
 
-    await storeRequestResponse(mockStorage, requestId, largeRequestBody, largeResponseBody, 'pro');
+    await storeBodies(mockStorage, requestId, largeRequestBody, largeResponseBody, false);
 
-    expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/large-test', largeRequestBody, {});
-
-    expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/large-test', largeResponseBody, {});
+    expect(mockStorage.put).toHaveBeenCalledWith(
+      'bodies/large-test',
+      JSON.stringify({
+        requestBody: largeRequestBody,
+        responseBody: largeResponseBody,
+      }),
+      {
+        httpMetadata: { contentType: 'application/json' },
+      },
+    );
   });
 
   it('should pass orgId as custom metadata when provided', async () => {
@@ -139,15 +100,39 @@ describe('storeRequestResponse', () => {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
 
-    await storeRequestResponse(mockStorage, 'meta-test', 'req', 'res', 'pro', 'org_123');
+    await storeBodies(mockStorage, 'meta-test', 'req', 'res', false, 'org_123');
 
-    expect(mockStorage.put).toHaveBeenCalledWith('requests/pro/meta-test', 'req', {
-      customMetadata: { orgId: 'org_123' },
-    });
+    expect(mockStorage.put).toHaveBeenCalledWith(
+      'bodies/meta-test',
+      JSON.stringify({
+        requestBody: 'req',
+        responseBody: 'res',
+      }),
+      {
+        customMetadata: { orgId: 'org_123' },
+        httpMetadata: { contentType: 'application/json' },
+      },
+    );
+  });
 
-    expect(mockStorage.put).toHaveBeenCalledWith('responses/pro/meta-test', 'res', {
-      customMetadata: { orgId: 'org_123' },
-    });
+  it('should persist the truncated flag when present', async () => {
+    const mockStorage = {
+      put: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+
+    await storeBodies(mockStorage, 'truncated-test', 'req', 'res', true);
+
+    expect(mockStorage.put).toHaveBeenCalledWith(
+      'bodies/truncated-test',
+      JSON.stringify({
+        requestBody: 'req',
+        responseBody: 'res',
+        truncated: true,
+      }),
+      {
+        httpMetadata: { contentType: 'application/json' },
+      },
+    );
   });
 
   it('should handle storage errors gracefully', async () => {
@@ -159,17 +144,10 @@ describe('storeRequestResponse', () => {
     const requestBody = 'request';
     const responseBody = 'response';
 
-    const result = await storeRequestResponse(
-      mockStorage,
-      requestId,
-      requestBody,
-      responseBody,
-      'hobby',
-    );
+    const result = await storeBodies(mockStorage, requestId, requestBody, responseBody, false);
 
     expect(result).toEqual({
-      requestBodyKey: 'requests/hobby/error-test',
-      responseBodyKey: 'responses/hobby/error-test',
+      bodyKey: 'bodies/error-test',
       stored: false,
     });
   });

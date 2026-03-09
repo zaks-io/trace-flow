@@ -23,8 +23,6 @@ describe('Queue Handler Integration', () => {
       timestamp: 1500,
       latency: 500,
     },
-    requestBodyKey: `requests/${requestId}`,
-    responseBodyKey: `responses/${requestId}`,
     timing: {
       requestStart: 1000,
       requestSent: 1100,
