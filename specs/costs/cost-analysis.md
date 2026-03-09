@@ -514,6 +514,65 @@ Break-even doesn't change much (fixed costs dominate at small scale), but trace 
 
 ---
 
+## Optimized Scenario: DO SQLite Bodies (7-Day Hot Storage)
+
+Store combined request+response bodies in Durable Object SQLite instead of R2. No external dependencies — uses the same DO infrastructure already in the stack. Bodies available instantly via native binding. Default retention: 7 days. Longer retention available as a paid add-on (archive to B2 before expiry).
+
+DO writes ($1.00/M) are 4.5x cheaper than R2 PUTs ($4.50/M). The tradeoff: DO storage ($0.20/GB) is 13x more expensive than R2 ($0.015/GB), but the 7-day retention window keeps total storage small enough that write savings dominate. Cleanup is simple — shard DOs by org+day, delete the whole DO after 7 days.
+
+### Per-Trace Breakdown (DO Bodies)
+
+| Service         | Operation                              | Count/Trace   | Unit Price     | Cost/Trace      | vs Current         |
+| --------------- | -------------------------------------- | ------------- | -------------- | --------------- | ------------------ |
+| Workers         | Proxy invocation                       | 1             | $0.30/M        | $0.0000003      |                    |
+| Workers         | Consumer invocation                    | 0.1 (batched) | $0.30/M        | $0.00000003     |                    |
+| KV              | Reads (auth + billing + pricing)       | 3             | $0.50/M        | $0.0000015      |                    |
+| **DO SQLite**   | **Row write (combined req+res body)**  | **1**         | **$1.00/M**    | **$0.0000010**  | was $0.0000090     |
+| **DO SQLite**   | **Storage (15KB avg, 7-day rolling)**  | 15KB          | **$0.20/GB**   | **$0.0000007**  | was $0.00000023    |
+| **DO**          | **Request (body store)**               | **1**         | **$0.15/M**    | **$0.00000015** | new                |
+| Queues          | Operations (send + receive)            | 2             | $0.40/M        | $0.0000008      |                    |
+| Durable Objects | Requests (UsageTracker + TraceBatcher) | 1.1           | $0.15/M        | $0.00000017     |                    |
+| DO SQLite       | Row writes (counters + trace inserts)  | 3             | $1.00/M        | $0.0000030      |                    |
+| DO SQLite       | Row reads (config + counters)          | 5             | $0.001/M       | $0.000000005    |                    |
+| Tinybird        | Ingestion                              | N/A           | $0 (unlimited) | $0              |                    |
+| Tinybird        | Storage (~10KB/trace, 90-day TTL)      | 10KB          | $0.058/GB-mo   | $0.0000006      |                    |
+| Convex          | Usage push (amortized)                 | 0.017         | $2.20/M        | $0.00000004     |                    |
+| **Total**       |                                        |               |                | **$0.0000082**  | **was $0.0000150** |
+
+**DO bodies cost: ~$0.008 per 1K traces ($8.20/million).** Down from $0.015/1K — a 45% reduction.
+
+### Scaling Comparison (All Three Options)
+
+| Scale          | R2 (current, 30-day) | DO SQLite (7-day) | B2 (30-day) |
+| -------------- | -------------------- | ----------------- | ----------- |
+| 100K traces/mo | $0.92                | $0.15             | $0.06       |
+| 1M traces/mo   | $9.23                | $1.75             | $0.12       |
+| 5M traces/mo   | $46.13               | $9.38             | $0.62       |
+| 50M traces/mo  | $461                 | $88               | $12         |
+| 250M traces/mo | $2,306               | $438              | $119        |
+
+### Unit Economics (All Three)
+
+| Metric                        | Current (R2) | DO SQLite (7-day) | B2 (30-day) |
+| ----------------------------- | ------------ | ----------------- | ----------- |
+| Cost per 1K traces            | $0.017       | $0.008            | $0.007      |
+| Pro user variable cost (100K) | $1.68        | $0.87             | $0.78       |
+| Net profit per Pro seat       | $17.32       | $18.15            | $18.24      |
+| Trace pack margin ($5/100K)   | 57%          | 77%               | 80%         |
+
+### Recommended Approach: DO Default + B2 Retention Add-On
+
+1. **Launch with DO only.** 7-day body retention, zero external deps, instant reads. No B2 account needed — ship faster.
+2. **Add B2 later** as a paid "Extended body retention" add-on (30/60/90-day options). Consumer batch-flushes expiring bodies to B2 before the 7-day TTL. B2 costs are subsidized by the add-on revenue, not base margins.
+
+### Constraints
+
+- **DO SQLite 2MB row limit.** Extended thinking responses or large conversation histories could exceed this. Need to either chunk oversized bodies or truncate with a "body too large" marker.
+- **DO 10GB storage limit.** Must shard across DOs (org+day bucketing keeps each DO well under). At 15KB avg, a DO holds ~660K bodies before hitting 10GB.
+- **DO storage cost at scale.** If average body sizes are larger than 15KB (unknown — needs measurement), the 13x storage premium over R2 becomes more significant even with 7-day retention.
+
+---
+
 ## Service Pricing Reference
 
 Detailed pricing for each service is documented in:
