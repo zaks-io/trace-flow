@@ -91,6 +91,14 @@ export default async function HomePage() {
               className="font-medium text-foreground decoration-foreground/60 hover:text-primary hover:decoration-primary"
             />
           </p>
+          <div className="mt-2 flex gap-4 text-xs text-muted-foreground/60">
+            <Link href="/terms" className="transition-colors hover:text-foreground">
+              Terms
+            </Link>
+            <Link href="/privacy" className="transition-colors hover:text-foreground">
+              Privacy
+            </Link>
+          </div>
         </div>
       </div>
     </div>
