@@ -1,4 +1,4 @@
-import type { StoredBodiesPayload } from '@trace-flow/types';
+import { buildStoredBodyKey, type StoredBodiesPayload } from '@trace-flow/types';
 
 /**
  * Stores request and response bodies in a single R2 object for later retrieval via the API worker.
@@ -36,7 +36,7 @@ export async function storeBodies(
   };
 
   try {
-    await storage.put(`bodies/${requestId}`, JSON.stringify(payload), putOptions);
+    await storage.put(buildStoredBodyKey(requestId), JSON.stringify(payload), putOptions);
     return true;
   } catch (error) {
     console.error('Failed to store in R2:', {

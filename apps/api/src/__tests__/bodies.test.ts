@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildStoredBodyKey } from '@trace-flow/types';
 import {
-  buildStoredBodyKey,
   getStoredBodies,
   isBodyVisible,
   parseStoredBodiesPayload,

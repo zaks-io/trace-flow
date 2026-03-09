@@ -51,6 +51,19 @@ describe('body helpers', () => {
     expect(result).toBeNull();
   });
 
+  it('throws on 403 Forbidden', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await expect(
+      fetchStoredBodies('req_123', 'token_123', new AbortController().signal),
+    ).rejects.toThrow('Forbidden');
+  });
+
   it('returns the combined body payload on success', async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(

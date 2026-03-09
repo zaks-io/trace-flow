@@ -1,4 +1,9 @@
-import { RETENTION_DAYS, type StoredBodiesPayload, type SubscriptionTier } from '@trace-flow/types';
+import {
+  RETENTION_DAYS,
+  buildStoredBodyKey,
+  type StoredBodiesPayload,
+  type SubscriptionTier,
+} from '@trace-flow/types';
 
 const MS_PER_DAY = 86_400_000;
 
@@ -8,10 +13,6 @@ function isStoredBodiesRecord(value: unknown): value is {
   truncated?: unknown;
 } {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function buildStoredBodyKey(requestId: string): string {
-  return `bodies/${requestId}`;
 }
 
 export function resolveVisibilityWindowDays(tier?: SubscriptionTier): number {

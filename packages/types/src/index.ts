@@ -179,6 +179,10 @@ export interface StoredBodiesPayload {
   truncated?: boolean;
 }
 
+export function buildStoredBodyKey(requestId: string): string {
+  return `bodies/${requestId}`;
+}
+
 export interface QueueMessage {
   requestId: string;
   apiKey: string;

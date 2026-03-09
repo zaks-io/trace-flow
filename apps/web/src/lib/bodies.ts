@@ -31,7 +31,13 @@ export async function fetchStoredBodies(
     );
   }
 
-  return (await res.json()) as StoredBodiesPayload;
+  const data: unknown = await res.json();
+
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error('Invalid body payload: expected an object');
+  }
+
+  return data as StoredBodiesPayload;
 }
 
 export function formatStoredBodiesForDisplay(
