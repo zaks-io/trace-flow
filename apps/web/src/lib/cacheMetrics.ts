@@ -1,4 +1,4 @@
-export interface PromptCacheMetricsInput {
+interface PromptCacheMetricsInput {
   promptTotalTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
@@ -10,7 +10,7 @@ export interface PromptCacheMetricsInput {
   cacheImpactCostUsd?: number;
 }
 
-export interface PromptCacheMetrics {
+interface PromptCacheMetrics {
   hasCacheActivity: boolean;
   promptTotalTokens: number;
   uncachedInputTokens: number;
