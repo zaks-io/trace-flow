@@ -415,7 +415,7 @@ export function aggregateSSETokens(
     provider === 'anthropic'
       ? totalUncachedInputTokens
       : Math.max(0, totalPromptTokens - totalCacheReadTokens - totalCacheCreationTokens);
-  if (derivedUncachedInputTokens > 0) {
+  if (totalPromptTokens > 0) {
     result.uncachedInputTokens = derivedUncachedInputTokens;
   }
   if (totalCompletionTokens > 0) {

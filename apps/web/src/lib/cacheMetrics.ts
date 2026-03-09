@@ -42,7 +42,8 @@ export function calculateUncachedInputTokens(
 
 /**
  * Calculates cache hit rate as the percentage of total prompt-side tokens served from cache reads.
- * Returns null when there was no cache activity or the prompt total is unavailable.
+ * Returns null only when there is no cache activity at all (neither reads nor writes).
+ * Returns 0 during pure warmup (writes > 0, reads = 0) — 0% is a meaningful signal.
  */
 export function calculateCacheHitRate(
   cacheReadTokens: number,

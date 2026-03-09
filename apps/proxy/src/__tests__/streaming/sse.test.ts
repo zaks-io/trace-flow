@@ -836,6 +836,7 @@ describe('aggregateSSETokens', () => {
 
     expect(result).toEqual({
       promptTokens: 1000,
+      uncachedInputTokens: 0,
       completionTokens: 50,
       totalTokens: 1050,
       cacheReadTokens: 1000,
