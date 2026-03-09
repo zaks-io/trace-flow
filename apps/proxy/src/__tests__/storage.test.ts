@@ -26,7 +26,7 @@ describe('storeBodies', () => {
     );
   });
 
-  it('should return the combined body key on success', async () => {
+  it('should return true on success', async () => {
     const mockStorage = {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
@@ -39,10 +39,7 @@ describe('storeBodies', () => {
       false,
     );
 
-    expect(result).toEqual({
-      bodyKey: 'bodies/my-request-123',
-      stored: true,
-    });
+    expect(result).toBe(true);
   });
 
   it('should handle empty bodies', async () => {
@@ -66,10 +63,7 @@ describe('storeBodies', () => {
         httpMetadata: { contentType: 'application/json' },
       },
     );
-    expect(result).toEqual({
-      bodyKey: 'bodies/empty-test',
-      stored: true,
-    });
+    expect(result).toBe(true);
   });
 
   it('should handle large bodies', async () => {
@@ -146,9 +140,6 @@ describe('storeBodies', () => {
 
     const result = await storeBodies(mockStorage, requestId, requestBody, responseBody, false);
 
-    expect(result).toEqual({
-      bodyKey: 'bodies/error-test',
-      stored: false,
-    });
+    expect(result).toBe(false);
   });
 });

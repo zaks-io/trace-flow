@@ -47,11 +47,6 @@ app.get('/bodies/:requestId', async (c) => {
   }
 
   const requestId = c.req.param('requestId');
-
-  if (!requestId) {
-    return c.json({ error: 'Missing requestId' }, 400);
-  }
-
   const storedBodies = await getStoredBodies(c.env.STORAGE, requestId);
   if (!storedBodies) {
     return c.json({ error: 'Bodies not found' }, 404);
@@ -65,16 +60,15 @@ app.get('/bodies/:requestId', async (c) => {
   }
 
   const userSub = c.get('userSub');
-  const userOrgData = userSub
-    ? await c.env.API_KEYS.get<{ orgId: string }>(`user-org:${userSub}`, 'json')
-    : null;
+  const [userOrgData, subData] = await Promise.all([
+    userSub ? c.env.API_KEYS.get<{ orgId: string }>(`user-org:${userSub}`, 'json') : null,
+    c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json'),
+  ]);
 
   if (userOrgData?.orgId !== orgId) {
     return c.json({ error: 'Forbidden' }, 403);
   }
 
-  // Enforce retention based on current subscription tier
-  const subData = await c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json');
   const tier = subData?.tier ?? 'hobby';
   if (!isBodyVisible(storedBodies.uploaded, tier)) {
     return c.json({ error: 'Bodies expired under current retention policy' }, 410);

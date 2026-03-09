@@ -341,7 +341,7 @@ app.all('*', async (c) => {
           let stored = false;
 
           if (!omitBody) {
-            const result = await storeBodies(
+            stored = await storeBodies(
               c.env.STORAGE,
               requestId,
               requestBody,
@@ -349,7 +349,6 @@ app.all('*', async (c) => {
               isTruncated,
               keyData.orgId,
             );
-            stored = result.stored;
 
             if (!stored) {
               console.warn('R2 storage failed, queuing message without stored bodies:', {

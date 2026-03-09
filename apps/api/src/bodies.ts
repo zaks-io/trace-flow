@@ -29,19 +29,21 @@ export function parseStoredBodiesPayload(raw: string): StoredBodiesPayload {
     throw new Error('Stored body payload must be an object');
   }
 
-  const requestBody =
-    parsed.requestBody === null || typeof parsed.requestBody === 'string'
-      ? parsed.requestBody
-      : (console.warn('Unexpected requestBody type in stored payload:', typeof parsed.requestBody),
-        null);
-  const responseBody =
-    parsed.responseBody === null || typeof parsed.responseBody === 'string'
-      ? parsed.responseBody
-      : (console.warn(
-          'Unexpected responseBody type in stored payload:',
-          typeof parsed.responseBody,
-        ),
-        null);
+  let requestBody: string | null;
+  if (parsed.requestBody === null || typeof parsed.requestBody === 'string') {
+    requestBody = parsed.requestBody;
+  } else {
+    console.warn('Unexpected requestBody type in stored payload:', typeof parsed.requestBody);
+    requestBody = null;
+  }
+
+  let responseBody: string | null;
+  if (parsed.responseBody === null || typeof parsed.responseBody === 'string') {
+    responseBody = parsed.responseBody;
+  } else {
+    console.warn('Unexpected responseBody type in stored payload:', typeof parsed.responseBody);
+    responseBody = null;
+  }
 
   return {
     requestBody,

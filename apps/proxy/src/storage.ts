@@ -24,8 +24,7 @@ export async function storeBodies(
   responseBody: string,
   truncated: boolean,
   orgId?: string,
-): Promise<{ bodyKey: string; stored: boolean }> {
-  const bodyKey = `bodies/${requestId}`;
+): Promise<boolean> {
   const payload: StoredBodiesPayload = {
     requestBody,
     responseBody,
@@ -37,15 +36,13 @@ export async function storeBodies(
   };
 
   try {
-    await storage.put(bodyKey, JSON.stringify(payload), putOptions);
-
-    return { bodyKey, stored: true };
+    await storage.put(`bodies/${requestId}`, JSON.stringify(payload), putOptions);
+    return true;
   } catch (error) {
     console.error('Failed to store in R2:', {
       requestId,
       error: error instanceof Error ? error.message : String(error),
     });
-
-    return { bodyKey, stored: false };
+    return false;
   }
 }
