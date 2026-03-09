@@ -15,6 +15,7 @@ describe('parseGoogleTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 10,
+      uncachedInputTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
     });
@@ -34,6 +35,7 @@ describe('parseGoogleTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 20,
       completionTokens: 50,
       totalTokens: 150,
       cacheReadTokens: 80,
@@ -65,6 +67,7 @@ describe('parseGoogleTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 50,
+      uncachedInputTokens: 50,
       completionTokens: 200,
       totalTokens: 250,
       reasoningTokens: 150,
@@ -89,6 +92,7 @@ describe('parseGoogleTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 8,
+      uncachedInputTokens: 8,
       completionTokens: 7,
       totalTokens: 15,
     });

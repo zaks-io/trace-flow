@@ -1,8 +1,9 @@
 import type { LLMTokenUsage } from '@trace-flow/types';
 
 /**
- * Anthropic's `input_tokens` excludes cached tokens, unlike OpenAI where `prompt_tokens` is the total.
- * We normalize: promptTokens = input_tokens + cache_read_input_tokens (total input).
+ * Anthropic's `input_tokens` excludes both cache reads and cache writes.
+ * Normalize to a canonical prompt total so downstream cache rates use one denominator:
+ * promptTokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
  */
 export function parseAnthropicTokens(body: string): LLMTokenUsage | undefined {
   const inputMatch = /"input_tokens"\s*:\s*(\d+)/.exec(body);
@@ -33,19 +34,25 @@ export function parseAnthropicTokens(body: string): LLMTokenUsage | undefined {
   const cacheCreation1hTokens = ephemeral1hMatch?.[1]
     ? parseInt(ephemeral1hMatch[1], 10)
     : undefined;
+  const ephemeralTotal = (cacheCreation5mTokens ?? 0) + (cacheCreation1hTokens ?? 0);
+  const normalizedCacheCreationTokens = cacheCreationTokens ?? ephemeralTotal;
 
-  // Normalize: promptTokens = input_tokens + cache_read_input_tokens (total input)
-  const promptTokens = inputTokens !== undefined ? inputTokens + (cacheReadTokens ?? 0) : undefined;
+  // Normalize to full prompt-side tokens: uncached + cache reads + cache writes.
+  const promptTokens =
+    inputTokens !== undefined
+      ? inputTokens + (cacheReadTokens ?? 0) + normalizedCacheCreationTokens
+      : undefined;
 
   const result: LLMTokenUsage = {};
 
   if (promptTokens !== undefined) result.promptTokens = promptTokens;
+  if (inputTokens !== undefined) result.uncachedInputTokens = inputTokens;
   if (outputTokens !== undefined) result.completionTokens = outputTokens;
   if (cacheReadTokens !== undefined) result.cacheReadTokens = cacheReadTokens;
   if (cacheCreationTokens !== undefined) {
     result.cacheCreationTokens = cacheCreationTokens;
   } else if (cacheCreation5mTokens !== undefined || cacheCreation1hTokens !== undefined) {
-    result.cacheCreationTokens = (cacheCreation5mTokens ?? 0) + (cacheCreation1hTokens ?? 0);
+    result.cacheCreationTokens = normalizedCacheCreationTokens;
   }
   if (cacheCreation5mTokens !== undefined) result.cacheCreation5mTokens = cacheCreation5mTokens;
   if (cacheCreation1hTokens !== undefined) result.cacheCreation1hTokens = cacheCreation1hTokens;

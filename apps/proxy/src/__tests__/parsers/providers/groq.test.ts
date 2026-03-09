@@ -22,6 +22,7 @@ describe('parseGroqTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 399,
+      uncachedInputTokens: 399,
       completionTokens: 92,
       totalTokens: 491,
       reasoningTokens: 71,
@@ -41,6 +42,7 @@ describe('parseGroqTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 100,
       completionTokens: 50,
       totalTokens: 150,
     });

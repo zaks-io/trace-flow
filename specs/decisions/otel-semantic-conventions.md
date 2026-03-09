@@ -39,13 +39,14 @@ The OTel GenAI semantic conventions define attributes under the `gen_ai.*` names
 
 ### Token Usage
 
-| Attribute                                  | Description                                            |
-| ------------------------------------------ | ------------------------------------------------------ |
-| `gen_ai.usage.input_tokens`                | Tokens in prompt                                       |
-| `gen_ai.usage.output_tokens`               | Tokens in response                                     |
-| `gen_ai.usage.reasoning_tokens`            | Tokens used for chain-of-thought (o1, Claude thinking) |
-| `gen_ai.usage.cache_read_input_tokens`     | Prompt tokens served from cache                        |
-| `gen_ai.usage.cache_creation_input_tokens` | Prompt tokens written to cache                         |
+| Attribute                                  | Description                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------- |
+| `gen_ai.usage.input_tokens`                | Total prompt-side tokens (`uncached + cache read + cache write`) |
+| `gen_ai.usage.input_tokens_uncached`       | Prompt tokens billed at the base input rate                      |
+| `gen_ai.usage.output_tokens`               | Tokens in response                                               |
+| `gen_ai.usage.reasoning_tokens`            | Tokens used for chain-of-thought (o1, Claude thinking)           |
+| `gen_ai.usage.cache_read_input_tokens`     | Prompt tokens served from cache                                  |
+| `gen_ai.usage.cache_creation_input_tokens` | Prompt tokens written to cache                                   |
 
 ### Response Metadata
 
@@ -60,13 +61,17 @@ The OTel GenAI semantic conventions define attributes under the `gen_ai.*` names
 
 OTel does not yet define cost attributes, so we use a consistent extension pattern:
 
-| Attribute                | Description                       |
-| ------------------------ | --------------------------------- |
-| `gen_ai.cost.input`      | Input token cost in microdollars  |
-| `gen_ai.cost.output`     | Output token cost in microdollars |
-| `gen_ai.cost.total`      | Total cost in microdollars        |
-| `gen_ai.cost.cache_read` | Cache hit cost savings            |
-| `gen_ai.cost.reasoning`  | Reasoning token cost              |
+| Attribute                     | Description                                          |
+| ----------------------------- | ---------------------------------------------------- |
+| `gen_ai.cost.input`           | Uncached input token cost in microdollars            |
+| `gen_ai.cost.output`          | Output token cost in microdollars                    |
+| `gen_ai.cost.total`           | Total cost in microdollars                           |
+| `gen_ai.cost.cache_read`      | Cache read token cost in microdollars                |
+| `gen_ai.cost.cache_creation`  | Cache write token cost in microdollars               |
+| `gen_ai.cost.prompt_baseline` | Prompt-side cost at the base input rate (no caching) |
+| `gen_ai.cost.cache_impact`    | Prompt-side savings or penalty versus the baseline   |
+| `gen_ai.cost.upstream`        | Provider-reported upstream cost when available       |
+| `gen_ai.cost.reasoning`       | Reasoning token cost                                 |
 
 ## Mapping Provider Responses
 

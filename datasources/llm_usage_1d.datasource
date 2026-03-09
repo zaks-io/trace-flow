@@ -16,11 +16,15 @@ SCHEMA >
     `CacheReadInputTokens` AggregateFunction(sum, UInt64),
     `CacheCreationInputTokens` AggregateFunction(sum, UInt64),
     `ReasoningTokens` AggregateFunction(sum, UInt64),
+    `UncachedInputTokens` AggregateFunction(sum, UInt64),
     `InputCostMicrodollars` AggregateFunction(sum, UInt64),
     `OutputCostMicrodollars` AggregateFunction(sum, UInt64),
     `CacheReadCostMicrodollars` AggregateFunction(sum, UInt64),
     `CacheCreationCostMicrodollars` AggregateFunction(sum, UInt64),
     `ReasoningCostMicrodollars` AggregateFunction(sum, UInt64),
+    `PromptBaselineCostMicrodollars` AggregateFunction(sum, UInt64),
+    `CacheImpactCostMicrodollars` AggregateFunction(sum, Int64),
+    `UpstreamCostMicrodollars` AggregateFunction(sum, UInt64),
     `TotalCostMicrodollars` AggregateFunction(sum, UInt64),
     `AvgDurationNano` AggregateFunction(avg, Int64),
     `MaxDurationNano` AggregateFunction(max, Int64),
@@ -30,3 +34,6 @@ ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode"
 ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
 ENGINE_TTL "BucketStart + INTERVAL 2 YEAR"
+
+FORWARD_QUERY >
+    SELECT BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, RequestCount, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens, ReasoningTokens, initializeAggregation('sumState', toUInt64(0)) AS UncachedInputTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars, CacheCreationCostMicrodollars, ReasoningCostMicrodollars, initializeAggregation('sumState', toUInt64(0)) AS PromptBaselineCostMicrodollars, initializeAggregation('sumState', toInt64(0)) AS CacheImpactCostMicrodollars, initializeAggregation('sumState', toUInt64(0)) AS UpstreamCostMicrodollars, TotalCostMicrodollars, AvgDurationNano, MaxDurationNano, P95DurationNano

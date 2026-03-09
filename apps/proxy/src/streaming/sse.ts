@@ -297,6 +297,7 @@ export function aggregateSSETokens(
   }
 
   let totalPromptTokens = 0;
+  let totalUncachedInputTokens = 0;
   let totalCompletionTokens = 0;
   let totalReasoningTokens = 0;
   let totalCacheReadTokens = 0;
@@ -324,6 +325,10 @@ export function aggregateSSETokens(
     // OpenAI/Anthropic style
     if (message.usage.input_tokens !== undefined) {
       totalPromptTokens += message.usage.input_tokens;
+      // For Anthropic, input_tokens IS the uncached portion (excludes cache reads/writes)
+      if (provider === 'anthropic') {
+        totalUncachedInputTokens += message.usage.input_tokens;
+      }
       hasAnyTokens = true;
     }
     if (message.usage.output_tokens !== undefined) {
@@ -387,9 +392,15 @@ export function aggregateSSETokens(
 
   const result: LLMTokenUsage = {};
 
-  // Normalize: for Anthropic, input_tokens excludes cached — add them back for total
-  if (provider === 'anthropic' && totalCacheReadTokens > 0) {
-    totalPromptTokens += totalCacheReadTokens;
+  // Normalize Anthropic to full prompt-side tokens: uncached + cache reads + cache writes.
+  if (
+    totalCacheCreationTokens === 0 &&
+    (totalCacheCreation5mTokens > 0 || totalCacheCreation1hTokens > 0)
+  ) {
+    totalCacheCreationTokens = totalCacheCreation5mTokens + totalCacheCreation1hTokens;
+  }
+  if (provider === 'anthropic' && (totalCacheReadTokens > 0 || totalCacheCreationTokens > 0)) {
+    totalPromptTokens += totalCacheReadTokens + totalCacheCreationTokens;
   }
 
   // Unify Google's cachedContentTokenCount → cacheReadTokens
@@ -399,6 +410,13 @@ export function aggregateSSETokens(
 
   if (totalPromptTokens > 0) {
     result.promptTokens = totalPromptTokens;
+  }
+  const derivedUncachedInputTokens =
+    provider === 'anthropic'
+      ? totalUncachedInputTokens
+      : Math.max(0, totalPromptTokens - totalCacheReadTokens - totalCacheCreationTokens);
+  if (derivedUncachedInputTokens > 0) {
+    result.uncachedInputTokens = derivedUncachedInputTokens;
   }
   if (totalCompletionTokens > 0) {
     result.completionTokens = totalCompletionTokens;

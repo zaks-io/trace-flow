@@ -18,11 +18,15 @@ SCHEMA >
     `CacheReadInputTokens` UInt32,
     `CacheCreationInputTokens` UInt32,
     `ReasoningTokens` UInt32,
+    `UncachedInputTokens` UInt32,
     `InputCostMicrodollars` UInt64,
     `OutputCostMicrodollars` UInt64,
     `CacheReadCostMicrodollars` UInt64,
     `CacheCreationCostMicrodollars` UInt64,
     `ReasoningCostMicrodollars` UInt64,
+    `PromptBaselineCostMicrodollars` UInt64,
+    `CacheImpactCostMicrodollars` Int64,
+    `UpstreamCostMicrodollars` UInt64,
     `TotalCostMicrodollars` UInt64,
     `DurationNano` Int64,
     `TierAtIngestion` LowCardinality(String),
@@ -34,4 +38,4 @@ ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(RetentionExpiresAt / 1000000000) + toIntervalDay(0)"
 
 FORWARD_QUERY >
-    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens, ReasoningTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars, CacheCreationCostMicrodollars, ReasoningCostMicrodollars, TotalCostMicrodollars, DurationNano, defaultValueOfTypeName('LowCardinality(String)') AS TierAtIngestion, defaultValueOfTypeName('Int64') AS RetentionExpiresAt
+    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens, ReasoningTokens, defaultValueOfTypeName('UInt32') AS UncachedInputTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars, CacheCreationCostMicrodollars, ReasoningCostMicrodollars, defaultValueOfTypeName('UInt64') AS PromptBaselineCostMicrodollars, defaultValueOfTypeName('Int64') AS CacheImpactCostMicrodollars, defaultValueOfTypeName('UInt64') AS UpstreamCostMicrodollars, TotalCostMicrodollars, DurationNano, defaultValueOfTypeName('LowCardinality(String)') AS TierAtIngestion, defaultValueOfTypeName('Int64') AS RetentionExpiresAt

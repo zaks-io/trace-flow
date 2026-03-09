@@ -172,6 +172,7 @@ const displayedKeys = new Set([
   'gen_ai.system',
   'gen_ai.request.model',
   'gen_ai.usage.input_tokens',
+  'gen_ai.usage.input_tokens_uncached',
   'gen_ai.usage.output_tokens',
   'gen_ai.usage.reasoning_tokens',
   'gen_ai.usage.cache_read_input_tokens',
@@ -184,6 +185,9 @@ const displayedKeys = new Set([
   'gen_ai.cost.cache_read',
   'gen_ai.cost.cache_creation',
   'gen_ai.cost.reasoning',
+  'gen_ai.cost.prompt_baseline',
+  'gen_ai.cost.cache_impact',
+  'gen_ai.cost.upstream',
   'gen_ai.request_id',
   'baggage.operation',
 ]);
@@ -529,9 +533,20 @@ export function SpanDetailPanel({
   const costReasoning = allAttributes['gen_ai.cost.reasoning']
     ? parseFloat(allAttributes['gen_ai.cost.reasoning'])
     : 0;
+  const costPromptBaseline = allAttributes['gen_ai.cost.prompt_baseline']
+    ? parseFloat(allAttributes['gen_ai.cost.prompt_baseline'])
+    : 0;
+  const costCacheImpact = allAttributes['gen_ai.cost.cache_impact']
+    ? parseFloat(allAttributes['gen_ai.cost.cache_impact'])
+    : 0;
+  const costUpstream = allAttributes['gen_ai.cost.upstream']
+    ? parseFloat(allAttributes['gen_ai.cost.upstream'])
+    : 0;
   const costTotal = costInput + costOutput + costCacheRead + costCacheWrite + costReasoning;
 
-  const inputTokens = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+  const inputTokens = allAttributes['gen_ai.usage.input_tokens_uncached']
+    ? parseInt(allAttributes['gen_ai.usage.input_tokens_uncached'], 10)
+    : Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
   const totalTokens =
     inputTokens + cacheReadTokens + cacheWriteTokens + completionTokens + reasoningTokens;
 
@@ -748,11 +763,31 @@ export function SpanDetailPanel({
                       />
                     )}
                   </div>
-                  {ttftMs !== null && (
+                  {(ttftMs !== null ||
+                    costPromptBaseline > 0 ||
+                    costCacheImpact !== 0 ||
+                    costUpstream > 0) && (
                     <div className="flex flex-wrap gap-1.5">
-                      <Badge variant="outline" className="font-mono text-[11px]">
-                        TTFT {ttftMs.toFixed(0)}ms
-                      </Badge>
+                      {ttftMs !== null && (
+                        <Badge variant="outline" className="font-mono text-[11px]">
+                          TTFT {ttftMs.toFixed(0)}ms
+                        </Badge>
+                      )}
+                      {costPromptBaseline > 0 && (
+                        <Badge variant="outline" className="font-mono text-[11px]">
+                          Baseline {formatCostCompact(costPromptBaseline)}
+                        </Badge>
+                      )}
+                      {costCacheImpact !== 0 && (
+                        <Badge variant="outline" className="font-mono text-[11px]">
+                          Impact {formatCostCompact(costCacheImpact)}
+                        </Badge>
+                      )}
+                      {costUpstream > 0 && (
+                        <Badge variant="outline" className="font-mono text-[11px]">
+                          Upstream {formatCostCompact(costUpstream)}
+                        </Badge>
+                      )}
                     </div>
                   )}
                 </div>

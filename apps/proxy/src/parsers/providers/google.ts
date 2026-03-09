@@ -33,6 +33,10 @@ export function parseGoogleTokens(body: string): LLMTokenUsage | undefined {
   const cachedMatch = lastMatch(/"cachedContentTokenCount"\s*:\s*(\d+)/, body);
   if (cachedMatch?.[1]) result.cacheReadTokens = parseInt(cachedMatch[1], 10);
 
+  if (result.promptTokens !== undefined) {
+    result.uncachedInputTokens = Math.max(0, result.promptTokens - (result.cacheReadTokens ?? 0));
+  }
+
   const thoughtsMatch = lastMatch(/"thoughtsTokenCount"\s*:\s*(\d+)/, body);
   if (thoughtsMatch?.[1]) result.reasoningTokens = parseInt(thoughtsMatch[1], 10);
 

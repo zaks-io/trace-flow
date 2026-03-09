@@ -1,5 +1,5 @@
 import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from './spans';
-import { calculateCacheHitRate } from './cacheMetrics';
+import { calculateCacheHitRate, calculateUncachedInputTokens } from './cacheMetrics';
 
 interface TokenSummary {
   promptTokens: number;
@@ -120,7 +120,14 @@ function extractLLMCalls(spans: TraceSpan[], traceStart: number): LLMCall[] {
       totalTokens: promptTokens + completionTokens,
       cacheReadTokens,
       cacheCreationTokens,
-      newTokens: Math.max(0, promptTokens - cacheReadTokens),
+      newTokens: calculateUncachedInputTokens(
+        promptTokens,
+        cacheReadTokens,
+        cacheCreationTokens,
+        attrs['gen_ai.usage.input_tokens_uncached']
+          ? parseInt(attrs['gen_ai.usage.input_tokens_uncached'], 10)
+          : undefined,
+      ),
       cost,
       duration: span.Duration,
       status: span.StatusCode,

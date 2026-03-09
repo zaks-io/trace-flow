@@ -4,7 +4,8 @@
 
 All provider parsers normalize to `LLMTokenUsage` where:
 
-- **`promptTokens`** = TOTAL input tokens (cached + non-cached)
+- **`promptTokens`** = total prompt-side input tokens (`uncached + cache read + cache write`)
+- **`uncachedInputTokens`** = prompt tokens billed at the base input rate
 - **`completionTokens`** = output tokens
 - **`cacheReadTokens`** = subset of promptTokens served from cache
 - **`cacheCreationTokens`** = tokens written to cache
@@ -23,25 +24,40 @@ All provider parsers normalize to `LLMTokenUsage` where:
 
 ### Anthropic
 
-Anthropic is the only provider where the prompt token field (`input_tokens`) **excludes** cached tokens. The parser normalizes:
+Anthropic is the only provider where the prompt token field (`input_tokens`) excludes both cache reads and cache writes. The parser normalizes:
 
 ```
-promptTokens = input_tokens + cache_read_input_tokens
+promptTokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+uncachedInputTokens = input_tokens
 ```
 
 Anthropic also reports a `cache_creation` sub-object with `ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens`. These are parsed into `cacheCreation5mTokens`/`cacheCreation1hTokens` and priced at separate tier rates (`cacheWriteCostPerMillion` for 5m, `cacheWrite1hCostPerMillion` for 1h). When the tier breakdown is available, it replaces the aggregate `cacheCreationTokens` for cost calculation.
 
 ### OpenAI
 
-`prompt_tokens` already includes cached tokens. `cached_tokens` is nested under `prompt_tokens_details`. No normalization needed.
+`prompt_tokens` already includes the full prompt total. `cached_tokens` is nested under `prompt_tokens_details`, so:
+
+```
+uncachedInputTokens = max(prompt_tokens - cached_tokens, 0)
+```
 
 ### OpenRouter
 
 OpenAI-compatible with additional fields: `cache_write_tokens` in `prompt_tokens_details` and `cost` at the usage level.
 
+```
+uncachedInputTokens = max(prompt_tokens - cached_tokens - cache_write_tokens, 0)
+```
+
 ### Google
 
-Uses camelCase fields in `usageMetadata`. `promptTokenCount` includes cached tokens. `cachedContentTokenCount` maps to `cacheReadTokens`. `thoughtsTokenCount` maps to `reasoningTokens` (parity with OpenAI `reasoning_tokens` and Anthropic thinking estimation).
+Uses camelCase fields in `usageMetadata`. `promptTokenCount` already includes cached tokens. `cachedContentTokenCount` maps to `cacheReadTokens`, so:
+
+```
+uncachedInputTokens = max(promptTokenCount - cachedContentTokenCount, 0)
+```
+
+`thoughtsTokenCount` maps to `reasoningTokens` (parity with OpenAI `reasoning_tokens` and Anthropic thinking estimation).
 
 ### Groq
 
@@ -63,13 +79,13 @@ The dispatcher routes by provider ID. When no provider is given, `parseAutoDetec
 
 ## Cost Calculation Impact
 
-The consumer's `calculateCost()` in `pricing.ts` subtracts `cacheReadTokens` from `promptTokens` to get non-cached input:
+The consumer's `calculateCost()` in `pricing.ts` uses the explicit uncached field when available, and otherwise derives uncached prompt input by subtracting both cache reads and cache writes:
 
 ```
-nonCachedPromptTokens = max(0, promptTokens - cacheReadTokens)
+uncachedInputTokens = max(0, promptTokens - cacheReadTokens - cacheCreationTokens)
 ```
 
-With the normalization fix, this correctly deducts cached tokens for all providers. Before the fix, Anthropic's `input_tokens` (which excluded cache reads) was used as `promptTokens`, making `nonCachedPromptTokens` too low and cache hit rate always 100%.
+With the normalization fix, this correctly deducts cache-served and cache-written tokens for all providers. Before the fix, Anthropic's `input_tokens` (which excluded cache reads and cache writes) was treated like total prompt tokens, making cache rates and prompt-side costs inconsistent.
 
 ## Cache Hit Rate
 

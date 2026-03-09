@@ -1,27 +1,100 @@
+export interface PromptCacheMetricsInput {
+  promptTotalTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  uncachedInputTokens?: number;
+  inputCostUsd?: number;
+  cacheReadCostUsd?: number;
+  cacheWriteCostUsd?: number;
+  promptBaselineCostUsd?: number;
+  cacheImpactCostUsd?: number;
+}
+
+export interface PromptCacheMetrics {
+  hasCacheActivity: boolean;
+  promptTotalTokens: number;
+  uncachedInputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRate: number | null;
+  cacheWriteRate: number | null;
+  promptCostActualUsd: number;
+  promptBaselineCostUsd: number | null;
+  cacheImpactCostUsd: number | null;
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(value, 100));
+}
+
+export function calculateUncachedInputTokens(
+  promptTotalTokens: number,
+  cacheReadTokens: number,
+  cacheCreationTokens: number,
+  explicitUncachedInputTokens?: number,
+): number {
+  if (explicitUncachedInputTokens !== undefined) {
+    return Math.max(0, explicitUncachedInputTokens);
+  }
+
+  return Math.max(0, promptTotalTokens - cacheReadTokens - cacheCreationTokens);
+}
+
 /**
- * Calculates cache hit rate as percentage of total input tokens that were cache reads.
- *
- * Formula: (cacheReadTokens / totalInputTokens) × 100
- *
- * Returns null if there's no caching activity (both read and creation are 0) or no input tokens.
- * cacheCreationTokens is only used to detect whether any caching occurred at all — it does not
- * affect the hit rate formula itself.
+ * Calculates cache hit rate as the percentage of total prompt-side tokens served from cache reads.
+ * Returns null when there was no cache activity or the prompt total is unavailable.
  */
 export function calculateCacheHitRate(
   cacheReadTokens: number,
   cacheCreationTokens: number,
   totalInputTokens: number,
 ): number | null {
-  // No cache activity at all → null (distinguishes "no caching" from "0% hit rate")
-  if (cacheReadTokens === 0 && cacheCreationTokens === 0) {
-    return null;
-  }
+  if (cacheReadTokens === 0 && cacheCreationTokens === 0) return null;
+  if (totalInputTokens === 0) return null;
+  return clampPercent((cacheReadTokens / totalInputTokens) * 100);
+}
 
-  if (totalInputTokens === 0) {
-    return null;
-  }
+export function calculateCacheWriteRate(
+  cacheReadTokens: number,
+  cacheCreationTokens: number,
+  totalInputTokens: number,
+): number | null {
+  if (cacheCreationTokens === 0) return null;
+  if (totalInputTokens === 0) return null;
+  return clampPercent((cacheCreationTokens / totalInputTokens) * 100);
+}
 
-  return Math.min((cacheReadTokens / totalInputTokens) * 100, 100);
+export function getPromptCacheMetrics(input: PromptCacheMetricsInput): PromptCacheMetrics {
+  const uncachedInputTokens = calculateUncachedInputTokens(
+    input.promptTotalTokens,
+    input.cacheReadTokens,
+    input.cacheCreationTokens,
+    input.uncachedInputTokens,
+  );
+  const hasCacheActivity = input.cacheReadTokens > 0 || input.cacheCreationTokens > 0;
+  const promptCostActualUsd =
+    (input.inputCostUsd ?? 0) + (input.cacheReadCostUsd ?? 0) + (input.cacheWriteCostUsd ?? 0);
+
+  return {
+    hasCacheActivity,
+    promptTotalTokens: input.promptTotalTokens,
+    uncachedInputTokens,
+    cacheReadTokens: input.cacheReadTokens,
+    cacheCreationTokens: input.cacheCreationTokens,
+    cacheHitRate: calculateCacheHitRate(
+      input.cacheReadTokens,
+      input.cacheCreationTokens,
+      input.promptTotalTokens,
+    ),
+    cacheWriteRate: calculateCacheWriteRate(
+      input.cacheReadTokens,
+      input.cacheCreationTokens,
+      input.promptTotalTokens,
+    ),
+    promptCostActualUsd,
+    promptBaselineCostUsd: input.promptBaselineCostUsd ?? null,
+    cacheImpactCostUsd: input.cacheImpactCostUsd ?? null,
+  };
 }
 
 /**

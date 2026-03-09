@@ -22,6 +22,13 @@ export function parseOpenAITokens(body: string): LLMTokenUsage | undefined {
   const cachedMatch = /"cached_tokens"\s*:\s*(\d+)/.exec(body);
   if (cachedMatch?.[1]) result.cacheReadTokens = parseInt(cachedMatch[1], 10);
 
+  if (result.promptTokens !== undefined) {
+    result.uncachedInputTokens = Math.max(
+      0,
+      result.promptTokens - (result.cacheReadTokens ?? 0) - (result.cacheCreationTokens ?? 0),
+    );
+  }
+
   const reasoningMatch = /"reasoning_tokens"\s*:\s*(\d+)/.exec(body);
   if (reasoningMatch?.[1]) result.reasoningTokens = parseInt(reasoningMatch[1], 10);
 

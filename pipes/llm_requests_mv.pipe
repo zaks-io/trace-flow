@@ -16,6 +16,18 @@ SQL >
         coalesce(nullIf(JSONExtractString(SpanAttributes, 'baggage.operation'), ''), '') AS BaggageOperation,
         StatusCode,
         toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) AS InputTokens,
+        toUInt32(
+            greatest(
+                if(
+                    JSONHas(SpanAttributes, 'gen_ai.usage.input_tokens_uncached'),
+                    toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens_uncached')),
+                    toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))
+                        - toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_read_input_tokens'))
+                        - toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_creation_input_tokens'))
+                ),
+                0
+            )
+        ) AS UncachedInputTokens,
         toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens')) AS OutputTokens,
         toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_read_input_tokens')) AS CacheReadInputTokens,
         toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_creation_input_tokens')) AS CacheCreationInputTokens,
@@ -37,6 +49,15 @@ SQL >
         toUInt64(
             round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.reasoning')) * 1000000)
         ) AS ReasoningCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.prompt_baseline')) * 1000000)
+        ) AS PromptBaselineCostMicrodollars,
+        toInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.cache_impact')) * 1000000)
+        ) AS CacheImpactCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.upstream')) * 1000000)
+        ) AS UpstreamCostMicrodollars,
         toUInt64(
             round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total')) * 1000000)
         ) AS TotalCostMicrodollars,

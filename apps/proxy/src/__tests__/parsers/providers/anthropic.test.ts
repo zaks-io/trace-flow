@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseAnthropicTokens } from '../../../parsers/providers/anthropic';
 
 describe('parseAnthropicTokens', () => {
-  it('should normalize promptTokens = input_tokens + cache_read_input_tokens', () => {
+  it('should normalize promptTokens = uncached + cache_read + cache_write', () => {
     const body = JSON.stringify({
       usage: {
         input_tokens: 972,
@@ -15,6 +15,7 @@ describe('parseAnthropicTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 3208, // 972 + 2236
+      uncachedInputTokens: 972,
       completionTokens: 150,
       totalTokens: 3358,
       cacheReadTokens: 2236,
@@ -33,6 +34,7 @@ describe('parseAnthropicTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 100,
+      uncachedInputTokens: 100,
       completionTokens: 50,
       totalTokens: 150,
     });
@@ -51,9 +53,10 @@ describe('parseAnthropicTokens', () => {
     const result = parseAnthropicTokens(body);
 
     expect(result).toEqual({
-      promptTokens: 100,
+      promptTokens: 600,
+      uncachedInputTokens: 100,
       completionTokens: 50,
-      totalTokens: 150,
+      totalTokens: 650,
       cacheCreationTokens: 500,
       cacheReadTokens: 0,
     });
@@ -79,6 +82,7 @@ describe('parseAnthropicTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 3283, // 643 + 2640
+      uncachedInputTokens: 643,
       completionTokens: 43,
       totalTokens: 3326,
       cacheCreationTokens: 0,
@@ -102,6 +106,7 @@ describe('parseAnthropicTokens', () => {
 
     expect(result).toEqual({
       promptTokens: 500,
+      uncachedInputTokens: 500,
       completionTokens: 100,
       totalTokens: 600,
       cacheCreationTokens: 0,
@@ -131,9 +136,10 @@ describe('parseAnthropicTokens', () => {
     const result = parseAnthropicTokens(body);
 
     expect(result).toEqual({
-      promptTokens: 100,
+      promptTokens: 656,
+      uncachedInputTokens: 100,
       completionTokens: 50,
-      totalTokens: 150,
+      totalTokens: 706,
       cacheCreationTokens: 556,
       cacheReadTokens: 0,
       cacheCreation5mTokens: 456,

@@ -51,6 +51,7 @@ export interface LLMTiming {
 
 export interface LLMTokenUsage {
   promptTokens?: number;
+  uncachedInputTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
   reasoningTokens?: number;
