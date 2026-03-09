@@ -1,7 +1,12 @@
 import { query, mutation, internalQuery, internalMutation } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
-import { getCurrentUser, requireEnabledUser } from './users';
+import { getCurrentUser, requireEnabledUser } from './userHelpers';
+import { internal } from './_generated/api';
+import { TIER_CONFIG } from '@trace-flow/types';
+import type { SubscriptionKVData } from '@trace-flow/types';
+import type { Id } from './_generated/dataModel';
 
 export const get = query({
   handler: async (ctx) => {
@@ -97,3 +102,86 @@ export const getByStripeCustomerId = internalQuery({
       .first();
   },
 });
+
+async function insertHobbySubscription(ctx: MutationCtx, orgId: Id<'organizations'>) {
+  const now = Date.now();
+  const periodEnd = now + 30 * 24 * 60 * 60 * 1000;
+  const kvData: Required<SubscriptionKVData> = {
+    tier: 'hobby',
+    status: 'active',
+    monthlyUnits: TIER_CONFIG.hobby.monthlyUnits,
+    addonUnits: 0,
+    seatQuantity: 1,
+    currentPeriodStart: now,
+    currentPeriodEnd: periodEnd,
+    autoOverage: false,
+    overageCapCents: 0,
+    cancelAtPeriodEnd: false,
+  };
+
+  await ctx.db.insert('subscriptions', {
+    orgId,
+    ...kvData,
+    currentPeriodOverageSpentCents: 0,
+    addonPurchaseCount: 0,
+  });
+
+  await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
+    orgId,
+    ...kvData,
+  });
+}
+
+/**
+ * Canonical org bootstrap: creates org, owner membership, and default hobby subscription.
+ * Call this from user bootstrap flows instead of creating orgs directly.
+ * No Stripe customer is created for hobby tier.
+ */
+export async function createOrgWithDefaultBilling(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  name?: string,
+  sub?: string,
+): Promise<Id<'organizations'>> {
+  const orgName = name ? `${name}'s Org` : 'My Organization';
+  const orgId = await ctx.db.insert('organizations', {
+    name: orgName,
+    ownerId: userId,
+  });
+  await ctx.db.patch(userId, { orgId });
+  await ctx.db.insert('organizationMembers', {
+    orgId,
+    userId,
+    role: 'owner',
+    status: 'active',
+    joinedAt: Date.now(),
+  });
+
+  await insertHobbySubscription(ctx, orgId);
+
+  if (sub) {
+    await ctx.scheduler.runAfter(0, internal.cloudflare.syncUserOrgToKV, {
+      sub,
+      orgId,
+    });
+  }
+
+  return orgId;
+}
+
+/**
+ * Ensures an existing org has a hobby subscription. Idempotent: no-op if one exists.
+ * Used when a user joins an org via invite and the org lacks billing (e.g. migrated data).
+ */
+export async function ensureOrgHasSubscription(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+): Promise<void> {
+  const existing = await ctx.db
+    .query('subscriptions')
+    .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+    .first();
+  if (existing) return;
+
+  await insertHobbySubscription(ctx, orgId);
+}
