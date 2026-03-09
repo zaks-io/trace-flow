@@ -191,6 +191,16 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          <SidebarMenuItem className="mt-1">
+            <div className="flex gap-3 px-3 py-1 text-xs text-muted-foreground/60">
+              <Link href="/terms" className="transition-colors hover:text-foreground">
+                Terms
+              </Link>
+              <Link href="/privacy" className="transition-colors hover:text-foreground">
+                Privacy
+              </Link>
+            </div>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
