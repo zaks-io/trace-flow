@@ -20,7 +20,7 @@ export async function fetchStoredBodies(
   });
 
   if (!res.ok) {
-    if (res.status === 404 || res.status === 410) return null;
+    if (res.status === 403 || res.status === 404 || res.status === 410) return null;
 
     const errorData = (await res.json().catch(() => null)) as {
       error?: string;
