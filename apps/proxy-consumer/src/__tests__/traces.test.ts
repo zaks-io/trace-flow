@@ -21,8 +21,6 @@ describe('buildTraces', () => {
       timestamp: 1500,
       latency: 500,
     },
-    requestBodyKey: 'requests/test-request-123',
-    responseBodyKey: 'responses/test-request-123',
     timing: {
       requestStart: 1000,
       requestSent: 1100,

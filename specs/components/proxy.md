@@ -62,19 +62,17 @@ For Server-Sent Events (SSE) responses (`Content-Type: text/event-stream`), the 
 
 ## R2 Storage
 
-Request and response bodies are stored in R2 with consistent key naming:
+Request and response bodies are stored together in R2 with consistent key naming:
 
-- Request bodies: `requests/{requestId}`
-- Response bodies: `responses/{requestId}`
+- Combined body payload: `bodies/{requestId}`
 
-Each request gets a unique ID, so bodies are never overwritten even when multiple requests share the same trace ID. Storage failures are handled gracefully; the queue message is still sent without body keys.
+Each request gets a unique ID, so bodies are never overwritten even when multiple requests share the same trace ID. Storage failures are handled gracefully; the queue message is still sent without stored body data.
 
 ## Queue Message Structure
 
 After capturing data, the proxy enqueues a message containing:
 
 - Request and response metadata (provider, status, timestamps)
-- R2 keys for body retrieval
 - Parsed token usage from response body or SSE events
 - Error details if the response was an error
 - SSE stream data for streaming responses

@@ -1,8 +1,9 @@
 import * as Sentry from '@sentry/cloudflare';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { RETENTION_DAYS, type SubscriptionKVData } from '@trace-flow/types';
+import type { SubscriptionKVData } from '@trace-flow/types';
 import { validateAuth0JWT } from './auth';
+import { getStoredBodies, isBodyVisible } from './bodies';
 
 interface Env {
   STORAGE: R2Bucket;
@@ -39,66 +40,42 @@ app.use('*', async (c, next) => {
   return mw(c, next);
 });
 
-app.get('/bodies/:requestId/:type', async (c) => {
+app.get('/bodies/:requestId', async (c) => {
   const authError = await validateAuth0JWT(c);
   if (authError) {
     return authError;
   }
 
   const requestId = c.req.param('requestId');
-  const type = c.req.param('type');
-
-  if (!requestId) {
-    return c.json({ error: 'Missing requestId' }, 400);
-  }
-
-  if (type !== 'request' && type !== 'response') {
-    return c.json({ error: 'Invalid type. Must be "request" or "response"' }, 400);
-  }
-
-  // Try all possible key formats in parallel: tier-prefixed (new) and legacy
-  const [pro, hobby, legacy] = await Promise.all([
-    c.env.STORAGE.get(`${type}s/pro/${requestId}`),
-    c.env.STORAGE.get(`${type}s/hobby/${requestId}`),
-    c.env.STORAGE.get(`${type}s/${requestId}`),
-  ]);
-  const object = pro ?? hobby ?? legacy;
-
-  if (!object) {
-    return c.json({ error: `${type} body not found` }, 404);
+  const storedBodies = await getStoredBodies(c.env.STORAGE, requestId);
+  if (!storedBodies) {
+    return c.json({ error: 'Bodies not found' }, 404);
   }
 
   // Verify the requesting user belongs to the org that owns this object
-  const orgId = object.customMetadata?.orgId;
+  const orgId = storedBodies.orgId;
   if (!orgId) {
     // Legacy objects without orgId metadata are inaccessible
     return c.json({ error: 'Forbidden' }, 403);
   }
 
   const userSub = c.get('userSub');
-  const userOrgData = userSub
-    ? await c.env.API_KEYS.get<{ orgId: string }>(`user-org:${userSub}`, 'json')
-    : null;
+  const [userOrgData, subData] = await Promise.all([
+    userSub ? c.env.API_KEYS.get<{ orgId: string }>(`user-org:${userSub}`, 'json') : null,
+    c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json'),
+  ]);
 
   if (userOrgData?.orgId !== orgId) {
     return c.json({ error: 'Forbidden' }, 403);
   }
 
-  // Enforce retention based on current subscription tier
-  const subData = await c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json');
   const tier = subData?.tier ?? 'hobby';
-  const retentionMs = RETENTION_DAYS[tier] * 86_400_000;
-  const expiresAt = object.uploaded.getTime() + retentionMs;
-
-  if (Date.now() > expiresAt) {
-    return c.json({ error: 'Body expired under current retention policy' }, 403);
+  if (!isBodyVisible(storedBodies.uploaded, tier)) {
+    return c.json({ error: 'Bodies expired under current retention policy' }, 410);
   }
 
-  return new Response(object.body, {
-    headers: {
-      'Content-Type': object.httpMetadata?.contentType ?? 'text/plain',
-      'Cache-Control': 'private, max-age=3600',
-    },
+  return c.json(storedBodies.payload, 200, {
+    'Cache-Control': 'private, max-age=3600',
   });
 });
 

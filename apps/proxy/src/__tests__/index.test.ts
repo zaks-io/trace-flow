@@ -164,8 +164,8 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
 
       // Verify R2 storage
-      const stored = await env.STORAGE.list();
-      expect(stored.objects.length).toBeGreaterThanOrEqual(2);
+      const stored = await env.STORAGE.list({ prefix: 'bodies/' });
+      expect(stored.objects.length).toBeGreaterThanOrEqual(1);
     });
 
     it('should proxy successful request to Anthropic', async () => {
@@ -434,8 +434,8 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
 
       // Verify request body was stored
-      const requestKeys = await env.STORAGE.list({ prefix: 'requests/' });
-      expect(requestKeys.objects.length).toBeGreaterThanOrEqual(1);
+      const storedBodies = await env.STORAGE.list({ prefix: 'bodies/' });
+      expect(storedBodies.objects.length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -550,7 +550,7 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
 
       // No R2 storage should happen when not recording
-      const stored = await env.STORAGE.list({ prefix: `requests/` });
+      const stored = await env.STORAGE.list({ prefix: 'bodies/' });
       expect(stored.objects.length).toBe(0);
     });
 
@@ -793,8 +793,8 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
 
       // Verify bodies WERE stored
-      const stored = await env.STORAGE.list();
-      expect(stored.objects.length).toBeGreaterThanOrEqual(2);
+      const stored = await env.STORAGE.list({ prefix: 'bodies/' });
+      expect(stored.objects.length).toBeGreaterThanOrEqual(1);
     });
 
     it('should strip X-Trace-Flow-Omit-Body header before forwarding to provider', async () => {

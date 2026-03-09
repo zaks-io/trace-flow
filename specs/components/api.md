@@ -1,10 +1,10 @@
 # API Worker
 
-The API Worker provides a secure endpoint for retrieving request and response bodies stored in R2. It serves as the bridge between the web dashboard and the raw data captured by the proxy.
+The API Worker provides a secure endpoint for retrieving stored request/response body pairs from R2. It serves as the bridge between the web dashboard and the raw data captured by the proxy.
 
 ## What It Does
 
-The API worker exposes a single endpoint that retrieves request or response bodies from R2 storage. It validates Auth0 JWT tokens to ensure only authenticated users can access body data.
+The API worker exposes a single endpoint that retrieves the combined body payload from R2 storage. It validates Auth0 JWT tokens to ensure only authenticated users can access body data.
 
 ## Why a Separate Worker
 
@@ -21,21 +21,21 @@ The proxy worker stores bodies in R2 but cannot serve them directly because:
 ## Endpoint
 
 ```
-GET /bodies/:requestId/:type
+GET /bodies/:requestId
 ```
 
 **Parameters**:
 
 - `requestId`: The unique identifier from the trace (maps to R2 key)
-- `type`: Either `request` or `response`
 
 **Response**:
 
-- `200`: Body content with appropriate Content-Type
-- `400`: Missing or invalid parameters
+- `200`: JSON payload with `requestBody`, `responseBody`, and optional `truncated`
+- `400`: Missing request ID
 - `401`: Missing or invalid JWT
-- `403`: User lacks required role
+- `403`: User lacks required role or org mismatch
 - `404`: Body not found in R2
+- `410`: Bodies expired under current retention policy
 
 ## Authentication
 
@@ -66,12 +66,24 @@ Only `GET` and `OPTIONS` methods are allowed.
 
 Bodies are stored with predictable keys:
 
-| Type     | R2 Key Pattern          |
-| -------- | ----------------------- |
-| Request  | `requests/{requestId}`  |
-| Response | `responses/{requestId}` |
+| Purpose         | R2 Key Pattern       |
+| --------------- | -------------------- |
+| Combined bodies | `bodies/{requestId}` |
 
 The `requestId` comes from the trace's `gen_ai.request_id` attribute.
+
+The API worker performs a single R2 lookup against the combined object format.
+
+## Access Windows
+
+The API worker authorizes access in two steps:
+
+1. It checks that the Auth0 user belongs to the same organization recorded in the R2 object's `customMetadata.orgId`.
+2. It applies the caller's current subscription window using the object's `uploaded` timestamp:
+   - `hobby`: last 7 days
+   - `pro`: last 30 days
+
+This keeps storage uniform while preserving tier-based visibility in the read path.
 
 ## Error Handling
 
@@ -103,13 +115,15 @@ The worker is wrapped with Sentry for error monitoring. All unhandled exceptions
 
 ## Bindings
 
-| Binding           | Type      | Purpose                       |
-| ----------------- | --------- | ----------------------------- |
-| `STORAGE`         | R2 Bucket | Reads request/response bodies |
-| `AUTH0_DOMAIN`    | Variable  | Auth0 tenant domain           |
-| `AUTH0_CLIENT_ID` | Variable  | Auth0 application client ID   |
+| Binding           | Type         | Purpose                                   |
+| ----------------- | ------------ | ----------------------------------------- |
+| `STORAGE`         | R2 Bucket    | Reads combined body payloads              |
+| `API_KEYS`        | KV Namespace | Org membership and subscription tier data |
+| `AUTH0_DOMAIN`    | Variable     | Auth0 tenant domain                       |
+| `AUTH0_CLIENT_ID` | Variable     | Auth0 application client ID               |
 
 ## Key Files
 
 - `apps/api/src/index.ts` - Hono application with single endpoint
+- `apps/api/src/bodies.ts` - Stored body lookup, parsing, and visibility helpers
 - `apps/api/src/auth.ts` - JWT validation with JWKS caching

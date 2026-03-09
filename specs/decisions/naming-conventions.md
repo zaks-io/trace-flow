@@ -91,12 +91,11 @@ camelCase: `orgId`, `stripeCustomerId`, `currentPeriodStart`, `autoTopupPendingS
 
 ### R2 Keys
 
-| Purpose       | Format                         | Example                    |
-| ------------- | ------------------------------ | -------------------------- |
-| Request body  | `requests/{tier}/{requestId}`  | `requests/pro/a1b2c3d4`    |
-| Response body | `responses/{tier}/{requestId}` | `responses/hobby/a1b2c3d4` |
+| Purpose              | Format               | Example           |
+| -------------------- | -------------------- | ----------------- |
+| Combined body object | `bodies/{requestId}` | `bodies/a1b2c3d4` |
 
-Tier prefix enables R2 lifecycle rules for automatic retention-based deletion.
+Tier-based visibility is enforced at read time rather than encoded into the R2 key.
 
 ## Tinybird / ClickHouse
 

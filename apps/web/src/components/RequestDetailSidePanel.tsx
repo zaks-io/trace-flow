@@ -23,15 +23,11 @@ import {
   FileJson,
   ExternalLink,
 } from 'lucide-react';
-import {
-  formatBodyForDisplay,
-  mergeSSEEvents,
-  type FormattedBody,
-  type ParsedSSEEvent,
-} from '@trace-flow/utils';
+import { mergeSSEEvents, type FormattedBody, type ParsedSSEEvent } from '@trace-flow/utils';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { AlertBadge, AlertList } from '@/components/alerts';
+import { fetchStoredBodies, formatStoredBodiesForDisplay } from '@/lib/bodies';
 import { evaluateAlertsForTraces, getHighestSeverity } from '@/lib/alerts';
 import { formatModelDisplay } from '@/lib/format';
 import type { AlertSeverity } from '@/types/alerts';
@@ -80,36 +76,11 @@ function BodySkeleton() {
   );
 }
 
-async function fetchBody(
-  requestId: string,
-  type: 'request' | 'response',
-  token: string,
-  signal: AbortSignal,
-): Promise<FormattedBody | null> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
-
-  const res = await fetch(`${apiUrl}/bodies/${requestId}/${type}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal,
-  });
-
-  if (!res.ok) {
-    if (res.status === 404) return null;
-    const errorData = await res.json();
-    throw new Error(errorData.message ?? `HTTP ${res.status}: ${res.statusText}`);
-  }
-
-  const text = await res.text();
-  return formatBodyForDisplay(text);
-}
-
 export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDetailSidePanelProps) {
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
-  const [requestBodyLoading, setRequestBodyLoading] = useState(false);
-  const [responseBodyLoading, setResponseBodyLoading] = useState(false);
-  const [requestBodyError, setRequestBodyError] = useState<string | null>(null);
-  const [responseBodyError, setResponseBodyError] = useState<string | null>(null);
+  const [bodiesLoading, setBodiesLoading] = useState(false);
+  const [bodiesError, setBodiesError] = useState<string | null>(null);
   const [isRequestOpen, setIsRequestOpen] = useState(true);
   const [isResponseOpen, setIsResponseOpen] = useState(true);
   const [isMoreAttributesOpen, setIsMoreAttributesOpen] = useState(false);
@@ -163,10 +134,8 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
     if (!requestId || !isOpen) {
       setRequestBody(null);
       setResponseBody(null);
-      setRequestBodyLoading(false);
-      setResponseBodyLoading(false);
-      setRequestBodyError(null);
-      setResponseBodyError(null);
+      setBodiesLoading(false);
+      setBodiesError(null);
       return;
     }
 
@@ -175,10 +144,8 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
 
     setRequestBody(null);
     setResponseBody(null);
-    setRequestBodyError(null);
-    setResponseBodyError(null);
-    setRequestBodyLoading(true);
-    setResponseBodyLoading(true);
+    setBodiesError(null);
+    setBodiesLoading(true);
 
     const fetchBodies = async () => {
       const tokenRes = await fetch('/api/token', { signal: controller.signal });
@@ -188,43 +155,20 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
       }
       const { token } = await tokenRes.json();
 
-      const [reqResult, resResult] = await Promise.allSettled([
-        fetchBody(requestId, 'request', token, controller.signal),
-        fetchBody(requestId, 'response', token, controller.signal),
-      ]);
-
+      const storedBodies = await fetchStoredBodies(requestId, token, controller.signal);
       if (controller.signal.aborted) return;
 
-      if (reqResult.status === 'fulfilled') {
-        setRequestBody(reqResult.value);
-      } else {
-        setRequestBodyError(
-          reqResult.reason instanceof Error
-            ? reqResult.reason.message
-            : 'Failed to fetch request body',
-        );
-      }
-      setRequestBodyLoading(false);
-
-      if (resResult.status === 'fulfilled') {
-        setResponseBody(resResult.value);
-      } else {
-        setResponseBodyError(
-          resResult.reason instanceof Error
-            ? resResult.reason.message
-            : 'Failed to fetch response body',
-        );
-      }
-      setResponseBodyLoading(false);
+      const formattedBodies = formatStoredBodiesForDisplay(storedBodies);
+      setRequestBody(formattedBodies.requestBody);
+      setResponseBody(formattedBodies.responseBody);
+      setBodiesLoading(false);
     };
 
     fetchBodies().catch((err) => {
       if (!controller.signal.aborted) {
         const message = err instanceof Error ? err.message : 'Failed to fetch bodies';
-        setRequestBodyError(message);
-        setResponseBodyError(message);
-        setRequestBodyLoading(false);
-        setResponseBodyLoading(false);
+        setBodiesError(message);
+        setBodiesLoading(false);
       }
     });
 
@@ -479,11 +423,11 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
               </div>
               <CollapsibleContent>
                 <div className="mt-3">
-                  {responseBodyError ? (
+                  {bodiesError ? (
                     <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-                      <p className="text-sm text-red-400">{responseBodyError}</p>
+                      <p className="text-sm text-red-400">{bodiesError}</p>
                     </div>
-                  ) : responseBodyLoading ? (
+                  ) : bodiesLoading ? (
                     <BodySkeleton />
                   ) : (
                     renderBodyContent(responseBody, true)
@@ -502,11 +446,11 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="mt-3">
-                  {requestBodyError ? (
+                  {bodiesError ? (
                     <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
-                      <p className="text-sm text-red-400">{requestBodyError}</p>
+                      <p className="text-sm text-red-400">{bodiesError}</p>
                     </div>
-                  ) : requestBodyLoading ? (
+                  ) : bodiesLoading ? (
                     <BodySkeleton />
                   ) : (
                     renderBodyContent(requestBody)

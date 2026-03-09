@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { BarCard, type Segment, formatCompact, formatCostCompact } from '@/components/BarCard';
 import { AlertList } from '@/components/alerts';
 import { ModelPill } from '@/components/spans-table/ModelPill';
+import { fetchStoredBodies, formatStoredBodiesForDisplay } from '@/lib/bodies';
 import type { TriggeredAlert } from '@/types/alerts';
 import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from '@/lib/spans';
 
@@ -471,8 +472,7 @@ export function SpanDetailPanel({
 }: SpanDetailPanelProps) {
   const [requestBody, setRequestBody] = useState<FormattedBody | null>(null);
   const [responseBody, setResponseBody] = useState<FormattedBody | null>(null);
-  const [requestBodyLoading, setRequestBodyLoading] = useState(false);
-  const [responseBodyLoading, setResponseBodyLoading] = useState(false);
+  const [bodiesLoading, setBodiesLoading] = useState(false);
   const [messageContent, setMessageContent] = useState<{
     formatted: string;
     raw: object;
@@ -601,25 +601,9 @@ export function SpanDetailPanel({
     setResponseBody(null);
     setMessageContent(null);
 
-    const fetchBody = async (
-      id: string,
-      type: 'request' | 'response',
-      token: string,
-    ): Promise<FormattedBody | null> => {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
-      const res = await fetch(`${apiUrl}/bodies/${id}/${type}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal,
-      });
-      if (!res.ok) return null;
-      const text = await res.text();
-      return formatBodyForDisplay(text);
-    };
-
     const run = async () => {
       if (isLLMRoot) {
-        setRequestBodyLoading(true);
-        setResponseBodyLoading(true);
+        setBodiesLoading(true);
       } else {
         setMessageContentLoading(true);
       }
@@ -627,8 +611,7 @@ export function SpanDetailPanel({
       const tokenRes = await fetch('/api/token', { signal });
       if (!tokenRes.ok) {
         if (isLLMRoot) {
-          setRequestBodyLoading(false);
-          setResponseBodyLoading(false);
+          setBodiesLoading(false);
           window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
         } else {
           setMessageContentLoading(false);
@@ -637,21 +620,18 @@ export function SpanDetailPanel({
       }
       const { token } = await tokenRes.json();
 
+      const storedBodies = await fetchStoredBodies(requestId, token, signal);
+      if (signal.aborted) return;
+
       if (isLLMRoot) {
-        const [reqBody, resBody] = await Promise.all([
-          fetchBody(requestId, 'request', token),
-          fetchBody(requestId, 'response', token),
-        ]);
-        if (signal.aborted) return;
-        setRequestBody(reqBody);
-        setResponseBody(resBody);
-        setRequestBodyLoading(false);
-        setResponseBodyLoading(false);
+        const formattedBodies = formatStoredBodiesForDisplay(storedBodies);
+        setRequestBody(formattedBodies.requestBody);
+        setResponseBody(formattedBodies.responseBody);
+        setBodiesLoading(false);
       } else {
-        const resBody = await fetchBody(requestId, 'response', token);
-        if (signal.aborted) return;
-        if (resBody) {
-          setMessageContent(extractOutputContent(resBody, contentType, span.SpanName));
+        const responseBody = formatBodyForDisplay(storedBodies?.responseBody ?? null);
+        if (responseBody) {
+          setMessageContent(extractOutputContent(responseBody, contentType, span.SpanName));
         }
         setMessageContentLoading(false);
       }
@@ -659,8 +639,7 @@ export function SpanDetailPanel({
 
     void run().catch(() => {
       if (signal.aborted) return;
-      setRequestBodyLoading(false);
-      setResponseBodyLoading(false);
+      setBodiesLoading(false);
       setMessageContentLoading(false);
     });
 
@@ -790,7 +769,7 @@ export function SpanDetailPanel({
                         : null
                     }
                     rawBody={requestBody}
-                    loading={requestBodyLoading}
+                    loading={bodiesLoading}
                   />
                   <BodyContent
                     title="Response"
@@ -806,7 +785,7 @@ export function SpanDetailPanel({
                       return null;
                     })()}
                     rawBody={responseBody}
-                    loading={responseBodyLoading}
+                    loading={bodiesLoading}
                     isSse={responseBody?.format === 'sse'}
                   />
                 </>

@@ -237,8 +237,6 @@ interface QueueMessage {
   };
   tokens?: { promptTokens?: number; completionTokens?: number };
   sseStreamData?: SSEStreamData;
-  requestBodyKey?: string;
-  responseBodyKey?: string;
 }
 ```
 
@@ -248,10 +246,9 @@ The consumer transforms this into OpenTelemetry traces, adding computed fields l
 
 Bodies are stored with predictable keys:
 
-- Request: `requests/{requestId}`
-- Response: `responses/{requestId}`
+- Combined payload: `bodies/{requestId}`
 
-The API worker reconstructs these keys from the `requestId` parameter.
+The API worker reconstructs this key from the `requestId` parameter.
 
 ### Shared Types
 

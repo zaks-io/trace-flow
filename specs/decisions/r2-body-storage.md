@@ -53,69 +53,57 @@ Workers have 128MB memory limits. Holding multiple large bodies in memory during
 
 ## How It Works
 
-### Proxy Worker: Store and Reference
+### Proxy Worker: Store Once
 
 The proxy stores bodies immediately after capture:
 
 ```typescript
-// Store bodies in R2
-const requestBodyKey = `requests/${requestId}`;
-const responseBodyKey = `responses/${requestId}`;
+const bodyKey = `bodies/${requestId}`;
+const payload = JSON.stringify({
+  requestBody,
+  responseBody,
+  truncated,
+});
 
-await Promise.all([
-  storage.put(requestBodyKey, requestBody),
-  storage.put(responseBodyKey, responseBody),
-]);
-
-// Queue message contains keys, not bodies
-const queueMessage = {
-  requestId,
-  traceId,
-  timing,
-  tokens,
-  requestBodyKey,
-  responseBodyKey,
-};
-```
-
-Both bodies are stored in parallel to minimize latency. The queue message is under 1KB regardless of body size.
-
-### API Worker: Retrieve on Demand
-
-The web UI fetches bodies through the API worker:
-
-```typescript
-app.get('/bodies/:requestId/:type', async (c) => {
-  const key = `${type}s/${requestId}`;
-  const object = await c.env.STORAGE.get(key);
-
-  return new Response(object.body, {
-    headers: { 'Content-Type': 'text/plain' },
-  });
+await storage.put(bodyKey, payload, {
+  customMetadata: { orgId },
+  httpMetadata: { contentType: 'application/json' },
 });
 ```
 
-Bodies are fetched only when users expand trace details, not during initial page load. This reduces bandwidth and improves dashboard performance.
+This reduces body storage from two Class A operations to one. The queue message is still under 1KB because it contains metadata, not raw bodies.
+
+### API Worker: Retrieve on Demand
+
+The web UI fetches the combined payload through the API worker:
+
+```typescript
+app.get('/bodies/:requestId', async (c) => {
+  const object = await c.env.STORAGE.get(`bodies/${requestId}`);
+  return c.json(await object.json());
+});
+```
+
+Bodies are fetched only when users expand trace details, not during initial page load. Each detail view now requires one API request and one R2 read instead of separate request/response fetches.
 
 ## R2 Key Naming Convention
 
 Keys follow a predictable pattern:
 
 ```
-requests/{requestId}
-responses/{requestId}
+bodies/{requestId}
 ```
 
 Where `requestId` is a unique identifier generated per request (UUID format).
 
 This structure provides:
 
-- **Simple lookups**: Given a requestId, construct both keys
+- **Simple lookups**: Given a requestId, construct one key
 - **Flat namespace**: No nested directories to traverse
 - **Unique keys**: No collisions between requests
 - **Consistent pattern**: Same structure across all providers
 
-The consumer stores the keys in Tinybird as `RequestBodyKey` and `ResponseBodyKey` columns, enabling the web UI to construct fetch URLs.
+The consumer does not need body keys. The web UI already has `requestId` on the trace and can fetch the combined payload directly through the API worker.
 
 ## Why R2 Specifically
 
@@ -149,9 +137,9 @@ No credentials management or SDK configuration required.
 
 ## Retention and Lifecycle
 
-### 90-Day Retention
+### 30-Day Retention
 
-Bodies are retained for 90 days, then deleted via R2 lifecycle rules:
+Bodies are retained for 30 days, then deleted via R2 lifecycle rules:
 
 ```json
 {
@@ -159,17 +147,22 @@ Bodies are retained for 90 days, then deleted via R2 lifecycle rules:
     {
       "id": "delete-old-bodies",
       "status": "Enabled",
-      "expiration": { "days": 90 }
+      "expiration": { "days": 30 }
     }
   ]
 }
 ```
 
-90 days balances:
+30 days balances:
 
-- **Debugging needs**: Most issues are investigated within days
+- **Debugging needs**: Covers the full Pro access window
 - **Cost management**: Storage accumulates at ~10KB per request
 - **Compliance**: Avoid indefinite storage of potentially sensitive data
+
+Read-time visibility still depends on the caller's current tier:
+
+- **Hobby**: last 7 days
+- **Pro**: last 30 days
 
 ### Cost Considerations
 
@@ -182,7 +175,7 @@ R2 pricing (as of 2024):
 For 1 million requests/month with average 20KB body size:
 
 - Storage: 20GB \* $0.015 = $0.30/month
-- Writes: 2M \* $0.36/M = $0.72/month
+- Writes: 1M \* $0.36/M = $0.36/month
 - Reads: Varies with UI usage
 
 Cost is minimal compared to LLM API costs for the same traffic.
@@ -193,20 +186,17 @@ R2 writes can fail (network issues, rate limits). The proxy handles this gracefu
 
 ```typescript
 try {
-  await Promise.all([
-    storage.put(requestBodyKey, requestBody),
-    storage.put(responseBodyKey, responseBody),
-  ]);
-  return { requestBodyKey, responseBodyKey, stored: true };
+  await storage.put(bodyKey, JSON.stringify(payload), putOptions);
+  return { bodyKey, stored: true };
 } catch (error) {
   console.error('R2 storage failed:', error);
-  return { requestBodyKey, responseBodyKey, stored: false };
+  return { bodyKey, stored: false };
 }
 ```
 
 When storage fails:
 
-1. The queue message is sent without body keys
+1. The queue message is still sent without stored body data
 2. Trace metadata is still captured in Tinybird
 3. The web UI shows "Body not available" for affected requests
 4. Users can still see timing, tokens, and error information
@@ -245,7 +235,7 @@ When truncated:
 
 Bodies aren't embedded in trace queries. The web UI makes additional requests to fetch bodies when expanding trace details. This adds:
 
-- One API call per body viewed
+- One API call per trace detail view
 - Authentication overhead per request
 - Potential latency for large bodies
 

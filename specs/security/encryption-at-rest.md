@@ -12,8 +12,7 @@ Request and response bodies are currently stored unencrypted in Cloudflare R2. T
 Client Request -> Proxy Worker -> R2 Bucket
                      |
               Plain text storage at:
-              - requests/{requestId}
-              - responses/{requestId}
+              - bodies/{requestId}
 ```
 
 **Retrieval flow** (`apps/api/src/index.ts`):
@@ -120,9 +119,8 @@ export async function storeRequestResponse(
   requestBody: string,
   responseBody: string,
   env: EncryptionEnv,
-): Promise<{ requestBodyKey: string; responseBodyKey: string; stored: boolean }> {
-  const requestBodyKey = `requests/${requestId}`;
-  const responseBodyKey = `responses/${requestId}`;
+): Promise<{ bodyKey: string; stored: boolean }> {
+  const bodyKey = `bodies/${requestId}`;
 
   try {
     // Encrypt before storing
@@ -131,15 +129,19 @@ export async function storeRequestResponse(
       encrypt(responseBody, env),
     ]);
 
-    await Promise.all([
-      storage.put(requestBodyKey, encryptedRequest),
-      storage.put(responseBodyKey, encryptedResponse),
-    ]);
+    const payload = JSON.stringify({
+      requestBody: encryptedRequest,
+      responseBody: encryptedResponse,
+    });
 
-    return { requestBodyKey, responseBodyKey, stored: true };
+    await storage.put(bodyKey, payload, {
+      httpMetadata: { contentType: 'application/json' },
+    });
+
+    return { bodyKey, stored: true };
   } catch (error) {
     console.error('Failed to store in R2:', { requestId, error });
-    return { requestBodyKey, responseBodyKey, stored: false };
+    return { bodyKey, stored: false };
   }
 }
 ```
