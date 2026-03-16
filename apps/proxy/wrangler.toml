@@ -28,6 +28,11 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
 
+# Analytics Engine for operational KPMs (latency, error rate, skip rate)
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "trace-flow-proxy-dev"
+
 # Secrets required: CONVEX_SITE_URL (https://{deployment}.convex.site), USAGE_SYNC_SECRET, SENTRY_DSN
 
 # Durable Object for usage tracking
@@ -62,6 +67,10 @@ binding = "REQUEST_QUEUE"
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-prod"
 
+[[env.production.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "trace-flow-proxy"
+
 [[env.production.durable_objects.bindings]]
 name = "USAGE_TRACKER"
 class_name = "UsageTracker"
@@ -83,6 +92,10 @@ binding = "REQUEST_QUEUE"
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
+
+[[env.preview.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "trace-flow-proxy-dev"
 
 [[env.preview.durable_objects.bindings]]
 name = "USAGE_TRACKER"

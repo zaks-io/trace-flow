@@ -82,6 +82,7 @@ interface Env {
   USAGE_TRACKER: DurableObjectNamespace;
   CONVEX_SITE_URL: string;
   USAGE_SYNC_SECRET: string;
+  ANALYTICS: AnalyticsEngineDataset;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -385,6 +386,24 @@ app.all('*', async (c) => {
           });
 
           await c.env.REQUEST_QUEUE.send(queueMessage);
+
+          c.env.ANALYTICS.writeDataPoint({
+            indexes: [keyData.orgId ?? apiKey.slice(0, 8)],
+            blobs: [
+              route.provider.id,
+              response.status.toString(),
+              operationName ?? '',
+              decision.record ? '1' : '0',
+              decision.reason ?? '',
+            ],
+            doubles: [
+              responseComplete - requestStart,
+              requestSent - requestStart,
+              firstTokenReceived ? firstTokenReceived - requestSent : 0,
+              response.status >= 400 ? 1 : 0,
+              tokens?.totalTokens ?? 0,
+            ],
+          });
         } catch (error) {
           console.error('Failed to complete observability capture:', {
             requestId,
@@ -394,6 +413,13 @@ app.all('*', async (c) => {
       })(),
     );
   } else {
+    // Track skipped requests in Analytics Engine
+    c.env.ANALYTICS.writeDataPoint({
+      indexes: [apiKey.slice(0, 8)],
+      blobs: [route.provider.id, '', operationName ?? '', '0', decision.reason ?? ''],
+      doubles: [0, 0, 0, 0, 0],
+    });
+
     // Not recording — cancel the tee'd capture stream to prevent backpressure hanging the proxy
     c.executionCtx.waitUntil(
       (async () => {
