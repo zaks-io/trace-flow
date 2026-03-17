@@ -23,7 +23,7 @@ SQL >
         stddevSamp(toFloat64(TotalCostMicrodollars)) / 1000000 AS stddev_cost_usd,
         quantile(0.95)(TotalCostMicrodollars) / 1000000 AS p95_cost_usd,
         quantile(0.99)(TotalCostMicrodollars) / 1000000 AS p99_cost_usd
-    FROM llm_requests
+    FROM llm_requests FINAL
     WHERE ReceivedAt >= start_ns
         AND ReceivedAt <= end_ns
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
