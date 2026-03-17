@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -92,10 +93,10 @@ export default function Billing() {
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
             <Button asChild variant="outline">
-              <a href="/app">Open getting started</a>
+              <Link href="/app">Open getting started</Link>
             </Button>
             <Button asChild variant="outline">
-              <a href="/docs/quick-start">Read quick start</a>
+              <Link href="/docs/quick-start">Read quick start</Link>
             </Button>
           </CardContent>
         </Card>

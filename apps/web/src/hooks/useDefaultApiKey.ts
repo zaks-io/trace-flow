@@ -25,7 +25,6 @@ export function useDefaultApiKey<T extends ApiKeyLike>(
   const [isCreatingDefaultKey, setIsCreatingDefaultKey] = useState(false);
   const [defaultKeyError, setDefaultKeyError] = useState<string | null>(null);
   const hasAttemptedCreation = useRef(false);
-  const inFlightRef = useRef<Promise<unknown> | null>(null);
 
   const sortedApiKeys = useMemo(() => sortApiKeys(apiKeys), [apiKeys]);
   const primaryApiKey = useMemo(() => getPrimaryApiKey(apiKeys), [apiKeys]);
@@ -46,20 +45,10 @@ export function useDefaultApiKey<T extends ApiKeyLike>(
     setIsCreatingDefaultKey(true);
     setDefaultKeyError(null);
 
-    const creationRequest =
-      inFlightRef.current ??
-      createApiKey({
-        expiresAt: Date.now() + DEFAULT_API_KEY_TTL_MS,
-        name: DEFAULT_API_KEY_NAME,
-      });
-
-    if (!inFlightRef.current) {
-      inFlightRef.current = creationRequest.finally(() => {
-        inFlightRef.current = null;
-      });
-    }
-
-    void creationRequest
+    void createApiKey({
+      expiresAt: Date.now() + DEFAULT_API_KEY_TTL_MS,
+      name: DEFAULT_API_KEY_NAME,
+    })
       .catch((error: unknown) => {
         hasAttemptedCreation.current = false;
         setDefaultKeyError(

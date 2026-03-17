@@ -17,18 +17,20 @@ export default function ApiKeys({
 }) {
   const sessionContext = useQuery(api.app.sessionContext);
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
-  const sortedApiKeys = useMemo(() => {
-    return [...apiKeys].sort((a, b) => {
-      const nameA = a.name ?? '';
-      const nameB = b.name ?? '';
-      if (nameA !== nameB) {
-        if (!nameA) return 1;
-        if (!nameB) return -1;
-        return nameA.localeCompare(nameB);
-      }
-      return a._creationTime - b._creationTime;
-    });
-  }, [apiKeys]);
+  const sortedApiKeys = useMemo(
+    () =>
+      [...apiKeys].sort((a, b) => {
+        const nameA = a.name ?? '';
+        const nameB = b.name ?? '';
+        if (nameA !== nameB) {
+          if (!nameA) return 1;
+          if (!nameB) return -1;
+          return nameA.localeCompare(nameB);
+        }
+        return a._creationTime - b._creationTime;
+      }),
+    [apiKeys],
+  );
   const { primaryApiKey, isCreatingDefaultKey, defaultKeyError } = useDefaultApiKey(
     apiKeys,
     Boolean(sessionContext?.user),
@@ -48,55 +50,67 @@ export default function ApiKeys({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const handleCreateKey = async () => {
-    setIsCreating(true);
+  const withGuard = async (setLoading: (v: boolean) => void, fn: () => Promise<void>) => {
+    setLoading(true);
     setError(null);
     setSuccess(null);
-
-    const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1000;
-
-    await createApiKey({ expiresAt, name: newKeyName.trim() || undefined });
-    setSuccess('API key created successfully');
-    setIsCreating(false);
-    setShowCreateDialog(false);
-    setNewKeyName('');
-  };
-
-  const handleDeleteKey = async (id: Id<'apiKeys'>) => {
-    setDeletingId(id);
-    setError(null);
-    setSuccess(null);
-
-    await deleteApiKey({ id });
-    setSuccess('API key deleted successfully');
-    setDeletingId(null);
-  };
-
-  const handleSyncKey = async (id: Id<'apiKeys'>) => {
-    setSyncingId(id);
-    setError(null);
-    setSuccess(null);
-
-    const result = await syncToKV({ id });
-    if (result.existed) {
-      setSuccess('API key already exists in KV');
-    } else {
-      setSuccess('API key synced to KV');
+    try {
+      await fn();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Request failed');
+    } finally {
+      setLoading(false);
     }
-    setSyncingId(null);
   };
 
-  const handleUpdateKey = async () => {
-    if (!editingKey) return;
-    setIsUpdating(true);
-    setError(null);
-    setSuccess(null);
+  const handleCreateKey = () =>
+    void withGuard(setIsCreating, async () => {
+      await createApiKey({
+        expiresAt: Date.now() + 90 * 24 * 60 * 60 * 1000,
+        name: newKeyName.trim() || undefined,
+      });
+      setSuccess('API key created successfully');
+      setShowCreateDialog(false);
+      setNewKeyName('');
+    });
 
-    await updateApiKey({ id: editingKey.id, name: editingKey.name.trim() || undefined });
-    setSuccess('API key updated successfully');
-    setIsUpdating(false);
-    setEditingKey(null);
+  const handleDeleteKey = (id: Id<'apiKeys'>) => {
+    setDeletingId(id);
+    void withGuard(
+      () => {},
+      async () => {
+        try {
+          await deleteApiKey({ id });
+          setSuccess('API key deleted successfully');
+        } finally {
+          setDeletingId(null);
+        }
+      },
+    );
   };
+
+  const handleSyncKey = (id: Id<'apiKeys'>) => {
+    setSyncingId(id);
+    void withGuard(
+      () => {},
+      async () => {
+        try {
+          const result = await syncToKV({ id });
+          setSuccess(result.existed ? 'API key already exists in KV' : 'API key synced to KV');
+        } finally {
+          setSyncingId(null);
+        }
+      },
+    );
+  };
+
+  const handleUpdateKey = () =>
+    void withGuard(setIsUpdating, async () => {
+      if (!editingKey) return;
+      await updateApiKey({ id: editingKey.id, name: editingKey.name.trim() || undefined });
+      setSuccess('API key updated successfully');
+      setEditingKey(null);
+    });
 
   const formatExpiration = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -161,7 +175,7 @@ export default function ApiKeys({
                 Cancel
               </button>
               <button
-                onClick={() => void handleCreateKey()}
+                onClick={handleCreateKey}
                 disabled={isCreating}
                 className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -207,7 +221,7 @@ export default function ApiKeys({
                 Cancel
               </button>
               <button
-                onClick={() => void handleUpdateKey()}
+                onClick={handleUpdateKey}
                 disabled={isUpdating}
                 className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -338,7 +352,7 @@ export default function ApiKeys({
                           Edit
                         </button>
                         <button
-                          onClick={() => void handleSyncKey(apiKey._id)}
+                          onClick={() => handleSyncKey(apiKey._id)}
                           disabled={syncingId === apiKey._id}
                           className="mr-3 font-medium text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
                         >
@@ -351,7 +365,7 @@ export default function ApiKeys({
                                 `Are you sure you want to delete this API key?\n\n${apiKey.key}\n\nThis action cannot be undone.`,
                               )
                             ) {
-                              void handleDeleteKey(apiKey._id);
+                              handleDeleteKey(apiKey._id);
                             }
                           }}
                           disabled={deletingId === apiKey._id}

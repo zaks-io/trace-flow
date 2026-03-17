@@ -34,11 +34,12 @@ export default function Usage({
   );
 
   const foundTraces = useRef(false);
+  const errorCount = useRef(0);
 
   const firstTraceQuery = useTinybirdQuery<TinybirdTraceListResponse>({
     pipe: 'traces_list',
     params: { limit: 1 },
-    enabled: Boolean(sessionContext?.user) && !foundTraces.current,
+    enabled: Boolean(sessionContext?.user) && !foundTraces.current && errorCount.current < 3,
     pollInterval: 10_000,
     staleTime: 0,
   });
@@ -47,15 +48,19 @@ export default function Usage({
   const previousHasTraces = useRef<boolean | null>(null);
 
   const hasTraces = (firstTraceQuery.data?.data?.length ?? 0) > 0;
-  if (hasTraces) foundTraces.current = true;
   const shouldShowOnboarding = !hasTraces;
 
   useEffect(() => {
+    if (hasTraces) foundTraces.current = true;
     if (previousHasTraces.current === false && hasTraces) {
       setShowSuccessBanner(true);
     }
     previousHasTraces.current = hasTraces;
   }, [hasTraces]);
+
+  useEffect(() => {
+    if (firstTraceQuery.error) errorCount.current += 1;
+  }, [firstTraceQuery.error]);
 
   if (sessionContext === undefined) {
     return <UsageLoadingState />;
