@@ -1,7 +1,7 @@
 export const DEFAULT_API_KEY_NAME = 'Default API Key';
 
-export type ApiKeyLike<TId = unknown> = {
-  _id: TId;
+export type ApiKeyLike = {
+  _id: unknown;
   _creationTime: number;
   expiresAt: number;
   key: string;

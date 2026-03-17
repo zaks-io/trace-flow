@@ -17,6 +17,8 @@ export default function ApiKeys({
 }) {
   const sessionContext = useQuery(api.app.sessionContext);
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
+  // Sort inline — the hook's sortedApiKeys loses Id<"apiKeys"> because
+  // Convex codegen types the list return as `any`, collapsing the generic.
   const sortedApiKeys = useMemo(
     () =>
       [...apiKeys].sort((a, b) => {
