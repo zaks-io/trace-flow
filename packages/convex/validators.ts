@@ -40,6 +40,15 @@ export const subscriptionValidator = v.object({
   autoTopupPendingSince: v.optional(v.number()),
 });
 
+export const organizationValidator = v.object({
+  _id: v.id('organizations'),
+  _creationTime: v.number(),
+  name: v.string(),
+  ownerId: v.id('users'),
+  stripeCustomerId: v.optional(v.string()),
+  onboardingCompletedAt: v.optional(v.number()),
+});
+
 export const apiKeyValidator = v.object({
   _id: v.id('apiKeys'),
   _creationTime: v.number(),

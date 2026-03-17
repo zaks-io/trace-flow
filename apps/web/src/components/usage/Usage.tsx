@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { type Preloaded, usePreloadedQuery, useQuery } from 'convex/react';
+import { useEffect, useState } from 'react';
+import { type Preloaded, useMutation, usePreloadedQuery, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useDefaultApiKey } from '@/hooks/useDefaultApiKey';
@@ -33,53 +33,51 @@ export default function Usage({
     Boolean(sessionContext?.user),
   );
 
-  const foundTraces = useRef(false);
-  const errorCount = useRef(0);
+  const onboardingCompleted = Boolean(sessionContext?.onboardingCompletedAt);
+  const completeOnboarding = useMutation(api.organizations.completeOnboarding);
+
+  const [errorCount, setErrorCount] = useState(0);
+  const [showSuccessBanner, setShowSuccessBanner] = useState(false);
 
   const firstTraceQuery = useTinybirdQuery<TinybirdTraceListResponse>({
     pipe: 'traces_list',
     params: { limit: 1 },
-    enabled: Boolean(sessionContext?.user) && !foundTraces.current && errorCount.current < 3,
+    enabled: Boolean(sessionContext?.user) && !onboardingCompleted && errorCount < 3,
     pollInterval: 10_000,
     staleTime: 0,
   });
 
-  const [showSuccessBanner, setShowSuccessBanner] = useState(false);
-  const previousHasTraces = useRef<boolean | null>(null);
-
-  const hasTraces = (firstTraceQuery.data?.data?.length ?? 0) > 0;
-  const shouldShowOnboarding = !hasTraces;
+  const tinybirdHasTraces = (firstTraceQuery.data?.data?.length ?? 0) > 0;
 
   useEffect(() => {
-    if (hasTraces) foundTraces.current = true;
-    if (previousHasTraces.current === false && hasTraces) {
+    if (tinybirdHasTraces && !onboardingCompleted) {
       setShowSuccessBanner(true);
+      completeOnboarding().catch((e) => console.error('Failed to complete onboarding:', e));
     }
-    previousHasTraces.current = hasTraces;
-  }, [hasTraces]);
+  }, [tinybirdHasTraces, onboardingCompleted, completeOnboarding]);
 
   useEffect(() => {
-    if (firstTraceQuery.error) errorCount.current += 1;
+    if (firstTraceQuery.error) setErrorCount((c) => c + 1);
   }, [firstTraceQuery.error]);
 
   if (sessionContext === undefined) {
     return <UsageLoadingState />;
   }
 
-  if (shouldShowOnboarding) {
+  if (onboardingCompleted || tinybirdHasTraces) {
     return (
-      <GettingStarted
-        apiKey={primaryApiKey?.key ?? null}
-        isPreparingApiKey={isCreatingDefaultKey}
-        apiKeyError={defaultKeyError}
-        isWaitingForFirstTrace={
-          !firstTraceQuery.error && (firstTraceQuery.isFetching || firstTraceQuery.isLoading)
-        }
-      />
+      <UsageAnalytics preloadedApiKeys={preloadedApiKeys} showSuccessBanner={showSuccessBanner} />
     );
   }
 
   return (
-    <UsageAnalytics preloadedApiKeys={preloadedApiKeys} showSuccessBanner={showSuccessBanner} />
+    <GettingStarted
+      apiKey={primaryApiKey?.key ?? null}
+      isPreparingApiKey={isCreatingDefaultKey}
+      apiKeyError={defaultKeyError}
+      isWaitingForFirstTrace={
+        !firstTraceQuery.error && (firstTraceQuery.isFetching || firstTraceQuery.isLoading)
+      }
+    />
   );
 }

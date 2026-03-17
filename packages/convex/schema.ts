@@ -19,6 +19,7 @@ export default defineSchema({
     name: v.string(),
     ownerId: v.id('users'),
     stripeCustomerId: v.optional(v.string()),
+    onboardingCompletedAt: v.optional(v.number()),
   })
     .index('by_owner_id', ['ownerId'])
     .index('by_stripe_customer_id', ['stripeCustomerId']),
