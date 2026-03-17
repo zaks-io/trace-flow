@@ -21,7 +21,19 @@ import type { GenericId as Id } from "convex/values";
  */
 export declare const api: {
   admin: {
-    stats: FunctionReference<"query", "public", {}, any>;
+    stats: FunctionReference<
+      "query",
+      "public",
+      {},
+      {
+        apiKeyCount: number;
+        modelPricingCount: number;
+        orgCount: number;
+        subscriptionCount: number;
+        tierBreakdown: { hobby: number; pro: number };
+        userCount: number;
+      }
+    >;
   };
   alerts: {
     create: FunctionReference<
@@ -77,59 +89,156 @@ export declare const api: {
       "mutation",
       "public",
       { expiresAt: number; name?: string },
-      any
+      Id<"apiKeys">
     >;
-    getByKey: FunctionReference<"query", "public", { key: string }, any>;
-    list: FunctionReference<"query", "public", any, any>;
-    remove: FunctionReference<"mutation", "public", { id: Id<"apiKeys"> }, any>;
-    syncToKV: FunctionReference<"action", "public", { id: Id<"apiKeys"> }, any>;
+    getByKey: FunctionReference<
+      "query",
+      "public",
+      { key: string },
+      null | {
+        _creationTime: number;
+        _id: Id<"apiKeys">;
+        expiresAt: number;
+        key: string;
+        name?: string;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
+      }
+    >;
+    list: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"apiKeys">;
+        expiresAt: number;
+        key: string;
+        name?: string;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
+      }>
+    >;
+    remove: FunctionReference<
+      "mutation",
+      "public",
+      { id: Id<"apiKeys"> },
+      null
+    >;
+    syncToKV: FunctionReference<
+      "action",
+      "public",
+      { id: Id<"apiKeys"> },
+      { existed: boolean; synced: boolean }
+    >;
     update: FunctionReference<
       "mutation",
       "public",
       { id: Id<"apiKeys">; name?: string },
-      any
+      null
     >;
   };
   app: {
-    sessionContext: FunctionReference<"query", "public", any, any>;
+    sessionContext: FunctionReference<
+      "query",
+      "public",
+      {},
+      {
+        hasRole: boolean;
+        isAdmin: boolean;
+        subscription: {
+          _creationTime: number;
+          _id: Id<"subscriptions">;
+          addonPurchaseCount: number;
+          addonUnits: number;
+          autoOverage?: boolean;
+          autoTopupPendingSince?: number;
+          cancelAtPeriodEnd?: boolean;
+          currentPeriodEnd: number;
+          currentPeriodOverageSpentCents: number;
+          currentPeriodStart: number;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
+          monthlyUnits: number;
+          orgId: Id<"organizations">;
+          overageCapCents?: number;
+          status: "active" | "grace" | "suspended" | "canceled";
+          stripeCustomerId?: string;
+          stripePlanItemId?: string;
+          stripeSubscriptionId?: string;
+          tier: "hobby" | "pro";
+        } | null;
+        user: {
+          _creationTime: number;
+          _id: Id<"users">;
+          email: string;
+          enabled: boolean;
+          inviteId?: Id<"invites">;
+          isAdmin?: boolean;
+          name?: string;
+          orgId?: Id<"organizations">;
+          picture?: string;
+          tokenIdentifier: string;
+        } | null;
+      }
+    >;
   };
   auth: {
     hasTraceFlowRole: FunctionReference<"query", "public", any, any>;
   };
   cloudflare: {
-    syncAll: FunctionReference<"action", "public", {}, any>;
+    syncAll: FunctionReference<
+      "action",
+      "public",
+      {},
+      { keySynced: number; subSynced: number; userOrgSynced: number }
+    >;
   };
   invites: {
     acceptInvite: FunctionReference<
       "mutation",
       "public",
       { token: string },
-      any
+      { email: string }
     >;
     createInvite: FunctionReference<
       "mutation",
       "public",
       { email: string },
-      any
+      Id<"invites">
     >;
     createOrgInvite: FunctionReference<
       "mutation",
       "public",
       { email: string },
-      any
+      Id<"invites">
     >;
     getInviteByToken: FunctionReference<
       "query",
       "public",
       { token: string },
-      any
+      null | { status: "pending" | "accepted" | "expired" }
     >;
-    listInvites: FunctionReference<"query", "public", {}, any>;
+    listInvites: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"invites">;
+        acceptedAt?: number;
+        email: string;
+        expiresAt: number;
+        invitedBy: Id<"users">;
+        orgId?: Id<"organizations">;
+        status: "pending" | "accepted" | "expired";
+        token: string;
+      }>
+    >;
     revokeInvite: FunctionReference<
       "mutation",
       "public",
       { inviteId: Id<"invites"> },
-      any
+      null
     >;
   };
   mcp: {
@@ -138,13 +247,18 @@ export declare const api: {
         "action",
         "public",
         { message: any; sessionId?: string },
-        any
+        {
+          error?: { code: number; data?: any; message: string };
+          id: string | number | null;
+          jsonrpc: "2.0";
+          result?: any;
+        } | null
       >;
       terminateSession: FunctionReference<
         "action",
         "public",
         { sessionId: string },
-        any
+        null
       >;
     };
   };
@@ -153,18 +267,54 @@ export declare const api: {
       "query",
       "public",
       { model: string; provider: string },
-      any
+      {
+        _creationTime: number;
+        _id: Id<"modelPricing">;
+        cacheReadCostPerMillion?: number;
+        cacheWrite1hCostPerMillion?: number;
+        cacheWriteCostPerMillion?: number;
+        completionCostPerMillion: number;
+        model: string;
+        promptCostPerMillion: number;
+        provider: string;
+        reasoningCostPerMillion?: number;
+        source: "manual" | "openrouter" | "default";
+        updatedAt: number;
+      } | null
     >;
-    importFromOpenRouter: FunctionReference<"action", "public", {}, any>;
-    list: FunctionReference<"query", "public", { provider?: string }, any>;
+    importFromOpenRouter: FunctionReference<
+      "action",
+      "public",
+      {},
+      { imported: number }
+    >;
+    list: FunctionReference<
+      "query",
+      "public",
+      { provider?: string },
+      Array<{
+        _creationTime: number;
+        _id: Id<"modelPricing">;
+        cacheReadCostPerMillion?: number;
+        cacheWrite1hCostPerMillion?: number;
+        cacheWriteCostPerMillion?: number;
+        completionCostPerMillion: number;
+        model: string;
+        promptCostPerMillion: number;
+        provider: string;
+        reasoningCostPerMillion?: number;
+        source: "manual" | "openrouter" | "default";
+        updatedAt: number;
+      }>
+    >;
     remove: FunctionReference<
       "mutation",
       "public",
       { id: Id<"modelPricing"> },
-      any
+      null
     >;
-    syncAllToKV: FunctionReference<"action", "public", {}, any>;
-    syncDefaults: FunctionReference<"action", "public", {}, any>;
+    syncAllToKV: FunctionReference<"action", "public", {}, { synced: number }>;
+    syncDefaults: FunctionReference<"action", "public", {}, { synced: number }>;
     upsert: FunctionReference<
       "mutation",
       "public",
@@ -179,51 +329,129 @@ export declare const api: {
         reasoningCostPerMillion?: number;
         source: "manual" | "openrouter" | "default";
       },
-      any
+      Id<"modelPricing">
     >;
   };
   organizations: {
-    get: FunctionReference<"query", "public", any, any>;
-    getMembers: FunctionReference<"query", "public", {}, any>;
-    rename: FunctionReference<"mutation", "public", { name: string }, any>;
+    get: FunctionReference<
+      "query",
+      "public",
+      {},
+      null | {
+        _creationTime: number;
+        _id: Id<"organizations">;
+        name: string;
+        ownerId: Id<"users">;
+        stripeCustomerId?: string;
+      }
+    >;
+    getMembers: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"organizationMembers">;
+        invitedAt?: number;
+        joinedAt?: number;
+        orgId: Id<"organizations">;
+        removedAt?: number;
+        role: "owner" | "member";
+        status: "active" | "removed";
+        userId: Id<"users">;
+      }>
+    >;
+    rename: FunctionReference<"mutation", "public", { name: string }, null>;
   };
   subscriptions: {
     createAddonCheckoutSession: FunctionReference<
       "action",
       "public",
       { cancelUrl?: string; quantity: number; successUrl?: string },
-      any
+      { url: string | null }
     >;
     createBillingPortalSession: FunctionReference<
       "action",
       "public",
       { returnUrl?: string },
-      any
+      { url: string }
     >;
     createOrgCheckoutSession: FunctionReference<
       "action",
       "public",
       { cancelUrl?: string; successUrl?: string },
-      any
+      { url: string | null }
     >;
     getBillingSummaryForCurrentUser: FunctionReference<
       "query",
       "public",
-      any,
-      any
+      {},
+      null | {
+        currentPeriodEnd: number;
+        remaining: number;
+        role: "owner" | "member";
+        subscription: {
+          _creationTime: number;
+          _id: Id<"subscriptions">;
+          addonPurchaseCount: number;
+          addonUnits: number;
+          autoOverage?: boolean;
+          autoTopupPendingSince?: number;
+          cancelAtPeriodEnd?: boolean;
+          currentPeriodEnd: number;
+          currentPeriodOverageSpentCents: number;
+          currentPeriodStart: number;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
+          monthlyUnits: number;
+          orgId: Id<"organizations">;
+          overageCapCents?: number;
+          status: "active" | "grace" | "suspended" | "canceled";
+          stripeCustomerId?: string;
+          stripePlanItemId?: string;
+          stripeSubscriptionId?: string;
+          tier: "hobby" | "pro";
+        };
+        totalAvailable: number;
+        totalUsed: number;
+      }
     >;
-    getForCurrentUser: FunctionReference<"query", "public", any, any>;
+    getForCurrentUser: FunctionReference<
+      "query",
+      "public",
+      {},
+      null | {
+        _creationTime: number;
+        _id: Id<"subscriptions">;
+        addonPurchaseCount: number;
+        addonUnits: number;
+        autoOverage?: boolean;
+        autoTopupPendingSince?: number;
+        cancelAtPeriodEnd?: boolean;
+        currentPeriodEnd: number;
+        currentPeriodOverageSpentCents: number;
+        currentPeriodStart: number;
+        gracePeriodSchedulerId?: Id<"_scheduled_functions">;
+        monthlyUnits: number;
+        orgId: Id<"organizations">;
+        overageCapCents?: number;
+        status: "active" | "grace" | "suspended" | "canceled";
+        stripeCustomerId?: string;
+        stripePlanItemId?: string;
+        stripeSubscriptionId?: string;
+        tier: "hobby" | "pro";
+      }
+    >;
     reconcileCurrentOrgWithStripe: FunctionReference<
       "action",
       "public",
       {},
-      any
+      { reason: string; reconciled: false } | { reconciled: true }
     >;
     updateAutoOverageSettings: FunctionReference<
       "mutation",
       "public",
       { autoOverage: boolean; overageCapCents?: number },
-      any
+      null
     >;
   };
   tinybird: {
@@ -239,22 +467,72 @@ export declare const api: {
         }>;
         ttl?: number;
       },
-      any
+      { expiresAt: number; name: string; token: string }
     >;
   };
   usage: {
-    getCurrentUsage: FunctionReference<"query", "public", any, any>;
+    getCurrentUsage: FunctionReference<
+      "query",
+      "public",
+      {},
+      {
+        _creationTime: number;
+        _id: Id<"usage">;
+        addonUnitsUsed: number;
+        orgId: Id<"organizations">;
+        periodEnd: number;
+        periodStart: number;
+        subscriptionUnitsUsed: number;
+      } | null
+    >;
   };
   users: {
-    getCurrentUserQuery: FunctionReference<"query", "public", {}, any>;
-    getUser: FunctionReference<"query", "public", { id: Id<"users"> }, any>;
-    initializeUser: FunctionReference<"mutation", "public", {}, any>;
-    isAdmin: FunctionReference<"query", "public", {}, any>;
+    getCurrentUserQuery: FunctionReference<
+      "query",
+      "public",
+      {},
+      {
+        _creationTime: number;
+        _id: Id<"users">;
+        email: string;
+        enabled: boolean;
+        inviteId?: Id<"invites">;
+        isAdmin?: boolean;
+        name?: string;
+        orgId?: Id<"organizations">;
+        picture?: string;
+        tokenIdentifier: string;
+      } | null
+    >;
+    getUser: FunctionReference<
+      "query",
+      "public",
+      { id: Id<"users"> },
+      {
+        _creationTime: number;
+        _id: Id<"users">;
+        email: string;
+        enabled: boolean;
+        inviteId?: Id<"invites">;
+        isAdmin?: boolean;
+        name?: string;
+        orgId?: Id<"organizations">;
+        picture?: string;
+        tokenIdentifier: string;
+      } | null
+    >;
+    initializeUser: FunctionReference<
+      "mutation",
+      "public",
+      {},
+      { userId: Id<"users"> }
+    >;
+    isAdmin: FunctionReference<"query", "public", {}, boolean>;
     removeMember: FunctionReference<
       "mutation",
       "public",
       { memberId: Id<"organizationMembers"> },
-      any
+      null
     >;
   };
   waitlist: {
@@ -262,21 +540,35 @@ export declare const api: {
       "mutation",
       "public",
       { waitlistIds: Array<Id<"waitlist">> },
-      any
+      { invited: number }
     >;
     confirmEmail: FunctionReference<
       "mutation",
       "public",
       { token: string },
-      any
+      { alreadyConfirmed: boolean }
     >;
     joinWaitlist: FunctionReference<
       "mutation",
       "public",
       { email: string; source?: string },
-      any
+      | { confirmed: boolean; status: "already_on_waitlist" }
+      | { id: Id<"waitlist">; status: "joined" }
     >;
-    listWaitlist: FunctionReference<"query", "public", {}, any>;
+    listWaitlist: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"waitlist">;
+        confirmationToken: string;
+        confirmed: boolean;
+        email: string;
+        notifiedAt?: number;
+        source?: string;
+      }>
+    >;
   };
 };
 
@@ -294,42 +586,119 @@ export declare const internal: {
       "query",
       "internal",
       { id: Id<"apiKeys"> },
-      any
+      null | {
+        _creationTime: number;
+        _id: Id<"apiKeys">;
+        expiresAt: number;
+        key: string;
+        name?: string;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
+      }
     >;
     listByOrgId: FunctionReference<
       "query",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      Array<{
+        _creationTime: number;
+        _id: Id<"apiKeys">;
+        expiresAt: number;
+        key: string;
+        name?: string;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
+      }>
     >;
     listByUserId: FunctionReference<
       "query",
       "internal",
       { userId: Id<"users"> },
-      any
+      Array<{
+        _creationTime: number;
+        _id: Id<"apiKeys">;
+        expiresAt: number;
+        key: string;
+        name?: string;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
+      }>
     >;
   };
   cloudflare: {
-    checkKeyInKV: FunctionReference<"action", "internal", { key: string }, any>;
+    checkKeyInKV: FunctionReference<
+      "action",
+      "internal",
+      { key: string },
+      boolean
+    >;
     deleteKeyFromKV: FunctionReference<
       "action",
       "internal",
       { key: string },
-      any
+      null
     >;
     deleteUserOrgFromKV: FunctionReference<
       "action",
       "internal",
       { retryCount?: number; sub: string },
-      any
+      null
     >;
-    getAllSyncData: FunctionReference<"query", "internal", {}, any>;
-    isCallerAdmin: FunctionReference<"query", "internal", {}, any>;
+    getAllSyncData: FunctionReference<
+      "query",
+      "internal",
+      {},
+      {
+        apiKeys: Array<{
+          _creationTime: number;
+          _id: Id<"apiKeys">;
+          expiresAt: number;
+          key: string;
+          name?: string;
+          orgId?: Id<"organizations">;
+          userId?: Id<"users">;
+        }>;
+        subscriptions: Array<{
+          _creationTime: number;
+          _id: Id<"subscriptions">;
+          addonPurchaseCount: number;
+          addonUnits: number;
+          autoOverage?: boolean;
+          autoTopupPendingSince?: number;
+          cancelAtPeriodEnd?: boolean;
+          currentPeriodEnd: number;
+          currentPeriodOverageSpentCents: number;
+          currentPeriodStart: number;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
+          monthlyUnits: number;
+          orgId: Id<"organizations">;
+          overageCapCents?: number;
+          status: "active" | "grace" | "suspended" | "canceled";
+          stripeCustomerId?: string;
+          stripePlanItemId?: string;
+          stripeSubscriptionId?: string;
+          tier: "hobby" | "pro";
+        }>;
+        users: Array<{
+          _creationTime: number;
+          _id: Id<"users">;
+          email: string;
+          enabled: boolean;
+          inviteId?: Id<"invites">;
+          isAdmin?: boolean;
+          name?: string;
+          orgId?: Id<"organizations">;
+          picture?: string;
+          tokenIdentifier: string;
+        }>;
+      }
+    >;
+    isCallerAdmin: FunctionReference<"query", "internal", {}, boolean>;
     syncKeyToKV: FunctionReference<
       "action",
       "internal",
       { expiresAt: number; key: string; orgId?: string },
-      any
+      null
     >;
     syncSubscriptionToKV: FunctionReference<
       "action",
@@ -347,13 +716,13 @@ export declare const internal: {
         status: string;
         tier: string;
       },
-      any
+      null
     >;
     syncUserOrgToKV: FunctionReference<
       "action",
       "internal",
       { orgId: string; retryCount?: number; sub: string },
-      any
+      null
     >;
   };
   emails: {
@@ -361,13 +730,13 @@ export declare const internal: {
       "action",
       "internal",
       { confirmationToken: string; email: string },
-      any
+      null
     >;
     sendInviteEmail: FunctionReference<
       "action",
       "internal",
       { email: string; token: string },
-      any
+      null
     >;
   };
   mcp: {
@@ -390,7 +759,12 @@ export declare const internal: {
         "action",
         "internal",
         { message: any; sessionId?: string; userId: Id<"users"> },
-        any
+        {
+          error?: { code: number; data?: any; message: string };
+          id: string | number | null;
+          jsonrpc: "2.0";
+          result?: any;
+        } | null
       >;
     };
     session: {
@@ -398,43 +772,67 @@ export declare const internal: {
         "mutation",
         "internal",
         { sessionId: string },
-        any
+        null
       >;
       createSession: FunctionReference<
         "mutation",
         "internal",
         { protocolVersion: string; userId: Id<"users"> },
-        any
+        string
       >;
       deleteSession: FunctionReference<
         "mutation",
         "internal",
         { sessionId: string },
-        any
+        null
       >;
       getSession: FunctionReference<
         "query",
         "internal",
         { sessionId: string },
-        any
+        {
+          _creationTime: number;
+          _id: Id<"mcpSessions">;
+          expiresAt: number;
+          protocolVersion: string;
+          sessionId: string;
+          state: "initializing" | "ready" | "shutdown";
+          userId: Id<"users">;
+        } | null
       >;
       getSessionInternal: FunctionReference<
         "query",
         "internal",
         { sessionId: string },
-        any
+        {
+          _creationTime: number;
+          _id: Id<"mcpSessions">;
+          expiresAt: number;
+          protocolVersion: string;
+          sessionId: string;
+          state: "initializing" | "ready" | "shutdown";
+          userId: Id<"users">;
+        } | null
       >;
       getUserSessions: FunctionReference<
         "query",
         "internal",
         { userId: Id<"users"> },
-        any
+        Array<{
+          _creationTime: number;
+          _id: Id<"mcpSessions">;
+          expiresAt: number;
+          protocolVersion: string;
+          sessionId: string;
+          state: "initializing" | "ready" | "shutdown";
+          userId: Id<"users">;
+        }>
       >;
       updateSessionState: FunctionReference<
         "mutation",
         "internal",
         { sessionId: string; state: "initializing" | "ready" | "shutdown" },
-        any
+        null
       >;
     };
     tokens: {
@@ -442,13 +840,13 @@ export declare const internal: {
         "mutation",
         "internal",
         { code: string },
-        any
+        null
       >;
       cleanupRefreshToken: FunctionReference<
         "mutation",
         "internal",
         { hashedTokenId: string },
-        any
+        null
       >;
       createAuthCode: FunctionReference<
         "mutation",
@@ -461,43 +859,52 @@ export declare const internal: {
           redirectUri: string;
           userId: Id<"users">;
         },
-        any
+        string
       >;
       createRefreshToken: FunctionReference<
         "mutation",
         "internal",
         { auth0RefreshToken: string; userId: Id<"users"> },
-        any
+        string
       >;
       deleteRefreshToken: FunctionReference<
         "mutation",
         "internal",
         { tokenId: string },
-        any
+        null
       >;
       deleteUserRefreshTokens: FunctionReference<
         "mutation",
         "internal",
         { userId: Id<"users"> },
-        any
+        null
       >;
       exchangeAuthCode: FunctionReference<
         "mutation",
         "internal",
         { code: string; codeVerifier?: string; redirectUri: string },
-        any
+        | { error: string; error_description: string }
+        | { tokenId: string; userId: Id<"users"> }
       >;
       getRefreshToken: FunctionReference<
         "query",
         "internal",
         { tokenId: string },
-        any
+        {
+          _creationTime: number;
+          _id: Id<"mcpRefreshTokens">;
+          auth0RefreshToken: string;
+          expiresAt: number;
+          hashedTokenId: string;
+          tokenId?: string;
+          userId: Id<"users">;
+        } | null
       >;
       updateRefreshToken: FunctionReference<
         "mutation",
         "internal",
         { auth0RefreshToken: string; tokenId: string },
-        any
+        null
       >;
     };
     tools: {
@@ -569,7 +976,15 @@ export declare const internal: {
             trace_id: string;
           };
         },
-        any
+        {
+          content: Array<{
+            data?: string;
+            mimeType?: string;
+            text?: string;
+            type: "text" | "image" | "resource";
+          }>;
+          isError?: boolean;
+        }
       >;
       getTraceSpansAction: {
         getTraceSpans: FunctionReference<
@@ -590,7 +1005,15 @@ export declare const internal: {
               trace_id: string;
             };
           },
-          any
+          {
+            content: Array<{
+              data?: string;
+              mimeType?: string;
+              text?: string;
+              type: "text" | "image" | "resource";
+            }>;
+            isError?: boolean;
+          }
         >;
       };
       index: {
@@ -635,7 +1058,15 @@ export declare const internal: {
               trace_id: string;
             };
           },
-          any
+          {
+            content: Array<{
+              data?: string;
+              mimeType?: string;
+              text?: string;
+              type: "text" | "image" | "resource";
+            }>;
+            isError?: boolean;
+          }
         >;
         listTraces: FunctionReference<
           "action",
@@ -719,9 +1150,40 @@ export declare const internal: {
       "query",
       "internal",
       { model: string; provider: string },
-      any
+      {
+        _creationTime: number;
+        _id: Id<"modelPricing">;
+        cacheReadCostPerMillion?: number;
+        cacheWrite1hCostPerMillion?: number;
+        cacheWriteCostPerMillion?: number;
+        completionCostPerMillion: number;
+        model: string;
+        promptCostPerMillion: number;
+        provider: string;
+        reasoningCostPerMillion?: number;
+        source: "manual" | "openrouter" | "default";
+        updatedAt: number;
+      } | null
     >;
-    listAll: FunctionReference<"query", "internal", any, any>;
+    listAll: FunctionReference<
+      "query",
+      "internal",
+      any,
+      Array<{
+        _creationTime: number;
+        _id: Id<"modelPricing">;
+        cacheReadCostPerMillion?: number;
+        cacheWrite1hCostPerMillion?: number;
+        cacheWriteCostPerMillion?: number;
+        completionCostPerMillion: number;
+        model: string;
+        promptCostPerMillion: number;
+        provider: string;
+        reasoningCostPerMillion?: number;
+        source: "manual" | "openrouter" | "default";
+        updatedAt: number;
+      }>
+    >;
     upsertInternal: FunctionReference<
       "mutation",
       "internal",
@@ -736,39 +1198,45 @@ export declare const internal: {
         reasoningCostPerMillion?: number;
         source: "manual" | "openrouter" | "default";
       },
-      any
+      Id<"modelPricing">
     >;
   };
   organizations: {
-    canAddMember: FunctionReference<
-      "query",
-      "internal",
-      { orgId: Id<"organizations"> },
-      any
-    >;
     getActiveMemberCountInternal: FunctionReference<
       "query",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      number
     >;
     getByIdInternal: FunctionReference<
       "query",
       "internal",
       { id: Id<"organizations"> },
-      any
+      null | {
+        _creationTime: number;
+        _id: Id<"organizations">;
+        name: string;
+        ownerId: Id<"users">;
+        stripeCustomerId?: string;
+      }
     >;
     getByStripeCustomerId: FunctionReference<
       "query",
       "internal",
       { stripeCustomerId: string },
-      any
+      null | {
+        _creationTime: number;
+        _id: Id<"organizations">;
+        name: string;
+        ownerId: Id<"users">;
+        stripeCustomerId?: string;
+      }
     >;
     setStripeCustomerId: FunctionReference<
       "mutation",
       "internal",
       { orgId: Id<"organizations">; stripeCustomerId: string },
-      any
+      null
     >;
   };
   pricingSync: {
@@ -776,40 +1244,55 @@ export declare const internal: {
       "action",
       "internal",
       { model: string; provider: string },
-      any
+      null
     >;
     syncToKV: FunctionReference<
       "action",
       "internal",
       { model: string; provider: string },
-      any
+      null
     >;
   };
   stripeEvents: {
-    cleanupOldEvents: FunctionReference<"mutation", "internal", any, any>;
+    cleanupOldEvents: FunctionReference<
+      "mutation",
+      "internal",
+      {},
+      { deleted: number }
+    >;
     getByEventId: FunctionReference<
       "query",
       "internal",
       { eventId: string },
-      any
+      {
+        _creationTime: number;
+        _id: Id<"stripeEvents">;
+        error?: string;
+        eventId: string;
+        eventType: string;
+        processedAt?: number;
+        processingStartedAt?: number;
+        status: "processing" | "processed" | "failed";
+        stripeObjectId?: string;
+      } | null
     >;
     markFailed: FunctionReference<
       "mutation",
       "internal",
       { error: string; eventId: string },
-      any
+      null
     >;
     markProcessed: FunctionReference<
       "mutation",
       "internal",
       { eventId: string },
-      any
+      null
     >;
     startProcessing: FunctionReference<
       "mutation",
       "internal",
       { eventId: string; eventType: string; stripeObjectId?: string },
-      any
+      { alreadyProcessed: boolean; eventDocId: Id<"stripeEvents"> }
     >;
   };
   subscriptions: {
@@ -817,7 +1300,7 @@ export declare const internal: {
       "mutation",
       "internal",
       { orgId: Id<"organizations">; units: number },
-      any
+      null
     >;
     creditAddonPurchase: FunctionReference<
       "mutation",
@@ -831,73 +1314,133 @@ export declare const internal: {
         triggeredByUserId?: Id<"users">;
         units: number;
       },
-      any
+      null
     >;
     getByOrgId: FunctionReference<
       "query",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      null | {
+        _creationTime: number;
+        _id: Id<"subscriptions">;
+        addonPurchaseCount: number;
+        addonUnits: number;
+        autoOverage?: boolean;
+        autoTopupPendingSince?: number;
+        cancelAtPeriodEnd?: boolean;
+        currentPeriodEnd: number;
+        currentPeriodOverageSpentCents: number;
+        currentPeriodStart: number;
+        gracePeriodSchedulerId?: Id<"_scheduled_functions">;
+        monthlyUnits: number;
+        orgId: Id<"organizations">;
+        overageCapCents?: number;
+        status: "active" | "grace" | "suspended" | "canceled";
+        stripeCustomerId?: string;
+        stripePlanItemId?: string;
+        stripeSubscriptionId?: string;
+        tier: "hobby" | "pro";
+      }
     >;
     getByStripeCustomerId: FunctionReference<
       "query",
       "internal",
       { stripeCustomerId: string },
-      any
+      null | {
+        _creationTime: number;
+        _id: Id<"subscriptions">;
+        addonPurchaseCount: number;
+        addonUnits: number;
+        autoOverage?: boolean;
+        autoTopupPendingSince?: number;
+        cancelAtPeriodEnd?: boolean;
+        currentPeriodEnd: number;
+        currentPeriodOverageSpentCents: number;
+        currentPeriodStart: number;
+        gracePeriodSchedulerId?: Id<"_scheduled_functions">;
+        monthlyUnits: number;
+        orgId: Id<"organizations">;
+        overageCapCents?: number;
+        status: "active" | "grace" | "suspended" | "canceled";
+        stripeCustomerId?: string;
+        stripePlanItemId?: string;
+        stripeSubscriptionId?: string;
+        tier: "hobby" | "pro";
+      }
     >;
     getByStripeSubscriptionId: FunctionReference<
       "query",
       "internal",
       { stripeSubscriptionId: string },
-      any
+      null | {
+        _creationTime: number;
+        _id: Id<"subscriptions">;
+        addonPurchaseCount: number;
+        addonUnits: number;
+        autoOverage?: boolean;
+        autoTopupPendingSince?: number;
+        cancelAtPeriodEnd?: boolean;
+        currentPeriodEnd: number;
+        currentPeriodOverageSpentCents: number;
+        currentPeriodStart: number;
+        gracePeriodSchedulerId?: Id<"_scheduled_functions">;
+        monthlyUnits: number;
+        orgId: Id<"organizations">;
+        overageCapCents?: number;
+        status: "active" | "grace" | "suspended" | "canceled";
+        stripeCustomerId?: string;
+        stripePlanItemId?: string;
+        stripeSubscriptionId?: string;
+        tier: "hobby" | "pro";
+      }
     >;
     releaseAutoTopupReservation: FunctionReference<
       "mutation",
       "internal",
       { amountCents: number; orgId: Id<"organizations"> },
-      any
+      null
     >;
     reserveAutoTopup: FunctionReference<
       "mutation",
       "internal",
       { amountCents: number; orgId: Id<"organizations"> },
-      any
+      { idempotencyKey: string; ok: true } | { ok: false; reason: string }
     >;
     revertToHobby: FunctionReference<
       "mutation",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      null
     >;
     revokeAddonPurchase: FunctionReference<
       "mutation",
       "internal",
       { stripePaymentIntentId: string },
-      any
+      null
     >;
     scheduleGraceSuspension: FunctionReference<
       "mutation",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      null
     >;
     setStripeCustomerId: FunctionReference<
       "mutation",
       "internal",
       { orgId: Id<"organizations">; stripeCustomerId: string },
-      any
+      null
     >;
     setTier: FunctionReference<
       "mutation",
       "internal",
       { orgId: Id<"organizations">; tier: "hobby" | "pro" },
-      any
+      null
     >;
     transitionGraceToSuspended: FunctionReference<
       "mutation",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      null
     >;
     triggerAutoTopup: FunctionReference<
       "action",
@@ -908,7 +1451,7 @@ export declare const internal: {
         quantity?: number;
         reason?: string;
       },
-      any
+      { ok: false; reason: string } | { invoiceId: string; ok: true }
     >;
     upsertStripeSubscriptionState: FunctionReference<
       "mutation",
@@ -923,7 +1466,7 @@ export declare const internal: {
         stripePlanItemId?: string;
         stripeSubscriptionId?: string;
       },
-      any
+      null
     >;
   };
   tinybird: {
@@ -931,7 +1474,11 @@ export declare const internal: {
       "action",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      | { reason: string; updated: false }
+      | {
+          results: Record<string, { error?: string; success: boolean }>;
+          updated: true;
+        }
     >;
     generateTokenInternal: FunctionReference<
       "action",
@@ -942,7 +1489,7 @@ export declare const internal: {
         scopes: Array<{ resource: string; type: string }>;
         ttl?: number;
       },
-      any
+      string
     >;
   };
   usage: {
@@ -954,13 +1501,21 @@ export declare const internal: {
         orgId: Id<"organizations">;
         subscriptionUnitsUsed: number;
       },
-      any
+      null
     >;
     getForOrgInternal: FunctionReference<
       "query",
       "internal",
       { orgId: Id<"organizations"> },
-      any
+      {
+        _creationTime: number;
+        _id: Id<"usage">;
+        addonUnitsUsed: number;
+        orgId: Id<"organizations">;
+        periodEnd: number;
+        periodStart: number;
+        subscriptionUnitsUsed: number;
+      } | null
     >;
     recordUsage: FunctionReference<
       "mutation",
@@ -972,7 +1527,7 @@ export declare const internal: {
         periodStart: number;
         subscriptionUnitsUsed: number;
       },
-      any
+      null
     >;
   };
   users: {
@@ -985,21 +1540,43 @@ export declare const internal: {
         picture?: string;
         tokenIdentifier: string;
       },
-      any
+      Id<"users">
     >;
     getUserById: FunctionReference<
       "query",
       "internal",
       { id: Id<"users"> },
-      any
+      {
+        _creationTime: number;
+        _id: Id<"users">;
+        email: string;
+        enabled: boolean;
+        inviteId?: Id<"invites">;
+        isAdmin?: boolean;
+        name?: string;
+        orgId?: Id<"organizations">;
+        picture?: string;
+        tokenIdentifier: string;
+      } | null
     >;
     getUserByTokenIdentifier: FunctionReference<
       "query",
       "internal",
       { tokenIdentifier: string },
-      any
+      {
+        _creationTime: number;
+        _id: Id<"users">;
+        email: string;
+        enabled: boolean;
+        inviteId?: Id<"invites">;
+        isAdmin?: boolean;
+        name?: string;
+        orgId?: Id<"organizations">;
+        picture?: string;
+        tokenIdentifier: string;
+      } | null
     >;
-    isAdminInternal: FunctionReference<"query", "internal", {}, any>;
+    isAdminInternal: FunctionReference<"query", "internal", {}, boolean>;
   };
 };
 

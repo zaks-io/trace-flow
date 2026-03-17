@@ -55,15 +55,14 @@ async function requireOrgOwnerAction(ctx: ActionCtx) {
     tokenIdentifier: identity.tokenIdentifier,
   });
   if (!user?.orgId) throw new Error('Organization not found');
-  const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: user.orgId });
+  const orgId = user.orgId;
+  const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: orgId });
   if (!org) throw new Error('Organization not found');
   if (org.ownerId !== user._id) {
     throw new Error('Only organization owners can manage billing');
   }
-  const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, {
-    orgId: user.orgId,
-  });
-  return { user, org, subscription };
+  const subscription = await ctx.runQuery(internal.subscriptions.getByOrgId, { orgId });
+  return { user: { ...user, orgId }, org, subscription };
 }
 
 export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subscriptions'>) {

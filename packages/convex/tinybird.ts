@@ -62,7 +62,7 @@ export const generateToken = action({
     const subscription = user?.orgId
       ? await ctx.runQuery(internal.subscriptions.getByOrgId, { orgId: user.orgId })
       : null;
-    const tier = (subscription?.tier ?? 'hobby') as keyof typeof RETENTION_DAYS;
+    const tier = subscription?.tier ?? 'hobby';
     const retentionDays = RETENTION_DAYS[tier];
 
     // Add api_keys and retention_days to fixed_params for server-side enforcement
