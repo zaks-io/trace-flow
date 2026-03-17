@@ -32,10 +32,7 @@ SCHEMA >
     `TierAtIngestion` LowCardinality(String),
     `RetentionExpiresAt` Int64
 
-ENGINE "MergeTree"
+ENGINE "ReplacingMergeTree"
 ENGINE_SORTING_KEY "ReceivedAt, ApiKey, Provider, Model, OperationName, StatusCode, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(RetentionExpiresAt / 1000000000) + toIntervalDay(0)"
-
-FORWARD_QUERY >
-    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens, ReasoningTokens, defaultValueOfTypeName('UInt32') AS UncachedInputTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars, CacheCreationCostMicrodollars, ReasoningCostMicrodollars, defaultValueOfTypeName('UInt64') AS PromptBaselineCostMicrodollars, defaultValueOfTypeName('Int64') AS CacheImpactCostMicrodollars, defaultValueOfTypeName('UInt64') AS UpstreamCostMicrodollars, TotalCostMicrodollars, DurationNano, defaultValueOfTypeName('LowCardinality(String)') AS TierAtIngestion, defaultValueOfTypeName('Int64') AS RetentionExpiresAt
