@@ -42,7 +42,7 @@ function createMockSubscription(overrides = {}) {
     status: 'active',
     monthlyUnits: 100_000,
     addonUnits: 0,
-    seatQuantity: 1,
+
     currentPeriodStart: Date.now() - 15 * 86400000,
     currentPeriodEnd: Date.now() + 15 * 86400000,
     currentPeriodOverageSpentCents: 0,
@@ -57,30 +57,18 @@ function createMockSubscription(overrides = {}) {
 
 ## Pure Functions (no mocks needed)
 
-### `findSubscriptionItems(items)`
-
-| Scenario                                | Input                                                            | Expected                                       |
-| --------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
-| Matches plan and seat by price ID       | Items with matching pro/seat price IDs                           | `{ planItem, seatItem }` both set              |
-| Only plan item matches                  | One item matching pro price ID                                   | `{ planItem, seatItem: undefined }`            |
-| Only seat item matches                  | One item matching seat price ID                                  | `{ planItem: undefined, seatItem }`            |
-| No price ID match, single item (legacy) | One item, unknown price ID                                       | `{ planItem: items[0], seatItem: undefined }`  |
-| No match, multiple items                | Two items, neither matches                                       | `{ planItem: undefined, seatItem: undefined }` |
-| Empty items array                       | `[]`                                                             | `{ planItem: undefined, seatItem: undefined }` |
-| Price as string vs object               | `item.price = "price_123"` vs `item.price = { id: "price_123" }` | Same result                                    |
-
 ### `mapStripeStatusToInternal(status)`
 
-| Stripe Status        | Expected       |
-| -------------------- | -------------- |
-| `active`             | `active`       |
-| `trialing`           | `active`       |
-| `past_due`           | `grace`        |
-| `incomplete`         | `suspended`    |
-| `unpaid`             | `suspended`    |
-| `canceled`           | `canceled`     |
-| `incomplete_expired` | `canceled`     |
-| Unknown string       | Throws `Error` |
+| Stripe Status        | Expected                                  |
+| -------------------- | ----------------------------------------- |
+| `active`             | `active`                                  |
+| `trialing`           | `active`                                  |
+| `past_due`           | `grace`                                   |
+| `incomplete`         | `suspended`                               |
+| `unpaid`             | `suspended`                               |
+| `canceled`           | `canceled`                                |
+| `incomplete_expired` | `canceled`                                |
+| Unknown string       | Returns `suspended` (with `console.warn`) |
 
 ---
 
@@ -187,7 +175,7 @@ function createMockSubscription(overrides = {}) {
 - Resets tier to hobby with hobby config values
 - Zeros out addon units, overage spent, auto overage settings
 - Sets new 30-day period
-- Clears all Stripe IDs
+- Clears Stripe IDs (subscription, plan item); retains `stripeCustomerId` for re-subscription
 - Cancels grace period scheduler if set
 - Schedules KV sync
 
@@ -305,13 +293,12 @@ This is the most complex function. It orchestrates: reservation -> Stripe charge
 
 ### `getBillingSummaryForCurrentUser`
 
-| Scenario                                 | Expected                                                                                           |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Full data (subscription, members, usage) | Returns computed summary with correct `totalUsed`, `totalAvailable`, `remaining`, `seatsRemaining` |
-| No subscription                          | Returns `null`                                                                                     |
-| No usage record for current period       | `totalUsed = 0`, `remaining = totalAvailable`                                                      |
-| Usage exceeds available                  | `remaining` clamped to 0                                                                           |
-| More members than seats                  | `seatsRemaining` clamped to 0                                                                      |
+| Scenario                           | Expected                                                                         |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| Full data (subscription, usage)    | Returns computed summary with correct `totalUsed`, `totalAvailable`, `remaining` |
+| No subscription                    | Returns `null`                                                                   |
+| No usage record for current period | `totalUsed = 0`, `remaining = totalAvailable`                                    |
+| Usage exceeds available            | `remaining` clamped to 0                                                         |
 
 ### `getByOrgId` / `getByStripeSubscriptionId` / `getByStripeCustomerId`
 
@@ -330,7 +317,7 @@ Simple index lookups. Test:
 
 - Creates Stripe customer if none exists (with idempotency key)
 - Persists `stripeCustomerId` to both org and subscription tables
-- Creates checkout session with pro + seat line items
+- Creates checkout session with plan line item
 - Returns `{ url }`
 
 **Error cases:**
@@ -343,8 +330,7 @@ Simple index lookups. Test:
 **Edge cases:**
 
 - Existing `stripeCustomerId` on org: skips customer creation
-- Existing `stripeCustomerId` on subscription (but not org): uses it
-- Seat quantity from existing subscription, minimum 1
+- `stripeCustomerId` on subscription but not org (legacy data): falls back to subscription's value
 
 ### `createAddonCheckoutSession`
 
@@ -377,20 +363,6 @@ Simple index lookups. Test:
 - Not authenticated: throws
 - No org / not owner: throws
 - No `stripeCustomerId`: throws
-
-### `updateSeatQuantity`
-
-**Happy path:**
-
-- Updates Stripe subscription seat item quantity
-- Calls `upsertStripeSubscriptionState` with updated state
-
-**Error cases:**
-
-- `seatQuantity < 1`: throws
-- Not owner: throws
-- No `stripeSubscriptionId` or `stripeSeatItemId`: throws
-- `seatQuantity < activeMembers`: throws with member count in message
 
 ### `reconcileCurrentOrgWithStripe`
 
@@ -426,7 +398,7 @@ Simple index lookups. Test:
 
 ## Webhook Handler (`http.ts /stripe/webhook`)
 
-The webhook handler in `http.ts` uses `findSubscriptionItems` and `mapStripeStatusToInternal` from subscriptions.ts. Test these webhook event types:
+The webhook handler in `http.ts` uses `mapStripeStatusToInternal` from subscriptions.ts. Test these webhook event types:
 
 ### `checkout.session.completed`
 
@@ -541,7 +513,7 @@ Charge refunded after addon units already credited and partially consumed.
 
 ```
 packages/convex/__tests__/subscriptions/
-  pure-functions.test.ts        # findSubscriptionItems, mapStripeStatusToInternal
+  pure-functions.test.ts        # mapStripeStatusToInternal
   internal-mutations.test.ts    # setTier, addAddonUnits, upsertStripeSubscriptionState,
                                 # creditAddonPurchase, revokeAddonPurchase, revertToHobby,
                                 # scheduleGraceSuspension, transitionGraceToSuspended,
@@ -549,7 +521,7 @@ packages/convex/__tests__/subscriptions/
   queries.test.ts               # getForCurrentUser, getBillingSummaryForCurrentUser,
                                 # getByOrgId, getByStripeSubscriptionId, getByStripeCustomerId
   actions.test.ts               # createOrgCheckoutSession, createAddonCheckoutSession,
-                                # createBillingPortalSession, updateSeatQuantity,
+                                # createBillingPortalSession,
                                 # reconcileCurrentOrgWithStripe, triggerAutoTopup
   mutations.test.ts             # updateAutoOverageSettings
   auto-topup.test.ts            # checkAutoTopup (from usage.ts)

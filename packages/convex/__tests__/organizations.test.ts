@@ -64,7 +64,6 @@ describe('createOrgWithDefaultBilling', () => {
         tier: 'hobby',
         status: 'active',
         monthlyUnits: TIER_CONFIG.hobby.monthlyUnits,
-        seatQuantity: 1,
       }),
     );
     expect(ctx._schedulerRunAfter).toHaveBeenCalledTimes(2);
@@ -131,8 +130,8 @@ describe('ensureOrgHasSubscription', () => {
       tier: 'hobby',
       status: 'active',
       monthlyUnits: TIER_CONFIG.hobby.monthlyUnits,
-      seatQuantity: 1,
     });
+    expect(dbInsert.mock.calls[0][1]).not.toHaveProperty('seatQuantity');
     expect(schedulerRunAfter).toHaveBeenCalledTimes(1);
     expect(schedulerRunAfter.mock.calls[0][2]).toMatchObject({
       orgId,

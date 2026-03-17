@@ -20,7 +20,33 @@ export default function DocsIndexPage() {
           Learn how to integrate Trace Flow into your applications. Send traces, monitor LLM usage,
           and gain insights into your AI workflows.
         </p>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            href="/docs/quick-start"
+            className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-sm text-foreground transition-colors hover:bg-primary/15"
+          >
+            <Gauge className="h-4 w-4 text-primary" />
+            <span>Start Here</span>
+          </Link>
+          <Link
+            href="/agents.md"
+            className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-card/50 px-4 py-2 text-sm text-foreground transition-colors hover:border-primary/30 hover:bg-card"
+          >
+            <FileCode className="h-4 w-4 text-primary" />
+            <span>For AI Agents</span>
+          </Link>
+        </div>
       </div>
+
+      <section className="mb-16 animate-fade-in" style={{ animationDelay: '60ms' }}>
+        <div className="rounded-2xl border border-primary/20 bg-primary/5 p-6">
+          <h2 className="text-lg font-semibold text-foreground">New workspace?</h2>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+            Start with Quick Start if you want to wire the integration by hand. If you use Cursor or
+            Claude Code, open <code>/agents.md</code> first and let your coding agent do the setup.
+          </p>
+        </div>
+      </section>
 
       {/* Guides */}
       <section className="mb-16 animate-fade-in" style={{ animationDelay: '100ms' }}>
@@ -31,7 +57,7 @@ export default function DocsIndexPage() {
           {guides.map((card) => (
             <Link key={card.slug} href={getDocPath(card.slug)} className="group">
               <div className="relative flex h-full flex-col rounded-xl border border-border/50 bg-card/50 p-6 transition-all duration-200 hover:border-primary/30 hover:bg-card">
-                <div className="absolute -inset-px rounded-xl bg-gradient-to-b from-primary/10 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                <div className="absolute -inset-px rounded-xl bg-linear-to-b from-primary/10 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                 <div className="relative flex flex-1 flex-col">
                   <div className="mb-4 flex items-start justify-between">
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">

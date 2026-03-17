@@ -46,7 +46,6 @@ export const backfillAll = internalMutation({
     for (const sub of subs) {
       const updates: Record<string, unknown> = {};
       if (sub.status === undefined) updates.status = 'active';
-      if (sub.seatQuantity === undefined) updates.seatQuantity = 1;
       if (sub.currentPeriodStart === undefined) updates.currentPeriodStart = now;
       if (sub.currentPeriodEnd === undefined) updates.currentPeriodEnd = periodEnd;
       if (sub.currentPeriodOverageSpentCents === undefined)
@@ -80,9 +79,8 @@ export const backfillAll = internalMutation({
           orgId,
           tier: 'hobby',
           status: 'active',
-          monthlyUnits: 50_000,
+          monthlyUnits: 25_000,
           addonUnits: 0,
-          seatQuantity: 1,
           currentPeriodStart: now,
           currentPeriodEnd: periodEnd,
           currentPeriodOverageSpentCents: 0,
@@ -106,9 +104,8 @@ export const backfillAll = internalMutation({
           orgId: org._id,
           tier: 'hobby',
           status: 'active',
-          monthlyUnits: 50_000,
+          monthlyUnits: 25_000,
           addonUnits: 0,
-          seatQuantity: 1,
           currentPeriodStart: now,
           currentPeriodEnd: periodEnd,
           currentPeriodOverageSpentCents: 0,

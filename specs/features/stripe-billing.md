@@ -6,20 +6,17 @@ Integrate Stripe in an **org-first** model:
 
 - One Stripe Customer per organization
 - One Stripe Subscription per organization
-- Per-seat billing via subscription item `quantity`
 - Shared org usage limits with soft enforcement in proxy (always proxy, conditionally record)
 - Manual addon packs plus optional auto-topup
 
-Organizations are the billing boundary. Users are members of an org and can access org data according to app auth rules. Solo users still get a personal org with one seat.
+Organizations are the billing boundary. Users are members of an org and can access org data according to app auth rules. Solo users still get a personal org.
 
 ## Locked Decisions
 
 - **Billing authority is org-level.**
-- **Per-seat billing** uses Stripe licensed pricing (`quantity = seat count`).
+- **Flat per-org billing** — one price ($29/mo), one line item.
 - **Soft limits** — proxy always forwards to LLM provider, record traces conditionally based on billing/usage status.
 - **Overage model v1**: prepaid top-up packs + optional auto-topup with spend cap.
-- **Seat policy**: seat updates via `updateSeatQuantity` action (validates against active member count). Stripe Portal used for billing management only.
-- **Seat gate**: invite acceptance is blocked when org is at seat limit.
 - **Monthly billing only** in v1.
 - **No free trial** in v1.
 - **Stripe Tax enabled from day one**.
@@ -30,24 +27,23 @@ Organizations are the billing boundary. Users are members of an org and can acce
 
 - Stripe Customer maps to organization, not individual user.
 - Stripe Subscription maps to organization, not individual user.
-- Subscription has two line items: base plan (`stripePlanItemId`) and per-seat (`stripeSeatItemId`).
-- Seat count is the per-seat subscription item quantity.
+- Subscription has one line item: the flat plan (`stripePlanItemId`).
 - Org limit each period:
-  - `monthlyUnits` is tier-based (hobby: 50k, pro: 100k) -- flat per org, not per seat.
+  - `monthlyUnits` is tier-based (hobby: 25k, pro: 100k) -- flat per org.
   - `totalAvailableUnits = monthlyUnits + addonUnits`
 - Usage counters are org-level and reset on Stripe period rollover.
 
 ### Tiers
 
-|                 | Hobby (Free)   | Pro (Paid)                    |
-| --------------- | -------------- | ----------------------------- |
-| Price           | $0             | $20 per seat per month        |
-| Included traces | 50,000 per org | 100,000 per org               |
-| Proxy requests  | 2,500,000/mo   | 5,000,000/mo (base)           |
-| Overage         | Hard blocked   | Top-up packs / auto-topup     |
-| Addons          | Not allowed    | Allowed ($5 per 100k traces)  |
-| Seats           | 1              | `quantity` on Stripe sub item |
-| Retention       | 7 days         | 30 days                       |
+|                 | Hobby (Free)   | Pro (Paid)                   |
+| --------------- | -------------- | ---------------------------- |
+| Price           | $0             | $29/mo per org               |
+| Included traces | 25,000 per org | 100,000 per org              |
+| Proxy requests  | 1,250,000/mo   | 5,000,000/mo (base)          |
+| Overage         | Hard blocked   | Top-up packs / auto-topup    |
+| Addons          | Not allowed    | Allowed ($5 per 100k traces) |
+| Members         | Unlimited      | Unlimited                    |
+| Retention       | 7 days         | 30 days                      |
 
 Config is defined in `@trace-flow/types` as `TIER_CONFIG` and `RETENTION_DAYS`.
 
@@ -55,7 +51,7 @@ Config is defined in `@trace-flow/types` as `TIER_CONFIG` and `RETENTION_DAYS`.
 
 Every tier includes a proxy request allowance that limits total requests routed through the gateway, regardless of whether traces are recorded. This is a cost protection mechanism, not a revenue stream.
 
-- **Hobby:** 2.5M requests/month (50:1 ratio to included traces)
+- **Hobby:** 1.25M requests/month (50:1 ratio to included traces)
 - **Pro base:** 5M requests/month (50:1 ratio to included traces)
 - **Each trace pack (+100K traces):** adds 500K proxy requests (5:1 ratio)
 
@@ -70,7 +66,7 @@ Example: Pro org with 10 trace packs (1M total traces) gets 5M base + 5M from pa
 
 Request counters are tracked by the UsageTracker DO alongside trace counters and reset on Stripe period rollover.
 
-**Rationale:** Our passthrough cost is ~$1.50/million requests (KV reads + Worker invocations). At 5M included requests, worst case cost is $7.50/mo -- well within the $18.82 net revenue from a Pro seat. The allowance prevents abuse where someone routes tens of millions of requests through us as a free proxy without buying traces.
+**Rationale:** Our passthrough cost is ~$1.50/million requests (KV reads + Worker invocations). At 5M included requests, worst case cost is $7.50/mo -- well within the $27.71 net revenue from a Pro org. The allowance prevents abuse where someone routes tens of millions of requests through us as a free proxy without buying traces.
 
 ### Addons and Auto-Topup (Pro)
 
@@ -90,31 +86,13 @@ Auto-topup guardrails:
 - 15-minute dedup window (`autoTopupPendingSince`) prevents concurrent topups
 - Idempotency key scoped to org + period + purchase count
 
+### Addon Pack Expiry
+
+Purchased addon packs expire **1 year after purchase** to limit accounting liability. Until expiry enforcement is built, addon units persist indefinitely on the subscription. Addon units are NOT reset on period rollover — only `currentPeriodOverageSpentCents` resets each billing cycle.
+
 ### Refund Handling
 
 `charge.refunded` webhook revokes addon units by matching `stripePaymentIntentId` to `addonPurchases` records and subtracting credited units from the subscription.
-
-## Seat Lifecycle
-
-### Seat Increase
-
-- Owner calls `updateSeatQuantity` action.
-- Action validates `seatQuantity >= activeMembers` before updating Stripe.
-- Stripe applies proration per subscription config.
-- `customer.subscription.updated` webhook syncs the new quantity.
-
-### Seat Decrease
-
-- Owner calls `updateSeatQuantity` with lower count.
-- Action validates `seatQuantity >= activeMembers` (cannot reduce below active count).
-- Stripe subscription is updated immediately; proration behavior depends on Stripe config.
-
-### Seat Cap and Invites
-
-- Invite acceptance checks `activeMembers < seatQuantity` in `acceptInvite` handler.
-- If at capacity, acceptance is blocked and user sees "seat limit reached" error.
-- Owner must increase seats before invite can be accepted.
-- `canAddMember` internal query also available for programmatic seat checks.
 
 ## Stripe-Aligned State Model
 
@@ -167,19 +145,20 @@ ConvexUsageRecord --> AutoTopup["checkAutoTopup"]
 
 1. Org owner calls `createOrgCheckoutSession` action
 2. Action creates Stripe Customer if missing, persists ID to both `organizations` and `subscriptions` tables
-3. Creates Checkout Session with plan + seat line items
-4. `checkout.session.completed` retrieves full subscription from Stripe, calls `upsertStripeSubscriptionState`
-5. `customer.subscription.created`/`updated` further sync state
-6. `invoice.paid` confirms active status and updates period boundaries
-7. `scheduleKVSync` pushes subscription data to Cloudflare KV as `sub:{orgId}`
+3. Creates Checkout Session with a single plan line item
+4. `checkout.session.completed` persists `stripeCustomerId` to org table (safety net), retrieves full subscription from Stripe, calls `upsertStripeSubscriptionState`
+5. `setTier` to `pro` triggers `tinybird.extendRetention` to update retention for existing traces (hobby 7d → pro 30d)
+6. `customer.subscription.created`/`updated` further sync state
+7. `invoice.paid` confirms active status and updates period boundaries
+8. `scheduleKVSync` pushes subscription data to Cloudflare KV as `sub:{orgId}`
 
 ### Downgrade / Cancellation Flow
 
 1. Customer cancels via Stripe Portal or subscription is deleted
 2. `customer.subscription.deleted` webhook triggers `revertToHobby`:
    - Cancels any pending grace period scheduler
-   - Resets to hobby tier with 50k units, 0 addons, 0 overage
-   - Clears all Stripe IDs (subscription, plan item, seat item)
+   - Resets to hobby tier with 25k units, 0 addons, 0 overage
+   - Clears Stripe IDs (subscription, plan item); retains `stripeCustomerId` so re-subscription doesn't create a duplicate customer
    - Sets fresh 30-day period
    - Syncs to KV
 3. `customer.subscription.updated` with `cancel_at_period_end: true` stores the pending cancellation for UI display
@@ -213,10 +192,10 @@ All webhook handlers must be idempotent and replay-safe.
 
 - `checkout.session.completed` -- initial subscription setup
 - `customer.subscription.created` -- subscription state sync (not in original spec, added for robustness)
-- `customer.subscription.updated` -- seat changes, status changes, period updates, `cancelAtPeriodEnd`
+- `customer.subscription.updated` -- status changes, period updates, `cancelAtPeriodEnd`
 - `customer.subscription.deleted` -- revert to hobby
 - `invoice.paid` -- addon credit (via metadata) or subscription renewal confirmation
-- `invoice.payment_failed` -- transition to grace + schedule suspension
+- `invoice.payment_failed` -- transition to grace + schedule suspension (subscription invoices only; one-time addon invoices are skipped)
 - `charge.refunded` -- revoke addon units (not in original spec, added for refund handling)
 
 ### Processing Rules
@@ -227,7 +206,7 @@ All webhook handlers must be idempotent and replay-safe.
 - Stuck events (status `processing` for > 5 minutes) are eligible for reprocessing.
 - Failed events can be retried.
 - For out-of-order safety, `checkout.session.completed` fetches the full subscription from Stripe.
-- `invoice.paid` for subscription renewals fetches the subscription for period boundaries.
+- `invoice.paid` for subscription renewals uses `invoice.parent?.subscription_details?.subscription` (Stripe v20+ API) to find the parent subscription and fetch period boundaries.
 - On processing error: mark event `failed` with error message, return 500 so Stripe retries.
 
 ## Proxy Enforcement
@@ -293,7 +272,6 @@ Enabled on both subscription and addon checkout sessions:
 - `status` (`'active'` | `'grace'` | `'suspended'` | `'canceled'`)
 - `monthlyUnits` (number)
 - `addonUnits` (number)
-- `seatQuantity` (number)
 - `currentPeriodStart` (number, epoch ms)
 - `currentPeriodEnd` (number, epoch ms)
 - `currentPeriodOverageSpentCents` (number)
@@ -301,7 +279,6 @@ Enabled on both subscription and addon checkout sessions:
 - `stripeCustomerId` (optional string)
 - `stripeSubscriptionId` (optional string)
 - `stripePlanItemId` (optional string)
-- `stripeSeatItemId` (optional string)
 - `cancelAtPeriodEnd` (optional boolean)
 - `autoOverage` (optional boolean)
 - `overageCapCents` (optional number)
@@ -329,6 +306,7 @@ Indexes: `by_org_id`, `by_payment_intent`
 - `eventType` (string)
 - `stripeObjectId` (optional string)
 - `status` (`'processing'` | `'processed'` | `'failed'`)
+- `processingStartedAt` (optional number)
 - `processedAt` (optional number)
 - `error` (optional string)
 
@@ -339,7 +317,7 @@ Indexes: `by_event_id`, `by_status`
 - `orgId` (ref: organizations)
 - `userId` (ref: users)
 - `role` (`'owner'` | `'member'`)
-- `status` (`'active'` | `'invited'` | `'removed'`)
+- `status` (`'active'` | `'removed'`)
 - `invitedAt` (optional number)
 - `joinedAt` (optional number)
 - `removedAt` (optional number)
@@ -362,16 +340,15 @@ Synced from Convex via `cloudflare.syncSubscriptionToKV`. Contains `Subscription
 
 ```typescript
 {
-  (tier,
-    monthlyUnits,
-    addonUnits,
-    status,
-    seatQuantity,
-    currentPeriodStart,
-    currentPeriodEnd,
-    autoOverage,
-    overageCapCents,
-    cancelAtPeriodEnd);
+  tier: SubscriptionTier;
+  status: BillingStatus;
+  monthlyUnits: number;
+  addonUnits: number;
+  currentPeriodStart?: number;
+  currentPeriodEnd?: number;
+  autoOverage?: boolean;
+  overageCapCents?: number;
+  cancelAtPeriodEnd?: boolean;
 }
 ```
 
@@ -383,7 +360,6 @@ Implemented in `Billing.tsx`:
 
 - Subscription status and tier display
 - Cancel-at-period-end banner with end date
-- Seat quantity update (validates >= 1)
 - Manage billing (Stripe Portal redirect)
 - Start / upgrade subscription (Checkout redirect)
 - Buy addon packs (quantity input, Checkout redirect)
@@ -394,7 +370,7 @@ Implemented in `Billing.tsx`:
 
 Implemented in `Usage.tsx` (via `usage/Usage.tsx`):
 
-- Billing status banner with seat count, included units, reset date
+- Billing status banner with included units, reset date
 - Usage progress bar with color thresholds (green/amber/red at 70%/90%)
 - Link to billing settings
 - Cost analytics: timeseries, provider/model/operation/API key breakdowns
@@ -406,24 +382,22 @@ Implemented in `Usage.tsx` (via `usage/Usage.tsx`):
 
 1. **Billing notification emails**: No emails sent on payment failure, grace entry, suspension, or successful charge. Org owners have no visibility into billing issues outside the dashboard.
 2. **Day 90 cancellation policy**: Spec mentions Day 90 canceled/purge but `revertToHobby` only fires on `customer.subscription.deleted`. No scheduler exists to auto-cancel suspended orgs after extended non-payment.
-3. **Stripe Portal configuration**: Code uses Portal for billing management but no Portal configuration is documented or verified (allowed actions, branding, etc.). Seat changes via Portal are not validated against active member count server-side.
-4. **`includedUnitsPerSeat` removal**: Spec references `includedUnitsPerSeat` but implementation uses flat `monthlyUnits` per tier. Units are not multiplied by seat count. Spec and code are now aligned but the original per-seat unit scaling design was dropped without explicit documentation.
-5. **Hobby seat enforcement**: Spec says hobby has 1 seat, but nothing in the code prevents a hobby org from having `seatQuantity > 1` if set before downgrade. `revertToHobby` does not reset `seatQuantity` to 1.
+3. **Stripe Portal configuration**: Code uses Portal for billing management but no Portal configuration is documented or verified (allowed actions, branding, etc.).
 
 ### Should Have
 
-6. **Usage approaching limit notifications**: No in-app or email notification when usage approaches the limit (e.g., 80%, 90%). Auto-topup only triggers at 90% for pro orgs with it enabled.
-7. **Addon purchase history UI**: `addonPurchases` table is populated but no UI exists to show purchase history to the org owner.
-8. **Failed webhook visibility**: `stripeEvents` tracks failed events but no admin UI or alerting exists to surface persistent failures.
-9. **Reconciliation scheduling**: Manual reconcile exists but no automatic periodic reconciliation to catch drift between Stripe and local state.
-10. **Subscription creation flow**: When a new org is created, there's no documented flow for bootstrapping a hobby subscription record. The initial subscription row must exist for seat gating and usage tracking to work.
+4. **Usage approaching limit notifications**: No in-app or email notification when usage approaches the limit (e.g., 80%, 90%). Auto-topup only triggers at 90% for pro orgs with it enabled.
+5. **Addon purchase history UI**: `addonPurchases` table is populated but no UI exists to show purchase history to the org owner.
+6. **Failed webhook visibility**: `stripeEvents` tracks failed events but no admin UI or alerting exists to surface persistent failures.
+7. **Reconciliation scheduling**: Manual reconcile exists but no automatic periodic reconciliation to catch drift between Stripe and local state.
+8. **Addon pack expiry enforcement**: Purchased addon packs should expire 1 year after purchase to limit liability. No TTL enforcement exists yet — `addonPurchases` records have `periodStart` but no `expiresAt`.
 
 ### Nice to Have
 
-11. **Invoice download/history**: No link to Stripe-hosted invoices from the billing UI.
-12. **Multiple payment methods**: Portal handles this but no in-app display of payment method status.
-13. **Tax receipt/exemption management**: Tax is collected but no UI for managing tax IDs or exemptions beyond what Stripe Portal provides.
-14. **Usage export**: No ability to export usage data for accounting/reconciliation.
+9. **Invoice download/history**: No link to Stripe-hosted invoices from the billing UI.
+10. **Multiple payment methods**: Portal handles this but no in-app display of payment method status.
+11. **Tax receipt/exemption management**: Tax is collected but no UI for managing tax IDs or exemptions beyond what Stripe Portal provides.
+12. **Usage export**: No ability to export usage data for accounting/reconciliation.
 
 ## Not in v1
 
@@ -439,8 +413,6 @@ Implemented in `Usage.tsx` (via `usage/Usage.tsx`):
 - [Stripe subscription webhooks](https://docs.stripe.com/billing/subscriptions/webhooks)
 - [Stripe webhook best practices](https://docs.stripe.com/webhooks)
 - [Stripe process undelivered events](https://docs.stripe.com/webhooks/process-undelivered-events)
-- [Stripe per-seat pricing](https://docs.stripe.com/subscriptions/pricing-models/per-seat-pricing)
-- [Stripe quantities](https://docs.stripe.com/billing/subscriptions/quantities)
 - [Stripe prorations](https://docs.stripe.com/billing/subscriptions/prorations)
 - [Stripe customer portal](https://docs.stripe.com/customer-management/integrate-customer-portal)
 - [Stripe portal configuration](https://docs.stripe.com/customer-management/configure-portal)

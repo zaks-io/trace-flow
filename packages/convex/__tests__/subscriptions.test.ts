@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mapStripeStatusToInternal, findSubscriptionItems } from '../subscriptions';
+import { mapStripeStatusToInternal } from '../subscriptions';
 
 // ---------------------------------------------------------------------------
 // Pure function tests — no Convex context needed
@@ -34,46 +34,14 @@ describe('mapStripeStatusToInternal', () => {
     expect(mapStripeStatusToInternal('incomplete_expired')).toBe('canceled');
   });
 
-  it('throws for unknown status', () => {
+  it('throws on unknown status', () => {
     expect(() => mapStripeStatusToInternal('unknown_status')).toThrow(
       'Unknown Stripe subscription status: unknown_status',
     );
   });
 
-  it('throws for empty string', () => {
+  it('throws on empty string', () => {
     expect(() => mapStripeStatusToInternal('')).toThrow('Unknown Stripe subscription status: ');
-  });
-});
-
-describe('findSubscriptionItems', () => {
-  // Price IDs are captured at module load time from process.env.
-  // Tests here exercise the structural logic, not the price-ID matching
-  // (which requires integration-level env setup).
-
-  it('falls back to first item as planItem for single-item legacy subscriptions', () => {
-    const items = [{ id: 'si_legacy', price: { id: 'price_unknown' }, quantity: 1 }] as any;
-
-    const { planItem, seatItem } = findSubscriptionItems(items);
-    expect(planItem?.id).toBe('si_legacy');
-    expect(seatItem).toBeUndefined();
-  });
-
-  it('falls back to items[0] as planItem when multiple items do not match price IDs', () => {
-    // Prevents currentPeriodStart: 0 when Stripe adds unknown price IDs (e.g. during plan migration)
-    const items = [
-      { id: 'si_a', price: { id: 'price_unknown_a' }, quantity: 1 },
-      { id: 'si_b', price: { id: 'price_unknown_b' }, quantity: 2 },
-    ] as any;
-
-    const { planItem, seatItem } = findSubscriptionItems(items);
-    expect(planItem?.id).toBe('si_a');
-    expect(seatItem).toBeUndefined();
-  });
-
-  it('returns empty results for empty items array', () => {
-    const { planItem, seatItem } = findSubscriptionItems([]);
-    expect(planItem).toBeUndefined();
-    expect(seatItem).toBeUndefined();
   });
 });
 
@@ -89,7 +57,6 @@ function makeSub(overrides: Record<string, unknown> = {}) {
     status: 'active',
     monthlyUnits: 1000,
     addonUnits: 0,
-    seatQuantity: 1,
     currentPeriodStart: 1000000,
     currentPeriodEnd: 1000000 + 30 * 24 * 60 * 60 * 1000,
     currentPeriodOverageSpentCents: 0,
@@ -322,12 +289,10 @@ describe('upsertStripeSubscriptionState handler logic', () => {
       currentPeriodOverageSpentCents: 500,
     });
 
-    // New period start differs from existing → reset to 0
+    // New period start differs from existing → reset overage to 0
     const newPeriodStart = 2000;
-    const existingPeriodStart = sub.currentPeriodStart;
-
     const resetOverage =
-      newPeriodStart && newPeriodStart !== existingPeriodStart
+      newPeriodStart && newPeriodStart !== sub.currentPeriodStart
         ? 0
         : sub.currentPeriodOverageSpentCents;
 

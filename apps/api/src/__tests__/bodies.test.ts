@@ -141,4 +141,38 @@ describe('bodies helpers', () => {
     expect(result).toBeNull();
     expect(storage.get).toHaveBeenCalledWith('bodies/req_123');
   });
+
+  describe('resolveVisibilityWindowDays', () => {
+    it('returns 7 for hobby, 30 for pro, 7 for undefined', () => {
+      expect(resolveVisibilityWindowDays('hobby')).toBe(7);
+      expect(resolveVisibilityWindowDays('pro')).toBe(30);
+      expect(resolveVisibilityWindowDays(undefined)).toBe(7);
+    });
+  });
+
+  describe('isBodyVisible (immediate hobby retention, post-downgrade access)', () => {
+    it('body uploaded 5 days ago with hobby tier: visible', () => {
+      const now = Date.parse('2026-03-10T00:00:00.000Z');
+      const uploaded = new Date(now - 5 * 86_400_000);
+      expect(isBodyVisible(uploaded, 'hobby', now)).toBe(true);
+    });
+
+    it('body uploaded 10 days ago with hobby tier: not visible', () => {
+      const now = Date.parse('2026-03-10T00:00:00.000Z');
+      const uploaded = new Date(now - 10 * 86_400_000);
+      expect(isBodyVisible(uploaded, 'hobby', now)).toBe(false);
+    });
+
+    it('body uploaded 10 days ago with pro tier: visible', () => {
+      const now = Date.parse('2026-03-10T00:00:00.000Z');
+      const uploaded = new Date(now - 10 * 86_400_000);
+      expect(isBodyVisible(uploaded, 'pro', now)).toBe(true);
+    });
+
+    it('body uploaded 35 days ago with pro tier: not visible', () => {
+      const now = Date.parse('2026-03-10T00:00:00.000Z');
+      const uploaded = new Date(now - 35 * 86_400_000);
+      expect(isBodyVisible(uploaded, 'pro', now)).toBe(false);
+    });
+  });
 });

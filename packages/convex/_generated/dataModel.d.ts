@@ -401,11 +401,9 @@ export type DataModel = {
       monthlyUnits: number;
       orgId: Id<"organizations">;
       overageCapCents?: number;
-      seatQuantity: number;
       status: "active" | "grace" | "suspended" | "canceled";
       stripeCustomerId?: string;
       stripePlanItemId?: string;
-      stripeSeatItemId?: string;
       stripeSubscriptionId?: string;
       tier: "hobby" | "pro";
       _id: Id<"subscriptions">;
@@ -426,11 +424,9 @@ export type DataModel = {
       | "monthlyUnits"
       | "orgId"
       | "overageCapCents"
-      | "seatQuantity"
       | "status"
       | "stripeCustomerId"
       | "stripePlanItemId"
-      | "stripeSeatItemId"
       | "stripeSubscriptionId"
       | "tier";
     indexes: {

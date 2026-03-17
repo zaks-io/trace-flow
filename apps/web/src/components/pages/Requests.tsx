@@ -10,6 +10,7 @@ import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/PageToolbar';
+import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import { RequestDetailSidePanel } from '@/components/RequestDetailSidePanel';
 import {
   DataTable,
@@ -233,6 +234,20 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
         onClearFilters={clearFilters}
         hasActiveFilters={hasActiveFilters}
         loading={loading}
+        emptyMessage={
+          hasActiveFilters ? (
+            'No results found'
+          ) : (
+            <SetupCallout
+              title="No requests yet"
+              description="Send your first traced request from the getting started flow, then come back here to inspect individual calls."
+              primaryHref="/app"
+              primaryLabel="Open getting started"
+              secondaryHref="/docs/quick-start"
+              secondaryLabel="Open quick start"
+            />
+          )
+        }
         apiKeyMap={apiKeyMap}
       />
 

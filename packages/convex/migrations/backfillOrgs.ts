@@ -41,7 +41,7 @@ export const backfillOrgs = internalMutation({
         status: 'active',
         monthlyUnits: hobbyConfig.monthlyUnits,
         addonUnits: 0,
-        seatQuantity: 1,
+        autoOverage: false,
         currentPeriodStart: now,
         currentPeriodEnd: now + 30 * 24 * 60 * 60 * 1000,
         currentPeriodOverageSpentCents: 0,
@@ -69,7 +69,6 @@ export const backfillOrgs = internalMutation({
         monthlyUnits: hobbyConfig.monthlyUnits,
         addonUnits: 0,
         status: 'active',
-        seatQuantity: 1,
         currentPeriodStart: now,
         currentPeriodEnd: now + 30 * 24 * 60 * 60 * 1000,
       });

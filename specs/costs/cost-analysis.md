@@ -1,19 +1,19 @@
 # Trace Flow Cost Analysis
 
-Last updated: 2026-03-06
+Last updated: 2026-03-10
 
 ## Tech Stack Cost Summary
 
 ### Fixed Monthly Costs (Base Fees)
 
-| Service                 | Role                              | Base Cost               |
-| ----------------------- | --------------------------------- | ----------------------- |
-| Cloudflare Workers Paid | Proxy, Consumer, API, Web runtime | $5/mo                   |
-| Tinybird Developer 0.25 | Trace analytics (ClickHouse)      | $25/mo                  |
-| Convex Professional     | Backend DB, auth, billing logic   | $25/dev/mo              |
-| Sentry Team             | Error monitoring across 4 workers | $26/mo                  |
-| Domain (trace-flow.dev) | DNS                               | ~$1/mo                  |
-| **Total fixed**         |                                   | **$82/mo** (single dev) |
+| Service                 | Role                              | Base Cost                |
+| ----------------------- | --------------------------------- | ------------------------ |
+| Cloudflare Workers Paid | Proxy, Consumer, API, Web runtime | $5/mo                    |
+| Tinybird Developer 1    | Trace analytics (ClickHouse)      | $99/mo                   |
+| Convex Professional     | Backend DB, auth, billing logic   | $25/dev/mo               |
+| Sentry Team             | Error monitoring across 4 workers | $26/mo                   |
+| Domain (trace-flow.dev) | DNS                               | ~$1/mo                   |
+| **Total fixed**         |                                   | **$156/mo** (single dev) |
 
 Tinybird tier scales with concurrent dashboard users (QPS is the binding constraint, not storage or ingestion). Upgrade path: Dev 0.5 ($49) at ~10 users, Dev 1 ($99) at ~30 users, Dev 2 ($199) at ~50+ users. See `blind-spots.md` for full QPS analysis.
 
@@ -110,21 +110,21 @@ All costs calculated at full overage rates -- no free tier padding. This is what
 - Dashboard usage: ~100 page views/month per active user
 - Tinybird ingestion is unlimited (no per-event charge)
 
-### Hobby User (50K traces/month)
+### Hobby User (25K traces/month)
 
-| Component                             | Usage  | Unit Cost    | Monthly Cost |
-| ------------------------------------- | ------ | ------------ | ------------ |
-| Worker invocations                    | 55K    | $0.30/M      | $0.02        |
-| KV reads                              | 150K   | $0.50/M      | $0.08        |
-| R2 PUTs                               | 100K   | $4.50/M      | $0.45        |
-| R2 storage (7-day rolling)            | 170 MB | $0.015/GB-mo | $0.003       |
-| Queue operations                      | 100K   | $0.40/M      | $0.04        |
-| DO requests                           | 55K    | $0.15/M      | $0.01        |
-| DO SQLite writes                      | 150K   | $1.00/M      | $0.15        |
-| Tinybird storage (90-day rolling)     | 1.5 GB | $0.058/GB-mo | $0.09        |
-| Convex calls (usage push + dashboard) | ~3K    | $2.00/M      | $0.01        |
-| Dashboard (Convex queries)            | ~500   | $2.00/M      | $0.001       |
-| **Total variable cost**               |        |              | **$0.85/mo** |
+| Component                             | Usage   | Unit Cost    | Monthly Cost |
+| ------------------------------------- | ------- | ------------ | ------------ |
+| Worker invocations                    | 27.5K   | $0.30/M      | $0.01        |
+| KV reads                              | 75K     | $0.50/M      | $0.04        |
+| R2 PUTs                               | 50K     | $4.50/M      | $0.23        |
+| R2 storage (7-day rolling)            | 85 MB   | $0.015/GB-mo | $0.001       |
+| Queue operations                      | 50K     | $0.40/M      | $0.02        |
+| DO requests                           | 27.5K   | $0.15/M      | $0.004       |
+| DO SQLite writes                      | 75K     | $1.00/M      | $0.08        |
+| Tinybird storage (90-day rolling)     | 0.75 GB | $0.058/GB-mo | $0.04        |
+| Convex calls (usage push + dashboard) | ~1.5K   | $2.00/M      | $0.003       |
+| Dashboard (Convex queries)            | ~250    | $2.00/M      | $0.001       |
+| **Total variable cost**               |         |              | **$0.43/mo** |
 
 ### Moderate Pro User (100K traces/month)
 
@@ -175,7 +175,7 @@ All costs calculated at full overage rates -- no free tier padding. This is what
 
 | User Type    | Traces/mo | Variable Cost | Cost/1K Traces |
 | ------------ | --------- | ------------- | -------------- |
-| Hobby        | 50K       | $0.85         | $0.017         |
+| Hobby        | 25K       | $0.43         | $0.017         |
 | Moderate Pro | 100K      | $1.68         | $0.017         |
 | Heavy Pro    | 1M        | $16.87        | $0.017         |
 | Extreme      | 5M        | $84.31        | $0.017         |
@@ -214,7 +214,7 @@ All scenarios include fixed base fees + variable usage at overage rates.
 | **Total**                                | **~$146/mo**  |
 | **Per user**                             | **~$2.93/mo** |
 | **Per Pro user (variable only)**         | **~$3.37/mo** |
-| **Per Hobby user (variable only)**       | **~$0.85/mo** |
+| **Per Hobby user (variable only)**       | **~$0.43/mo** |
 
 ### Scenario: 200 Users (50 Pro + 150 Hobby)
 
@@ -243,7 +243,7 @@ All scenarios include fixed base fees + variable usage at overage rates.
 | **Total**                                  | **~$582/mo**  |
 | **Per user**                               | **~$2.91/mo** |
 | **Per Pro user (variable only)**           | **~$5.06/mo** |
-| **Per Hobby user (variable only)**         | **~$0.85/mo** |
+| **Per Hobby user (variable only)**         | **~$0.43/mo** |
 
 ---
 
@@ -263,19 +263,19 @@ A user sending 1M requests/month through the proxy **without recording** costs ~
 
 For every dollar of subscription revenue collected:
 
-| Component             | Rate         | On $20 subscription |
+| Component             | Rate         | On $29 subscription |
 | --------------------- | ------------ | ------------------- |
-| Card processing       | 2.9% + $0.30 | $0.88               |
-| Stripe Tax            | 0.5%         | $0.10               |
-| **Total Stripe fees** |              | **$0.98 (~4.9%)**   |
+| Card processing       | 2.9% + $0.30 | $1.14               |
+| Stripe Tax            | 0.5%         | $0.145              |
+| **Total Stripe fees** |              | **~$1.29 (~4.4%)**  |
 
-For addon packs ($8/100K units):
+For addon packs ($5/100K units):
 
-| Component             | Rate         | On $8 addon       |
+| Component             | Rate         | On $5 addon       |
 | --------------------- | ------------ | ----------------- |
-| Card processing       | 2.9% + $0.30 | $0.53             |
-| Stripe Tax            | 0.5%         | $0.04             |
-| **Total Stripe fees** |              | **$0.57 (~7.1%)** |
+| Card processing       | 2.9% + $0.30 | $0.45             |
+| Stripe Tax            | 0.5%         | $0.03             |
+| **Total Stripe fees** |              | **$0.48 (~9.5%)** |
 
 Small transactions have disproportionately high Stripe fees due to the $0.30 fixed component.
 
@@ -301,29 +301,28 @@ At scale, these are the dominant costs:
 #### Hobby (Free)
 
 - **Price:** $0
-- **Included traces:** 50,000/month per org
-- **Seats:** 1
+- **Included traces:** 25,000/month per org
 - **Retention:** 7 days (R2 bodies), 90 days (Tinybird analytics)
 - **Overage:** Hard blocked -- no trace packs available
-- **Our variable cost:** $0.85/mo
+- **Our variable cost:** $0.43/mo
 
-Purpose: acquisition funnel. 50K traces is generous compared to competitors (LangSmith: 5K, Helicone: 10K). Enough to properly evaluate the product with real workloads, not enough to run production on.
+Purpose: acquisition funnel. 25K traces is generous compared to competitors (LangSmith: 5K, Helicone: 10K), enough to evaluate the product with real workloads, not enough to run production on.
 
-#### Pro ($20/seat/month)
+#### Pro ($29/mo per org)
 
-- **Price:** $20/seat/month
-- **Included traces:** 100,000/month per org (flat, not per-seat)
-- **Seats:** Unlimited (billed per seat)
+- **Price:** $29/org/month
+- **Included traces:** 100,000/month per org
+- **Members:** Unlimited (flat per org)
 - **Retention:** 30 days (R2 bodies), 90 days (Tinybird analytics)
 - **Overage:** Trace packs (see below), auto-topup available
 - **Our variable cost for included traces:** $1.70/mo
 
-Why $20:
+Why $29:
 
-- Market rate: LangSmith is $39/seat, Helicone is $20/seat. $20 positions us as accessible without being "cheap."
-- At $20, net after Stripe (2.9% + $0.30 + 0.5% tax) is **$18.82/seat**.
-- After subtracting the $1.70 variable cost for 100K included traces: **$17.12 net margin/seat** (86%).
-- Single-seat org covers its own fixed cost share and then some.
+- At $29, net after Stripe (2.9% + $0.30 + 0.5% tax) is **$27.71/org**.
+- After subtracting the $1.70 variable cost for 100K included traces: **$26.01 net margin/org** (90%).
+- Market positioning: $29 flat is cheaper than LangSmith $39/seat for any team, comparable to Helicone $20/seat for solo.
+- Single org covers its own fixed cost share and then some.
 
 ### Trace Packs (Pro Only)
 
@@ -367,19 +366,19 @@ What a Pro user actually looks like at various usage levels:
 
 | Usage          | Subscription | Trace Packs Needed | Pack Revenue | Total Revenue | Our Variable Cost | Stripe Fees | Net Profit  |
 | -------------- | ------------ | ------------------ | ------------ | ------------- | ----------------- | ----------- | ----------- |
-| 100K traces/mo | $20          | 0                  | $0           | $20.00        | $1.70             | $0.98       | **$17.32**  |
-| 250K traces/mo | $20          | 1.5 ($7.50)        | $7.50        | $27.50        | $4.25             | $1.48       | **$21.77**  |
-| 500K traces/mo | $20          | 4 ($20)            | $20.00       | $40.00        | $8.50             | $2.48       | **$29.02**  |
-| 1M traces/mo   | $20          | 9 ($45)            | $45.00       | $65.00        | $17.00            | $4.49       | **$43.51**  |
-| 5M traces/mo   | $20          | 49 ($245)          | $245.00      | $265.00       | $85.00            | $17.39      | **$162.61** |
+| 100K traces/mo | $29          | 0                  | $0           | $29.00        | $1.70             | $1.29       | **$26.01**  |
+| 250K traces/mo | $29          | 1.5 ($7.50)        | $7.50        | $36.50        | $4.25             | $1.72       | **$30.53**  |
+| 500K traces/mo | $29          | 4 ($20)            | $20.00       | $49.00        | $8.50             | $2.19       | **$38.31**  |
+| 1M traces/mo   | $29          | 9 ($45)            | $45.00       | $74.00        | $17.00            | $3.94       | **$53.06**  |
+| 5M traces/mo   | $29          | 49 ($245)          | $245.00      | $274.00       | $85.00            | $16.64      | **$172.36** |
 
-Heavy users are extremely profitable. A 1M trace/mo user generates $43.51/mo in net profit from a single seat.
+Heavy users are extremely profitable. A 1M trace/mo org generates $53.06/mo in net profit.
 
 ### Passthrough Cost Exposure (Proxy Request Allowance)
 
 Each passthrough costs us ~$0.0015/1K requests ($1.50/million). A proxy request allowance scales with what the user pays:
 
-- **Hobby:** 2.5M requests/mo included (cost to us: $3.75 worst case)
+- **Hobby:** 1.25M requests/mo included (cost to us: $1.88 worst case)
 - **Pro base:** 5M requests/mo included (cost to us: $7.50 worst case)
 - **Each trace pack ($5/100K):** adds 500K requests to the allowance
 
@@ -394,19 +393,18 @@ At 150% of allowance, the proxy starts returning 429s. This isn't a revenue mech
 
 ### Break-Even Analysis
 
-Monthly fixed costs: **$82/mo** (CF Workers $5 + Tinybird Dev 0.25 $25 + Convex $25 + Sentry $26 + Domain $1)
+Monthly fixed costs: **$156/mo** (CF Workers $5 + Tinybird Dev 1 $99 + Convex $25 + Sentry $26 + Domain $1)
 
-Note: Tinybird will need upgrading as users grow. At ~30 users, add $74/mo for Dev 1 ($99 total). Factor tier jumps into growth planning.
+| Scenario                       | Revenue/mo | Variable Cost | Stripe Fees | Net     | Covers Fixed? |
+| ------------------------------ | ---------- | ------------- | ----------- | ------- | ------------- |
+| 3 Pro orgs, no packs           | $87        | $5.10         | $3.87       | $78.03  | No (-$78)     |
+| 4 Pro orgs, no packs           | $116       | $6.80         | $5.16       | $104.04 | No (-$52)     |
+| 5 Pro orgs, no packs           | $145       | $8.50         | $6.45       | $130.05 | No (-$26)     |
+| 5 Pro orgs + avg 2 packs each  | $195       | $18.50        | $8.70       | $167.80 | Yes (+$12)    |
+| 10 Pro orgs, no packs          | $290       | $17.00        | $12.90      | $260.10 | Yes (+$104)   |
+| 10 Pro orgs + avg 2 packs each | $390       | $37.00        | $17.10      | $335.90 | Yes (+$180)   |
 
-| Scenario                        | Revenue/mo | Variable Cost | Stripe Fees | Net     | Covers Fixed? |
-| ------------------------------- | ---------- | ------------- | ----------- | ------- | ------------- |
-| 3 Pro seats, no packs           | $60        | $5.10         | $2.94       | $51.96  | No (-$30)     |
-| 5 Pro seats, no packs           | $100       | $8.50         | $4.90       | $86.60  | Yes (+$5)     |
-| 5 Pro seats + avg 2 packs each  | $150       | $18.50        | $7.15       | $124.35 | Yes (+$42)    |
-| 10 Pro seats, no packs          | $200       | $17.00        | $9.80       | $173.20 | Yes (+$91)    |
-| 10 Pro seats + avg 2 packs each | $300       | $37.00        | $14.30      | $248.70 | Yes (+$167)   |
-
-**Break-even: ~5 Pro seats at $20/mo.** At ~30 users you'll need Tinybird Dev 1 ($99), pushing break-even back to ~8 seats.
+**Break-even: ~6 Pro orgs at $29/mo.**
 
 ---
 
@@ -475,7 +473,7 @@ The dominant cost shifts from body storage ops to **DO SQLite writes** (43% of p
 
 | User Type    | Traces/mo | Current Cost | Optimized Cost | Savings |
 | ------------ | --------- | ------------ | -------------- | ------- |
-| Hobby        | 50K       | $0.85        | $0.39          | 54%     |
+| Hobby        | 25K       | $0.43        | $0.20          | 54%     |
 | Moderate Pro | 100K      | $1.68        | $0.78          | 54%     |
 | Heavy Pro    | 1M        | $16.87       | $7.77          | 54%     |
 | Extreme      | 5M        | $84.31       | $38.81         | 54%     |
@@ -489,7 +487,7 @@ The dominant cost shifts from body storage ops to **DO SQLite writes** (43% of p
 | DO SQLite Writes         | $750                    | $750                  | $0          |
 | KV Reads                 | $375                    | $375                  | $0          |
 | Everything else          | $437                    | $437                  | $0          |
-| Tinybird (Dev 0.25+ovg)  | $30-50                  | $30-50                | $0          |
+| Tinybird (Dev 1+ovg)     | $99-120                 | $99-120               | $0          |
 | **Total infrastructure** | **~$3,900/mo**          | **~$1,710/mo**        | **~$2,190** |
 | **Gross margin**         | **87%**                 | **94%**               |             |
 
@@ -499,9 +497,9 @@ The dominant cost shifts from body storage ops to **DO SQLite writes** (43% of p
 | ----------------------------- | ------- | --------- |
 | Cost per 1K traces            | $0.017  | $0.007    |
 | Pro user variable cost (100K) | $1.68   | $0.78     |
-| Net profit per Pro seat       | $17.32  | $18.24    |
+| Net profit per Pro org        | $26.01  | $27.23    |
 | Trace pack margin ($5/100K)   | 57%     | 80%       |
-| Break-even seats              | ~5      | ~5        |
+| Break-even orgs               | ~6      | ~6        |
 
 Break-even doesn't change much (fixed costs dominate at small scale), but trace pack margins jump from 57% to 80% — making the growth engine significantly more profitable.
 
@@ -557,7 +555,7 @@ DO writes ($1.00/M) are 4.5x cheaper than R2 PUTs ($4.50/M). The tradeoff: DO st
 | ----------------------------- | ------------ | ----------------- | ----------- |
 | Cost per 1K traces            | $0.017       | $0.008            | $0.007      |
 | Pro user variable cost (100K) | $1.68        | $0.87             | $0.78       |
-| Net profit per Pro seat       | $17.32       | $18.15            | $18.24      |
+| Net profit per Pro org        | $26.01       | $27.14            | $27.23      |
 | Trace pack margin ($5/100K)   | 57%          | 77%               | 80%         |
 
 ### Recommended Approach: DO Default + B2 Retention Add-On

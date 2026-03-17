@@ -63,24 +63,6 @@ export const getActiveMemberCountInternal = internalQuery({
   },
 });
 
-export const canAddMember = internalQuery({
-  args: { orgId: v.id('organizations') },
-  handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
-    if (!subscription) return false;
-
-    const activeMembers = await ctx.db
-      .query('organizationMembers')
-      .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'active'))
-      .collect();
-
-    return subscription.seatQuantity > activeMembers.length;
-  },
-});
-
 export const setStripeCustomerId = internalMutation({
   args: {
     orgId: v.id('organizations'),
@@ -111,7 +93,6 @@ async function insertHobbySubscription(ctx: MutationCtx, orgId: Id<'organization
     status: 'active',
     monthlyUnits: TIER_CONFIG.hobby.monthlyUnits,
     addonUnits: 0,
-    seatQuantity: 1,
     currentPeriodStart: now,
     currentPeriodEnd: periodEnd,
     autoOverage: false,

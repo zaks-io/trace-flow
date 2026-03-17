@@ -34,7 +34,6 @@ export default defineSchema({
     ),
     monthlyUnits: v.number(),
     addonUnits: v.number(),
-    seatQuantity: v.number(),
     currentPeriodStart: v.number(),
     currentPeriodEnd: v.number(),
     currentPeriodOverageSpentCents: v.number(),
@@ -43,7 +42,6 @@ export default defineSchema({
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
     stripePlanItemId: v.optional(v.string()),
-    stripeSeatItemId: v.optional(v.string()),
     cancelAtPeriodEnd: v.optional(v.boolean()),
     // Overage controls (opt-in)
     autoOverage: v.optional(v.boolean()),

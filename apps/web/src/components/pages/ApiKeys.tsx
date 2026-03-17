@@ -1,29 +1,42 @@
 'use client';
 
-import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'convex/react';
+import Link from 'next/link';
+import { type Preloaded, usePreloadedQuery, useMutation, useAction, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import { PageToolbar } from '@/components/PageToolbar';
+import { ApiKeyQuickStart } from '@/components/onboarding/ApiKeyQuickStart';
+import { SetupCallout } from '@/components/onboarding/SetupCallout';
+import { useDefaultApiKey } from '@/hooks/useDefaultApiKey';
 
 export default function ApiKeys({
   preloadedApiKeys,
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
+  const sessionContext = useQuery(api.app.sessionContext);
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
-  const sortedApiKeys = useMemo(() => {
-    return [...apiKeys].sort((a, b) => {
-      const nameA = a.name ?? '';
-      const nameB = b.name ?? '';
-      if (nameA !== nameB) {
-        if (!nameA) return 1;
-        if (!nameB) return -1;
-        return nameA.localeCompare(nameB);
-      }
-      return a._creationTime - b._creationTime;
-    });
-  }, [apiKeys]);
+  // Sort inline — the hook's sortedApiKeys loses Id<"apiKeys"> because
+  // Convex codegen types the list return as `any`, collapsing the generic.
+  const sortedApiKeys = useMemo(
+    () =>
+      [...apiKeys].sort((a, b) => {
+        const nameA = a.name ?? '';
+        const nameB = b.name ?? '';
+        if (nameA !== nameB) {
+          if (!nameA) return 1;
+          if (!nameB) return -1;
+          return nameA.localeCompare(nameB);
+        }
+        return a._creationTime - b._creationTime;
+      }),
+    [apiKeys],
+  );
+  const { primaryApiKey, isCreatingDefaultKey, defaultKeyError } = useDefaultApiKey(
+    apiKeys,
+    Boolean(sessionContext?.user),
+  );
   const createApiKey = useMutation(api.apiKeys.create);
   const updateApiKey = useMutation(api.apiKeys.update);
   const deleteApiKey = useMutation(api.apiKeys.remove);
@@ -39,55 +52,67 @@ export default function ApiKeys({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const handleCreateKey = async () => {
-    setIsCreating(true);
+  const withGuard = async (setLoading: (v: boolean) => void, fn: () => Promise<void>) => {
+    setLoading(true);
     setError(null);
     setSuccess(null);
-
-    const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1000;
-
-    await createApiKey({ expiresAt, name: newKeyName.trim() || undefined });
-    setSuccess('API key created successfully');
-    setIsCreating(false);
-    setShowCreateDialog(false);
-    setNewKeyName('');
-  };
-
-  const handleDeleteKey = async (id: Id<'apiKeys'>) => {
-    setDeletingId(id);
-    setError(null);
-    setSuccess(null);
-
-    await deleteApiKey({ id });
-    setSuccess('API key deleted successfully');
-    setDeletingId(null);
-  };
-
-  const handleSyncKey = async (id: Id<'apiKeys'>) => {
-    setSyncingId(id);
-    setError(null);
-    setSuccess(null);
-
-    const result = await syncToKV({ id });
-    if (result.existed) {
-      setSuccess('API key already exists in KV');
-    } else {
-      setSuccess('API key synced to KV');
+    try {
+      await fn();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Request failed');
+    } finally {
+      setLoading(false);
     }
-    setSyncingId(null);
   };
 
-  const handleUpdateKey = async () => {
-    if (!editingKey) return;
-    setIsUpdating(true);
-    setError(null);
-    setSuccess(null);
+  const handleCreateKey = () =>
+    void withGuard(setIsCreating, async () => {
+      await createApiKey({
+        expiresAt: Date.now() + 90 * 24 * 60 * 60 * 1000,
+        name: newKeyName.trim() || undefined,
+      });
+      setSuccess('API key created successfully');
+      setShowCreateDialog(false);
+      setNewKeyName('');
+    });
 
-    await updateApiKey({ id: editingKey.id, name: editingKey.name.trim() || undefined });
-    setSuccess('API key updated successfully');
-    setIsUpdating(false);
-    setEditingKey(null);
+  const handleDeleteKey = (id: Id<'apiKeys'>) => {
+    setDeletingId(id);
+    void withGuard(
+      () => {},
+      async () => {
+        try {
+          await deleteApiKey({ id });
+          setSuccess('API key deleted successfully');
+        } finally {
+          setDeletingId(null);
+        }
+      },
+    );
   };
+
+  const handleSyncKey = (id: Id<'apiKeys'>) => {
+    setSyncingId(id);
+    void withGuard(
+      () => {},
+      async () => {
+        try {
+          const result = await syncToKV({ id });
+          setSuccess(result.existed ? 'API key already exists in KV' : 'API key synced to KV');
+        } finally {
+          setSyncingId(null);
+        }
+      },
+    );
+  };
+
+  const handleUpdateKey = () =>
+    void withGuard(setIsUpdating, async () => {
+      if (!editingKey) return;
+      await updateApiKey({ id: editingKey.id, name: editingKey.name.trim() || undefined });
+      setSuccess('API key updated successfully');
+      setEditingKey(null);
+    });
 
   const formatExpiration = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -152,7 +177,7 @@ export default function ApiKeys({
                 Cancel
               </button>
               <button
-                onClick={() => void handleCreateKey()}
+                onClick={handleCreateKey}
                 disabled={isCreating}
                 className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -198,7 +223,7 @@ export default function ApiKeys({
                 Cancel
               </button>
               <button
-                onClick={() => void handleUpdateKey()}
+                onClick={handleUpdateKey}
                 disabled={isUpdating}
                 className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -228,13 +253,37 @@ export default function ApiKeys({
         </div>
       )}
 
-      {sortedApiKeys.length === 0 ? (
-        <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
-          <p className="text-muted-foreground">No API keys found</p>
-          <p className="mt-1 text-sm text-muted-foreground/70">
-            Create your first API key to get started
-          </p>
+      {primaryApiKey ? (
+        <div className="mb-6">
+          <ApiKeyQuickStart
+            apiKey={primaryApiKey.key}
+            title="Use this key in your app"
+            description="This page is for long-term API key management, but you can also copy the current default key and env vars from here."
+          />
         </div>
+      ) : null}
+
+      {isCreatingDefaultKey ? (
+        <div className="mb-6 rounded-xl border border-border bg-card/60 p-4 text-sm text-muted-foreground">
+          Generating your default API key...
+        </div>
+      ) : null}
+
+      {defaultKeyError ? (
+        <div className="mb-6 rounded-xl border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+          {defaultKeyError}
+        </div>
+      ) : null}
+
+      {sortedApiKeys.length === 0 ? (
+        <SetupCallout
+          title="No API keys yet"
+          description="Trace Flow generates a default key automatically. If it does not show up here, return to getting started and finish the first-run setup."
+          primaryHref="/app"
+          primaryLabel="Return to getting started"
+          secondaryHref="/docs/quick-start"
+          secondaryLabel="Open quick start"
+        />
       ) : (
         <div className="card-elevated overflow-hidden rounded-xl bg-card/40">
           <div className="overflow-x-auto">
@@ -305,7 +354,7 @@ export default function ApiKeys({
                           Edit
                         </button>
                         <button
-                          onClick={() => void handleSyncKey(apiKey._id)}
+                          onClick={() => handleSyncKey(apiKey._id)}
                           disabled={syncingId === apiKey._id}
                           className="mr-3 font-medium text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50"
                         >
@@ -318,7 +367,7 @@ export default function ApiKeys({
                                 `Are you sure you want to delete this API key?\n\n${apiKey.key}\n\nThis action cannot be undone.`,
                               )
                             ) {
-                              void handleDeleteKey(apiKey._id);
+                              handleDeleteKey(apiKey._id);
                             }
                           }}
                           disabled={deletingId === apiKey._id}
@@ -334,9 +383,14 @@ export default function ApiKeys({
             </table>
           </div>
           <div className="border-t border-border bg-muted/20 px-6 py-3">
-            <p className="text-xs text-muted-foreground">
-              Showing {sortedApiKeys.length} {sortedApiKeys.length === 1 ? 'key' : 'keys'}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+              <p>
+                Showing {sortedApiKeys.length} {sortedApiKeys.length === 1 ? 'key' : 'keys'}
+              </p>
+              <Link className="text-primary hover:underline" href="/app">
+                Back to getting started
+              </Link>
+            </div>
           </div>
         </div>
       )}

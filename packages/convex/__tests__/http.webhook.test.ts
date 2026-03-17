@@ -6,7 +6,6 @@ const { mockConstructEvent, mockSubscriptionsRetrieve, mockInvoicePaymentsList }
     process.env.STRIPE_SECRET_KEY = 'sk_test_123';
     process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_123';
     process.env.STRIPE_PRICE_ID_PRO = 'price_pro';
-    process.env.STRIPE_PRICE_ID_SEAT = 'price_seat';
     return {
       mockConstructEvent: vi.fn(),
       mockSubscriptionsRetrieve: vi.fn(),
@@ -208,13 +207,6 @@ describe('POST /stripe/webhook', () => {
               current_period_start: 1700000000,
               current_period_end: 1702592000,
             },
-            {
-              id: 'si_seat',
-              price: { id: 'price_seat' },
-              quantity: 3,
-              current_period_start: 1700000000,
-              current_period_end: 1702592000,
-            },
           ],
         },
       });
@@ -240,9 +232,9 @@ describe('POST /stripe/webhook', () => {
         stripeCustomerId: 'cus_1',
         stripeSubscriptionId: 'sub_1',
         stripePlanItemId: 'si_plan',
-        stripeSeatItemId: 'si_seat',
-        seatQuantity: 3,
       });
+      expect(upsertCall[1]).not.toHaveProperty('stripeSeatItemId');
+      expect(upsertCall[1]).not.toHaveProperty('seatQuantity');
     });
 
     it('skips when orgId is missing from metadata', async () => {
@@ -457,6 +449,8 @@ describe('POST /stripe/webhook', () => {
       expect(res.status).toBe(200);
       // startProcessing + revertToHobby + markProcessed
       expect(ctx.runMutation).toHaveBeenCalledTimes(3);
+      const revertCall = ctx.runMutation.mock.calls[1];
+      expect(revertCall[1]).toEqual({ orgId: 'org123' });
     });
 
     it('skips when no existing subscription found', async () => {
@@ -578,8 +572,6 @@ describe('POST /stripe/webhook', () => {
       ctx.runQuery.mockResolvedValueOnce({
         orgId: 'org123',
         stripePlanItemId: 'si_plan_old',
-        stripeSeatItemId: 'si_seat_old',
-        seatQuantity: 2,
         currentPeriodStart: 1700000000000,
         currentPeriodEnd: 1702592000000,
       });

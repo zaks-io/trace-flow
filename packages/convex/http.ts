@@ -9,7 +9,7 @@ import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
 import type Stripe from 'stripe';
 import { UNITS_PER_ADDON } from '@trace-flow/types';
-import { mapStripeStatusToInternal, findSubscriptionItems } from './subscriptions';
+import { mapStripeStatusToInternal } from './subscriptions';
 import { getStripeClient, stripeWebhookSecret } from './stripe';
 
 // Dependencies that can be injected for testing
@@ -112,18 +112,15 @@ export function createApp(
             stripeCustomerId: session.customer,
           });
           const sub = await stripe.subscriptions.retrieve(stripeSubId);
-          const { planItem, seatItem } = findSubscriptionItems(sub.items.data);
-          const periodItem = seatItem ?? planItem;
+          const planItem = sub.items.data[0];
           await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
             orgId,
             status: mapStripeStatusToInternal(sub.status),
             stripeCustomerId: session.customer,
             stripeSubscriptionId: sub.id,
             stripePlanItemId: planItem?.id,
-            stripeSeatItemId: seatItem?.id,
-            seatQuantity: seatItem?.quantity ?? 1,
-            currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
-            currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
+            currentPeriodStart: (planItem?.current_period_start ?? 0) * 1000,
+            currentPeriodEnd: (planItem?.current_period_end ?? 0) * 1000,
           });
           break;
         }
@@ -134,18 +131,15 @@ export function createApp(
             typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id;
           const existing = await resolveOrgSubscription(ctx, customerId, stripeSub.id);
           if (!existing) break;
-          const { planItem, seatItem } = findSubscriptionItems(stripeSub.items.data);
-          const periodItem = seatItem ?? planItem;
+          const planItem = stripeSub.items.data[0];
           await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
             status: mapStripeStatusToInternal(stripeSub.status),
             stripeCustomerId: customerId,
             stripeSubscriptionId: stripeSub.id,
             stripePlanItemId: planItem?.id,
-            stripeSeatItemId: seatItem?.id,
-            seatQuantity: seatItem?.quantity ?? 1,
-            currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
-            currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
+            currentPeriodStart: (planItem?.current_period_start ?? 0) * 1000,
+            currentPeriodEnd: (planItem?.current_period_end ?? 0) * 1000,
             cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
           });
           break;
@@ -239,23 +233,18 @@ export function createApp(
           const stripeSub = subscriptionId
             ? await stripe.subscriptions.retrieve(subscriptionId)
             : undefined;
-          const items = stripeSub
-            ? findSubscriptionItems(stripeSub.items.data)
-            : { planItem: undefined, seatItem: undefined };
-          const periodItem = items.seatItem ?? items.planItem;
+          const planItem = stripeSub?.items.data[0];
           await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
             status: 'active',
             stripeCustomerId: customerId,
             stripeSubscriptionId: subscriptionId,
-            stripePlanItemId: items.planItem?.id ?? existing.stripePlanItemId,
-            stripeSeatItemId: items.seatItem?.id ?? existing.stripeSeatItemId,
-            seatQuantity: items.seatItem?.quantity ?? existing.seatQuantity,
-            currentPeriodStart: periodItem?.current_period_start
-              ? periodItem.current_period_start * 1000
+            stripePlanItemId: planItem?.id ?? existing.stripePlanItemId,
+            currentPeriodStart: planItem?.current_period_start
+              ? planItem.current_period_start * 1000
               : existing.currentPeriodStart,
-            currentPeriodEnd: periodItem?.current_period_end
-              ? periodItem.current_period_end * 1000
+            currentPeriodEnd: planItem?.current_period_end
+              ? planItem.current_period_end * 1000
               : existing.currentPeriodEnd,
             cancelAtPeriodEnd: false,
           });

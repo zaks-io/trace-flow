@@ -13,7 +13,7 @@ const DOCS: DocDefinition[] = [
     slug: 'quick-start',
     title: 'Quick Start',
     description:
-      'Get full LLM observability in minutes. See user events, API calls, and LLM requests in one unified trace.',
+      'Start here: add TRACE_FLOW_API_KEY, point your provider at the gateway, and send the first traced request.',
     tag: 'Start Here',
   },
   {
@@ -34,7 +34,7 @@ const DOCS: DocDefinition[] = [
     slug: 'agents',
     title: 'AI Agents',
     description:
-      'Bootstrap Claude Code, Cursor, or any AI assistant with Trace Flow knowledge. Copy-paste ready.',
+      'Hand your coding agent a single machine-readable guide for env vars, gateway wiring, and first-run verification.',
     tag: 'Agents',
   },
   {

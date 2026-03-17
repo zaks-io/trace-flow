@@ -15,7 +15,6 @@ function makeSub(overrides: Record<string, unknown> = {}) {
     status: 'active' as const,
     monthlyUnits: 10000,
     addonUnits: 0,
-    seatQuantity: 1,
     currentPeriodStart: 1000000,
     currentPeriodEnd: 1000000 + 30 * 24 * 60 * 60 * 1000,
     currentPeriodOverageSpentCents: 0,

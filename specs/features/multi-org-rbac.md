@@ -10,7 +10,7 @@ Replace the boolean `isAdmin` flag with a role-based access control system scope
 
 1. **Platform admin**: `users.isAdmin` boolean. Used by `requireAdmin()` in `users.ts`. Guards: invite management (`invites.ts`), waitlist (`waitlist.ts`), admin dashboard (`admin.ts`), KV sync (`cloudflare.ts`).
 2. **Org ownership**: `organizations.ownerId === user._id` check. Inline in every billing function (`subscriptions.ts` has 6 occurrences), plus `organizations.rename()` and `invites.createOrgInvite()`.
-3. **Org membership**: `organizationMembers` table with `role: 'owner' | 'member'` and `status: 'active' | 'invited' | 'removed'`. The `role` field exists but is never checked -- all members have equal read access.
+3. **Org membership**: `organizationMembers` table with `role: 'owner' | 'member'` and `status: 'active' | 'removed'`. Invites are tracked in a separate `invites` table. The `role` field exists but is never checked -- all members have equal read access.
 4. **Auth0 role**: `requireTraceFlowRole()` checks `neuron/roles` in the Auth0 identity token. This gates platform access, not org-level permissions.
 5. **Frontend**: `AdminContext.tsx` provides `useIsAdmin()` from `app.ts sessionContext` which reads `user.isAdmin`.
 
@@ -20,7 +20,7 @@ Replace the boolean `isAdmin` flag with a role-based access control system scope
 - Ownership checks are copy-pasted inline (6+ locations in `subscriptions.ts` alone).
 - No `admin` role -- the org owner must do everything. No delegation possible.
 - No `viewer` role -- all members can modify API keys, alerts, etc.
-- `canAddMember` in `organizations.ts` checks seat count but not permissions.
+- No permission check for adding members — previously `canAddMember` existed but only enforced seat limits, not role-based access.
 
 ## Target Design
 
@@ -39,24 +39,24 @@ owner > admin > member > viewer
 
 ### Permission Matrix
 
-| Action                                   | owner | admin | member | viewer |
-| ---------------------------------------- | ----- | ----- | ------ | ------ |
-| View traces & dashboards                 | Y     | Y     | Y      | Y      |
-| View usage & billing summary             | Y     | Y     | Y      | Y      |
-| Create/revoke own API keys               | Y     | Y     | Y      | -      |
-| View all org API keys                    | Y     | Y     | Y      | -      |
-| Delete other users' API keys             | Y     | Y     | -      | -      |
-| Create/manage alerts                     | Y     | Y     | Y      | -      |
-| Invite members                           | Y     | Y     | -      | -      |
-| Remove members                           | Y     | Y     | -      | -      |
-| Change member roles                      | Y     | Y\*   | -      | -      |
-| Rename organization                      | Y     | Y     | -      | -      |
-| Manage billing (checkout, seats, addons) | Y     | -     | -      | -      |
-| Configure auto-overage                   | Y     | -     | -      | -      |
-| Reconcile with Stripe                    | Y     | -     | -      | -      |
-| Access billing portal                    | Y     | -     | -      | -      |
-| Transfer ownership                       | Y     | -     | -      | -      |
-| Delete organization                      | Y     | -     | -      | -      |
+| Action                            | owner | admin | member | viewer |
+| --------------------------------- | ----- | ----- | ------ | ------ |
+| View traces & dashboards          | Y     | Y     | Y      | Y      |
+| View usage & billing summary      | Y     | Y     | Y      | Y      |
+| Create/revoke own API keys        | Y     | Y     | Y      | -      |
+| View all org API keys             | Y     | Y     | Y      | -      |
+| Delete other users' API keys      | Y     | Y     | -      | -      |
+| Create/manage alerts              | Y     | Y     | Y      | -      |
+| Invite members                    | Y     | Y     | -      | -      |
+| Remove members                    | Y     | Y     | -      | -      |
+| Change member roles               | Y     | Y\*   | -      | -      |
+| Rename organization               | Y     | Y     | -      | -      |
+| Manage billing (checkout, addons) | Y     | -     | -      | -      |
+| Configure auto-overage            | Y     | -     | -      | -      |
+| Reconcile with Stripe             | Y     | -     | -      | -      |
+| Access billing portal             | Y     | -     | -      | -      |
+| Transfer ownership                | Y     | -     | -      | -      |
+| Delete organization               | Y     | -     | -      | -      |
 
 \* Admins cannot promote to owner or demote other admins.
 
@@ -175,7 +175,6 @@ Replace the 6+ inline `org.ownerId !== user._id` checks in `subscriptions.ts` wi
 | `subscriptions.ts` `createOrgCheckoutSession`      | Inline ownership check            | `requireCurrentOrgRole(ctx, 'owner')` via `runQuery` |
 | `subscriptions.ts` `createAddonCheckoutSession`    | Inline ownership check            | Same                                                 |
 | `subscriptions.ts` `createBillingPortalSession`    | Inline ownership check            | Same                                                 |
-| `subscriptions.ts` `updateSeatQuantity`            | Inline ownership check            | Same                                                 |
 | `subscriptions.ts` `reconcileCurrentOrgWithStripe` | Inline ownership check            | Same                                                 |
 | `organizations.ts` `rename`                        | Inline ownership check            | `requireCurrentOrgRole(ctx, 'admin')`                |
 | `invites.ts` `createOrgInvite`                     | Inline ownership check            | `requireCurrentOrgRole(ctx, 'admin')`                |
@@ -216,50 +215,6 @@ After roles are fully deployed:
 1. Remove `requireAdmin()` calls from `invites.ts` `createInvite`, `listInvites`, `revokeInvite` -- replace with `requireCurrentOrgRole(ctx, 'admin')`.
 2. Keep `requireAdmin()` only for true platform admin operations (`admin.ts`, `waitlist.ts`, `cloudflare.syncAll`).
 3. Clean up `isAdmin` references in frontend to only gate the platform admin page.
-
-## Seat Enforcement in Invites
-
-Currently `invites.ts acceptInvite()` already checks seat limits:
-
-```ts
-if (activeMembers.length >= seatLimit) {
-  throw new Error('Organization has reached its seat limit...');
-}
-```
-
-This needs two additions:
-
-1. **Check at invite creation time** (not just acceptance): `createOrgInvite` should call `canAddMember` or an equivalent check. Currently it does not -- you can create unlimited pending invites even when at the seat limit.
-
-2. **Count pending invites toward soft limit**: To prevent inviting 100 people when you have 2 seats remaining, `canAddMember` should include pending org invites in its count:
-
-```ts
-export const canAddMember = internalQuery({
-  args: { orgId: v.id('organizations') },
-  handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
-    if (!subscription) return false;
-
-    const activeMembers = await ctx.db
-      .query('organizationMembers')
-      .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'active'))
-      .collect();
-
-    const pendingInvites = await ctx.db
-      .query('invites')
-      .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId).eq('status', 'pending'))
-      .collect();
-
-    const effectiveCount = activeMembers.length + pendingInvites.length;
-    return subscription.seatQuantity > effectiveCount;
-  },
-});
-```
-
-The hard gate at `acceptInvite` remains as a safety net.
 
 ## Role Assignment Flow
 
@@ -443,7 +398,7 @@ Add to the subscriptions test plan:
 - Non-member access: throws
 - Inactive membership: throws
 - Role hierarchy enforcement: member < admin, admin < owner, etc.
-- Seat enforcement with pending invites included in count
+- Membership validation: non-member and inactive member access throws
 
 ## Risks
 
