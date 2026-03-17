@@ -51,10 +51,8 @@ const METRIC_META = {
 
 export function UsageAnalytics({
   preloadedApiKeys,
-  showSuccessBanner = false,
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
-  showSuccessBanner?: boolean;
 }) {
   const billingSummary = useQuery(api.subscriptions.getBillingSummaryForCurrentUser);
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
@@ -263,12 +261,6 @@ export function UsageAnalytics({
           />
         </div>
       </PageToolbar>
-
-      {showSuccessBanner ? (
-        <div className="mb-6 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm text-emerald-300">
-          Your first traced request is in. The dashboard is live now.
-        </div>
-      ) : null}
 
       {hasError && (
         <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
