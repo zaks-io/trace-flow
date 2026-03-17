@@ -37,7 +37,6 @@ export default function Usage({
   const completeOnboarding = useMutation(api.organizations.completeOnboarding);
 
   const [errorCount, setErrorCount] = useState(0);
-  const [showSuccessBanner, setShowSuccessBanner] = useState(false);
 
   const firstTraceQuery = useTinybirdQuery<TinybirdTraceListResponse>({
     pipe: 'traces_list',
@@ -51,7 +50,6 @@ export default function Usage({
 
   useEffect(() => {
     if (tinybirdHasTraces && !onboardingCompleted) {
-      setShowSuccessBanner(true);
       completeOnboarding().catch((e) => console.error('Failed to complete onboarding:', e));
     }
   }, [tinybirdHasTraces, onboardingCompleted, completeOnboarding]);
@@ -65,9 +63,7 @@ export default function Usage({
   }
 
   if (onboardingCompleted || tinybirdHasTraces) {
-    return (
-      <UsageAnalytics preloadedApiKeys={preloadedApiKeys} showSuccessBanner={showSuccessBanner} />
-    );
+    return <UsageAnalytics preloadedApiKeys={preloadedApiKeys} />;
   }
 
   return (
