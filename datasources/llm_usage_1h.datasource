@@ -34,6 +34,3 @@ ENGINE "AggregatingMergeTree"
 ENGINE_SORTING_KEY "BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode"
 ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
 ENGINE_TTL "BucketStart + INTERVAL 90 DAY"
-
-FORWARD_QUERY >
-    SELECT BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, RequestCount, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens, ReasoningTokens, initializeAggregation('sumState', toUInt64(0)) AS UncachedInputTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars, CacheCreationCostMicrodollars, ReasoningCostMicrodollars, initializeAggregation('sumState', toUInt64(0)) AS PromptBaselineCostMicrodollars, initializeAggregation('sumState', toInt64(0)) AS CacheImpactCostMicrodollars, initializeAggregation('sumState', toUInt64(0)) AS UpstreamCostMicrodollars, TotalCostMicrodollars, AvgDurationNano, MaxDurationNano, P95DurationNano
