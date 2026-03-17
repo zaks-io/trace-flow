@@ -1,6 +1,6 @@
 import type { TinybirdTrace } from '@trace-flow/types';
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 1;
 const INITIAL_RETRY_DELAY_MS = 1000;
 const TINYBIRD_TIMEOUT_MS = 60000;
 
@@ -49,7 +49,7 @@ export async function insertIntoTinybird(
   datasource: string,
   host: string,
 ): Promise<void> {
-  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}&wait=true`;
+  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
 
   const body = traces
     .map((trace) => {
@@ -101,14 +101,8 @@ export async function insertIntoTinybird(
 }
 
 /**
- * Wraps insertIntoTinybird with exponential backoff retry logic.
- *
- * Retries up to MAX_RETRIES times with exponential backoff and jitter:
- * - Attempt 1: 1000ms + jitter
- * - Attempt 2: 2000ms + jitter
- * - Attempt 3: 4000ms + jitter
- *
- * Jitter (0-100ms) prevents thundering herd when multiple workers retry simultaneously.
+ * Wraps insertIntoTinybird — no retries by default since the Events API
+ * is non-idempotent. The batcher's alarm cycle handles retry at a higher level.
  */
 export async function insertIntoTinybirdWithRetry(
   traces: TinybirdTrace[],
