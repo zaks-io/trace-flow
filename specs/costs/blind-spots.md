@@ -105,16 +105,16 @@ Every user independently hits Tinybird. 10 users viewing the same org's Usage da
 
 Rough distribution:
 
-| Segment      | Orgs    | Avg Seats | Avg Packs/mo | Revenue/org | Segment Revenue | Traces/mo |
-| ------------ | ------- | --------- | ------------ | ----------- | --------------- | --------- |
-| Hobby (free) | 400     | 1         | 0            | $0          | $0              | 20M       |
-| Small Pro    | 180     | 1.5       | 0            | $30         | $5,400          | 18M       |
-| Medium Pro   | 80      | 4         | 3            | $95         | $7,600          | 28M       |
-| Heavy Pro    | 40      | 7         | 15           | $215        | $8,600          | 84M       |
-| Very Heavy   | 15      | 12        | 50           | $490        | $7,350          | 92M       |
-| **Total**    | **715** |           |              |             | **~$29,000**    | **~242M** |
+| Segment      | Orgs      | Avg Packs/mo | Revenue/org | Segment Revenue | Traces/mo |
+| ------------ | --------- | ------------ | ----------- | --------------- | --------- |
+| Hobby (free) | 500       | 0            | $0          | $0              | 12.5M     |
+| Small Pro    | 350       | 0            | $29         | $10,150         | 35M       |
+| Medium Pro   | 100       | 5            | $54         | $5,400          | 60M       |
+| Heavy Pro    | 40        | 25           | $154        | $6,160          | 84M       |
+| Very Heavy   | 20        | 75           | $404        | $8,080          | 130M      |
+| **Total**    | **1,010** |              |             | **~$29,790**    | **~322M** |
 
-~250M traces/mo, ~315 paying orgs, ~700 total users.
+~320M traces/mo, ~510 paying orgs, ~1,000 total orgs. Flat $29/org pricing requires more orgs than per-seat to hit $30K MRR.
 
 ### Infrastructure costs at $30K MRR (~250M traces/mo)
 

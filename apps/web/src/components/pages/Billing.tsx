@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { SetupCallout } from '@/components/onboarding/SetupCallout';
 
 function formatCents(cents?: number): string {
   if (cents === undefined || cents === null) return 'No cap';
@@ -19,11 +20,9 @@ export default function Billing() {
   const createPortal = useAction(api.subscriptions.createBillingPortalSession);
   const createCheckout = useAction(api.subscriptions.createOrgCheckoutSession);
   const createAddonCheckout = useAction(api.subscriptions.createAddonCheckoutSession);
-  const updateSeats = useAction(api.subscriptions.updateSeatQuantity);
   const reconcile = useAction(api.subscriptions.reconcileCurrentOrgWithStripe);
   const updateAutoOverage = useMutation(api.subscriptions.updateAutoOverageSettings);
 
-  const [seatQuantity, setSeatQuantity] = useState('1');
   const [addonPackages, setAddonPackages] = useState('1');
   const [autoOverage, setAutoOverage] = useState(false);
   const [overageCap, setOverageCap] = useState('50');
@@ -32,7 +31,6 @@ export default function Billing() {
 
   useEffect(() => {
     if (!summary?.subscription) return;
-    setSeatQuantity(String(summary.subscription.seatQuantity ?? 1));
     setAutoOverage(Boolean(summary.subscription.autoOverage));
     if (summary.subscription.overageCapCents !== undefined) {
       setOverageCap((summary.subscription.overageCapCents / 100).toFixed(2));
@@ -43,7 +41,7 @@ export default function Billing() {
 
   const usageCopy = useMemo(() => {
     if (!summary?.subscription) return null;
-    return `${summary.activeMembers} active members / ${summary.subscription.seatQuantity ?? 1} seats`;
+    return `${summary.subscription.tier.toUpperCase()} plan`;
   }, [summary]);
 
   const withBusy = async (label: string, fn: () => Promise<void>) => {
@@ -64,12 +62,14 @@ export default function Billing() {
 
   if (!summary) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Billing unavailable</CardTitle>
-          <CardDescription>No organization billing data found.</CardDescription>
-        </CardHeader>
-      </Card>
+      <SetupCallout
+        title="Billing unavailable"
+        description="Finish the getting started flow first. Trace Flow will create usage and billing context as soon as real traffic starts flowing."
+        primaryHref="/app"
+        primaryLabel="Open getting started"
+        secondaryHref="/docs/quick-start"
+        secondaryLabel="Open quick start"
+      />
     );
   }
 
@@ -79,6 +79,26 @@ export default function Billing() {
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
         </div>
+      )}
+
+      {!summary.subscription.stripeSubscriptionId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Before you worry about billing</CardTitle>
+            <CardDescription>
+              Start by routing one real request through Trace Flow. Billing becomes useful after the
+              integration is live and your org starts producing traces.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Button asChild variant="outline">
+              <a href="/app">Open getting started</a>
+            </Button>
+            <Button asChild variant="outline">
+              <a href="/docs/quick-start">Read quick start</a>
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
       <Card>
@@ -98,45 +118,20 @@ export default function Billing() {
             </div>
           )}
           <div className="text-sm text-muted-foreground">{usageCopy}</div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {isOwner && (
-              <>
-                <div>
-                  <label className="mb-1 block text-sm font-medium">Seat quantity</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={seatQuantity}
-                    onChange={(e) => setSeatQuantity(e.target.value)}
-                  />
-                </div>
-                <div className="flex items-end gap-2">
-                  <Button
-                    onClick={() =>
-                      void withBusy('seats', async () => {
-                        await updateSeats({ seatQuantity: Math.max(1, Number(seatQuantity) || 1) });
-                      })
-                    }
-                    disabled={busy !== null}
-                  >
-                    {busy === 'seats' ? 'Updating...' : 'Update Seats'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      void withBusy('portal', async () => {
-                        const res = await createPortal({});
-                        if (res.url) window.location.href = res.url;
-                      })
-                    }
-                    disabled={busy !== null}
-                  >
-                    {busy === 'portal' ? 'Opening...' : 'Manage Billing'}
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
+          {isOwner && (
+            <Button
+              variant="outline"
+              onClick={() =>
+                void withBusy('portal', async () => {
+                  const res = await createPortal({});
+                  if (res.url) window.location.href = res.url;
+                })
+              }
+              disabled={busy !== null}
+            >
+              {busy === 'portal' ? 'Opening...' : 'Manage Billing'}
+            </Button>
+          )}
         </CardContent>
       </Card>
 

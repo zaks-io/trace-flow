@@ -57,7 +57,7 @@ interface DataTableProps<TData> {
   onClearFilters?: () => void;
   hasActiveFilters?: boolean;
   loading?: boolean;
-  emptyMessage?: string;
+  emptyMessage?: React.ReactNode;
   apiKeyMap?: Map<string, string>;
   hideToolbar?: boolean;
   rowClassName?: (row: TData) => string | undefined;

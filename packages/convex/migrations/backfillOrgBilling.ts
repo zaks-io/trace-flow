@@ -35,7 +35,6 @@ export const backfillOrgBilling = internalMutation({
     for (const subscription of subscriptions) {
       const patch: Record<string, unknown> = {};
       if (!subscription.status) patch.status = 'active';
-      if (subscription.seatQuantity === undefined) patch.seatQuantity = 1;
       if (subscription.autoOverage === undefined) patch.autoOverage = false;
       if (subscription.currentPeriodOverageSpentCents === undefined) {
         patch.currentPeriodOverageSpentCents = 0;
@@ -61,7 +60,6 @@ export const backfillOrgBilling = internalMutation({
         monthlyUnits: (patch.monthlyUnits as number | undefined) ?? subscription.monthlyUnits,
         addonUnits: subscription.addonUnits,
         status: (patch.status as string | undefined) ?? subscription.status ?? 'active',
-        seatQuantity: (patch.seatQuantity as number | undefined) ?? subscription.seatQuantity ?? 1,
         currentPeriodStart:
           (patch.currentPeriodStart as number | undefined) ?? subscription.currentPeriodStart ?? 0,
         currentPeriodEnd:

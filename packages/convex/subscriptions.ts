@@ -14,54 +14,7 @@ import { internal } from './_generated/api';
 import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
 import type { SubscriptionTier } from '@trace-flow/types';
 import type { Id } from './_generated/dataModel';
-import type Stripe from 'stripe';
-import {
-  getStripeClient,
-  stripeProPriceId,
-  stripeSeatPriceId,
-  getProPriceId,
-  getSeatPriceId,
-  getAddonPriceId,
-  appUrl,
-} from './stripe';
-
-/**
- * Matches subscription items to plan vs seat by their price ID.
- * Stripe subscriptions have two items: one for the base plan (quantity 1)
- * and one for per-seat billing (quantity = seat count).
- */
-export function findSubscriptionItems(items: Stripe.SubscriptionItem[]): {
-  planItem?: Stripe.SubscriptionItem;
-  seatItem?: Stripe.SubscriptionItem;
-} {
-  const proPriceId = stripeProPriceId;
-  const seatPriceId = stripeSeatPriceId;
-  let planItem: Stripe.SubscriptionItem | undefined;
-  let seatItem: Stripe.SubscriptionItem | undefined;
-
-  for (const item of items) {
-    const priceId = typeof item.price === 'string' ? item.price : item.price?.id;
-    if (priceId === proPriceId) planItem = item;
-    else if (priceId === seatPriceId) seatItem = item;
-  }
-
-  // If only one item and no match by price ID, treat it as the plan item (legacy)
-  if (!planItem && !seatItem && items.length === 1) {
-    planItem = items[0];
-  }
-
-  // Multi-item subscription where no price ID matched — use first item so period data is not lost
-  if (!planItem && !seatItem && items.length > 1) {
-    console.warn(
-      `findSubscriptionItems: no price ID match for any of ${items.length} items ` +
-        `(expected proPriceId=${proPriceId}, seatPriceId=${seatPriceId}). ` +
-        `Falling back to items[0] for period data.`,
-    );
-    planItem = items[0];
-  }
-
-  return { planItem, seatItem };
-}
+import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './stripe';
 
 export function mapStripeStatusToInternal(
   status: string,
@@ -122,7 +75,6 @@ export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subsc
     monthlyUnits: sub.monthlyUnits,
     addonUnits: sub.addonUnits,
     status: sub.status,
-    seatQuantity: sub.seatQuantity,
     currentPeriodStart: sub.currentPeriodStart,
     currentPeriodEnd: sub.currentPeriodEnd,
     autoOverage: sub.autoOverage,
@@ -157,11 +109,6 @@ export const getBillingSummaryForCurrentUser = query({
 
     if (!subscription) return null;
 
-    const members = await ctx.db
-      .query('organizationMembers')
-      .withIndex('by_org_id_status', (q) => q.eq('orgId', user.orgId!).eq('status', 'active'))
-      .collect();
-
     const usage = await ctx.db
       .query('usage')
       .withIndex('by_org_id_period', (q) =>
@@ -180,8 +127,6 @@ export const getBillingSummaryForCurrentUser = query({
 
     return {
       subscription,
-      activeMembers: members.length,
-      seatsRemaining: Math.max(0, subscription.seatQuantity - members.length),
       totalUsed,
       totalAvailable,
       remaining: Math.max(0, totalAvailable - totalUsed),
@@ -292,8 +237,6 @@ export const createOrgCheckoutSession = action({
         'Organization already has an active subscription. Use the billing portal to manage it.',
       );
     }
-    const seatQuantity = Math.max(1, subscription?.seatQuantity ?? 1);
-
     const stripe = getStripeClient();
     let stripeCustomerId = org.stripeCustomerId ?? subscription?.stripeCustomerId;
     if (!stripeCustomerId) {
@@ -310,7 +253,8 @@ export const createOrgCheckoutSession = action({
       );
       stripeCustomerId = customer.id;
     }
-    // Write to both org and subscription tables during transition
+    // Dual-write: org table is the primary read path, subscription table
+    // is kept in sync for webhook lookups via resolveOrgSubscription
     await ctx.runMutation(internal.organizations.setStripeCustomerId, {
       orgId: user.orgId,
       stripeCustomerId,
@@ -327,10 +271,7 @@ export const createOrgCheckoutSession = action({
         automatic_tax: { enabled: true },
         tax_id_collection: { enabled: true },
         customer_update: { name: 'auto', address: 'auto' },
-        line_items: [
-          { price: getProPriceId(), quantity: 1 },
-          { price: getSeatPriceId(), quantity: seatQuantity },
-        ],
+        line_items: [{ price: getProPriceId(), quantity: 1 }],
         client_reference_id: user.orgId,
         success_url: args.successUrl ?? `${appUrl}/app/settings/billing?checkout=success`,
         cancel_url: args.cancelUrl ?? `${appUrl}/app/settings/billing?checkout=cancel`,
@@ -345,7 +286,7 @@ export const createOrgCheckoutSession = action({
         },
       },
       {
-        idempotencyKey: `checkout-sub:${user.orgId}:${seatQuantity}:${Math.floor(Date.now() / 60000)}`,
+        idempotencyKey: `checkout-sub:${user.orgId}:${Math.floor(Date.now() / 60000)}`,
       },
     );
 
@@ -366,7 +307,7 @@ export const createAddonCheckoutSession = action({
     if (subscription?.tier !== 'pro') {
       throw new Error('Addons require a Pro subscription');
     }
-    const stripeCustomerId = org.stripeCustomerId ?? subscription.stripeCustomerId;
+    const stripeCustomerId = org.stripeCustomerId ?? subscription?.stripeCustomerId;
     if (!stripeCustomerId) {
       throw new Error('Organization is missing Stripe customer');
     }
@@ -417,51 +358,6 @@ export const createBillingPortalSession = action({
       return_url: args.returnUrl ?? `${appUrl}/app/settings/billing`,
     });
     return { url: session.url };
-  },
-});
-
-export const updateSeatQuantity = action({
-  args: {
-    seatQuantity: v.number(),
-  },
-  handler: async (ctx, args) => {
-    if (args.seatQuantity < 1) throw new Error('seatQuantity must be at least 1');
-    const { user, subscription } = await requireOrgOwnerAction(ctx);
-    if (!subscription?.stripeSubscriptionId || !subscription.stripeSeatItemId) {
-      throw new Error('Stripe subscription is not configured');
-    }
-
-    const activeMembers = await ctx.runQuery(internal.organizations.getActiveMemberCountInternal, {
-      orgId: user.orgId,
-    });
-    if (args.seatQuantity < activeMembers) {
-      throw new Error(`Cannot reduce seats below active member count (${activeMembers})`);
-    }
-
-    const stripe = getStripeClient();
-    const updated = await stripe.subscriptions.update(subscription.stripeSubscriptionId, {
-      items: [
-        {
-          id: subscription.stripeSeatItemId,
-          quantity: args.seatQuantity,
-        },
-      ],
-    });
-    const { planItem, seatItem } = findSubscriptionItems(updated.items.data);
-    const periodItem = seatItem ?? planItem;
-
-    await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
-      orgId: user.orgId,
-      status: mapStripeStatusToInternal(updated.status),
-      stripeCustomerId:
-        typeof updated.customer === 'string' ? updated.customer : updated.customer.id,
-      stripeSubscriptionId: updated.id,
-      stripePlanItemId: planItem?.id,
-      stripeSeatItemId: seatItem?.id,
-      seatQuantity: seatItem?.quantity ?? args.seatQuantity,
-      currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
-      currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
-    });
   },
 });
 
@@ -661,8 +557,7 @@ export const reconcileCurrentOrgWithStripe = action({
 
     const stripe = getStripeClient();
     const stripeSub = await stripe.subscriptions.retrieve(subscription.stripeSubscriptionId);
-    const { planItem, seatItem } = findSubscriptionItems(stripeSub.items.data);
-    const periodItem = seatItem ?? planItem;
+    const planItem = stripeSub.items.data[0];
 
     await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
       orgId: user.orgId,
@@ -671,10 +566,8 @@ export const reconcileCurrentOrgWithStripe = action({
         typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id,
       stripeSubscriptionId: stripeSub.id,
       stripePlanItemId: planItem?.id,
-      stripeSeatItemId: seatItem?.id,
-      seatQuantity: seatItem?.quantity ?? 1,
-      currentPeriodStart: (periodItem?.current_period_start ?? 0) * 1000,
-      currentPeriodEnd: (periodItem?.current_period_end ?? 0) * 1000,
+      currentPeriodStart: (planItem?.current_period_start ?? 0) * 1000,
+      currentPeriodEnd: (planItem?.current_period_end ?? 0) * 1000,
       cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
     });
 
@@ -711,8 +604,6 @@ export const upsertStripeSubscriptionState = internalMutation({
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
     stripePlanItemId: v.optional(v.string()),
-    stripeSeatItemId: v.optional(v.string()),
-    seatQuantity: v.optional(v.number()),
     currentPeriodStart: v.optional(v.number()),
     currentPeriodEnd: v.optional(v.number()),
     cancelAtPeriodEnd: v.optional(v.boolean()),
@@ -724,8 +615,6 @@ export const upsertStripeSubscriptionState = internalMutation({
       .first();
     if (!subscription) throw new Error('Subscription not found');
 
-    const seatQuantity = args.seatQuantity ?? subscription.seatQuantity;
-
     // Cancel grace period scheduler when transitioning to active
     if (args.status === 'active' && subscription.gracePeriodSchedulerId) {
       await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
@@ -736,8 +625,6 @@ export const upsertStripeSubscriptionState = internalMutation({
       stripeCustomerId: args.stripeCustomerId ?? subscription.stripeCustomerId,
       stripeSubscriptionId: args.stripeSubscriptionId ?? subscription.stripeSubscriptionId,
       stripePlanItemId: args.stripePlanItemId ?? subscription.stripePlanItemId,
-      stripeSeatItemId: args.stripeSeatItemId ?? subscription.stripeSeatItemId,
-      seatQuantity,
       currentPeriodStart: args.currentPeriodStart ?? subscription.currentPeriodStart,
       currentPeriodEnd: args.currentPeriodEnd ?? subscription.currentPeriodEnd,
       currentPeriodOverageSpentCents:
@@ -857,12 +744,10 @@ export const revertToHobby = internalMutation({
       currentPeriodOverageSpentCents: 0,
       autoOverage: false,
       overageCapCents: undefined,
-      seatQuantity: 1,
       currentPeriodStart: now,
       currentPeriodEnd: now + thirtyDaysMs,
       stripeSubscriptionId: undefined,
       stripePlanItemId: undefined,
-      stripeSeatItemId: undefined,
       cancelAtPeriodEnd: undefined,
       gracePeriodSchedulerId: undefined,
     });

@@ -29,7 +29,7 @@ For a customer sending 10M requests/month (but only tracing 50k), these 3 operat
 
 ### Cost Without Caching
 
-For one customer sending 10M requests/month on a $20/month plan:
+For one customer sending 10M requests/month on a $29/org/month plan:
 
 | Resource             | Quantity        | Cost                      |
 | -------------------- | --------------- | ------------------------- |
@@ -40,9 +40,9 @@ For one customer sending 10M requests/month on a $20/month plan:
 | Queue messages (50k) | 50k             | $0.02                     |
 | **Total**            |                 | **~$11.82**               |
 
-Revenue: $20. Margin: ~$8 (40%). That's before Tinybird, Convex, R2 storage, or any other costs.
+Revenue: $29. Margin: ~$17 (59%). That's before Tinybird, Convex, R2 storage, or any other costs.
 
-At 10 customers x 10M requests each: $152 cost against $200 revenue (24% margin). Not viable.
+At 10 customers x 10M requests each: $152 cost against $290 revenue (48% margin). Still tight after other costs.
 
 ### Cost With Two-Layer Caching
 
@@ -54,7 +54,7 @@ At 10 customers x 10M requests each: $152 cost against $200 revenue (24% margin)
 | R2 + Queue (50k traces) | 100k/50k | $0.47      |
 | **Total**               |          | **~$0.53** |
 
-Revenue: $20. Margin: $19.47 (97%).
+Revenue: $29. Margin: $28.47 (98%).
 
 ## Caching Architecture
 

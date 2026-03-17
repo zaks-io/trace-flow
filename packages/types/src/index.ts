@@ -2,8 +2,8 @@ export type SubscriptionTier = 'hobby' | 'pro';
 export type BillingStatus = 'active' | 'grace' | 'suspended' | 'canceled';
 
 export const TIER_CONFIG = {
-  hobby: { monthlyUnits: 50_000, overagePer100kCents: 0 },
-  pro: { monthlyUnits: 100_000, overagePer100kCents: 800 },
+  hobby: { monthlyUnits: 25_000, overagePer100kCents: 0 },
+  pro: { monthlyUnits: 100_000, overagePer100kCents: 500 },
 } as const;
 
 export const UNITS_PER_ADDON = 100_000;
@@ -18,7 +18,6 @@ export interface SubscriptionKVData {
   status: BillingStatus;
   monthlyUnits: number;
   addonUnits: number;
-  seatQuantity?: number;
   currentPeriodStart?: number;
   currentPeriodEnd?: number;
   autoOverage?: boolean;

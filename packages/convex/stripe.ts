@@ -6,7 +6,6 @@ const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 export const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 export const stripeProPriceId = process.env.STRIPE_PRICE_ID_PRO;
-export const stripeSeatPriceId = process.env.STRIPE_PRICE_ID_SEAT;
 export const stripeAddonPriceId = process.env.STRIPE_PRICE_ID_ADDON;
 export const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
 
@@ -22,13 +21,6 @@ export function getProPriceId(): string {
     throw new Error('STRIPE_PRICE_ID_PRO environment variable is not set');
   }
   return stripeProPriceId;
-}
-
-export function getSeatPriceId(): string {
-  if (!stripeSeatPriceId) {
-    throw new Error('STRIPE_PRICE_ID_SEAT environment variable is not set');
-  }
-  return stripeSeatPriceId;
 }
 
 export function getAddonPriceId(): string {

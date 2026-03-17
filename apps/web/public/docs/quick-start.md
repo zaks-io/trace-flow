@@ -2,13 +2,24 @@
 
 Get end-to-end LLM observability in minutes. Trace Flow links user events, API calls, LLM requests, tool calls, and final responses in one trace timeline.
 
-## 1) Install SDK dependencies
+If you use Cursor, Claude Code, or another coding agent, you can also hand it [`/agents.md`](https://trace-flow.dev/agents.md) and let it wire the integration into your repo.
+
+## 1) Add your env vars
+
+Keep your upstream provider key exactly as you already do, then add your Trace Flow key:
+
+```bash
+export TRACE_FLOW_API_KEY="your-trace-flow-key"
+export OPENAI_API_KEY="your-provider-key"
+```
+
+## 2) Install SDK dependencies
 
 ```bash
 npm install ai @ai-sdk/openai
 ```
 
-## 2) Configure your provider to use Trace Flow gateway
+## 3) Configure your provider to use the Trace Flow gateway
 
 Use your normal provider API key and add your Trace Flow API key in headers.
 
@@ -24,7 +35,7 @@ const openai = createOpenAI({
 });
 ```
 
-## 3) Send requests as normal
+## 4) Send requests as normal
 
 ```typescript
 import { generateText } from 'ai';
@@ -35,7 +46,7 @@ const result = await generateText({
 });
 ```
 
-## 4) Link requests to your app traces
+## 5) Link requests to your app traces
 
 To stitch LLM calls into your existing trace hierarchy, pass trace context headers.
 
@@ -76,5 +87,6 @@ parentSpan.end();
 
 ## Next docs
 
+- [AI Agents](/docs/agents)
 - [SDK Reference](/docs/sdk-reference)
 - [OpenTelemetry](/docs/opentelemetry)

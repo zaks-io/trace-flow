@@ -10,6 +10,7 @@ import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/PageToolbar';
+import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataTable, TableToolbar, type AlertFilterValue } from '@/components/requests-table';
 import {
@@ -306,7 +307,20 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
           onFilterChange={setFilter}
           onClearFilters={clearFilters}
           hasActiveFilters={hasActiveFilters}
-          emptyMessage="No traces found"
+          emptyMessage={
+            hasActiveFilters ? (
+              'No traces found'
+            ) : (
+              <SetupCallout
+                title="No traces yet"
+                description="The trace timeline appears after your first real request reaches the Trace Flow gateway."
+                primaryHref="/app"
+                primaryLabel="Open getting started"
+                secondaryHref="/docs/quick-start"
+                secondaryLabel="Open quick start"
+              />
+            )
+          }
           apiKeyMap={apiKeyMap}
           hideToolbar
           rowClassName={getRowClassName}

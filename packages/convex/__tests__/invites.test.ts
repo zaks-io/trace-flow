@@ -194,28 +194,6 @@ describe('acceptInvite handler logic', () => {
     expect(ctx._dbPatch).toHaveBeenCalledWith('invite_id', { status: 'expired' });
   });
 
-  it('throws when org seat limit is reached', () => {
-    const subscription = { seatQuantity: 2 };
-    const activeMembers = [{ _id: 'm1' }, { _id: 'm2' }];
-
-    expect(() => {
-      if (activeMembers.length >= subscription.seatQuantity) {
-        throw new Error('Organization has reached its seat limit');
-      }
-    }).toThrow('Organization has reached its seat limit');
-  });
-
-  it('allows acceptance when under seat limit', () => {
-    const subscription = { seatQuantity: 5 };
-    const activeMembers = [{ _id: 'm1' }, { _id: 'm2' }];
-
-    expect(() => {
-      if (activeMembers.length >= subscription.seatQuantity) {
-        throw new Error('Organization has reached its seat limit');
-      }
-    }).not.toThrow();
-  });
-
   it('patches invite to accepted status', async () => {
     const invite = makeInvite();
     const ctx = makeCtx();

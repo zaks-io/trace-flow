@@ -69,7 +69,6 @@ describe('syncSubscriptionToKV KV payload shape', () => {
       monthlyUnits: 50000,
       addonUnits: 10000,
       status: 'active',
-      seatQuantity: 3,
       currentPeriodStart: 1700000000000,
       currentPeriodEnd: 1702592000000,
       autoOverage: true,
@@ -82,7 +81,6 @@ describe('syncSubscriptionToKV KV payload shape', () => {
       monthlyUnits: args.monthlyUnits,
       addonUnits: args.addonUnits,
       status: args.status,
-      seatQuantity: args.seatQuantity,
       currentPeriodStart: args.currentPeriodStart,
       currentPeriodEnd: args.currentPeriodEnd,
       autoOverage: args.autoOverage,
@@ -95,7 +93,7 @@ describe('syncSubscriptionToKV KV payload shape', () => {
     expect(parsed.monthlyUnits).toBe(50000);
     expect(parsed.addonUnits).toBe(10000);
     expect(parsed.status).toBe('active');
-    expect(parsed.seatQuantity).toBe(3);
+
     expect(parsed.currentPeriodStart).toBe(1700000000000);
     expect(parsed.currentPeriodEnd).toBe(1702592000000);
     expect(parsed.autoOverage).toBe(true);
@@ -110,7 +108,6 @@ describe('syncSubscriptionToKV KV payload shape', () => {
       monthlyUnits: 1000,
       addonUnits: 0,
       status: 'active',
-      seatQuantity: 1,
       currentPeriodStart: 1700000000000,
       currentPeriodEnd: 1702592000000,
     };
@@ -120,7 +117,6 @@ describe('syncSubscriptionToKV KV payload shape', () => {
       monthlyUnits: args.monthlyUnits,
       addonUnits: args.addonUnits,
       status: args.status,
-      seatQuantity: args.seatQuantity,
       currentPeriodStart: args.currentPeriodStart,
       currentPeriodEnd: args.currentPeriodEnd,
     });
@@ -136,7 +132,6 @@ describe('syncSubscriptionToKV KV payload shape', () => {
       monthlyUnits: 1000,
       addonUnits: 0,
       status: 'active',
-      seatQuantity: 1,
       currentPeriodStart: 1700000000000,
       currentPeriodEnd: 1702592000000,
       autoOverage: undefined,
@@ -149,7 +144,6 @@ describe('syncSubscriptionToKV KV payload shape', () => {
       monthlyUnits: args.monthlyUnits,
       addonUnits: args.addonUnits,
       status: args.status,
-      seatQuantity: args.seatQuantity,
       currentPeriodStart: args.currentPeriodStart,
       currentPeriodEnd: args.currentPeriodEnd,
       autoOverage: args.autoOverage,

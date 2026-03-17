@@ -225,12 +225,6 @@ export declare const api: {
       { autoOverage: boolean; overageCapCents?: number },
       any
     >;
-    updateSeatQuantity: FunctionReference<
-      "action",
-      "public",
-      { seatQuantity: number },
-      any
-    >;
   };
   tinybird: {
     generateToken: FunctionReference<
@@ -350,7 +344,6 @@ export declare const internal: {
         orgId: string;
         overageCapCents?: number;
         retryCount?: number;
-        seatQuantity: number;
         status: string;
         tier: string;
       },
@@ -925,11 +918,9 @@ export declare const internal: {
         currentPeriodEnd?: number;
         currentPeriodStart?: number;
         orgId: Id<"organizations">;
-        seatQuantity?: number;
         status: "active" | "grace" | "suspended" | "canceled";
         stripeCustomerId?: string;
         stripePlanItemId?: string;
-        stripeSeatItemId?: string;
         stripeSubscriptionId?: string;
       },
       any

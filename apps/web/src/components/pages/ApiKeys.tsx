@@ -1,16 +1,21 @@
 'use client';
 
-import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'convex/react';
+import Link from 'next/link';
+import { type Preloaded, usePreloadedQuery, useMutation, useAction, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Id } from '@convex/_generated/dataModel';
 import { PageToolbar } from '@/components/PageToolbar';
+import { ApiKeyQuickStart } from '@/components/onboarding/ApiKeyQuickStart';
+import { SetupCallout } from '@/components/onboarding/SetupCallout';
+import { useDefaultApiKey } from '@/hooks/useDefaultApiKey';
 
 export default function ApiKeys({
   preloadedApiKeys,
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
+  const sessionContext = useQuery(api.app.sessionContext);
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const sortedApiKeys = useMemo(() => {
     return [...apiKeys].sort((a, b) => {
@@ -24,6 +29,10 @@ export default function ApiKeys({
       return a._creationTime - b._creationTime;
     });
   }, [apiKeys]);
+  const { primaryApiKey, isCreatingDefaultKey, defaultKeyError } = useDefaultApiKey(
+    apiKeys,
+    Boolean(sessionContext?.user),
+  );
   const createApiKey = useMutation(api.apiKeys.create);
   const updateApiKey = useMutation(api.apiKeys.update);
   const deleteApiKey = useMutation(api.apiKeys.remove);
@@ -228,13 +237,37 @@ export default function ApiKeys({
         </div>
       )}
 
-      {sortedApiKeys.length === 0 ? (
-        <div className="card-elevated rounded-xl border border-border bg-card p-12 text-center">
-          <p className="text-muted-foreground">No API keys found</p>
-          <p className="mt-1 text-sm text-muted-foreground/70">
-            Create your first API key to get started
-          </p>
+      {primaryApiKey ? (
+        <div className="mb-6">
+          <ApiKeyQuickStart
+            apiKey={primaryApiKey.key}
+            title="Use this key in your app"
+            description="This page is for long-term API key management, but you can also copy the current default key and env vars from here."
+          />
         </div>
+      ) : null}
+
+      {isCreatingDefaultKey ? (
+        <div className="mb-6 rounded-xl border border-border bg-card/60 p-4 text-sm text-muted-foreground">
+          Generating your default API key...
+        </div>
+      ) : null}
+
+      {defaultKeyError ? (
+        <div className="mb-6 rounded-xl border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+          {defaultKeyError}
+        </div>
+      ) : null}
+
+      {sortedApiKeys.length === 0 ? (
+        <SetupCallout
+          title="No API keys yet"
+          description="Trace Flow generates a default key automatically. If it does not show up here, return to getting started and finish the first-run setup."
+          primaryHref="/app"
+          primaryLabel="Return to getting started"
+          secondaryHref="/docs/quick-start"
+          secondaryLabel="Open quick start"
+        />
       ) : (
         <div className="card-elevated overflow-hidden rounded-xl bg-card/40">
           <div className="overflow-x-auto">
@@ -334,9 +367,14 @@ export default function ApiKeys({
             </table>
           </div>
           <div className="border-t border-border bg-muted/20 px-6 py-3">
-            <p className="text-xs text-muted-foreground">
-              Showing {sortedApiKeys.length} {sortedApiKeys.length === 1 ? 'key' : 'keys'}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+              <p>
+                Showing {sortedApiKeys.length} {sortedApiKeys.length === 1 ? 'key' : 'keys'}
+              </p>
+              <Link className="text-primary hover:underline" href="/app">
+                Back to getting started
+              </Link>
+            </div>
           </div>
         </div>
       )}
