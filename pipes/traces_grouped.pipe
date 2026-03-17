@@ -9,7 +9,7 @@ DESCRIPTION >
 SQL >
     %
     SELECT DISTINCT TraceId
-    FROM otel_traces_genai
+    FROM otel_traces_genai FINAL
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(after_received_at) %}
@@ -68,7 +68,7 @@ SQL >
         sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) as CompletionTokens,
         max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) as MaxTTFT,
         sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total'))) as TotalCost
-    FROM otel_traces
+    FROM otel_traces FINAL
     WHERE {% if defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) or defined(api_key_filter) %}
         TraceId IN (SELECT TraceId FROM filter_traces)
         AND {% end %}

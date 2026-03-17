@@ -14,7 +14,7 @@ SQL >
               JSONExtractString(SpanAttributes, 'gen_ai.request.model'))),
           JSONExtractString(SpanAttributes, 'gen_ai.request.model')) as model,
         countDistinct(SpanId) as request_count
-    FROM otel_traces
+    FROM otel_traces FINAL
     WHERE ParentSpanId = ''
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000

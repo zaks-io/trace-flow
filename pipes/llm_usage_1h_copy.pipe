@@ -1,5 +1,6 @@
 DESCRIPTION >
-    Materialized view to roll up LLM usage metrics into hourly buckets.
+    Copy pipe to roll up LLM usage metrics into hourly buckets.
+    Runs every 5 minutes and replaces all data with deduplicated results.
 
 NODE rollup
 SQL >
@@ -30,7 +31,7 @@ SQL >
         avgState(DurationNano) AS AvgDurationNano,
         maxState(DurationNano) AS MaxDurationNano,
         quantileState(0.95)(DurationNano) AS P95DurationNano
-    FROM llm_requests
+    FROM llm_requests FINAL
     GROUP BY
         BucketStart,
         ApiKey,
@@ -40,5 +41,7 @@ SQL >
         BaggageOperation,
         StatusCode
 
-TYPE materialized
-DATASOURCE llm_usage_1h
+TYPE COPY
+TARGET_DATASOURCE llm_usage_1h
+COPY_SCHEDULE */10 * * * *
+COPY_MODE replace
