@@ -9,6 +9,17 @@ import type { SubscriptionKVData } from '@trace-flow/types';
 import type { Id } from './_generated/dataModel';
 
 export const get = query({
+  args: {},
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id('organizations'),
+      _creationTime: v.number(),
+      name: v.string(),
+      ownerId: v.id('users'),
+      stripeCustomerId: v.optional(v.string()),
+    }),
+  ),
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
@@ -19,6 +30,19 @@ export const get = query({
 
 export const getMembers = query({
   args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id('organizationMembers'),
+      _creationTime: v.number(),
+      orgId: v.id('organizations'),
+      userId: v.id('users'),
+      role: v.union(v.literal('owner'), v.literal('member')),
+      status: v.union(v.literal('active'), v.literal('removed')),
+      invitedAt: v.optional(v.number()),
+      joinedAt: v.optional(v.number()),
+      removedAt: v.optional(v.number()),
+    }),
+  ),
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
@@ -32,6 +56,7 @@ export const getMembers = query({
 
 export const rename = mutation({
   args: { name: v.string() },
+  returns: v.null(),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
     const user = await requireEnabledUser(ctx);
@@ -47,6 +72,16 @@ export const rename = mutation({
 
 export const getByIdInternal = internalQuery({
   args: { id: v.id('organizations') },
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id('organizations'),
+      _creationTime: v.number(),
+      name: v.string(),
+      ownerId: v.id('users'),
+      stripeCustomerId: v.optional(v.string()),
+    }),
+  ),
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
   },
@@ -54,6 +89,7 @@ export const getByIdInternal = internalQuery({
 
 export const getActiveMemberCountInternal = internalQuery({
   args: { orgId: v.id('organizations') },
+  returns: v.number(),
   handler: async (ctx, args) => {
     const members = await ctx.db
       .query('organizationMembers')
@@ -68,6 +104,7 @@ export const setStripeCustomerId = internalMutation({
     orgId: v.id('organizations'),
     stripeCustomerId: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.orgId);
     if (!org) throw new Error('Organization not found');
@@ -77,6 +114,16 @@ export const setStripeCustomerId = internalMutation({
 
 export const getByStripeCustomerId = internalQuery({
   args: { stripeCustomerId: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id('organizations'),
+      _creationTime: v.number(),
+      name: v.string(),
+      ownerId: v.id('users'),
+      stripeCustomerId: v.optional(v.string()),
+    }),
+  ),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('organizations')

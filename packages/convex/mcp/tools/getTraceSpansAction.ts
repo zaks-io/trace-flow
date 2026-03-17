@@ -36,6 +36,17 @@ export const getTraceSpans = internalAction({
       cursor: v.optional(v.string()),
     }),
   },
+  returns: v.object({
+    content: v.array(
+      v.object({
+        type: v.union(v.literal('text'), v.literal('image'), v.literal('resource')),
+        text: v.optional(v.string()),
+        data: v.optional(v.string()),
+        mimeType: v.optional(v.string()),
+      }),
+    ),
+    isError: v.optional(v.boolean()),
+  }),
   handler: async (_, args): Promise<ToolCallResult> => {
     const { apiKeys, params } = args;
 

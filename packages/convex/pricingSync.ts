@@ -7,13 +7,14 @@ export const syncToKV = internalAction({
     provider: v.string(),
     model: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const pricing = await ctx.runQuery(internal.modelPricing.getInternal, {
       provider: args.provider,
       model: args.model,
     });
 
-    if (!pricing) return;
+    if (!pricing) return null;
 
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const apiToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -50,6 +51,8 @@ export const syncToKV = internalAction({
       const errorText = await response.text();
       throw new Error(`Failed to sync pricing to KV: ${response.status} - ${errorText}`);
     }
+
+    return null;
   },
 });
 
@@ -58,6 +61,7 @@ export const deleteFromKV = internalAction({
     provider: v.string(),
     model: v.string(),
   },
+  returns: v.null(),
   handler: async (_ctx, args) => {
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
     const apiToken = process.env.CLOUDFLARE_API_TOKEN;
@@ -81,5 +85,7 @@ export const deleteFromKV = internalAction({
       const errorText = await response.text();
       throw new Error(`Failed to delete pricing from KV: ${response.status} - ${errorText}`);
     }
+
+    return null;
   },
 });

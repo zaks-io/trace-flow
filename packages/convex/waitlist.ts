@@ -8,6 +8,10 @@ export const joinWaitlist = mutation({
     email: v.string(),
     source: v.optional(v.string()),
   },
+  returns: v.union(
+    v.object({ status: v.literal('already_on_waitlist'), confirmed: v.boolean() }),
+    v.object({ status: v.literal('joined'), id: v.id('waitlist') }),
+  ),
   handler: async (ctx, args) => {
     const email = args.email.toLowerCase().trim();
 
@@ -40,6 +44,7 @@ export const joinWaitlist = mutation({
 
 export const confirmEmail = mutation({
   args: { token: v.string() },
+  returns: v.object({ alreadyConfirmed: v.boolean() }),
   handler: async (ctx, args) => {
     const entry = await ctx.db
       .query('waitlist')
@@ -61,6 +66,17 @@ export const confirmEmail = mutation({
 
 export const listWaitlist = query({
   args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id('waitlist'),
+      _creationTime: v.number(),
+      email: v.string(),
+      source: v.optional(v.string()),
+      confirmed: v.boolean(),
+      confirmationToken: v.string(),
+      notifiedAt: v.optional(v.number()),
+    }),
+  ),
   handler: async (ctx) => {
     await requireAdmin(ctx);
     return await ctx.db.query('waitlist').order('desc').collect();
@@ -69,6 +85,7 @@ export const listWaitlist = query({
 
 export const bulkInviteFromWaitlist = mutation({
   args: { waitlistIds: v.array(v.id('waitlist')) },
+  returns: v.object({ invited: v.number() }),
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
     let invited = 0;

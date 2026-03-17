@@ -4,7 +4,19 @@ import { requireTraceFlowRole } from './auth';
 import { internal } from './_generated/api';
 import { getCurrentUser, requireEnabledUser } from './users';
 
+const apiKeyValidator = v.object({
+  _id: v.id('apiKeys'),
+  _creationTime: v.number(),
+  key: v.string(),
+  expiresAt: v.number(),
+  userId: v.optional(v.id('users')),
+  orgId: v.optional(v.id('organizations')),
+  name: v.optional(v.string()),
+});
+
 export const list = query({
+  args: {},
+  returns: v.array(apiKeyValidator),
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
@@ -27,6 +39,7 @@ export const list = query({
 
 export const getByKey = query({
   args: { key: v.string() },
+  returns: v.union(v.null(), apiKeyValidator),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
     return await ctx.db
@@ -41,6 +54,7 @@ export const create = mutation({
     expiresAt: v.number(),
     name: v.optional(v.string()),
   },
+  returns: v.id('apiKeys'),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
     const user = await requireEnabledUser(ctx);
@@ -69,6 +83,7 @@ export const update = mutation({
     id: v.id('apiKeys'),
     name: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
     const user = await requireEnabledUser(ctx);
@@ -88,6 +103,7 @@ export const update = mutation({
 
 export const remove = mutation({
   args: { id: v.id('apiKeys') },
+  returns: v.null(),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
     const user = await requireEnabledUser(ctx);
@@ -111,6 +127,7 @@ export const remove = mutation({
 
 export const syncToKV = action({
   args: { id: v.id('apiKeys') },
+  returns: v.object({ synced: v.boolean(), existed: v.boolean() }),
   handler: async (ctx, args): Promise<{ synced: boolean; existed: boolean }> => {
     await requireTraceFlowRole(ctx);
 
@@ -139,6 +156,7 @@ export const syncToKV = action({
 
 export const getByIdInternal = internalQuery({
   args: { id: v.id('apiKeys') },
+  returns: v.union(v.null(), apiKeyValidator),
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
   },
@@ -147,6 +165,7 @@ export const getByIdInternal = internalQuery({
 // Internal query for MCP - bypasses Convex auth, uses userId directly
 export const listByUserId = internalQuery({
   args: { userId: v.id('users') },
+  returns: v.array(apiKeyValidator),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('apiKeys')
@@ -158,6 +177,7 @@ export const listByUserId = internalQuery({
 // Internal query to get all API keys for an organization
 export const listByOrgId = internalQuery({
   args: { orgId: v.id('organizations') },
+  returns: v.array(apiKeyValidator),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('apiKeys')

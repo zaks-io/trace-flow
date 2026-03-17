@@ -83,7 +83,36 @@ export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subsc
   });
 }
 
+const subscriptionValidator = v.object({
+  _id: v.id('subscriptions'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  tier: v.union(v.literal('hobby'), v.literal('pro')),
+  status: v.union(
+    v.literal('active'),
+    v.literal('grace'),
+    v.literal('suspended'),
+    v.literal('canceled'),
+  ),
+  monthlyUnits: v.number(),
+  addonUnits: v.number(),
+  currentPeriodStart: v.number(),
+  currentPeriodEnd: v.number(),
+  currentPeriodOverageSpentCents: v.number(),
+  addonPurchaseCount: v.number(),
+  stripeCustomerId: v.optional(v.string()),
+  stripeSubscriptionId: v.optional(v.string()),
+  stripePlanItemId: v.optional(v.string()),
+  cancelAtPeriodEnd: v.optional(v.boolean()),
+  autoOverage: v.optional(v.boolean()),
+  overageCapCents: v.optional(v.number()),
+  gracePeriodSchedulerId: v.optional(v.id('_scheduled_functions')),
+  autoTopupPendingSince: v.optional(v.number()),
+});
+
 export const getForCurrentUser = query({
+  args: {},
+  returns: v.union(v.null(), subscriptionValidator),
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
@@ -97,6 +126,18 @@ export const getForCurrentUser = query({
 });
 
 export const getBillingSummaryForCurrentUser = query({
+  args: {},
+  returns: v.union(
+    v.null(),
+    v.object({
+      subscription: subscriptionValidator,
+      totalUsed: v.number(),
+      totalAvailable: v.number(),
+      remaining: v.number(),
+      currentPeriodEnd: v.number(),
+      role: v.union(v.literal('owner'), v.literal('member')),
+    }),
+  ),
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
@@ -141,6 +182,7 @@ export const setTier = internalMutation({
     orgId: v.id('organizations'),
     tier: v.union(v.literal('hobby'), v.literal('pro')),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')
@@ -173,6 +215,7 @@ export const addAddonUnits = internalMutation({
     orgId: v.id('organizations'),
     units: v.number(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     if (args.units <= 0) throw new Error('Units must be positive');
 
@@ -192,6 +235,7 @@ export const addAddonUnits = internalMutation({
 
 export const getByOrgId = internalQuery({
   args: { orgId: v.id('organizations') },
+  returns: v.union(v.null(), subscriptionValidator),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('subscriptions')
@@ -202,6 +246,7 @@ export const getByOrgId = internalQuery({
 
 export const getByStripeSubscriptionId = internalQuery({
   args: { stripeSubscriptionId: v.string() },
+  returns: v.union(v.null(), subscriptionValidator),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('subscriptions')
@@ -214,6 +259,7 @@ export const getByStripeSubscriptionId = internalQuery({
 
 export const getByStripeCustomerId = internalQuery({
   args: { stripeCustomerId: v.string() },
+  returns: v.union(v.null(), subscriptionValidator),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('subscriptions')
@@ -227,6 +273,7 @@ export const createOrgCheckoutSession = action({
     successUrl: v.optional(v.string()),
     cancelUrl: v.optional(v.string()),
   },
+  returns: v.object({ url: v.union(v.string(), v.null()) }),
   handler: async (ctx, args) => {
     const { user, org, subscription } = await requireOrgOwnerAction(ctx);
     if (
@@ -300,6 +347,7 @@ export const createAddonCheckoutSession = action({
     successUrl: v.optional(v.string()),
     cancelUrl: v.optional(v.string()),
   },
+  returns: v.object({ url: v.union(v.string(), v.null()) }),
   handler: async (ctx, args) => {
     const { user, org, subscription } = await requireOrgOwnerAction(ctx);
     const quantity = Math.max(1, Math.floor(args.quantity));
@@ -345,6 +393,7 @@ export const createBillingPortalSession = action({
   args: {
     returnUrl: v.optional(v.string()),
   },
+  returns: v.object({ url: v.string() }),
   handler: async (ctx, args) => {
     const { org, subscription } = await requireOrgOwnerAction(ctx);
     const stripeCustomerId = org.stripeCustomerId ?? subscription?.stripeCustomerId;
@@ -366,6 +415,7 @@ export const updateAutoOverageSettings = mutation({
     autoOverage: v.boolean(),
     overageCapCents: v.optional(v.number()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
     const { user } = await requireOrgOwner(ctx);
@@ -393,6 +443,10 @@ export const reserveAutoTopup = internalMutation({
     orgId: v.id('organizations'),
     amountCents: v.number(),
   },
+  returns: v.union(
+    v.object({ ok: v.literal(true), idempotencyKey: v.string() }),
+    v.object({ ok: v.literal(false), reason: v.string() }),
+  ),
   handler: async (
     ctx,
     args,
@@ -426,6 +480,7 @@ export const releaseAutoTopupReservation = internalMutation({
     orgId: v.id('organizations'),
     amountCents: v.number(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')
@@ -450,6 +505,10 @@ export const triggerAutoTopup = internalAction({
     amountCents: v.number(),
     reason: v.optional(v.string()),
   },
+  returns: v.union(
+    v.object({ ok: v.literal(false), reason: v.string() }),
+    v.object({ ok: v.literal(true), invoiceId: v.string() }),
+  ),
   handler: async (ctx, args) => {
     const quantity = Math.max(1, Math.floor(args.quantity ?? 1));
     const units = quantity * UNITS_PER_ADDON;
@@ -470,7 +529,7 @@ export const triggerAutoTopup = internalAction({
       amountCents: args.amountCents,
     });
     if (!reservation.ok) {
-      return { ok: false, reason: reservation.reason };
+      return { ok: false as const, reason: reservation.reason };
     }
 
     const stripe = getStripeClient();
@@ -543,16 +602,20 @@ export const triggerAutoTopup = internalAction({
     // The reservation holds currentPeriodOverageSpentCents in place,
     // and creditAddonPurchase (called by the webhook) adds the addon
     // units idempotently via stripePaymentIntentId deduplication.
-    return { ok: true, invoiceId };
+    return { ok: true as const, invoiceId };
   },
 });
 
 export const reconcileCurrentOrgWithStripe = action({
   args: {},
+  returns: v.union(
+    v.object({ reconciled: v.literal(false), reason: v.string() }),
+    v.object({ reconciled: v.literal(true) }),
+  ),
   handler: async (ctx) => {
     const { user, subscription } = await requireOrgOwnerAction(ctx);
     if (!subscription?.stripeSubscriptionId) {
-      return { reconciled: false, reason: 'missing_stripe_subscription' };
+      return { reconciled: false as const, reason: 'missing_stripe_subscription' };
     }
 
     const stripe = getStripeClient();
@@ -571,7 +634,7 @@ export const reconcileCurrentOrgWithStripe = action({
       cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
     });
 
-    return { reconciled: true };
+    return { reconciled: true as const };
   },
 });
 
@@ -580,6 +643,7 @@ export const setStripeCustomerId = internalMutation({
     orgId: v.id('organizations'),
     stripeCustomerId: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')
@@ -608,6 +672,7 @@ export const upsertStripeSubscriptionState = internalMutation({
     currentPeriodEnd: v.optional(v.number()),
     cancelAtPeriodEnd: v.optional(v.boolean()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')
@@ -649,6 +714,7 @@ export const creditAddonPurchase = internalMutation({
     mode: v.union(v.literal('manual'), v.literal('auto')),
     triggeredByUserId: v.optional(v.id('users')),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     if (args.units <= 0 || args.units % UNITS_PER_ADDON !== 0) {
       throw new Error(`units must be a positive multiple of ${UNITS_PER_ADDON}`);
@@ -693,6 +759,7 @@ export const creditAddonPurchase = internalMutation({
 
 export const revokeAddonPurchase = internalMutation({
   args: { stripePaymentIntentId: v.string() },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const purchase = await ctx.db
       .query('addonPurchases')
@@ -717,6 +784,7 @@ export const revokeAddonPurchase = internalMutation({
 
 export const revertToHobby = internalMutation({
   args: { orgId: v.id('organizations') },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')
@@ -760,6 +828,7 @@ const GRACE_PERIOD_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 export const scheduleGraceSuspension = internalMutation({
   args: { orgId: v.id('organizations') },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')
@@ -783,6 +852,7 @@ export const scheduleGraceSuspension = internalMutation({
 
 export const transitionGraceToSuspended = internalMutation({
   args: { orgId: v.id('organizations') },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')

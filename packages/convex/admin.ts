@@ -1,8 +1,20 @@
 import { query } from './_generated/server';
+import { v } from 'convex/values';
 import { requireAdmin } from './users';
 
 export const stats = query({
   args: {},
+  returns: v.object({
+    userCount: v.number(),
+    orgCount: v.number(),
+    apiKeyCount: v.number(),
+    modelPricingCount: v.number(),
+    subscriptionCount: v.number(),
+    tierBreakdown: v.object({
+      hobby: v.number(),
+      pro: v.number(),
+    }),
+  }),
   handler: async (ctx) => {
     await requireAdmin(ctx);
 

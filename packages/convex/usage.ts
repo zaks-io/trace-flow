@@ -5,7 +5,22 @@ import { getCurrentUser } from './users';
 import { internal } from './_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
 
+const usageDocValidator = v.union(
+  v.object({
+    _id: v.id('usage'),
+    _creationTime: v.number(),
+    orgId: v.id('organizations'),
+    periodStart: v.number(),
+    periodEnd: v.number(),
+    subscriptionUnitsUsed: v.number(),
+    addonUnitsUsed: v.number(),
+  }),
+  v.null(),
+);
+
 export const getCurrentUsage = query({
+  args: {},
+  returns: usageDocValidator,
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
@@ -32,6 +47,7 @@ export const recordUsage = internalMutation({
     subscriptionUnitsUsed: v.number(),
     addonUnitsUsed: v.number(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query('usage')
@@ -60,6 +76,7 @@ export const recordUsage = internalMutation({
 
 export const getForOrgInternal = internalQuery({
   args: { orgId: v.id('organizations') },
+  returns: usageDocValidator,
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')
@@ -84,6 +101,7 @@ export const checkAutoTopup = internalMutation({
     subscriptionUnitsUsed: v.number(),
     addonUnitsUsed: v.number(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const subscription = await ctx.db
       .query('subscriptions')

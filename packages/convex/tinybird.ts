@@ -38,6 +38,11 @@ export const generateToken = action({
     ttl: v.optional(v.number()),
     name: v.optional(v.string()),
   },
+  returns: v.object({
+    token: v.string(),
+    expiresAt: v.number(),
+    name: v.string(),
+  }),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
 
@@ -117,6 +122,7 @@ export const generateTokenInternal = internalAction({
     retentionDays: v.optional(v.number()),
     ttl: v.optional(v.number()),
   },
+  returns: v.string(),
   handler: async (_, args) => {
     // Validate API keys are UUIDs before inclusion in JWT (defense in depth)
     const validKeys = sanitizeApiKeys(args.apiKeys);
@@ -157,13 +163,23 @@ export const extendRetention = internalAction({
   args: {
     orgId: v.id('organizations'),
   },
+  returns: v.union(
+    v.object({ updated: v.literal(false), reason: v.string() }),
+    v.object({
+      updated: v.literal(true),
+      results: v.record(
+        v.string(),
+        v.object({ success: v.boolean(), error: v.optional(v.string()) }),
+      ),
+    }),
+  ),
   handler: async (ctx, args) => {
     // Get all API keys for this organization
     const apiKeys = await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: args.orgId });
     const apiKeyStrings = apiKeys.map((k: { key: string }) => k.key);
 
     if (apiKeyStrings.length === 0) {
-      return { updated: false, reason: 'No API keys found for organization' };
+      return { updated: false as const, reason: 'No API keys found for organization' };
     }
 
     // Calculate the extension: difference between pro and hobby retention in nanoseconds
@@ -173,7 +189,7 @@ export const extendRetention = internalAction({
     // Validate API keys are UUIDs before interpolating into SQL (defense in depth)
     const validKeys = apiKeyStrings.filter((k: string) => UUID_PATTERN.test(k));
     if (validKeys.length === 0) {
-      return { updated: false, reason: 'No valid API keys found for organization' };
+      return { updated: false as const, reason: 'No valid API keys found for organization' };
     }
 
     // Format API keys for SQL IN clause (safe: UUID_PATTERN guarantees only hex + dashes)
@@ -219,6 +235,6 @@ export const extendRetention = internalAction({
       }
     }
 
-    return { updated: true, results };
+    return { updated: true as const, results };
   },
 });

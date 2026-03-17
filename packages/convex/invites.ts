@@ -7,6 +7,7 @@ const INVITE_EXPIRY_DAYS = 7;
 
 export const createInvite = mutation({
   args: { email: v.string() },
+  returns: v.id('invites'),
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
     const email = args.email.toLowerCase().trim();
@@ -44,6 +45,7 @@ export const createInvite = mutation({
 
 export const createOrgInvite = mutation({
   args: { email: v.string() },
+  returns: v.id('invites'),
   handler: async (ctx, args) => {
     const user = await requireEnabledUser(ctx);
     const orgId = user.orgId;
@@ -84,6 +86,12 @@ export const createOrgInvite = mutation({
 
 export const getInviteByToken = query({
   args: { token: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      status: v.union(v.literal('pending'), v.literal('accepted'), v.literal('expired')),
+    }),
+  ),
   handler: async (ctx, args) => {
     const invite = await ctx.db
       .query('invites')
@@ -102,6 +110,7 @@ export const getInviteByToken = query({
 
 export const acceptInvite = mutation({
   args: { token: v.string() },
+  returns: v.object({ email: v.string() }),
   handler: async (ctx, args) => {
     const invite = await ctx.db
       .query('invites')
@@ -132,6 +141,19 @@ export const acceptInvite = mutation({
 
 export const listInvites = query({
   args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id('invites'),
+      _creationTime: v.number(),
+      email: v.string(),
+      invitedBy: v.id('users'),
+      orgId: v.optional(v.id('organizations')),
+      status: v.union(v.literal('pending'), v.literal('accepted'), v.literal('expired')),
+      token: v.string(),
+      acceptedAt: v.optional(v.number()),
+      expiresAt: v.number(),
+    }),
+  ),
   handler: async (ctx) => {
     await requireAdmin(ctx);
     const invites = await ctx.db.query('invites').order('desc').collect();
@@ -147,6 +169,7 @@ export const listInvites = query({
 
 export const revokeInvite = mutation({
   args: { inviteId: v.id('invites') },
+  returns: v.null(),
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
 
