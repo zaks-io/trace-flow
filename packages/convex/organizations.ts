@@ -3,23 +3,32 @@ import type { MutationCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
 import { getCurrentUser, requireEnabledUser } from './userHelpers';
+import { organizationValidator } from './validators';
 import { internal } from './_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import type { Id } from './_generated/dataModel';
 
+export const completeOnboarding = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    await requireTraceFlowRole(ctx);
+    const user = await requireEnabledUser(ctx);
+    if (!user.orgId) throw new Error('No organization found');
+
+    const org = await ctx.db.get(user.orgId);
+    if (!org) throw new Error('Organization not found');
+    if (org.onboardingCompletedAt) return null;
+
+    await ctx.db.patch(user.orgId, { onboardingCompletedAt: Date.now() });
+    return null;
+  },
+});
+
 export const get = query({
   args: {},
-  returns: v.union(
-    v.null(),
-    v.object({
-      _id: v.id('organizations'),
-      _creationTime: v.number(),
-      name: v.string(),
-      ownerId: v.id('users'),
-      stripeCustomerId: v.optional(v.string()),
-    }),
-  ),
+  returns: v.union(v.null(), organizationValidator),
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const user = await getCurrentUser(ctx);
@@ -67,21 +76,13 @@ export const rename = mutation({
     if (org.ownerId !== user._id) throw new Error('Only the owner can rename the organization');
 
     await ctx.db.patch(user.orgId, { name: args.name });
+    return null;
   },
 });
 
 export const getByIdInternal = internalQuery({
   args: { id: v.id('organizations') },
-  returns: v.union(
-    v.null(),
-    v.object({
-      _id: v.id('organizations'),
-      _creationTime: v.number(),
-      name: v.string(),
-      ownerId: v.id('users'),
-      stripeCustomerId: v.optional(v.string()),
-    }),
-  ),
+  returns: v.union(v.null(), organizationValidator),
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
   },
@@ -109,21 +110,13 @@ export const setStripeCustomerId = internalMutation({
     const org = await ctx.db.get(args.orgId);
     if (!org) throw new Error('Organization not found');
     await ctx.db.patch(args.orgId, { stripeCustomerId: args.stripeCustomerId });
+    return null;
   },
 });
 
 export const getByStripeCustomerId = internalQuery({
   args: { stripeCustomerId: v.string() },
-  returns: v.union(
-    v.null(),
-    v.object({
-      _id: v.id('organizations'),
-      _creationTime: v.number(),
-      name: v.string(),
-      ownerId: v.id('users'),
-      stripeCustomerId: v.optional(v.string()),
-    }),
-  ),
+  returns: v.union(v.null(), organizationValidator),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('organizations')
