@@ -146,6 +146,7 @@ export declare const api: {
       {
         hasRole: boolean;
         isAdmin: boolean;
+        onboardingCompletedAt?: number;
         subscription: {
           _creationTime: number;
           _id: Id<"subscriptions">;
@@ -333,6 +334,7 @@ export declare const api: {
     >;
   };
   organizations: {
+    completeOnboarding: FunctionReference<"mutation", "public", {}, null>;
     get: FunctionReference<
       "query",
       "public",
@@ -341,6 +343,7 @@ export declare const api: {
         _creationTime: number;
         _id: Id<"organizations">;
         name: string;
+        onboardingCompletedAt?: number;
         ownerId: Id<"users">;
         stripeCustomerId?: string;
       }
@@ -1216,6 +1219,7 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"organizations">;
         name: string;
+        onboardingCompletedAt?: number;
         ownerId: Id<"users">;
         stripeCustomerId?: string;
       }
@@ -1228,6 +1232,7 @@ export declare const internal: {
         _creationTime: number;
         _id: Id<"organizations">;
         name: string;
+        onboardingCompletedAt?: number;
         ownerId: Id<"users">;
         stripeCustomerId?: string;
       }

@@ -336,6 +336,7 @@ export type DataModel = {
   organizations: {
     document: {
       name: string;
+      onboardingCompletedAt?: number;
       ownerId: Id<"users">;
       stripeCustomerId?: string;
       _id: Id<"organizations">;
@@ -345,6 +346,7 @@ export type DataModel = {
       | "_creationTime"
       | "_id"
       | "name"
+      | "onboardingCompletedAt"
       | "ownerId"
       | "stripeCustomerId";
     indexes: {
