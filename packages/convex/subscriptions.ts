@@ -15,6 +15,7 @@ import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
 import type { SubscriptionTier } from '@trace-flow/types';
 import type { Id } from './_generated/dataModel';
 import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './stripe';
+import { subscriptionValidator } from './validators';
 
 export function mapStripeStatusToInternal(
   status: string,
@@ -81,33 +82,6 @@ export async function scheduleKVSync(ctx: MutationCtx, subscriptionId: Id<'subsc
     cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
   });
 }
-
-const subscriptionValidator = v.object({
-  _id: v.id('subscriptions'),
-  _creationTime: v.number(),
-  orgId: v.id('organizations'),
-  tier: v.union(v.literal('hobby'), v.literal('pro')),
-  status: v.union(
-    v.literal('active'),
-    v.literal('grace'),
-    v.literal('suspended'),
-    v.literal('canceled'),
-  ),
-  monthlyUnits: v.number(),
-  addonUnits: v.number(),
-  currentPeriodStart: v.number(),
-  currentPeriodEnd: v.number(),
-  currentPeriodOverageSpentCents: v.number(),
-  addonPurchaseCount: v.number(),
-  stripeCustomerId: v.optional(v.string()),
-  stripeSubscriptionId: v.optional(v.string()),
-  stripePlanItemId: v.optional(v.string()),
-  cancelAtPeriodEnd: v.optional(v.boolean()),
-  autoOverage: v.optional(v.boolean()),
-  overageCapCents: v.optional(v.number()),
-  gracePeriodSchedulerId: v.optional(v.id('_scheduled_functions')),
-  autoTopupPendingSince: v.optional(v.number()),
-});
 
 export const getForCurrentUser = query({
   args: {},

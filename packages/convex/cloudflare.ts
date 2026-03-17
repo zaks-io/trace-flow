@@ -2,8 +2,8 @@ import { internalAction, internalQuery, action } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { requireTraceFlowRole } from './auth';
-import type { Doc } from './_generated/dataModel';
 import { extractSub } from './users';
+import { apiKeyValidator, subscriptionValidator, userValidator } from './validators';
 
 function getCloudflareConfig() {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -194,59 +194,9 @@ export const isCallerAdmin = internalQuery({
 export const getAllSyncData = internalQuery({
   args: {},
   returns: v.object({
-    apiKeys: v.array(
-      v.object({
-        _id: v.id('apiKeys'),
-        _creationTime: v.number(),
-        key: v.string(),
-        expiresAt: v.number(),
-        userId: v.optional(v.id('users')),
-        orgId: v.optional(v.id('organizations')),
-        name: v.optional(v.string()),
-      }),
-    ),
-    subscriptions: v.array(
-      v.object({
-        _id: v.id('subscriptions'),
-        _creationTime: v.number(),
-        orgId: v.id('organizations'),
-        tier: v.union(v.literal('hobby'), v.literal('pro')),
-        status: v.union(
-          v.literal('active'),
-          v.literal('grace'),
-          v.literal('suspended'),
-          v.literal('canceled'),
-        ),
-        monthlyUnits: v.number(),
-        addonUnits: v.number(),
-        currentPeriodStart: v.number(),
-        currentPeriodEnd: v.number(),
-        currentPeriodOverageSpentCents: v.number(),
-        addonPurchaseCount: v.number(),
-        stripeCustomerId: v.optional(v.string()),
-        stripeSubscriptionId: v.optional(v.string()),
-        stripePlanItemId: v.optional(v.string()),
-        cancelAtPeriodEnd: v.optional(v.boolean()),
-        autoOverage: v.optional(v.boolean()),
-        overageCapCents: v.optional(v.number()),
-        gracePeriodSchedulerId: v.optional(v.id('_scheduled_functions')),
-        autoTopupPendingSince: v.optional(v.number()),
-      }),
-    ),
-    users: v.array(
-      v.object({
-        _id: v.id('users'),
-        _creationTime: v.number(),
-        tokenIdentifier: v.string(),
-        email: v.string(),
-        name: v.optional(v.string()),
-        picture: v.optional(v.string()),
-        enabled: v.boolean(),
-        orgId: v.optional(v.id('organizations')),
-        inviteId: v.optional(v.id('invites')),
-        isAdmin: v.optional(v.boolean()),
-      }),
-    ),
+    apiKeys: v.array(apiKeyValidator),
+    subscriptions: v.array(subscriptionValidator),
+    users: v.array(userValidator),
   }),
   handler: async (ctx) => {
     const apiKeys = await ctx.db.query('apiKeys').collect();
@@ -273,13 +223,9 @@ export const syncAll = action({
     await requireTraceFlowRole(ctx);
     const isAdmin = await ctx.runQuery(internal.cloudflare.isCallerAdmin);
     if (!isAdmin) throw new Error('Admin access required');
-    const { apiKeys, subscriptions, users } = (await ctx.runQuery(
+    const { apiKeys, subscriptions, users } = await ctx.runQuery(
       internal.cloudflare.getAllSyncData,
-    )) as {
-      apiKeys: Doc<'apiKeys'>[];
-      subscriptions: Doc<'subscriptions'>[];
-      users: Doc<'users'>[];
-    };
+    );
 
     await runBatched(apiKeys, 10, (key) =>
       ctx.runAction(internal.cloudflare.syncKeyToKV, {

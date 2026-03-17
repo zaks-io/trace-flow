@@ -5,6 +5,7 @@ import { type Doc, type Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from './organizations';
 import { getCurrentUser, requireEnabledUser } from './userHelpers';
+import { userValidator } from './validators';
 
 type AuthContext = QueryCtx | MutationCtx;
 
@@ -249,19 +250,6 @@ export const initializeUser = mutation({
 
     return { userId };
   },
-});
-
-const userValidator = v.object({
-  _id: v.id('users'),
-  _creationTime: v.number(),
-  tokenIdentifier: v.string(),
-  email: v.string(),
-  name: v.optional(v.string()),
-  picture: v.optional(v.string()),
-  enabled: v.boolean(),
-  orgId: v.optional(v.id('organizations')),
-  inviteId: v.optional(v.id('invites')),
-  isAdmin: v.optional(v.boolean()),
 });
 
 export const getCurrentUserQuery = query({

@@ -3,16 +3,7 @@ import { v } from 'convex/values';
 import { requireTraceFlowRole } from './auth';
 import { internal } from './_generated/api';
 import { getCurrentUser, requireEnabledUser } from './users';
-
-const apiKeyValidator = v.object({
-  _id: v.id('apiKeys'),
-  _creationTime: v.number(),
-  key: v.string(),
-  expiresAt: v.number(),
-  userId: v.optional(v.id('users')),
-  orgId: v.optional(v.id('organizations')),
-  name: v.optional(v.string()),
-});
+import { apiKeyValidator } from './validators';
 
 export const list = query({
   args: {},
