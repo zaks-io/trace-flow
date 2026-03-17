@@ -1,7 +1,16 @@
 import { query } from './_generated/server';
+import { v } from 'convex/values';
 import { getCurrentUser } from './users';
+import { userValidator, subscriptionValidator } from './validators';
 
 export const sessionContext = query({
+  args: {},
+  returns: v.object({
+    hasRole: v.boolean(),
+    user: v.union(userValidator, v.null()),
+    isAdmin: v.boolean(),
+    subscription: v.union(subscriptionValidator, v.null()),
+  }),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
 

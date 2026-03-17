@@ -52,11 +52,25 @@ export function createSuccessResponse(id: string | number, result: unknown): Jso
   };
 }
 
+const jsonRpcResponseValidator = v.object({
+  jsonrpc: v.literal('2.0'),
+  id: v.union(v.string(), v.number(), v.null()),
+  result: v.optional(v.any()),
+  error: v.optional(
+    v.object({
+      code: v.number(),
+      message: v.string(),
+      data: v.optional(v.any()),
+    }),
+  ),
+});
+
 export const handleMessage = action({
   args: {
     message: v.any(),
     sessionId: v.optional(v.string()),
   },
+  returns: v.union(jsonRpcResponseValidator, v.null()),
   handler: async (ctx, args): Promise<JsonRpcResponse | null> => {
     await requireTraceFlowRole(ctx);
     const user = await ctx.runQuery(api.users.getCurrentUserQuery);
@@ -89,6 +103,7 @@ export const handleMessageWithUser = internalAction({
     sessionId: v.optional(v.string()),
     userId: v.id('users'),
   },
+  returns: v.union(jsonRpcResponseValidator, v.null()),
   handler: async (ctx, args): Promise<JsonRpcResponse | null> => {
     const message = args.message as JsonRpcMessage;
 
@@ -313,6 +328,7 @@ export const terminateSession = action({
   args: {
     sessionId: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     await requireTraceFlowRole(ctx);
 

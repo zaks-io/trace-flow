@@ -3,6 +3,20 @@ import { v } from 'convex/values';
 
 export const getByEventId = internalQuery({
   args: { eventId: v.string() },
+  returns: v.union(
+    v.object({
+      _id: v.id('stripeEvents'),
+      _creationTime: v.number(),
+      eventId: v.string(),
+      eventType: v.string(),
+      stripeObjectId: v.optional(v.string()),
+      status: v.union(v.literal('processing'), v.literal('processed'), v.literal('failed')),
+      processingStartedAt: v.optional(v.number()),
+      processedAt: v.optional(v.number()),
+      error: v.optional(v.string()),
+    }),
+    v.null(),
+  ),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('stripeEvents')
@@ -17,6 +31,10 @@ export const startProcessing = internalMutation({
     eventType: v.string(),
     stripeObjectId: v.optional(v.string()),
   },
+  returns: v.object({
+    alreadyProcessed: v.boolean(),
+    eventDocId: v.id('stripeEvents'),
+  }),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query('stripeEvents')
@@ -55,6 +73,7 @@ export const startProcessing = internalMutation({
 
 export const markProcessed = internalMutation({
   args: { eventId: v.string() },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query('stripeEvents')
@@ -74,6 +93,7 @@ export const markFailed = internalMutation({
     eventId: v.string(),
     error: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query('stripeEvents')
@@ -89,6 +109,8 @@ export const markFailed = internalMutation({
 });
 
 export const cleanupOldEvents = internalMutation({
+  args: {},
+  returns: v.object({ deleted: v.number() }),
   handler: async (ctx) => {
     const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
     let deleted = 0;

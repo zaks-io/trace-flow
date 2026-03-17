@@ -5,6 +5,7 @@ import { type Doc, type Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from './organizations';
 import { getCurrentUser, requireEnabledUser } from './userHelpers';
+import { userValidator } from './validators';
 
 type AuthContext = QueryCtx | MutationCtx;
 
@@ -111,6 +112,7 @@ export async function requireAdmin(ctx: AuthContext): Promise<Doc<'users'>> {
 
 export const removeMember = mutation({
   args: { memberId: v.id('organizationMembers') },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const caller = await requireEnabledUser(ctx);
     if (!caller.orgId) throw new Error('No organization');
@@ -151,6 +153,7 @@ export const removeMember = mutation({
 
 export const initializeUser = mutation({
   args: {},
+  returns: v.object({ userId: v.id('users') }),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
@@ -251,6 +254,7 @@ export const initializeUser = mutation({
 
 export const getCurrentUserQuery = query({
   args: {},
+  returns: v.union(userValidator, v.null()),
   handler: async (ctx) => {
     return await getCurrentUser(ctx);
   },
@@ -258,6 +262,7 @@ export const getCurrentUserQuery = query({
 
 export const getUser = query({
   args: { id: v.id('users') },
+  returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUser(ctx);
     if (!currentUser) throw new Error('Authentication required');
@@ -276,6 +281,7 @@ export const findOrCreateUser = internalMutation({
     name: v.optional(v.string()),
     picture: v.optional(v.string()),
   },
+  returns: v.id('users'),
   handler: async (ctx, args): Promise<Id<'users'>> => {
     const existingUser = await ctx.db
       .query('users')
@@ -328,6 +334,7 @@ export const findOrCreateUser = internalMutation({
 
 export const getUserById = internalQuery({
   args: { id: v.id('users') },
+  returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
   },
@@ -335,6 +342,7 @@ export const getUserById = internalQuery({
 
 export const getUserByTokenIdentifier = internalQuery({
   args: { tokenIdentifier: v.string() },
+  returns: v.union(userValidator, v.null()),
   handler: async (ctx, args) => {
     return await ctx.db
       .query('users')
@@ -345,6 +353,7 @@ export const getUserByTokenIdentifier = internalQuery({
 
 export const isAdmin = query({
   args: {},
+  returns: v.boolean(),
   handler: async (ctx) => {
     const user = await getCurrentUser(ctx);
     return user?.isAdmin === true;
@@ -353,6 +362,7 @@ export const isAdmin = query({
 
 export const isAdminInternal = internalQuery({
   args: {},
+  returns: v.boolean(),
   handler: async (ctx) => {
     const user = await getCurrentUser(ctx);
     return user?.isAdmin === true;

@@ -50,6 +50,7 @@ export const createRefreshToken = internalMutation({
     userId: v.id('users'),
     auth0RefreshToken: v.string(),
   },
+  returns: v.string(),
   handler: async (ctx, args): Promise<string> => {
     const tokenId = crypto.randomUUID();
     const hashedTokenId = await sha256Hex(tokenId);
@@ -72,6 +73,18 @@ export const createRefreshToken = internalMutation({
 
 export const getRefreshToken = internalQuery({
   args: { tokenId: v.string() },
+  returns: v.union(
+    v.object({
+      _id: v.id('mcpRefreshTokens'),
+      _creationTime: v.number(),
+      tokenId: v.optional(v.string()),
+      hashedTokenId: v.string(),
+      userId: v.id('users'),
+      auth0RefreshToken: v.string(),
+      expiresAt: v.number(),
+    }),
+    v.null(),
+  ),
   handler: async (ctx, args) => {
     const hashed = await sha256Hex(args.tokenId);
     const token = await ctx.db
@@ -93,6 +106,7 @@ export const getRefreshToken = internalQuery({
 
 export const deleteRefreshToken = internalMutation({
   args: { tokenId: v.string() },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const hashed = await sha256Hex(args.tokenId);
     const token = await ctx.db
@@ -111,6 +125,7 @@ export const updateRefreshToken = internalMutation({
     tokenId: v.string(),
     auth0RefreshToken: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const hashed = await sha256Hex(args.tokenId);
     const token = await ctx.db
@@ -133,6 +148,7 @@ export const updateRefreshToken = internalMutation({
 
 export const deleteUserRefreshTokens = internalMutation({
   args: { userId: v.id('users') },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const tokens = await ctx.db
       .query('mcpRefreshTokens')
@@ -156,6 +172,7 @@ export const createAuthCode = internalMutation({
     codeChallengeMethod: v.optional(v.string()),
     auth0RefreshToken: v.string(),
   },
+  returns: v.string(),
   handler: async (ctx, args): Promise<string> => {
     const code = crypto.randomUUID();
     const expiresAt = Date.now() + AUTH_CODE_TTL_MS;
@@ -184,6 +201,10 @@ export const exchangeAuthCode = internalMutation({
     redirectUri: v.string(),
     codeVerifier: v.optional(v.string()),
   },
+  returns: v.union(
+    v.object({ error: v.string(), error_description: v.string() }),
+    v.object({ userId: v.id('users'), tokenId: v.string() }),
+  ),
   handler: async (ctx, args) => {
     const authCode = await ctx.db
       .query('mcpAuthCodes')
@@ -257,6 +278,7 @@ export { ACCESS_TOKEN_TTL_SECONDS };
 
 export const cleanupRefreshToken = internalMutation({
   args: { hashedTokenId: v.string() },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const token = await ctx.db
       .query('mcpRefreshTokens')
@@ -271,6 +293,7 @@ export const cleanupRefreshToken = internalMutation({
 
 export const cleanupAuthCode = internalMutation({
   args: { code: v.string() },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const authCode = await ctx.db
       .query('mcpAuthCodes')

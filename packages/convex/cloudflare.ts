@@ -2,8 +2,8 @@ import { internalAction, internalQuery, action } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { requireTraceFlowRole } from './auth';
-import type { Doc } from './_generated/dataModel';
 import { extractSub } from './users';
+import { apiKeyValidator, subscriptionValidator, userValidator } from './validators';
 
 function getCloudflareConfig() {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -44,6 +44,7 @@ export const syncKeyToKV = internalAction({
     expiresAt: v.number(),
     orgId: v.optional(v.string()),
   },
+  returns: v.null(),
   handler: async (_ctx, args) => {
     const value = JSON.stringify({
       expiresAt: args.expiresAt,
@@ -69,6 +70,7 @@ export const syncSubscriptionToKV = internalAction({
     cancelAtPeriodEnd: v.optional(v.boolean()),
     retryCount: v.optional(v.number()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const value = JSON.stringify({
       tier: args.tier,
@@ -109,6 +111,7 @@ export const syncUserOrgToKV = internalAction({
     orgId: v.string(),
     retryCount: v.optional(v.number()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     try {
       await putKV(`user-org:${args.sub}`, JSON.stringify({ orgId: args.orgId }));
@@ -131,6 +134,7 @@ export const deleteUserOrgFromKV = internalAction({
     sub: v.string(),
     retryCount: v.optional(v.number()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const { accountId, apiToken, namespaceId } = getCloudflareConfig();
     const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/user-org:${encodeURIComponent(args.sub)}`;
@@ -159,6 +163,7 @@ export const deleteUserOrgFromKV = internalAction({
 
 export const checkKeyInKV = internalAction({
   args: { key: v.string() },
+  returns: v.boolean(),
   handler: async (_ctx, args): Promise<boolean> => {
     const { accountId, apiToken, namespaceId } = getCloudflareConfig();
     const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(args.key)}`;
@@ -174,6 +179,7 @@ export const checkKeyInKV = internalAction({
 
 export const isCallerAdmin = internalQuery({
   args: {},
+  returns: v.boolean(),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return false;
@@ -187,6 +193,11 @@ export const isCallerAdmin = internalQuery({
 
 export const getAllSyncData = internalQuery({
   args: {},
+  returns: v.object({
+    apiKeys: v.array(apiKeyValidator),
+    subscriptions: v.array(subscriptionValidator),
+    users: v.array(userValidator),
+  }),
   handler: async (ctx) => {
     const apiKeys = await ctx.db.query('apiKeys').collect();
     const subscriptions = await ctx.db.query('subscriptions').collect();
@@ -195,7 +206,7 @@ export const getAllSyncData = internalQuery({
   },
 });
 
-async function runBatched<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>) {
+async function runBatched<T>(items: T[], concurrency: number, fn: (item: T) => Promise<unknown>) {
   for (let i = 0; i < items.length; i += concurrency) {
     await Promise.all(items.slice(i, i + concurrency).map(fn));
   }
@@ -203,17 +214,18 @@ async function runBatched<T>(items: T[], concurrency: number, fn: (item: T) => P
 
 export const syncAll = action({
   args: {},
+  returns: v.object({
+    keySynced: v.number(),
+    subSynced: v.number(),
+    userOrgSynced: v.number(),
+  }),
   handler: async (ctx) => {
     await requireTraceFlowRole(ctx);
     const isAdmin = await ctx.runQuery(internal.cloudflare.isCallerAdmin);
     if (!isAdmin) throw new Error('Admin access required');
-    const { apiKeys, subscriptions, users } = (await ctx.runQuery(
+    const { apiKeys, subscriptions, users } = await ctx.runQuery(
       internal.cloudflare.getAllSyncData,
-    )) as {
-      apiKeys: Doc<'apiKeys'>[];
-      subscriptions: Doc<'subscriptions'>[];
-      users: Doc<'users'>[];
-    };
+    );
 
     await runBatched(apiKeys, 10, (key) =>
       ctx.runAction(internal.cloudflare.syncKeyToKV, {
@@ -259,6 +271,7 @@ export const syncAll = action({
 
 export const deleteKeyFromKV = internalAction({
   args: { key: v.string() },
+  returns: v.null(),
   handler: async (_ctx, args) => {
     const { accountId, apiToken, namespaceId } = getCloudflareConfig();
     const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(args.key)}`;

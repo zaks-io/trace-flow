@@ -18,10 +18,26 @@ async function requireAdminAction(ctx: ActionCtx) {
   if (!isAdmin) throw new Error('Admin access required');
 }
 
+const modelPricingDoc = v.object({
+  _id: v.id('modelPricing'),
+  _creationTime: v.number(),
+  provider: v.string(),
+  model: v.string(),
+  promptCostPerMillion: v.number(),
+  completionCostPerMillion: v.number(),
+  cacheReadCostPerMillion: v.optional(v.number()),
+  cacheWriteCostPerMillion: v.optional(v.number()),
+  cacheWrite1hCostPerMillion: v.optional(v.number()),
+  reasoningCostPerMillion: v.optional(v.number()),
+  source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
+  updatedAt: v.number(),
+});
+
 export const list = query({
   args: {
     provider: v.optional(v.string()),
   },
+  returns: v.array(modelPricingDoc),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
 
@@ -41,6 +57,7 @@ export const get = query({
     provider: v.string(),
     model: v.string(),
   },
+  returns: v.union(modelPricingDoc, v.null()),
   handler: async (ctx, args) => {
     await requireTraceFlowRole(ctx);
 
@@ -58,6 +75,7 @@ export const getInternal = internalQuery({
     provider: v.string(),
     model: v.string(),
   },
+  returns: v.union(modelPricingDoc, v.null()),
   handler: async (ctx, args) => {
     return ctx.db
       .query('modelPricing')
@@ -80,6 +98,7 @@ export const upsert = mutation({
     reasoningCostPerMillion: v.optional(v.number()),
     source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
   },
+  returns: v.id('modelPricing'),
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
 
@@ -133,6 +152,7 @@ export const upsertInternal = internalMutation({
     reasoningCostPerMillion: v.optional(v.number()),
     source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
   },
+  returns: v.id('modelPricing'),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query('modelPricing')
@@ -167,6 +187,7 @@ export const remove = mutation({
   args: {
     id: v.id('modelPricing'),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
 
@@ -185,6 +206,7 @@ export const remove = mutation({
 
 export const syncAllToKV = action({
   args: {},
+  returns: v.object({ synced: v.number() }),
   handler: async (ctx) => {
     await requireAdminAction(ctx);
 
@@ -204,6 +226,7 @@ export const syncAllToKV = action({
 });
 
 export const listAll = internalQuery({
+  returns: v.array(modelPricingDoc),
   handler: async (ctx) => {
     return ctx.db.query('modelPricing').collect();
   },
@@ -269,6 +292,7 @@ function convertOpenRouterModel(orModel: OpenRouterModel): {
 
 export const importFromOpenRouter = action({
   args: {},
+  returns: v.object({ imported: v.number() }),
   handler: async (ctx) => {
     await requireAdminAction(ctx);
 
@@ -303,6 +327,7 @@ export const importFromOpenRouter = action({
 
 export const syncDefaults = action({
   args: {},
+  returns: v.object({ synced: v.number() }),
   handler: async (ctx) => {
     await requireAdminAction(ctx);
 

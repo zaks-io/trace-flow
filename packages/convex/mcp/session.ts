@@ -6,11 +6,22 @@ import { internal } from '../_generated/api';
 
 export type McpSessionState = 'initializing' | 'ready' | 'shutdown';
 
+const mcpSessionValidator = v.object({
+  _id: v.id('mcpSessions'),
+  _creationTime: v.number(),
+  sessionId: v.string(),
+  userId: v.id('users'),
+  protocolVersion: v.string(),
+  state: v.union(v.literal('initializing'), v.literal('ready'), v.literal('shutdown')),
+  expiresAt: v.number(),
+});
+
 export const createSession = internalMutation({
   args: {
     userId: v.id('users'),
     protocolVersion: v.string(),
   },
+  returns: v.string(),
   handler: async (ctx, args): Promise<string> => {
     const sessionId = crypto.randomUUID();
     const expiresAt = Date.now() + SESSION_TTL_MS;
@@ -31,6 +42,7 @@ export const createSession = internalMutation({
 
 export const getSession = internalQuery({
   args: { sessionId: v.string() },
+  returns: v.union(mcpSessionValidator, v.null()),
   handler: async (ctx, args): Promise<Doc<'mcpSessions'> | null> => {
     const session = await ctx.db
       .query('mcpSessions')
@@ -51,6 +63,7 @@ export const getSession = internalQuery({
 
 export const getSessionInternal = internalQuery({
   args: { sessionId: v.string() },
+  returns: v.union(mcpSessionValidator, v.null()),
   handler: async (ctx, args): Promise<Doc<'mcpSessions'> | null> => {
     const session = await ctx.db
       .query('mcpSessions')
@@ -70,6 +83,7 @@ export const updateSessionState = internalMutation({
     sessionId: v.string(),
     state: v.union(v.literal('initializing'), v.literal('ready'), v.literal('shutdown')),
   },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const session = await ctx.db
       .query('mcpSessions')
@@ -86,6 +100,7 @@ export const updateSessionState = internalMutation({
 
 export const deleteSession = internalMutation({
   args: { sessionId: v.string() },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const session = await ctx.db
       .query('mcpSessions')
@@ -100,6 +115,7 @@ export const deleteSession = internalMutation({
 
 export const getUserSessions = internalQuery({
   args: { userId: v.id('users') },
+  returns: v.array(mcpSessionValidator),
   handler: async (ctx, args): Promise<Doc<'mcpSessions'>[]> => {
     return await ctx.db
       .query('mcpSessions')
@@ -110,6 +126,7 @@ export const getUserSessions = internalQuery({
 
 export const cleanupSession = internalMutation({
   args: { sessionId: v.string() },
+  returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
     const session = await ctx.db
       .query('mcpSessions')

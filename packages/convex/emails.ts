@@ -15,6 +15,7 @@ export const sendInviteEmail = internalAction({
     email: v.string(),
     token: v.string(),
   },
+  returns: v.null(),
   handler: async (_ctx, args) => {
     const resend = new Resend(process.env.RESEND_API_KEY);
     const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
@@ -28,6 +29,8 @@ export const sendInviteEmail = internalAction({
       subject: "You've been invited to Trace Flow",
       html,
     });
+
+    return null;
   },
 });
 
@@ -36,6 +39,7 @@ export const sendConfirmationEmail = internalAction({
     email: v.string(),
     confirmationToken: v.string(),
   },
+  returns: v.null(),
   handler: async (_ctx, args) => {
     const resend = new Resend(process.env.RESEND_API_KEY);
     const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
@@ -49,5 +53,7 @@ export const sendConfirmationEmail = internalAction({
       subject: 'Confirm your Trace Flow waitlist spot',
       html,
     });
+
+    return null;
   },
 });
