@@ -1,6 +1,6 @@
 DESCRIPTION >
     Copy pipe to roll up LLM usage metrics into hourly buckets.
-    Runs every 5 minutes and replaces all data with deduplicated results.
+    Runs every 10 minutes and replaces all data with deduplicated results.
 
 NODE rollup
 SQL >
