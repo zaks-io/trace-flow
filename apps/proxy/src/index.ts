@@ -435,7 +435,7 @@ app.all('*', async (c) => {
               response.status.toString(),
               operationName ?? '',
               decision.reason ?? '',
-              '0',
+              isSSE ? '1' : '0',
               '',
             ],
             doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0],
