@@ -82,6 +82,7 @@ interface Env {
   USAGE_TRACKER: DurableObjectNamespace;
   CONVEX_SITE_URL: string;
   USAGE_SYNC_SECRET: string;
+  ANALYTICS: AnalyticsEngineDataset;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -384,6 +385,34 @@ app.all('*', async (c) => {
             orgId: keyData.orgId,
           });
 
+          // Analytics Engine slot layout:
+          // blobs:   provider, status_code, operation, skip_reason, is_sse, model
+          // doubles: total_latency_ms, prep_latency_ms, ttfb_ms, is_server_error, total_tokens,
+          //          prompt_tokens, completion_tokens, cache_read_tokens, response_size
+          // Queries must use sum(_sample_interval) for counts, quantileExactWeighted for percentiles
+          c.env.ANALYTICS.writeDataPoint({
+            indexes: [keyData.orgId],
+            blobs: [
+              route.provider.id,
+              response.status.toString(),
+              operationName ?? '',
+              '',
+              isSSE ? '1' : '0',
+              responseMetadata?.model ?? '',
+            ],
+            doubles: [
+              responseComplete - requestStart,
+              requestSent - requestStart,
+              firstTokenReceived ? firstTokenReceived - requestSent : 0,
+              response.status >= 500 ? 1 : 0,
+              tokens?.totalTokens ?? 0,
+              tokens?.promptTokens ?? 0,
+              tokens?.completionTokens ?? 0,
+              tokens?.cacheReadTokens ?? 0,
+              totalSize,
+            ],
+          });
+
           await c.env.REQUEST_QUEUE.send(queueMessage);
         } catch (error) {
           console.error('Failed to complete observability capture:', {
@@ -398,6 +427,19 @@ app.all('*', async (c) => {
     c.executionCtx.waitUntil(
       (async () => {
         try {
+          // Track skipped requests in Analytics Engine
+          c.env.ANALYTICS.writeDataPoint({
+            indexes: [keyData.orgId],
+            blobs: [
+              route.provider.id,
+              response.status.toString(),
+              operationName ?? '',
+              decision.reason ?? '',
+              isSSE ? '1' : '0',
+              '',
+            ],
+            doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+          });
           await streamToCapture?.cancel();
           await pipePromise;
         } catch (error) {
