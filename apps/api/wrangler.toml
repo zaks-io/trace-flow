@@ -10,6 +10,8 @@ enabled = true
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 
+# Secret: TINYBIRD_ADMIN_TOKEN — set via `wrangler secret put TINYBIRD_ADMIN_TOKEN`
+
 [vars]
 AUTH0_DOMAIN = "auth0.zaks.io"
 AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"

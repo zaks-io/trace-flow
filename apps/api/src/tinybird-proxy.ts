@@ -67,6 +67,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
   const cached = await cache.match(cacheRequest);
   if (cached) {
     const response = new Response(cached.body, cached);
+    response.headers.delete('Cache-Control');
     response.headers.set('X-Cache', 'HIT');
     return response;
   }
@@ -91,13 +92,20 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
   return response;
 });
 
+const PASSTHROUGH_STATUSES = new Set([400, 403, 404, 429]);
+
 async function handleUpstreamError(
   c: { json: (data: unknown, status: number) => Response },
   tbResponse: Response,
 ): Promise<Response> {
   const detail = await tbResponse.text();
   console.error(`Tinybird ${tbResponse.status}: ${detail}`);
-  return c.json({ error: 'Upstream query failed' }, tbResponse.status >= 500 ? 502 : 400);
+  const status = PASSTHROUGH_STATUSES.has(tbResponse.status)
+    ? tbResponse.status
+    : tbResponse.status >= 500
+      ? 502
+      : 400;
+  return c.json({ error: 'Upstream query failed' }, status);
 }
 
 async function fetchFromTinybird(
