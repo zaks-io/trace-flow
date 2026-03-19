@@ -65,7 +65,7 @@ async function fetchWithToken<T>(
   params?: Record<string, string | number | boolean | undefined>,
   transform?: (data: unknown) => T,
 ): Promise<T> {
-  const apiUrl = process.env.NEXT_PUBLIC_TINYBIRD_API_URL ?? 'https://api.tinybird.co';
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
   const url = new URL(`${apiUrl}/v0/pipes/${pipe}.json`);
 
   if (params) {

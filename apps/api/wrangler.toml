@@ -14,6 +14,7 @@ binding = "CF_VERSION_METADATA"
 AUTH0_DOMAIN = "auth0.zaks.io"
 AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 SENTRY_ENVIRONMENT = "development"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 
 [[r2_buckets]]
 binding = "STORAGE"
@@ -31,6 +32,7 @@ workers_dev = false
 AUTH0_DOMAIN = "auth0.zaks.io"
 AUTH0_CLIENT_ID = "asEG3J6UWZOeKWclu2WxONmoIhTsCfdp"
 SENTRY_ENVIRONMENT = "production"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 
 [[env.production.routes]]
 pattern = "api.trace-flow.dev/*"
@@ -51,6 +53,7 @@ name = "trace-flow-api-preview"
 AUTH0_DOMAIN = "auth0.zaks.io"
 AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 SENTRY_ENVIRONMENT = "preview"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"
