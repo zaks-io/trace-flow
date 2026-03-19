@@ -61,7 +61,37 @@ Get your Tinybird token with `DATASOURCE:APPEND` scope:
 tb token create --name trace-flow-dev --scopes DATASOURCES:APPEND
 ```
 
-## 4. Deploy the Workers
+## 4. Configure Analytics Engine Read Access
+
+The admin Analytics Engine explorer reads directly from Cloudflare's Analytics Engine SQL API through Convex actions in `packages/convex/adminAnalytics.ts`.
+
+Set these environment variables for the Convex deployment that powers the web app:
+
+```bash
+# Required for Cloudflare API access
+npx convex env set CLOUDFLARE_ACCOUNT_ID your-cloudflare-account-id
+
+# Preferred: dedicated token with Account | Account Analytics | Read
+npx convex env set CLOUDFLARE_ANALYTICS_API_TOKEN your-analytics-read-token
+
+# Optional fallback if the shared token already includes analytics read access
+npx convex env set CLOUDFLARE_API_TOKEN your-cloudflare-api-token
+
+# Analytics Engine dataset to query
+npx convex env set CLOUDFLARE_ANALYTICS_DATASET trace-flow-proxy-dev
+```
+
+Recommended token scope:
+
+- `Account | Account Analytics | Read`
+
+Current Analytics Engine dataset limits:
+
+- The dataset is written only by the proxy worker.
+- It stores operational aggregates, not trace IDs or request bodies.
+- Preview and dev currently share `trace-flow-proxy-dev`, so the explorer cannot separate them unless the write-side dataset strategy changes.
+
+## 5. Deploy the Workers
 
 After creating the queues and setting the secrets, deploy the workers to your chosen environment:
 
@@ -81,7 +111,7 @@ bun run deploy:staging
 bun run deploy:prod
 ```
 
-## 5. Configure Custom Domains (Production)
+## 6. Configure Custom Domains (Production)
 
 Custom domains are configured in `wrangler.toml` and connected through the Cloudflare Dashboard:
 
@@ -113,7 +143,7 @@ cd apps/api && wrangler deploy --env production
 cd apps/proxy && wrangler deploy --env production
 ```
 
-## Testing Locally
+## 7. Testing Locally
 
 To test locally, you'll need to set up environment variables. Create a `.dev.vars` file in `apps/proxy-consumer/`:
 
@@ -130,7 +160,7 @@ Then run the workers in development mode:
 wrangler dev -c apps/proxy/wrangler.toml -c apps/proxy-consumer/wrangler.toml --persist-to .wrangler/state
 ```
 
-## Verifying the Setup
+## 8. Verifying the Setup
 
 1. Send a test request to your proxy worker using route-based paths:
 
@@ -165,7 +195,7 @@ Or use the Tinybird CLI:
 tb sql "SELECT * FROM otel_traces ORDER BY Timestamp DESC LIMIT 10 FORMAT JSON"
 ```
 
-## Architecture
+## 9. Architecture
 
 The system works as follows:
 
@@ -177,7 +207,7 @@ The system works as follows:
 6. Traces are inserted into Tinybird (managed ClickHouse) via HTTP interface
 7. Query traces in Tinybird or visualize with Grafana
 
-## OpenTelemetry Traces Schema
+## 10. OpenTelemetry Traces Schema
 
 Each queue message creates spans following [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/):
 
@@ -200,7 +230,7 @@ Each queue message creates spans following [OpenTelemetry GenAI semantic convent
 
 All spans use the same `TraceId` for correlation and form a parent-child relationship.
 
-## Querying Traces
+## 11. Querying Traces
 
 ### Get recent requests by provider
 
@@ -247,7 +277,23 @@ ORDER BY Duration DESC
 LIMIT 10;
 ```
 
-## Visualization with Grafana
+## 12. Analytics Engine Explorer Notes
+
+The admin explorer at `/app/admin/analytics` queries the proxy Analytics Engine dataset with Cloudflare SQL.
+
+The current proxy schema in `apps/proxy/src/index.ts` maps fields as:
+
+- `index1`: org ID
+- `blob1..6`: provider, status code, operation, skip reason, SSE flag, model
+- `double1..9`: total latency, prep latency, TTFB, server error flag, total tokens, prompt tokens, completion tokens, cache-read tokens, response size
+
+Aggregate queries must account for sampling:
+
+- Use `SUM(_sample_interval)` for counts
+- Use weighted sums and averages for numeric fields
+- Use `quantileExactWeighted(..., _sample_interval)` for percentiles
+
+## 13. Visualization with Grafana
 
 You can connect Grafana to your ClickHouse Cloud instance to build dashboards:
 

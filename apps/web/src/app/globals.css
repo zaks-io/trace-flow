@@ -226,6 +226,11 @@
     backdrop-filter: blur(16px);
   }
 
+  .tabular-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Table row hover with smooth transition */
   .table-row-interactive {
     @apply transition-colors duration-150;

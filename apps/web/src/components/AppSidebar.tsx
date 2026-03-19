@@ -15,6 +15,7 @@ import {
   UserPlus,
   Shield,
   CreditCard,
+  ChartColumn,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -51,6 +52,7 @@ const settingsItems: NavItem[] = [
 
 const adminNavItems: NavItem[] = [
   { title: 'System', href: '/app/admin', icon: Shield },
+  { title: 'Analytics', href: '/app/admin/analytics', icon: ChartColumn },
   { title: 'Invites', href: '/app/admin/invites', icon: UserPlus },
 ];
 

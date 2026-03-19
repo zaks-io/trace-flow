@@ -174,13 +174,15 @@ Convex exposes HTTP endpoints for OAuth flow:
 
 ## Environment Variables
 
-| Variable                     | Purpose                  |
-| ---------------------------- | ------------------------ |
-| `TINYBIRD_ADMIN_TOKEN`       | Signs Tinybird JWTs      |
-| `TINYBIRD_WORKSPACE_ID`      | Workspace for JWT claims |
-| `CLOUDFLARE_ACCOUNT_ID`      | For KV API calls         |
-| `CLOUDFLARE_API_TOKEN`       | Auth for Cloudflare API  |
-| `CLOUDFLARE_KV_NAMESPACE_ID` | Target KV namespace      |
+| Variable                         | Purpose                                            |
+| -------------------------------- | -------------------------------------------------- |
+| `TINYBIRD_ADMIN_TOKEN`           | Signs Tinybird JWTs                                |
+| `TINYBIRD_WORKSPACE_ID`          | Workspace for JWT claims                           |
+| `CLOUDFLARE_ACCOUNT_ID`          | Cloudflare account ID                              |
+| `CLOUDFLARE_API_TOKEN`           | Shared Cloudflare API token fallback               |
+| `CLOUDFLARE_ANALYTICS_API_TOKEN` | Preferred Analytics Engine SQL API read token      |
+| `CLOUDFLARE_ANALYTICS_DATASET`   | Analytics Engine dataset queried by admin explorer |
+| `CLOUDFLARE_KV_NAMESPACE_ID`     | Target KV namespace                                |
 
 ## Key Files
 
@@ -190,5 +192,6 @@ Convex exposes HTTP endpoints for OAuth flow:
 - `packages/convex/alerts.ts` - Alert rule management
 - `packages/convex/modelPricing.ts` - Pricing data management
 - `packages/convex/cloudflare.ts` - Cloudflare KV sync actions
+- `packages/convex/adminAnalytics.ts` - Analytics Engine SQL API admin actions
 - `packages/convex/mcp/handler.ts` - MCP message handling
 - `packages/convex/mcp/tools/` - MCP tool implementations
