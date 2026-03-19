@@ -137,6 +137,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         const stats = await batcher.getStats();
         env.ANALYTICS.writeDataPoint({
           indexes: [`shard-${shardId}`],
+          blobs: ['batcher_queue_depth'],
           doubles: [stats.queuedTraces, stats.lastFlushTime],
         });
       } catch (error) {

@@ -340,6 +340,7 @@ app.all('*', async (c) => {
 
           const tier = usageCheck.status !== 'error' ? usageCheck.tier : undefined;
           let stored = false;
+          const storageSkipped = omitBody;
 
           if (!omitBody) {
             stored = await storeBodies(
@@ -388,7 +389,8 @@ app.all('*', async (c) => {
           // Analytics Engine slot layout:
           // blobs:   provider, status_code, operation, skip_reason, is_sse, model
           // doubles: total_latency_ms, prep_latency_ms, ttfb_ms, is_server_error, total_tokens,
-          //          prompt_tokens, completion_tokens, cache_read_tokens, response_size, is_stored
+          //          prompt_tokens, completion_tokens, cache_read_tokens, response_size,
+          //          storage_status (1=stored, 0=failed, -1=skipped/omitBody)
           // Queries must use sum(_sample_interval) for counts, quantileExactWeighted for percentiles
           c.env.ANALYTICS.writeDataPoint({
             indexes: [keyData.orgId],
@@ -410,7 +412,7 @@ app.all('*', async (c) => {
               tokens?.completionTokens ?? 0,
               tokens?.cacheReadTokens ?? 0,
               totalSize,
-              stored ? 1 : 0,
+              storageSkipped ? -1 : stored ? 1 : 0,
             ],
           });
 
