@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/cloudflare';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { validateAuth0JWT } from './auth';
 import { getStoredBodies, isBodyVisible } from './bodies';
@@ -13,6 +14,9 @@ interface Env {
   AUTH0_CLIENT_ID: string;
   TINYBIRD_API_URL: string;
   TINYBIRD_ADMIN_TOKEN: string;
+  AXIOM_TOKEN?: string;
+  AXIOM_DATASET?: string;
+  AXIOM_DOMAIN?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -20,6 +24,7 @@ interface Env {
 
 interface Variables {
   userSub: string;
+  logger: Logger;
 }
 
 const PRODUCTION_ORIGINS = [
@@ -44,32 +49,43 @@ app.use('*', async (c, next) => {
 });
 
 app.use('*', async (c, next) => {
+  const logger = createWorkerLogger({
+    service: 'api',
+    request: c.req.raw,
+    axiom: axiomConfigFromEnv(c.env),
+    context: {
+      component: 'http',
+    },
+  });
+  c.set('logger', logger);
   const start = Date.now();
   await next();
   if (c.req.method !== 'OPTIONS') {
-    console.log(
-      JSON.stringify({
-        type: 'api_request',
-        method: c.req.method,
-        path: c.req.path,
-        status: c.res.status,
-        latencyMs: Date.now() - start,
-      }),
-    );
+    logger.info('api.request_complete', {
+      status: c.res.status,
+      latencyMs: Date.now() - start,
+    });
   }
+  c.executionCtx.waitUntil(logger.flush());
 });
 
 app.route('/', tinybirdProxy);
 
 app.get('/bodies/:requestId', async (c) => {
+  const logger = c.get('logger');
   const authError = await validateAuth0JWT(c);
   if (authError) {
     return authError;
   }
 
   const requestId = c.req.param('requestId');
-  const storedBodies = await getStoredBodies(c.env.STORAGE, requestId);
+  const requestLogger = logger.child({
+    requestId,
+    operation: 'fetch_bodies',
+  });
+  const storedBodies = await getStoredBodies(c.env.STORAGE, requestId, requestLogger);
   if (!storedBodies) {
+    requestLogger.warn('api.bodies_not_found');
     return c.json({ error: 'Bodies not found' }, 404);
   }
 
@@ -77,6 +93,7 @@ app.get('/bodies/:requestId', async (c) => {
   const orgId = storedBodies.orgId;
   if (!orgId) {
     // Legacy objects without orgId metadata are inaccessible
+    requestLogger.warn('api.bodies_forbidden_missing_org');
     return c.json({ error: 'Forbidden' }, 403);
   }
 
@@ -87,11 +104,18 @@ app.get('/bodies/:requestId', async (c) => {
   ]);
 
   if (userOrgData?.orgId !== orgId) {
+    requestLogger.warn('api.bodies_forbidden_wrong_org', {
+      orgId,
+    });
     return c.json({ error: 'Forbidden' }, 403);
   }
 
   const tier = subData?.tier ?? 'hobby';
   if (!isBodyVisible(storedBodies.uploaded, tier)) {
+    requestLogger.warn('api.bodies_expired', {
+      orgId,
+      tier,
+    });
     return c.json({ error: 'Bodies expired under current retention policy' }, 410);
   }
 

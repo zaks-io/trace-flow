@@ -2,6 +2,13 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HttpRouterWithHono } from 'convex-helpers/server/hono';
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
+import {
+  axiomConfigFromEnv,
+  createConvexLogger,
+  traceContextFromHeaders,
+  type LogContext,
+  type TraceContext,
+} from '@trace-flow/logging';
 import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
@@ -42,6 +49,23 @@ async function resolveOrgSubscription(ctx: ActionCtx, customerId: string, subscr
   return null;
 }
 
+function getRequestLogger(request: Request, context?: LogContext) {
+  return createConvexLogger({
+    service: 'convex',
+    convexFunction: 'http',
+    axiom: axiomConfigFromEnv({
+      AXIOM_TOKEN: process.env.AXIOM_TOKEN,
+      AXIOM_DATASET: process.env.AXIOM_DATASET,
+      AXIOM_DOMAIN: process.env.AXIOM_DOMAIN,
+    }),
+    context: {
+      component: 'http',
+      ...traceContextFromHeaders(request.headers),
+      ...(context ?? {}),
+    },
+  });
+}
+
 // Factory function for creating the Hono app (exported for testing)
 export function createApp(
   deps: HttpDeps = { oauth: oauthModule, tokens: tokensModule },
@@ -61,6 +85,9 @@ export function createApp(
 
   app.post('/stripe/webhook', async (c) => {
     const ctx = c.env;
+    const logger = getRequestLogger(c.req.raw, {
+      operation: 'stripe_webhook',
+    });
     const signature = c.req.header('stripe-signature');
     if (!signature) {
       return c.json({ error: 'Missing stripe-signature header' }, 400);
@@ -166,7 +193,7 @@ export function createApp(
           if (addonUnitsRaw) {
             const orgIdRaw = invoice.metadata?.orgId as Id<'organizations'> | undefined;
             if (!orgIdRaw) {
-              console.error('invoice.paid: addon invoice missing orgId metadata', {
+              logger.error('convex.stripe_invoice_missing_org_id', undefined, {
                 invoiceId: invoice.id,
                 addonUnits: addonUnitsRaw,
               });
@@ -174,7 +201,7 @@ export function createApp(
             }
             const units = Number(addonUnitsRaw);
             if (!Number.isFinite(units) || units <= 0 || units % UNITS_PER_ADDON !== 0) {
-              console.error('invoice.paid: addon invoice has invalid units', {
+              logger.error('convex.stripe_invoice_invalid_units', undefined, {
                 invoiceId: invoice.id,
                 orgId: orgIdRaw,
                 addonUnitsRaw,
@@ -197,15 +224,12 @@ export function createApp(
                   : payment.payment_intent?.id
                 : undefined;
             if (!paymentIntentId) {
-              console.error(
-                'invoice.paid: addon invoice has no payment_intent — credits NOT applied',
-                {
-                  invoiceId: invoice.id,
-                  orgId: orgIdRaw,
-                  units,
-                  paymentData: payment ? { type: payment.type } : 'no_payments',
-                },
-              );
+              logger.error('convex.stripe_invoice_missing_payment_intent', undefined, {
+                invoiceId: invoice.id,
+                orgId: orgIdRaw,
+                units,
+                paymentData: payment ? { type: payment.type } : 'no_payments',
+              });
               break;
             }
 
@@ -289,17 +313,18 @@ export function createApp(
       }
 
       await ctx.runMutation(internal.stripeEvents.markProcessed, { eventId: event.id });
+      await logger.flush();
       return c.json({ ok: true });
     } catch (error) {
-      console.error('Stripe webhook processing failed:', {
+      logger.error('convex.stripe_webhook_processing_failed', error, {
         eventId: event.id,
         eventType: event.type,
-        error: error instanceof Error ? error.message : String(error),
       });
       await ctx.runMutation(internal.stripeEvents.markFailed, {
         eventId: event.id,
         error: error instanceof Error ? error.message : String(error),
       });
+      await logger.flush();
       // Return 500 so Stripe retries. Idempotency table prevents double-processing.
       return c.json({ ok: false, error: 'processing_failed' }, 500);
     }
@@ -420,6 +445,9 @@ export function createApp(
   // OAuth: Handle Auth0 callback
   app.get('/mcp/callback', async (c) => {
     const ctx = c.env;
+    const logger = getRequestLogger(c.req.raw, {
+      operation: 'mcp_callback',
+    });
 
     try {
       const url = new URL(c.req.url);
@@ -448,7 +476,7 @@ export function createApp(
       try {
         auth0Tokens = await oauth.exchangeAuth0Code(code, callbackUrl);
       } catch (err) {
-        console.error('Auth0 token exchange failed:', err);
+        logger.error('convex.auth0_token_exchange_failed', err);
         return c.json({ error: 'Auth0 token exchange failed', details: String(err) }, 500);
       }
 
@@ -457,7 +485,7 @@ export function createApp(
       try {
         userInfo = await oauth.getAuth0UserInfo(auth0Tokens.access_token);
       } catch (err) {
-        console.error('Auth0 userinfo failed:', err);
+        logger.error('convex.auth0_userinfo_failed', err);
         return c.json({ error: 'Failed to get user info', details: String(err) }, 500);
       }
 
@@ -493,6 +521,7 @@ export function createApp(
       }
 
       // Explicit redirect with proper headers for browser compatibility
+      await logger.flush();
       return new Response(null, {
         status: 302,
         headers: {
@@ -502,7 +531,8 @@ export function createApp(
         },
       });
     } catch (err) {
-      console.error('OAuth callback error:', err);
+      logger.error('convex.oauth_callback_failed', err);
+      await logger.flush();
       return c.json({ error: 'OAuth callback failed', details: String(err) }, 500);
     }
   });
@@ -510,6 +540,9 @@ export function createApp(
   // OAuth: Token endpoint (for authorization code and refresh)
   app.post('/mcp/token', async (c) => {
     const ctx = c.env;
+    const logger = getRequestLogger(c.req.raw, {
+      operation: 'mcp_token',
+    });
     const body = await c.req.parseBody();
     const grantType = body.grant_type;
 
@@ -582,12 +615,13 @@ export function createApp(
             });
           }
         } catch (err) {
-          console.error('Auth0 token refresh failed:', err);
+          logger.error('convex.auth0_token_refresh_failed', err);
         }
       }
 
       const accessToken = await tokens.createAccessToken(refreshToken.userId, refreshTokenId);
 
+      await logger.flush();
       return c.json({
         access_token: accessToken,
         token_type: 'Bearer',
@@ -666,6 +700,7 @@ export function createApp(
   // Usage: DO pushes usage totals
   app.post('/usage/record', async (c) => {
     const ctx = c.env;
+    const requestTraceContext = traceContextFromHeaders(c.req.raw.headers);
 
     const authHeader = c.req.header('Authorization');
     const secret = process.env.USAGE_SYNC_SECRET;
@@ -679,13 +714,20 @@ export function createApp(
       periodEnd: number;
       subscriptionUnitsUsed: number;
       addonUnitsUsed: number;
+      traceContext?: TraceContext;
     }>();
+    const logger = getRequestLogger(c.req.raw, {
+      operation: 'usage_record',
+      ...(body.traceContext ?? requestTraceContext),
+      orgId: body.orgId,
+    });
 
     const orgId = body.orgId as Id<'organizations'>;
 
     // Verify the org exists before recording usage
     const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: orgId });
     if (!org) {
+      logger.warn('convex.usage_org_not_found');
       return c.json({ error: 'Organization not found' }, 404);
     }
 
@@ -703,6 +745,14 @@ export function createApp(
       addonUnitsUsed: body.addonUnitsUsed,
     });
 
+    logger.info('convex.usage_recorded', {
+      periodStart: body.periodStart,
+      periodEnd: body.periodEnd,
+      subscriptionUnitsUsed: body.subscriptionUnitsUsed,
+      addonUnitsUsed: body.addonUnitsUsed,
+    });
+
+    await logger.flush();
     return c.json({ ok: true });
   });
 

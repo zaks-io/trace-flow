@@ -864,4 +864,53 @@ describe('convex/http.ts', () => {
       expect(json.error).toBe('Session does not belong to this user');
     });
   });
+
+  describe('POST /usage/record', () => {
+    it('records usage when trace context is provided', async () => {
+      vi.stubEnv('USAGE_SYNC_SECRET', 'sync-secret');
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({ _id: 'org123' });
+      ctx.runMutation.mockResolvedValue(undefined);
+
+      const res = await app.request(
+        'http://localhost/usage/record',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer sync-secret',
+            traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
+          },
+          body: JSON.stringify({
+            orgId: 'org123',
+            periodStart: 1,
+            periodEnd: 2,
+            subscriptionUnitsUsed: 3,
+            addonUnitsUsed: 4,
+            traceContext: {
+              traceId: '0123456789abcdef0123456789abcdef',
+              requestId: 'req_123',
+            },
+          }),
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(200);
+      expect(ctx.runQuery).toHaveBeenCalledOnce();
+      expect(ctx.runMutation).toHaveBeenCalledTimes(2);
+      expect(ctx.runMutation.mock.calls[0]?.[1]).toMatchObject({
+        orgId: 'org123',
+        periodStart: 1,
+        periodEnd: 2,
+        subscriptionUnitsUsed: 3,
+        addonUnitsUsed: 4,
+      });
+      expect(ctx.runMutation.mock.calls[1]?.[1]).toMatchObject({
+        orgId: 'org123',
+        subscriptionUnitsUsed: 3,
+        addonUnitsUsed: 4,
+      });
+    });
+  });
 });

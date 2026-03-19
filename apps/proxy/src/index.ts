@@ -17,6 +17,7 @@
  */
 import * as Sentry from '@sentry/cloudflare';
 import { OpenAPIHono } from '@hono/zod-openapi';
+import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import {
   generateId,
   generateTraceId,
@@ -83,6 +84,9 @@ interface Env {
   CONVEX_SITE_URL: string;
   USAGE_SYNC_SECRET: string;
   ANALYTICS: AnalyticsEngineDataset;
+  AXIOM_TOKEN?: string;
+  AXIOM_DATASET?: string;
+  AXIOM_DOMAIN?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -128,9 +132,19 @@ app.all('*', async (c) => {
     return authResult;
   }
   const keyData: ApiKeyData = authResult;
+  const requestLogger = createWorkerLogger({
+    service: 'proxy',
+    request: c.req.raw,
+    axiom: axiomConfigFromEnv(c.env),
+    context: {
+      component: 'gateway',
+      orgId: keyData.orgId,
+    },
+  });
 
   if (!keyData.orgId) {
-    console.log(JSON.stringify({ type: 'proxy_reject', reason: 'no_org' }));
+    requestLogger.warn('proxy.request_rejected', { reason: 'no_org' });
+    c.executionCtx.waitUntil(requestLogger.flush());
     return c.json(
       {
         error: 'Misconfigured API key',
@@ -155,8 +169,7 @@ app.all('*', async (c) => {
   const decision = resolveTracingDecision(billing, usageCheck);
 
   if (decision.reason === 'internal_error') {
-    console.error('Tracing disabled due to internal error — DO or billing check failed', {
-      orgId: keyData.orgId,
+    requestLogger.error('proxy.tracing_disabled', undefined, {
       billingStatus: billing.status,
       usageStatus: usageCheck.status,
     });
@@ -166,14 +179,11 @@ app.all('*', async (c) => {
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
 
   if (contentLength > MAX_REQUEST_SIZE) {
-    console.log(
-      JSON.stringify({
-        type: 'proxy_reject',
-        reason: 'too_large',
-        orgId: keyData.orgId,
-        contentLength,
-      }),
-    );
+    requestLogger.warn('proxy.request_rejected', {
+      reason: 'too_large',
+      contentLength,
+    });
+    c.executionCtx.waitUntil(requestLogger.flush());
     return c.json(
       {
         error: 'Request too large',
@@ -185,14 +195,11 @@ app.all('*', async (c) => {
 
   const route = resolveRoute(c.req.path);
   if (!route) {
-    console.log(
-      JSON.stringify({
-        type: 'proxy_reject',
-        reason: 'invalid_route',
-        orgId: keyData.orgId,
-        path: c.req.path,
-      }),
-    );
+    requestLogger.warn('proxy.request_rejected', {
+      reason: 'invalid_route',
+      path: c.req.path,
+    });
+    c.executionCtx.waitUntil(requestLogger.flush());
     return c.json(
       {
         error: 'Invalid route',
@@ -220,6 +227,13 @@ app.all('*', async (c) => {
 
   // Derive gen_ai.operation.name from the API endpoint path
   const operationName = deriveOperationName(c.req.path);
+  const logger = requestLogger.child({
+    traceId,
+    requestId,
+    parentSpanId,
+    provider: route.provider.id,
+    operation: operationName,
+  });
 
   const query = new URL(c.req.url).search;
   const targetUrl = route.targetUrl + query;
@@ -298,9 +312,7 @@ app.all('*', async (c) => {
           const responseBody = chunksToString(responseCapturedChunks);
 
           if (isTruncated) {
-            console.warn('Response truncated for storage:', {
-              requestId,
-              orgId: keyData.orgId,
+            logger.warn('proxy.response_truncated', {
               totalSize,
               capturedSize: responseBody.length,
             });
@@ -349,11 +361,7 @@ app.all('*', async (c) => {
                 inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
               }
             } catch (error) {
-              console.error('Failed to parse request body:', {
-                requestId,
-                orgId: keyData.orgId,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              logger.error('proxy.request_body_parse_failed', error);
             }
           }
 
@@ -368,14 +376,12 @@ app.all('*', async (c) => {
               requestBody,
               responseBody,
               isTruncated,
+              logger,
               keyData.orgId,
             );
 
             if (!stored) {
-              console.warn('R2 storage failed, queuing message without stored bodies:', {
-                requestId,
-                orgId: keyData.orgId,
-              });
+              logger.warn('proxy.r2_storage_failed');
             }
           }
 
@@ -436,30 +442,22 @@ app.all('*', async (c) => {
             ],
           });
 
-          console.log(
-            JSON.stringify({
-              type: 'proxy_kpm',
-              orgId: keyData.orgId,
-              requestId,
-              provider: route.provider.id,
-              status: response.status,
-              totalLatencyMs: responseComplete - requestStart,
-              prepLatencyMs: requestSent - requestStart,
-              ttfbMs: firstTokenReceived ? firstTokenReceived - requestSent : 0,
-              isSSE,
-              model: responseMetadata?.model,
-              totalTokens: tokens?.totalTokens ?? 0,
-              r2Stored: storageSkipped ? 'skipped' : stored ? 'stored' : 'failed',
-            }),
-          );
+          logger.info('proxy.capture_metrics', {
+            status: response.status,
+            totalLatencyMs: responseComplete - requestStart,
+            prepLatencyMs: requestSent - requestStart,
+            ttfbMs: firstTokenReceived ? firstTokenReceived - requestSent : 0,
+            isSse: isSSE,
+            model: responseMetadata?.model,
+            totalTokens: tokens?.totalTokens ?? 0,
+            r2Stored: storageSkipped ? 'skipped' : stored ? 'stored' : 'failed',
+          });
 
           await c.env.REQUEST_QUEUE.send(queueMessage);
         } catch (error) {
-          console.error('Failed to complete observability capture:', {
-            requestId,
-            orgId: keyData.orgId,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.error('proxy.capture_failed', error);
+        } finally {
+          await logger.flush();
         }
       })(),
     );
@@ -481,25 +479,19 @@ app.all('*', async (c) => {
             ],
             doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // match recording path slot count
           });
-          console.log(
-            JSON.stringify({
-              type: 'proxy_skip',
-              requestId,
-              provider: route.provider.id,
-              reason: decision.reason,
-              orgId: keyData.orgId,
-            }),
-          );
+          logger.info('proxy.capture_skipped', {
+            reason: decision.reason,
+            status: response.status,
+          });
 
           await streamToCapture?.cancel();
           await pipePromise;
         } catch (error) {
           if (error instanceof Error && error.name !== 'AbortError') {
-            console.error('Stream cleanup failed (not recording):', {
-              requestId,
-              error: error.message,
-            });
+            logger.error('proxy.stream_cleanup_failed', error);
           }
+        } finally {
+          await logger.flush();
         }
       })(),
     );

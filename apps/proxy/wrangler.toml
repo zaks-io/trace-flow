@@ -18,6 +18,7 @@ binding = "CF_VERSION_METADATA"
 
 [vars]
 SENTRY_ENVIRONMENT = "development"
+AXIOM_DATASET = "trace-flow-logs"
 
 # KV Namespace for API key validation (dev)
 [[kv_namespaces]]
@@ -39,7 +40,7 @@ bucket_name = "trace-flow-storage-dev"
 binding = "ANALYTICS"
 dataset = "trace-flow-proxy-dev"
 
-# Secrets required: CONVEX_SITE_URL (https://{deployment}.convex.site), USAGE_SYNC_SECRET, SENTRY_DSN
+# Secrets required: CONVEX_SITE_URL (https://{deployment}.convex.site), USAGE_SYNC_SECRET, SENTRY_DSN, AXIOM_TOKEN
 
 # Durable Object for usage tracking
 [[durable_objects.bindings]]
@@ -56,6 +57,7 @@ workers_dev = false
 
 [env.production.vars]
 SENTRY_ENVIRONMENT = "production"
+AXIOM_DATASET = "trace-flow-logs"
 
 [[env.production.routes]]
 pattern = "gateway.trace-flow.dev/*"
@@ -86,6 +88,7 @@ name = "trace-flow-proxy-preview"
 
 [env.preview.vars]
 SENTRY_ENVIRONMENT = "preview"
+AXIOM_DATASET = "trace-flow-logs"
 
 [[env.preview.kv_namespaces]]
 binding = "API_KEYS"

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { validateAuth0JWT } from '../auth';
 import type { Context } from 'hono';
+import type { Logger } from '@trace-flow/logging';
 
 vi.mock('jose', () => ({
   jwtVerify: vi.fn(),
@@ -9,16 +10,25 @@ vi.mock('jose', () => ({
 
 import { jwtVerify } from 'jose';
 
+const noopLogger: Logger = {
+  child: () => noopLogger,
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  flush: () => Promise.resolve(),
+};
+
 interface MockEnv {
   Bindings: { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string };
-  Variables: { userSub: string };
+  Variables: { userSub: string; logger: Logger };
 }
 
 function createMockContext(
   headers: Record<string, string>,
   env: { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string },
 ): Context<MockEnv> {
-  const vars: Record<string, unknown> = {};
+  const vars: Record<string, unknown> = { logger: noopLogger };
   return {
     req: {
       header: (name: string) => headers[name.toLowerCase()],

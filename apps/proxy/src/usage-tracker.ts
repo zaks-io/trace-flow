@@ -1,9 +1,20 @@
+import {
+  axiomConfigFromEnv,
+  createLogger,
+  traceContextToHeaders,
+  type Logger,
+  type TraceContext,
+} from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
+import { generateTraceId } from '@trace-flow/utils';
 import { DurableObject } from 'cloudflare:workers';
 
 interface Env {
   CONVEX_SITE_URL: string;
   USAGE_SYNC_SECRET: string;
+  AXIOM_TOKEN?: string;
+  AXIOM_DATASET?: string;
+  AXIOM_DOMAIN?: string;
 }
 
 interface CheckRequest {
@@ -21,8 +32,49 @@ interface ConfigRow {
   period_end: number;
 }
 
+interface UsageSyncPayload {
+  orgId: string;
+  periodStart: number;
+  periodEnd: number;
+  subscriptionUnitsUsed: number;
+  addonUnitsUsed: number;
+  traceContext?: TraceContext;
+}
+
+export function buildUsageSyncRequestInit(secret: string, payload: UsageSyncPayload): RequestInit {
+  return {
+    method: 'POST',
+    headers: traceContextToHeaders(payload.traceContext ?? {}, {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${secret}`,
+    }),
+    body: JSON.stringify(payload),
+  };
+}
+
 export class UsageTracker extends DurableObject<Env> {
   private initialized = false;
+
+  private createTraceContext(orgId: string, periodStart: number, periodEnd: number): TraceContext {
+    return {
+      traceId: generateTraceId(),
+      workflowId: `usage:${orgId}:${periodStart}:${periodEnd}`,
+      orgId,
+    };
+  }
+
+  private createUsageLogger(traceContext: TraceContext) {
+    return createLogger({
+      service: 'proxy',
+      runtime: 'durable-object',
+      axiom: axiomConfigFromEnv(this.env),
+      context: {
+        component: 'usage-tracker',
+        operation: 'push_usage',
+        ...traceContext,
+      },
+    });
+  }
 
   private ensureTables() {
     if (this.initialized) return;
@@ -144,10 +196,24 @@ export class UsageTracker extends DurableObject<Env> {
     // If push fails, proceed with reset — the alarm will retry the push.
     // This avoids blocking all capture during transient Convex outages.
     await this.ctx.blockConcurrencyWhile(async () => {
+      const traceContext = this.createTraceContext(
+        config.org_id,
+        config.period_start,
+        config.period_end,
+      );
+      const logger = this.createUsageLogger(traceContext);
       try {
-        await this.pushToConvex(config.org_id, config.period_start, config.period_end);
+        await this.pushToConvex(
+          config.org_id,
+          config.period_start,
+          config.period_end,
+          logger,
+          traceContext,
+        );
       } catch (e) {
-        console.error('pushToConvex failed during rollover, proceeding with reset:', e);
+        logger.error('proxy.usage_rollover_push_failed', e);
+      } finally {
+        await logger.flush();
       }
     });
 
@@ -273,12 +339,26 @@ export class UsageTracker extends DurableObject<Env> {
       counters.subscription_units_used !== counters.last_pushed_subscription ||
       counters.addon_units_used !== counters.last_pushed_addon
     ) {
+      const traceContext = this.createTraceContext(
+        config.org_id,
+        config.period_start,
+        config.period_end,
+      );
+      const logger = this.createUsageLogger(traceContext);
       try {
-        await this.pushToConvex(config.org_id, config.period_start, config.period_end);
+        await this.pushToConvex(
+          config.org_id,
+          config.period_start,
+          config.period_end,
+          logger,
+          traceContext,
+        );
       } catch (e) {
-        console.error('pushToConvex failed in alarm, rescheduling:', e);
+        logger.error('proxy.usage_alarm_push_failed', e);
         await this.ctx.storage.setAlarm(Date.now() + 60_000);
         return;
+      } finally {
+        await logger.flush();
       }
 
       // Fix #1: Re-read counters after push to avoid marking unpushed increments as synced
@@ -288,35 +368,46 @@ export class UsageTracker extends DurableObject<Env> {
         freshCounters.subscription_units_used,
         freshCounters.addon_units_used,
       );
-    } else {
-      // Counters unchanged, nothing to push
     }
   }
 
-  private async pushToConvex(orgId: string, periodStart: number, periodEnd: number) {
+  private async pushToConvex(
+    orgId: string,
+    periodStart: number,
+    periodEnd: number,
+    logger: Logger,
+    traceContext: TraceContext,
+  ) {
     const counters = this.getCounters();
 
     const url = `${this.env.CONVEX_SITE_URL}/usage/record`;
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.env.USAGE_SYNC_SECRET}`,
-      },
-      body: JSON.stringify({
+    const response = await fetch(
+      url,
+      buildUsageSyncRequestInit(this.env.USAGE_SYNC_SECRET, {
         orgId,
         periodStart,
         periodEnd,
         subscriptionUnitsUsed: counters.subscription_units_used,
         addonUnitsUsed: counters.addon_units_used - counters.addon_baseline,
+        traceContext,
       }),
-    });
+    );
 
     if (!response.ok) {
       const body = await response.text();
-      console.error('pushToConvex failed:', { status: response.status, body });
+      logger.error('proxy.usage_sync_failed', undefined, {
+        status: response.status,
+        body,
+      });
       throw new Error(`pushToConvex failed: ${response.status} ${response.statusText}`);
     }
+
+    logger.info('proxy.usage_synced', {
+      subscriptionUnitsUsed: counters.subscription_units_used,
+      addonUnitsUsed: counters.addon_units_used - counters.addon_baseline,
+      periodStart,
+      periodEnd,
+    });
   }
 }

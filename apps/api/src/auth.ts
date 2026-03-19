@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
+import type { Logger } from '@trace-flow/logging';
 
 interface JWTPayload {
   sub: string;
@@ -25,8 +26,9 @@ const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
  */
 export async function validateAuth0JWT<
   E extends { AUTH0_DOMAIN: string; AUTH0_CLIENT_ID: string },
-  V extends { userSub: string },
+  V extends { userSub: string; logger: Logger },
 >(c: Context<{ Bindings: E; Variables: V }>): Promise<Response | null> {
+  const logger = c.get('logger');
   const authHeader = c.req.header('Authorization');
 
   if (!authHeader) {
@@ -55,7 +57,7 @@ export async function validateAuth0JWT<
   const clientId = c.env.AUTH0_CLIENT_ID;
 
   if (!domain || !clientId) {
-    console.error('Auth0 configuration is missing', { domain, clientId });
+    logger.error('api.auth_config_missing', undefined, { domain, clientId });
     return c.json(
       {
         error: 'Server configuration error',
@@ -83,6 +85,9 @@ export async function validateAuth0JWT<
     const roles = jwtPayload['neuron/roles'] ?? [];
 
     if (!roles.includes('Trace Flow')) {
+      logger.warn('api.auth_forbidden_role', {
+        sub: jwtPayload.sub,
+      });
       return c.json(
         {
           error: 'Insufficient permissions',
@@ -99,6 +104,7 @@ export async function validateAuth0JWT<
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
     if (errorMessage.includes('expired')) {
+      logger.warn('api.auth_token_expired');
       return c.json(
         {
           error: 'Token expired',
@@ -107,7 +113,9 @@ export async function validateAuth0JWT<
         401,
       );
     }
-    console.error('Error validating Auth0 JWT', error);
+    logger.warn('api.auth_token_invalid', {
+      error: errorMessage,
+    });
     return c.json(
       {
         error: 'Invalid token',
