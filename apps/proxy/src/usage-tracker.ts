@@ -32,7 +32,7 @@ interface ConfigRow {
   period_end: number;
 }
 
-export interface UsageSyncPayload {
+interface UsageSyncPayload {
   orgId: string;
   periodStart: number;
   periodEnd: number;
