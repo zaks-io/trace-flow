@@ -193,6 +193,14 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     billing.status === 'canceled' ||
     billing.status === 'not_found'
   ) {
+    console.log(
+      JSON.stringify({
+        type: 'otlp_reject',
+        orgId: keyData.orgId,
+        reason: billing.status,
+        rejectedSpans: traces.length,
+      }),
+    );
     const response: OTLPExportTraceServiceResponse = {
       partialSuccess: {
         rejectedSpans: traces.length,
@@ -211,6 +219,14 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   const usageCheck = await checkUsage(c.env, keyData.orgId, traces.length, billing.subscription);
 
   if (usageCheck.status === 'exceeded') {
+    console.log(
+      JSON.stringify({
+        type: 'otlp_reject',
+        orgId: keyData.orgId,
+        reason: 'exceeded',
+        rejectedSpans: traces.length,
+      }),
+    );
     const response: OTLPExportTraceServiceResponse = {
       partialSuccess: {
         rejectedSpans: traces.length,
@@ -222,6 +238,14 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   }
 
   if (usageCheck.status === 'error') {
+    console.log(
+      JSON.stringify({
+        type: 'otlp_reject',
+        orgId: keyData.orgId,
+        reason: 'usage_error',
+        rejectedSpans: traces.length,
+      }),
+    );
     const response: OTLPExportTraceServiceResponse = {
       partialSuccess: {
         rejectedSpans: traces.length,
@@ -243,8 +267,17 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     (async () => {
       try {
         await c.env.REQUEST_QUEUE.send(message);
+        console.log(
+          JSON.stringify({
+            type: 'otlp_kpm',
+            orgId: keyData.orgId,
+            spanCount: traces.length,
+            resourceSpanCount: body.resourceSpans.length,
+          }),
+        );
       } catch (error) {
         console.error('Failed to enqueue OTLP traces:', {
+          orgId: keyData.orgId,
           traceCount: traces.length,
           error: error instanceof Error ? error.message : String(error),
         });

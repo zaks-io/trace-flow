@@ -88,8 +88,10 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
     } catch (error) {
       const messageId =
         message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : message.body.requestId;
+      const orgId = message.body.type === 'otlp' ? undefined : message.body.orgId;
       console.error('Failed to process message:', {
         messageId,
+        orgId,
         error: error instanceof Error ? error.message : String(error),
       });
       failedMessages.push(message);
@@ -151,6 +153,15 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
   for (const message of failedMessages) {
     message.retry();
   }
+
+  console.log(
+    JSON.stringify({
+      type: 'queue_batch',
+      batchSize: batch.messages.length,
+      failedCount: failedMessages.length,
+      shardCount: shardedMessages.size,
+    }),
+  );
 }
 
 export default {

@@ -130,6 +130,7 @@ app.all('*', async (c) => {
   const keyData: ApiKeyData = authResult;
 
   if (!keyData.orgId) {
+    console.log(JSON.stringify({ type: 'proxy_reject', reason: 'no_org', status: 403 }));
     return c.json(
       {
         error: 'Misconfigured API key',
@@ -165,6 +166,14 @@ app.all('*', async (c) => {
   const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
 
   if (contentLength > MAX_REQUEST_SIZE) {
+    console.log(
+      JSON.stringify({
+        type: 'proxy_reject',
+        reason: 'too_large',
+        orgId: keyData.orgId,
+        contentLength,
+      }),
+    );
     return c.json(
       {
         error: 'Request too large',
@@ -176,6 +185,14 @@ app.all('*', async (c) => {
 
   const route = resolveRoute(c.req.path);
   if (!route) {
+    console.log(
+      JSON.stringify({
+        type: 'proxy_reject',
+        reason: 'invalid_route',
+        orgId: keyData.orgId,
+        path: c.req.path,
+      }),
+    );
     return c.json(
       {
         error: 'Invalid route',
@@ -283,6 +300,7 @@ app.all('*', async (c) => {
           if (isTruncated) {
             console.warn('Response truncated for storage:', {
               requestId,
+              orgId: keyData.orgId,
               totalSize,
               capturedSize: responseBody.length,
             });
@@ -333,6 +351,7 @@ app.all('*', async (c) => {
             } catch (error) {
               console.error('Failed to parse request body:', {
                 requestId,
+                orgId: keyData.orgId,
                 error: error instanceof Error ? error.message : String(error),
               });
             }
@@ -355,6 +374,7 @@ app.all('*', async (c) => {
             if (!stored) {
               console.warn('R2 storage failed, queuing message without stored bodies:', {
                 requestId,
+                orgId: keyData.orgId,
               });
             }
           }
@@ -416,10 +436,28 @@ app.all('*', async (c) => {
             ],
           });
 
+          console.log(
+            JSON.stringify({
+              type: 'proxy_kpm',
+              orgId: keyData.orgId,
+              requestId,
+              provider: route.provider.id,
+              status: response.status,
+              totalLatencyMs: responseComplete - requestStart,
+              prepLatencyMs: requestSent - requestStart,
+              ttfbMs: firstTokenReceived ? firstTokenReceived - requestSent : 0,
+              isSSE,
+              model: responseMetadata?.model,
+              totalTokens: tokens?.totalTokens ?? 0,
+              r2Stored: stored,
+            }),
+          );
+
           await c.env.REQUEST_QUEUE.send(queueMessage);
         } catch (error) {
           console.error('Failed to complete observability capture:', {
             requestId,
+            orgId: keyData.orgId,
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -443,6 +481,16 @@ app.all('*', async (c) => {
             ],
             doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // match recording path slot count
           });
+          console.log(
+            JSON.stringify({
+              type: 'proxy_skip',
+              requestId,
+              provider: route.provider.id,
+              reason: decision.reason,
+              orgId: keyData.orgId,
+            }),
+          );
+
           await streamToCapture?.cancel();
           await pipePromise;
         } catch (error) {

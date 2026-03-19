@@ -20,6 +20,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   const apiKey = c.req.header('X-Trace-Flow-Api-Key');
 
   if (!apiKey) {
+    console.log(JSON.stringify({ type: 'auth_reject', reason: 'missing_key', path: c.req.path }));
     return c.json(
       {
         error: 'Missing API key',
@@ -46,6 +47,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   });
 
   if (!parsed) {
+    console.log(JSON.stringify({ type: 'auth_reject', reason: 'invalid_key', path: c.req.path }));
     return c.json(
       {
         error: 'Invalid API key',
@@ -58,6 +60,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   // Re-check expiry on cache hits (key may have expired since it was cached)
   if (parsed.expiresAt < Date.now()) {
     await invalidate(cacheKey);
+    console.log(JSON.stringify({ type: 'auth_reject', reason: 'expired_key', path: c.req.path }));
     return c.json(
       {
         error: 'Expired API key',

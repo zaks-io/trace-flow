@@ -46,7 +46,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
   if (ttl === 0) {
     const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
     if (!tbResponse.ok) {
-      return handleUpstreamError(c, tbResponse);
+      return handleUpstreamError(c, tbResponse, pipe);
     }
     const body = await tbResponse.text();
     return new Response(body, {
@@ -74,7 +74,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
 
   const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
   if (!tbResponse.ok) {
-    return handleUpstreamError(c, tbResponse);
+    return handleUpstreamError(c, tbResponse, pipe);
   }
 
   const body = await tbResponse.text();
@@ -97,9 +97,10 @@ const PASSTHROUGH_STATUSES = new Set([400, 403, 404, 429]);
 async function handleUpstreamError(
   c: { json: (data: unknown, status: number) => Response },
   tbResponse: Response,
+  pipe: string,
 ): Promise<Response> {
   const detail = await tbResponse.text();
-  console.error(`Tinybird ${tbResponse.status}: ${detail}`);
+  console.error(`Tinybird ${tbResponse.status}: ${detail}`, { pipe });
   const status = PASSTHROUGH_STATUSES.has(tbResponse.status)
     ? tbResponse.status
     : tbResponse.status >= 500

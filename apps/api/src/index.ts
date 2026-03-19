@@ -43,6 +43,22 @@ app.use('*', async (c, next) => {
   return mw(c, next);
 });
 
+app.use('*', async (c, next) => {
+  const start = Date.now();
+  await next();
+  if (c.req.method !== 'OPTIONS') {
+    console.log(
+      JSON.stringify({
+        type: 'api_request',
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        latencyMs: Date.now() - start,
+      }),
+    );
+  }
+});
+
 app.route('/', tinybirdProxy);
 
 app.get('/bodies/:requestId', async (c) => {
