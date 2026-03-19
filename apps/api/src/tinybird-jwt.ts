@@ -14,7 +14,7 @@ export interface TinybirdJWTPayload {
   exp?: number;
 }
 
-export interface CacheParams {
+interface CacheParams {
   apiKeys: string;
   retentionDays: number;
 }
