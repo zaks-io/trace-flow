@@ -238,7 +238,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   }
 
   if (usageCheck.status === 'error') {
-    console.log(
+    console.warn(
       JSON.stringify({
         type: 'otlp_reject',
         orgId: keyData.orgId,
