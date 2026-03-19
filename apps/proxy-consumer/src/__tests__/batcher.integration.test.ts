@@ -1,12 +1,15 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env, runInDurableObject } from 'cloudflare:test';
-import type { TinybirdTrace } from '@trace-flow/types';
 import type { TraceBatcherInstance } from '../batcher';
+import { createMockTrace } from './fixtures';
 
 describe('TraceBatcher Integration', () => {
   let batcher: DurableObjectStub<TraceBatcherInstance>;
 
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+
     const id = env.TRACE_BATCHER.newUniqueId();
     batcher = env.TRACE_BATCHER.get(id);
     vi.clearAllMocks();
@@ -14,38 +17,13 @@ describe('TraceBatcher Integration', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
-  const createMockTrace = (traceId: string): TinybirdTrace => ({
-    ReceivedAt: 1700000000000000000,
-    Timestamp: 1000000000,
-    TraceId: traceId,
-    SpanId: 'span-123',
-    ParentSpanId: '',
-    TraceState: '',
-    SpanName: 'gen_ai.request',
-    SpanKind: 'SPAN_KIND_CLIENT',
-    ServiceName: 'llm-observability',
-    ResourceAttributes: { 'service.name': 'llm-observability' },
-    SpanAttributes: {
-      'gen_ai.request_id': traceId,
-      'gen_ai.system': 'openai',
-      'gen_ai.request.model': 'gpt-4',
-    },
-    Duration: 500000,
-    StatusCode: 'STATUS_CODE_OK',
-    StatusMessage: '',
-    ApiKey: 'test-key',
-    'Events.Timestamp': [],
-    'Events.Name': [],
-    'Events.Attributes': [],
-    'Links.TraceId': [],
-    'Links.SpanId': [],
-    'Links.TraceState': [],
-    'Links.Attributes': [],
-    TierAtIngestion: 'hobby',
-    RetentionExpiresAt: 1700604800000000000,
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it('should deduplicate message IDs in addMessageTraces', async () => {
+  it('should expose enriched stats for queued traces', async () => {
+    const now = Date.now();
+
     const firstResults = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addMessageTraces([
         { messageId: 'msg-1', traces: [createMockTrace('trace-msg-1')] },
@@ -63,15 +41,24 @@ describe('TraceBatcher Integration', () => {
     const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.getStats();
     });
-    expect(stats.queuedTraces).toBe(1);
+
+    expect(stats).toEqual({
+      queuedTraces: 1,
+      oldestQueuedTraceTime: now,
+      lastSuccessfulFlushTime: now,
+      lastFlushTime: now,
+    });
   });
 
-  it('should handle mixed batches in addMessageTraces', async () => {
+  it('should keep the oldest queued trace timestamp across later inserts', async () => {
+    const firstInsertTime = Date.now();
     await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addMessageTraces([
         { messageId: 'msg-2', traces: [createMockTrace('trace-msg-2')] },
       ]);
     });
+
+    vi.advanceTimersByTime(60_000);
 
     const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
       return instance.addMessageTraces([
@@ -84,5 +71,23 @@ describe('TraceBatcher Integration', () => {
       { messageId: 'msg-2', status: 'duplicate' },
       { messageId: 'msg-3', status: 'inserted' },
     ]);
+
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+      return instance.getStats();
+    });
+
+    expect(stats.queuedTraces).toBe(2);
+    expect(stats.oldestQueuedTraceTime).toBe(firstInsertTime);
+    expect(stats.lastSuccessfulFlushTime).toBe(firstInsertTime);
+    expect(stats.lastFlushTime).toBeGreaterThanOrEqual(firstInsertTime);
+  });
+
+  it('should report no oldest queued trace when the queue is empty', async () => {
+    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+      return instance.getStats();
+    });
+
+    expect(stats.queuedTraces).toBe(0);
+    expect(stats.oldestQueuedTraceTime).toBeNull();
   });
 });

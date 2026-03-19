@@ -11,6 +11,8 @@ const MAX_JITTER_MS = 1000;
 const PROCESSED_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
+export const TRACE_BATCHER_BATCH_SIZE = BATCH_SIZE;
+
 type MessageTraceStatus = 'inserted' | 'duplicate' | 'failed';
 
 interface MessageTraceBatchItem {
@@ -23,8 +25,16 @@ interface MessageTraceResult {
   status: MessageTraceStatus;
 }
 
+export interface TraceBatcherStats {
+  queuedTraces: number;
+  oldestQueuedTraceTime: number | null;
+  lastSuccessfulFlushTime: number;
+  lastFlushTime: number;
+}
+
 class TraceBatcherBase extends DurableObject<Env> {
   private lastFlushTime: number = Date.now();
+  private lastSuccessfulFlushTime: number = Date.now();
   private flushAlarmScheduled = false;
   private durableState: DurableObjectState;
   private traceCount = 0;
@@ -45,12 +55,14 @@ class TraceBatcherBase extends DurableObject<Env> {
 
     this.initializeSchema();
 
-    const result = this.durableState.storage.sql.exec<{ last_flush_time: number }>(
-      'SELECT last_flush_time FROM metadata WHERE id = 1',
-    );
+    const result = this.durableState.storage.sql.exec<{
+      last_flush_time: number;
+      last_successful_flush_time: number;
+    }>('SELECT last_flush_time, last_successful_flush_time FROM metadata WHERE id = 1');
     const rows = [...result];
     if (rows.length > 0 && rows[0]) {
       this.lastFlushTime = rows[0].last_flush_time;
+      this.lastSuccessfulFlushTime = rows[0].last_successful_flush_time;
     }
 
     const countResult = this.durableState.storage.sql.exec<{ count: number }>(
@@ -86,9 +98,22 @@ class TraceBatcherBase extends DurableObject<Env> {
     this.durableState.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS metadata (
         id INTEGER PRIMARY KEY,
-        last_flush_time INTEGER NOT NULL
+        last_flush_time INTEGER NOT NULL,
+        last_successful_flush_time INTEGER NOT NULL
       )
     `);
+
+    const metadataColumns = [
+      ...this.durableState.storage.sql.exec<{ name: string }>('PRAGMA table_info(metadata)'),
+    ];
+    if (!metadataColumns.some((column) => column.name === 'last_successful_flush_time')) {
+      this.durableState.storage.sql.exec(
+        'ALTER TABLE metadata ADD COLUMN last_successful_flush_time INTEGER',
+      );
+      this.durableState.storage.sql.exec(
+        'UPDATE metadata SET last_successful_flush_time = last_flush_time WHERE last_successful_flush_time IS NULL',
+      );
+    }
 
     const metadataExists = [
       ...this.durableState.storage.sql.exec<{ count: number }>(
@@ -97,9 +122,11 @@ class TraceBatcherBase extends DurableObject<Env> {
     ];
 
     if (metadataExists[0]?.count === 0) {
+      const now = Date.now();
       this.durableState.storage.sql.exec(
-        'INSERT INTO metadata (id, last_flush_time) VALUES (1, ?)',
-        Date.now(),
+        'INSERT INTO metadata (id, last_flush_time, last_successful_flush_time) VALUES (1, ?, ?)',
+        now,
+        now,
       );
     }
   }
@@ -190,6 +217,7 @@ class TraceBatcherBase extends DurableObject<Env> {
     this.flushInProgress = true;
 
     const batchCount = Math.ceil(this.traceCount / BATCH_SIZE);
+    let lastSuccessfulFlushTime = this.lastSuccessfulFlushTime;
 
     try {
       for (let i = 0; i < batchCount; i++) {
@@ -218,6 +246,7 @@ class TraceBatcherBase extends DurableObject<Env> {
           );
 
           this.traceCount -= traces.length;
+          lastSuccessfulFlushTime = Date.now();
         } catch (error) {
           this.logger
             .child({ traceId: traces[0]?.TraceId })
@@ -233,7 +262,8 @@ class TraceBatcherBase extends DurableObject<Env> {
       }
     } finally {
       this.lastFlushTime = Date.now();
-      this.updateLastFlushTime();
+      this.lastSuccessfulFlushTime = lastSuccessfulFlushTime;
+      this.updateFlushTimes();
 
       if (this.flushAlarmScheduled) {
         void this.durableState.storage.deleteAlarm();
@@ -245,16 +275,29 @@ class TraceBatcherBase extends DurableObject<Env> {
     }
   }
 
-  private updateLastFlushTime(): void {
+  private updateFlushTimes(): void {
     this.durableState.storage.sql.exec(
-      'UPDATE metadata SET last_flush_time = ? WHERE id = 1',
+      'UPDATE metadata SET last_flush_time = ?, last_successful_flush_time = ? WHERE id = 1',
       this.lastFlushTime,
+      this.lastSuccessfulFlushTime,
     );
   }
 
-  getStats(): { queuedTraces: number; lastFlushTime: number } {
+  getStats(): TraceBatcherStats {
+    let oldestQueuedTraceTime: number | null = null;
+    if (this.traceCount > 0) {
+      const oldestTraceRows = [
+        ...this.durableState.storage.sql.exec<{ oldest_queued_trace_time: number | null }>(
+          'SELECT MIN(timestamp) as oldest_queued_trace_time FROM traces',
+        ),
+      ];
+      oldestQueuedTraceTime = oldestTraceRows[0]?.oldest_queued_trace_time ?? null;
+    }
+
     return {
       queuedTraces: this.traceCount,
+      oldestQueuedTraceTime,
+      lastSuccessfulFlushTime: this.lastSuccessfulFlushTime,
       lastFlushTime: this.lastFlushTime,
     };
   }
