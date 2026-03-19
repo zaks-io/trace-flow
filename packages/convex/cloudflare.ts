@@ -105,6 +105,7 @@ export const syncSubscriptionToKV = internalAction({
       logger.error('convex.cloudflare_sync_subscription_failed', e, {
         attempt,
       });
+      await logger.flush();
       if (attempt < 3) {
         await ctx.scheduler.runAfter(30_000, internal.cloudflare.syncSubscriptionToKV, {
           ...args,

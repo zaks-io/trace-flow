@@ -232,6 +232,8 @@ function buildAxiomUrl(config: AxiomConfig): string {
   return `${base}/v1/ingest/${encodeURIComponent(config.dataset)}`;
 }
 
+const MAX_BUFFER_SIZE = 1000;
+
 function createBatchAxiomTransport(config: AxiomConfig): BatchTransport {
   const url = buildAxiomUrl(config);
   const buffer: LogRecord[] = [];
@@ -258,12 +260,19 @@ function createBatchAxiomTransport(config: AxiomConfig): BatchTransport {
       }
     } catch (error) {
       buffer.unshift(...records);
+      // Drop oldest records if buffer exceeds cap after restore
+      if (buffer.length > MAX_BUFFER_SIZE) {
+        buffer.splice(0, buffer.length - MAX_BUFFER_SIZE);
+      }
       throw error;
     }
   }
 
   return {
     enqueue(record: LogRecord): void {
+      if (buffer.length >= MAX_BUFFER_SIZE) {
+        buffer.shift();
+      }
       buffer.push(record);
     },
     async flush(): Promise<void> {

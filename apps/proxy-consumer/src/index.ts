@@ -72,112 +72,116 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
 
   const failedMessages: Message<QueueMessageUnion>[] = [];
 
-  for (const message of batch.messages) {
-    try {
-      let traces: TinybirdTrace[];
-      let apiKey: string;
-      let messageId: string;
+  try {
+    for (const message of batch.messages) {
+      try {
+        let traces: TinybirdTrace[];
+        let apiKey: string;
+        let messageId: string;
 
-      if (message.body.type === 'otlp') {
-        traces = message.body.traces;
-        apiKey = message.body.apiKey;
-        messageId = `otlp:${apiKey}:${message.body.receivedAt}:${traces.length}`;
-      } else {
-        const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
-        traces = buildTraces(message.body, pricing);
-        apiKey = message.body.apiKey;
-        messageId = `llm:${message.body.requestId}`;
-      }
-
-      const shardId = calculateShardId(apiKey, NUM_SHARDS);
-
-      if (!shardedMessages.has(shardId)) {
-        shardedMessages.set(shardId, { items: [] });
-      }
-
-      const shard = shardedMessages.get(shardId)!;
-      shard.items.push({ messageId, traces, message });
-    } catch (error) {
-      const requestId = message.body.type === 'otlp' ? undefined : message.body.requestId;
-      const messageId =
-        message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : requestId;
-      const orgId = message.body.type === 'otlp' ? undefined : message.body.orgId;
-      const traceId =
-        message.body.type === 'otlp' ? message.body.traces[0]?.TraceId : message.body.traceId;
-      logger.child({ traceId, requestId, orgId }).error('consumer.message_process_failed', error, {
-        messageId,
-        orgId,
-      });
-      failedMessages.push(message);
-    }
-  }
-
-  const shardPromises = Array.from(shardedMessages.entries()).map(async ([shardId, shard]) => {
-    try {
-      const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
-      const batcher = env.TRACE_BATCHER.get(batcherId);
-
-      const results = await batcher.addMessageTraces(
-        shard.items.map((item) => ({ messageId: item.messageId, traces: item.traces })),
-      );
-      const statusById = new Map(results.map((result) => [result.messageId, result.status]));
-
-      for (const item of shard.items) {
-        const status = statusById.get(item.messageId) ?? 'failed';
-        if (status === 'failed') {
-          item.message.retry();
+        if (message.body.type === 'otlp') {
+          traces = message.body.traces;
+          apiKey = message.body.apiKey;
+          messageId = `otlp:${apiKey}:${message.body.receivedAt}:${traces.length}`;
         } else {
-          item.message.ack();
+          const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
+          traces = buildTraces(message.body, pricing);
+          apiKey = message.body.apiKey;
+          messageId = `llm:${message.body.requestId}`;
+        }
+
+        const shardId = calculateShardId(apiKey, NUM_SHARDS);
+
+        if (!shardedMessages.has(shardId)) {
+          shardedMessages.set(shardId, { items: [] });
+        }
+
+        const shard = shardedMessages.get(shardId)!;
+        shard.items.push({ messageId, traces, message });
+      } catch (error) {
+        const requestId = message.body.type === 'otlp' ? undefined : message.body.requestId;
+        const messageId =
+          message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : requestId;
+        const orgId = message.body.type === 'otlp' ? undefined : message.body.orgId;
+        const traceId =
+          message.body.type === 'otlp' ? message.body.traces[0]?.TraceId : message.body.traceId;
+        logger
+          .child({ traceId, requestId, orgId })
+          .error('consumer.message_process_failed', error, {
+            messageId,
+            orgId,
+          });
+        failedMessages.push(message);
+      }
+    }
+
+    const shardPromises = Array.from(shardedMessages.entries()).map(async ([shardId, shard]) => {
+      try {
+        const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
+        const batcher = env.TRACE_BATCHER.get(batcherId);
+
+        const results = await batcher.addMessageTraces(
+          shard.items.map((item) => ({ messageId: item.messageId, traces: item.traces })),
+        );
+        const statusById = new Map(results.map((result) => [result.messageId, result.status]));
+
+        for (const item of shard.items) {
+          const status = statusById.get(item.messageId) ?? 'failed';
+          if (status === 'failed') {
+            item.message.retry();
+          } else {
+            item.message.ack();
+          }
+        }
+      } catch (error) {
+        logger
+          .child({ component: 'queue-consumer', operation: 'batch_to_do_shard' })
+          .error('consumer.shard_flush_failed', error, {
+            shardId,
+          });
+        // Note: Errors in the TraceBatcher Durable Object are captured by Sentry there
+
+        for (const item of shard.items) {
+          item.message.retry();
         }
       }
-    } catch (error) {
-      logger
-        .child({ component: 'queue-consumer', operation: 'batch_to_do_shard' })
-        .error('consumer.shard_flush_failed', error, {
-          shardId,
-        });
-      // Note: Errors in the TraceBatcher Durable Object are captured by Sentry there
+    });
 
-      for (const item of shard.items) {
-        item.message.retry();
-      }
+    await Promise.all(shardPromises);
+
+    // Record batcher queue depth for shards active in this batch
+    await Promise.all(
+      Array.from(shardedMessages.keys()).map(async (shardId) => {
+        const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
+        const batcher = env.TRACE_BATCHER.get(batcherId);
+        try {
+          const stats = await batcher.getStats();
+          env.ANALYTICS.writeDataPoint({
+            indexes: [`shard-${shardId}`],
+            blobs: ['batcher_queue_depth'],
+            doubles: [stats.queuedTraces, stats.lastFlushTime],
+          });
+        } catch (error) {
+          logger.warn('consumer.batcher_stats_failed', {
+            shardId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }),
+    );
+
+    for (const message of failedMessages) {
+      message.retry();
     }
-  });
 
-  await Promise.all(shardPromises);
-
-  // Record batcher queue depth for shards active in this batch
-  await Promise.all(
-    Array.from(shardedMessages.keys()).map(async (shardId) => {
-      const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
-      const batcher = env.TRACE_BATCHER.get(batcherId);
-      try {
-        const stats = await batcher.getStats();
-        env.ANALYTICS.writeDataPoint({
-          indexes: [`shard-${shardId}`],
-          blobs: ['batcher_queue_depth'],
-          doubles: [stats.queuedTraces, stats.lastFlushTime],
-        });
-      } catch (error) {
-        logger.warn('consumer.batcher_stats_failed', {
-          shardId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }),
-  );
-
-  for (const message of failedMessages) {
-    message.retry();
+    logger.info('consumer.batch_processed', {
+      batchSize: batch.messages.length,
+      failedCount: failedMessages.length,
+      shardCount: shardedMessages.size,
+    });
+  } finally {
+    await logger.flush();
   }
-
-  logger.info('consumer.batch_processed', {
-    batchSize: batch.messages.length,
-    failedCount: failedMessages.length,
-    shardCount: shardedMessages.size,
-  });
-
-  await logger.flush();
 }
 
 export default {
