@@ -15,6 +15,7 @@ export interface Env {
   TRACE_BATCHER: DurableObjectNamespace<TraceBatcherInstance>;
   NUM_SHARDS?: number;
   MODEL_PRICING: KVNamespace;
+  ANALYTICS: AnalyticsEngineDataset;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -126,6 +127,25 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
   });
 
   await Promise.all(shardPromises);
+
+  // Record batcher queue depth for shards active in this batch
+  await Promise.all(
+    Array.from(shardedMessages.keys()).map(async (shardId) => {
+      const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
+      const batcher = env.TRACE_BATCHER.get(batcherId);
+      try {
+        const stats = await batcher.getStats();
+        env.ANALYTICS.writeDataPoint({
+          indexes: [`shard-${shardId}`],
+          doubles: [stats.queuedTraces, stats.lastFlushTime],
+        });
+      } catch (error) {
+        console.warn(`Failed to record batcher stats for shard ${shardId}:`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }),
+  );
 
   for (const message of failedMessages) {
     message.retry();

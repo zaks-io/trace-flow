@@ -388,7 +388,7 @@ app.all('*', async (c) => {
           // Analytics Engine slot layout:
           // blobs:   provider, status_code, operation, skip_reason, is_sse, model
           // doubles: total_latency_ms, prep_latency_ms, ttfb_ms, is_server_error, total_tokens,
-          //          prompt_tokens, completion_tokens, cache_read_tokens, response_size
+          //          prompt_tokens, completion_tokens, cache_read_tokens, response_size, is_stored
           // Queries must use sum(_sample_interval) for counts, quantileExactWeighted for percentiles
           c.env.ANALYTICS.writeDataPoint({
             indexes: [keyData.orgId],
@@ -410,6 +410,7 @@ app.all('*', async (c) => {
               tokens?.completionTokens ?? 0,
               tokens?.cacheReadTokens ?? 0,
               totalSize,
+              stored ? 1 : 0,
             ],
           });
 
@@ -438,7 +439,7 @@ app.all('*', async (c) => {
               isSSE ? '1' : '0',
               '',
             ],
-            doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+            doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // match recording path slot count
           });
           await streamToCapture?.cancel();
           await pipePromise;
