@@ -35,6 +35,203 @@ export declare const api: {
       }
     >;
   };
+  adminAnalytics: {
+    exportExplorerCsv: FunctionReference<
+      "action",
+      "public",
+      {
+        endTimeMs: number;
+        isSse?: "0" | "1";
+        limit?: number;
+        model?: string;
+        operation?: string;
+        orgId?: string;
+        provider?: string;
+        skipReason?: string;
+        startTimeMs: number;
+        statusCode?: string;
+      },
+      { csv: string; filename: string; rowCount: number }
+    >;
+    getDashboard: FunctionReference<
+      "action",
+      "public",
+      {
+        endTimeMs: number;
+        isSse?: "0" | "1";
+        model?: string;
+        operation?: string;
+        orgId?: string;
+        provider?: string;
+        skipReason?: string;
+        startTimeMs: number;
+        statusCode?: string;
+      },
+      {
+        breakdowns: {
+          model: Array<{
+            dimension: string;
+            p95LatencyMs: number;
+            requestCount: number;
+            responseBytes: number;
+            serverErrorCount: number;
+            serverErrorRate: number;
+            skipCount: number;
+            skipRate: number;
+            totalTokens: number;
+          }>;
+          operation: Array<{
+            dimension: string;
+            p95LatencyMs: number;
+            requestCount: number;
+            responseBytes: number;
+            serverErrorCount: number;
+            serverErrorRate: number;
+            skipCount: number;
+            skipRate: number;
+            totalTokens: number;
+          }>;
+          orgId: Array<{
+            dimension: string;
+            p95LatencyMs: number;
+            requestCount: number;
+            responseBytes: number;
+            serverErrorCount: number;
+            serverErrorRate: number;
+            skipCount: number;
+            skipRate: number;
+            totalTokens: number;
+          }>;
+          provider: Array<{
+            dimension: string;
+            p95LatencyMs: number;
+            requestCount: number;
+            responseBytes: number;
+            serverErrorCount: number;
+            serverErrorRate: number;
+            skipCount: number;
+            skipRate: number;
+            totalTokens: number;
+          }>;
+          skipReason: Array<{
+            dimension: string;
+            p95LatencyMs: number;
+            requestCount: number;
+            responseBytes: number;
+            serverErrorCount: number;
+            serverErrorRate: number;
+            skipCount: number;
+            skipRate: number;
+            totalTokens: number;
+          }>;
+          statusCode: Array<{
+            dimension: string;
+            p95LatencyMs: number;
+            requestCount: number;
+            responseBytes: number;
+            serverErrorCount: number;
+            serverErrorRate: number;
+            skipCount: number;
+            skipRate: number;
+            totalTokens: number;
+          }>;
+        };
+        dataset: string;
+        filterOptions: {
+          models: Array<string>;
+          operations: Array<string>;
+          orgIds: Array<string>;
+          providers: Array<string>;
+          skipReasons: Array<string>;
+          statusCodes: Array<string>;
+        };
+        granularity: string;
+        summary: {
+          avgLatencyMs: number;
+          avgTtfbMs: number;
+          cacheReadTokens: number;
+          completionTokens: number;
+          p50LatencyMs: number;
+          p95LatencyMs: number;
+          p95TtfbMs: number;
+          p99LatencyMs: number;
+          promptTokens: number;
+          requestCount: number;
+          responseBytes: number;
+          serverErrorCount: number;
+          serverErrorRate: number;
+          skipCount: number;
+          skipRate: number;
+          totalTokens: number;
+        };
+        timeseries: Array<{
+          bucket: string;
+          p95LatencyMs: number;
+          p95TtfbMs: number;
+          requestCount: number;
+          responseBytes: number;
+          serverErrorRate: number;
+          skipRate: number;
+          totalTokens: number;
+        }>;
+      }
+    >;
+    getExplorerRows: FunctionReference<
+      "action",
+      "public",
+      {
+        endTimeMs: number;
+        isSse?: "0" | "1";
+        limit?: number;
+        model?: string;
+        offset?: number;
+        operation?: string;
+        orgId?: string;
+        provider?: string;
+        skipReason?: string;
+        startTimeMs: number;
+        statusCode?: string;
+      },
+      {
+        columns: Array<{ name: string; type: string }>;
+        hasMore: boolean;
+        limit: number;
+        offset: number;
+        rows: Array<{
+          cacheReadTokens: number;
+          completionTokens: number;
+          isServerError: number;
+          isSse: string;
+          model: string;
+          operation: string;
+          orgId: string;
+          prepLatencyMs: number;
+          promptTokens: number;
+          provider: string;
+          responseBytes: number;
+          sampleInterval: number;
+          skipReason: string;
+          statusCode: string;
+          timestamp: string;
+          totalLatencyMs: number;
+          totalTokens: number;
+          ttfbMs: number;
+        }>;
+        sql: string;
+      }
+    >;
+    runAdvancedQuery: FunctionReference<
+      "action",
+      "public",
+      { endTimeMs: number; limit?: number; sql: string; startTimeMs: number },
+      {
+        columns: Array<{ name: string; type: string }>;
+        rowCount: number;
+        rows: Array<Array<string>>;
+        sql: string;
+      }
+    >;
+  };
   alerts: {
     create: FunctionReference<
       "mutation",
