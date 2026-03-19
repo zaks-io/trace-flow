@@ -130,7 +130,7 @@ app.all('*', async (c) => {
   const keyData: ApiKeyData = authResult;
 
   if (!keyData.orgId) {
-    console.log(JSON.stringify({ type: 'proxy_reject', reason: 'no_org', status: 403 }));
+    console.log(JSON.stringify({ type: 'proxy_reject', reason: 'no_org' }));
     return c.json(
       {
         error: 'Misconfigured API key',
@@ -449,7 +449,7 @@ app.all('*', async (c) => {
               isSSE,
               model: responseMetadata?.model,
               totalTokens: tokens?.totalTokens ?? 0,
-              r2Stored: stored,
+              r2Stored: storageSkipped ? 'skipped' : stored ? 'stored' : 'failed',
             }),
           );
 

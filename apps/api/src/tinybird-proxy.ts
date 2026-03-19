@@ -100,7 +100,9 @@ async function handleUpstreamError(
   pipe: string,
 ): Promise<Response> {
   const detail = await tbResponse.text();
-  console.error(`Tinybird ${tbResponse.status}: ${detail}`, { pipe });
+  console.error(
+    JSON.stringify({ type: 'tinybird_error', status: tbResponse.status, pipe, detail }),
+  );
   const status = PASSTHROUGH_STATUSES.has(tbResponse.status)
     ? tbResponse.status
     : tbResponse.status >= 500
