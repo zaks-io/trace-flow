@@ -44,6 +44,11 @@ bucket_name = "trace-flow-storage-dev"
 binding = "MODEL_PRICING"
 id = "25a35f71a8d64884a8e8935056880dba"
 
+# Analytics Engine for batcher queue depth metrics
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "trace-flow-consumer-dev"
+
 # Tinybird configuration
 # TINYBIRD_TOKEN - Auth token with DATASOURCE:APPEND scope (set via wrangler secret)
 # TINYBIRD_DATASOURCE - Data source name (optional, defaults to "otel_traces")
@@ -76,6 +81,10 @@ bucket_name = "trace-flow-storage-prod"
 binding = "MODEL_PRICING"
 id = "45dd0d5e619d44fc831ccab01ed428a4"
 
+[[env.production.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "trace-flow-consumer"
+
 [env.preview]
 name = "trace-flow-consumer-preview"
 
@@ -101,3 +110,7 @@ bucket_name = "trace-flow-storage-dev"
 [[env.preview.kv_namespaces]]
 binding = "MODEL_PRICING"
 id = "25a35f71a8d64884a8e8935056880dba"
+
+[[env.preview.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "trace-flow-consumer-dev"
