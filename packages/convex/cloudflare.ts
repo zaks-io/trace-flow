@@ -1,5 +1,6 @@
 import { internalAction, internalQuery, action } from './_generated/server';
 import { v } from 'convex/values';
+import { axiomConfigFromEnv, createConvexLogger } from '@trace-flow/logging';
 import { internal } from './_generated/api';
 import { requireTraceFlowRole } from './auth';
 import { extractSub } from './users';
@@ -72,6 +73,19 @@ export const syncSubscriptionToKV = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const logger = createConvexLogger({
+      service: 'convex',
+      convexFunction: 'cloudflare.syncSubscriptionToKV',
+      axiom: axiomConfigFromEnv({
+        AXIOM_TOKEN: process.env.AXIOM_TOKEN,
+        AXIOM_DATASET: process.env.AXIOM_DATASET,
+        AXIOM_DOMAIN: process.env.AXIOM_DOMAIN,
+      }),
+      context: {
+        component: 'cloudflare-sync',
+        orgId: args.orgId,
+      },
+    });
     const value = JSON.stringify({
       tier: args.tier,
       monthlyUnits: args.monthlyUnits,
@@ -88,10 +102,8 @@ export const syncSubscriptionToKV = internalAction({
       await putKV(`sub:${args.orgId}`, value);
     } catch (e) {
       const attempt = args.retryCount ?? 0;
-      console.error('syncSubscriptionToKV failed', {
-        orgId: args.orgId,
+      logger.error('convex.cloudflare_sync_subscription_failed', e, {
         attempt,
-        error: e instanceof Error ? e.message : String(e),
       });
       if (attempt < 3) {
         await ctx.scheduler.runAfter(30_000, internal.cloudflare.syncSubscriptionToKV, {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { computePeriod } from '@trace-flow/utils';
+import { buildUsageSyncRequestInit } from '../usage-tracker';
 
 /**
  * In-memory SQLite mock that replicates the DO's table structure.
@@ -808,6 +809,39 @@ describe('UsageTracker Durable Object', () => {
       const body = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
       const counters = sqlMock._getCounters();
       expect(body.addonUnitsUsed).toBe(counters.addon_units_used - counters.addon_baseline);
+    });
+  });
+});
+
+describe('buildUsageSyncRequestInit', () => {
+  it('propagates trace context in headers and body', () => {
+    const init = buildUsageSyncRequestInit('sync-secret', {
+      orgId: 'org_123',
+      periodStart: 1,
+      periodEnd: 2,
+      subscriptionUnitsUsed: 3,
+      addonUnitsUsed: 4,
+      traceContext: {
+        traceId: '0123456789abcdef0123456789abcdef',
+        requestId: 'req_123',
+        workflowId: 'usage:org_123:1:2',
+        orgId: 'org_123',
+      },
+    });
+
+    const headers = new Headers(init.headers);
+    const body = JSON.parse(String(init.body)) as {
+      traceContext?: { traceId?: string; requestId?: string; workflowId?: string };
+    };
+
+    expect(headers.get('Authorization')).toBe('Bearer sync-secret');
+    expect(headers.get('traceparent')).toContain('0123456789abcdef0123456789abcdef');
+    expect(headers.get('baggage')).toContain('request_id=req_123');
+    expect(headers.get('baggage')).toContain('workflow_id=usage%3Aorg_123%3A1%3A2');
+    expect(body.traceContext).toMatchObject({
+      traceId: '0123456789abcdef0123456789abcdef',
+      requestId: 'req_123',
+      workflowId: 'usage:org_123:1:2',
     });
   });
 });

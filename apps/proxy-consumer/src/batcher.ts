@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/cloudflare';
 import { DurableObject } from 'cloudflare:workers';
+import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import type { TinybirdTrace } from '@trace-flow/types';
 import type { Env } from './index';
 import { insertIntoTinybirdWithRetry } from './tinybird';
@@ -29,6 +30,14 @@ class TraceBatcherBase extends DurableObject<Env> {
   private traceCount = 0;
   private flushInProgress = false;
   private lastCleanupTime = 0;
+  private logger = createLogger({
+    service: 'proxy-consumer',
+    runtime: 'durable-object',
+    axiom: axiomConfigFromEnv(this.env),
+    context: {
+      component: 'trace-batcher',
+    },
+  });
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -117,10 +126,11 @@ class TraceBatcherBase extends DurableObject<Env> {
           status: inserted ? 'inserted' : 'duplicate',
         });
       } catch (error) {
-        console.error('Failed to add message traces:', {
-          messageId: item.messageId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        this.logger
+          .child({ traceId: item.traces[0]?.TraceId })
+          .error('consumer.trace_insert_failed', error, {
+            messageId: item.messageId,
+          });
         results.push({ messageId: item.messageId, status: 'failed' });
       }
     }
@@ -136,6 +146,7 @@ class TraceBatcherBase extends DurableObject<Env> {
       }
     }
 
+    await this.logger.flush();
     return results;
   }
 
@@ -208,10 +219,11 @@ class TraceBatcherBase extends DurableObject<Env> {
 
           this.traceCount -= traces.length;
         } catch (error) {
-          console.error('Failed to flush traces to Tinybird:', {
-            batchSize: traces.length,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          this.logger
+            .child({ traceId: traces[0]?.TraceId })
+            .error('consumer.tinybird_flush_failed', error, {
+              batchSize: traces.length,
+            });
           Sentry.captureException(error, {
             tags: { operation: 'flush' },
             extra: { batchSize: traces.length },
@@ -229,6 +241,7 @@ class TraceBatcherBase extends DurableObject<Env> {
       }
 
       this.flushInProgress = false;
+      await this.logger.flush();
     }
   }
 

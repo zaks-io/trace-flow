@@ -51,7 +51,7 @@ The proxy captures request/response data and enqueues metadata:
 
 ```typescript
 // Store bodies in R2 (fast, local to edge)
-await storeBodies(storage, requestId, requestBody, responseBody, truncated, orgId);
+await storeBodies(storage, requestId, requestBody, responseBody, truncated, logger, orgId);
 
 // Enqueue lightweight metadata (no bodies in queue)
 const queueMessage = {

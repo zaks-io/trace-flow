@@ -1,4 +1,5 @@
 import type { QueueMessageUnion, TinybirdTrace, QueueMessage } from '@trace-flow/types';
+import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { TraceBatcher, type TraceBatcherInstance } from './batcher';
 import { buildTraces } from './traces';
 import { calculateShardId } from './sharding';
@@ -16,6 +17,9 @@ export interface Env {
   NUM_SHARDS?: number;
   MODEL_PRICING: KVNamespace;
   ANALYTICS: AnalyticsEngineDataset;
+  AXIOM_TOKEN?: string;
+  AXIOM_DATASET?: string;
+  AXIOM_DOMAIN?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -46,6 +50,14 @@ async function getPricingForMessage(
 
 async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: Env): Promise<void> {
   const NUM_SHARDS = env.NUM_SHARDS ?? 10;
+  const logger = createLogger({
+    service: 'proxy-consumer',
+    runtime: 'cloudflare-worker',
+    axiom: axiomConfigFromEnv(env),
+    context: {
+      component: 'queue-consumer',
+    },
+  });
 
   const shardedMessages = new Map<
     number,
@@ -86,13 +98,15 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
       const shard = shardedMessages.get(shardId)!;
       shard.items.push({ messageId, traces, message });
     } catch (error) {
+      const requestId = message.body.type === 'otlp' ? undefined : message.body.requestId;
       const messageId =
-        message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : message.body.requestId;
+        message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : requestId;
       const orgId = message.body.type === 'otlp' ? undefined : message.body.orgId;
-      console.error('Failed to process message:', {
+      const traceId =
+        message.body.type === 'otlp' ? message.body.traces[0]?.TraceId : message.body.traceId;
+      logger.child({ traceId, requestId, orgId }).error('consumer.message_process_failed', error, {
         messageId,
         orgId,
-        error: error instanceof Error ? error.message : String(error),
       });
       failedMessages.push(message);
     }
@@ -117,9 +131,11 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         }
       }
     } catch (error) {
-      console.error(`Shard ${shardId}: Failed to add traces to batcher:`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger
+        .child({ component: 'queue-consumer', operation: 'batch_to_do_shard' })
+        .error('consumer.shard_flush_failed', error, {
+          shardId,
+        });
       // Note: Errors in the TraceBatcher Durable Object are captured by Sentry there
 
       for (const item of shard.items) {
@@ -143,7 +159,8 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
           doubles: [stats.queuedTraces, stats.lastFlushTime],
         });
       } catch (error) {
-        console.warn(`Failed to record batcher stats for shard ${shardId}:`, {
+        logger.warn('consumer.batcher_stats_failed', {
+          shardId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -154,14 +171,13 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
     message.retry();
   }
 
-  console.log(
-    JSON.stringify({
-      type: 'queue_batch',
-      batchSize: batch.messages.length,
-      failedCount: failedMessages.length,
-      shardCount: shardedMessages.size,
-    }),
-  );
+  logger.info('consumer.batch_processed', {
+    batchSize: batch.messages.length,
+    failedCount: failedMessages.length,
+    shardCount: shardedMessages.size,
+  });
+
+  await logger.flush();
 }
 
 export default {

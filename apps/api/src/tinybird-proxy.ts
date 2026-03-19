@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Logger } from '@trace-flow/logging';
 import { verifyTinybirdJWT, extractCacheParams } from './tinybird-jwt';
 import { buildCacheKey, computeTTL, hashString } from './cache';
 
@@ -9,9 +10,16 @@ interface TinybirdProxyEnv {
 
 const VALID_PIPE_NAME = /^[a-z_][a-z0-9_]*$/;
 
-export const tinybirdProxy = new Hono<{ Bindings: TinybirdProxyEnv }>();
+export const tinybirdProxy = new Hono<{
+  Bindings: TinybirdProxyEnv;
+  Variables: { logger: Logger };
+}>();
 
 tinybirdProxy.get('/v0/pipes/*', async (c) => {
+  const logger = c.get('logger').child({
+    component: 'tinybird-proxy',
+    operation: 'query_pipe',
+  });
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return c.json({ error: 'Missing or invalid Authorization header' }, 401);
@@ -20,7 +28,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
   const token = authHeader.slice(7);
 
   if (!c.env.TINYBIRD_ADMIN_TOKEN) {
-    console.error('TINYBIRD_ADMIN_TOKEN is not configured');
+    logger.error('api.tinybird_admin_token_missing');
     return c.json({ error: 'Server configuration error' }, 500);
   }
 
@@ -46,7 +54,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
   if (ttl === 0) {
     const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
     if (!tbResponse.ok) {
-      return handleUpstreamError(c, tbResponse, pipe);
+      return handleUpstreamError(c, logger, tbResponse, pipe);
     }
     const body = await tbResponse.text();
     return new Response(body, {
@@ -74,7 +82,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
 
   const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
   if (!tbResponse.ok) {
-    return handleUpstreamError(c, tbResponse, pipe);
+    return handleUpstreamError(c, logger, tbResponse, pipe);
   }
 
   const body = await tbResponse.text();
@@ -96,13 +104,16 @@ const PASSTHROUGH_STATUSES = new Set([400, 403, 404, 429]);
 
 async function handleUpstreamError(
   c: { json: (data: unknown, status: number) => Response },
+  logger: Logger,
   tbResponse: Response,
   pipe: string,
 ): Promise<Response> {
   const detail = await tbResponse.text();
-  console.error(
-    JSON.stringify({ type: 'tinybird_error', status: tbResponse.status, pipe, detail }),
-  );
+  logger.error('api.tinybird_upstream_error', undefined, {
+    status: tbResponse.status,
+    pipe,
+    detail,
+  });
   const status = PASSTHROUGH_STATUSES.has(tbResponse.status)
     ? tbResponse.status
     : tbResponse.status >= 500

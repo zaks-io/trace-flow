@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildStoredBodyKey } from '@trace-flow/types';
+import type { Logger } from '@trace-flow/logging';
 import {
   getStoredBodies,
   isBodyVisible,
   parseStoredBodiesPayload,
   resolveVisibilityWindowDays,
 } from '../bodies';
+
+const noopLogger: Logger = {
+  child: () => noopLogger,
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  flush: () => Promise.resolve(),
+};
 
 function createObjectBody(body: string, uploaded: string, orgId = 'org_123'): R2ObjectBody {
   return {
@@ -32,6 +42,7 @@ describe('bodies helpers', () => {
           responseBody: '{"output":"hello"}',
           truncated: true,
         }),
+        noopLogger,
       ),
     ).toEqual({
       requestBody: '{"prompt":"hi"}',
@@ -90,7 +101,7 @@ describe('bodies helpers', () => {
       }),
     } as unknown as R2Bucket;
 
-    const result = await getStoredBodies(storage, 'req_123');
+    const result = await getStoredBodies(storage, 'req_123', noopLogger);
 
     expect(result).toEqual({
       payload: {
@@ -113,18 +124,21 @@ describe('bodies helpers', () => {
       get: vi.fn().mockResolvedValue(corrupt),
     } as unknown as R2Bucket;
 
-    const result = await getStoredBodies(storage, 'req_corrupt');
+    const result = await getStoredBodies(storage, 'req_corrupt', noopLogger);
 
     expect(result).toBeNull();
   });
 
   it('rejects arrays in parseStoredBodiesPayload', () => {
-    expect(() => parseStoredBodiesPayload('[]')).toThrow('Stored body payload must be an object');
+    expect(() => parseStoredBodiesPayload('[]', noopLogger)).toThrow(
+      'Stored body payload must be an object',
+    );
   });
 
   it('coerces unexpected field types to null', () => {
     const result = parseStoredBodiesPayload(
       JSON.stringify({ requestBody: 123, responseBody: { nested: true } }),
+      noopLogger,
     );
 
     expect(result.requestBody).toBeNull();
@@ -136,7 +150,7 @@ describe('bodies helpers', () => {
       get: vi.fn().mockResolvedValue(null),
     } as unknown as R2Bucket;
 
-    const result = await getStoredBodies(storage, 'req_123');
+    const result = await getStoredBodies(storage, 'req_123', noopLogger);
 
     expect(result).toBeNull();
     expect(storage.get).toHaveBeenCalledWith('bodies/req_123');

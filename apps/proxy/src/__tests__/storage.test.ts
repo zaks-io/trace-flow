@@ -1,5 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { Logger } from '@trace-flow/logging';
 import { storeBodies } from '../storage';
+
+const noopLogger: Logger = {
+  child: () => noopLogger,
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  flush: () => Promise.resolve(),
+};
 
 describe('storeBodies', () => {
   it('should store request and response bodies in a single object', async () => {
@@ -11,7 +21,7 @@ describe('storeBodies', () => {
     const requestBody = 'request body content';
     const responseBody = 'response body content';
 
-    await storeBodies(mockStorage, requestId, requestBody, responseBody, false);
+    await storeBodies(mockStorage, requestId, requestBody, responseBody, false, noopLogger);
 
     expect(mockStorage.put).toHaveBeenCalledTimes(1);
     expect(mockStorage.put).toHaveBeenCalledWith(
@@ -37,6 +47,7 @@ describe('storeBodies', () => {
       'test request',
       'test response',
       false,
+      noopLogger,
     );
 
     expect(result).toBe(true);
@@ -51,7 +62,14 @@ describe('storeBodies', () => {
     const requestBody = '';
     const responseBody = '';
 
-    const result = await storeBodies(mockStorage, requestId, requestBody, responseBody, false);
+    const result = await storeBodies(
+      mockStorage,
+      requestId,
+      requestBody,
+      responseBody,
+      false,
+      noopLogger,
+    );
 
     expect(mockStorage.put).toHaveBeenCalledWith(
       'bodies/empty-test',
@@ -75,7 +93,14 @@ describe('storeBodies', () => {
     const largeRequestBody = 'a'.repeat(100000);
     const largeResponseBody = 'b'.repeat(200000);
 
-    await storeBodies(mockStorage, requestId, largeRequestBody, largeResponseBody, false);
+    await storeBodies(
+      mockStorage,
+      requestId,
+      largeRequestBody,
+      largeResponseBody,
+      false,
+      noopLogger,
+    );
 
     expect(mockStorage.put).toHaveBeenCalledWith(
       'bodies/large-test',
@@ -94,7 +119,7 @@ describe('storeBodies', () => {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
 
-    await storeBodies(mockStorage, 'meta-test', 'req', 'res', false, 'org_123');
+    await storeBodies(mockStorage, 'meta-test', 'req', 'res', false, noopLogger, 'org_123');
 
     expect(mockStorage.put).toHaveBeenCalledWith(
       'bodies/meta-test',
@@ -114,7 +139,7 @@ describe('storeBodies', () => {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
 
-    await storeBodies(mockStorage, 'truncated-test', 'req', 'res', true);
+    await storeBodies(mockStorage, 'truncated-test', 'req', 'res', true, noopLogger);
 
     expect(mockStorage.put).toHaveBeenCalledWith(
       'bodies/truncated-test',
@@ -138,7 +163,14 @@ describe('storeBodies', () => {
     const requestBody = 'request';
     const responseBody = 'response';
 
-    const result = await storeBodies(mockStorage, requestId, requestBody, responseBody, false);
+    const result = await storeBodies(
+      mockStorage,
+      requestId,
+      requestBody,
+      responseBody,
+      false,
+      noopLogger,
+    );
 
     expect(result).toBe(false);
   });

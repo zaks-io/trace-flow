@@ -18,6 +18,7 @@ binding = "CF_VERSION_METADATA"
 
 [vars]
 SENTRY_ENVIRONMENT = "development"
+AXIOM_DATASET = "trace-flow-logs"
 
 [placement]
 mode = "smart"
@@ -59,6 +60,7 @@ dataset = "trace-flow-consumer-dev"
 # TINYBIRD_TOKEN - Auth token with DATASOURCE:APPEND scope (set via wrangler secret)
 # TINYBIRD_DATASOURCE - Data source name (optional, defaults to "otel_traces")
 # TINYBIRD_HOST - API host (optional, defaults to "https://api.tinybird.co")
+# AXIOM_TOKEN - Auth token for Axiom ingest (set via wrangler secret)
 
 [env.production]
 name = "trace-flow-consumer"
@@ -66,6 +68,7 @@ workers_dev = false
 
 [env.production.vars]
 SENTRY_ENVIRONMENT = "production"
+AXIOM_DATASET = "trace-flow-logs"
 
 [[env.production.durable_objects.bindings]]
 name = "TRACE_BATCHER"
@@ -96,6 +99,7 @@ name = "trace-flow-consumer-preview"
 
 [env.preview.vars]
 SENTRY_ENVIRONMENT = "preview"
+AXIOM_DATASET = "trace-flow-logs"
 
 [[env.preview.durable_objects.bindings]]
 name = "TRACE_BATCHER"

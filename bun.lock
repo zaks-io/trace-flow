@@ -26,6 +26,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@sentry/cloudflare": "^10.32.1",
+        "@trace-flow/logging": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "hono": "^4.6.14",
         "jose": "^6.1.0",
@@ -45,6 +46,7 @@
       "dependencies": {
         "@hono/zod-openapi": "^1.1.5",
         "@sentry/cloudflare": "^10.32.1",
+        "@trace-flow/logging": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "eventsource-parser": "^3.0.6",
@@ -65,6 +67,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@sentry/cloudflare": "^10.32.1",
+        "@trace-flow/logging": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
       },
@@ -139,6 +142,7 @@
       "dependencies": {
         "@react-email/components": "^1.0.8",
         "@trace-flow/emails": "workspace:*",
+        "@trace-flow/logging": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "convex": "^1.32.0",
@@ -164,6 +168,18 @@
       "devDependencies": {
         "@types/react": "^19.2.13",
         "typescript": "^5.9.3",
+      },
+    },
+    "packages/logging": {
+      "name": "@trace-flow/logging",
+      "version": "0.0.1",
+      "dependencies": {
+        "@trace-flow/utils": "workspace:*",
+      },
+      "devDependencies": {
+        "@vitest/coverage-v8": "^4.0.18",
+        "typescript": "^5.9.3",
+        "vitest": "^4.0.18",
       },
     },
     "packages/sdk-tests": {
@@ -1203,6 +1219,8 @@
     "@trace-flow/convex": ["@trace-flow/convex@workspace:packages/convex"],
 
     "@trace-flow/emails": ["@trace-flow/emails@workspace:packages/emails"],
+
+    "@trace-flow/logging": ["@trace-flow/logging@workspace:packages/logging"],
 
     "@trace-flow/proxy": ["@trace-flow/proxy@workspace:apps/proxy"],
 

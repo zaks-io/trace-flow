@@ -4,6 +4,7 @@ import {
   type StoredBodiesPayload,
   type SubscriptionTier,
 } from '@trace-flow/types';
+import type { Logger } from '@trace-flow/logging';
 
 const MS_PER_DAY = 86_400_000;
 
@@ -23,7 +24,7 @@ export function isBodyVisible(uploaded: Date, tier?: SubscriptionTier, now = Dat
   return uploaded.getTime() + resolveVisibilityWindowDays(tier) * MS_PER_DAY > now;
 }
 
-export function parseStoredBodiesPayload(raw: string): StoredBodiesPayload {
+export function parseStoredBodiesPayload(raw: string, logger: Logger): StoredBodiesPayload {
   const parsed: unknown = JSON.parse(raw);
 
   if (!isStoredBodiesRecord(parsed)) {
@@ -34,7 +35,10 @@ export function parseStoredBodiesPayload(raw: string): StoredBodiesPayload {
   if (parsed.requestBody === null || typeof parsed.requestBody === 'string') {
     requestBody = parsed.requestBody;
   } else {
-    console.warn('Unexpected requestBody type in stored payload:', typeof parsed.requestBody);
+    logger.warn('api.stored_bodies_unexpected_type', {
+      field: 'requestBody',
+      actualType: typeof parsed.requestBody,
+    });
     requestBody = null;
   }
 
@@ -42,7 +46,10 @@ export function parseStoredBodiesPayload(raw: string): StoredBodiesPayload {
   if (parsed.responseBody === null || typeof parsed.responseBody === 'string') {
     responseBody = parsed.responseBody;
   } else {
-    console.warn('Unexpected responseBody type in stored payload:', typeof parsed.responseBody);
+    logger.warn('api.stored_bodies_unexpected_type', {
+      field: 'responseBody',
+      actualType: typeof parsed.responseBody,
+    });
     responseBody = null;
   }
 
@@ -62,6 +69,7 @@ interface StoredBodiesResult {
 export async function getStoredBodies(
   storage: R2Bucket,
   requestId: string,
+  logger: Logger,
 ): Promise<StoredBodiesResult | null> {
   const combinedObject = await storage.get(buildStoredBodyKey(requestId));
 
@@ -71,14 +79,13 @@ export async function getStoredBodies(
 
   try {
     return {
-      payload: parseStoredBodiesPayload(await combinedObject.text()),
+      payload: parseStoredBodiesPayload(await combinedObject.text(), logger),
       orgId: combinedObject.customMetadata?.orgId,
       uploaded: combinedObject.uploaded,
     };
   } catch (error) {
-    console.error('Failed to parse stored body payload:', {
+    logger.error('api.stored_bodies_parse_failed', error, {
       requestId,
-      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
