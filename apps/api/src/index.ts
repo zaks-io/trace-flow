@@ -4,12 +4,15 @@ import { cors } from 'hono/cors';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { validateAuth0JWT } from './auth';
 import { getStoredBodies, isBodyVisible } from './bodies';
+import { tinybirdProxy } from './tinybird-proxy';
 
 interface Env {
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
   AUTH0_DOMAIN: string;
   AUTH0_CLIENT_ID: string;
+  TINYBIRD_API_URL: string;
+  TINYBIRD_ADMIN_TOKEN: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -39,6 +42,8 @@ app.use('*', async (c, next) => {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   return mw(c, next);
 });
+
+app.route('/', tinybirdProxy);
 
 app.get('/bodies/:requestId', async (c) => {
   const authError = await validateAuth0JWT(c);
