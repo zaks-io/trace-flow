@@ -100,20 +100,24 @@ export const syncSubscriptionToKV = internalAction({
 
     try {
       await putKV(`sub:${args.orgId}`, value);
+      logger.info('convex.cloudflare_sync_subscription_success', {
+        tier: args.tier,
+      });
     } catch (e) {
       const attempt = args.retryCount ?? 0;
       logger.error('convex.cloudflare_sync_subscription_failed', e, {
         attempt,
       });
-      await logger.flush();
       if (attempt < 3) {
         await ctx.scheduler.runAfter(30_000, internal.cloudflare.syncSubscriptionToKV, {
           ...args,
           retryCount: attempt + 1,
         });
-        return;
+      } else {
+        throw e;
       }
-      throw e;
+    } finally {
+      await logger.flush();
     }
   },
 });
