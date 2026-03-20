@@ -24,6 +24,7 @@ describe('buildTraces', () => {
     timing: {
       requestStart: 1000,
       requestSent: 1100,
+      responseReceived: 1150,
       firstTokenReceived: 1200,
       responseComplete: 1500,
     },

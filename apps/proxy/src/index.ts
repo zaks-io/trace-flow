@@ -261,6 +261,8 @@ app.all('*', async (c) => {
     body: streamToProxy,
   });
 
+  const responseReceived = getCurrentTimestamp();
+
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
   const sseStreamData: SSEStreamData = { messages: [] };
@@ -398,6 +400,7 @@ app.all('*', async (c) => {
             responseStatus: response.status,
             requestStart,
             requestSent,
+            responseReceived,
             firstTokenReceived,
             responseComplete,
             latency,
@@ -433,6 +436,7 @@ app.all('*', async (c) => {
               requestSent - requestStart,
               firstTokenReceived ? firstTokenReceived - requestSent : 0,
               response.status >= 500 ? 1 : 0,
+              responseReceived - requestSent,
               tokens?.totalTokens ?? 0,
               tokens?.promptTokens ?? 0,
               tokens?.completionTokens ?? 0,
