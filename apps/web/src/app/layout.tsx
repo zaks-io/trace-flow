@@ -18,8 +18,23 @@ const firaCode = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: 'Trace Flow - LLM Analytics',
-  description: 'LLM Request Analytics Platform',
+  title: 'Trace Flow — LLM Observability Proxy',
+  description:
+    'Drop-in proxy for OpenAI, Anthropic, Google, and more. Exact per-request cost, token usage, and full body capture with <20ms overhead.',
+  openGraph: {
+    title: 'Trace Flow — LLM Observability Proxy',
+    description:
+      'Know what your LLM calls cost. Drop-in proxy with unified cost visibility across all providers.',
+    url: 'https://trace-flow.dev',
+    siteName: 'Trace Flow',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Trace Flow — LLM Observability Proxy',
+    description:
+      'Know what your LLM calls cost. Drop-in proxy with unified cost visibility across all providers.',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
