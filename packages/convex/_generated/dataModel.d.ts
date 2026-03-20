@@ -335,6 +335,7 @@ export type DataModel = {
   };
   organizations: {
     document: {
+      deletedAt?: number;
       name: string;
       onboardingCompletedAt?: number;
       ownerId: Id<"users">;
@@ -345,6 +346,7 @@ export type DataModel = {
     fieldPaths:
       | "_creationTime"
       | "_id"
+      | "deletedAt"
       | "name"
       | "onboardingCompletedAt"
       | "ownerId"
@@ -399,6 +401,7 @@ export type DataModel = {
       currentPeriodEnd: number;
       currentPeriodOverageSpentCents: number;
       currentPeriodStart: number;
+      deletionSchedulerId?: Id<"_scheduled_functions">;
       gracePeriodSchedulerId?: Id<"_scheduled_functions">;
       monthlyUnits: number;
       orgId: Id<"organizations">;
@@ -422,6 +425,7 @@ export type DataModel = {
       | "currentPeriodEnd"
       | "currentPeriodOverageSpentCents"
       | "currentPeriodStart"
+      | "deletionSchedulerId"
       | "gracePeriodSchedulerId"
       | "monthlyUnits"
       | "orgId"

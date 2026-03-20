@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "ignore": ["datasources/**", "pipes/**"],
+  "ignore": ["datasources/**", "pipes/**", "scripts/**"],
   "ignoreBinaries": ["wrangler"],
   "ignoreDependencies": ["cloudflare"],
   "workspaces": {

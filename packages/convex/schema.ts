@@ -20,6 +20,7 @@ export default defineSchema({
     ownerId: v.id('users'),
     stripeCustomerId: v.optional(v.string()),
     onboardingCompletedAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
   })
     .index('by_owner_id', ['ownerId'])
     .index('by_stripe_customer_id', ['stripeCustomerId']),
@@ -49,6 +50,8 @@ export default defineSchema({
     overageCapCents: v.optional(v.number()),
     // Grace period -> suspended scheduler (transient)
     gracePeriodSchedulerId: v.optional(v.id('_scheduled_functions')),
+    // Scheduled org data deletion after cancellation (transient)
+    deletionSchedulerId: v.optional(v.id('_scheduled_functions')),
     // Auto-topup dedup (transient)
     autoTopupPendingSince: v.optional(v.number()),
   })

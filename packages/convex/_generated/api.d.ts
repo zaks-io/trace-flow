@@ -21,6 +21,44 @@ import type { GenericId as Id } from "convex/values";
  */
 export declare const api: {
   admin: {
+    deleteOrgData: FunctionReference<
+      "action",
+      "public",
+      { orgId: Id<"organizations"> },
+      {
+        convexDeleted: {
+          addonPurchases: number;
+          alerts: number;
+          apiKeys: number;
+          invites: number;
+          mcpRefreshTokens: number;
+          mcpSessions: number;
+          membersRemoved: number;
+          usage: number;
+        };
+        stripeCanceled: boolean;
+        tinybirdResults:
+          | { deleted: false; reason: string }
+          | {
+              deleted: true;
+              results: Record<string, { error?: string; success: boolean }>;
+            };
+      }
+    >;
+    listOrgs: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"organizations">;
+        deletedAt?: number;
+        name: string;
+        onboardingCompletedAt?: number;
+        ownerId: Id<"users">;
+        stripeCustomerId?: string;
+      }>
+    >;
     stats: FunctionReference<
       "query",
       "public",
@@ -355,6 +393,7 @@ export declare const api: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
           gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
           orgId: Id<"organizations">;
@@ -539,6 +578,7 @@ export declare const api: {
       null | {
         _creationTime: number;
         _id: Id<"organizations">;
+        deletedAt?: number;
         name: string;
         onboardingCompletedAt?: number;
         ownerId: Id<"users">;
@@ -601,6 +641,7 @@ export declare const api: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
           gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
           orgId: Id<"organizations">;
@@ -630,6 +671,7 @@ export declare const api: {
         currentPeriodEnd: number;
         currentPeriodOverageSpentCents: number;
         currentPeriodStart: number;
+        deletionSchedulerId?: Id<"_scheduled_functions">;
         gracePeriodSchedulerId?: Id<"_scheduled_functions">;
         monthlyUnits: number;
         orgId: Id<"organizations">;
@@ -781,6 +823,56 @@ export declare const api: {
  * ```
  */
 export declare const internal: {
+  admin: {
+    deleteOrgDataScheduled: FunctionReference<
+      "action",
+      "internal",
+      { orgId: Id<"organizations"> },
+      {
+        convexDeleted: {
+          addonPurchases: number;
+          alerts: number;
+          apiKeys: number;
+          invites: number;
+          mcpRefreshTokens: number;
+          mcpSessions: number;
+          membersRemoved: number;
+          usage: number;
+        };
+        stripeCanceled: boolean;
+        tinybirdResults:
+          | { deleted: false; reason: string }
+          | {
+              deleted: true;
+              results: Record<string, { error?: string; success: boolean }>;
+            };
+      }
+    >;
+    deleteOrgRecordsBatch: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      {
+        counts: {
+          addonPurchases: number;
+          alerts: number;
+          apiKeys: number;
+          invites: number;
+          mcpRefreshTokens: number;
+          mcpSessions: number;
+          membersRemoved: number;
+          usage: number;
+        };
+        hasMore: boolean;
+      }
+    >;
+    finalizeOrgDeletion: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      null
+    >;
+  };
   apiKeys: {
     getByIdInternal: FunctionReference<
       "query",
@@ -869,6 +961,7 @@ export declare const internal: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
           gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
           orgId: Id<"organizations">;
@@ -1415,6 +1508,7 @@ export declare const internal: {
       null | {
         _creationTime: number;
         _id: Id<"organizations">;
+        deletedAt?: number;
         name: string;
         onboardingCompletedAt?: number;
         ownerId: Id<"users">;
@@ -1428,6 +1522,7 @@ export declare const internal: {
       null | {
         _creationTime: number;
         _id: Id<"organizations">;
+        deletedAt?: number;
         name: string;
         onboardingCompletedAt?: number;
         ownerId: Id<"users">;
@@ -1533,6 +1628,7 @@ export declare const internal: {
         currentPeriodEnd: number;
         currentPeriodOverageSpentCents: number;
         currentPeriodStart: number;
+        deletionSchedulerId?: Id<"_scheduled_functions">;
         gracePeriodSchedulerId?: Id<"_scheduled_functions">;
         monthlyUnits: number;
         orgId: Id<"organizations">;
@@ -1559,6 +1655,7 @@ export declare const internal: {
         currentPeriodEnd: number;
         currentPeriodOverageSpentCents: number;
         currentPeriodStart: number;
+        deletionSchedulerId?: Id<"_scheduled_functions">;
         gracePeriodSchedulerId?: Id<"_scheduled_functions">;
         monthlyUnits: number;
         orgId: Id<"organizations">;
@@ -1585,6 +1682,7 @@ export declare const internal: {
         currentPeriodEnd: number;
         currentPeriodOverageSpentCents: number;
         currentPeriodStart: number;
+        deletionSchedulerId?: Id<"_scheduled_functions">;
         gracePeriodSchedulerId?: Id<"_scheduled_functions">;
         monthlyUnits: number;
         orgId: Id<"organizations">;
@@ -1672,6 +1770,16 @@ export declare const internal: {
     >;
   };
   tinybird: {
+    deleteOrgTraces: FunctionReference<
+      "action",
+      "internal",
+      { orgId: Id<"organizations"> },
+      | { deleted: false; reason: string }
+      | {
+          deleted: true;
+          results: Record<string, { error?: string; success: boolean }>;
+        }
+    >;
     extendRetention: FunctionReference<
       "action",
       "internal",

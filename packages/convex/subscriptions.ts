@@ -653,9 +653,22 @@ export const upsertStripeSubscriptionState = internalMutation({
       .first();
     if (!subscription) throw new Error('Subscription not found');
 
-    // Cancel grace period scheduler when transitioning to active
+    // Cancel grace period scheduler when transitioning to active (try/catch: job may have already fired)
     if (args.status === 'active' && subscription.gracePeriodSchedulerId) {
-      await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      try {
+        await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      } catch {
+        // Already completed or canceled
+      }
+    }
+
+    // Cancel pending deletion if reactivating (try/catch: job may have already fired)
+    if (args.status === 'active' && subscription.deletionSchedulerId) {
+      try {
+        await ctx.scheduler.cancel(subscription.deletionSchedulerId);
+      } catch {
+        // Already completed or canceled — safe to ignore
+      }
     }
 
     await ctx.db.patch(subscription._id, {
@@ -670,7 +683,9 @@ export const upsertStripeSubscriptionState = internalMutation({
           ? 0
           : subscription.currentPeriodOverageSpentCents,
       ...(args.cancelAtPeriodEnd !== undefined && { cancelAtPeriodEnd: args.cancelAtPeriodEnd }),
-      ...(args.status === 'active' ? { gracePeriodSchedulerId: undefined } : {}),
+      ...(args.status === 'active'
+        ? { gracePeriodSchedulerId: undefined, deletionSchedulerId: undefined }
+        : {}),
     });
 
     await scheduleKVSync(ctx, subscription._id);
@@ -767,12 +782,28 @@ export const revertToHobby = internalMutation({
 
     // Cancel any pending grace->suspended scheduler before clearing the ID
     if (subscription.gracePeriodSchedulerId) {
-      await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      try {
+        await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      } catch {
+        // Already completed or canceled
+      }
     }
 
     const now = Date.now();
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     const hobbyConfig = TIER_CONFIG.hobby;
+
+    // Cancel any existing deletion scheduler before scheduling a new one
+    if (subscription.deletionSchedulerId) {
+      await ctx.scheduler.cancel(subscription.deletionSchedulerId);
+    }
+
+    // Schedule org data deletion 30 days from cancellation
+    const deletionSchedulerId = await ctx.scheduler.runAfter(
+      thirtyDaysMs,
+      internal.admin.deleteOrgDataScheduled,
+      { orgId: args.orgId },
+    );
 
     // stripeCustomerId intentionally retained so the customer can re-subscribe
     // without creating a duplicate Stripe customer
@@ -791,6 +822,7 @@ export const revertToHobby = internalMutation({
       stripePlanItemId: undefined,
       cancelAtPeriodEnd: undefined,
       gracePeriodSchedulerId: undefined,
+      deletionSchedulerId,
     });
 
     await scheduleKVSync(ctx, subscription._id);

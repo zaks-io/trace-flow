@@ -154,6 +154,78 @@ export const generateTokenInternal = internalAction({
 });
 
 /**
+ * Deletes all trace data for an organization across all Tinybird datasources.
+ * Uses ALTER TABLE DELETE with ApiKey filtering (same pattern as extendRetention).
+ */
+export const deleteOrgTraces = internalAction({
+  args: {
+    orgId: v.id('organizations'),
+  },
+  returns: v.union(
+    v.object({ deleted: v.literal(false), reason: v.string() }),
+    v.object({
+      deleted: v.literal(true),
+      results: v.record(
+        v.string(),
+        v.object({ success: v.boolean(), error: v.optional(v.string()) }),
+      ),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const apiKeys = await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: args.orgId });
+    const apiKeyStrings = apiKeys.map((k: { key: string }) => k.key);
+
+    if (apiKeyStrings.length === 0) {
+      return { deleted: false as const, reason: 'No API keys found for organization' };
+    }
+
+    const validKeys = sanitizeApiKeys(apiKeyStrings);
+    if (validKeys.length === 0) {
+      return { deleted: false as const, reason: 'No valid API keys found for organization' };
+    }
+
+    const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
+
+    const datasources = [
+      'otel_traces',
+      'otel_traces_genai',
+      'llm_requests',
+      'llm_usage_1h',
+      'llm_usage_1d',
+      'llm_usage_1mo',
+    ];
+
+    const results: Record<string, { success: boolean; error?: string }> = {};
+
+    for (const datasource of datasources) {
+      const sql = `ALTER TABLE ${datasource} DELETE WHERE ApiKey IN (${apiKeysInClause})`;
+
+      const response = await fetch(`${tinybirdApiUrl}/v0/sql`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'text/plain',
+        },
+        body: sql,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        results[datasource] = {
+          success: false,
+          error: `${response.status}: ${errorText}`,
+        };
+        console.error(`Failed to delete traces for ${datasource}:`, errorText);
+      } else {
+        results[datasource] = { success: true };
+      }
+    }
+
+    return { deleted: true as const, results };
+  },
+});
+
+/**
  * Extends retention for existing traces when a user upgrades from hobby to pro.
  * Updates RetentionExpiresAt and TierAtIngestion in all three datasources.
  *
