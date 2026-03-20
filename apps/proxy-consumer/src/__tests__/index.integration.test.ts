@@ -1,10 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { env } from 'cloudflare:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { env, runInDurableObject } from 'cloudflare:test';
 import type { QueueMessage } from '@trace-flow/types';
 import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
+import { createMockTrace } from './fixtures';
 
 describe('Queue Handler Integration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    env.NUM_SHARDS = 2;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete env.NUM_SHARDS;
+  });
+
   const createMockQueueMessage = (requestId: string, apiKey: string): QueueMessage => ({
     requestId,
     apiKey,
@@ -31,6 +46,27 @@ describe('Queue Handler Integration', () => {
     },
     receivedAt: 1000000000000000,
   });
+
+  const createScheduledController = (): ScheduledController =>
+    ({
+      cron: '*/5 * * * *',
+      scheduledTime: Date.now(),
+      noRetry() {
+        // noop for tests
+      },
+    }) as ScheduledController;
+
+  const parseFirstLogRecord = (spy: ReturnType<typeof vi.spyOn>) => {
+    const firstCall = spy.mock.calls[0];
+    if (!firstCall) {
+      throw new Error('Expected a logged record');
+    }
+
+    return JSON.parse(String(firstCall[0])) as {
+      event: string;
+      data?: Record<string, unknown>;
+    };
+  };
 
   it('should process single message and route to correct shard', async () => {
     const message = createMockQueueMessage('test-1', 'api-key-123');
@@ -95,14 +131,98 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // Verify all messages were processed
     expect(batch.messages.length).toBe(20);
+  });
+
+  it('should not write health metrics during queue processing', async () => {
+    const analyticsSpy = vi.spyOn(env.ANALYTICS, 'writeDataPoint');
+    const message = createMockQueueMessage('test-no-health-metrics', 'api-key-123');
+
+    const batch: MessageBatch<QueueMessage> = {
+      queue: 'test-queue',
+      messages: [
+        {
+          id: '1',
+          timestamp: new Date(),
+          body: message,
+          attempts: 0,
+          ack: () => {
+            /* noop */
+          },
+          retry: () => {
+            /* noop */
+          },
+        },
+      ],
+      retryAll: () => {
+        /* noop */
+      },
+      ackAll: () => {
+        /* noop */
+      },
+    };
+
+    await worker.queue(batch, env);
+
+    expect(analyticsSpy).not.toHaveBeenCalled();
+  });
+
+  it('should write cron health metrics for all shards and only warn for unhealthy ones', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
+    env.NUM_SHARDS = 3;
+
+    const analyticsSpy = vi.spyOn(env.ANALYTICS, 'writeDataPoint');
+    const warnSpy = vi.spyOn(console, 'warn');
+    const infoSpy = vi.spyOn(console, 'info');
+
+    const shard0 = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName('batcher-0'));
+    await runInDurableObject(shard0, (instance: TraceBatcherInstance) => {
+      return instance.addMessageTraces([
+        { messageId: 'stale-msg', traces: [createMockTrace('trace-stale')] },
+      ]);
+    });
+
+    vi.advanceTimersByTime(11 * 60 * 1000);
+
+    await worker.scheduled(createScheduledController(), env);
+
+    expect(analyticsSpy).toHaveBeenCalledTimes(3);
+
+    const statuses = analyticsSpy.mock.calls.map(
+      ([point]) => (point as { blobs?: string[] }).blobs?.[1],
+    );
+    expect(statuses).toContain('stale_backlog');
+    expect(statuses).toContain('healthy');
+
+    const warnRecords = warnSpy.mock.calls.map(
+      ([record]) =>
+        JSON.parse(String(record)) as {
+          event: string;
+          data?: Record<string, unknown>;
+        },
+    );
+    expect(warnRecords.length).toBeGreaterThanOrEqual(1);
+    expect(warnRecords.every((record) => record.event === 'consumer.trace_batcher_unhealthy')).toBe(
+      true,
+    );
+    expect(
+      warnRecords.some(
+        (record) => record.data?.status === 'stale_backlog' && record.data?.cron === '*/5 * * * *',
+      ),
+    ).toBe(true);
+
+    const infoRecord = parseFirstLogRecord(infoSpy);
+    expect(infoRecord.event).toBe('consumer.trace_batcher_health_check_complete');
+    expect(infoRecord.data).toMatchObject({
+      checkedShards: 3,
+      cron: '*/5 * * * *',
+    });
   });
 
   it('should handle message with invalid trace data gracefully', async () => {
     const invalidMessage = createMockQueueMessage('test-invalid', 'api-key-invalid');
-    // Remove required fields to trigger error
-    delete (invalidMessage as any).timing;
+    delete (invalidMessage as Partial<QueueMessage>).timing;
 
     const ackCalled = { value: false };
     const retryCalled = { value: false };
@@ -133,7 +253,6 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // Should retry failed message
     expect(retryCalled.value).toBe(true);
     expect(ackCalled.value).toBe(false);
   });
@@ -168,7 +287,6 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // Verify message was acknowledged
     expect(ackCalled.value).toBe(true);
   });
 
@@ -300,8 +418,6 @@ describe('Queue Handler Integration', () => {
 
     await worker.queue(batch, env);
 
-    // All messages with same API key should go to same shard
-    // Verify by checking they were all processed
     expect(batch.messages.length).toBe(5);
   });
 

@@ -1,10 +1,34 @@
 import type { QueueMessageUnion, TinybirdTrace, QueueMessage } from '@trace-flow/types';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
-import { TraceBatcher, type TraceBatcherInstance } from './batcher';
+import {
+  TraceBatcher,
+  TRACE_BATCHER_BATCH_SIZE,
+  type TraceBatcherInstance,
+  type TraceBatcherStats,
+} from './batcher';
 import { buildTraces } from './traces';
 import { calculateShardId } from './sharding';
 import { getPricing, type ModelPricing } from './pricing';
 import { fetchOpenRouterPricing } from './openrouter-pricing';
+
+const DEFAULT_NUM_SHARDS = 10;
+const TRACE_BATCHER_STALE_BACKLOG_THRESHOLD_MS = 10 * 60 * 1000;
+
+type TraceBatcherHealthStatus =
+  | 'healthy'
+  | 'high_queue_depth'
+  | 'stale_backlog'
+  | 'high_queue_depth_and_stale_backlog'
+  | 'stats_unavailable';
+
+interface TraceBatcherHealthSnapshot {
+  shardId: number;
+  status: TraceBatcherHealthStatus;
+  queuedTraces: number;
+  backlogAgeMs: number;
+  lastSuccessfulFlushAgeMs: number;
+  unhealthy: boolean;
+}
 
 export { TraceBatcher };
 
@@ -23,6 +47,81 @@ export interface Env {
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
+}
+
+function getNumShards(env: Env): number {
+  return env.NUM_SHARDS ?? DEFAULT_NUM_SHARDS;
+}
+
+function getTraceBatcher(env: Env, shardId: number): DurableObjectStub<TraceBatcherInstance> {
+  const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
+  return env.TRACE_BATCHER.get(batcherId);
+}
+
+function evaluateTraceBatcherHealth(
+  shardId: number,
+  stats: TraceBatcherStats,
+  now: number,
+): TraceBatcherHealthSnapshot {
+  const backlogAgeMs =
+    stats.oldestQueuedTraceTime === null ? 0 : Math.max(0, now - stats.oldestQueuedTraceTime);
+  const lastSuccessfulFlushAgeMs = Math.max(0, now - stats.lastSuccessfulFlushTime);
+  const queueDepthExceeded = stats.queuedTraces >= TRACE_BATCHER_BATCH_SIZE;
+  const staleBacklog =
+    stats.queuedTraces > 0 && backlogAgeMs >= TRACE_BATCHER_STALE_BACKLOG_THRESHOLD_MS;
+
+  let status: TraceBatcherHealthStatus = 'healthy';
+  if (queueDepthExceeded && staleBacklog) {
+    status = 'high_queue_depth_and_stale_backlog';
+  } else if (queueDepthExceeded) {
+    status = 'high_queue_depth';
+  } else if (staleBacklog) {
+    status = 'stale_backlog';
+  }
+
+  return {
+    shardId,
+    status,
+    queuedTraces: stats.queuedTraces,
+    backlogAgeMs,
+    lastSuccessfulFlushAgeMs,
+    unhealthy: status !== 'healthy',
+  };
+}
+
+function createStatsUnavailableSnapshot(shardId: number): TraceBatcherHealthSnapshot {
+  return {
+    shardId,
+    status: 'stats_unavailable',
+    queuedTraces: 0,
+    backlogAgeMs: -1,
+    lastSuccessfulFlushAgeMs: -1,
+    unhealthy: true,
+  };
+}
+
+function writeTraceBatcherHealthMetric(
+  env: Env,
+  snapshot: TraceBatcherHealthSnapshot,
+  logger: ReturnType<typeof createLogger>,
+): void {
+  try {
+    env.ANALYTICS.writeDataPoint({
+      indexes: [`shard-${snapshot.shardId}`],
+      blobs: ['trace_batcher_health', snapshot.status],
+      doubles: [
+        snapshot.queuedTraces,
+        snapshot.backlogAgeMs,
+        snapshot.lastSuccessfulFlushAgeMs,
+        snapshot.unhealthy ? 1 : 0,
+      ],
+    });
+  } catch (error) {
+    logger.error('consumer.trace_batcher_health_metric_failed', error, {
+      shardId: snapshot.shardId,
+      status: snapshot.status,
+    });
+  }
 }
 
 async function getPricingForMessage(
@@ -49,7 +148,7 @@ async function getPricingForMessage(
 }
 
 async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: Env): Promise<void> {
-  const NUM_SHARDS = env.NUM_SHARDS ?? 10;
+  const numShards = getNumShards(env);
   const logger = createLogger({
     service: 'proxy-consumer',
     runtime: 'cloudflare-worker',
@@ -90,7 +189,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
           messageId = `llm:${message.body.requestId}`;
         }
 
-        const shardId = calculateShardId(apiKey, NUM_SHARDS);
+        const shardId = calculateShardId(apiKey, numShards);
 
         if (!shardedMessages.has(shardId)) {
           shardedMessages.set(shardId, { items: [] });
@@ -117,8 +216,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
 
     const shardPromises = Array.from(shardedMessages.entries()).map(async ([shardId, shard]) => {
       try {
-        const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
-        const batcher = env.TRACE_BATCHER.get(batcherId);
+        const batcher = getTraceBatcher(env, shardId);
 
         const results = await batcher.addMessageTraces(
           shard.items.map((item) => ({ messageId: item.messageId, traces: item.traces })),
@@ -149,27 +247,6 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
 
     await Promise.all(shardPromises);
 
-    // Record batcher queue depth for shards active in this batch
-    await Promise.all(
-      Array.from(shardedMessages.keys()).map(async (shardId) => {
-        const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
-        const batcher = env.TRACE_BATCHER.get(batcherId);
-        try {
-          const stats = await batcher.getStats();
-          env.ANALYTICS.writeDataPoint({
-            indexes: [`shard-${shardId}`],
-            blobs: ['batcher_queue_depth'],
-            doubles: [stats.queuedTraces, stats.lastFlushTime],
-          });
-        } catch (error) {
-          logger.warn('consumer.batcher_stats_failed', {
-            shardId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }),
-    );
-
     for (const message of failedMessages) {
       message.retry();
     }
@@ -184,11 +261,80 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
   }
 }
 
+async function runTraceBatcherHealthCheck(
+  env: Env,
+  cron: string,
+): Promise<{ checkedShards: number; unhealthyShards: number }> {
+  const logger = createLogger({
+    service: 'proxy-consumer',
+    runtime: 'cloudflare-worker',
+    axiom: axiomConfigFromEnv(env),
+    context: {
+      component: 'trace-batcher-health-check',
+    },
+  });
+
+  try {
+    const now = Date.now();
+    const environment = env.SENTRY_ENVIRONMENT ?? 'development';
+    const shardIds = Array.from({ length: getNumShards(env) }, (_, index) => index);
+
+    const snapshots = await Promise.all(
+      shardIds.map(async (shardId) => {
+        try {
+          const stats = await getTraceBatcher(env, shardId).getStats();
+          const snapshot = evaluateTraceBatcherHealth(shardId, stats, now);
+          writeTraceBatcherHealthMetric(env, snapshot, logger);
+
+          if (snapshot.unhealthy) {
+            logger.warn('consumer.trace_batcher_unhealthy', {
+              shardId,
+              status: snapshot.status,
+              queuedTraces: snapshot.queuedTraces,
+              backlogAgeMs: snapshot.backlogAgeMs,
+              lastSuccessfulFlushAgeMs: snapshot.lastSuccessfulFlushAgeMs,
+              cron,
+              environment,
+            });
+          }
+
+          return snapshot;
+        } catch (error) {
+          const snapshot = createStatsUnavailableSnapshot(shardId);
+          writeTraceBatcherHealthMetric(env, snapshot, logger);
+          logger.error('consumer.trace_batcher_health_check_failed', error, {
+            shardId,
+            cron,
+            environment,
+          });
+          return snapshot;
+        }
+      }),
+    );
+
+    const unhealthyShards = snapshots.filter((snapshot) => snapshot.unhealthy).length;
+    logger.info('consumer.trace_batcher_health_check_complete', {
+      checkedShards: snapshots.length,
+      unhealthyShards,
+      cron,
+      environment,
+    });
+
+    return { checkedShards: snapshots.length, unhealthyShards };
+  } finally {
+    await logger.flush();
+  }
+}
+
 export default {
   async queue(batch: MessageBatch<QueueMessageUnion>, env: Env): Promise<void> {
     // Note: @sentry/cloudflare doesn't have init() for queue handlers.
     // Errors are captured via Sentry.captureException() in processQueueBatch.
     // The TraceBatcher Durable Object is fully instrumented with Sentry.
     await processQueueBatch(batch, env);
+  },
+
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    await runTraceBatcherHealthCheck(env, controller.cron);
   },
 };
