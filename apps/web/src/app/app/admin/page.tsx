@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import type { Id } from '@convex/_generated/dataModel';
 import { Button } from '@/components/ui/button';
 import { PageToolbar } from '@/components/PageToolbar';
 import { useIsAdmin } from '@/components/AdminContext';
@@ -20,6 +21,8 @@ import {
   Loader2,
   Crown,
   Sparkles,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 
 type ActionStatus = 'idle' | 'loading' | 'success' | 'error';
@@ -144,6 +147,126 @@ function SyncActionRow({
   );
 }
 
+function DangerZone() {
+  const orgs = useQuery(api.admin.listOrgs);
+  const deleteOrgData = useAction(api.admin.deleteOrgData);
+  const [selectedOrgId, setSelectedOrgId] = useState<Id<'organizations'> | ''>('');
+  const [confirmText, setConfirmText] = useState('');
+  const [status, setStatus] = useState<ActionStatus>('idle');
+  const [result, setResult] = useState('');
+
+  const selectedOrg = orgs?.find((o) => o._id === selectedOrgId);
+  const confirmMatch = selectedOrg && confirmText === selectedOrg.name;
+
+  async function handleDelete() {
+    if (!selectedOrgId || !confirmMatch) return;
+    setStatus('loading');
+    setResult('');
+    try {
+      const r = await deleteOrgData({ orgId: selectedOrgId as Id<'organizations'> });
+      const tinybirdSummary =
+        r.tinybirdResults.deleted === false
+          ? r.tinybirdResults.reason
+          : Object.entries(r.tinybirdResults.results)
+              .map(([ds, res]) => `${ds}: ${res.success ? 'ok' : res.error}`)
+              .join(', ');
+      const convex = r.convexDeleted;
+      setResult(
+        `Tinybird: ${tinybirdSummary}. Convex: ${convex.apiKeys} keys, ${convex.usage} usage, ${convex.addonPurchases} addons, ${convex.membersRemoved} members, ${convex.invites} invites, ${convex.alerts} alerts, ${convex.mcpSessions} sessions, ${convex.mcpRefreshTokens} tokens. Stripe: ${r.stripeCanceled ? 'canceled' : 'n/a'}`,
+      );
+      setStatus('success');
+      setSelectedOrgId('');
+      setConfirmText('');
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : 'Failed');
+      setStatus('error');
+    }
+  }
+
+  return (
+    <section>
+      <div className="mb-4 flex items-center gap-2">
+        <AlertTriangle className="h-4 w-4 text-red-400" />
+        <h2 className="text-base font-medium text-red-400">Danger Zone</h2>
+      </div>
+      <div className="space-y-4 rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+        <div>
+          <p className="text-sm font-medium text-foreground">Delete All Organization Data</p>
+          <p className="text-xs text-muted-foreground">
+            Permanently deletes all traces, API keys, usage records, and Convex data for an org.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="flex-1">
+            <label className="mb-1 block text-xs text-muted-foreground">Organization</label>
+            <select
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+              value={selectedOrgId}
+              onChange={(e) => {
+                setSelectedOrgId(e.target.value as Id<'organizations'> | '');
+                setConfirmText('');
+                setStatus('idle');
+                setResult('');
+              }}
+            >
+              <option value="">Select an org...</option>
+              {orgs?.map((org) => (
+                <option key={org._id} value={org._id}>
+                  {org.name} ({org._id})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedOrg && (
+            <div className="flex-1">
+              <label className="mb-1 block text-xs text-muted-foreground">
+                Type <span className="font-mono font-semibold">{selectedOrg.name}</span> to confirm
+              </label>
+              <input
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder={selectedOrg.name}
+              />
+            </div>
+          )}
+
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={!confirmMatch || status === 'loading'}
+            onClick={() => void handleDelete()}
+            className="min-w-[140px]"
+          >
+            {status === 'loading' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <>
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Delete Org Data
+              </>
+            )}
+          </Button>
+        </div>
+
+        {result && (
+          <div
+            className={`rounded-lg border p-3 text-xs ${
+              status === 'error'
+                ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+            }`}
+          >
+            {result}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function AdminPage() {
   const isAdmin = useIsAdmin();
   const stats = useQuery(api.admin.stats, isAdmin ? {} : 'skip');
@@ -259,6 +382,8 @@ export default function AdminPage() {
           />
         </div>
       </section>
+
+      <DangerZone />
     </div>
   );
 }

@@ -658,6 +658,11 @@ export const upsertStripeSubscriptionState = internalMutation({
       await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
     }
 
+    // Cancel pending deletion if reactivating
+    if (args.status === 'active' && subscription.deletionSchedulerId) {
+      await ctx.scheduler.cancel(subscription.deletionSchedulerId);
+    }
+
     await ctx.db.patch(subscription._id, {
       status: args.status,
       stripeCustomerId: args.stripeCustomerId ?? subscription.stripeCustomerId,
@@ -670,7 +675,9 @@ export const upsertStripeSubscriptionState = internalMutation({
           ? 0
           : subscription.currentPeriodOverageSpentCents,
       ...(args.cancelAtPeriodEnd !== undefined && { cancelAtPeriodEnd: args.cancelAtPeriodEnd }),
-      ...(args.status === 'active' ? { gracePeriodSchedulerId: undefined } : {}),
+      ...(args.status === 'active'
+        ? { gracePeriodSchedulerId: undefined, deletionSchedulerId: undefined }
+        : {}),
     });
 
     await scheduleKVSync(ctx, subscription._id);
@@ -774,6 +781,18 @@ export const revertToHobby = internalMutation({
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
     const hobbyConfig = TIER_CONFIG.hobby;
 
+    // Cancel any existing deletion scheduler before scheduling a new one
+    if (subscription.deletionSchedulerId) {
+      await ctx.scheduler.cancel(subscription.deletionSchedulerId);
+    }
+
+    // Schedule org data deletion 30 days from cancellation
+    const deletionSchedulerId = await ctx.scheduler.runAfter(
+      thirtyDaysMs,
+      internal.admin.deleteOrgDataScheduled,
+      { orgId: args.orgId },
+    );
+
     // stripeCustomerId intentionally retained so the customer can re-subscribe
     // without creating a duplicate Stripe customer
     await ctx.db.patch(subscription._id, {
@@ -791,6 +810,7 @@ export const revertToHobby = internalMutation({
       stripePlanItemId: undefined,
       cancelAtPeriodEnd: undefined,
       gracePeriodSchedulerId: undefined,
+      deletionSchedulerId,
     });
 
     await scheduleKVSync(ctx, subscription._id);

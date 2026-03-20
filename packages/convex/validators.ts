@@ -37,6 +37,7 @@ export const subscriptionValidator = v.object({
   autoOverage: v.optional(v.boolean()),
   overageCapCents: v.optional(v.number()),
   gracePeriodSchedulerId: v.optional(v.id('_scheduled_functions')),
+  deletionSchedulerId: v.optional(v.id('_scheduled_functions')),
   autoTopupPendingSince: v.optional(v.number()),
 });
 
@@ -47,6 +48,7 @@ export const organizationValidator = v.object({
   ownerId: v.id('users'),
   stripeCustomerId: v.optional(v.string()),
   onboardingCompletedAt: v.optional(v.number()),
+  deletedAt: v.optional(v.number()),
 });
 
 export const apiKeyValidator = v.object({
