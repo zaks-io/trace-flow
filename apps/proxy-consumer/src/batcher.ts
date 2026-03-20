@@ -250,7 +250,7 @@ class TraceBatcherBase extends DurableObject<Env> {
 
         try {
           const datasource = this.env.TINYBIRD_DATASOURCE ?? 'otel_traces';
-          const host = this.env.TINYBIRD_HOST ?? 'https://api.tinybird.co';
+          const host = this.env.TINYBIRD_HOST ?? 'https://api.us-west-2.aws.tinybird.co';
           await insertIntoTinybirdWithRetry(traces, this.env.TINYBIRD_TOKEN, datasource, host);
 
           this.durableState.storage.sql.exec(
