@@ -63,7 +63,7 @@ export async function queryTinybird(
   token: string,
   sql: string,
 ): Promise<Record<string, unknown>[]> {
-  const apiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.tinybird.co';
+  const apiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
   const url = new URL(`${apiUrl}/v0/sql`);
   url.searchParams.set('q', sql);
 
@@ -85,7 +85,7 @@ export async function queryTinybirdPipe(
   pipe: string,
   params: Record<string, string | number | undefined> = {},
 ): Promise<Record<string, unknown>[]> {
-  const apiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.tinybird.co';
+  const apiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
   const url = new URL(`${apiUrl}/v0/pipes/${pipe}.json`);
 
   for (const [key, value] of Object.entries(params)) {

@@ -8,7 +8,7 @@ import { RETENTION_DAYS } from '@trace-flow/types';
 
 const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
 const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
-const tinybirdApiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.tinybird.co';
+const tinybirdApiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
 
 if (!adminToken) {
   throw new Error('TINYBIRD_ADMIN_TOKEN environment variable is not set');
