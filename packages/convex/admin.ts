@@ -213,6 +213,7 @@ export const deleteOrgRecordsBatch = internalMutation({
     let ops = 0;
 
     // Helper: delete up to remaining budget from a query
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async function deleteBatch<T extends { _id: any }>(
       items: T[],
       key: keyof typeof counts,
