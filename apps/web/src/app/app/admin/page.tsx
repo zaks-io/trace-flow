@@ -213,7 +213,7 @@ function DangerZone() {
               <option value="">Select an org...</option>
               {orgs?.map((org) => (
                 <option key={org._id} value={org._id}>
-                  {org.name} ({org._id})
+                  {org.name}
                 </option>
               ))}
             </select>

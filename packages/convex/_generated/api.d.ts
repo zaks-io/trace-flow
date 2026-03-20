@@ -848,19 +848,22 @@ export declare const internal: {
             };
       }
     >;
-    deleteOrgRecords: FunctionReference<
+    deleteOrgRecordsBatch: FunctionReference<
       "mutation",
       "internal",
       { orgId: Id<"organizations"> },
       {
-        addonPurchases: number;
-        alerts: number;
-        apiKeys: number;
-        invites: number;
-        mcpRefreshTokens: number;
-        mcpSessions: number;
-        membersRemoved: number;
-        usage: number;
+        counts: {
+          addonPurchases: number;
+          alerts: number;
+          apiKeys: number;
+          invites: number;
+          mcpRefreshTokens: number;
+          mcpSessions: number;
+          membersRemoved: number;
+          usage: number;
+        };
+        hasMore: boolean;
       }
     >;
     finalizeOrgDeletion: FunctionReference<

@@ -136,8 +136,25 @@ async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
   // deleteOrgTraces queries API keys from Convex to build the SQL WHERE clause.
   const tinybirdResults = await ctx.runAction(internal.tinybird.deleteOrgTraces, { orgId });
 
-  // 2. Delete Convex records in batches
-  const convexDeleted = await ctx.runMutation(internal.admin.deleteOrgRecords, { orgId });
+  // 2. Delete Convex records in paginated batches to stay under mutation limits
+  const convexDeleted = {
+    apiKeys: 0,
+    usage: 0,
+    addonPurchases: 0,
+    membersRemoved: 0,
+    invites: 0,
+    alerts: 0,
+    mcpSessions: 0,
+    mcpRefreshTokens: 0,
+  };
+  let hasMore = true;
+  while (hasMore) {
+    const batch = await ctx.runMutation(internal.admin.deleteOrgRecordsBatch, { orgId });
+    for (const key of Object.keys(convexDeleted) as (keyof typeof convexDeleted)[]) {
+      convexDeleted[key] += batch.counts[key];
+    }
+    hasMore = batch.hasMore;
+  }
 
   // 3. Cancel Stripe subscription if active
   let stripeCanceled = false;
@@ -158,17 +175,29 @@ async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
   return { tinybirdResults, convexDeleted, stripeCanceled };
 }
 
-export const deleteOrgRecords = internalMutation({
+const deleteBatchCountsValidator = v.object({
+  apiKeys: v.number(),
+  usage: v.number(),
+  addonPurchases: v.number(),
+  membersRemoved: v.number(),
+  invites: v.number(),
+  alerts: v.number(),
+  mcpSessions: v.number(),
+  mcpRefreshTokens: v.number(),
+});
+
+const PAGE_SIZE = 500;
+
+/**
+ * Deletes up to PAGE_SIZE org-related records per call. Returns hasMore=true
+ * if there are remaining records — the caller (action) loops until done.
+ * This keeps each mutation well under Convex's 8096 document op limit.
+ */
+export const deleteOrgRecordsBatch = internalMutation({
   args: { orgId: v.id('organizations') },
   returns: v.object({
-    apiKeys: v.number(),
-    usage: v.number(),
-    addonPurchases: v.number(),
-    membersRemoved: v.number(),
-    invites: v.number(),
-    alerts: v.number(),
-    mcpSessions: v.number(),
-    mcpRefreshTokens: v.number(),
+    counts: deleteBatchCountsValidator,
+    hasMore: v.boolean(),
   }),
   handler: async (ctx, args) => {
     const counts = {
@@ -181,36 +210,42 @@ export const deleteOrgRecords = internalMutation({
       mcpSessions: 0,
       mcpRefreshTokens: 0,
     };
+    let ops = 0;
+
+    // Helper: delete up to remaining budget from a query
+    async function deleteBatch<T extends { _id: any }>(
+      items: T[],
+      key: keyof typeof counts,
+    ): Promise<boolean> {
+      for (const item of items) {
+        if (ops >= PAGE_SIZE) return true;
+        await ctx.db.delete(item._id);
+        counts[key]++;
+        ops++;
+      }
+      return false;
+    }
 
     // Delete API keys
     const apiKeys = await ctx.db
       .query('apiKeys')
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .collect();
-    for (const key of apiKeys) {
-      await ctx.db.delete(key._id);
-      counts.apiKeys++;
-    }
+      .take(PAGE_SIZE);
+    if (await deleteBatch(apiKeys, 'apiKeys')) return { counts, hasMore: true };
 
     // Delete usage records
     const usageRecords = await ctx.db
       .query('usage')
       .withIndex('by_org_id_period', (q) => q.eq('orgId', args.orgId))
-      .collect();
-    for (const record of usageRecords) {
-      await ctx.db.delete(record._id);
-      counts.usage++;
-    }
+      .take(PAGE_SIZE - ops);
+    if (await deleteBatch(usageRecords, 'usage')) return { counts, hasMore: true };
 
     // Delete addon purchases
     const addons = await ctx.db
       .query('addonPurchases')
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .collect();
-    for (const addon of addons) {
-      await ctx.db.delete(addon._id);
-      counts.addonPurchases++;
-    }
+      .take(PAGE_SIZE - ops);
+    if (await deleteBatch(addons, 'addonPurchases')) return { counts, hasMore: true };
 
     // Mark members as removed and clean up per-member data
     const members = await ctx.db
@@ -218,51 +253,41 @@ export const deleteOrgRecords = internalMutation({
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
       .collect();
     for (const member of members) {
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+
       if (member.status !== 'removed') {
         await ctx.db.patch(member._id, { status: 'removed', removedAt: Date.now() });
         counts.membersRemoved++;
+        ops++;
       }
 
-      // Delete per-user data
       const alerts = await ctx.db
         .query('alerts')
         .withIndex('by_user_id', (q) => q.eq('userId', member.userId))
-        .collect();
-      for (const alert of alerts) {
-        await ctx.db.delete(alert._id);
-        counts.alerts++;
-      }
+        .take(PAGE_SIZE - ops);
+      if (await deleteBatch(alerts, 'alerts')) return { counts, hasMore: true };
 
       const sessions = await ctx.db
         .query('mcpSessions')
         .withIndex('by_user_id', (q) => q.eq('userId', member.userId))
-        .collect();
-      for (const session of sessions) {
-        await ctx.db.delete(session._id);
-        counts.mcpSessions++;
-      }
+        .take(PAGE_SIZE - ops);
+      if (await deleteBatch(sessions, 'mcpSessions')) return { counts, hasMore: true };
 
       const tokens = await ctx.db
         .query('mcpRefreshTokens')
         .withIndex('by_user_id', (q) => q.eq('userId', member.userId))
-        .collect();
-      for (const token of tokens) {
-        await ctx.db.delete(token._id);
-        counts.mcpRefreshTokens++;
-      }
+        .take(PAGE_SIZE - ops);
+      if (await deleteBatch(tokens, 'mcpRefreshTokens')) return { counts, hasMore: true };
     }
 
     // Delete invites
     const invites = await ctx.db
       .query('invites')
       .withIndex('by_org_id_status', (q) => q.eq('orgId', args.orgId))
-      .collect();
-    for (const invite of invites) {
-      await ctx.db.delete(invite._id);
-      counts.invites++;
-    }
+      .take(PAGE_SIZE - ops);
+    if (await deleteBatch(invites, 'invites')) return { counts, hasMore: true };
 
-    return counts;
+    return { counts, hasMore: false };
   },
 });
 
@@ -276,12 +301,15 @@ export const finalizeOrgDeletion = internalMutation({
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
       .first();
     if (subscription) {
-      // Cancel any pending schedulers
-      if (subscription.gracePeriodSchedulerId) {
-        await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
-      }
-      if (subscription.deletionSchedulerId) {
-        await ctx.scheduler.cancel(subscription.deletionSchedulerId);
+      // Cancel any pending schedulers (try/catch: jobs may have already completed)
+      for (const id of [subscription.gracePeriodSchedulerId, subscription.deletionSchedulerId]) {
+        if (id) {
+          try {
+            await ctx.scheduler.cancel(id);
+          } catch {
+            // Already completed or canceled
+          }
+        }
       }
       await ctx.db.delete(subscription._id);
     }

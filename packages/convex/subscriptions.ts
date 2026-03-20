@@ -658,9 +658,13 @@ export const upsertStripeSubscriptionState = internalMutation({
       await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
     }
 
-    // Cancel pending deletion if reactivating
+    // Cancel pending deletion if reactivating (try/catch: job may have already fired)
     if (args.status === 'active' && subscription.deletionSchedulerId) {
-      await ctx.scheduler.cancel(subscription.deletionSchedulerId);
+      try {
+        await ctx.scheduler.cancel(subscription.deletionSchedulerId);
+      } catch {
+        // Already completed or canceled — safe to ignore
+      }
     }
 
     await ctx.db.patch(subscription._id, {
