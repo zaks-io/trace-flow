@@ -38,6 +38,7 @@ export function createQueueMessage(params: {
   responseStatus: number;
   requestStart: number;
   requestSent: number;
+  responseReceived: number;
   firstTokenReceived: number | undefined;
   responseComplete: number;
   latency: number;
@@ -65,6 +66,7 @@ export function createQueueMessage(params: {
     responseStatus,
     requestStart,
     requestSent,
+    responseReceived,
     firstTokenReceived,
     responseComplete,
     latency,
@@ -85,6 +87,7 @@ export function createQueueMessage(params: {
   const timing: LLMTiming = {
     requestStart,
     requestSent,
+    responseReceived,
     firstTokenReceived,
     responseComplete,
   };

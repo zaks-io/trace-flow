@@ -44,6 +44,7 @@ export interface LLMResponse {
 export interface LLMTiming {
   requestStart: number;
   requestSent: number;
+  responseReceived: number;
   firstTokenReceived?: number;
   responseComplete: number;
 }

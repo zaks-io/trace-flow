@@ -261,6 +261,8 @@ app.all('*', async (c) => {
     body: streamToProxy,
   });
 
+  const responseReceived = getCurrentTimestamp();
+
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
   const sseStreamData: SSEStreamData = { messages: [] };
@@ -398,6 +400,7 @@ app.all('*', async (c) => {
             responseStatus: response.status,
             requestStart,
             requestSent,
+            responseReceived,
             firstTokenReceived,
             responseComplete,
             latency,
@@ -414,9 +417,9 @@ app.all('*', async (c) => {
 
           // Analytics Engine slot layout:
           // blobs:   provider, status_code, operation, skip_reason, is_sse, model
-          // doubles: total_latency_ms, prep_latency_ms, ttfb_ms, is_server_error, total_tokens,
-          //          prompt_tokens, completion_tokens, cache_read_tokens, response_size,
-          //          storage_status (1=stored, 0=failed, -1=skipped/omitBody)
+          // doubles: total_latency_ms, prep_latency_ms, ttfb_ms, is_server_error, upstream_ttfb_ms,
+          //          total_tokens, prompt_tokens, completion_tokens, cache_read_tokens,
+          //          response_size, storage_status (1=stored, 0=failed, -1=skipped/omitBody)
           // Queries must use sum(_sample_interval) for counts, quantileExactWeighted for percentiles
           c.env.ANALYTICS.writeDataPoint({
             indexes: [keyData.orgId],
@@ -433,6 +436,7 @@ app.all('*', async (c) => {
               requestSent - requestStart,
               firstTokenReceived ? firstTokenReceived - requestSent : 0,
               response.status >= 500 ? 1 : 0,
+              responseReceived - requestSent,
               tokens?.totalTokens ?? 0,
               tokens?.promptTokens ?? 0,
               tokens?.completionTokens ?? 0,
@@ -477,7 +481,7 @@ app.all('*', async (c) => {
               isSSE ? '1' : '0',
               '',
             ],
-            doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // match recording path slot count
+            doubles: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], // match recording path slot count
           });
           logger.info('proxy.capture_skipped', {
             reason: decision.reason,

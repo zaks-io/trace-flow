@@ -104,6 +104,13 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
     RetentionExpiresAt: retentionExpiresAt,
   };
 
+  // Proxy overhead and upstream TTFB
+  const proxyOverheadMs = data.timing.requestSent - data.timing.requestStart;
+  spanAttributes['trace_flow.proxy_overhead_ms'] = String(proxyOverheadMs);
+
+  const upstreamTtfbMs = data.timing.responseReceived - data.timing.requestSent;
+  spanAttributes['trace_flow.upstream_ttfb_ms'] = String(upstreamTtfbMs);
+
   if (data.tokens) {
     if (data.tokens.promptTokens !== undefined) {
       rootSpan.SpanAttributes['gen_ai.usage.input_tokens'] = String(data.tokens.promptTokens);

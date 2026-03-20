@@ -10,6 +10,7 @@ describe('createQueueMessage', () => {
     responseStatus: 200,
     requestStart: 1000,
     requestSent: 1100,
+    responseReceived: 1150,
     firstTokenReceived: 1200,
     responseComplete: 1500,
     latency: 500,
@@ -46,6 +47,7 @@ describe('createQueueMessage', () => {
     expect(result.timing).toEqual({
       requestStart: 1000,
       requestSent: 1100,
+      responseReceived: 1150,
       firstTokenReceived: 1200,
       responseComplete: 1500,
     });

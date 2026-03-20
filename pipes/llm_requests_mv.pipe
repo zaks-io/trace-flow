@@ -62,6 +62,8 @@ SQL >
             round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total')) * 1000000)
         ) AS TotalCostMicrodollars,
         Duration AS DurationNano,
+        toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.proxy_overhead_ms')) * 1000000)) AS ProxyOverheadNano,
+        toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.upstream_ttfb_ms')) * 1000000)) AS UpstreamTtfbNano,
         TierAtIngestion,
         RetentionExpiresAt
     FROM otel_traces

@@ -24,6 +24,7 @@ describe('buildTraces', () => {
     timing: {
       requestStart: 1000,
       requestSent: 1100,
+      responseReceived: 1150,
       firstTokenReceived: 1200,
       responseComplete: 1500,
     },
@@ -68,6 +69,14 @@ describe('buildTraces', () => {
 
       expect(rootSpan.Timestamp).toBe(1000 * 1000000);
       expect(rootSpan.Duration).toBe((1500 - 1000) * 1000000);
+    });
+
+    it('should include proxy overhead and upstream TTFB attributes', () => {
+      const traces = buildTraces(baseQueueMessage);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['trace_flow.proxy_overhead_ms']).toBe('100');
+      expect(rootSpan.SpanAttributes['trace_flow.upstream_ttfb_ms']).toBe('50');
     });
   });
 

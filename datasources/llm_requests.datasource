@@ -29,6 +29,8 @@ SCHEMA >
     `UpstreamCostMicrodollars` UInt64,
     `TotalCostMicrodollars` UInt64,
     `DurationNano` Int64,
+    `ProxyOverheadNano` Int64,
+    `UpstreamTtfbNano` Int64,
     `TierAtIngestion` LowCardinality(String),
     `RetentionExpiresAt` Int64
 
