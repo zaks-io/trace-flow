@@ -7,8 +7,6 @@ import { createMockTrace } from './fixtures';
 
 describe('Queue Handler Integration', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
@@ -170,6 +168,8 @@ describe('Queue Handler Integration', () => {
   });
 
   it('should write cron health metrics for all shards and only warn for unhealthy ones', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
     env.NUM_SHARDS = 3;
 
     const analyticsSpy = vi.spyOn(env.ANALYTICS, 'writeDataPoint');

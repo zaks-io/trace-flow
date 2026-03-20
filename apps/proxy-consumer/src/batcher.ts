@@ -103,13 +103,26 @@ class TraceBatcherBase extends DurableObject<Env> {
       )
     `);
 
-    const metadataColumns = [
-      ...this.durableState.storage.sql.exec<{ name: string }>('PRAGMA table_info(metadata)'),
-    ];
-    if (!metadataColumns.some((column) => column.name === 'last_successful_flush_time')) {
-      this.durableState.storage.sql.exec(
-        'ALTER TABLE metadata ADD COLUMN last_successful_flush_time INTEGER',
-      );
+    let needsMigration = false;
+    try {
+      const rows = [
+        ...this.durableState.storage.sql.exec<{ last_successful_flush_time: number | null }>(
+          'SELECT last_successful_flush_time FROM metadata WHERE id = 1',
+        ),
+      ];
+      needsMigration = rows.length > 0 && rows[0]?.last_successful_flush_time === null;
+    } catch {
+      // Column doesn't exist yet on pre-existing DOs
+      needsMigration = true;
+    }
+    if (needsMigration) {
+      try {
+        this.durableState.storage.sql.exec(
+          'ALTER TABLE metadata ADD COLUMN last_successful_flush_time INTEGER',
+        );
+      } catch {
+        // Column already exists
+      }
       this.durableState.storage.sql.exec(
         'UPDATE metadata SET last_successful_flush_time = last_flush_time WHERE last_successful_flush_time IS NULL',
       );

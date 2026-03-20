@@ -94,8 +94,8 @@ function createStatsUnavailableSnapshot(shardId: number): TraceBatcherHealthSnap
     shardId,
     status: 'stats_unavailable',
     queuedTraces: 0,
-    backlogAgeMs: 0,
-    lastSuccessfulFlushAgeMs: 0,
+    backlogAgeMs: -1,
+    lastSuccessfulFlushAgeMs: -1,
     unhealthy: true,
   };
 }
