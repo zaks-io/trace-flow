@@ -653,9 +653,13 @@ export const upsertStripeSubscriptionState = internalMutation({
       .first();
     if (!subscription) throw new Error('Subscription not found');
 
-    // Cancel grace period scheduler when transitioning to active
+    // Cancel grace period scheduler when transitioning to active (try/catch: job may have already fired)
     if (args.status === 'active' && subscription.gracePeriodSchedulerId) {
-      await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      try {
+        await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      } catch {
+        // Already completed or canceled
+      }
     }
 
     // Cancel pending deletion if reactivating (try/catch: job may have already fired)
@@ -778,7 +782,11 @@ export const revertToHobby = internalMutation({
 
     // Cancel any pending grace->suspended scheduler before clearing the ID
     if (subscription.gracePeriodSchedulerId) {
-      await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      try {
+        await ctx.scheduler.cancel(subscription.gracePeriodSchedulerId);
+      } catch {
+        // Already completed or canceled
+      }
     }
 
     const now = Date.now();

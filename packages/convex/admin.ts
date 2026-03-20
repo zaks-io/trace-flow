@@ -252,7 +252,7 @@ export const deleteOrgRecordsBatch = internalMutation({
     const members = await ctx.db
       .query('organizationMembers')
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .collect();
+      .take(PAGE_SIZE - ops);
     for (const member of members) {
       if (ops >= PAGE_SIZE) return { counts, hasMore: true };
 
