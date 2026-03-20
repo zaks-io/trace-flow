@@ -70,6 +70,14 @@ describe('buildTraces', () => {
       expect(rootSpan.Timestamp).toBe(1000 * 1000000);
       expect(rootSpan.Duration).toBe((1500 - 1000) * 1000000);
     });
+
+    it('should include proxy overhead and upstream TTFB attributes', () => {
+      const traces = buildTraces(baseQueueMessage);
+      const rootSpan = traces[0]!;
+
+      expect(rootSpan.SpanAttributes['trace_flow.proxy_overhead_ms']).toBe('100');
+      expect(rootSpan.SpanAttributes['trace_flow.upstream_ttfb_ms']).toBe('50');
+    });
   });
 
   describe('token usage', () => {

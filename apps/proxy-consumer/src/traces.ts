@@ -108,10 +108,8 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   const proxyOverheadMs = data.timing.requestSent - data.timing.requestStart;
   spanAttributes['trace_flow.proxy_overhead_ms'] = String(proxyOverheadMs);
 
-  if (data.timing.responseReceived) {
-    const upstreamTtfbMs = data.timing.responseReceived - data.timing.requestSent;
-    spanAttributes['trace_flow.upstream_ttfb_ms'] = String(upstreamTtfbMs);
-  }
+  const upstreamTtfbMs = data.timing.responseReceived - data.timing.requestSent;
+  spanAttributes['trace_flow.upstream_ttfb_ms'] = String(upstreamTtfbMs);
 
   if (data.tokens) {
     if (data.tokens.promptTokens !== undefined) {
