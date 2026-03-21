@@ -17,7 +17,7 @@ import * as tokensModule from './mcp/tokens';
 import type Stripe from 'stripe';
 import { UNITS_PER_ADDON } from '@trace-flow/types';
 import { mapStripeStatusToInternal } from './billing/subscriptions';
-import { getStripeClient, stripeWebhookSecret } from './billing/stripe';
+import { getStripeClient, stripeWebhookSecret, stripeProPriceId } from './billing/stripe';
 
 // Dependencies that can be injected for testing
 export interface HttpDeps {
@@ -90,9 +90,13 @@ export function createApp(
     });
     const signature = c.req.header('stripe-signature');
     if (!signature) {
+      logger.error('convex.stripe_webhook_missing_signature');
+      await logger.flush();
       return c.json({ error: 'Missing stripe-signature header' }, 400);
     }
     if (!stripeWebhookSecret) {
+      logger.error('convex.stripe_webhook_missing_secret');
+      await logger.flush();
       return c.json({ error: 'STRIPE_WEBHOOK_SECRET environment variable is not set' }, 500);
     }
 
@@ -101,8 +105,14 @@ export function createApp(
 
     let event: Stripe.Event;
     try {
-      event = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
+      event = await stripe.webhooks.constructEventAsync(rawBody, signature, stripeWebhookSecret);
     } catch (error) {
+      logger.error('convex.stripe_webhook_signature_invalid', error, {
+        signaturePrefix: signature.slice(0, 20),
+        secretPrefix: stripeWebhookSecret.slice(0, 8),
+        bodyLength: rawBody.length,
+      });
+      await logger.flush();
       return c.json(
         {
           error: 'Invalid webhook signature',
@@ -149,6 +159,10 @@ export function createApp(
             currentPeriodStart: (planItem?.current_period_start ?? 0) * 1000,
             currentPeriodEnd: (planItem?.current_period_end ?? 0) * 1000,
           });
+          await ctx.runMutation(internal.billing.subscriptions.setTier, {
+            orgId,
+            tier: 'pro',
+          });
           break;
         }
         case 'customer.subscription.created':
@@ -168,6 +182,14 @@ export function createApp(
             currentPeriodStart: (planItem?.current_period_start ?? 0) * 1000,
             currentPeriodEnd: (planItem?.current_period_end ?? 0) * 1000,
             cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+          });
+          const priceId =
+            planItem?.price?.id ??
+            (typeof planItem?.price === 'string' ? planItem.price : undefined);
+          const tier = priceId === stripeProPriceId ? 'pro' : 'hobby';
+          await ctx.runMutation(internal.billing.subscriptions.setTier, {
+            orgId: existing.orgId,
+            tier,
           });
           break;
         }

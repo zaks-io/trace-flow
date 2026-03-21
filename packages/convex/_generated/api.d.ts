@@ -657,6 +657,12 @@ export declare const api: {
         { cancelUrl?: string; successUrl?: string },
         { url: string | null }
       >;
+      ensureBillingForCurrentUser: FunctionReference<
+        "mutation",
+        "public",
+        {},
+        null
+      >;
       getBillingSummaryForCurrentUser: FunctionReference<
         "query",
         "public",
