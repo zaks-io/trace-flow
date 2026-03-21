@@ -1,337 +1,73 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { ArrowUpDown, ChevronDown, ChevronUp, Database, Layers, Users } from 'lucide-react';
-import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { Database, Layers, Users } from 'lucide-react';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
-import { PageToolbar } from '@/components/PageToolbar';
-import { BarCard, formatCostCompact } from '@/components/BarCard';
+import { PageToolbar } from '@/components/shared/PageToolbar';
 import { FilterDropdown } from '@/components/usage/FilterDropdown';
-import {
-  TIME_RANGES,
-  type TimeRange,
-  type TinybirdResponse,
-  type OperationLeaderboardRow,
-  type OperationUserRow,
-  type OperationsFilterOptionsRow,
-} from '@/components/usage/types';
+import { TIME_RANGES } from '@/components/usage/types';
 import { Input } from '@/components/ui/input';
-import { formatCurrency, formatDuration, formatNumber } from '@/lib/format';
-import { getAggregateCacheHitRate, getCostPerRequest } from '@/lib/operations';
-import { formatCacheHitRate, getCacheHitRateAccent } from '@/lib/cacheMetrics';
-import { snapToMinute } from '@/lib/tinybird';
-
-type LeaderboardSortKey =
-  | 'request_count'
-  | 'total_cost_usd'
-  | 'cost_per_request'
-  | 'cache_hit_rate'
-  | 'avg_duration_ms'
-  | 'p95_duration_ms';
-
-function SortIcon({ col, sortKey, sortDesc }: { col: string; sortKey: string; sortDesc: boolean }) {
-  if (sortKey !== col) return <ArrowUpDown className="ml-1 inline h-3 w-3 opacity-40" />;
-  return sortDesc ? (
-    <ChevronDown className="ml-1 inline h-3 w-3" />
-  ) : (
-    <ChevronUp className="ml-1 inline h-3 w-3" />
-  );
-}
-
-function ProportionBar({ value, max }: { value: number; max: number }) {
-  if (max === 0 || value === 0) return null;
-  const pct = Math.min((value / max) * 100, 100);
-  return (
-    <div className="absolute inset-y-0 left-0 opacity-[0.06]" style={{ width: `${pct}%` }}>
-      <div className="h-full bg-foreground" />
-    </div>
-  );
-}
-
-const CACHE_RATE_COLORS = {
-  green: 'text-emerald-500',
-  amber: 'text-amber-500',
-  red: 'text-red-400',
-  zinc: 'text-muted-foreground',
-} as const;
-
-function OperationsLeaderboardTable({
-  data,
-  selectedOperation,
-  onSelectOperation,
-  sortKey,
-  sortDesc,
-  onSort,
-}: {
-  data: OperationLeaderboardRow[];
-  selectedOperation: string;
-  onSelectOperation: (operation: string) => void;
-  sortKey: LeaderboardSortKey;
-  sortDesc: boolean;
-  onSort: (key: LeaderboardSortKey) => void;
-}) {
-  if (data.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-2 py-12 text-center">
-        <Layers className="h-8 w-8 text-muted-foreground/40" />
-        <p className="text-sm text-muted-foreground">No operation data available for this range.</p>
-      </div>
-    );
-  }
-
-  const maxRequests = Math.max(...data.map((r) => r.request_count));
-
-  const cols: { key: LeaderboardSortKey; label: string }[] = [
-    { key: 'request_count', label: 'Requests' },
-    { key: 'total_cost_usd', label: 'Cost' },
-    { key: 'cost_per_request', label: 'Cost / Req' },
-    { key: 'cache_hit_rate', label: 'Cache Hit' },
-    { key: 'avg_duration_ms', label: 'Avg' },
-    { key: 'p95_duration_ms', label: 'P95' },
-  ];
-
-  return (
-    <div className="overflow-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="pb-2 pl-3 font-medium">Operation</th>
-            {cols.map((col) => (
-              <th
-                key={col.key}
-                className="cursor-pointer select-none pb-2 text-right font-medium transition-colors hover:text-foreground"
-                onClick={() => onSort(col.key)}
-              >
-                {col.label}
-                <SortIcon col={col.key} sortKey={sortKey} sortDesc={sortDesc} />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row) => {
-            const isSelected = row.operation === selectedOperation;
-            const cacheHitRate = getAggregateCacheHitRate(row);
-            const costPerRequest = getCostPerRequest(row);
-            const cacheAccent = getCacheHitRateAccent(cacheHitRate);
-
-            return (
-              <tr
-                key={row.operation}
-                onClick={() => onSelectOperation(row.operation)}
-                className={`group relative cursor-pointer border-b border-border/50 transition-colors ${
-                  isSelected ? 'bg-primary/5 hover:bg-primary/8' : 'hover:bg-muted/30'
-                }`}
-              >
-                <td className="relative py-2.5 pl-3 font-medium text-foreground">
-                  <ProportionBar value={row.request_count} max={maxRequests} />
-                  {isSelected && (
-                    <span className="absolute inset-y-0 left-0 w-[3px] rounded-r bg-primary" />
-                  )}
-                  <span className="relative z-10">{row.operation}</span>
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatNumber(row.request_count)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-foreground">
-                  {formatCurrency(row.total_cost_usd)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatCurrency(costPerRequest)}
-                </td>
-                <td className={`py-2.5 text-right font-mono ${CACHE_RATE_COLORS[cacheAccent]}`}>
-                  {formatCacheHitRate(cacheHitRate)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatDuration(row.avg_duration_ms)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatDuration(row.p95_duration_ms)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function OperationUsersTable({ data }: { data: OperationUserRow[] }) {
-  if (data.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-2 py-12 text-center">
-        <Users className="h-8 w-8 text-muted-foreground/40" />
-        <p className="text-sm text-muted-foreground">
-          No <code className="rounded bg-muted px-1 py-0.5 text-xs">baggage.userId</code> values
-          were captured for this operation.
-        </p>
-      </div>
-    );
-  }
-
-  const maxRequests = Math.max(...data.map((r) => r.request_count));
-
-  return (
-    <div className="overflow-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="pb-2 pl-3 font-medium">User ID</th>
-            <th className="pb-2 text-right font-medium">Requests</th>
-            <th className="pb-2 text-right font-medium">Cost</th>
-            <th className="pb-2 text-right font-medium">Cost / Req</th>
-            <th className="pb-2 text-right font-medium">Cache Hit</th>
-            <th className="pb-2 text-right font-medium">Avg</th>
-            <th className="pb-2 text-right font-medium">P95</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row) => {
-            const cacheHitRate = getAggregateCacheHitRate(row);
-            const costPerRequest = getCostPerRequest(row);
-            const cacheAccent = getCacheHitRateAccent(cacheHitRate);
-
-            return (
-              <tr
-                key={row.baggage_user_id}
-                className="relative border-b border-border/50 transition-colors hover:bg-muted/30"
-              >
-                <td className="relative py-2.5 pl-3 font-mono text-foreground">
-                  <ProportionBar value={row.request_count} max={maxRequests} />
-                  <span className="relative z-10">{row.baggage_user_id}</span>
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatNumber(row.request_count)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-foreground">
-                  {formatCurrency(row.total_cost_usd)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatCurrency(costPerRequest)}
-                </td>
-                <td className={`py-2.5 text-right font-mono ${CACHE_RATE_COLORS[cacheAccent]}`}>
-                  {formatCacheHitRate(cacheHitRate)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatDuration(row.avg_duration_ms)}
-                </td>
-                <td className="py-2.5 text-right font-mono text-muted-foreground">
-                  {formatDuration(row.p95_duration_ms)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+import { formatNumber } from '@/lib/format';
+import { useOperationsFilters } from './useOperationsFilters';
+import { useOperationsData } from './useOperationsData';
+import { SummaryCards } from './SummaryCards';
+import { LeaderboardTable } from './LeaderboardTable';
+import { UsersTable } from './UsersTable';
 
 export function OperationsAnalytics({
   preloadedApiKeys,
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
-  const [timeRange, setTimeRange] = useState<TimeRange>('30d');
-  const [providerFilter, setProviderFilter] = useState('');
-  const [modelFilter, setModelFilter] = useState('');
-  const [operationFilter, setOperationFilter] = useState('');
-  const [selectedOperationName, setSelectedOperationName] = useState('');
-  const [apiKeyFilter, setApiKeyFilter] = useState('');
-  const [userIdFilter, setUserIdFilter] = useState('');
-  const [sortKey, setSortKey] = useState<LeaderboardSortKey>('total_cost_usd');
-  const [sortDesc, setSortDesc] = useState(true);
-
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
-  const trimmedUserId = userIdFilter.trim();
-  const [debouncedUserId, setDebouncedUserId] = useState(trimmedUserId);
 
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedUserId(trimmedUserId), 300);
-    return () => clearTimeout(id);
-  }, [trimmedUserId]);
-
-  const { startTimeNs, endTimeNs } = useMemo(() => {
-    const rangeMs = TIME_RANGES.find((range) => range.value === timeRange)?.ms ?? 0;
-    const now = Date.now();
-
-    return {
-      startTimeNs: snapToMinute(now - rangeMs) * 1_000_000,
-      endTimeNs: snapToMinute(now) * 1_000_000,
-    };
-  }, [timeRange]);
-
-  const filterParams = useMemo(() => {
-    const params: Record<string, string | number> = {
-      start_time_ns: startTimeNs,
-      end_time_ns: endTimeNs,
-    };
-
-    if (providerFilter) params.provider = providerFilter;
-    if (modelFilter) params.model = modelFilter;
-    if (operationFilter) params.baggage_operation = operationFilter;
-    if (apiKeyFilter) params.api_key_filter = apiKeyFilter;
-    if (debouncedUserId) params.baggage_user_id = debouncedUserId;
-
-    return params;
-  }, [
-    apiKeyFilter,
-    endTimeNs,
-    modelFilter,
-    operationFilter,
+  const filters = useOperationsFilters();
+  const {
+    timeRange,
+    setTimeRange,
     providerFilter,
-    startTimeNs,
-    debouncedUserId,
-  ]);
+    setProviderFilter,
+    modelFilter,
+    setModelFilter,
+    operationFilter,
+    setOperationFilter,
+    setSelectedOperationName,
+    apiKeyFilter,
+    setApiKeyFilter,
+    userIdFilter,
+    setUserIdFilter,
+    sortKey,
+    setSortKey,
+    sortDesc,
+    setSortDesc,
+    filterParams,
+    activeOperation,
+    hasActiveFilters,
+    clearFilters,
+    seenProviders,
+    seenModels,
+    seenOperations,
+    seenApiKeys,
+  } = filters;
 
-  const activeOperation = operationFilter || selectedOperationName;
+  const {
+    operations,
+    sortedOperations,
+    users,
+    filterOptions,
+    selectedOperation,
+    isInitialLoading,
+    isUsersLoading,
+    hasError,
+  } = useOperationsData({ filterParams, activeOperation, sortKey, sortDesc });
 
-  const operationsQuery = useTinybirdQuery<TinybirdResponse<OperationLeaderboardRow>>({
-    pipe: 'operations_leaderboard',
-    params: { ...filterParams, limit: 100 },
-  });
-
-  const usersQuery = useTinybirdQuery<TinybirdResponse<OperationUserRow>>({
-    pipe: 'operation_user_breakdown',
-    params: { ...filterParams, baggage_operation: activeOperation, limit: 50 },
-    enabled: activeOperation !== '',
-  });
-
-  const filterOptionsQuery = useTinybirdQuery<TinybirdResponse<OperationsFilterOptionsRow>>({
-    pipe: 'operations_filter_options',
-    params: filterParams,
-  });
-
-  const operations = useMemo(() => operationsQuery.data?.data ?? [], [operationsQuery.data]);
-  const users = usersQuery.data?.data ?? [];
-  const filterOptions = filterOptionsQuery.data?.data?.[0];
-
-  const isInitialLoading = operationsQuery.isLoading || filterOptionsQuery.isLoading;
-  const isUsersLoading = usersQuery.isLoading;
-  const hasError = operationsQuery.error ?? usersQuery.error ?? filterOptionsQuery.error;
-
-  const seenProviders = useRef(new Set<string>());
-  const seenModels = useRef(new Set<string>());
-  const seenOperations = useRef(new Set<string>());
-  const seenApiKeys = useRef(new Set<string>());
-  const prevTimeRange = useRef(timeRange);
-
-  if (prevTimeRange.current !== timeRange) {
-    seenProviders.current.clear();
-    seenModels.current.clear();
-    seenOperations.current.clear();
-    seenApiKeys.current.clear();
-    prevTimeRange.current = timeRange;
-  }
-
-  filterOptions?.providers.forEach((provider) => seenProviders.current.add(provider));
-  filterOptions?.models.forEach((model) => seenModels.current.add(model));
-  filterOptions?.operations.forEach((operation) => seenOperations.current.add(operation));
-  filterOptions?.api_keys.forEach((apiKey) => seenApiKeys.current.add(apiKey));
+  // Accumulate filter options across queries so dropdowns don't collapse when a filter is applied
+  filterOptions?.providers.forEach((p) => seenProviders.current.add(p));
+  filterOptions?.models.forEach((m) => seenModels.current.add(m));
+  filterOptions?.operations.forEach((o) => seenOperations.current.add(o));
+  filterOptions?.api_keys.forEach((k) => seenApiKeys.current.add(k));
   operations.forEach((row) => seenOperations.current.add(row.operation));
 
   if (providerFilter) seenProviders.current.add(providerFilter);
@@ -344,9 +80,7 @@ export function OperationsAnalytics({
   const operationOptions = Array.from(seenOperations.current).sort();
   const apiKeyOptions = Array.from(seenApiKeys.current).sort();
 
-  const selectedOperation = operations.find((row) => row.operation === activeOperation) ?? null;
-
-  function handleSort(key: LeaderboardSortKey) {
+  function handleSort(key: typeof sortKey) {
     if (sortKey === key) {
       setSortDesc((d) => !d);
     } else {
@@ -354,38 +88,6 @@ export function OperationsAnalytics({
       setSortDesc(true);
     }
   }
-
-  const sortedOperations = useMemo(() => {
-    return [...operations].sort((a, b) => {
-      let aVal: number;
-      let bVal: number;
-
-      if (sortKey === 'cost_per_request') {
-        aVal = getCostPerRequest(a) ?? 0;
-        bVal = getCostPerRequest(b) ?? 0;
-      } else if (sortKey === 'cache_hit_rate') {
-        aVal = getAggregateCacheHitRate(a) ?? -1;
-        bVal = getAggregateCacheHitRate(b) ?? -1;
-      } else {
-        aVal = a[sortKey] ?? 0;
-        bVal = b[sortKey] ?? 0;
-      }
-
-      return sortDesc ? bVal - aVal : aVal - bVal;
-    });
-  }, [operations, sortKey, sortDesc]);
-
-  function clearFilters() {
-    setProviderFilter('');
-    setModelFilter('');
-    setOperationFilter('');
-    setSelectedOperationName('');
-    setApiKeyFilter('');
-    setUserIdFilter('');
-  }
-
-  const hasActiveFilters =
-    providerFilter || modelFilter || operationFilter || apiKeyFilter || trimmedUserId;
 
   return (
     <div className="animate-fade-in">
@@ -477,127 +179,7 @@ export function OperationsAnalytics({
         </div>
       ) : (
         <div className="space-y-6">
-          {selectedOperation && (
-            <div className="stagger-children grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <BarCard
-                label="Cost"
-                value={formatCurrency(selectedOperation.total_cost_usd)}
-                accent="from-chart-4/20 to-chart-4/5"
-                compact
-                segments={[
-                  {
-                    key: 'input',
-                    label: 'Input',
-                    value: selectedOperation.input_cost_usd,
-                    color: 'var(--color-chart-1)',
-                  },
-                  {
-                    key: 'output',
-                    label: 'Output',
-                    value: selectedOperation.output_cost_usd,
-                    color: 'var(--color-chart-2)',
-                  },
-                  {
-                    key: 'cache_read',
-                    label: 'Cache Read',
-                    value: selectedOperation.cache_read_cost_usd,
-                    color: 'var(--color-chart-3)',
-                  },
-                  {
-                    key: 'cache_write',
-                    label: 'Cache Write',
-                    value: selectedOperation.cache_creation_cost_usd,
-                    color: 'var(--color-chart-4)',
-                  },
-                  {
-                    key: 'reasoning',
-                    label: 'Reasoning',
-                    value: selectedOperation.reasoning_cost_usd,
-                    color: 'var(--color-chart-5)',
-                  },
-                ]}
-                total={selectedOperation.total_cost_usd}
-                formatter={formatCostCompact}
-                inlineLabels={[
-                  {
-                    label: '/ request',
-                    value: formatCurrency(getCostPerRequest(selectedOperation)),
-                    color: 'var(--color-muted-foreground)',
-                  },
-                ]}
-              />
-              <BarCard
-                label="Requests"
-                value={formatNumber(selectedOperation.request_count)}
-                accent="from-chart-5/20 to-chart-5/5"
-                compact
-                segments={[]}
-                total={0}
-                formatter={formatNumber}
-                inlineLabels={[
-                  {
-                    label: 'tokens',
-                    value: formatNumber(selectedOperation.total_tokens),
-                    color: 'var(--color-muted-foreground)',
-                  },
-                ]}
-              />
-              <BarCard
-                label="Cache Hit Rate"
-                value={formatCacheHitRate(getAggregateCacheHitRate(selectedOperation))}
-                accent="from-chart-3/20 to-chart-3/5"
-                compact
-                segments={
-                  selectedOperation.input_tokens > 0
-                    ? [
-                        {
-                          key: 'cached',
-                          label: 'Cached',
-                          value: selectedOperation.cache_read_input_tokens,
-                          color: 'var(--color-chart-3)',
-                        },
-                        {
-                          key: 'warmup',
-                          label: 'Warmup',
-                          value: selectedOperation.cache_creation_input_tokens,
-                          color: 'var(--color-chart-4)',
-                        },
-                        {
-                          key: 'uncached',
-                          label: 'Uncached',
-                          value: selectedOperation.uncached_input_tokens,
-                          color: 'var(--color-muted-foreground)',
-                        },
-                      ]
-                    : []
-                }
-                total={selectedOperation.input_tokens}
-                formatter={formatNumber}
-                showPercent
-              />
-              <BarCard
-                label="Latency"
-                value={formatDuration(selectedOperation.avg_duration_ms)}
-                accent="from-chart-7/20 to-chart-7/5"
-                compact
-                segments={[]}
-                total={0}
-                formatter={formatDuration}
-                inlineLabels={[
-                  {
-                    label: 'P95',
-                    value: formatDuration(selectedOperation.p95_duration_ms),
-                    color: 'var(--color-chart-6)',
-                  },
-                  {
-                    label: 'Max',
-                    value: formatDuration(selectedOperation.max_duration_ms),
-                    color: 'var(--color-chart-1)',
-                  },
-                ]}
-              />
-            </div>
-          )}
+          {selectedOperation && <SummaryCards operation={selectedOperation} />}
 
           <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center justify-between gap-3">
@@ -614,7 +196,7 @@ export function OperationsAnalytics({
                 {formatNumber(operations.length)} ops
               </span>
             </div>
-            <OperationsLeaderboardTable
+            <LeaderboardTable
               data={sortedOperations}
               selectedOperation={activeOperation}
               onSelectOperation={setSelectedOperationName}
@@ -652,7 +234,7 @@ export function OperationsAnalytics({
                   Loading user breakdown...
                 </div>
               ) : (
-                <OperationUsersTable data={users} />
+                <UsersTable data={users} />
               )
             ) : (
               <div className="flex flex-col items-center gap-2 py-12 text-center">

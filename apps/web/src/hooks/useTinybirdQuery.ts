@@ -19,7 +19,7 @@ interface UseTinybirdQueryOptions<T> {
 export function useTinybirdQuery<T = unknown>(options: UseTinybirdQueryOptions<T>) {
   const { pipe, params, ttl, enabled = true, pollInterval, transform, staleTime, gcTime } = options;
 
-  const generateToken = useAction(api.tinybird.generateToken);
+  const generateToken = useAction(api.integrations.tinybird.generateToken);
 
   const query = useQuery({
     queryKey: tinybirdKeys.pipeWithParams(pipe, params as Record<string, unknown> | undefined),

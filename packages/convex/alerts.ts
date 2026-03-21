@@ -1,7 +1,7 @@
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from './auth';
-import { getCurrentUser, requireEnabledUser } from './users';
+import { requireTraceFlowRole } from './auth/auth';
+import { getCurrentUser, requireEnabledUser } from './auth/users';
 
 const alertFieldValidator = v.union(
   v.literal('duration_ms'),

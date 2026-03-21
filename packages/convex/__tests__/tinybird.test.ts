@@ -1,7 +1,7 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
 import { describe, it, expect } from 'vitest';
-import { sanitizeApiKeys, UUID_PATTERN } from '../tinybird';
+import { sanitizeApiKeys, UUID_PATTERN } from '../integrations/tinybird';
 
 describe('tinybird API key sanitization', () => {
   describe('UUID_PATTERN', () => {

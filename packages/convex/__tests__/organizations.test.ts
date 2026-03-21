@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from '../organizations';
+import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from '../auth/organizations';
 import { TIER_CONFIG } from '@trace-flow/types';
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 'use client';
 
-import { BarCard, formatCostCompact } from '@/components/BarCard';
+import { BarCard, formatCostCompact } from '@/components/shared/BarCard';
 import { formatNumber, formatCurrency, formatDuration, formatPercent } from '@/lib/format';
 import { formatCacheHitRate, getPromptCacheMetrics } from '@/lib/cacheMetrics';
 import { ProjectedCostCard } from './ProjectedCostCard';

@@ -79,7 +79,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
   const isInitialFetchRef = useRef(true);
 
   const queryClient = useQueryClient();
-  const generateToken = useAction(api.tinybird.generateToken);
+  const generateToken = useAction(api.integrations.tinybird.generateToken);
   const prevTraceIdRef = useRef(traceId);
 
   const queryKey = useMemo(

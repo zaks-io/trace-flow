@@ -56,14 +56,14 @@ export const backfillOrgs = internalMutation({
 
       for (const key of userKeys) {
         await ctx.db.patch(key._id, { orgId });
-        await ctx.scheduler.runAfter(0, internal.cloudflare.syncKeyToKV, {
+        await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncKeyToKV, {
           key: key.key,
           expiresAt: key.expiresAt,
           orgId,
         });
       }
 
-      await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
+      await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncSubscriptionToKV, {
         orgId,
         tier: 'hobby',
         monthlyUnits: hobbyConfig.monthlyUnits,

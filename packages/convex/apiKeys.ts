@@ -1,8 +1,8 @@
 import { action, mutation, query, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from './auth';
+import { requireTraceFlowRole } from './auth/auth';
 import { internal } from './_generated/api';
-import { getCurrentUser, requireEnabledUser } from './users';
+import { getCurrentUser, requireEnabledUser } from './auth/users';
 import { apiKeyValidator } from './validators';
 
 export const list = query({
@@ -59,7 +59,7 @@ export const create = mutation({
       name: args.name,
     });
 
-    await ctx.scheduler.runAfter(0, internal.cloudflare.syncKeyToKV, {
+    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncKeyToKV, {
       key,
       expiresAt: args.expiresAt,
       orgId: user.orgId,
@@ -110,7 +110,7 @@ export const remove = mutation({
 
     await ctx.db.delete(args.id);
 
-    await ctx.scheduler.runAfter(0, internal.cloudflare.deleteKeyFromKV, {
+    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteKeyFromKV, {
       key: apiKey.key,
     });
   },
@@ -127,7 +127,7 @@ export const syncToKV = action({
       throw new Error('API key not found');
     }
 
-    const existsInKV = await ctx.runAction(internal.cloudflare.checkKeyInKV, {
+    const existsInKV = await ctx.runAction(internal.integrations.cloudflare.checkKeyInKV, {
       key: apiKey.key,
     });
 
@@ -135,7 +135,7 @@ export const syncToKV = action({
       return { synced: false, existed: true };
     }
 
-    await ctx.runAction(internal.cloudflare.syncKeyToKV, {
+    await ctx.runAction(internal.integrations.cloudflare.syncKeyToKV, {
       key: apiKey.key,
       expiresAt: apiKey.expiresAt,
       orgId: apiKey.orgId,

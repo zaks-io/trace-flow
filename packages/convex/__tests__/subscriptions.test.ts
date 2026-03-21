@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mapStripeStatusToInternal } from '../subscriptions';
+import { mapStripeStatusToInternal } from '../billing/subscriptions';
 
 // ---------------------------------------------------------------------------
 // Pure function tests — no Convex context needed
@@ -168,14 +168,14 @@ describe('setTier handler logic', () => {
     const newTier = 'pro';
 
     if (previousTier === 'hobby' && newTier === 'pro') {
-      await ctx.scheduler.runAfter(0, 'internal.tinybird.extendRetention' as any, {
+      await ctx.scheduler.runAfter(0, 'internal.integrations.tinybird.extendRetention' as any, {
         orgId: 'org_id',
       });
     }
 
     expect(ctx._schedulerRunAfter).toHaveBeenCalledWith(
       0,
-      'internal.tinybird.extendRetention',
+      'internal.integrations.tinybird.extendRetention',
       expect.objectContaining({ orgId: 'org_id' }),
     );
   });
@@ -188,7 +188,7 @@ describe('setTier handler logic', () => {
     const newTier = 'pro';
 
     if (previousTier === 'hobby' && newTier === 'pro') {
-      await ctx.scheduler.runAfter(0, 'internal.tinybird.extendRetention' as any, {
+      await ctx.scheduler.runAfter(0, 'internal.integrations.tinybird.extendRetention' as any, {
         orgId: 'org_id',
       });
     }
@@ -437,7 +437,7 @@ describe('scheduleGraceSuspension handler logic', () => {
     const GRACE_PERIOD_MS = 14 * 24 * 60 * 60 * 1000;
     const schedulerId = await ctx.scheduler.runAfter(
       GRACE_PERIOD_MS,
-      'internal.subscriptions.transitionGraceToSuspended' as any,
+      'internal.billing.subscriptions.transitionGraceToSuspended' as any,
       { orgId: subscription.orgId },
     );
     await ctx.db.patch(subscription._id, { gracePeriodSchedulerId: schedulerId });

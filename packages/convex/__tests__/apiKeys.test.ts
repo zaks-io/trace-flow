@@ -132,7 +132,7 @@ describe('apiKeys.create handler logic', () => {
     const key = 'mock-uuid-5678';
     const expiresAt = Date.now() + 86400000;
 
-    await ctx.scheduler.runAfter(0, 'internal.cloudflare.syncKeyToKV' as any, {
+    await ctx.scheduler.runAfter(0, 'internal.integrations.cloudflare.syncKeyToKV' as any, {
       key,
       expiresAt,
       orgId: user.orgId,
@@ -233,7 +233,7 @@ describe('apiKeys.remove handler logic', () => {
 
     if (apiKey.userId && apiKey.userId !== user._id) throw new Error('no permission');
     await ctx.db.delete(apiKey._id);
-    await ctx.scheduler.runAfter(0, 'internal.cloudflare.deleteKeyFromKV' as any, {
+    await ctx.scheduler.runAfter(0, 'internal.integrations.cloudflare.deleteKeyFromKV' as any, {
       key: apiKey.key,
     });
 

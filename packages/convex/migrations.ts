@@ -1,6 +1,6 @@
 import { internalMutation } from './_generated/server';
 import { sha256Hex } from '@trace-flow/utils';
-import { scheduleKVSync } from './subscriptions';
+import { scheduleKVSync } from './billing/subscriptions';
 
 // One-shot migration: backfill hashedTokenId for existing mcpRefreshTokens.
 // Run: npx convex run migrations:backfillHashedTokenIds

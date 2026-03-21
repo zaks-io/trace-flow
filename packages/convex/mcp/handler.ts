@@ -20,7 +20,7 @@ import {
   MCP_SERVER_CAPABILITIES,
 } from './protocol';
 import { TOOL_DEFINITIONS } from './tools';
-import { requireTraceFlowRole } from '../auth';
+import { requireTraceFlowRole } from '../auth/auth';
 import { api } from '../_generated/api';
 
 export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
@@ -73,7 +73,7 @@ export const handleMessage = action({
   returns: v.union(jsonRpcResponseValidator, v.null()),
   handler: async (ctx, args): Promise<JsonRpcResponse | null> => {
     await requireTraceFlowRole(ctx);
-    const user = await ctx.runQuery(api.users.getCurrentUserQuery);
+    const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery);
     if (!user?.enabled) {
       return createErrorResponse(
         null,

@@ -1,6 +1,6 @@
 import { query } from './_generated/server';
 import { v } from 'convex/values';
-import { getCurrentUser } from './users';
+import { getCurrentUser } from './auth/users';
 import { userValidator, subscriptionValidator } from './validators';
 
 export const sessionContext = query({

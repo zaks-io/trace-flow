@@ -30,7 +30,7 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from '@/components/ui/sidebar';
-import { EmailContactLink } from '@/components/EmailContactLink';
+import { EmailContactLink } from '@/components/shared/EmailContactLink';
 
 interface NavItem {
   title: string;

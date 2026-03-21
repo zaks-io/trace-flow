@@ -1,5 +1,5 @@
 import { parseSpanAttributes } from '@trace-flow/utils';
-import type { RequestRow } from '@/components/requests-table/columns';
+import type { RequestRow } from '@/components/requests/data-table/columns';
 import type {
   Alert,
   AlertField,

@@ -235,7 +235,7 @@ describe('checkAutoTopup handler logic', () => {
 
     // Simulate triggering
     await ctx.db.patch(sub._id, { autoTopupPendingSince: Date.now() });
-    await ctx.scheduler.runAfter(0, 'internal.subscriptions.triggerAutoTopup' as any, {
+    await ctx.scheduler.runAfter(0, 'internal.billing.subscriptions.triggerAutoTopup' as any, {
       orgId: sub.orgId,
       quantity: 1,
       amountCents: expect.any(Number),

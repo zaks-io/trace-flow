@@ -6,7 +6,7 @@ const crons = cronJobs();
 crons.weekly(
   'cleanup old stripe events',
   { dayOfWeek: 'sunday', hourUTC: 4, minuteUTC: 0 },
-  internal.stripeEvents.cleanupOldEvents,
+  internal.billing.stripeEvents.cleanupOldEvents,
 );
 
 export default crons;

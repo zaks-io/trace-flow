@@ -1,4 +1,4 @@
-import { hashString } from '@trace-flow/utils';
+import { djb2Hash } from '@trace-flow/utils';
 
 /**
  * Calculates the shard ID for a given API key using consistent hashing.
@@ -10,5 +10,5 @@ import { hashString } from '@trace-flow/utils';
  * The modulo operation distributes keys evenly across NUM_SHARDS.
  */
 export function calculateShardId(apiKey: string, numShards: number): number {
-  return hashString(apiKey) % numShards;
+  return djb2Hash(apiKey) % numShards;
 }

@@ -16,8 +16,8 @@ import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
 import type Stripe from 'stripe';
 import { UNITS_PER_ADDON } from '@trace-flow/types';
-import { mapStripeStatusToInternal } from './subscriptions';
-import { getStripeClient, stripeWebhookSecret } from './stripe';
+import { mapStripeStatusToInternal } from './billing/subscriptions';
+import { getStripeClient, stripeWebhookSecret } from './billing/stripe';
 
 // Dependencies that can be injected for testing
 export interface HttpDeps {
@@ -27,23 +27,23 @@ export interface HttpDeps {
 
 async function resolveOrgSubscription(ctx: ActionCtx, customerId: string, subscriptionId?: string) {
   if (subscriptionId) {
-    const bySub = await ctx.runQuery(internal.subscriptions.getByStripeSubscriptionId, {
+    const bySub = await ctx.runQuery(internal.billing.subscriptions.getByStripeSubscriptionId, {
       stripeSubscriptionId: subscriptionId,
     });
     if (bySub) return bySub;
   }
 
   // Check subscription table first, then fall back to org table
-  const byCust = await ctx.runQuery(internal.subscriptions.getByStripeCustomerId, {
+  const byCust = await ctx.runQuery(internal.billing.subscriptions.getByStripeCustomerId, {
     stripeCustomerId: customerId,
   });
   if (byCust) return byCust;
 
-  const org = await ctx.runQuery(internal.organizations.getByStripeCustomerId, {
+  const org = await ctx.runQuery(internal.auth.organizations.getByStripeCustomerId, {
     stripeCustomerId: customerId,
   });
   if (org) {
-    return await ctx.runQuery(internal.subscriptions.getByOrgId, { orgId: org._id });
+    return await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: org._id });
   }
 
   return null;
@@ -112,7 +112,7 @@ export function createApp(
       );
     }
 
-    const start = await ctx.runMutation(internal.stripeEvents.startProcessing, {
+    const start = await ctx.runMutation(internal.billing.stripeEvents.startProcessing, {
       eventId: event.id,
       eventType: event.type,
       stripeObjectId:
@@ -134,13 +134,13 @@ export function createApp(
             typeof session.subscription === 'string' ? session.subscription : undefined;
           if (!stripeSubId || !session.customer || typeof session.customer !== 'string') break;
           // Ensure org has the customer ID persisted
-          await ctx.runMutation(internal.organizations.setStripeCustomerId, {
+          await ctx.runMutation(internal.auth.organizations.setStripeCustomerId, {
             orgId,
             stripeCustomerId: session.customer,
           });
           const sub = await stripe.subscriptions.retrieve(stripeSubId);
           const planItem = sub.items.data[0];
-          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+          await ctx.runMutation(internal.billing.subscriptions.upsertStripeSubscriptionState, {
             orgId,
             status: mapStripeStatusToInternal(sub.status),
             stripeCustomerId: session.customer,
@@ -159,7 +159,7 @@ export function createApp(
           const existing = await resolveOrgSubscription(ctx, customerId, stripeSub.id);
           if (!existing) break;
           const planItem = stripeSub.items.data[0];
-          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+          await ctx.runMutation(internal.billing.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
             status: mapStripeStatusToInternal(stripeSub.status),
             stripeCustomerId: customerId,
@@ -177,7 +177,7 @@ export function createApp(
             typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id;
           const existing = await resolveOrgSubscription(ctx, customerId, stripeSub.id);
           if (!existing) break;
-          await ctx.runMutation(internal.subscriptions.revertToHobby, {
+          await ctx.runMutation(internal.billing.subscriptions.revertToHobby, {
             orgId: existing.orgId,
           });
           break;
@@ -235,7 +235,7 @@ export function createApp(
 
             const ownerUserId = invoice.metadata?.ownerUserId as Id<'users'> | undefined;
 
-            await ctx.runMutation(internal.subscriptions.creditAddonPurchase, {
+            await ctx.runMutation(internal.billing.subscriptions.creditAddonPurchase, {
               orgId: orgIdRaw,
               units,
               amountCents: invoice.amount_paid,
@@ -258,7 +258,7 @@ export function createApp(
             ? await stripe.subscriptions.retrieve(subscriptionId)
             : undefined;
           const planItem = stripeSub?.items.data[0];
-          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+          await ctx.runMutation(internal.billing.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
             status: 'active',
             stripeCustomerId: customerId,
@@ -287,11 +287,11 @@ export function createApp(
           const subscriptionId = typeof parentSub === 'string' ? parentSub : parentSub.id;
           const existing = await resolveOrgSubscription(ctx, customerId, subscriptionId);
           if (!existing) break;
-          await ctx.runMutation(internal.subscriptions.upsertStripeSubscriptionState, {
+          await ctx.runMutation(internal.billing.subscriptions.upsertStripeSubscriptionState, {
             orgId: existing.orgId,
             status: 'grace',
           });
-          await ctx.runMutation(internal.subscriptions.scheduleGraceSuspension, {
+          await ctx.runMutation(internal.billing.subscriptions.scheduleGraceSuspension, {
             orgId: existing.orgId,
           });
           break;
@@ -303,7 +303,7 @@ export function createApp(
               ? charge.payment_intent
               : charge.payment_intent?.id;
           if (!paymentIntentId) break;
-          await ctx.runMutation(internal.subscriptions.revokeAddonPurchase, {
+          await ctx.runMutation(internal.billing.subscriptions.revokeAddonPurchase, {
             stripePaymentIntentId: paymentIntentId,
           });
           break;
@@ -312,7 +312,7 @@ export function createApp(
           break;
       }
 
-      await ctx.runMutation(internal.stripeEvents.markProcessed, { eventId: event.id });
+      await ctx.runMutation(internal.billing.stripeEvents.markProcessed, { eventId: event.id });
       await logger.flush();
       return c.json({ ok: true });
     } catch (error) {
@@ -320,7 +320,7 @@ export function createApp(
         eventId: event.id,
         eventType: event.type,
       });
-      await ctx.runMutation(internal.stripeEvents.markFailed, {
+      await ctx.runMutation(internal.billing.stripeEvents.markFailed, {
         eventId: event.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -497,7 +497,7 @@ export function createApp(
       const tokenIdentifier = `https://${domain}/|${userInfo.sub}`;
 
       // Find or create user
-      const userId = await ctx.runMutation(internal.users.findOrCreateUser, {
+      const userId = await ctx.runMutation(internal.auth.users.findOrCreateUser, {
         tokenIdentifier,
         email: userInfo.email,
         name: userInfo.name,
@@ -653,7 +653,7 @@ export function createApp(
     }
 
     // Verify user exists and is enabled
-    const user = await ctx.runQuery(internal.users.getUserById, {
+    const user = await ctx.runQuery(internal.auth.users.getUserById, {
       id: payload.userId as Id<'users'>,
     });
     if (!user) {
@@ -725,13 +725,13 @@ export function createApp(
     const orgId = body.orgId as Id<'organizations'>;
 
     // Verify the org exists before recording usage
-    const org = await ctx.runQuery(internal.organizations.getByIdInternal, { id: orgId });
+    const org = await ctx.runQuery(internal.auth.organizations.getByIdInternal, { id: orgId });
     if (!org) {
       logger.warn('convex.usage_org_not_found');
       return c.json({ error: 'Organization not found' }, 404);
     }
 
-    await ctx.runMutation(internal.usage.recordUsage, {
+    await ctx.runMutation(internal.billing.usage.recordUsage, {
       orgId,
       periodStart: body.periodStart,
       periodEnd: body.periodEnd,
@@ -739,7 +739,7 @@ export function createApp(
       addonUnitsUsed: body.addonUnitsUsed,
     });
 
-    await ctx.runMutation(internal.usage.checkAutoTopup, {
+    await ctx.runMutation(internal.billing.usage.checkAutoTopup, {
       orgId,
       subscriptionUnitsUsed: body.subscriptionUnitsUsed,
       addonUnitsUsed: body.addonUnitsUsed,
