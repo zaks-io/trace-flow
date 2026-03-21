@@ -8,6 +8,7 @@ export interface RunContext {
   providerName: string;
   traceId?: string;
   operation?: string;
+  userId?: string;
   headers?: Record<string, string>;
 }
 
@@ -21,10 +22,13 @@ function buildTraceHeaders(ctx: RunContext): {
   spanId: string | undefined;
 } {
   const spanId = ctx.traceId ? generateSpanId() : undefined;
+  const bag: Record<string, string> = {};
+  if (ctx.operation) bag.operation = ctx.operation;
+  if (ctx.userId) bag.userId = ctx.userId;
   const headers: Record<string, string> = {
     ...ctx.headers,
     ...(ctx.traceId && spanId ? { traceparent: formatTraceparent(ctx.traceId, spanId) } : {}),
-    ...(ctx.operation ? { baggage: formatBaggage({ operation: ctx.operation }) } : {}),
+    ...(Object.keys(bag).length > 0 ? { baggage: formatBaggage(bag) } : {}),
   };
   return { headers, spanId };
 }

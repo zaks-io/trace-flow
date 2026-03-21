@@ -88,11 +88,12 @@ interface ProviderRef {
 function makeHeaders(
   traceId: string,
   operation: string,
+  userId = 'test-user-1',
 ): { traceparent: string; baggage: string; spanId: string } {
   const spanId = generateSpanId();
   return {
     traceparent: formatTraceparent(traceId, spanId),
-    baggage: formatBaggage({ operation }),
+    baggage: formatBaggage({ operation, userId }),
     spanId,
   };
 }
@@ -262,7 +263,11 @@ async function runConcurrentPhase(
   count: number,
 ): Promise<RequestResult[]> {
   const tasks = Array.from({ length: count }, (_, i) => {
-    const { traceparent, baggage, spanId } = makeHeaders(traceId, `concurrent-stream-${i + 1}`);
+    const { traceparent, baggage, spanId } = makeHeaders(
+      traceId,
+      `concurrent-stream-${i + 1}`,
+      `test-user-${(i % 3) + 1}`,
+    );
     const start = Date.now();
     let ttft: number | undefined;
 
