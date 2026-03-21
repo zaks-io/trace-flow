@@ -1,7 +1,7 @@
 import { preloadQuery } from 'convex/nextjs';
 import { api } from '@convex/_generated/api';
 import { getConvexToken } from '@/lib/convex';
-import ApiKeys from '@/components/pages/ApiKeys';
+import ApiKeys from '@/components/api-keys/ApiKeys';
 
 export default async function ApiKeysPage() {
   const token = await getConvexToken();

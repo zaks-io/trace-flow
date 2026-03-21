@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { EmailContactLink } from '@/components/EmailContactLink';
+import { EmailContactLink } from '@/components/shared/EmailContactLink';
 import { SignupButton } from './SignupButton';
 
 interface FooterCTAProps {

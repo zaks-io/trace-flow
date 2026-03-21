@@ -34,7 +34,7 @@ export default function Usage({
   );
 
   const onboardingCompleted = Boolean(sessionContext?.onboardingCompletedAt);
-  const completeOnboarding = useMutation(api.organizations.completeOnboarding);
+  const completeOnboarding = useMutation(api.auth.organizations.completeOnboarding);
 
   const [errorCount, setErrorCount] = useState(0);
 

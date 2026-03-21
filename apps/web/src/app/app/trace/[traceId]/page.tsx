@@ -1,7 +1,7 @@
 import { preloadQuery } from 'convex/nextjs';
 import { api } from '@convex/_generated/api';
 import { getConvexToken } from '@/lib/convex';
-import TraceDetail from '@/components/pages/TraceDetail';
+import TraceDetail from '@/components/traces/TraceDetail';
 
 export default async function TraceDetailPage({
   params,

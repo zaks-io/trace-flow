@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { getCurrentUser, requireEnabledUser, requireAdmin } from '../users';
+import { getCurrentUser, requireEnabledUser, requireAdmin } from '../auth/users';
 
 function makeAuthCtx(identityOverrides: Record<string, unknown> | null = {}) {
   const identity =

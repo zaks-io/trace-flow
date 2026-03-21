@@ -1,7 +1,7 @@
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import { requireAdmin } from './users';
+import { requireAdmin } from './auth/users';
 
 export const joinWaitlist = mutation({
   args: {
@@ -33,7 +33,7 @@ export const joinWaitlist = mutation({
       confirmationToken,
     });
 
-    await ctx.scheduler.runAfter(0, internal.emails.sendConfirmationEmail, {
+    await ctx.scheduler.runAfter(0, internal.integrations.emails.sendConfirmationEmail, {
       email,
       confirmationToken,
     });
@@ -113,7 +113,7 @@ export const bulkInviteFromWaitlist = mutation({
         expiresAt,
       });
 
-      await ctx.scheduler.runAfter(0, internal.emails.sendInviteEmail, {
+      await ctx.scheduler.runAfter(0, internal.integrations.emails.sendInviteEmail, {
         email: entry.email,
         token,
       });

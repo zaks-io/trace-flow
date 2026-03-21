@@ -1,7 +1,7 @@
 import { preloadQuery } from 'convex/nextjs';
 import { api } from '@convex/_generated/api';
 import { getConvexToken } from '@/lib/convex';
-import Traces from '@/components/pages/Traces';
+import Traces from '@/components/traces/Traces';
 
 export default async function TracesPage() {
   const token = await getConvexToken();

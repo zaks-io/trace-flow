@@ -54,7 +54,7 @@ export const backfillOrgBilling = internalMutation({
         subscriptionsUpdated++;
       }
 
-      await ctx.scheduler.runAfter(0, internal.cloudflare.syncSubscriptionToKV, {
+      await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncSubscriptionToKV, {
         orgId: subscription.orgId,
         tier: subscription.tier,
         monthlyUnits: (patch.monthlyUnits as number | undefined) ?? subscription.monthlyUnits,

@@ -6,7 +6,7 @@ import AdminInvitesClient from './AdminInvitesClient';
 export default async function AdminInvitesPage() {
   const token = await getConvexToken();
   const [preloadedInvites, preloadedWaitlist] = await Promise.all([
-    preloadQuery(api.invites.listInvites, {}, { token }),
+    preloadQuery(api.auth.invites.listInvites, {}, { token }),
     preloadQuery(api.waitlist.listWaitlist, {}, { token }),
   ]);
 

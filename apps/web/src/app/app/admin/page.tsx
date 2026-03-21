@@ -5,8 +5,8 @@ import { useQuery, useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { Button } from '@/components/ui/button';
-import { PageToolbar } from '@/components/PageToolbar';
-import { useIsAdmin } from '@/components/AdminContext';
+import { PageToolbar } from '@/components/shared/PageToolbar';
+import { useIsAdmin } from '@/components/admin/AdminContext';
 import {
   Users,
   Building2,
@@ -148,8 +148,8 @@ function SyncActionRow({
 }
 
 function DangerZone() {
-  const orgs = useQuery(api.admin.listOrgs);
-  const deleteOrgData = useAction(api.admin.deleteOrgData);
+  const orgs = useQuery(api.admin.admin.listOrgs);
+  const deleteOrgData = useAction(api.admin.admin.deleteOrgData);
   const [selectedOrgId, setSelectedOrgId] = useState<Id<'organizations'> | ''>('');
   const [confirmText, setConfirmText] = useState('');
   const [status, setStatus] = useState<ActionStatus>('idle');
@@ -269,12 +269,12 @@ function DangerZone() {
 
 export default function AdminPage() {
   const isAdmin = useIsAdmin();
-  const stats = useQuery(api.admin.stats, isAdmin ? {} : 'skip');
+  const stats = useQuery(api.admin.admin.stats, isAdmin ? {} : 'skip');
 
-  const syncDefaults = useAction(api.modelPricing.syncDefaults);
-  const importFromOpenRouter = useAction(api.modelPricing.importFromOpenRouter);
-  const syncAllToKV = useAction(api.modelPricing.syncAllToKV);
-  const syncAll = useAction(api.cloudflare.syncAll);
+  const syncDefaults = useAction(api.billing.modelPricing.syncDefaults);
+  const importFromOpenRouter = useAction(api.billing.modelPricing.importFromOpenRouter);
+  const syncAllToKV = useAction(api.billing.modelPricing.syncAllToKV);
+  const syncAll = useAction(api.integrations.cloudflare.syncAll);
 
   if (!isAdmin) {
     return (

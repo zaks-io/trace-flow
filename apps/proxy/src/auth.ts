@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import type { Logger } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { sha256Hex } from '@trace-flow/utils';
 import { getCached, invalidate } from './cache';
@@ -16,11 +17,12 @@ export interface ApiKeyData {
  */
 export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   c: Context<{ Bindings: E }>,
+  logger?: Logger,
 ): Promise<Response | ApiKeyData> {
   const apiKey = c.req.header('X-Trace-Flow-Api-Key');
 
   if (!apiKey) {
-    console.log(JSON.stringify({ type: 'auth_reject', reason: 'missing_key', path: c.req.path }));
+    logger?.warn('proxy.auth_rejected', { reason: 'missing_key', path: c.req.path });
     return c.json(
       {
         error: 'Missing API key',
@@ -47,7 +49,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   });
 
   if (!parsed) {
-    console.log(JSON.stringify({ type: 'auth_reject', reason: 'invalid_key', path: c.req.path }));
+    logger?.warn('proxy.auth_rejected', { reason: 'invalid_key', path: c.req.path });
     return c.json(
       {
         error: 'Invalid API key',
@@ -60,7 +62,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   // Re-check expiry on cache hits (key may have expired since it was cached)
   if (parsed.expiresAt < Date.now()) {
     await invalidate(cacheKey);
-    console.log(JSON.stringify({ type: 'auth_reject', reason: 'expired_key', path: c.req.path }));
+    logger?.warn('proxy.auth_rejected', { reason: 'expired_key', path: c.req.path });
     return c.json(
       {
         error: 'Expired API key',
@@ -85,6 +87,7 @@ export interface BillingCheckResult {
 export async function checkBillingStatus(
   env: { API_KEYS: KVNamespace },
   orgId: string,
+  logger?: Logger,
 ): Promise<BillingCheckResult> {
   // Cache the parsed BillingCheckResult (not the raw JSON string).
   // Corrupt or unrecognized data resolves to null so it isn't cached as valid.
@@ -98,7 +101,7 @@ export async function checkBillingStatus(
     try {
       sub = JSON.parse(subRaw) as SubscriptionKVData;
     } catch {
-      console.error('Failed to parse subscription KV data', { orgId });
+      logger?.error('proxy.billing_data_invalid', undefined, { orgId, reason: 'parse_error' });
       return { status: 'not_found' };
     }
 
@@ -111,7 +114,7 @@ export async function checkBillingStatus(
       return { status: sub.status, subscription: sub };
     }
 
-    console.error('Unrecognized billing status in KV', { orgId, status: sub.status });
+    logger?.error('proxy.billing_data_invalid', undefined, { orgId, status: sub.status });
     return { status: 'not_found' };
   });
 }

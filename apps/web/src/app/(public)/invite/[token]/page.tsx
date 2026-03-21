@@ -6,8 +6,8 @@ import { api } from '@convex/_generated/api';
 
 export default function InviteAcceptPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
-  const invite = useQuery(api.invites.getInviteByToken, { token });
-  const acceptInvite = useMutation(api.invites.acceptInvite);
+  const invite = useQuery(api.auth.invites.getInviteByToken, { token });
+  const acceptInvite = useMutation(api.auth.invites.acceptInvite);
   const [status, setStatus] = useState<'loading' | 'accepting' | 'success' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
 

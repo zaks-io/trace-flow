@@ -7,7 +7,7 @@ import { Activity, DollarSign, Hash, Layers, Server, Cpu, Timer, Key } from 'luc
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { snapToMinute } from '@/lib/tinybird';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
-import { PageToolbar } from '@/components/PageToolbar';
+import { PageToolbar } from '@/components/shared/PageToolbar';
 import {
   TIME_RANGES,
   costChartConfig,
@@ -54,7 +54,7 @@ export function UsageAnalytics({
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
-  const billingSummary = useQuery(api.subscriptions.getBillingSummaryForCurrentUser);
+  const billingSummary = useQuery(api.billing.subscriptions.getBillingSummaryForCurrentUser);
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
   const [metric, setMetric] = useState<TimeseriesMetric>('cost');
   const [providerFilter, setProviderFilter] = useState('');

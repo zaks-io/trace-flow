@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { type Preloaded, usePreloadedQuery, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { type Doc } from '@convex/_generated/dataModel';
-import { useIsAdmin } from '@/components/AdminContext';
+import { useIsAdmin } from '@/components/admin/AdminContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,7 +23,7 @@ function SendInviteForm() {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
-  const createInvite = useMutation(api.invites.createInvite);
+  const createInvite = useMutation(api.auth.invites.createInvite);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -91,10 +91,10 @@ function statusVariant(status: string) {
 function InvitesTable({
   preloadedInvites,
 }: {
-  preloadedInvites: Preloaded<typeof api.invites.listInvites>;
+  preloadedInvites: Preloaded<typeof api.auth.invites.listInvites>;
 }) {
   const invites = usePreloadedQuery(preloadedInvites);
-  const revokeInvite = useMutation(api.invites.revokeInvite);
+  const revokeInvite = useMutation(api.auth.invites.revokeInvite);
 
   if (invites.length === 0)
     return <div className="text-muted-foreground">No invites sent yet.</div>;
@@ -208,7 +208,7 @@ function WaitlistTable({
 }
 
 interface AdminInvitesClientProps {
-  preloadedInvites: Preloaded<typeof api.invites.listInvites>;
+  preloadedInvites: Preloaded<typeof api.auth.invites.listInvites>;
   preloadedWaitlist: Preloaded<typeof api.waitlist.listWaitlist>;
 }
 
