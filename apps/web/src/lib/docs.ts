@@ -6,6 +6,7 @@ type DocDefinition = {
   title: string;
   description: string;
   tag: string;
+  filePath?: string;
 };
 
 const DOCS: DocDefinition[] = [
@@ -36,6 +37,7 @@ const DOCS: DocDefinition[] = [
     description:
       'Hand your coding agent a single machine-readable guide for env vars, gateway wiring, and first-run verification.',
     tag: 'Agents',
+    filePath: 'agents.md',
   },
   {
     slug: 'mcp',
@@ -63,17 +65,23 @@ export function getDocPath(slug: string): string {
 }
 
 export function getDocMarkdownPath(slug: string): string {
+  const doc = getDocBySlug(slug);
+  if (doc?.filePath) {
+    return `/${doc.filePath}`;
+  }
   return `/docs/${slug}.md`;
 }
 
 function getDocsMarkdownFilePath(slug: string): string {
-  return path.resolve(process.cwd(), 'public', 'docs', `${slug}.md`);
+  const doc = getDocBySlug(slug);
+  const relativePath = doc?.filePath ?? `docs/${slug}.md`;
+  return path.resolve(process.cwd(), 'public', relativePath);
 }
 
 export async function readDocMarkdown(slug: string): Promise<string | null> {
-  const docsDir = path.resolve(process.cwd(), 'public', 'docs');
+  const publicDir = path.resolve(process.cwd(), 'public');
   const filePath = getDocsMarkdownFilePath(slug);
-  const relativePath = path.relative(docsDir, filePath);
+  const relativePath = path.relative(publicDir, filePath);
 
   // Guard against path traversal even if callers pass unvalidated slugs.
   if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
