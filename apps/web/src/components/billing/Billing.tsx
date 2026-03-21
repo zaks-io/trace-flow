@@ -75,7 +75,16 @@ export default function Billing() {
   };
 
   if (summary === undefined || summary === null) {
-    return <div className="text-sm text-muted-foreground">Setting up billing...</div>;
+    return (
+      <div className="space-y-3">
+        <div className="text-sm text-muted-foreground">Setting up billing...</div>
+        {error && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+      </div>
+    );
   }
 
   const { subscription, totalUsed, totalAvailable, remaining } = summary;
@@ -227,7 +236,11 @@ export default function Billing() {
           {isOwner ? (
             <>
               <div className="flex items-center gap-3 border-t pt-3">
-                <Switch checked={autoOverage} onCheckedChange={setAutoOverage} />
+                <Switch
+                  checked={autoOverage}
+                  onCheckedChange={setAutoOverage}
+                  disabled={subscription.tier !== 'pro'}
+                />
                 <span className="text-sm text-muted-foreground">Enable auto-topup</span>
               </div>
               <div className="flex items-center gap-2">
@@ -239,6 +252,7 @@ export default function Billing() {
                   value={overageCap}
                   onChange={(e) => setOverageCap(e.target.value)}
                   className="w-32"
+                  disabled={subscription.tier !== 'pro'}
                 />
                 <Button
                   variant="outline"
