@@ -141,7 +141,9 @@ export interface OperationRow extends CostBreakdownRow, LatencyRow {
 }
 
 export interface OperationLeaderboardRow extends OperationRow {
+  unique_user_count: number;
   cost_per_request_usd: number | null;
+  cost_per_user_usd: number | null;
   cache_hit_rate: number | null;
 }
 

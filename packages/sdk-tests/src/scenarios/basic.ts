@@ -32,7 +32,7 @@ export const basicScenario: Scenario = {
         providerId: config.id,
         providerName: config.name,
         traceId: ctx.traceId,
-        userId: 'test-user-1',
+        user_id: 'test-user-1',
       };
 
       const [nonStream, stream] = await Promise.all([

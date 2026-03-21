@@ -150,8 +150,8 @@ export function OperationsAnalytics({
           <Input
             value={userIdFilter}
             onChange={(event) => setUserIdFilter(event.target.value)}
-            placeholder="Filter by baggage.userId"
-            aria-label="Filter by baggage.userId"
+            placeholder="Filter by baggage.user_id"
+            aria-label="Filter by baggage.user_id"
             className="bg-card text-sm"
           />
         </div>
@@ -241,7 +241,7 @@ export function OperationsAnalytics({
                 <Database className="h-8 w-8 text-muted-foreground/30" />
                 <p className="text-sm text-muted-foreground">
                   Choose an operation from the table above to inspect{' '}
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs">baggage.userId</code>{' '}
+                  <code className="rounded bg-muted px-1 py-0.5 text-xs">baggage.user_id</code>{' '}
                   breakdowns.
                 </p>
               </div>

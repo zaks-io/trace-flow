@@ -88,12 +88,12 @@ interface ProviderRef {
 function makeHeaders(
   traceId: string,
   operation: string,
-  userId = 'test-user-1',
+  user_id = 'test-user-1',
 ): { traceparent: string; baggage: string; spanId: string } {
   const spanId = generateSpanId();
   return {
     traceparent: formatTraceparent(traceId, spanId),
-    baggage: formatBaggage({ operation, userId }),
+    baggage: formatBaggage({ operation, user_id }),
     spanId,
   };
 }
