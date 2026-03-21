@@ -16,6 +16,7 @@ import type { SubscriptionTier } from '@trace-flow/types';
 import type { Id } from '../_generated/dataModel';
 import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './stripe';
 import { subscriptionValidator } from '../validators';
+import { ensureOrgHasSubscription } from '../auth/organizations';
 
 export function mapStripeStatusToInternal(
   status: string,
@@ -98,6 +99,17 @@ export const getForCurrentUser = query({
   },
 });
 
+export const ensureBillingForCurrentUser = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const user = await getCurrentUser(ctx);
+    if (!user?.orgId) return null;
+    await ensureOrgHasSubscription(ctx, user.orgId);
+    return null;
+  },
+});
+
 export const getBillingSummaryForCurrentUser = query({
   args: {},
   returns: v.union(
@@ -164,22 +176,13 @@ export const setTier = internalMutation({
 
     if (!subscription) throw new Error('Subscription not found');
 
-    const previousTier = subscription.tier;
     const config = TIER_CONFIG[args.tier as SubscriptionTier];
     await ctx.db.patch(subscription._id, {
       tier: args.tier,
-      status: 'active',
       monthlyUnits: config.monthlyUnits,
     });
 
     await scheduleKVSync(ctx, subscription._id);
-
-    // When upgrading from hobby to pro, extend retention for existing traces
-    if (previousTier === 'hobby' && args.tier === 'pro') {
-      await ctx.scheduler.runAfter(0, internal.integrations.tinybird.extendRetention, {
-        orgId: args.orgId,
-      });
-    }
   },
 });
 
@@ -605,6 +608,14 @@ export const reconcileCurrentOrgWithStripe = action({
       currentPeriodStart: (planItem?.current_period_start ?? 0) * 1000,
       currentPeriodEnd: (planItem?.current_period_end ?? 0) * 1000,
       cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+    });
+
+    const priceId =
+      planItem?.price?.id ?? (typeof planItem?.price === 'string' ? planItem.price : undefined);
+    const tier = priceId === getProPriceId() ? 'pro' : 'hobby';
+    await ctx.runMutation(internal.billing.subscriptions.setTier, {
+      orgId: user.orgId,
+      tier,
     });
 
     return { reconciled: true as const };

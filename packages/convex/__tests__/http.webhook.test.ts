@@ -16,7 +16,7 @@ const { mockConstructEvent, mockSubscriptionsRetrieve, mockInvoicePaymentsList }
 
 vi.mock('stripe', () => ({
   default: class StripeMock {
-    webhooks = { constructEvent: mockConstructEvent };
+    webhooks = { constructEventAsync: mockConstructEvent };
     subscriptions = { retrieve: mockSubscriptionsRetrieve };
     invoicePayments = { list: mockInvoicePaymentsList };
   },
@@ -126,7 +126,7 @@ describe('POST /stripe/webhook', () => {
       expect(json.details).toContain('Signature verification failed');
     });
 
-    it('passes raw body and signature to constructEvent', async () => {
+    it('passes raw body and signature to constructEventAsync', async () => {
       mockConstructEvent.mockReturnValue(
         makeStripeEvent('test.event', { id: 'obj_1' }, 'evt_sig_test'),
       );
@@ -219,8 +219,8 @@ describe('POST /stripe/webhook', () => {
       );
 
       expect(res.status).toBe(200);
-      // Calls: startProcessing, setStripeCustomerId, upsertStripeSubscriptionState, markProcessed
-      expect(ctx.runMutation).toHaveBeenCalledTimes(4);
+      // Calls: startProcessing, setStripeCustomerId, upsertStripeSubscriptionState, setTier, markProcessed
+      expect(ctx.runMutation).toHaveBeenCalledTimes(5);
       // setStripeCustomerId call
       const setCustomerCall = ctx.runMutation.mock.calls[1];
       expect(setCustomerCall[1]).toEqual({ orgId: 'org123', stripeCustomerId: 'cus_1' });
@@ -235,6 +235,9 @@ describe('POST /stripe/webhook', () => {
       });
       expect(upsertCall[1]).not.toHaveProperty('stripeSeatItemId');
       expect(upsertCall[1]).not.toHaveProperty('seatQuantity');
+      // setTier call
+      const setTierCall = ctx.runMutation.mock.calls[3];
+      expect(setTierCall[1]).toEqual({ orgId: 'org123', tier: 'pro' });
     });
 
     it('skips when orgId is missing from metadata', async () => {
@@ -315,8 +318,8 @@ describe('POST /stripe/webhook', () => {
       );
 
       expect(res.status).toBe(200);
-      // startProcessing + upsertStripeSubscriptionState + markProcessed
-      expect(ctx.runMutation).toHaveBeenCalledTimes(3);
+      // startProcessing + upsertStripeSubscriptionState + setTier + markProcessed
+      expect(ctx.runMutation).toHaveBeenCalledTimes(4);
       const upsertCall = ctx.runMutation.mock.calls[1];
       expect(upsertCall[1]).toMatchObject({
         orgId: 'org123',
@@ -325,6 +328,9 @@ describe('POST /stripe/webhook', () => {
         stripeSubscriptionId: 'sub_1',
         cancelAtPeriodEnd: false,
       });
+      // setTier call — price_pro matches env var so tier is 'pro'
+      const setTierCall = ctx.runMutation.mock.calls[2];
+      expect(setTierCall[1]).toEqual({ orgId: 'org123', tier: 'pro' });
     });
 
     it('skips when subscription is not found for any org', async () => {
@@ -390,6 +396,49 @@ describe('POST /stripe/webhook', () => {
       });
     });
 
+    it('preserves grace status when subscription is past_due', async () => {
+      const event = makeStripeEvent('customer.subscription.updated', {
+        id: 'sub_1',
+        customer: 'cus_1',
+        status: 'past_due',
+        cancel_at_period_end: false,
+        items: {
+          data: [
+            {
+              id: 'si_plan',
+              price: { id: 'price_pro' },
+              quantity: 1,
+              current_period_start: 1700000000,
+              current_period_end: 1702592000,
+            },
+          ],
+        },
+      });
+      mockConstructEvent.mockReturnValue(event);
+      ctx.runMutation.mockResolvedValueOnce({ alreadyProcessed: false, eventDocId: 'doc_1' });
+      ctx.runQuery.mockResolvedValueOnce({ orgId: 'org123' });
+
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/stripe/webhook',
+        webhookRequest(JSON.stringify(event)),
+        ctx,
+      );
+
+      expect(res.status).toBe(200);
+      // startProcessing + upsert + setTier + markProcessed
+      expect(ctx.runMutation).toHaveBeenCalledTimes(4);
+      const upsertCall = ctx.runMutation.mock.calls[1];
+      expect(upsertCall[1]).toMatchObject({
+        orgId: 'org123',
+        status: 'grace', // past_due maps to grace
+        cancelAtPeriodEnd: false,
+      });
+      // setTier should NOT overwrite status — only tier and monthlyUnits
+      const setTierCall = ctx.runMutation.mock.calls[2];
+      expect(setTierCall[1]).toEqual({ orgId: 'org123', tier: 'pro' });
+    });
+
     it('resolves org via customer ID fallback through org table', async () => {
       const event = makeStripeEvent('customer.subscription.updated', {
         id: 'sub_new',
@@ -417,13 +466,16 @@ describe('POST /stripe/webhook', () => {
       );
 
       expect(res.status).toBe(200);
-      // startProcessing + upsert + markProcessed
-      expect(ctx.runMutation).toHaveBeenCalledTimes(3);
+      // startProcessing + upsert + setTier + markProcessed
+      expect(ctx.runMutation).toHaveBeenCalledTimes(4);
       const upsertCall = ctx.runMutation.mock.calls[1];
       expect(upsertCall[1]).toMatchObject({
         orgId: 'org123',
         status: 'active', // trialing maps to active
       });
+      // setTier — no price in items.data so tier falls back to hobby
+      const setTierCall = ctx.runMutation.mock.calls[2];
+      expect(setTierCall[1]).toEqual({ orgId: 'org123', tier: 'hobby' });
     });
   });
 

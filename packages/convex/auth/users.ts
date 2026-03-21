@@ -187,6 +187,8 @@ export const initializeUser = mutation({
           existingUser.name,
           extractSub(userInfo.tokenIdentifier) ?? undefined,
         );
+      } else {
+        await ensureOrgHasSubscription(ctx, existingUser.orgId);
       }
       // Enable user if they have an accepted invite and aren't enabled yet
       if (!existingUser.enabled && !existingUser.inviteId) {
