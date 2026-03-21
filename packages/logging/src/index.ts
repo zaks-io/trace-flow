@@ -229,7 +229,7 @@ function normalizeDomain(domain?: string): string {
 
 function buildAxiomUrl(config: AxiomConfig): string {
   const base = normalizeDomain(config.domain);
-  return `${base}/v1/ingest/${encodeURIComponent(config.dataset)}`;
+  return `${base}/v1/datasets/${encodeURIComponent(config.dataset)}/ingest`;
 }
 
 const MAX_BUFFER_SIZE = 1000;

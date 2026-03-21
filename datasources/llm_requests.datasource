@@ -12,6 +12,7 @@ SCHEMA >
     `Model` LowCardinality(String),
     `OperationName` LowCardinality(String),
     `BaggageOperation` LowCardinality(String),
+    `BaggageUserId` LowCardinality(String),
     `StatusCode` LowCardinality(String),
     `InputTokens` UInt32,
     `OutputTokens` UInt32,
@@ -35,6 +36,6 @@ SCHEMA >
     `RetentionExpiresAt` Int64
 
 ENGINE "ReplacingMergeTree"
-ENGINE_SORTING_KEY "ReceivedAt, ApiKey, Provider, Model, OperationName, StatusCode, TraceId, SpanId"
+ENGINE_SORTING_KEY "ReceivedAt, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(RetentionExpiresAt / 1000000000) + toIntervalDay(0)"

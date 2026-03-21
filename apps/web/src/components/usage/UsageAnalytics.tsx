@@ -21,7 +21,7 @@ import {
   type TimeseriesRow,
   type ModelRow,
   type ProviderRow,
-  type OperationRow,
+  type OperationLeaderboardRow,
   type ApiKeyRow,
   type CostForecastRow,
   type RequestStatsRow,
@@ -139,9 +139,9 @@ export function UsageAnalytics({
     params: filterParams,
   });
 
-  const operationsQuery = useTinybirdQuery<TinybirdResponse<OperationRow>>({
-    pipe: 'llm_usage_by_operation',
-    params: filterParams,
+  const operationsQuery = useTinybirdQuery<TinybirdResponse<OperationLeaderboardRow>>({
+    pipe: 'operations_leaderboard',
+    params: { ...filterParams, limit: 100 },
   });
 
   const apiKeysQuery = useTinybirdQuery<TinybirdResponse<ApiKeyRow>>({
@@ -382,7 +382,7 @@ export function UsageAnalytics({
                 <Layers className="h-4 w-4 text-muted-foreground" />
                 <h2 className="text-base font-medium text-foreground">By Operation</h2>
               </div>
-              <OperationTable data={operations} />
+              <OperationTable data={operations.slice(0, 10)} />
             </div>
           </div>
 
