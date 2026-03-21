@@ -115,7 +115,7 @@ async function runCacheRequest(
 ): Promise<RequestResult> {
   const spanId = generateSpanId();
   const traceparent = formatTraceparent(traceId, spanId);
-  const baggage = formatBaggage({ operation });
+  const baggage = formatBaggage({ operation, userId: 'test-user-3' });
   const start = Date.now();
 
   try {

@@ -73,7 +73,10 @@ export const sharedTraceMultiStreamScenario: Scenario = {
       const model = task.config.createModel(apiKey);
       const spanId = generateSpanId();
       const traceparent = formatTraceparent(traceId, spanId);
-      const baggage = formatBaggage({ operation: `stream-${task.index + 1}` });
+      const baggage = formatBaggage({
+        operation: `stream-${task.index + 1}`,
+        userId: `test-user-${(task.index % 3) + 1}`,
+      });
 
       const reqStart = Date.now();
       let ttft: number | undefined;
