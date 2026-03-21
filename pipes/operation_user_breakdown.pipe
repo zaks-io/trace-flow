@@ -1,0 +1,222 @@
+DESCRIPTION >
+    Per-user breakdown for a selected operation with cache-rate visibility.
+    Groups by BaggageUserId and excludes requests without a user ID.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE aggregated
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        toDateTime(start_ns / 1000000000) AS start_dt,
+        toDateTime(end_ns / 1000000000) AS end_dt,
+        dateDiff('day', start_dt, end_dt) AS range_days
+    SELECT
+        baggage_user_id,
+        countMerge(RequestCount) AS request_count,
+        sumMerge(InputTokens) AS input_tokens,
+        sumMerge(UncachedInputTokens) AS uncached_input_tokens,
+        sumMerge(OutputTokens) AS output_tokens,
+        sumMerge(CacheReadInputTokens) AS cache_read_input_tokens,
+        sumMerge(CacheCreationInputTokens) AS cache_creation_input_tokens,
+        sumMerge(ReasoningTokens) AS reasoning_tokens,
+        sumMerge(TotalCostMicrodollars) / 1000000 AS total_cost_usd,
+        sumMerge(InputCostMicrodollars) / 1000000 AS input_cost_usd,
+        sumMerge(OutputCostMicrodollars) / 1000000 AS output_cost_usd,
+        sumMerge(CacheReadCostMicrodollars) / 1000000 AS cache_read_cost_usd,
+        sumMerge(CacheCreationCostMicrodollars) / 1000000 AS cache_creation_cost_usd,
+        sumMerge(ReasoningCostMicrodollars) / 1000000 AS reasoning_cost_usd,
+        sumMerge(PromptBaselineCostMicrodollars) / 1000000 AS prompt_baseline_cost_usd,
+        sumMerge(CacheImpactCostMicrodollars) / 1000000 AS cache_impact_cost_usd,
+        sumMerge(UpstreamCostMicrodollars) / 1000000 AS upstream_cost_usd,
+        avgMerge(AvgDurationNano) / 1000000 AS avg_duration_ms,
+        maxMerge(MaxDurationNano) / 1000000 AS max_duration_ms,
+        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
+    FROM (
+        SELECT
+            BaggageUserId AS baggage_user_id,
+            RequestCount,
+            InputTokens,
+            UncachedInputTokens,
+            OutputTokens,
+            CacheReadInputTokens,
+            CacheCreationInputTokens,
+            ReasoningTokens,
+            TotalCostMicrodollars,
+            InputCostMicrodollars,
+            OutputCostMicrodollars,
+            CacheReadCostMicrodollars,
+            CacheCreationCostMicrodollars,
+            ReasoningCostMicrodollars,
+            PromptBaselineCostMicrodollars,
+            CacheImpactCostMicrodollars,
+            UpstreamCostMicrodollars,
+            AvgDurationNano,
+            MaxDurationNano,
+            P95DurationNano
+        FROM llm_usage_1h
+        WHERE range_days <= 30
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            AND BaggageUserId != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+{% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(status) %}
+            AND StatusCode = {{ String(status) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT
+            BaggageUserId AS baggage_user_id,
+            RequestCount,
+            InputTokens,
+            UncachedInputTokens,
+            OutputTokens,
+            CacheReadInputTokens,
+            CacheCreationInputTokens,
+            ReasoningTokens,
+            TotalCostMicrodollars,
+            InputCostMicrodollars,
+            OutputCostMicrodollars,
+            CacheReadCostMicrodollars,
+            CacheCreationCostMicrodollars,
+            ReasoningCostMicrodollars,
+            PromptBaselineCostMicrodollars,
+            CacheImpactCostMicrodollars,
+            UpstreamCostMicrodollars,
+            AvgDurationNano,
+            MaxDurationNano,
+            P95DurationNano
+        FROM llm_usage_1d
+        WHERE range_days > 30
+            AND range_days <= 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            AND BaggageUserId != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+{% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(status) %}
+            AND StatusCode = {{ String(status) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT
+            BaggageUserId AS baggage_user_id,
+            RequestCount,
+            InputTokens,
+            UncachedInputTokens,
+            OutputTokens,
+            CacheReadInputTokens,
+            CacheCreationInputTokens,
+            ReasoningTokens,
+            TotalCostMicrodollars,
+            InputCostMicrodollars,
+            OutputCostMicrodollars,
+            CacheReadCostMicrodollars,
+            CacheCreationCostMicrodollars,
+            ReasoningCostMicrodollars,
+            PromptBaselineCostMicrodollars,
+            CacheImpactCostMicrodollars,
+            UpstreamCostMicrodollars,
+            AvgDurationNano,
+            MaxDurationNano,
+            P95DurationNano
+        FROM llm_usage_1mo
+        WHERE range_days > 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            AND BaggageUserId != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+{% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(status) %}
+            AND StatusCode = {{ String(status) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+    )
+    GROUP BY baggage_user_id
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        baggage_user_id,
+        request_count,
+        input_tokens,
+        uncached_input_tokens,
+        output_tokens,
+        cache_read_input_tokens,
+        cache_creation_input_tokens,
+        reasoning_tokens,
+        total_cost_usd,
+        input_cost_usd,
+        output_cost_usd,
+        cache_read_cost_usd,
+        cache_creation_cost_usd,
+        reasoning_cost_usd,
+        prompt_baseline_cost_usd,
+        cache_impact_cost_usd,
+        upstream_cost_usd,
+        input_tokens + output_tokens AS total_tokens,
+        avg_duration_ms,
+        max_duration_ms,
+        p95_duration_ms,
+        if(request_count = 0, CAST(NULL, 'Nullable(Float64)'), total_cost_usd / request_count) AS cost_per_request_usd,
+        if(
+            cache_read_input_tokens = 0 AND cache_creation_input_tokens = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            if(
+                input_tokens = 0,
+                CAST(NULL, 'Nullable(Float64)'),
+                greatest(0.0, least(100.0, (cache_read_input_tokens / input_tokens) * 100.0))
+            )
+        ) AS cache_hit_rate
+    FROM aggregated
+    ORDER BY total_cost_usd DESC, request_count DESC
+    LIMIT {{ Int32(limit, 50) }}
+
+TYPE ENDPOINT

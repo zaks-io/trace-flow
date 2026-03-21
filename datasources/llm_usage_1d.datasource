@@ -9,6 +9,7 @@ SCHEMA >
     `Model` LowCardinality(String),
     `OperationName` LowCardinality(String),
     `BaggageOperation` LowCardinality(String),
+    `BaggageUserId` String,
     `StatusCode` LowCardinality(String),
     `RequestCount` AggregateFunction(count),
     `InputTokens` AggregateFunction(sum, UInt64),
@@ -30,7 +31,11 @@ SCHEMA >
     `MaxDurationNano` AggregateFunction(max, Int64),
     `P95DurationNano` AggregateFunction(quantile(0.95), Int64)
 
+
+FORWARD_QUERY >
+    SELECT BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, '' AS BaggageUserId, StatusCode, RequestCount, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens, ReasoningTokens, UncachedInputTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars, CacheCreationCostMicrodollars, ReasoningCostMicrodollars, PromptBaselineCostMicrodollars, CacheImpactCostMicrodollars, UpstreamCostMicrodollars, TotalCostMicrodollars, AvgDurationNano, MaxDurationNano, P95DurationNano
+
 ENGINE "AggregatingMergeTree"
-ENGINE_SORTING_KEY "BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode"
+ENGINE_SORTING_KEY "BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId"
 ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
 ENGINE_TTL "BucketStart + INTERVAL 2 YEAR"

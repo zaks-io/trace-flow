@@ -1,0 +1,335 @@
+DESCRIPTION >
+    Filter options for the operations page.
+    Uses usage rollups and supports filtering by operation, provider, model, API key, and baggage.userId.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE providers
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        toDateTime(start_ns / 1000000000) AS start_dt,
+        toDateTime(end_ns / 1000000000) AS end_dt,
+        dateDiff('day', start_dt, end_dt) AS range_days
+    SELECT DISTINCT Provider AS value
+    FROM (
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1h
+        WHERE range_days <= 30
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND Provider != ''
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1d
+        WHERE range_days > 30
+            AND range_days <= 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND Provider != ''
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1mo
+        WHERE range_days > 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND Provider != ''
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+    )
+    ORDER BY value
+    LIMIT 100
+
+NODE models
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        toDateTime(start_ns / 1000000000) AS start_dt,
+        toDateTime(end_ns / 1000000000) AS end_dt,
+        dateDiff('day', start_dt, end_dt) AS range_days
+    SELECT DISTINCT Model AS value
+    FROM (
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1h
+        WHERE range_days <= 30
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND Model != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1d
+        WHERE range_days > 30
+            AND range_days <= 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND Model != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1mo
+        WHERE range_days > 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND Model != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+    )
+    ORDER BY value
+    LIMIT 100
+
+NODE operations
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        toDateTime(start_ns / 1000000000) AS start_dt,
+        toDateTime(end_ns / 1000000000) AS end_dt,
+        dateDiff('day', start_dt, end_dt) AS range_days
+    SELECT DISTINCT BaggageOperation AS value
+    FROM (
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1h
+        WHERE range_days <= 30
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND BaggageOperation != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1d
+        WHERE range_days > 30
+            AND range_days <= 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND BaggageOperation != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1mo
+        WHERE range_days > 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND BaggageOperation != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+    )
+    ORDER BY value
+    LIMIT 100
+
+NODE api_keys_list
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(7), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        toDateTime(start_ns / 1000000000) AS start_dt,
+        toDateTime(end_ns / 1000000000) AS end_dt,
+        dateDiff('day', start_dt, end_dt) AS range_days
+    SELECT DISTINCT ApiKey AS value
+    FROM (
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1h
+        WHERE range_days <= 30
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND ApiKey != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1d
+        WHERE range_days > 30
+            AND range_days <= 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND ApiKey != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+        UNION ALL
+        SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
+        FROM llm_usage_1mo
+        WHERE range_days > 180
+            AND BucketStart >= start_dt
+            AND BucketStart <= end_dt
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            AND ApiKey != ''
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
+    )
+    ORDER BY value
+    LIMIT 100
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        (SELECT groupArray(value) FROM providers) AS providers,
+        (SELECT groupArray(value) FROM models) AS models,
+        (SELECT groupArray(value) FROM operations) AS operations,
+        (SELECT groupArray(value) FROM api_keys_list) AS api_keys
+
+TYPE ENDPOINT

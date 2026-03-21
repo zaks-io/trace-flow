@@ -16,6 +16,7 @@ import {
   Shield,
   CreditCard,
   ChartColumn,
+  Layers,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -39,6 +40,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
+  { title: 'Operations', href: '/app/operations', icon: Layers },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
   { title: 'Docs', href: '/docs', icon: BookOpen },

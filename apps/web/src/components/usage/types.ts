@@ -140,6 +140,33 @@ export interface OperationRow extends CostBreakdownRow, LatencyRow {
   total_tokens: number;
 }
 
+export interface OperationLeaderboardRow extends OperationRow {
+  cost_per_request_usd: number | null;
+  cache_hit_rate: number | null;
+}
+
+export interface OperationUserRow extends CostBreakdownRow, LatencyRow {
+  baggage_user_id: string;
+  request_count: number;
+  input_tokens: number;
+  uncached_input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  reasoning_tokens: number;
+  total_cost_usd: number;
+  total_tokens: number;
+  cost_per_request_usd: number | null;
+  cache_hit_rate: number | null;
+}
+
+export interface OperationsFilterOptionsRow {
+  providers: string[];
+  models: string[];
+  operations: string[];
+  api_keys: string[];
+}
+
 export interface ApiKeyRow extends CostBreakdownRow, LatencyRow {
   api_key: string;
   request_count: number;

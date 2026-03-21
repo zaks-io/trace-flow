@@ -12,6 +12,7 @@ SCHEMA >
     `Model` LowCardinality(String),
     `OperationName` LowCardinality(String),
     `BaggageOperation` LowCardinality(String),
+    `BaggageUserId` String,
     `StatusCode` LowCardinality(String),
     `InputTokens` UInt32,
     `OutputTokens` UInt32,
@@ -34,7 +35,10 @@ SCHEMA >
     `TierAtIngestion` LowCardinality(String),
     `RetentionExpiresAt` Int64
 
+FORWARD_QUERY >
+    SELECT ReceivedAt, Timestamp, TraceId, SpanId, ApiKey, Provider, Model, OperationName, BaggageOperation, '' AS BaggageUserId, StatusCode, InputTokens, OutputTokens, CacheReadInputTokens, CacheCreationInputTokens, ReasoningTokens, UncachedInputTokens, InputCostMicrodollars, OutputCostMicrodollars, CacheReadCostMicrodollars, CacheCreationCostMicrodollars, ReasoningCostMicrodollars, PromptBaselineCostMicrodollars, CacheImpactCostMicrodollars, UpstreamCostMicrodollars, TotalCostMicrodollars, DurationNano, ProxyOverheadNano, UpstreamTtfbNano, TierAtIngestion, RetentionExpiresAt
+
 ENGINE "ReplacingMergeTree"
-ENGINE_SORTING_KEY "ReceivedAt, ApiKey, Provider, Model, OperationName, StatusCode, TraceId, SpanId"
+ENGINE_SORTING_KEY "ReceivedAt, ApiKey, Provider, Model, OperationName, BaggageOperation, StatusCode, BaggageUserId, TraceId, SpanId"
 ENGINE_PARTITION_KEY "toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))"
 ENGINE_TTL "toDateTime(RetentionExpiresAt / 1000000000) + toIntervalDay(0)"
