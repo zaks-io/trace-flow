@@ -75,7 +75,7 @@ export const sharedTraceMultiStreamScenario: Scenario = {
       const traceparent = formatTraceparent(traceId, spanId);
       const baggage = formatBaggage({
         operation: `stream-${task.index + 1}`,
-        userId: `test-user-${(task.index % 3) + 1}`,
+        user_id: `test-user-${(task.index % 3) + 1}`,
       });
 
       const reqStart = Date.now();

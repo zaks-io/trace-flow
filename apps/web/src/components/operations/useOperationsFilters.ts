@@ -6,6 +6,8 @@ export type LeaderboardSortKey =
   | 'request_count'
   | 'total_cost_usd'
   | 'cost_per_request'
+  | 'cost_per_user'
+  | 'unique_user_count'
   | 'cache_hit_rate'
   | 'avg_duration_ms'
   | 'p95_duration_ms';

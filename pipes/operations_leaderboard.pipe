@@ -34,10 +34,12 @@ SQL >
         sumMerge(UpstreamCostMicrodollars) / 1000000 AS upstream_cost_usd,
         avgMerge(AvgDurationNano) / 1000000 AS avg_duration_ms,
         maxMerge(MaxDurationNano) / 1000000 AS max_duration_ms,
-        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms
+        quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms,
+        uniqExact(if(BaggageUserId != '', BaggageUserId, NULL)) AS unique_user_count
     FROM (
         SELECT
             BaggageOperation AS operation,
+            BaggageUserId,
             RequestCount,
             InputTokens,
             UncachedInputTokens,
@@ -85,6 +87,7 @@ SQL >
         UNION ALL
         SELECT
             BaggageOperation AS operation,
+            BaggageUserId,
             RequestCount,
             InputTokens,
             UncachedInputTokens,
@@ -133,6 +136,7 @@ SQL >
         UNION ALL
         SELECT
             BaggageOperation AS operation,
+            BaggageUserId,
             RequestCount,
             InputTokens,
             UncachedInputTokens,
@@ -205,7 +209,9 @@ SQL >
         avg_duration_ms,
         max_duration_ms,
         p95_duration_ms,
+        unique_user_count,
         if(request_count = 0, CAST(NULL, 'Nullable(Float64)'), total_cost_usd / request_count) AS cost_per_request_usd,
+        if(unique_user_count = 0, CAST(NULL, 'Nullable(Float64)'), total_cost_usd / unique_user_count) AS cost_per_user_usd,
         if(
             cache_read_input_tokens = 0 AND cache_creation_input_tokens = 0,
             CAST(NULL, 'Nullable(Float64)'),

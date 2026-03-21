@@ -65,6 +65,8 @@ export function LeaderboardTable({
     { key: 'request_count', label: 'Requests' },
     { key: 'total_cost_usd', label: 'Cost' },
     { key: 'cost_per_request', label: 'Cost / Req' },
+    { key: 'cost_per_user', label: 'Cost / User' },
+    { key: 'unique_user_count', label: 'Users' },
     { key: 'cache_hit_rate', label: 'Cache Hit' },
     { key: 'avg_duration_ms', label: 'Avg' },
     { key: 'p95_duration_ms', label: 'P95' },
@@ -118,6 +120,12 @@ export function LeaderboardTable({
                 </td>
                 <td className="py-2.5 text-right font-mono text-muted-foreground">
                   {formatCurrency(costPerRequest)}
+                </td>
+                <td className="py-2.5 text-right font-mono text-muted-foreground">
+                  {row.cost_per_user_usd != null ? formatCurrency(row.cost_per_user_usd) : '—'}
+                </td>
+                <td className="py-2.5 text-right font-mono text-muted-foreground">
+                  {row.unique_user_count > 0 ? formatNumber(row.unique_user_count) : '—'}
                 </td>
                 <td className={`py-2.5 text-right font-mono ${CACHE_RATE_COLORS[cacheAccent]}`}>
                   {formatCacheHitRate(cacheHitRate)}

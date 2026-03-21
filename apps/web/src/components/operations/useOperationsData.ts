@@ -56,6 +56,9 @@ export function useOperationsData({
       if (sortKey === 'cost_per_request') {
         aVal = getCostPerRequest(a) ?? 0;
         bVal = getCostPerRequest(b) ?? 0;
+      } else if (sortKey === 'cost_per_user') {
+        aVal = a.cost_per_user_usd ?? 0;
+        bVal = b.cost_per_user_usd ?? 0;
       } else if (sortKey === 'cache_hit_rate') {
         aVal = getAggregateCacheHitRate(a) ?? -1;
         bVal = getAggregateCacheHitRate(b) ?? -1;

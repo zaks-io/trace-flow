@@ -40,7 +40,7 @@ export const toolsScenario: Scenario = {
       const model = config.createModel(apiKey);
       const spanId = generateSpanId();
       const traceparent = formatTraceparent(ctx.traceId, spanId);
-      const baggage = formatBaggage({ operation: 'tool-call', userId: 'test-user-2' });
+      const baggage = formatBaggage({ operation: 'tool-call', user_id: 'test-user-2' });
       const reqStart = Date.now();
 
       try {

@@ -29,7 +29,7 @@ export function UsersTable({ data }: { data: OperationUserRow[] }) {
       <div className="flex flex-col items-center gap-2 py-12 text-center">
         <Users className="h-8 w-8 text-muted-foreground/40" />
         <p className="text-sm text-muted-foreground">
-          No <code className="rounded bg-muted px-1 py-0.5 text-xs">baggage.userId</code> values
+          No <code className="rounded bg-muted px-1 py-0.5 text-xs">baggage.user_id</code> values
           were captured for this operation.
         </p>
       </div>
