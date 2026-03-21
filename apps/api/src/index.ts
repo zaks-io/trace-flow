@@ -92,9 +92,8 @@ app.get('/bodies/:requestId', async (c) => {
   // Verify the requesting user belongs to the org that owns this object
   const orgId = storedBodies.orgId;
   if (!orgId) {
-    // Legacy objects without orgId metadata are inaccessible
     requestLogger.warn('api.bodies_forbidden_missing_org');
-    return c.json({ error: 'Forbidden' }, 403);
+    return c.json({ error: 'Forbidden', message: 'Object missing organization metadata' }, 403);
   }
 
   const userSub = c.get('userSub');
@@ -106,8 +105,10 @@ app.get('/bodies/:requestId', async (c) => {
   if (userOrgData?.orgId !== orgId) {
     requestLogger.warn('api.bodies_forbidden_wrong_org', {
       orgId,
+      userSub,
+      userOrgId: userOrgData?.orgId ?? null,
     });
-    return c.json({ error: 'Forbidden' }, 403);
+    return c.json({ error: 'Forbidden', message: 'Organization mismatch' }, 403);
   }
 
   const tier = subData?.tier ?? 'hobby';
