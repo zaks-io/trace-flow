@@ -138,9 +138,8 @@ export function extractAnthropicMetadata(
 
   // Extract model (from message_start event)
   const modelMatch = ANTHROPIC_MODEL_PATTERN.exec(data);
-  if (modelMatch && !metadata.object) {
-    // Store model in object field for consistency with other providers
-    metadata.object = modelMatch[1];
+  if (modelMatch && !metadata.model) {
+    metadata.model = modelMatch[1];
   }
 
   // Extract stop_reason (from message_delta or message_stop)

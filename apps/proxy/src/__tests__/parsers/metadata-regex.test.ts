@@ -77,7 +77,7 @@ describe('extractAnthropicMetadata', () => {
     const metadata = extractAnthropicMetadata(data);
 
     expect(metadata.id).toBe('msg_01BK1fpyqpgrrGvA4HTgaNCu');
-    expect(metadata.object).toBe('claude-sonnet-4-5-20250929'); // stored in object field
+    expect(metadata.model).toBe('claude-sonnet-4-5-20250929');
   });
 
   it('should extract stop_reason and stop_sequence', () => {
@@ -110,7 +110,7 @@ describe('extractMetadataFromSSEData', () => {
     const metadata = extractMetadataFromSSEData(data);
 
     expect(metadata.id).toBe('msg_123');
-    expect(metadata.object).toBe('claude-sonnet-4');
+    expect(metadata.model).toBe('claude-sonnet-4');
   });
 });
 
@@ -188,7 +188,7 @@ describe('extractMetadataFromResponseBody', () => {
     const metadata = extractMetadataFromResponseBody(responseBody);
 
     expect(metadata.id).toBe('msg_01BK1fpyqpgrrGvA4HTgaNCu');
-    expect(metadata.object).toBe('claude-sonnet-4-5-20250929');
+    expect(metadata.model).toBe('claude-sonnet-4-5-20250929');
     expect(metadata.stopReason).toBe(null); // null in JSON is preserved as null
   });
 });
