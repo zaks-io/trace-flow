@@ -10,11 +10,6 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ['recharts'],
   },
-  async rewrites() {
-    return {
-      beforeFiles: [{ source: '/agents.md', destination: '/docs/agents.md' }],
-    };
-  },
 };
 
 export default nextConfig;
