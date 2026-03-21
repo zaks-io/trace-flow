@@ -12,7 +12,7 @@ SCHEMA >
     `Model` LowCardinality(String),
     `OperationName` LowCardinality(String),
     `BaggageOperation` LowCardinality(String),
-    `BaggageUserId` LowCardinality(String),
+    `BaggageUserId` String,
     `StatusCode` LowCardinality(String),
     `InputTokens` UInt32,
     `OutputTokens` UInt32,

@@ -9,7 +9,7 @@ SCHEMA >
     `Model` LowCardinality(String),
     `OperationName` LowCardinality(String),
     `BaggageOperation` LowCardinality(String),
-    `BaggageUserId` LowCardinality(String),
+    `BaggageUserId` String,
     `StatusCode` LowCardinality(String),
     `RequestCount` AggregateFunction(count),
     `InputTokens` AggregateFunction(sum, UInt64),

@@ -70,10 +70,7 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
-            {% if defined(baggage_operation) %}
+{% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
             {% if defined(baggage_user_id) %}
@@ -121,10 +118,7 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
-            {% if defined(baggage_operation) %}
+{% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
             {% if defined(baggage_user_id) %}
@@ -171,10 +165,7 @@ SQL >
             {% if defined(model) %}
             AND Model = {{ String(model) }}
             {% end %}
-            {% if defined(operation_name) %}
-            AND OperationName = {{ String(operation_name) }}
-            {% end %}
-            {% if defined(baggage_operation) %}
+{% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
             {% if defined(baggage_user_id) %}

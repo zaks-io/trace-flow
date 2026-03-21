@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { ArrowUpDown, ChevronDown, ChevronUp, Database, Layers, Users } from 'lucide-react';
@@ -248,6 +248,12 @@ export function OperationsAnalytics({
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
   const trimmedUserId = userIdFilter.trim();
+  const [debouncedUserId, setDebouncedUserId] = useState(trimmedUserId);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedUserId(trimmedUserId), 300);
+    return () => clearTimeout(id);
+  }, [trimmedUserId]);
 
   const { startTimeNs, endTimeNs } = useMemo(() => {
     const rangeMs = TIME_RANGES.find((range) => range.value === timeRange)?.ms ?? 0;
@@ -269,7 +275,7 @@ export function OperationsAnalytics({
     if (modelFilter) params.model = modelFilter;
     if (operationFilter) params.baggage_operation = operationFilter;
     if (apiKeyFilter) params.api_key_filter = apiKeyFilter;
-    if (trimmedUserId) params.baggage_user_id = trimmedUserId;
+    if (debouncedUserId) params.baggage_user_id = debouncedUserId;
 
     return params;
   }, [
@@ -279,7 +285,7 @@ export function OperationsAnalytics({
     operationFilter,
     providerFilter,
     startTimeNs,
-    trimmedUserId,
+    debouncedUserId,
   ]);
 
   const activeOperation = operationFilter || selectedOperationName;
