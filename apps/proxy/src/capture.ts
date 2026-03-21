@@ -148,23 +148,22 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
       }
     }
 
-    const isAnthropic = targetUrl.includes('anthropic.com');
-    const isGoogle = targetUrl.includes('generativelanguage.googleapis.com');
-    const isOpenAIStyle =
-      targetUrl.includes('openai.com') ||
-      targetUrl.includes('groq.com') ||
-      targetUrl.includes('openrouter.ai');
-
     let inputMessages: InputMessage[] | undefined;
 
     if (requestBody) {
       try {
-        if (isAnthropic) {
-          inputMessages = parseAnthropicRequestBody(requestBody) ?? undefined;
-        } else if (isGoogle) {
-          inputMessages = parseGoogleRequestBody(requestBody) ?? undefined;
-        } else if (isOpenAIStyle) {
-          inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
+        switch (route.provider.id) {
+          case 'anthropic':
+            inputMessages = parseAnthropicRequestBody(requestBody) ?? undefined;
+            break;
+          case 'google':
+            inputMessages = parseGoogleRequestBody(requestBody) ?? undefined;
+            break;
+          case 'openai':
+          case 'groq':
+          case 'openrouter':
+            inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
+            break;
         }
       } catch (err) {
         logger.error('proxy.request_body_parse_failed', err);
