@@ -53,7 +53,10 @@ export default function Billing() {
 
   useEffect(() => {
     if (summary === null) {
-      ensureBilling().catch((e) => console.error('Failed to ensure billing:', e));
+      ensureBilling().catch((e) => {
+        console.error('Failed to ensure billing:', e);
+        setError(e instanceof Error ? e.message : 'Failed to initialize billing');
+      });
     }
   }, [summary, ensureBilling]);
 

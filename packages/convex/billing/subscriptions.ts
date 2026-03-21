@@ -179,7 +179,6 @@ export const setTier = internalMutation({
     const config = TIER_CONFIG[args.tier as SubscriptionTier];
     await ctx.db.patch(subscription._id, {
       tier: args.tier,
-      status: 'active',
       monthlyUnits: config.monthlyUnits,
     });
 

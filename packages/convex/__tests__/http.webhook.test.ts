@@ -396,6 +396,49 @@ describe('POST /stripe/webhook', () => {
       });
     });
 
+    it('preserves grace status when subscription is past_due', async () => {
+      const event = makeStripeEvent('customer.subscription.updated', {
+        id: 'sub_1',
+        customer: 'cus_1',
+        status: 'past_due',
+        cancel_at_period_end: false,
+        items: {
+          data: [
+            {
+              id: 'si_plan',
+              price: { id: 'price_pro' },
+              quantity: 1,
+              current_period_start: 1700000000,
+              current_period_end: 1702592000,
+            },
+          ],
+        },
+      });
+      mockConstructEvent.mockReturnValue(event);
+      ctx.runMutation.mockResolvedValueOnce({ alreadyProcessed: false, eventDocId: 'doc_1' });
+      ctx.runQuery.mockResolvedValueOnce({ orgId: 'org123' });
+
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/stripe/webhook',
+        webhookRequest(JSON.stringify(event)),
+        ctx,
+      );
+
+      expect(res.status).toBe(200);
+      // startProcessing + upsert + setTier + markProcessed
+      expect(ctx.runMutation).toHaveBeenCalledTimes(4);
+      const upsertCall = ctx.runMutation.mock.calls[1];
+      expect(upsertCall[1]).toMatchObject({
+        orgId: 'org123',
+        status: 'grace', // past_due maps to grace
+        cancelAtPeriodEnd: false,
+      });
+      // setTier should NOT overwrite status — only tier and monthlyUnits
+      const setTierCall = ctx.runMutation.mock.calls[2];
+      expect(setTierCall[1]).toEqual({ orgId: 'org123', tier: 'pro' });
+    });
+
     it('resolves org via customer ID fallback through org table', async () => {
       const event = makeStripeEvent('customer.subscription.updated', {
         id: 'sub_new',

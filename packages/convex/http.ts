@@ -186,6 +186,12 @@ export function createApp(
           const priceId =
             planItem?.price?.id ??
             (typeof planItem?.price === 'string' ? planItem.price : undefined);
+          if (!stripeProPriceId) {
+            logger.error('convex.stripe_webhook_missing_pro_price_id', undefined, {
+              event: event.type,
+              hint: 'STRIPE_PRICE_ID_PRO env var is not set — tier detection will default to hobby',
+            });
+          }
           const tier = priceId === stripeProPriceId ? 'pro' : 'hobby';
           await ctx.runMutation(internal.billing.subscriptions.setTier, {
             orgId: existing.orgId,
