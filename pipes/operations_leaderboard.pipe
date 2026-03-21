@@ -35,7 +35,7 @@ SQL >
         avgMerge(AvgDurationNano) / 1000000 AS avg_duration_ms,
         maxMerge(MaxDurationNano) / 1000000 AS max_duration_ms,
         quantileMerge(0.95)(P95DurationNano) / 1000000 AS p95_duration_ms,
-        uniqExact(if(BaggageUserId != '', BaggageUserId, NULL)) AS unique_user_count
+        uniqExactIf(BaggageUserId, BaggageUserId != '') AS unique_user_count
     FROM (
         SELECT
             BaggageOperation AS operation,
