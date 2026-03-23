@@ -121,7 +121,7 @@ export interface ConvexLoggerOptions extends Omit<LoggerOptions, 'runtime'> {
   convexFunction?: string;
 }
 
-const DEFAULT_AXIOM_DATASET = 'trace-flow-logs';
+const DEFAULT_AXIOM_DATASET = 'cloudflare';
 const DEFAULT_AXIOM_DOMAIN = 'api.axiom.co';
 const KNOWN_BAGGAGE_KEYS = {
   request_id: 'requestId',
