@@ -18,7 +18,7 @@ binding = "CF_VERSION_METADATA"
 
 [vars]
 SENTRY_ENVIRONMENT = "development"
-AXIOM_DATASET = "trace-flow-logs"
+AXIOM_DATASET = "cloudflare"
 
 # KV Namespace for API key validation (dev)
 [[kv_namespaces]]
@@ -57,7 +57,7 @@ workers_dev = false
 
 [env.production.vars]
 SENTRY_ENVIRONMENT = "production"
-AXIOM_DATASET = "trace-flow-logs"
+AXIOM_DATASET = "cloudflare"
 
 [[env.production.routes]]
 pattern = "gateway.trace-flow.dev/*"
@@ -88,7 +88,7 @@ name = "trace-flow-proxy-preview"
 
 [env.preview.vars]
 SENTRY_ENVIRONMENT = "preview"
-AXIOM_DATASET = "trace-flow-logs"
+AXIOM_DATASET = "cloudflare"
 
 [[env.preview.kv_namespaces]]
 binding = "API_KEYS"

@@ -18,7 +18,7 @@ binding = "CF_VERSION_METADATA"
 
 [vars]
 SENTRY_ENVIRONMENT = "development"
-AXIOM_DATASET = "trace-flow-logs"
+AXIOM_DATASET = "cloudflare"
 TINYBIRD_HOST = "https://api.us-west-2.aws.tinybird.co"
 
 [placement]
@@ -72,7 +72,7 @@ workers_dev = false
 
 [env.production.vars]
 SENTRY_ENVIRONMENT = "production"
-AXIOM_DATASET = "trace-flow-logs"
+AXIOM_DATASET = "cloudflare"
 TINYBIRD_HOST = "https://api.us-west-2.aws.tinybird.co"
 
 [env.production.triggers]
@@ -107,7 +107,7 @@ name = "trace-flow-consumer-preview"
 
 [env.preview.vars]
 SENTRY_ENVIRONMENT = "preview"
-AXIOM_DATASET = "trace-flow-logs"
+AXIOM_DATASET = "cloudflare"
 TINYBIRD_HOST = "https://api.us-west-2.aws.tinybird.co"
 
 [env.preview.triggers]
