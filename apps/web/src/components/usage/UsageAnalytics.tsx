@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useRef } from 'react';
+import { Fragment, useState, useMemo, useRef } from 'react';
 import { type Preloaded, usePreloadedQuery, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Activity, DollarSign, Hash, Layers, Server, Cpu, Timer, Key } from 'lucide-react';
@@ -55,7 +55,7 @@ export function UsageAnalytics({
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
 }) {
   const billingSummary = useQuery(api.billing.subscriptions.getBillingSummaryForCurrentUser);
-  const [timeRange, setTimeRange] = useState<TimeRange>('30d');
+  const [timeRange, setTimeRange] = useState<TimeRange>('this-month');
   const [metric, setMetric] = useState<TimeseriesMetric>('cost');
   const [providerFilter, setProviderFilter] = useState('');
   const [modelFilter, setModelFilter] = useState('');
@@ -66,8 +66,20 @@ export function UsageAnalytics({
   const apiKeyMap = useApiKeyMap(apiKeys);
 
   const { startTimeNs, endTimeNs, prevStartTimeNs, prevEndTimeNs } = useMemo(() => {
-    const rangeMs = TIME_RANGES.find((r) => r.value === timeRange)?.ms ?? 0;
+    const range = TIME_RANGES.find((r) => r.value === timeRange);
     const now = Date.now();
+
+    if (range?.getRange) {
+      const { start, end, prevStart, prevEnd } = range.getRange();
+      return {
+        startTimeNs: snapToMinute(start) * 1_000_000,
+        endTimeNs: snapToMinute(end) * 1_000_000,
+        prevStartTimeNs: snapToMinute(prevStart) * 1_000_000,
+        prevEndTimeNs: snapToMinute(prevEnd) * 1_000_000,
+      };
+    }
+
+    const rangeMs = range?.ms ?? 0;
     return {
       startTimeNs: snapToMinute(now - rangeMs) * 1_000_000,
       endTimeNs: snapToMinute(now) * 1_000_000,
@@ -149,9 +161,12 @@ export function UsageAnalytics({
     params: filterParams,
   });
 
+  const showForecast = timeRange === 'this-month';
+
   const forecastQuery = useTinybirdQuery<TinybirdResponse<CostForecastRow>>({
     pipe: 'llm_cost_forecast',
     params: forecastParams,
+    enabled: showForecast,
   });
 
   const summary = summaryQuery.data?.data?.[0];
@@ -162,7 +177,7 @@ export function UsageAnalytics({
   const providers = providersQuery.data?.data ?? [];
   const operations = operationsQuery.data?.data ?? [];
   const apiKeyRows = apiKeysQuery.data?.data ?? [];
-  const forecast = forecastQuery.data?.data?.[0] ?? null;
+  const forecast = showForecast ? (forecastQuery.data?.data?.[0] ?? null) : null;
 
   const isLoading = [
     summaryQuery.isLoading,
@@ -220,18 +235,20 @@ export function UsageAnalytics({
         <div className="flex-1" />
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg border border-border bg-card">
-            {TIME_RANGES.map((range) => (
-              <button
-                key={range.value}
-                onClick={() => setTimeRange(range.value)}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  timeRange === range.value
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {range.label}
-              </button>
+            {TIME_RANGES.map((range, i) => (
+              <Fragment key={range.value}>
+                {i === 2 && <div className="my-1 w-px bg-border" />}
+                <button
+                  onClick={() => setTimeRange(range.value)}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    timeRange === range.value
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {range.label}
+                </button>
+              </Fragment>
             ))}
           </div>
           <FilterDropdown

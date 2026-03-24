@@ -86,8 +86,8 @@ export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | nu
         </span>
         <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
-          <span className="font-mono tabular-nums">{forecast.basis_days}d</span>
-          <span>Basis</span>
+          <span className="font-mono tabular-nums">{formatCurrency(forecast.daily_average)}</span>
+          <span>/day</span>
         </span>
       </div>
     </div>
