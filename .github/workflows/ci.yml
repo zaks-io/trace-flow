@@ -10,7 +10,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
       pull-requests: read
@@ -61,7 +61,7 @@ jobs:
 
   actionlint:
     name: Lint GitHub Actions
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.workflows == 'true'
     permissions:
@@ -73,7 +73,7 @@ jobs:
 
   utils:
     name: Utils Package
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.utils == 'true' || needs.changes.outputs.root == 'true'
     steps:
@@ -110,7 +110,7 @@ jobs:
 
   types:
     name: Types Package
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.types == 'true' || needs.changes.outputs.root == 'true'
     steps:
@@ -144,7 +144,7 @@ jobs:
 
   convex:
     name: Convex Backend
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.convex == 'true' || needs.changes.outputs.root == 'true'
     steps:
@@ -173,7 +173,7 @@ jobs:
 
   proxy:
     name: Proxy Worker
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.proxy == 'true' || needs.changes.outputs.root == 'true'
     steps:
@@ -213,7 +213,7 @@ jobs:
 
   proxy-consumer:
     name: Proxy Consumer Worker
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.proxy-consumer == 'true' || needs.changes.outputs.root == 'true'
     steps:
@@ -253,7 +253,7 @@ jobs:
 
   web:
     name: Web Worker
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.web == 'true' || needs.changes.outputs.root == 'true'
     steps:
@@ -306,7 +306,7 @@ jobs:
 
   status:
     name: CI Status
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     if: always()
     needs:
       - changes
