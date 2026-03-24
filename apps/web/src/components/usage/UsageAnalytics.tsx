@@ -161,12 +161,9 @@ export function UsageAnalytics({
     params: filterParams,
   });
 
-  const showForecast = timeRange === 'this-month';
-
   const forecastQuery = useTinybirdQuery<TinybirdResponse<CostForecastRow>>({
     pipe: 'llm_cost_forecast',
     params: forecastParams,
-    enabled: showForecast,
   });
 
   const summary = summaryQuery.data?.data?.[0];
@@ -177,7 +174,7 @@ export function UsageAnalytics({
   const providers = providersQuery.data?.data ?? [];
   const operations = operationsQuery.data?.data ?? [];
   const apiKeyRows = apiKeysQuery.data?.data ?? [];
-  const forecast = showForecast ? (forecastQuery.data?.data?.[0] ?? null) : null;
+  const forecast = forecastQuery.data?.data?.[0] ?? null;
 
   const isLoading = [
     summaryQuery.isLoading,
