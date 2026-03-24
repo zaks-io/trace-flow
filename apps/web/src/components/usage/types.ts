@@ -250,6 +250,6 @@ export interface CostForecastRow {
   trend: string;
   trend_percent: number;
   anomaly_count: number;
-  anomalies: [string, number, number, number][];
+  anomalies: [string, number, number, number][] | null;
   insufficient_data: number;
 }

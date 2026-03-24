@@ -100,14 +100,10 @@ SQL >
             WHERE day >= today() - 14 AND day < today() - 7
         ) AS prior_7d_avg
     SELECT
-        if(days_elapsed < 2, 0, projected) AS projected_monthly_cost,
+        projected AS projected_monthly_cost,
         mtd_cost AS month_to_date_cost,
-        if(days_elapsed < 2, 0,
-            greatest(mtd_cost, projected - ci_margin)
-        ) AS confidence_low,
-        if(days_elapsed < 2, 0,
-            projected + ci_margin
-        ) AS confidence_high,
+        greatest(mtd_cost, projected - ci_margin) AS confidence_low,
+        projected + ci_margin AS confidence_high,
         mtd_cost / greatest(days_elapsed, 1) AS daily_average,
         days_elapsed AS days_elapsed_in_month,
         days_remaining AS days_remaining_in_month,
@@ -120,8 +116,8 @@ SQL >
         if(prior_7d_avg IS NULL OR prior_7d_avg = 0 OR recent_7d_avg IS NULL, 0,
             (recent_7d_avg - prior_7d_avg) / prior_7d_avg * 100
         ) AS trend_percent,
-        (SELECT anomaly_count FROM anomalies) AS anomaly_count,
+        coalesce((SELECT anomaly_count FROM anomalies), 0) AS anomaly_count,
         (SELECT anomaly_list FROM anomalies) AS anomalies,
-        if(days_elapsed < 2, 1, 0) AS insufficient_data
+        if(mtd_cost = 0, 1, 0) AS insufficient_data
 
 TYPE ENDPOINT
