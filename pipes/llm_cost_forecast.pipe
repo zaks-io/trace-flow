@@ -1,7 +1,7 @@
 DESCRIPTION >
-    Day-of-week decomposed cost forecast with calendar-aware projection,
-    confidence intervals, trend detection, and anomaly flagging.
-    Uses last 90 days of daily data from llm_usage_1d.
+    Run-rate cost forecast with confidence intervals, trend detection,
+    and anomaly flagging. Uses last 30 days of daily data for variance
+    and llm_usage_1h for accurate MTD.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE daily_costs
@@ -9,10 +9,9 @@ SQL >
     %
     SELECT
         toDate(BucketStart) AS day,
-        toDayOfWeek(BucketStart) AS dow,
         sumMerge(TotalCostMicrodollars) / 1000000 AS cost_usd
     FROM llm_usage_1d
-    WHERE BucketStart >= today() - INTERVAL 90 DAY
+    WHERE BucketStart >= today() - INTERVAL 30 DAY
         AND BucketStart < today()
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         {% if defined(provider) %}
@@ -27,19 +26,15 @@ SQL >
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
         {% end %}
-    GROUP BY day, dow
+    GROUP BY day
     ORDER BY day
 
-NODE dow_stats
+NODE daily_stats
 SQL >
     SELECT
-        dow,
         avg(cost_usd) AS mean_cost,
-        varSamp(cost_usd) AS variance_cost,
-        stddevSamp(cost_usd) AS stddev_cost,
-        count() AS sample_count
+        stddevSamp(cost_usd) AS stddev_cost
     FROM daily_costs
-    GROUP BY dow
 
 NODE anomalies
 SQL >
@@ -54,7 +49,7 @@ SQL >
         ) AS anomaly_list,
         length(anomaly_list) AS anomaly_count
     FROM daily_costs dc
-    INNER JOIN dow_stats ds ON dc.dow = ds.dow
+    CROSS JOIN daily_stats ds
     WHERE ds.stddev_cost > 0
         AND abs(dc.cost_usd - ds.mean_cost) / ds.stddev_cost > 2
 
@@ -66,14 +61,15 @@ SQL >
         toStartOfMonth(current_date) AS month_start,
         toLastDayOfMonth(current_date) AS month_end,
         toUInt32(current_date - month_start) + 1 AS days_elapsed,
+        toUInt32(month_end - month_start) + 1 AS days_in_month,
         toUInt32(month_end - current_date) AS days_remaining,
-        (SELECT count(DISTINCT day) FROM daily_costs) AS total_history_days,
-        -- MTD actual: includes today's partial data
+        (SELECT stddev_cost FROM daily_stats) AS daily_stddev,
+        -- MTD from hourly table for freshest data
         (
-            SELECT sumMerge(TotalCostMicrodollars) / 1000000
-            FROM llm_usage_1d
+            SELECT coalesce(sumMerge(TotalCostMicrodollars) / 1000000, 0)
+            FROM llm_usage_1h
             WHERE BucketStart >= month_start
-                AND BucketStart <= current_date
+                AND BucketStart <= now()
                 AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
                 {% if defined(provider) %}
                 AND Provider = {{ String(provider) }}
@@ -88,20 +84,10 @@ SQL >
                 AND ApiKey = {{ String(api_key_filter) }}
                 {% end %}
         ) AS mtd_cost,
-        -- Sum of DOW means for remaining days
-        (
-            SELECT coalesce(sum(ds.mean_cost), 0)
-            FROM numbers(days_remaining) n
-            INNER JOIN dow_stats ds
-                ON ds.dow = toDayOfWeek(current_date + toUInt32(n.number) + 1)
-        ) AS remaining_mean_sum,
-        -- Sum of DOW variances for remaining days (for confidence interval)
-        (
-            SELECT coalesce(sum(ds.variance_cost), 0)
-            FROM numbers(days_remaining) n
-            INNER JOIN dow_stats ds
-                ON ds.dow = toDayOfWeek(current_date + toUInt32(n.number) + 1)
-        ) AS remaining_variance_sum,
+        -- Run-rate projection: scale current pace to full month
+        mtd_cost / greatest(days_elapsed, 1) * days_in_month AS projected,
+        -- Confidence interval based on daily variance
+        coalesce(daily_stddev, 0) * 1.645 * sqrt(greatest(days_remaining, 0)) AS ci_margin,
         -- Trend: last 7 days avg vs prior 7 days avg
         (
             SELECT avg(cost_usd)
@@ -114,20 +100,11 @@ SQL >
             WHERE day >= today() - 14 AND day < today() - 7
         ) AS prior_7d_avg
     SELECT
-        if(total_history_days < 14, 0, coalesce(mtd_cost, 0) + remaining_mean_sum)
-            AS projected_monthly_cost,
-        coalesce(mtd_cost, 0) AS month_to_date_cost,
-        if(total_history_days < 14, 0,
-            greatest(0, coalesce(mtd_cost, 0) + remaining_mean_sum - 1.645 * sqrt(remaining_variance_sum))
-        ) AS confidence_low,
-        if(total_history_days < 14, 0,
-            coalesce(mtd_cost, 0) + remaining_mean_sum + 1.645 * sqrt(remaining_variance_sum)
-        ) AS confidence_high,
-        if(total_history_days > 0,
-            (SELECT sum(cost_usd) FROM daily_costs) / total_history_days,
-            0
-        ) AS daily_average,
-        total_history_days AS basis_days,
+        projected AS projected_monthly_cost,
+        mtd_cost AS month_to_date_cost,
+        greatest(mtd_cost, projected - ci_margin) AS confidence_low,
+        projected + ci_margin AS confidence_high,
+        mtd_cost / greatest(days_elapsed, 1) AS daily_average,
         days_elapsed AS days_elapsed_in_month,
         days_remaining AS days_remaining_in_month,
         multiIf(
@@ -139,8 +116,8 @@ SQL >
         if(prior_7d_avg IS NULL OR prior_7d_avg = 0 OR recent_7d_avg IS NULL, 0,
             (recent_7d_avg - prior_7d_avg) / prior_7d_avg * 100
         ) AS trend_percent,
-        (SELECT anomaly_count FROM anomalies) AS anomaly_count,
+        coalesce((SELECT anomaly_count FROM anomalies), 0) AS anomaly_count,
         (SELECT anomaly_list FROM anomalies) AS anomalies,
-        if(total_history_days < 14, 1, 0) AS insufficient_data
+        if(mtd_cost = 0, 1, 0) AS insufficient_data
 
 TYPE ENDPOINT

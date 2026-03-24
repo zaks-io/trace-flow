@@ -1,11 +1,41 @@
 import type { ChartConfig } from '@/components/ui/chart';
 
-export type TimeRange = '7d' | '30d' | '90d';
+export type TimeRange = 'this-month' | 'last-month' | '7d' | '30d' | '90d';
 
-export const TIME_RANGES: { value: TimeRange; label: string; ms: number }[] = [
-  { value: '7d', label: '7d', ms: 7 * 24 * 60 * 60 * 1000 },
-  { value: '30d', label: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
-  { value: '90d', label: '90d', ms: 90 * 24 * 60 * 60 * 1000 },
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface TimeRangeConfig {
+  value: TimeRange;
+  label: string;
+  ms?: number;
+  getRange?: () => { start: number; end: number; prevStart: number; prevEnd: number };
+}
+
+function getMonthRange(monthsAgo: number): {
+  start: number;
+  end: number;
+  prevStart: number;
+  prevEnd: number;
+} {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const start = Date.UTC(y, m - monthsAgo, 1);
+  const prevStart = Date.UTC(y, m - monthsAgo - 1, 1);
+  const prevEnd = start; // first ms of current period = end of previous
+  if (monthsAgo === 0) {
+    return { start, end: now.getTime(), prevStart, prevEnd };
+  }
+  const end = Date.UTC(y, m - monthsAgo + 1, 0, 23, 59, 59, 999);
+  return { start, end, prevStart, prevEnd };
+}
+
+export const TIME_RANGES: TimeRangeConfig[] = [
+  { value: 'this-month', label: 'This Month', getRange: () => getMonthRange(0) },
+  { value: 'last-month', label: 'Last Month', getRange: () => getMonthRange(1) },
+  { value: '7d', label: '7d', ms: 7 * DAY_MS },
+  { value: '30d', label: '30d', ms: 30 * DAY_MS },
+  { value: '90d', label: '90d', ms: 90 * DAY_MS },
 ];
 
 export type TimeseriesMetric = 'cost' | 'tokens' | 'requests' | 'duration';
@@ -215,12 +245,11 @@ export interface CostForecastRow {
   confidence_low: number;
   confidence_high: number;
   daily_average: number;
-  basis_days: number;
   days_elapsed_in_month: number;
   days_remaining_in_month: number;
   trend: string;
   trend_percent: number;
   anomaly_count: number;
-  anomalies: [string, number, number, number][];
+  anomalies: [string, number, number, number][] | null;
   insufficient_data: number;
 }
