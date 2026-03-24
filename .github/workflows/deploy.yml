@@ -18,7 +18,7 @@ concurrency:
 jobs:
   ci:
     name: CI Checks
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +53,7 @@ jobs:
 
   deploy-convex-and-web:
     name: Deploy Convex and Web
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
     environment: Production
     steps:
@@ -95,7 +95,7 @@ jobs:
 
   deploy-proxy:
     name: Deploy Proxy Worker
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
     environment: Production
     steps:
@@ -121,7 +121,7 @@ jobs:
 
   deploy-proxy-consumer:
     name: Deploy Proxy Consumer Worker
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
     environment: Production
     steps:
@@ -147,7 +147,7 @@ jobs:
 
   deploy-api:
     name: Deploy API Worker
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
     environment: Production
     steps:
@@ -173,7 +173,7 @@ jobs:
 
   deploy-status:
     name: Deployment Status
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     if: always()
     needs:
       - deploy-convex-and-web
