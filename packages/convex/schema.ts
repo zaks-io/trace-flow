@@ -203,4 +203,9 @@ export default defineSchema({
   })
     .index('by_email', ['email'])
     .index('by_confirmation_token', ['confirmationToken']),
+
+  feedback: defineTable({
+    userId: v.id('users'),
+    message: v.string(),
+  }),
 });
