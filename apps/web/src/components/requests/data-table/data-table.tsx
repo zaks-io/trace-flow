@@ -58,6 +58,7 @@ interface DataTableProps<TData> {
   hasActiveFilters?: boolean;
   loading?: boolean;
   emptyMessage?: React.ReactNode;
+  apiKeyOptions?: string[];
   apiKeyMap?: Map<string, string>;
   hideToolbar?: boolean;
   rowClassName?: (row: TData) => string | undefined;
@@ -85,6 +86,7 @@ export function DataTable<TData>({
   hasActiveFilters,
   loading,
   emptyMessage = 'No results found',
+  apiKeyOptions,
   apiKeyMap,
   hideToolbar,
   rowClassName,
@@ -169,6 +171,7 @@ export function DataTable<TData>({
           onAlertFilterChange={onAlertFilterChange}
           isLiveMode={isLiveMode}
           onLiveModeToggle={onLiveModeToggle}
+          apiKeyOptions={apiKeyOptions}
           apiKeyMap={apiKeyMap}
         />
       )}
