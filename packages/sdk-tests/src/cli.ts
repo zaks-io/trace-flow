@@ -123,6 +123,50 @@ program
   });
 
 program
+  .command('bench')
+  .description('Benchmark proxy latency overhead vs direct provider calls')
+  .option('-p, --provider <id>', 'Provider to benchmark (default: openai)', 'openai')
+  .option('-n, --iterations <n>', 'Number of measured iterations', (v: string) => Number(v), 50)
+  .option('-w, --warmup <n>', 'Warmup iterations to discard', (v: string) => Number(v), 2)
+  .option('--all', 'Run benchmark for all providers with API keys set')
+  .option('--streaming', 'Only benchmark streaming mode')
+  .option('--non-streaming', 'Only benchmark non-streaming mode')
+  .option('--prompt <text>', 'Custom prompt', 'Say hello in exactly three words.')
+  .option('--max-tokens <n>', 'Max output tokens', (v: string) => Number(v), 50)
+  .option('--json', 'Output structured JSON results')
+  .option('--markdown', 'Output markdown report for documentation')
+  .action(
+    async (opts: {
+      provider: string;
+      iterations: number;
+      warmup: number;
+      all?: boolean;
+      streaming?: boolean;
+      nonStreaming?: boolean;
+      prompt: string;
+      maxTokens: number;
+      json?: boolean;
+      markdown?: boolean;
+    }) => {
+      const { runBenchmark } = await import('./benchmark/index');
+      const streaming = opts.streaming === true || opts.nonStreaming !== true;
+      const nonStreaming = opts.nonStreaming === true || opts.streaming !== true;
+      await runBenchmark({
+        provider: opts.provider,
+        iterations: opts.iterations,
+        warmup: opts.warmup,
+        all: opts.all ?? false,
+        streaming,
+        nonStreaming,
+        prompt: opts.prompt,
+        maxTokens: opts.maxTokens,
+        json: opts.json ?? false,
+        markdown: opts.markdown ?? false,
+      });
+    },
+  );
+
+program
   .command('scenarios')
   .description('List available scenario ids')
   .option('--json', 'Output as JSON')
