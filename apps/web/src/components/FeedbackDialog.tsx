@@ -13,8 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-
-const MAX_LENGTH = 3000;
+import { MAX_MESSAGE_LENGTH } from '@convex/feedback';
 
 export function FeedbackDialog({
   open,
@@ -28,8 +27,8 @@ export function FeedbackDialog({
   const [status, setStatus] = useState<'idle' | 'submitting' | 'error'>('idle');
   const [error, setError] = useState('');
 
-  const charCount = message.length;
-  const isOverLimit = charCount > MAX_LENGTH;
+  const trimmedLength = message.trim().length;
+  const isOverLimit = trimmedLength > MAX_MESSAGE_LENGTH;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -89,7 +88,10 @@ export function FeedbackDialog({
           <div className="space-y-2">
             <textarea
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={(e) => {
+                setMessage(e.target.value);
+                if (error) setError('');
+              }}
               placeholder="What's on your mind?"
               rows={5}
               className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background disabled:opacity-50"
@@ -102,7 +104,7 @@ export function FeedbackDialog({
               <span
                 className={`tabular-nums ${isOverLimit ? 'text-destructive' : 'text-muted-foreground'}`}
               >
-                {charCount.toLocaleString()} / {MAX_LENGTH.toLocaleString()}
+                {trimmedLength.toLocaleString()} / {MAX_MESSAGE_LENGTH.toLocaleString()}
               </span>
             </div>
           </div>

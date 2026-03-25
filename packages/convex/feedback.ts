@@ -8,7 +8,7 @@ const rateLimiter = new RateLimiter(components.rateLimiter, {
   submitFeedback: { kind: 'fixed window', rate: 5, period: HOUR },
 });
 
-const MAX_MESSAGE_LENGTH = 3000;
+export const MAX_MESSAGE_LENGTH = 3000;
 
 export const submit = mutation({
   args: {
