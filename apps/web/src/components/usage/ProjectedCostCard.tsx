@@ -10,11 +10,28 @@ const trendConfig = {
   stable: { icon: Minus, color: 'text-muted-foreground' },
 } as const;
 
+const SHORT_MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
 export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | null }) {
+  const currentMonthLabel = SHORT_MONTHS[new Date().getUTCMonth()];
   if (!forecast || forecast.insufficient_data) {
     return (
       <div className="relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br from-chart-6/20 to-chart-6/5 p-5">
-        <p className="text-xs font-medium tracking-wide text-muted-foreground">Projected Cost</p>
+        <p className="text-xs font-medium tracking-wide text-muted-foreground">
+          {currentMonthLabel} Projection
+        </p>
         <p className="mt-2 font-mono text-3xl font-medium tabular-nums text-foreground">-</p>
         <p className="mt-1 text-xs text-muted-foreground">Not enough data</p>
       </div>
@@ -33,7 +50,9 @@ export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | nu
     <div className="relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br from-chart-6/20 to-chart-6/5 p-5">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs font-medium tracking-wide text-muted-foreground">Projected Cost</p>
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">
+            {currentMonthLabel} Projection
+          </p>
           <p className="mt-2 font-mono text-3xl font-medium tabular-nums text-foreground">
             {formatCurrency(forecast.projected_monthly_cost)}
           </p>
