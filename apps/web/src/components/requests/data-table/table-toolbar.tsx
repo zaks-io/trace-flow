@@ -269,6 +269,7 @@ interface TableToolbarProps<TData> {
   onAlertFilterChange?: (filter: AlertFilterValue) => void;
   isLiveMode?: boolean;
   onLiveModeToggle?: () => void;
+  apiKeyOptions?: string[];
   apiKeyMap?: Map<string, string>;
 }
 
@@ -288,6 +289,7 @@ export function TableToolbar<TData>({
   onAlertFilterChange,
   isLiveMode,
   onLiveModeToggle,
+  apiKeyOptions,
   apiKeyMap,
 }: TableToolbarProps<TData>) {
   const [searchValue, setSearchValue] = useState(filters?.search ?? '');
@@ -389,8 +391,7 @@ export function TableToolbar<TData>({
             <FilterDropdown
               label="API Key"
               value={filters.apiKey}
-              options={filterOptions.apiKeys}
-              loading={filterOptionsLoading}
+              options={apiKeyOptions ?? []}
               onChange={(value) => onFilterChange('apiKey', value)}
               labelMap={apiKeyMap}
             />

@@ -38,7 +38,6 @@ type OperationsFiltersState = {
   seenProviders: React.MutableRefObject<Set<string>>;
   seenModels: React.MutableRefObject<Set<string>>;
   seenOperations: React.MutableRefObject<Set<string>>;
-  seenApiKeys: React.MutableRefObject<Set<string>>;
 };
 
 export function useOperationsFilters(): OperationsFiltersState {
@@ -96,14 +95,12 @@ export function useOperationsFilters(): OperationsFiltersState {
   const seenProviders = useRef(new Set<string>());
   const seenModels = useRef(new Set<string>());
   const seenOperations = useRef(new Set<string>());
-  const seenApiKeys = useRef(new Set<string>());
   const prevTimeRange = useRef(timeRange);
 
   if (prevTimeRange.current !== timeRange) {
     seenProviders.current.clear();
     seenModels.current.clear();
     seenOperations.current.clear();
-    seenApiKeys.current.clear();
     prevTimeRange.current = timeRange;
   }
 
@@ -151,6 +148,5 @@ export function useOperationsFilters(): OperationsFiltersState {
     seenProviders,
     seenModels,
     seenOperations,
-    seenApiKeys,
   };
 }

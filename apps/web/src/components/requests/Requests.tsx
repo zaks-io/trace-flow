@@ -54,6 +54,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
+  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key).sort(), [apiKeys]);
   const alerts = usePreloadedQuery(preloadedAlerts);
 
   const pipeParams = useMemo(() => {
@@ -248,6 +249,7 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
             />
           )
         }
+        apiKeyOptions={apiKeyOptions}
         apiKeyMap={apiKeyMap}
       />
 

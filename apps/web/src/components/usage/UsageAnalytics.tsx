@@ -203,26 +203,23 @@ export function UsageAnalytics({
   const seenProviders = useRef(new Set<string>());
   const seenModels = useRef(new Set<string>());
   const seenOperations = useRef(new Set<string>());
-  const seenApiKeys = useRef(new Set<string>());
 
   const prevTimeRange = useRef(timeRange);
   if (prevTimeRange.current !== timeRange) {
     seenProviders.current.clear();
     seenModels.current.clear();
     seenOperations.current.clear();
-    seenApiKeys.current.clear();
     prevTimeRange.current = timeRange;
   }
 
   providers.forEach((p) => seenProviders.current.add(p.provider));
   models.forEach((m) => seenModels.current.add(m.model));
   operations.forEach((o) => seenOperations.current.add(o.operation));
-  apiKeyRows.forEach((k) => seenApiKeys.current.add(k.api_key));
 
   const providerOptions = Array.from(seenProviders.current).sort();
   const modelOptions = Array.from(seenModels.current).sort();
   const operationOptions = Array.from(seenOperations.current).sort();
-  const apiKeyOptions = Array.from(seenApiKeys.current).sort();
+  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key).sort(), [apiKeys]);
   const MetricIcon = METRIC_META[metric].icon;
 
   return (

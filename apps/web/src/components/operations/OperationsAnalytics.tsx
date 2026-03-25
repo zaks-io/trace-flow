@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Database, Layers, Users } from 'lucide-react';
@@ -49,7 +50,6 @@ export function OperationsAnalytics({
     seenProviders,
     seenModels,
     seenOperations,
-    seenApiKeys,
   } = filters;
 
   const {
@@ -67,18 +67,16 @@ export function OperationsAnalytics({
   filterOptions?.providers.forEach((p) => seenProviders.current.add(p));
   filterOptions?.models.forEach((m) => seenModels.current.add(m));
   filterOptions?.operations.forEach((o) => seenOperations.current.add(o));
-  filterOptions?.api_keys.forEach((k) => seenApiKeys.current.add(k));
   operations.forEach((row) => seenOperations.current.add(row.operation));
 
   if (providerFilter) seenProviders.current.add(providerFilter);
   if (modelFilter) seenModels.current.add(modelFilter);
   if (operationFilter) seenOperations.current.add(operationFilter);
-  if (apiKeyFilter) seenApiKeys.current.add(apiKeyFilter);
 
   const providerOptions = Array.from(seenProviders.current).sort();
   const modelOptions = Array.from(seenModels.current).sort();
   const operationOptions = Array.from(seenOperations.current).sort();
-  const apiKeyOptions = Array.from(seenApiKeys.current).sort();
+  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key).sort(), [apiKeys]);
 
   function handleSort(key: typeof sortKey) {
     if (sortKey === key) {
