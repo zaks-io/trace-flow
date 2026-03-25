@@ -13,7 +13,15 @@
     "integration:openrouter": "bun run src/cli.ts run -p openrouter",
     "integration:groq": "bun run src/cli.ts run -p groq",
     "integration:groq-tools": "bun run src/cli.ts run -p groq -s tools",
-    "integration:all": "bun run src/cli.ts run"
+    "integration:all": "bun run src/cli.ts run",
+    "bench": "bun run src/cli.ts bench",
+    "bench:openai": "bun run src/cli.ts bench -p openai",
+    "bench:anthropic": "bun run src/cli.ts bench -p anthropic",
+    "bench:google": "bun run src/cli.ts bench -p google",
+    "bench:openrouter": "bun run src/cli.ts bench -p openrouter",
+    "bench:groq": "bun run src/cli.ts bench -p groq",
+    "bench:all": "bun run src/cli.ts bench --all",
+    "bench:report": "bun run src/cli.ts bench --all --markdown"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3",
