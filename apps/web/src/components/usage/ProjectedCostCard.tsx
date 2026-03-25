@@ -24,9 +24,8 @@ const SHORT_MONTHS = [
   'Nov',
   'Dec',
 ] as const;
-const currentMonthLabel = SHORT_MONTHS[new Date().getUTCMonth()];
-
 export function ProjectedCostCard({ forecast }: { forecast: CostForecastRow | null }) {
+  const currentMonthLabel = SHORT_MONTHS[new Date().getUTCMonth()];
   if (!forecast || forecast.insufficient_data) {
     return (
       <div className="relative min-w-0 overflow-hidden rounded-xl bg-linear-to-br from-chart-6/20 to-chart-6/5 p-5">
