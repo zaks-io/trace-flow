@@ -121,6 +121,21 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  feedback: {
+    document: {
+      message: string;
+      userId: Id<"users">;
+      _id: Id<"feedback">;
+      _creationTime: number;
+    };
+    fieldPaths: "_creationTime" | "_id" | "message" | "userId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   invites: {
     document: {
       acceptedAt?: number;

@@ -10,18 +10,19 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@convex-dev/rate-limiter": "^0.3.2",
+    "@react-email/components": "^1.0.8",
     "@trace-flow/emails": "workspace:*",
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/types": "workspace:*",
-    "@react-email/components": "^1.0.8",
-    "convex-helpers": "^0.1.113",
+    "@trace-flow/utils": "workspace:*",
     "convex": "^1.32.0",
+    "convex-helpers": "^0.1.113",
     "hono": "^4.10.2",
     "jose": "^6.1.0",
     "react": "^19.2.4",
     "resend": "^6.9.1",
-    "stripe": "^20.3.1",
-    "@trace-flow/utils": "workspace:*"
+    "stripe": "^20.3.1"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",

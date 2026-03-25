@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -17,6 +18,7 @@ import {
   CreditCard,
   ChartColumn,
   Layers,
+  MessageSquare,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -31,6 +33,7 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 import { EmailContactLink } from '@/components/shared/EmailContactLink';
+import { FeedbackDialog } from '@/components/FeedbackDialog';
 
 interface NavItem {
   title: string;
@@ -85,6 +88,7 @@ function NavMenuItem({ item, active, delay }: { item: NavItem; active: boolean; 
 
 export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const isActive = (href: string) => {
     if (href === '/app' || href === '/app/admin') {
@@ -183,6 +187,17 @@ export function AppSidebar({ isAdmin }: { isAdmin: boolean }) {
                 className="h-auto p-0 text-sm font-medium text-foreground decoration-foreground/50 hover:text-primary hover:decoration-primary"
               />
             </div>
+          </SidebarMenuItem>
+          <SidebarMenuItem className="mt-1">
+            <SidebarMenuButton
+              className="h-9 gap-3 rounded-lg px-3 text-muted-foreground transition-colors hover:bg-sidebar-accent"
+              onClick={() => setFeedbackOpen(true)}
+              tooltip="Send Feedback"
+            >
+              <MessageSquare className="h-4 w-4" />
+              <span className="text-sm font-medium">Feedback</span>
+            </SidebarMenuButton>
+            <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
           </SidebarMenuItem>
           <SidebarMenuItem className="mt-1">
             <SidebarMenuButton
