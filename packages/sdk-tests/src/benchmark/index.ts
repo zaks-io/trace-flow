@@ -119,6 +119,11 @@ export async function runBenchmark(opts: BenchOptions): Promise<void> {
     process.exit(1);
   }
 
+  if (opts.iterations < 1 || opts.warmup < 0) {
+    console.error('Iterations must be >= 1 and warmup must be >= 0.');
+    process.exit(1);
+  }
+
   const modes: {
     label: string;
     measure: (model: LanguageModel, prompt: string, maxTokens: number) => Promise<TimingResult>;

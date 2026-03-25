@@ -20,8 +20,8 @@ interface ProviderDef {
   name: string;
   model: string;
   envKey: string;
-  createProxied: (apiKey: string) => LanguageModel;
-  createDirect: (apiKey: string) => LanguageModel;
+  createProxied: (apiKey: string, model: string) => LanguageModel;
+  createDirect: (apiKey: string, model: string) => LanguageModel;
 }
 
 const defs: ProviderDef[] = [
@@ -30,66 +30,59 @@ const defs: ProviderDef[] = [
     name: 'OpenAI',
     model: 'gpt-4o-mini',
     envKey: 'OPENAI_API_KEY',
-
-    createProxied: (apiKey) =>
+    createProxied: (apiKey, model) =>
       createOpenAI({ baseURL: `${PROXY_URL}/openai/v1`, apiKey, headers: getProxyHeaders() })(
-        'gpt-4o-mini',
+        model,
       ),
-    createDirect: (apiKey) => createOpenAI({ apiKey })('gpt-4o-mini'),
+    createDirect: (apiKey, model) => createOpenAI({ apiKey })(model),
   },
   {
     id: 'anthropic',
     name: 'Anthropic',
     model: 'claude-haiku-4-5',
     envKey: 'ANTHROPIC_API_KEY',
-
-    createProxied: (apiKey) =>
+    createProxied: (apiKey, model) =>
       createAnthropic({
         baseURL: `${PROXY_URL}/anthropic/v1`,
         apiKey,
         headers: getProxyHeaders(),
-      })('claude-haiku-4-5'),
-    createDirect: (apiKey) => createAnthropic({ apiKey })('claude-haiku-4-5'),
+      })(model),
+    createDirect: (apiKey, model) => createAnthropic({ apiKey })(model),
   },
   {
     id: 'google',
     name: 'Google',
     model: 'gemini-2.5-flash',
     envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
-
-    createProxied: (apiKey) =>
+    createProxied: (apiKey, model) =>
       createGoogleGenerativeAI({
         baseURL: `${PROXY_URL}/google/v1beta`,
         apiKey,
         headers: getProxyHeaders(),
-      })('gemini-2.5-flash'),
-    createDirect: (apiKey) => createGoogleGenerativeAI({ apiKey })('gemini-2.5-flash'),
+      })(model),
+    createDirect: (apiKey, model) => createGoogleGenerativeAI({ apiKey })(model),
   },
   {
     id: 'openrouter',
     name: 'OpenRouter',
     model: 'google/gemini-2.5-flash-lite',
     envKey: 'OPENROUTER_API_KEY',
-
-    createProxied: (apiKey) =>
+    createProxied: (apiKey, model) =>
       createOpenRouter({
         baseURL: `${PROXY_URL}/openrouter/v1`,
         apiKey,
         headers: getProxyHeaders(),
-      })('google/gemini-2.5-flash-lite'),
-    createDirect: (apiKey) => createOpenRouter({ apiKey })('google/gemini-2.5-flash-lite'),
+      })(model),
+    createDirect: (apiKey, model) => createOpenRouter({ apiKey })(model),
   },
   {
     id: 'groq',
     name: 'Groq',
     model: 'openai/gpt-oss-20b',
     envKey: 'GROQ_API_KEY',
-
-    createProxied: (apiKey) =>
-      createGroq({ baseURL: `${PROXY_URL}/groq/v1`, apiKey, headers: getProxyHeaders() })(
-        'openai/gpt-oss-20b',
-      ),
-    createDirect: (apiKey) => createGroq({ apiKey })('openai/gpt-oss-20b'),
+    createProxied: (apiKey, model) =>
+      createGroq({ baseURL: `${PROXY_URL}/groq/v1`, apiKey, headers: getProxyHeaders() })(model),
+    createDirect: (apiKey, model) => createGroq({ apiKey })(model),
   },
 ];
 
@@ -103,8 +96,8 @@ export function getBenchmarkProvider(id: string): BenchmarkProvider | null {
     name: def.name,
     model: def.model,
     envKey: def.envKey,
-    createProxiedModel: () => def.createProxied(apiKey),
-    createDirectModel: () => def.createDirect(apiKey),
+    createProxiedModel: () => def.createProxied(apiKey, def.model),
+    createDirectModel: () => def.createDirect(apiKey, def.model),
   };
 }
 

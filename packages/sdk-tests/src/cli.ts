@@ -149,6 +149,7 @@ program
       markdown?: boolean;
     }) => {
       const { runBenchmark } = await import('./benchmark/index');
+      // Default: both modes; passing --streaming or --non-streaming narrows to one
       const streaming = opts.streaming === true || opts.nonStreaming !== true;
       const nonStreaming = opts.nonStreaming === true || opts.streaming !== true;
       await runBenchmark({
