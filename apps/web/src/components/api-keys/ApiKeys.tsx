@@ -122,6 +122,11 @@ export default function ApiKeys({
       setEditingKey(null);
     });
 
+  const toLocalDatetime = (ts: number) => {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
   const formatExpiration = (timestamp: number) => {
     const date = new Date(timestamp);
     const now = Date.now();
@@ -233,10 +238,13 @@ export default function ApiKeys({
               <input
                 id="editKeyExpiration"
                 type="datetime-local"
-                value={new Date(editingKey.expiresAt).toISOString().slice(0, 16)}
-                onChange={(e) =>
-                  setEditingKey({ ...editingKey, expiresAt: new Date(e.target.value).getTime() })
-                }
+                value={toLocalDatetime(editingKey.expiresAt)}
+                onChange={(e) => {
+                  const ms = new Date(e.target.value).getTime();
+                  if (!Number.isNaN(ms)) {
+                    setEditingKey({ ...editingKey, expiresAt: ms });
+                  }
+                }}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
               <div className="mt-2 flex gap-2">

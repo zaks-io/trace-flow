@@ -33,7 +33,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   }
 
   // Cache the parsed ApiKeyData (not the raw JSON string) to skip JSON.parse on hits.
-  // Already-expired or corrupt keys resolve to null so they aren't cached as valid data.
+  // Corrupt/missing keys resolve to null. Expired keys are cached, then invalidated on first access.
   const cacheKey = `apikey:${await sha256Hex(apiKey)}`;
   const parsed = await getCached<ApiKeyData | null>(cacheKey, async () => {
     const raw = await c.env.API_KEYS.get(apiKey);
