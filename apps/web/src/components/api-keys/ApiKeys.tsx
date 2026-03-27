@@ -45,7 +45,11 @@ export default function ApiKeys({
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
-  const [editingKey, setEditingKey] = useState<{ id: Id<'apiKeys'>; name: string } | null>(null);
+  const [editingKey, setEditingKey] = useState<{
+    id: Id<'apiKeys'>;
+    name: string;
+    expiresAt: number;
+  } | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [deletingId, setDeletingId] = useState<Id<'apiKeys'> | null>(null);
   const [syncingId, setSyncingId] = useState<Id<'apiKeys'> | null>(null);
@@ -109,7 +113,11 @@ export default function ApiKeys({
   const handleUpdateKey = () =>
     void withGuard(setIsUpdating, async () => {
       if (!editingKey) return;
-      await updateApiKey({ id: editingKey.id, name: editingKey.name.trim() || undefined });
+      await updateApiKey({
+        id: editingKey.id,
+        name: editingKey.name.trim() || undefined,
+        expiresAt: editingKey.expiresAt,
+      });
       setSuccess('API key updated successfully');
       setEditingKey(null);
     });
@@ -214,6 +222,40 @@ export default function ApiKeys({
                 placeholder="e.g., Production, Development, My App"
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               />
+            </div>
+            <div className="mb-4">
+              <label
+                htmlFor="editKeyExpiration"
+                className="mb-1.5 block text-sm font-medium text-foreground"
+              >
+                Expiration
+              </label>
+              <input
+                id="editKeyExpiration"
+                type="datetime-local"
+                value={new Date(editingKey.expiresAt).toISOString().slice(0, 16)}
+                onChange={(e) =>
+                  setEditingKey({ ...editingKey, expiresAt: new Date(e.target.value).getTime() })
+                }
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <div className="mt-2 flex gap-2">
+                {[30, 90, 365].map((days) => (
+                  <button
+                    key={days}
+                    type="button"
+                    onClick={() =>
+                      setEditingKey({
+                        ...editingKey,
+                        expiresAt: Date.now() + days * 24 * 60 * 60 * 1000,
+                      })
+                    }
+                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    {days}d from now
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex justify-end gap-3">
               <button
@@ -348,7 +390,13 @@ export default function ApiKeys({
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 text-right text-sm">
                         <button
-                          onClick={() => setEditingKey({ id: apiKey._id, name: apiKey.name ?? '' })}
+                          onClick={() =>
+                            setEditingKey({
+                              id: apiKey._id,
+                              name: apiKey.name ?? '',
+                              expiresAt: apiKey.expiresAt,
+                            })
+                          }
                           className="mr-3 font-medium text-primary transition-colors hover:text-primary/80"
                         >
                           Edit

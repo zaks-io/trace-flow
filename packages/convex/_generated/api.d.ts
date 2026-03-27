@@ -371,7 +371,7 @@ export declare const api: {
     update: FunctionReference<
       "mutation",
       "public",
-      { id: Id<"apiKeys">; name?: string },
+      { expiresAt?: number; id: Id<"apiKeys">; name?: string },
       null
     >;
   };

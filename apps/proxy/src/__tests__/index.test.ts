@@ -74,7 +74,7 @@ describe('Proxy Worker Integration', () => {
 
       expect(res.status).toBe(401);
       const body = await res.json();
-      expect(body).toHaveProperty('error', 'Invalid API key');
+      expect(body).toHaveProperty('error', 'Expired API key');
     });
   });
 

@@ -88,7 +88,7 @@ describe('validateApiKey', () => {
       const body = await result.json();
       expect(body).toEqual({
         error: 'Invalid API key',
-        message: 'The provided API key is not valid or has expired',
+        message: 'The provided API key is not valid',
       });
     }
   });
@@ -109,14 +109,13 @@ describe('validateApiKey', () => {
 
     const result = await validateApiKey(context);
 
-    // Already-expired keys are not cached — fetcher resolves to null
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
       expect(result.status).toBe(401);
       const body = await result.json();
       expect(body).toEqual({
-        error: 'Invalid API key',
-        message: 'The provided API key is not valid or has expired',
+        error: 'Expired API key',
+        message: 'The provided API key has expired',
       });
     }
   });
@@ -163,14 +162,13 @@ describe('validateApiKey', () => {
 
     const result = await validateApiKey(context);
 
-    // Corrupted keys are not cached — fetcher catches parse error and resolves to null
     expect(isAuthError(result)).toBe(true);
     if (isAuthError(result)) {
       expect(result.status).toBe(401);
       const body = await result.json();
       expect(body).toEqual({
         error: 'Invalid API key',
-        message: 'The provided API key is not valid or has expired',
+        message: 'The provided API key is not valid',
       });
     }
   });
