@@ -33,16 +33,13 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
   }
 
   // Cache the parsed ApiKeyData (not the raw JSON string) to skip JSON.parse on hits.
-  // Already-expired or corrupt keys resolve to null so they aren't cached as valid data.
+  // Corrupt/missing keys resolve to null. Expired keys are cached, then invalidated on first access.
   const cacheKey = `apikey:${await sha256Hex(apiKey)}`;
   const parsed = await getCached<ApiKeyData | null>(cacheKey, async () => {
     const raw = await c.env.API_KEYS.get(apiKey);
     if (!raw) return null;
     try {
-      const data = JSON.parse(raw) as ApiKeyData;
-      // Don't cache already-expired keys — return null so the cache holds "not found"
-      if (data.expiresAt < Date.now()) return null;
-      return data;
+      return JSON.parse(raw) as ApiKeyData;
     } catch {
       return null;
     }
@@ -53,13 +50,12 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
     return c.json(
       {
         error: 'Invalid API key',
-        message: 'The provided API key is not valid or has expired',
+        message: 'The provided API key is not valid',
       },
       401,
     );
   }
 
-  // Re-check expiry on cache hits (key may have expired since it was cached)
   if (parsed.expiresAt < Date.now()) {
     await invalidate(cacheKey);
     logger?.warn('proxy.auth_rejected', { reason: 'expired_key', path: c.req.path });

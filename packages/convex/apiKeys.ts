@@ -73,6 +73,7 @@ export const update = mutation({
   args: {
     id: v.id('apiKeys'),
     name: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -88,7 +89,19 @@ export const update = mutation({
       throw new Error('You do not have permission to edit this API key');
     }
 
-    await ctx.db.patch(args.id, { name: args.name });
+    const patch: { name?: string; expiresAt?: number } = {};
+    if (args.name !== undefined) patch.name = args.name;
+    if (args.expiresAt !== undefined) patch.expiresAt = args.expiresAt;
+
+    await ctx.db.patch(args.id, patch);
+
+    if (args.expiresAt !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.syncKeyToKV, {
+        key: apiKey.key,
+        expiresAt: args.expiresAt,
+        orgId: apiKey.orgId,
+      });
+    }
   },
 });
 
