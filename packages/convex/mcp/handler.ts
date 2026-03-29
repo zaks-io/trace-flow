@@ -345,7 +345,7 @@ async function handleToolsCall(
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }
 
-  const args = (params.arguments ?? {}) as Record<string, unknown>;
+  const args = params.arguments ?? {};
   const result = await handler(apiKeyStrings, args);
   return createSuccessResponse(id, result);
 }
