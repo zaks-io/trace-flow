@@ -28,6 +28,7 @@ import { getTraceSpans } from './tools/getTraceSpansAction';
 import { getTraceEvents } from './tools/getTraceEventsAction';
 import { listTraceSummaries } from './tools/listTraceSummaries';
 import { getUsageSummary, listModelUsage, listOperationUsage } from './tools/analytics';
+import { RETENTION_DAYS } from '@trace-flow/types';
 
 export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
   return 'id' in message && message.id !== undefined;
@@ -328,8 +329,19 @@ async function handleToolsCall(
 
   const apiKeyStrings = resolved;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const toolHandlers: Record<string, (keys: string[], args: any) => Promise<ToolCallResult>> = {
+  // Resolve retention days from subscription tier
+  const user = await ctx.runQuery(internal.auth.users.getUserById, { userId });
+  const subscription = user?.orgId
+    ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
+    : null;
+  const tier = (subscription?.tier ?? 'hobby') as keyof typeof RETENTION_DAYS;
+  const retentionDays = RETENTION_DAYS[tier] ?? RETENTION_DAYS.hobby;
+
+  const toolHandlers: Record<
+    string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (keys: string[], args: any, retentionDays: number) => Promise<ToolCallResult>
+  > = {
     list_traces: listTraces,
     list_trace_summaries: listTraceSummaries,
     get_trace: getTrace,
@@ -346,7 +358,7 @@ async function handleToolsCall(
   }
 
   const args = params.arguments ?? {};
-  const result = await handler(apiKeyStrings, args);
+  const result = await handler(apiKeyStrings, args, retentionDays);
   return createSuccessResponse(id, result);
 }
 

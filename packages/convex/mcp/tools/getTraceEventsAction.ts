@@ -90,6 +90,7 @@ interface GetTraceEventsParams {
 export async function getTraceEvents(
   apiKeys: string[],
   params: GetTraceEventsParams,
+  retentionDays: number,
 ): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
@@ -102,6 +103,7 @@ export async function getTraceEvents(
   const token = await generateTinybirdToken(
     [{ type: 'PIPES:READ', resource: 'mcp_trace_events' }],
     apiKeys,
+    retentionDays,
   );
 
   const limit = Math.min(params.limit ?? DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT);

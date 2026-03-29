@@ -48,7 +48,7 @@ describe('analytics MCP helpers', () => {
         }),
     });
 
-    const result = await getUsageSummary(['raw-key'], { hours: 24, operation: 'heartbeat' });
+    const result = await getUsageSummary(['raw-key'], { hours: 24, operation: 'heartbeat' }, 7);
     const payload = JSON.parse(result.content[0]!.text!);
 
     expect(payload.window.hours).toBe(24);
@@ -95,11 +95,15 @@ describe('analytics MCP helpers', () => {
         }),
     });
 
-    const result = await listOperationUsage(['raw-key'], {
-      hours: 48,
-      model: 'gpt-4.1',
-      limit: 5,
-    });
+    const result = await listOperationUsage(
+      ['raw-key'],
+      {
+        hours: 48,
+        model: 'gpt-4.1',
+        limit: 5,
+      },
+      7,
+    );
     const payload = JSON.parse(result.content[0]!.text!);
 
     expect(payload.operations[0].operation).toBe('heartbeat');
@@ -146,11 +150,15 @@ describe('analytics MCP helpers', () => {
         }),
     });
 
-    const result = await listModelUsage(['raw-key'], {
-      hours: 72,
-      provider: 'anthropic',
-      status: 'STATUS_CODE_OK',
-    });
+    const result = await listModelUsage(
+      ['raw-key'],
+      {
+        hours: 72,
+        provider: 'anthropic',
+        status: 'STATUS_CODE_OK',
+      },
+      7,
+    );
     const payload = JSON.parse(result.content[0]!.text!);
 
     expect(payload.models[0].model).toBe('anthropic/claude-3-7-sonnet');

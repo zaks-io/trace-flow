@@ -40,7 +40,11 @@ interface GetTraceParams {
   trace_id: string;
 }
 
-export async function getTrace(apiKeys: string[], params: GetTraceParams): Promise<ToolCallResult> {
+export async function getTrace(
+  apiKeys: string[],
+  params: GetTraceParams,
+  retentionDays: number,
+): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
   }
@@ -53,6 +57,7 @@ export async function getTrace(apiKeys: string[], params: GetTraceParams): Promi
   const token = await generateTinybirdToken(
     pipes.map((p) => ({ type: 'PIPES:READ', resource: p })),
     apiKeys,
+    retentionDays,
   );
 
   const baseParams = { trace_id: params.trace_id };

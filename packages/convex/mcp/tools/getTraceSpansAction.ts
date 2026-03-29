@@ -34,6 +34,7 @@ interface GetTraceSpansParams {
 export async function getTraceSpans(
   apiKeys: string[],
   params: GetTraceSpansParams,
+  retentionDays: number,
 ): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
@@ -46,6 +47,7 @@ export async function getTraceSpans(
   const token = await generateTinybirdToken(
     [{ type: 'PIPES:READ', resource: 'mcp_trace_detail' }],
     apiKeys,
+    retentionDays,
   );
 
   const baseParams: Record<string, string | number | undefined> = {

@@ -15,10 +15,16 @@ export const list = query({
     if (!user) return [];
 
     if (user.orgId) {
-      return await ctx.db
+      const orgKeys = await ctx.db
         .query('apiKeys')
         .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId))
         .collect();
+      const userKeys = await ctx.db
+        .query('apiKeys')
+        .withIndex('by_user_id', (q) => q.eq('userId', user._id))
+        .collect();
+      const seen = new Set(orgKeys.map((k) => k._id));
+      return [...orgKeys, ...userKeys.filter((k) => !seen.has(k._id))];
     }
 
     return await ctx.db
@@ -175,10 +181,17 @@ export const listForUser = internalQuery({
     if (!user) return [];
 
     if (user.orgId) {
-      return await ctx.db
+      const orgKeys = await ctx.db
         .query('apiKeys')
         .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId))
         .collect();
+      const userKeys = await ctx.db
+        .query('apiKeys')
+        .withIndex('by_user_id', (q) => q.eq('userId', args.userId))
+        .collect();
+      // Include pre-org keys (orgId undefined) that the org index misses
+      const seen = new Set(orgKeys.map((k) => k._id));
+      return [...orgKeys, ...userKeys.filter((k) => !seen.has(k._id))];
     }
 
     return await ctx.db

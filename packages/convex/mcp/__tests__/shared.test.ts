@@ -181,14 +181,14 @@ describe('generateTinybirdToken', () => {
   it('throws error when admin token is missing', async () => {
     vi.stubEnv('TINYBIRD_ADMIN_TOKEN', '');
     await expect(
-      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }], testApiKeys),
+      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }], testApiKeys, 7),
     ).rejects.toThrow('Tinybird credentials not configured');
   });
 
   it('throws error when workspace ID is missing', async () => {
     vi.stubEnv('TINYBIRD_WORKSPACE_ID', '');
     await expect(
-      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }], testApiKeys),
+      generateTinybirdToken([{ type: 'PIPES:READ', resource: 'otel_traces' }], testApiKeys, 7),
     ).rejects.toThrow('Tinybird credentials not configured');
   });
 
@@ -196,6 +196,7 @@ describe('generateTinybirdToken', () => {
     const token = await generateTinybirdToken(
       [{ type: 'PIPES:READ', resource: 'otel_traces' }],
       testApiKeys,
+      7,
     );
     expect(typeof token).toBe('string');
     expect(token.split('.')).toHaveLength(3);
@@ -205,6 +206,7 @@ describe('generateTinybirdToken', () => {
     const token = await generateTinybirdToken(
       [{ type: 'PIPES:READ', resource: 'otel_traces' }],
       testApiKeys,
+      7,
       300,
     );
     expect(typeof token).toBe('string');
@@ -214,6 +216,7 @@ describe('generateTinybirdToken', () => {
     const token = await generateTinybirdToken(
       [{ type: 'PIPES:READ', resource: 'otel_traces' }],
       [],
+      7,
     );
     expect(typeof token).toBe('string');
     expect(token.split('.')).toHaveLength(3);
@@ -406,9 +409,9 @@ describe('stripNulls', () => {
     expect(result).toBeUndefined();
   });
 
-  it('returns undefined for empty array after stripping', () => {
+  it('returns empty array after stripping all null/undefined elements', () => {
     const result = stripNulls([null, undefined]);
-    expect(result).toBeUndefined();
+    expect(result).toEqual([]);
   });
 });
 

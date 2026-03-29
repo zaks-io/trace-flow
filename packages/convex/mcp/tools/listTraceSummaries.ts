@@ -80,6 +80,7 @@ function formatTraceSummaryRow(row: TraceSummaryRow) {
 export async function listTraceSummaries(
   apiKeys: string[],
   params: ListTraceSummariesParams,
+  retentionDays: number,
 ): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
@@ -88,6 +89,7 @@ export async function listTraceSummaries(
   const token = await generateTinybirdToken(
     [{ type: 'PIPES:READ', resource: 'mcp_trace_summaries' }],
     apiKeys,
+    retentionDays,
   );
 
   const limit = Math.min(params.limit ?? DEFAULT_TRACE_SUMMARY_LIMIT, MAX_TRACE_SUMMARY_LIMIT);
