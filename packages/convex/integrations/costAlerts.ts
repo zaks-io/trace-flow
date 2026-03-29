@@ -76,7 +76,7 @@ async function fetchPipe<T>(
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const message = (await response.text()).slice(0, 500);
     throw new Error(`Tinybird pipe ${pipe} failed: ${response.status} ${message}`);
   }
 
@@ -493,7 +493,7 @@ export const evaluateOrg = internalAction({
     const hourBucket = Math.floor(now / (60 * 60 * 1000));
     const traceId = `${args.orgId}:${hourBucket}`;
 
-    let lastOrgError: string | undefined;
+    const orgErrors: string[] = [];
 
     for (const alert of enabledAlerts) {
       try {
@@ -564,7 +564,7 @@ export const evaluateOrg = internalAction({
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown evaluation failure';
-        lastOrgError = `Alert "${alert.name}": ${message}`;
+        orgErrors.push(`Alert "${alert.name}": ${message}`);
         // Preserve existing timestamps so cooldown state isn't reset by an eval error
         const existing = stateMap.get(alert._id);
         await ctx.runMutation(internal.costAlerts.recordState, {
@@ -587,7 +587,7 @@ export const evaluateOrg = internalAction({
       orgId: args.orgId,
       delayMs: 60 * 60 * 1000,
       lastEvaluatedAt: now,
-      lastError: lastOrgError,
+      lastError: orgErrors.length > 0 ? orgErrors.join('; ') : undefined,
     });
     return null;
   },
