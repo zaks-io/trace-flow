@@ -34,7 +34,7 @@ interface ListTraceSummariesParams {
   model?: string;
   status?: string;
   operation?: string;
-  search?: string;
+  trace_id?: string;
   limit?: number;
   cursor?: string;
   hours?: number;
@@ -104,7 +104,7 @@ export async function listTraceSummaries(
   if (params.model) pipeParams.model = params.model;
   if (params.status) pipeParams.status = params.status;
   if (params.operation) pipeParams.operation = params.operation;
-  if (params.search) pipeParams.search = params.search;
+  if (params.trace_id) pipeParams.search = params.trace_id;
   if (params.sort_by) pipeParams.sort_by = params.sort_by;
   if (params.order) pipeParams.order = params.order;
 

@@ -64,12 +64,12 @@ export function buildTimeRangeNs(
   maxHours = MAX_ANALYTICS_HOURS,
 ): { hours: number; startTimeNs: string; endTimeNs: string } {
   const resolvedHours = Math.min(hours ?? defaultHours, maxHours);
-  const endTimeMs = BigInt(Date.now());
-  const startTimeMs = endTimeMs - BigInt(resolvedHours) * 3_600_000n;
+  const endEpochMs = BigInt(Date.now());
+  const startEpochMs = endEpochMs - BigInt(resolvedHours) * 3_600_000n;
   return {
     hours: resolvedHours,
-    startTimeNs: String(startTimeMs * 1_000_000n),
-    endTimeNs: String(endTimeMs * 1_000_000n),
+    startTimeNs: String(startEpochMs * 1_000_000n),
+    endTimeNs: String(endEpochMs * 1_000_000n),
   };
 }
 

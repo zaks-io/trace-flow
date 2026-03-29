@@ -84,7 +84,7 @@ describe('listTraceSummaries', () => {
 
     await listTraceSummaries(['raw-key'], {
       operation: 'key-art',
-      search: 'abcdef0123456789abcdef0123456789',
+      trace_id: 'abcdef0123456789abcdef0123456789',
     });
 
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;

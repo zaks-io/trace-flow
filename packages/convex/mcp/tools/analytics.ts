@@ -195,6 +195,7 @@ export async function listModelUsage(
     apiKeys,
   );
   const { hours, pipeParams } = buildPipeParams(params);
+  pipeParams.limit = Math.min(params.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT);
   const data = await queryTinybirdPipe(token, 'llm_usage_by_model', pipeParams);
   const rows = data as unknown as ModelUsageRow[];
 

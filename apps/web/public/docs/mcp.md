@@ -52,7 +52,7 @@ Parameters:
 - `model` (string): filter to traces that include this model
 - `status` (enum): `STATUS_CODE_OK` or `STATUS_CODE_ERROR`
 - `operation` (string): filter by baggage operation / workflow label
-- `search` (string): exact trace ID search
+- `trace_id` (string): exact trace ID lookup (bypasses other filters)
 - `hours` (number): lookback window (default 168)
 - `limit` (number): result limit (default 20, max 100)
 - `cursor` (string): pagination cursor

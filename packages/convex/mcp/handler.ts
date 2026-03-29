@@ -348,7 +348,7 @@ async function handleToolsCall(
       model?: string;
       status?: string;
       operation?: string;
-      search?: string;
+      trace_id?: string;
       limit?: number;
       hours?: number;
       cursor?: string;
@@ -411,6 +411,7 @@ async function handleToolsCall(
       provider?: string;
       operation?: string;
       status?: string;
+      limit?: number;
     };
     result = await listModelUsage(apiKeyStrings, modelsArgs);
   } else {

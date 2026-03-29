@@ -179,9 +179,9 @@ describe('list_trace_summaries tool definition', () => {
       expect(props.operation.type).toBe('string');
     });
 
-    it('has search parameter', () => {
-      expect(props.search).toBeDefined();
-      expect(props.search.type).toBe('string');
+    it('has trace_id parameter', () => {
+      expect(props.trace_id).toBeDefined();
+      expect(props.trace_id.type).toBe('string');
     });
 
     it('has sort_by parameter', () => {
@@ -414,10 +414,11 @@ describe('list_model_usage tool definition', () => {
     expect(listModelUsageTool.description).toContain('cost efficiency');
   });
 
-  it('includes provider, operation, and status filters', () => {
+  it('includes provider, operation, status, and limit filters', () => {
     const props = listModelUsageTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
     expect(props.provider?.type).toBe('string');
     expect(props.operation?.type).toBe('string');
     expect(props.status?.enum).toContain('STATUS_CODE_ERROR');
+    expect(props.limit?.type).toBe('number');
   });
 });

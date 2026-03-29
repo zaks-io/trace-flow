@@ -97,9 +97,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             'Filter by baggage.operation / workflow label (for example chat, heartbeat, or key-art)',
         },
-        search: {
+        trace_id: {
           type: 'string',
-          description: 'Exact trace_id search',
+          description: 'Exact trace_id lookup. Bypasses other filters when set.',
         },
         limit: {
           type: 'number',
@@ -353,6 +353,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           enum: ['STATUS_CODE_OK', 'STATUS_CODE_ERROR'],
           description: 'Filter by status code',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max models to return (default 20, max 100)',
         },
         api_key_ids: API_KEY_IDS_PROPERTY,
       },
