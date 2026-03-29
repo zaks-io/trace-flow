@@ -42,11 +42,15 @@ describe('listTraceSummaries', () => {
         }),
     });
 
-    const result = await listTraceSummaries(['raw-key'], {
-      limit: 1,
-      hours: 24,
-      sort_by: 'cost_usd',
-    });
+    const result = await listTraceSummaries(
+      ['raw-key'],
+      {
+        limit: 1,
+        hours: 24,
+        sort_by: 'cost_usd',
+      },
+      7,
+    );
 
     const payload = JSON.parse(result.content[0]!.text!);
     expect(payload.traces).toEqual([
@@ -82,10 +86,14 @@ describe('listTraceSummaries', () => {
       json: () => Promise.resolve({ data: [] }),
     });
 
-    await listTraceSummaries(['raw-key'], {
-      operation: 'key-art',
-      trace_id: 'abcdef0123456789abcdef0123456789',
-    });
+    await listTraceSummaries(
+      ['raw-key'],
+      {
+        operation: 'key-art',
+        trace_id: 'abcdef0123456789abcdef0123456789',
+      },
+      7,
+    );
 
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
     expect(call).toContain('/v0/pipes/mcp_trace_summaries.json');

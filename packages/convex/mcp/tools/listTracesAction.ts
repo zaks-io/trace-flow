@@ -69,6 +69,7 @@ interface ListTracesParams {
 export async function listTraces(
   apiKeys: string[],
   params: ListTracesParams,
+  retentionDays: number,
 ): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
@@ -77,6 +78,7 @@ export async function listTraces(
   const token = await generateTinybirdToken(
     [{ type: 'PIPES:READ', resource: 'mcp_traces_list' }],
     apiKeys,
+    retentionDays,
   );
 
   const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);

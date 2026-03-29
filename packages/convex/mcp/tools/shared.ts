@@ -19,7 +19,7 @@ export function stripNulls<T>(obj: T): T | undefined {
   if (obj === null || obj === undefined) return undefined;
   if (Array.isArray(obj)) {
     const filtered = obj.map(stripNulls).filter((v) => v !== undefined);
-    return filtered.length > 0 ? (filtered as T) : undefined;
+    return filtered as T;
   }
   if (typeof obj === 'object') {
     const result: Record<string, unknown> = {};
@@ -157,6 +157,7 @@ interface TinybirdScope {
 export async function generateTinybirdToken(
   scopes: { type: string; resource: string }[],
   apiKeys: string[],
+  retentionDays: number,
   ttlSeconds = 600,
 ): Promise<string> {
   const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
@@ -166,12 +167,12 @@ export async function generateTinybirdToken(
     throw new Error('Tinybird credentials not configured');
   }
 
-  // Add api_keys to fixed_params for row-level security
+  // Add api_keys and retention_days to fixed_params for row-level security
   // Use sentinel value when no keys to prevent matching empty strings
   const apiKeyString = apiKeys.join(',') || '__NO_KEYS__';
   const scopesWithApiKeys: TinybirdScope[] = scopes.map((scope) => ({
     ...scope,
-    fixed_params: { api_keys: apiKeyString },
+    fixed_params: { api_keys: apiKeyString, retention_days: retentionDays },
   }));
 
   const payload = {

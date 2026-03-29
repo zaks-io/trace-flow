@@ -112,6 +112,7 @@ function buildPipeParams(params: AnalyticsParams) {
 export async function getUsageSummary(
   apiKeys: string[],
   params: AnalyticsParams,
+  retentionDays: number,
 ): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
@@ -120,6 +121,7 @@ export async function getUsageSummary(
   const token = await generateTinybirdToken(
     [{ type: 'PIPES:READ', resource: 'llm_usage_summary' }],
     apiKeys,
+    retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
   const data = await queryTinybirdPipe(token, 'llm_usage_summary', pipeParams);
@@ -147,6 +149,7 @@ export async function getUsageSummary(
 export async function listOperationUsage(
   apiKeys: string[],
   params: AnalyticsParams,
+  retentionDays: number,
 ): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
@@ -155,6 +158,7 @@ export async function listOperationUsage(
   const token = await generateTinybirdToken(
     [{ type: 'PIPES:READ', resource: 'operations_leaderboard' }],
     apiKeys,
+    retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
   pipeParams.limit = Math.min(params.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT);
@@ -185,6 +189,7 @@ export async function listOperationUsage(
 export async function listModelUsage(
   apiKeys: string[],
   params: AnalyticsParams,
+  retentionDays: number,
 ): Promise<ToolCallResult> {
   if (apiKeys.length === 0) {
     return noApiKeysError();
@@ -193,6 +198,7 @@ export async function listModelUsage(
   const token = await generateTinybirdToken(
     [{ type: 'PIPES:READ', resource: 'llm_usage_by_model' }],
     apiKeys,
+    retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
   pipeParams.limit = Math.min(params.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT);
