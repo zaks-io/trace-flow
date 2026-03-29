@@ -22,6 +22,12 @@ import {
 import { TOOL_DEFINITIONS } from './tools';
 import { requireTraceFlowRole } from '../auth/auth';
 import { api } from '../_generated/api';
+import { listTraces } from './tools/listTracesAction';
+import { getTrace } from './tools/getTraceAction';
+import { getTraceSpans } from './tools/getTraceSpansAction';
+import { getTraceEvents } from './tools/getTraceEventsAction';
+import { listTraceSummaries } from './tools/listTraceSummaries';
+import { getUsageSummary, listModelUsage, listOperationUsage } from './tools/analytics';
 
 export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
   return 'id' in message && message.id !== undefined;
@@ -322,64 +328,25 @@ async function handleToolsCall(
 
   const apiKeyStrings = resolved;
 
-  let result: ToolCallResult;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const toolHandlers: Record<string, (keys: string[], args: any) => Promise<ToolCallResult>> = {
+    list_traces: listTraces,
+    list_trace_summaries: listTraceSummaries,
+    get_trace: getTrace,
+    get_trace_spans: getTraceSpans,
+    get_trace_events: getTraceEvents,
+    get_usage_summary: getUsageSummary,
+    list_operation_usage: listOperationUsage,
+    list_model_usage: listModelUsage,
+  };
 
-  if (params.name === 'list_traces') {
-    const listArgs = (params.arguments ?? {}) as {
-      provider?: string;
-      model?: string;
-      status?: string;
-      limit?: number;
-      hours?: number;
-      cursor?: string;
-    };
-    result = await ctx.runAction(internal.mcp.tools.listTracesAction.listTraces, {
-      apiKeys: apiKeyStrings,
-      params: listArgs,
-    });
-  } else if (params.name === 'get_trace') {
-    const getArgs = (params.arguments ?? {}) as {
-      trace_id: string;
-    };
-    result = await ctx.runAction(internal.mcp.tools.getTraceAction.getTrace, {
-      apiKeys: apiKeyStrings,
-      params: getArgs,
-    });
-  } else if (params.name === 'get_trace_spans') {
-    const getSpansArgs = (params.arguments ?? {}) as {
-      trace_id: string;
-      expand?: string[];
-      span_names?: string[];
-      exclude_span_names?: string[];
-      min_duration_ms?: number;
-      sort_by?: string;
-      order?: string;
-      top_n?: number;
-      limit?: number;
-      cursor?: string;
-    };
-    result = await ctx.runAction(internal.mcp.tools.getTraceSpansAction.getTraceSpans, {
-      apiKeys: apiKeyStrings,
-      params: getSpansArgs,
-    });
-  } else if (params.name === 'get_trace_events') {
-    const getEventsArgs = (params.arguments ?? {}) as {
-      trace_id: string;
-      span_id?: string;
-      span_names?: string[];
-      event_names?: string[];
-      order?: string;
-      limit?: number;
-      cursor?: string;
-    };
-    result = await ctx.runAction(internal.mcp.tools.getTraceEventsAction.getTraceEvents, {
-      apiKeys: apiKeyStrings,
-      params: getEventsArgs,
-    });
-  } else {
+  const handler = toolHandlers[params.name];
+  if (!handler) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }
 
+  const args = params.arguments ?? {};
+  const result = await handler(apiKeyStrings, args);
   return createSuccessResponse(id, result);
 }
 

@@ -17,9 +17,13 @@ describe('TOOL_DEFINITIONS', () => {
     const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
     expect(toolNames).toContain('list_api_keys');
     expect(toolNames).toContain('list_traces');
+    expect(toolNames).toContain('list_trace_summaries');
     expect(toolNames).toContain('get_trace');
     expect(toolNames).toContain('get_trace_spans');
     expect(toolNames).toContain('get_trace_events');
+    expect(toolNames).toContain('get_usage_summary');
+    expect(toolNames).toContain('list_operation_usage');
+    expect(toolNames).toContain('list_model_usage');
   });
 });
 
@@ -149,6 +153,51 @@ describe('get_trace tool definition', () => {
   });
 });
 
+describe('list_trace_summaries tool definition', () => {
+  const listTraceSummariesTool = TOOL_DEFINITIONS.find((t) => t.name === 'list_trace_summaries')!;
+
+  it('has correct name', () => {
+    expect(listTraceSummariesTool.name).toBe('list_trace_summaries');
+  });
+
+  it('has a description', () => {
+    expect(listTraceSummariesTool.description).toContain('one row per trace_id');
+  });
+
+  it('has inputSchema with type object', () => {
+    expect(listTraceSummariesTool.inputSchema.type).toBe('object');
+  });
+
+  describe('parameters', () => {
+    const props = listTraceSummariesTool.inputSchema.properties as Record<
+      string,
+      JsonSchemaProperty
+    >;
+
+    it('has operation filter parameter', () => {
+      expect(props.operation).toBeDefined();
+      expect(props.operation.type).toBe('string');
+    });
+
+    it('has trace_id parameter', () => {
+      expect(props.trace_id).toBeDefined();
+      expect(props.trace_id.type).toBe('string');
+    });
+
+    it('has sort_by parameter', () => {
+      expect(props.sort_by).toBeDefined();
+      expect(props.sort_by.enum).toContain('duration_ms');
+      expect(props.sort_by.enum).toContain('cost_usd');
+      expect(props.sort_by.enum).toContain('tokens');
+    });
+
+    it('has api_key_ids parameter as array', () => {
+      expect(props.api_key_ids).toBeDefined();
+      expect(props.api_key_ids.type).toBe('array');
+    });
+  });
+});
+
 describe('get_trace_spans tool definition', () => {
   const getTraceSpansTool = TOOL_DEFINITIONS.find((t) => t.name === 'get_trace_spans')!;
 
@@ -199,6 +248,7 @@ describe('get_trace_spans tool definition', () => {
     it('has limit parameter', () => {
       expect(props.limit).toBeDefined();
       expect(props.limit.type).toBe('number');
+      expect(props.limit.description).toContain('default 20');
     });
 
     it('has cursor parameter', () => {
@@ -209,6 +259,7 @@ describe('get_trace_spans tool definition', () => {
     it('has span_names parameter as array', () => {
       expect(props.span_names).toBeDefined();
       expect(props.span_names.type).toBe('array');
+      expect(props.span_names.description).toContain('chat *');
     });
 
     it('has top_n parameter', () => {
@@ -251,6 +302,7 @@ describe('get_trace_events tool definition', () => {
   it('has a description', () => {
     expect(getTraceEventsTool.description).toBeDefined();
     expect(getTraceEventsTool.description!.length).toBeGreaterThan(0);
+    expect(getTraceEventsTool.description).toContain('without prompt or response bodies');
   });
 
   it('has inputSchema with type object', () => {
@@ -277,6 +329,7 @@ describe('get_trace_events tool definition', () => {
     it('has span_names parameter as array', () => {
       expect(props.span_names).toBeDefined();
       expect(props.span_names.type).toBe('array');
+      expect(props.span_names.description).toContain('chat *');
     });
 
     it('has event_names parameter as array', () => {
@@ -305,5 +358,67 @@ describe('get_trace_events tool definition', () => {
       expect(props.api_key_ids).toBeDefined();
       expect(props.api_key_ids.type).toBe('array');
     });
+  });
+});
+
+describe('get_usage_summary tool definition', () => {
+  const getUsageSummaryTool = TOOL_DEFINITIONS.find((t) => t.name === 'get_usage_summary')!;
+
+  it('has correct name', () => {
+    expect(getUsageSummaryTool.name).toBe('get_usage_summary');
+  });
+
+  it('has no required parameters', () => {
+    expect(getUsageSummaryTool.inputSchema.required).toBeUndefined();
+  });
+
+  it('includes hours, operation, and api_key_ids filters', () => {
+    const props = getUsageSummaryTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+    expect(props.hours?.type).toBe('number');
+    expect(props.operation?.type).toBe('string');
+    expect(props.api_key_ids?.type).toBe('array');
+  });
+});
+
+describe('list_operation_usage tool definition', () => {
+  const listOperationUsageTool = TOOL_DEFINITIONS.find((t) => t.name === 'list_operation_usage')!;
+
+  it('has correct name', () => {
+    expect(listOperationUsageTool.name).toBe('list_operation_usage');
+  });
+
+  it('documents cost and latency use cases', () => {
+    expect(listOperationUsageTool.description).toContain('p95 latency');
+    expect(listOperationUsageTool.description).toContain('cache hit rate');
+  });
+
+  it('includes limit and filter parameters', () => {
+    const props = listOperationUsageTool.inputSchema.properties as Record<
+      string,
+      JsonSchemaProperty
+    >;
+    expect(props.limit?.type).toBe('number');
+    expect(props.model?.type).toBe('string');
+    expect(props.operation?.type).toBe('string');
+  });
+});
+
+describe('list_model_usage tool definition', () => {
+  const listModelUsageTool = TOOL_DEFINITIONS.find((t) => t.name === 'list_model_usage')!;
+
+  it('has correct name', () => {
+    expect(listModelUsageTool.name).toBe('list_model_usage');
+  });
+
+  it('documents cost efficiency use case', () => {
+    expect(listModelUsageTool.description).toContain('cost efficiency');
+  });
+
+  it('includes provider, operation, status, and limit filters', () => {
+    const props = listModelUsageTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+    expect(props.provider?.type).toBe('string');
+    expect(props.operation?.type).toBe('string');
+    expect(props.status?.enum).toContain('STATUS_CODE_ERROR');
+    expect(props.limit?.type).toBe('number');
   });
 });

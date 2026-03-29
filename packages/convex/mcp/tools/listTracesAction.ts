@@ -1,5 +1,3 @@
-import { internalAction } from '../../_generated/server';
-import { v } from 'convex/values';
 import type { ToolCallResult } from '../protocol';
 import {
   jsonReplacer,
@@ -7,6 +5,7 @@ import {
   queryTinybirdPipe,
   noApiKeysError,
   generateTinybirdToken,
+  buildTimeRangeNs,
   DEFAULT_LIMIT,
   MAX_LIMIT,
   DEFAULT_HOURS,
@@ -56,67 +55,63 @@ export function formatTraceRow(row: TraceRow): FormattedTrace {
   };
 }
 
-export const listTraces = internalAction({
-  args: {
-    apiKeys: v.array(v.string()),
-    params: v.object({
-      provider: v.optional(v.string()),
-      model: v.optional(v.string()),
-      status: v.optional(v.string()),
-      limit: v.optional(v.number()),
-      hours: v.optional(v.number()),
-      cursor: v.optional(v.string()),
-      sort_by: v.optional(v.string()),
-      order: v.optional(v.string()),
-    }),
-  },
-  handler: async (_, args): Promise<ToolCallResult> => {
-    const { apiKeys, params } = args;
+interface ListTracesParams {
+  provider?: string;
+  model?: string;
+  status?: string;
+  limit?: number;
+  hours?: number;
+  cursor?: string;
+  sort_by?: string;
+  order?: string;
+}
 
-    if (apiKeys.length === 0) {
-      return noApiKeysError();
-    }
+export async function listTraces(
+  apiKeys: string[],
+  params: ListTracesParams,
+): Promise<ToolCallResult> {
+  if (apiKeys.length === 0) {
+    return noApiKeysError();
+  }
 
-    const token = await generateTinybirdToken(
-      [{ type: 'PIPES:READ', resource: 'mcp_traces_list' }],
-      apiKeys,
-    );
+  const token = await generateTinybirdToken(
+    [{ type: 'PIPES:READ', resource: 'mcp_traces_list' }],
+    apiKeys,
+  );
 
-    const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-    const hours = Math.min(params.hours ?? DEFAULT_HOURS, MAX_HOURS);
-    const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
-    const startTimeNs = (Date.now() - hours * 60 * 60 * 1000) * 1_000_000;
+  const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+  const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
+  const { startTimeNs } = buildTimeRangeNs(params.hours, DEFAULT_HOURS, MAX_HOURS);
 
-    const pipeParams: Record<string, string | number | undefined> = {
-      start_time_ns: startTimeNs,
+  const pipeParams: Record<string, string | number | undefined> = {
+    start_time_ns: startTimeNs,
+    limit,
+    offset,
+  };
+
+  if (params.provider) pipeParams.provider = params.provider;
+  if (params.model) pipeParams.model = params.model;
+  if (params.status) pipeParams.status = params.status;
+  if (params.sort_by) pipeParams.sort_by = params.sort_by;
+  if (params.order) pipeParams.order = params.order;
+
+  const data = await queryTinybirdPipe(token, 'mcp_traces_list', pipeParams);
+
+  const totalCount = data.length > 0 ? (data[0] as unknown as TraceRow).total_count : 0;
+  const hasMore = totalCount > offset + data.length;
+  const formattedTraces = data.map((row) => formatTraceRow(row as unknown as TraceRow));
+  const nextCursor = hasMore ? String(offset + limit) : undefined;
+
+  const result = {
+    traces: formattedTraces,
+    pagination: {
+      has_more: hasMore,
+      next_cursor: nextCursor,
       limit,
-      offset,
-    };
+    },
+  };
 
-    if (params.provider) pipeParams.provider = params.provider;
-    if (params.model) pipeParams.model = params.model;
-    if (params.status) pipeParams.status = params.status;
-    if (params.sort_by) pipeParams.sort_by = params.sort_by;
-    if (params.order) pipeParams.order = params.order;
-
-    const data = await queryTinybirdPipe(token, 'mcp_traces_list', pipeParams);
-
-    const totalCount = data.length > 0 ? (data[0] as unknown as TraceRow).total_count : 0;
-    const hasMore = totalCount > offset + data.length;
-    const formattedTraces = data.map((row) => formatTraceRow(row as unknown as TraceRow));
-    const nextCursor = hasMore ? String(offset + limit) : undefined;
-
-    const result = {
-      traces: formattedTraces,
-      pagination: {
-        has_more: hasMore,
-        next_cursor: nextCursor,
-        limit,
-      },
-    };
-
-    return {
-      content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
-    };
-  },
-});
+  return {
+    content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
+  };
+}

@@ -970,6 +970,33 @@ describe('buildTraces', () => {
       const responseSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(responseSpan).toBeUndefined();
     });
+
+    it('should create embedding response spans for non-streaming embedding requests', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        targetUrl: 'https://api.openai.com/v1/embeddings',
+        request: {
+          ...baseQueueMessage.request,
+          model: 'text-embedding-3-small',
+        },
+        operationName: 'embeddings',
+      };
+
+      const traces = buildTraces(message);
+
+      const responseSpan = traces.find((t) => t.SpanName === 'gen_ai.response.embedding');
+      expect(responseSpan).toBeDefined();
+      expect(responseSpan?.SpanAttributes['gen_ai.content.type']).toBe('embedding');
+
+      const rootSpan = traces.find(
+        (t) => t.SpanAttributes['gen_ai.operation.name'] === 'embeddings',
+      );
+      expect(rootSpan?.['Events.Name']).toContain('output.embedding');
+      const eventIndex = rootSpan?.['Events.Name'].indexOf('output.embedding') ?? -1;
+      const eventAttrs = JSON.parse(rootSpan?.['Events.Attributes'][eventIndex] ?? '{}');
+      expect(eventAttrs['gen_ai.content.type']).toBe('embedding');
+      expect(eventAttrs['gen_ai.response.streaming']).toBe('false');
+    });
   });
 
   describe('cost attributes', () => {

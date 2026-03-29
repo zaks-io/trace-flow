@@ -28,7 +28,6 @@ describe('formatEventRow', () => {
     const result = formatEventRow(baseRow);
     expect(result.attributes).toEqual({
       'gen_ai.message.role': 'user',
-      content: 'Hello',
     });
   });
 
@@ -59,18 +58,37 @@ describe('formatEventRow', () => {
     expect(result.attributes).toEqual({});
   });
 
-  it('preserves nested attribute values', () => {
+  it('keeps only safe metadata attributes', () => {
     const row: EventRow = {
       ...baseRow,
       event_attributes: JSON.stringify({
         'gen_ai.message.content': 'test message',
         'gen_ai.message.role': 'assistant',
         'gen_ai.content.type': 'text',
+        'gen_ai.tool.name': 'wake',
+        content: 'raw body',
       }),
     };
     const result = formatEventRow(row);
-    expect(result.attributes['gen_ai.message.content']).toBe('test message');
     expect(result.attributes['gen_ai.message.role']).toBe('assistant');
     expect(result.attributes['gen_ai.content.type']).toBe('text');
+    expect(result.attributes['gen_ai.tool.name']).toBe('wake');
+    expect(result.attributes['gen_ai.message.content']).toBeUndefined();
+    expect(result.attributes.content).toBeUndefined();
+  });
+
+  it('stringifies non-string safe values', () => {
+    const row: EventRow = {
+      ...baseRow,
+      event_attributes: JSON.stringify({
+        'gen_ai.message.index': 3,
+        'gen_ai.response.streaming': false,
+      }),
+    };
+    const result = formatEventRow(row);
+    expect(result.attributes).toEqual({
+      'gen_ai.message.index': '3',
+      'gen_ai.response.streaming': 'false',
+    });
   });
 });

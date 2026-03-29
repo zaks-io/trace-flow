@@ -1,0 +1,103 @@
+DESCRIPTION >
+    List unique traces with aggregated rollup fields for MCP tools.
+    Returns one row per trace_id with filtering, sorting, and offset pagination.
+    The api_keys parameter is enforced via JWT fixed_params for security.
+
+NODE endpoint
+SQL >
+    %
+    WITH grouped AS (
+        SELECT
+            TraceId AS trace_id,
+            min(Timestamp) AS first_timestamp_ns,
+            max(Timestamp + Duration) AS last_end_ns,
+            max(ReceivedAt) AS latest_received_at_ns,
+            countDistinct(SpanId) AS span_count,
+            countIf(StatusCode = 'STATUS_CODE_ERROR') AS error_count,
+            groupArray(DISTINCT
+                if(JSONExtractString(SpanAttributes, 'gen_ai.system') != '',
+                    concat(
+                        JSONExtractString(SpanAttributes, 'gen_ai.system'),
+                        '/',
+                        if(
+                            position(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), '/') > 0,
+                            substringUTF8(
+                                JSONExtractString(SpanAttributes, 'gen_ai.request.model'),
+                                position(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), '/') + 1
+                            ),
+                            JSONExtractString(SpanAttributes, 'gen_ai.request.model')
+                        )
+                    ),
+                    JSONExtractString(SpanAttributes, 'gen_ai.request.model')
+                )
+            ) AS models,
+            groupArray(DISTINCT JSONExtractString(SpanAttributes, 'baggage.operation')) AS operations,
+            sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))) AS prompt_tokens,
+            sum(toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))) AS completion_tokens,
+            sum(
+                toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) +
+                toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens'))
+            ) AS total_tokens,
+            max(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.server.time_to_first_token'))) AS max_ttft_ms,
+            sum(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total'))) AS total_cost_usd
+        FROM otel_traces FINAL
+        WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+            AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
+            {% if defined(trace_id) %}
+            AND TraceId = {{ String(trace_id) }}
+            {% end %}
+        GROUP BY TraceId
+        HAVING 1 = 1
+            {% if defined(provider) %}
+            AND max(JSONExtractString(SpanAttributes, 'gen_ai.system') = {{ String(provider) }}) = 1
+            {% end %}
+            {% if defined(model) %}
+            AND max(JSONExtractString(SpanAttributes, 'gen_ai.request.model') = {{ String(model) }}) = 1
+            {% end %}
+            {% if defined(operation) %}
+            AND max(JSONExtractString(SpanAttributes, 'baggage.operation') = {{ String(operation) }}) = 1
+            {% end %}
+            {% if defined(status) and status == 'STATUS_CODE_ERROR' %}
+            AND error_count > 0
+            {% elif defined(status) and status == 'STATUS_CODE_OK' %}
+            AND error_count = 0
+            {% end %}
+    )
+    SELECT
+        trace_id,
+        formatDateTime(toDateTime(first_timestamp_ns / 1000000000), '%Y-%m-%dT%H:%i:%S') || '.' ||
+            lpad(toString(toInt64(first_timestamp_ns / 1000000) % 1000), 3, '0') || 'Z' AS timestamp,
+        formatDateTime(toDateTime(latest_received_at_ns / 1000000000), '%Y-%m-%dT%H:%i:%S') || '.' ||
+            lpad(toString(toInt64(latest_received_at_ns / 1000000) % 1000), 3, '0') || 'Z' AS latest_received_at,
+        greatest(0, (latest_received_at_ns - last_end_ns) / 1000000) AS capture_lag_ms,
+        (last_end_ns - first_timestamp_ns) / 1000000 AS duration_ms,
+        if(error_count > 0, 'error', 'ok') AS status,
+        span_count,
+        models,
+        operations,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        max_ttft_ms,
+        total_cost_usd,
+        count(*) OVER() AS total_count
+    FROM grouped
+    ORDER BY
+        {% if defined(sort_by) and sort_by == 'timestamp' %}
+        first_timestamp_ns
+        {% elif defined(sort_by) and sort_by == 'duration_ms' %}
+        duration_ms
+        {% elif defined(sort_by) and sort_by == 'cost_usd' %}
+        total_cost_usd
+        {% elif defined(sort_by) and sort_by == 'tokens' %}
+        total_tokens
+        {% else %}
+        latest_received_at_ns
+        {% end %}
+        {% if defined(order) and order == 'asc' %}ASC{% else %}DESC{% end %}
+    LIMIT {{ Int32(limit, 20) }}
+    OFFSET {{ Int32(offset, 0) }}
+
+TYPE ENDPOINT

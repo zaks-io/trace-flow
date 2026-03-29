@@ -442,4 +442,10 @@ describe('splitPatterns', () => {
     expect(result.exact).toEqual([]);
     expect(result.prefixes).toEqual(['gen_ai.']);
   });
+
+  it('supports trailing star prefixes for root span names', () => {
+    const result = splitPatterns(['chat *', 'embeddings *', 'gen_ai.response.*']);
+    expect(result.exact).toEqual([]);
+    expect(result.prefixes).toEqual(['chat ', 'embeddings ', 'gen_ai.response.']);
+  });
 });
