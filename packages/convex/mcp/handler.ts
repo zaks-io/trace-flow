@@ -249,6 +249,34 @@ function handleToolsList(id: string | number): JsonRpcResponse {
   return createSuccessResponse(id, result);
 }
 
+export function resolveApiKeys(
+  allApiKeys: { _id: string; key: string }[],
+  requestedIds?: string[],
+): string[] | { error: string } {
+  if (!requestedIds || requestedIds.length === 0) {
+    return allApiKeys.map((k) => k.key);
+  }
+
+  const keyMap = new Map(allApiKeys.map((k) => [k._id, k.key]));
+  const resolved: string[] = [];
+  const invalid: string[] = [];
+
+  for (const id of requestedIds) {
+    const raw = keyMap.get(id);
+    if (raw) {
+      resolved.push(raw);
+    } else {
+      invalid.push(id);
+    }
+  }
+
+  if (invalid.length > 0) {
+    return { error: `Invalid or unauthorized API key IDs: ${invalid.join(', ')}` };
+  }
+
+  return resolved;
+}
+
 async function handleToolsCall(
   ctx: {
     runQuery: typeof action.prototype.runQuery;
@@ -262,8 +290,22 @@ async function handleToolsCall(
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Missing tool name');
   }
 
-  const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
-  const apiKeyStrings = apiKeys.map((k: { key: string }) => k.key);
+  if (params.name === 'list_api_keys') {
+    const result = await ctx.runAction(internal.mcp.tools.listApiKeysAction.listApiKeys, {
+      userId,
+    });
+    return createSuccessResponse(id, result);
+  }
+
+  const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
+  const requestedIds = params.arguments?.api_key_ids as string[] | undefined;
+  const resolved = resolveApiKeys(apiKeys, requestedIds);
+
+  if (typeof resolved === 'object' && 'error' in resolved) {
+    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, resolved.error);
+  }
+
+  const apiKeyStrings = resolved;
 
   let result: ToolCallResult;
 
@@ -296,6 +338,7 @@ async function handleToolsCall(
       exclude_span_names?: string[];
       min_duration_ms?: number;
       sort_by?: string;
+      order?: string;
       top_n?: number;
       limit?: number;
       cursor?: string;
@@ -310,6 +353,7 @@ async function handleToolsCall(
       span_id?: string;
       span_names?: string[];
       event_names?: string[];
+      order?: string;
       limit?: number;
       cursor?: string;
     };

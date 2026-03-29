@@ -1,5 +1,6 @@
 export {
   TOOL_DEFINITIONS,
+  listApiKeys,
   listTraces,
   getTrace,
   getTraceSpans,

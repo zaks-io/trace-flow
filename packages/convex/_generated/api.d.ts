@@ -945,6 +945,20 @@ export declare const internal: {
         userId?: Id<"users">;
       }>
     >;
+    listForUser: FunctionReference<
+      "query",
+      "internal",
+      { userId: Id<"users"> },
+      Array<{
+        _creationTime: number;
+        _id: Id<"apiKeys">;
+        expiresAt: number;
+        key: string;
+        name?: string;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
+      }>
+    >;
   };
   auth: {
     organizations: {
@@ -1697,6 +1711,20 @@ export declare const internal: {
           "action",
           "internal",
           { apiKeys: Array<string>; params: { trace_id: string } },
+          any
+        >;
+      };
+      listApiKeys: FunctionReference<
+        "action",
+        "internal",
+        { userId: Id<"users"> },
+        any
+      >;
+      listApiKeysAction: {
+        listApiKeys: FunctionReference<
+          "action",
+          "internal",
+          { userId: Id<"users"> },
           any
         >;
       };

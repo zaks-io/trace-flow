@@ -1,7 +1,22 @@
 import type { ToolDefinition } from '../protocol';
 import { DEFAULT_LIMIT, MAX_LIMIT, DEFAULT_HOURS, MAX_HOURS } from './shared';
 
+const API_KEY_IDS_PROPERTY = {
+  type: 'array',
+  items: { type: 'string' },
+  description: 'Filter by specific API key IDs (from list_api_keys). Omit to use all keys.',
+} as const;
+
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
+  {
+    name: 'list_api_keys',
+    description:
+      'List available API keys. Returns key names and IDs (not raw values). Use the returned IDs with api_key_ids on other tools to filter traces to a specific app.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
   {
     name: 'list_traces',
     description:
@@ -44,6 +59,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           enum: ['asc', 'desc'],
           description: 'Sort direction. Default: desc',
         },
+        api_key_ids: API_KEY_IDS_PROPERTY,
       },
     },
   },
@@ -58,6 +74,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: '32-character hex trace ID',
         },
+        api_key_ids: API_KEY_IDS_PROPERTY,
       },
       required: ['trace_id'],
     },
@@ -131,6 +148,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Pagination cursor from previous response.',
         },
+        api_key_ids: API_KEY_IDS_PROPERTY,
       },
       required: ['trace_id'],
     },
@@ -175,6 +193,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Pagination cursor from previous response.',
         },
+        api_key_ids: API_KEY_IDS_PROPERTY,
       },
       required: ['trace_id'],
     },

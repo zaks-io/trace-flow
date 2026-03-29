@@ -166,7 +166,29 @@ export const getByIdInternal = internalQuery({
   },
 });
 
-// Internal query for MCP - bypasses Convex auth, uses userId directly
+// Internal query for MCP - resolves org membership and returns the correct keys
+export const listForUser = internalQuery({
+  args: { userId: v.id('users') },
+  returns: v.array(apiKeyValidator),
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return [];
+
+    if (user.orgId) {
+      return await ctx.db
+        .query('apiKeys')
+        .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId))
+        .collect();
+    }
+
+    return await ctx.db
+      .query('apiKeys')
+      .withIndex('by_user_id', (q) => q.eq('userId', args.userId))
+      .collect();
+  },
+});
+
+// Internal query - bypasses Convex auth, uses userId directly
 export const listByUserId = internalQuery({
   args: { userId: v.id('users') },
   returns: v.array(apiKeyValidator),
