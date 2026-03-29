@@ -90,6 +90,6 @@ describe('listTraceSummaries', () => {
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
     expect(call).toContain('/v0/pipes/mcp_trace_summaries.json');
     expect(call).toContain('operation=key-art');
-    expect(call).toContain('search=abcdef0123456789abcdef0123456789');
+    expect(call).toContain('trace_id=abcdef0123456789abcdef0123456789');
   });
 });

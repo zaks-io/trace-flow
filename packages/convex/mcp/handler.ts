@@ -328,96 +328,25 @@ async function handleToolsCall(
 
   const apiKeyStrings = resolved;
 
-  let result: ToolCallResult;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const toolHandlers: Record<string, (keys: string[], args: any) => Promise<ToolCallResult>> = {
+    list_traces: listTraces,
+    list_trace_summaries: listTraceSummaries,
+    get_trace: getTrace,
+    get_trace_spans: getTraceSpans,
+    get_trace_events: getTraceEvents,
+    get_usage_summary: getUsageSummary,
+    list_operation_usage: listOperationUsage,
+    list_model_usage: listModelUsage,
+  };
 
-  if (params.name === 'list_traces') {
-    const listArgs = (params.arguments ?? {}) as {
-      provider?: string;
-      model?: string;
-      status?: string;
-      limit?: number;
-      hours?: number;
-      cursor?: string;
-      sort_by?: string;
-      order?: string;
-    };
-    result = await listTraces(apiKeyStrings, listArgs);
-  } else if (params.name === 'list_trace_summaries') {
-    const listArgs = (params.arguments ?? {}) as {
-      provider?: string;
-      model?: string;
-      status?: string;
-      operation?: string;
-      trace_id?: string;
-      limit?: number;
-      hours?: number;
-      cursor?: string;
-      sort_by?: string;
-      order?: string;
-    };
-    result = await listTraceSummaries(apiKeyStrings, listArgs);
-  } else if (params.name === 'get_trace') {
-    const getArgs = (params.arguments ?? {}) as {
-      trace_id: string;
-    };
-    result = await getTrace(apiKeyStrings, getArgs);
-  } else if (params.name === 'get_trace_spans') {
-    const getSpansArgs = (params.arguments ?? {}) as {
-      trace_id: string;
-      expand?: string[];
-      span_names?: string[];
-      exclude_span_names?: string[];
-      min_duration_ms?: number;
-      sort_by?: string;
-      order?: string;
-      top_n?: number;
-      limit?: number;
-      cursor?: string;
-    };
-    result = await getTraceSpans(apiKeyStrings, getSpansArgs);
-  } else if (params.name === 'get_trace_events') {
-    const getEventsArgs = (params.arguments ?? {}) as {
-      trace_id: string;
-      span_id?: string;
-      span_names?: string[];
-      event_names?: string[];
-      order?: string;
-      limit?: number;
-      cursor?: string;
-    };
-    result = await getTraceEvents(apiKeyStrings, getEventsArgs);
-  } else if (params.name === 'get_usage_summary') {
-    const usageArgs = (params.arguments ?? {}) as {
-      hours?: number;
-      provider?: string;
-      model?: string;
-      operation?: string;
-      status?: string;
-    };
-    result = await getUsageSummary(apiKeyStrings, usageArgs);
-  } else if (params.name === 'list_operation_usage') {
-    const operationsArgs = (params.arguments ?? {}) as {
-      hours?: number;
-      provider?: string;
-      model?: string;
-      operation?: string;
-      status?: string;
-      limit?: number;
-    };
-    result = await listOperationUsage(apiKeyStrings, operationsArgs);
-  } else if (params.name === 'list_model_usage') {
-    const modelsArgs = (params.arguments ?? {}) as {
-      hours?: number;
-      provider?: string;
-      operation?: string;
-      status?: string;
-      limit?: number;
-    };
-    result = await listModelUsage(apiKeyStrings, modelsArgs);
-  } else {
+  const handler = toolHandlers[params.name];
+  if (!handler) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }
 
+  const args = (params.arguments ?? {}) as Record<string, unknown>;
+  const result = await handler(apiKeyStrings, args);
   return createSuccessResponse(id, result);
 }
 
