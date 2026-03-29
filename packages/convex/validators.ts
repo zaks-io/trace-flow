@@ -60,3 +60,119 @@ export const apiKeyValidator = v.object({
   orgId: v.optional(v.id('organizations')),
   name: v.optional(v.string()),
 });
+
+export const costAlertChannelConfigValidator = v.union(
+  v.object({
+    type: v.literal('email'),
+    recipients: v.array(v.string()),
+  }),
+  v.object({
+    type: v.literal('webhook'),
+    url: v.string(),
+    secret: v.optional(v.string()),
+    headers: v.optional(
+      v.array(
+        v.object({
+          key: v.string(),
+          value: v.string(),
+        }),
+      ),
+    ),
+  }),
+);
+
+export const costAlertChannelValidator = v.object({
+  _id: v.id('costAlertChannels'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  name: v.string(),
+  enabled: v.boolean(),
+  config: costAlertChannelConfigValidator,
+  createdByUserId: v.id('users'),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+
+export const costAlertConditionValidator = v.union(
+  v.object({
+    type: v.literal('absolute_spend_threshold'),
+    window: v.union(v.literal('last_hour'), v.literal('last_24_hours'), v.literal('month_to_date')),
+    thresholdUsd: v.number(),
+  }),
+  v.object({
+    type: v.literal('projected_monthly_over'),
+    thresholdUsd: v.number(),
+  }),
+  v.object({
+    type: v.literal('hourly_spend_spike'),
+    baselineHours: v.number(),
+    multiplier: v.number(),
+    minCurrentHourUsd: v.number(),
+    minIncreaseUsd: v.number(),
+  }),
+);
+
+export const costAlertSeverityValidator = v.union(
+  v.literal('info'),
+  v.literal('warning'),
+  v.literal('error'),
+);
+
+export const costAlertValidator = v.object({
+  _id: v.id('costAlerts'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  name: v.string(),
+  enabled: v.boolean(),
+  severity: costAlertSeverityValidator,
+  apiKeyIds: v.optional(v.array(v.id('apiKeys'))),
+  channelIds: v.array(v.id('costAlertChannels')),
+  cooldownMinutes: v.number(),
+  notifyOnRecovery: v.boolean(),
+  condition: costAlertConditionValidator,
+  createdByUserId: v.id('users'),
+  updatedByUserId: v.id('users'),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+});
+
+export const costAlertStateValidator = v.object({
+  _id: v.id('costAlertStates'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  costAlertId: v.id('costAlerts'),
+  active: v.boolean(),
+  lastEvaluatedAt: v.number(),
+  lastNotificationAt: v.optional(v.number()),
+  lastTriggeredAt: v.optional(v.number()),
+  lastRecoveredAt: v.optional(v.number()),
+  lastMetricValue: v.optional(v.number()),
+  lastMetricLabel: v.optional(v.string()),
+  lastSummary: v.optional(v.string()),
+  lastDeliveryError: v.optional(v.string()),
+});
+
+export const costAlertDeliveryValidator = v.object({
+  _id: v.id('costAlertDeliveries'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  costAlertId: v.optional(v.id('costAlerts')),
+  channelId: v.id('costAlertChannels'),
+  eventType: v.union(v.literal('triggered'), v.literal('recovered'), v.literal('test')),
+  status: v.union(v.literal('success'), v.literal('failed')),
+  idempotencyKey: v.string(),
+  payloadSummary: v.string(),
+  attemptedAt: v.number(),
+  deliveredAt: v.optional(v.number()),
+  error: v.optional(v.string()),
+});
+
+export const costAlertMonitorValidator = v.object({
+  _id: v.id('costAlertMonitors'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  schedulerId: v.optional(v.id('_scheduled_functions')),
+  nextEvaluationAt: v.optional(v.number()),
+  lastEvaluatedAt: v.optional(v.number()),
+  lastError: v.optional(v.string()),
+});

@@ -33,7 +33,7 @@ name = "TRACE_BATCHER"
 class_name = "TraceBatcher"
 
 [[migrations]]
-tag = "v1"
+tag = "v3"
 new_sqlite_classes = ["TraceBatcher"]
 
 # Queue consumer configuration

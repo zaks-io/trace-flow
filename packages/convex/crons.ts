@@ -9,4 +9,10 @@ crons.weekly(
   internal.billing.stripeEvents.cleanupOldEvents,
 );
 
+crons.hourly(
+  'recover stale cost alert monitors',
+  { minuteUTC: 5 },
+  internal.costAlerts.recoverStaleMonitors,
+);
+
 export default crons;

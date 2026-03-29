@@ -121,6 +121,215 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  costAlertChannels: {
+    document: {
+      config:
+        | { recipients: Array<string>; type: "email" }
+        | {
+            headers?: Array<{ key: string; value: string }>;
+            secret?: string;
+            type: "webhook";
+            url: string;
+          };
+      createdAt: number;
+      createdByUserId: Id<"users">;
+      enabled: boolean;
+      name: string;
+      orgId: Id<"organizations">;
+      updatedAt: number;
+      _id: Id<"costAlertChannels">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "config"
+      | "config.headers"
+      | "config.recipients"
+      | "config.secret"
+      | "config.type"
+      | "config.url"
+      | "createdAt"
+      | "createdByUserId"
+      | "enabled"
+      | "name"
+      | "orgId"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  costAlertDeliveries: {
+    document: {
+      attemptedAt: number;
+      channelId: Id<"costAlertChannels">;
+      costAlertId?: Id<"costAlerts">;
+      deliveredAt?: number;
+      error?: string;
+      eventType: "triggered" | "recovered" | "test";
+      idempotencyKey: string;
+      orgId: Id<"organizations">;
+      payloadSummary: string;
+      status: "success" | "failed";
+      _id: Id<"costAlertDeliveries">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "attemptedAt"
+      | "channelId"
+      | "costAlertId"
+      | "deliveredAt"
+      | "error"
+      | "eventType"
+      | "idempotencyKey"
+      | "orgId"
+      | "payloadSummary"
+      | "status";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_alert_id: ["costAlertId", "_creationTime"];
+      by_channel_id: ["channelId", "_creationTime"];
+      by_idempotency_key: ["idempotencyKey", "_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+      by_org_id_attempted_at: ["orgId", "attemptedAt", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  costAlertMonitors: {
+    document: {
+      lastError?: string;
+      lastEvaluatedAt?: number;
+      nextEvaluationAt?: number;
+      orgId: Id<"organizations">;
+      schedulerId?: Id<"_scheduled_functions">;
+      _id: Id<"costAlertMonitors">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "lastError"
+      | "lastEvaluatedAt"
+      | "nextEvaluationAt"
+      | "orgId"
+      | "schedulerId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  costAlerts: {
+    document: {
+      apiKeyIds?: Array<Id<"apiKeys">>;
+      channelIds: Array<Id<"costAlertChannels">>;
+      condition:
+        | {
+            thresholdUsd: number;
+            type: "absolute_spend_threshold";
+            window: "last_hour" | "last_24_hours" | "month_to_date";
+          }
+        | { thresholdUsd: number; type: "projected_monthly_over" }
+        | {
+            baselineHours: number;
+            minCurrentHourUsd: number;
+            minIncreaseUsd: number;
+            multiplier: number;
+            type: "hourly_spend_spike";
+          };
+      cooldownMinutes: number;
+      createdAt: number;
+      createdByUserId: Id<"users">;
+      enabled: boolean;
+      name: string;
+      notifyOnRecovery: boolean;
+      orgId: Id<"organizations">;
+      severity: "info" | "warning" | "error";
+      updatedAt: number;
+      updatedByUserId: Id<"users">;
+      _id: Id<"costAlerts">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "apiKeyIds"
+      | "channelIds"
+      | "condition"
+      | "condition.baselineHours"
+      | "condition.minCurrentHourUsd"
+      | "condition.minIncreaseUsd"
+      | "condition.multiplier"
+      | "condition.thresholdUsd"
+      | "condition.type"
+      | "condition.window"
+      | "cooldownMinutes"
+      | "createdAt"
+      | "createdByUserId"
+      | "enabled"
+      | "name"
+      | "notifyOnRecovery"
+      | "orgId"
+      | "severity"
+      | "updatedAt"
+      | "updatedByUserId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  costAlertStates: {
+    document: {
+      active: boolean;
+      costAlertId: Id<"costAlerts">;
+      lastDeliveryError?: string;
+      lastEvaluatedAt: number;
+      lastMetricLabel?: string;
+      lastMetricValue?: number;
+      lastNotificationAt?: number;
+      lastRecoveredAt?: number;
+      lastSummary?: string;
+      lastTriggeredAt?: number;
+      orgId: Id<"organizations">;
+      _id: Id<"costAlertStates">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "active"
+      | "costAlertId"
+      | "lastDeliveryError"
+      | "lastEvaluatedAt"
+      | "lastMetricLabel"
+      | "lastMetricValue"
+      | "lastNotificationAt"
+      | "lastRecoveredAt"
+      | "lastSummary"
+      | "lastTriggeredAt"
+      | "orgId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_alert_id: ["costAlertId", "_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   feedback: {
     document: {
       message: string;

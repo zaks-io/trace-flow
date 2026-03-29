@@ -1,0 +1,78 @@
+DESCRIPTION >
+    Hourly spend spike detector for cost alerts. Compares a completed hour's spend
+    to a trailing hourly baseline from llm_usage_1h.
+    When use_previous_hour=1, compares the last fully completed hour (avoids
+    partial-hour false negatives). Otherwise compares the current partial hour.
+    The api_keys parameter is required and enforced by the caller.
+
+NODE baseline
+SQL >
+    %
+    WITH
+        greatest({{ Int32(baseline_hours, 24) }}, 4) AS baseline_hours,
+        toStartOfHour(now()) AS current_hour,
+        if({{ Int32(use_previous_hour, 0) }} = 1, current_hour - toIntervalHour(1), current_hour) AS target_hour
+    SELECT
+        target_hour,
+        baseline_hours,
+        count() AS baseline_bucket_count,
+        coalesce(avg(hour_cost_usd), 0) AS baseline_hourly_cost_usd
+    FROM (
+        SELECT
+            BucketStart,
+            sumMerge(TotalCostMicrodollars) / 1000000 AS hour_cost_usd
+        FROM llm_usage_1h
+        WHERE BucketStart >= target_hour - toIntervalHour(baseline_hours)
+            AND BucketStart < target_hour
+            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            {% if defined(provider) %}
+            AND Provider = {{ String(provider) }}
+            {% end %}
+            {% if defined(model) %}
+            AND Model = {{ String(model) }}
+            {% end %}
+            {% if defined(baggage_operation) %}
+            AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(api_key_filter) %}
+            AND ApiKey = {{ String(api_key_filter) }}
+            {% end %}
+        GROUP BY BucketStart
+    )
+
+NODE endpoint
+SQL >
+    %
+    WITH
+        (SELECT target_hour FROM baseline) AS target_hour,
+        (SELECT baseline_hours FROM baseline) AS baseline_hours,
+        (SELECT baseline_bucket_count FROM baseline) AS baseline_bucket_count,
+        (SELECT baseline_hourly_cost_usd FROM baseline) AS baseline_hourly_cost_usd,
+        (
+            SELECT coalesce(sumMerge(TotalCostMicrodollars) / 1000000, 0)
+            FROM llm_usage_1h
+            WHERE BucketStart = target_hour
+                AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+                {% if defined(provider) %}
+                AND Provider = {{ String(provider) }}
+                {% end %}
+                {% if defined(model) %}
+                AND Model = {{ String(model) }}
+                {% end %}
+                {% if defined(baggage_operation) %}
+                AND BaggageOperation = {{ String(baggage_operation) }}
+                {% end %}
+                {% if defined(api_key_filter) %}
+                AND ApiKey = {{ String(api_key_filter) }}
+                {% end %}
+        ) AS current_hour_cost_usd
+    SELECT
+        current_hour_cost_usd,
+        baseline_hourly_cost_usd,
+        if(baseline_hourly_cost_usd > 0, current_hour_cost_usd / baseline_hourly_cost_usd, 0) AS ratio_to_baseline,
+        greatest(current_hour_cost_usd - baseline_hourly_cost_usd, 0) AS absolute_increase_usd,
+        baseline_hours,
+        baseline_bucket_count,
+        if(baseline_bucket_count < greatest(baseline_hours / 2, 2), 1, 0) AS insufficient_data
+
+TYPE ENDPOINT

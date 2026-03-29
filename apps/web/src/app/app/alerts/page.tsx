@@ -1,11 +1,16 @@
 import { preloadQuery } from 'convex/nextjs';
 import { api } from '@convex/_generated/api';
 import { getConvexToken } from '@/lib/convex';
-import Alerts from '@/components/alerts/Alerts';
+import AlertsPageClient from './AlertsPageClient';
 
 export default async function AlertsPage() {
   const token = await getConvexToken();
-  const preloadedAlerts = await preloadQuery(api.alerts.list, {}, { token });
+  const [preloadedAlerts, preloadedCostAlerts] = await Promise.all([
+    preloadQuery(api.alerts.list, {}, { token }),
+    preloadQuery(api.costAlerts.listForCurrentOrg, {}, { token }),
+  ]);
 
-  return <Alerts preloadedAlerts={preloadedAlerts} />;
+  return (
+    <AlertsPageClient preloadedAlerts={preloadedAlerts} preloadedCostAlerts={preloadedCostAlerts} />
+  );
 }
