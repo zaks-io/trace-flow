@@ -1,7 +1,7 @@
 DESCRIPTION >
     Run-rate cost forecast with confidence intervals, trend detection,
-    and anomaly flagging. Uses last 30 days of daily data for variance
-    and llm_usage_1h for accurate MTD.
+    and anomaly flagging. Uses a rolling 30-day daily average for stable
+    projections at any point in the month, plus llm_usage_1h for accurate MTD.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE daily_costs
@@ -63,6 +63,7 @@ SQL >
         toUInt32(current_date - month_start) + 1 AS days_elapsed,
         toUInt32(month_end - month_start) + 1 AS days_in_month,
         toUInt32(month_end - current_date) AS days_remaining,
+        (SELECT mean_cost FROM daily_stats) AS rolling_daily_avg,
         (SELECT stddev_cost FROM daily_stats) AS daily_stddev,
         -- MTD from hourly table for freshest data
         (
@@ -84,8 +85,9 @@ SQL >
                 AND ApiKey = {{ String(api_key_filter) }}
                 {% end %}
         ) AS mtd_cost,
-        -- Run-rate projection: scale current pace to full month
-        mtd_cost / greatest(days_elapsed, 1) * days_in_month AS projected,
+        -- Rolling projection: MTD actuals + rolling 30d avg * remaining days
+        -- Stable at all times — not sensitive to where we are in the month
+        mtd_cost + coalesce(rolling_daily_avg, 0) * greatest(days_remaining, 0) AS projected,
         -- Confidence interval based on daily variance
         coalesce(daily_stddev, 0) * 1.645 * sqrt(greatest(days_remaining, 0)) AS ci_margin,
         -- Trend: last 7 days avg vs prior 7 days avg
@@ -104,7 +106,7 @@ SQL >
         mtd_cost AS month_to_date_cost,
         greatest(mtd_cost, projected - ci_margin) AS confidence_low,
         projected + ci_margin AS confidence_high,
-        mtd_cost / greatest(days_elapsed, 1) AS daily_average,
+        coalesce(rolling_daily_avg, mtd_cost / greatest(days_elapsed, 1)) AS daily_average,
         days_elapsed AS days_elapsed_in_month,
         days_remaining AS days_remaining_in_month,
         multiIf(

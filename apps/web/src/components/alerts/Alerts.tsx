@@ -245,7 +245,7 @@ export default function Alerts({
   }));
 
   return (
-    <div className="animate-fade-in">
+    <div>
       <PageToolbar>
         <p className="text-sm text-muted-foreground">
           Configure alerts to highlight traces matching specific conditions
