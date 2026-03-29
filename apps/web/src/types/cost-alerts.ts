@@ -7,8 +7,6 @@ export type CostAlertConditionType =
   | 'projected_monthly_over'
   | 'hourly_spend_spike';
 
-export type CostAlertChannelType = 'email' | 'webhook';
-
 export const COST_ALERT_CONDITION_LABELS: Record<CostAlertConditionType, string> = {
   absolute_spend_threshold: 'Hard Threshold',
   projected_monthly_over: 'Projected Monthly Over',

@@ -36,13 +36,13 @@ export interface AlertFormData {
   channelIds: string[];
 }
 
-export interface ApiKeyOption {
+interface ApiKeyOption {
   _id: Id<'apiKeys'>;
   name?: string;
   key: string;
 }
 
-export interface CostAlertChannelLike {
+interface CostAlertChannelLike {
   _id: Id<'costAlertChannels'>;
   name: string;
   config:
@@ -50,7 +50,7 @@ export interface CostAlertChannelLike {
     | { type: 'webhook'; url: string; secret?: string; headers?: { key: string; value: string }[] };
 }
 
-export interface CostAlertRuleLike {
+interface CostAlertRuleLike {
   _id: Id<'costAlerts'>;
   name: string;
   severity: CostAlertSeverity;
@@ -279,6 +279,6 @@ export function formatScope(rule: CostAlertRuleLike, apiKeys: ApiKeyOption[]): s
   return labels.length > 0 ? labels.join(', ') : 'Selected API keys';
 }
 
-export function formatCurrency(value: number): string {
+function formatCurrency(value: number): string {
   return `$${value.toFixed(2)}`;
 }
