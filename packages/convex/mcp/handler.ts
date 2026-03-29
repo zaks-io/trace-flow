@@ -330,7 +330,7 @@ async function handleToolsCall(
   const apiKeyStrings = resolved;
 
   // Resolve retention days from subscription tier
-  const user = await ctx.runQuery(internal.auth.users.getUserById, { userId });
+  const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
   const subscription = user?.orgId
     ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
     : null;
