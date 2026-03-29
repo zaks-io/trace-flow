@@ -15,10 +15,36 @@ describe('TOOL_DEFINITIONS', () => {
 
   it('contains all expected tools', () => {
     const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
+    expect(toolNames).toContain('list_api_keys');
     expect(toolNames).toContain('list_traces');
     expect(toolNames).toContain('get_trace');
     expect(toolNames).toContain('get_trace_spans');
     expect(toolNames).toContain('get_trace_events');
+  });
+});
+
+describe('list_api_keys tool definition', () => {
+  const listApiKeysTool = TOOL_DEFINITIONS.find((t) => t.name === 'list_api_keys')!;
+
+  it('has correct name', () => {
+    expect(listApiKeysTool.name).toBe('list_api_keys');
+  });
+
+  it('has a description', () => {
+    expect(listApiKeysTool.description).toBeDefined();
+    expect(listApiKeysTool.description!.length).toBeGreaterThan(0);
+  });
+
+  it('has inputSchema with type object', () => {
+    expect(listApiKeysTool.inputSchema.type).toBe('object');
+  });
+
+  it('has no required parameters', () => {
+    expect(listApiKeysTool.inputSchema.required).toBeUndefined();
+  });
+
+  it('has empty properties', () => {
+    expect(Object.keys(listApiKeysTool.inputSchema.properties as object)).toEqual([]);
   });
 });
 
@@ -76,6 +102,11 @@ describe('list_traces tool definition', () => {
       expect(props.cursor).toBeDefined();
       expect(props.cursor.type).toBe('string');
     });
+
+    it('has api_key_ids parameter as array', () => {
+      expect(props.api_key_ids).toBeDefined();
+      expect(props.api_key_ids.type).toBe('array');
+    });
   });
 });
 
@@ -107,8 +138,13 @@ describe('get_trace tool definition', () => {
       expect(props.trace_id.type).toBe('string');
     });
 
-    it('only has trace_id parameter', () => {
-      expect(Object.keys(props)).toEqual(['trace_id']);
+    it('only has trace_id and api_key_ids parameters', () => {
+      expect(Object.keys(props)).toEqual(['trace_id', 'api_key_ids']);
+    });
+
+    it('has api_key_ids parameter as array', () => {
+      expect(props.api_key_ids).toBeDefined();
+      expect(props.api_key_ids.type).toBe('array');
     });
   });
 });
@@ -197,6 +233,11 @@ describe('get_trace_spans tool definition', () => {
       expect(props.exclude_span_names).toBeDefined();
       expect(props.exclude_span_names.type).toBe('array');
     });
+
+    it('has api_key_ids parameter as array', () => {
+      expect(props.api_key_ids).toBeDefined();
+      expect(props.api_key_ids.type).toBe('array');
+    });
   });
 });
 
@@ -258,6 +299,11 @@ describe('get_trace_events tool definition', () => {
     it('has cursor parameter', () => {
       expect(props.cursor).toBeDefined();
       expect(props.cursor.type).toBe('string');
+    });
+
+    it('has api_key_ids parameter as array', () => {
+      expect(props.api_key_ids).toBeDefined();
+      expect(props.api_key_ids.type).toBe('array');
     });
   });
 });
