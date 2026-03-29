@@ -42,17 +42,35 @@ export const MAX_HOURS = 168;
 export const DEFAULT_SPAN_LIMIT = 20;
 export const MAX_SPAN_LIMIT = 100;
 
+export const DEFAULT_ANALYTICS_HOURS = 168;
+export const MAX_ANALYTICS_HOURS = 24 * 180;
+
 export function splitPatterns(patterns: string[]): { exact: string[]; prefixes: string[] } {
   const exact: string[] = [];
   const prefixes: string[] = [];
   for (const p of patterns) {
-    if (p.endsWith('.*')) {
+    if (p.endsWith('*') && p.length > 1) {
       prefixes.push(p.slice(0, -1));
     } else {
       exact.push(p);
     }
   }
   return { exact, prefixes };
+}
+
+export function buildTimeRangeNs(
+  hours: number | undefined,
+  defaultHours = DEFAULT_ANALYTICS_HOURS,
+  maxHours = MAX_ANALYTICS_HOURS,
+): { hours: number; startTimeNs: string; endTimeNs: string } {
+  const resolvedHours = Math.min(hours ?? defaultHours, maxHours);
+  const endTimeMs = BigInt(Date.now());
+  const startTimeMs = endTimeMs - BigInt(resolvedHours) * 3_600_000n;
+  return {
+    hours: resolvedHours,
+    startTimeNs: String(startTimeMs * 1_000_000n),
+    endTimeNs: String(endTimeMs * 1_000_000n),
+  };
 }
 
 interface TinybirdResponse {

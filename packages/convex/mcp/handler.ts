@@ -22,6 +22,12 @@ import {
 import { TOOL_DEFINITIONS } from './tools';
 import { requireTraceFlowRole } from '../auth/auth';
 import { api } from '../_generated/api';
+import { listTraces } from './tools/listTracesAction';
+import { getTrace } from './tools/getTraceAction';
+import { getTraceSpans } from './tools/getTraceSpansAction';
+import { getTraceEvents } from './tools/getTraceEventsAction';
+import { listTraceSummaries } from './tools/listTraceSummaries';
+import { getUsageSummary, listModelUsage, listOperationUsage } from './tools/analytics';
 
 export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
   return 'id' in message && message.id !== undefined;
@@ -332,19 +338,29 @@ async function handleToolsCall(
       limit?: number;
       hours?: number;
       cursor?: string;
+      sort_by?: string;
+      order?: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.listTracesAction.listTraces, {
-      apiKeys: apiKeyStrings,
-      params: listArgs,
-    });
+    result = await listTraces(apiKeyStrings, listArgs);
+  } else if (params.name === 'list_trace_summaries') {
+    const listArgs = (params.arguments ?? {}) as {
+      provider?: string;
+      model?: string;
+      status?: string;
+      operation?: string;
+      search?: string;
+      limit?: number;
+      hours?: number;
+      cursor?: string;
+      sort_by?: string;
+      order?: string;
+    };
+    result = await listTraceSummaries(apiKeyStrings, listArgs);
   } else if (params.name === 'get_trace') {
     const getArgs = (params.arguments ?? {}) as {
       trace_id: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.getTraceAction.getTrace, {
-      apiKeys: apiKeyStrings,
-      params: getArgs,
-    });
+    result = await getTrace(apiKeyStrings, getArgs);
   } else if (params.name === 'get_trace_spans') {
     const getSpansArgs = (params.arguments ?? {}) as {
       trace_id: string;
@@ -358,10 +374,7 @@ async function handleToolsCall(
       limit?: number;
       cursor?: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.getTraceSpansAction.getTraceSpans, {
-      apiKeys: apiKeyStrings,
-      params: getSpansArgs,
-    });
+    result = await getTraceSpans(apiKeyStrings, getSpansArgs);
   } else if (params.name === 'get_trace_events') {
     const getEventsArgs = (params.arguments ?? {}) as {
       trace_id: string;
@@ -372,10 +385,34 @@ async function handleToolsCall(
       limit?: number;
       cursor?: string;
     };
-    result = await ctx.runAction(internal.mcp.tools.getTraceEventsAction.getTraceEvents, {
-      apiKeys: apiKeyStrings,
-      params: getEventsArgs,
-    });
+    result = await getTraceEvents(apiKeyStrings, getEventsArgs);
+  } else if (params.name === 'get_usage_summary') {
+    const usageArgs = (params.arguments ?? {}) as {
+      hours?: number;
+      provider?: string;
+      model?: string;
+      operation?: string;
+      status?: string;
+    };
+    result = await getUsageSummary(apiKeyStrings, usageArgs);
+  } else if (params.name === 'list_operation_usage') {
+    const operationsArgs = (params.arguments ?? {}) as {
+      hours?: number;
+      provider?: string;
+      model?: string;
+      operation?: string;
+      status?: string;
+      limit?: number;
+    };
+    result = await listOperationUsage(apiKeyStrings, operationsArgs);
+  } else if (params.name === 'list_model_usage') {
+    const modelsArgs = (params.arguments ?? {}) as {
+      hours?: number;
+      provider?: string;
+      operation?: string;
+      status?: string;
+    };
+    result = await listModelUsage(apiKeyStrings, modelsArgs);
   } else {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }

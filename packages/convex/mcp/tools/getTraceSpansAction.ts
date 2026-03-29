@@ -1,5 +1,3 @@
-import { internalAction } from '../../_generated/server';
-import { v } from 'convex/values';
 import type { ToolCallResult } from '../protocol';
 import {
   jsonReplacer,
@@ -20,126 +18,112 @@ interface SpanRowWithCount extends SpanRow {
   total_count: number;
 }
 
-export const getTraceSpans = internalAction({
-  args: {
-    apiKeys: v.array(v.string()),
-    params: v.object({
-      trace_id: v.string(),
-      expand: v.optional(v.array(v.string())),
-      span_names: v.optional(v.array(v.string())),
-      exclude_span_names: v.optional(v.array(v.string())),
-      min_duration_ms: v.optional(v.number()),
-      sort_by: v.optional(v.string()),
-      order: v.optional(v.string()),
-      top_n: v.optional(v.number()),
-      limit: v.optional(v.number()),
-      cursor: v.optional(v.string()),
-    }),
-  },
-  returns: v.object({
-    content: v.array(
-      v.object({
-        type: v.union(v.literal('text'), v.literal('image'), v.literal('resource')),
-        text: v.optional(v.string()),
-        data: v.optional(v.string()),
-        mimeType: v.optional(v.string()),
-      }),
-    ),
-    isError: v.optional(v.boolean()),
-  }),
-  handler: async (_, args): Promise<ToolCallResult> => {
-    const { apiKeys, params } = args;
+interface GetTraceSpansParams {
+  trace_id: string;
+  expand?: string[];
+  span_names?: string[];
+  exclude_span_names?: string[];
+  min_duration_ms?: number;
+  sort_by?: string;
+  order?: string;
+  top_n?: number;
+  limit?: number;
+  cursor?: string;
+}
 
-    if (apiKeys.length === 0) {
-      return noApiKeysError();
-    }
+export async function getTraceSpans(
+  apiKeys: string[],
+  params: GetTraceSpansParams,
+): Promise<ToolCallResult> {
+  if (apiKeys.length === 0) {
+    return noApiKeysError();
+  }
 
-    if (!TRACE_ID_PATTERN.test(params.trace_id)) {
-      return invalidTraceIdError();
-    }
+  if (!TRACE_ID_PATTERN.test(params.trace_id)) {
+    return invalidTraceIdError();
+  }
 
-    const token = await generateTinybirdToken(
-      [{ type: 'PIPES:READ', resource: 'mcp_trace_detail' }],
-      apiKeys,
-    );
+  const token = await generateTinybirdToken(
+    [{ type: 'PIPES:READ', resource: 'mcp_trace_detail' }],
+    apiKeys,
+  );
 
-    const baseParams: Record<string, string | number | undefined> = {
-      trace_id: params.trace_id,
-    };
+  const baseParams: Record<string, string | number | undefined> = {
+    trace_id: params.trace_id,
+  };
 
-    if (params.span_names && params.span_names.length > 0) {
-      const { exact, prefixes } = splitPatterns(params.span_names);
-      if (exact.length > 0) baseParams.span_names = exact.join(',');
-      if (prefixes.length > 0) baseParams.span_name_prefixes = prefixes.join(',');
-    }
+  if (params.span_names && params.span_names.length > 0) {
+    const { exact, prefixes } = splitPatterns(params.span_names);
+    if (exact.length > 0) baseParams.span_names = exact.join(',');
+    if (prefixes.length > 0) baseParams.span_name_prefixes = prefixes.join(',');
+  }
 
-    if (params.exclude_span_names && params.exclude_span_names.length > 0) {
-      const { exact } = splitPatterns(params.exclude_span_names);
-      if (exact.length > 0) baseParams.exclude_span_names = exact.join(',');
-    }
+  if (params.exclude_span_names && params.exclude_span_names.length > 0) {
+    const { exact } = splitPatterns(params.exclude_span_names);
+    if (exact.length > 0) baseParams.exclude_span_names = exact.join(',');
+  }
 
-    if (params.min_duration_ms !== undefined && params.min_duration_ms > 0) {
-      baseParams.min_duration_ms = params.min_duration_ms;
-    }
+  if (params.min_duration_ms !== undefined && params.min_duration_ms > 0) {
+    baseParams.min_duration_ms = params.min_duration_ms;
+  }
 
-    const limit = Math.min(params.limit ?? DEFAULT_SPAN_LIMIT, MAX_SPAN_LIMIT);
-    const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
-    const cappedTopN =
-      params.top_n && params.top_n > 0 ? Math.min(params.top_n, MAX_SPAN_LIMIT) : undefined;
+  const limit = Math.min(params.limit ?? DEFAULT_SPAN_LIMIT, MAX_SPAN_LIMIT);
+  const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
+  const cappedTopN =
+    params.top_n && params.top_n > 0 ? Math.min(params.top_n, MAX_SPAN_LIMIT) : undefined;
 
-    const detailParams: Record<string, string | number | undefined> = {
-      ...baseParams,
-      limit: cappedTopN ?? limit,
-      offset: cappedTopN ? 0 : offset,
-    };
+  const detailParams: Record<string, string | number | undefined> = {
+    ...baseParams,
+    limit: cappedTopN ?? limit,
+    offset: cappedTopN ? 0 : offset,
+  };
 
-    if (params.sort_by) {
-      detailParams.sort_by = params.sort_by;
-    } else if (cappedTopN) {
-      detailParams.sort_by = 'duration_ms';
-    }
+  if (params.sort_by) {
+    detailParams.sort_by = params.sort_by;
+  } else if (cappedTopN) {
+    detailParams.sort_by = 'duration_ms';
+  }
 
-    if (params.order) {
-      detailParams.order = params.order;
-    } else if (params.sort_by || cappedTopN) {
-      detailParams.order = 'desc';
-    }
+  if (params.order) {
+    detailParams.order = params.order;
+  } else if (params.sort_by || cappedTopN) {
+    detailParams.order = 'desc';
+  }
 
-    const data = await queryTinybirdPipe(token, 'mcp_trace_detail', detailParams);
+  const data = await queryTinybirdPipe(token, 'mcp_trace_detail', detailParams);
 
-    if (data.length === 0) {
-      return traceNotFoundError(params.trace_id);
-    }
+  if (data.length === 0) {
+    return traceNotFoundError(params.trace_id);
+  }
 
-    const expand = new Set(params.expand ?? []);
+  const expand = new Set(params.expand ?? []);
 
-    const totalCount = (data[0] as unknown as SpanRowWithCount).total_count;
-    const parsedSpans = data.map((row) => parseSpanRow(row as unknown as SpanRow));
+  const totalCount = (data[0] as unknown as SpanRowWithCount).total_count;
+  const parsedSpans = data.map((row) => parseSpanRow(row as unknown as SpanRow));
 
-    let paginatedSpans = parsedSpans;
-    let hasMore: boolean;
+  let paginatedSpans = parsedSpans;
+  let hasMore: boolean;
 
-    if (cappedTopN) {
-      paginatedSpans = parsedSpans.slice(offset, offset + limit);
-      hasMore = offset + limit < parsedSpans.length;
-    } else {
-      hasMore = totalCount > offset + data.length;
-    }
+  if (cappedTopN) {
+    paginatedSpans = parsedSpans.slice(offset, offset + limit);
+    hasMore = offset + limit < parsedSpans.length;
+  } else {
+    hasMore = totalCount > offset + data.length;
+  }
 
-    const outputSpans = paginatedSpans.map((s) => buildOutputSpan(s, expand));
+  const outputSpans = paginatedSpans.map((s) => buildOutputSpan(s, expand));
 
-    const result = {
-      trace_id: params.trace_id,
-      spans: outputSpans,
-      pagination: {
-        has_more: hasMore,
-        next_cursor: hasMore ? String(offset + paginatedSpans.length) : undefined,
-        total: cappedTopN ? parsedSpans.length : undefined,
-      },
-    };
+  const result = {
+    trace_id: params.trace_id,
+    spans: outputSpans,
+    pagination: {
+      has_more: hasMore,
+      next_cursor: hasMore ? String(offset + paginatedSpans.length) : undefined,
+      total: cappedTopN ? parsedSpans.length : undefined,
+    },
+  };
 
-    return {
-      content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
-    };
-  },
-});
+  return {
+    content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
+  };
+}

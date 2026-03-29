@@ -326,8 +326,11 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       addNonStreamingOutputEvent(rootSpan, data);
     }
   } else if (data.response.status < 400) {
+    const nonStreamingOutputType = getNonStreamingOutputType(operationName);
+
     // Create response span for non-streaming responses
-    // Uses same ai.response.text name as streaming for consistency
+    // Use an output type that matches the underlying operation so embeddings
+    // don't get misclassified as text responses.
     const responseSpan: TinybirdTrace = {
       ReceivedAt: data.receivedAt,
       Timestamp: data.timing.requestSent * 1_000_000,
@@ -335,7 +338,7 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       SpanId: generateSpanId(),
       ParentSpanId: rootSpan.SpanId,
       TraceState: '',
-      SpanName: 'gen_ai.response.text',
+      SpanName: `gen_ai.response.${nonStreamingOutputType}`,
       SpanKind: 'SPAN_KIND_INTERNAL',
       ServiceName: serviceName,
       ResourceAttributes: {
@@ -344,7 +347,7 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
       SpanAttributes: {
         'gen_ai.request_id': data.requestId,
         'gen_ai.response.streaming': 'false',
-        'gen_ai.content.type': 'text',
+        'gen_ai.content.type': nonStreamingOutputType,
         'gen_ai.message.index': String(data.inputMessages?.length ?? 0),
       },
       Duration: (data.timing.responseComplete - data.timing.requestSent) * 1_000_000,
@@ -482,14 +485,19 @@ function addOutputEvents(
  * Adds output event to the root span for non-streaming responses.
  */
 function addNonStreamingOutputEvent(rootSpan: TinybirdTrace, data: QueueMessage): void {
+  const outputType = getNonStreamingOutputType(data.operationName ?? 'chat');
   const attributes: Record<string, string> = {
-    'gen_ai.content.type': 'text',
+    'gen_ai.content.type': outputType,
     'gen_ai.response.streaming': 'false',
   };
 
   rootSpan['Events.Timestamp'].push(data.timing.responseComplete * 1_000_000);
-  rootSpan['Events.Name'].push('output.text');
+  rootSpan['Events.Name'].push(`output.${outputType}`);
   rootSpan['Events.Attributes'].push(JSON.stringify(attributes));
+}
+
+function getNonStreamingOutputType(operationName: string): string {
+  return operationName === 'embeddings' ? 'embedding' : 'text';
 }
 
 /**
