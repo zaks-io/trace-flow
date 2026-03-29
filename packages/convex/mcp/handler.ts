@@ -297,8 +297,23 @@ async function handleToolsCall(
     return createSuccessResponse(id, result);
   }
 
-  const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
-  const requestedIds = params.arguments?.api_key_ids as string[] | undefined;
+  const now = Date.now();
+  const allApiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
+  const apiKeys = allApiKeys.filter((k: { expiresAt: number }) => k.expiresAt > now);
+
+  const rawIds = params.arguments?.api_key_ids;
+  if (
+    rawIds !== undefined &&
+    (!Array.isArray(rawIds) || !rawIds.every((v) => typeof v === 'string'))
+  ) {
+    return createErrorResponse(
+      id,
+      JsonRpcErrorCode.InvalidParams,
+      'api_key_ids must be an array of strings',
+    );
+  }
+  const requestedIds = rawIds;
+
   const resolved = resolveApiKeys(apiKeys, requestedIds);
 
   if (typeof resolved === 'object' && 'error' in resolved) {
