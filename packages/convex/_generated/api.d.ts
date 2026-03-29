@@ -1597,6 +1597,12 @@ export declare const internal: {
     };
   };
   costAlerts: {
+    cleanupDeliveries: FunctionReference<
+      "mutation",
+      "internal",
+      { costAlertId: Id<"costAlerts"> },
+      null
+    >;
     getRuntimeContext: FunctionReference<
       "query",
       "internal",

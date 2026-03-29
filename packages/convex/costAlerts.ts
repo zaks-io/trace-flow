@@ -90,6 +90,11 @@ export function normalizeChannelConfig(
       throw new ConvexError('Email channels require at least one recipient');
     }
 
+    const invalidEmail = recipients.find((r) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r));
+    if (invalidEmail) {
+      throw new ConvexError(`Invalid email address: ${invalidEmail}`);
+    }
+
     return { type: 'email' as const, recipients };
   }
 
@@ -106,11 +111,18 @@ export function normalizeChannelConfig(
       }))
       .filter((header) => header.key.length > 0 && header.value.length > 0) ?? [];
 
+  const secretTrimmed = config.secret?.trim();
+  const isPlaceholder = secretTrimmed === WEBHOOK_SECRET_PLACEHOLDER;
+
   return {
     type: 'webhook' as const,
     url,
-    secret:
-      config.secret?.trim() && config.secret.trim().length > 0 ? config.secret.trim() : undefined,
+    // Placeholder means "keep existing" — resolved in updateChannel
+    secret: isPlaceholder
+      ? WEBHOOK_SECRET_PLACEHOLDER
+      : secretTrimmed && secretTrimmed.length > 0
+        ? secretTrimmed
+        : undefined,
     headers: headers.length > 0 ? headers : undefined,
   };
 }
@@ -171,6 +183,16 @@ async function assertChannelsBelongToOrg(
   }
 }
 
+const WEBHOOK_SECRET_PLACEHOLDER = '••••••••';
+
+function redactChannelConfig(channel: Doc<'costAlertChannels'>): Doc<'costAlertChannels'> {
+  if (channel.config.type !== 'webhook' || !channel.config.secret) return channel;
+  return {
+    ...channel,
+    config: { ...channel.config, secret: WEBHOOK_SECRET_PLACEHOLDER },
+  };
+}
+
 async function getSettingsForOrg(ctx: QueryCtx, orgId: Id<'organizations'>, isOwner: boolean) {
   const [rules, channels, states, apiKeys] = await Promise.all([
     ctx.db
@@ -193,7 +215,7 @@ async function getSettingsForOrg(ctx: QueryCtx, orgId: Id<'organizations'>, isOw
 
   return {
     rules: rules.sort((a, b) => b.updatedAt - a.updatedAt),
-    channels: channels.sort((a, b) => b.updatedAt - a.updatedAt),
+    channels: channels.sort((a, b) => b.updatedAt - a.updatedAt).map(redactChannelConfig),
     states,
     apiKeys,
     isOwner,
@@ -343,9 +365,20 @@ export const updateChannel = mutation({
       throw new ConvexError('Channel not found');
     }
 
+    let nextConfig = args.config ? normalizeChannelConfig(args.config) : channel.config;
+
+    // Resolve placeholder secret — keep existing value from DB
+    if (
+      nextConfig.type === 'webhook' &&
+      nextConfig.secret === WEBHOOK_SECRET_PLACEHOLDER &&
+      channel.config.type === 'webhook'
+    ) {
+      nextConfig = { ...nextConfig, secret: channel.config.secret };
+    }
+
     await ctx.db.patch(args.id, {
       name: args.name?.trim() ?? channel.name,
-      config: args.config ? normalizeChannelConfig(args.config) : channel.config,
+      config: nextConfig,
       updatedAt: Date.now(),
     });
 
@@ -559,24 +592,44 @@ export const removeAlert = mutation({
       throw new ConvexError('Alert not found');
     }
 
-    const [state, deliveries] = await Promise.all([
-      ctx.db
-        .query('costAlertStates')
-        .withIndex('by_alert_id', (q) => q.eq('costAlertId', args.id))
-        .first(),
-      ctx.db
-        .query('costAlertDeliveries')
-        .withIndex('by_alert_id', (q) => q.eq('costAlertId', args.id))
-        .collect(),
-    ]);
+    const state = await ctx.db
+      .query('costAlertStates')
+      .withIndex('by_alert_id', (q) => q.eq('costAlertId', args.id))
+      .first();
 
-    await Promise.all([
-      state ? ctx.db.delete(state._id) : undefined,
-      ...deliveries.map((d) => ctx.db.delete(d._id)),
-    ]);
-
+    if (state) await ctx.db.delete(state._id);
     await ctx.db.delete(args.id);
+
+    await ctx.scheduler.runAfter(0, internal.costAlerts.cleanupDeliveries, {
+      costAlertId: args.id,
+    });
+
     await updateMonitorSchedule(ctx, org._id, CONFIG_CHANGE_RECHECK_MS);
+    return null;
+  },
+});
+
+const DELIVERY_CLEANUP_BATCH_SIZE = 200;
+
+export const cleanupDeliveries = internalMutation({
+  args: { costAlertId: v.id('costAlerts') },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const batch = await ctx.db
+      .query('costAlertDeliveries')
+      .withIndex('by_alert_id', (q) => q.eq('costAlertId', args.costAlertId))
+      .take(DELIVERY_CLEANUP_BATCH_SIZE);
+
+    if (batch.length === 0) return null;
+
+    await Promise.all(batch.map((d) => ctx.db.delete(d._id)));
+
+    if (batch.length === DELIVERY_CLEANUP_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.costAlerts.cleanupDeliveries, {
+        costAlertId: args.costAlertId,
+      });
+    }
+
     return null;
   },
 });
@@ -619,15 +672,16 @@ export const recoverStaleMonitors = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
-    const monitors = await ctx.db.query('costAlertMonitors').collect();
     const now = Date.now();
+    const staleThreshold = now - 15 * 60 * 1000;
 
-    for (const monitor of monitors) {
-      // Skip monitors that are on schedule or intentionally stopped
-      if (!monitor.nextEvaluationAt) continue;
-      // Consider stale if overdue by more than 15 minutes
-      if (monitor.nextEvaluationAt > now - 15 * 60 * 1000) continue;
+    // Only fetch monitors that are overdue (nextEvaluationAt < staleThreshold)
+    const staleMonitors = await ctx.db
+      .query('costAlertMonitors')
+      .withIndex('by_next_evaluation', (q) => q.lt('nextEvaluationAt', staleThreshold))
+      .take(50);
 
+    for (const monitor of staleMonitors) {
       await updateMonitorSchedule(ctx, monitor.orgId, 0, {
         lastError: `Monitor recovered by cron at ${new Date(now).toISOString()}`,
       });

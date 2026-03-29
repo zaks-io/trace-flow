@@ -209,7 +209,9 @@ export default defineSchema({
     nextEvaluationAt: v.optional(v.number()),
     lastEvaluatedAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
-  }).index('by_org_id', ['orgId']),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_next_evaluation', ['nextEvaluationAt']),
 
   mcpSessions: defineTable({
     sessionId: v.string(),

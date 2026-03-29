@@ -29,6 +29,7 @@ interface ForecastRow {
   confidence_low: number;
   confidence_high: number;
   daily_average: number;
+  insufficient_data: number;
 }
 
 interface HourlySpikeRow {
@@ -159,6 +160,17 @@ async function evaluateAlert(
     const forecast = response.data[0];
     const projected = Number(forecast?.projected_monthly_cost ?? 0);
     const monthToDate = Number(forecast?.month_to_date_cost ?? 0);
+    const insufficientData = Number(forecast?.insufficient_data ?? 1) === 1;
+
+    if (insufficientData) {
+      return {
+        triggered: false,
+        metricValue: projected,
+        metricLabel: 'Projected monthly cost',
+        summary: `Insufficient data — no spend recorded this month yet. Projection will activate once current-month usage appears.`,
+      };
+    }
+
     return {
       triggered: projected >= condition.thresholdUsd,
       metricValue: projected,
@@ -329,7 +341,7 @@ async function sendWebhookNotification(
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const message = (await response.text()).slice(0, 500);
     throw new Error(`Webhook delivery failed: ${response.status} ${message}`);
   }
 }
