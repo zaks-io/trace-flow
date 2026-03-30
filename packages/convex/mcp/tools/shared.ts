@@ -37,7 +37,6 @@ export const TRACE_ID_PATTERN = /^[a-f0-9]{32}$/i;
 export const DEFAULT_LIMIT = 10;
 export const MAX_LIMIT = 25;
 export const DEFAULT_HOURS = 24;
-export const MAX_HOURS = 168;
 
 export const DEFAULT_SPAN_LIMIT = 20;
 export const MAX_SPAN_LIMIT = 100;
