@@ -2097,6 +2097,12 @@ export declare const internal: {
     };
   };
   migrations: {
+    advanceBillingPeriod: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      any
+    >;
     backfillAll: FunctionReference<"mutation", "internal", {}, any>;
     backfillHashedTokenIds: FunctionReference<"mutation", "internal", {}, any>;
     backfillOrgBilling: {

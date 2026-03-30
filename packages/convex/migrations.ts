@@ -1,4 +1,5 @@
 import { internalMutation } from './_generated/server';
+import { v } from 'convex/values';
 import { sha256Hex } from '@trace-flow/utils';
 import { scheduleKVSync } from './billing/subscriptions';
 
@@ -27,6 +28,47 @@ export const backfillHashedTokenIds = internalMutation({
       patched++;
     }
     return { total: tokens.length, patched };
+  },
+});
+
+// One-shot migration: advance expired billing period for an org.
+// Run: npx convex run migrations:advanceBillingPeriod '{"orgId": "k57axc8sefsfp6k28nx6c481js806pwv"}'
+// Delete after running.
+export const advanceBillingPeriod = internalMutation({
+  args: { orgId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    const sub = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .first();
+    if (!sub) throw new Error('Subscription not found');
+
+    const now = Date.now();
+    if (now < sub.currentPeriodEnd) {
+      throw new Error('Current period has not ended yet');
+    }
+
+    const duration = Math.max(1, sub.currentPeriodEnd - sub.currentPeriodStart);
+    let periodStart = sub.currentPeriodStart;
+    let periodEnd = sub.currentPeriodEnd;
+    while (now >= periodEnd) {
+      periodStart = periodEnd;
+      periodEnd = periodEnd + duration;
+    }
+
+    await ctx.db.patch(sub._id, {
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+      currentPeriodOverageSpentCents: 0,
+    });
+
+    await scheduleKVSync(ctx, sub._id);
+
+    return {
+      oldPeriodEnd: new Date(sub.currentPeriodEnd).toISOString(),
+      newPeriodStart: new Date(periodStart).toISOString(),
+      newPeriodEnd: new Date(periodEnd).toISOString(),
+    };
   },
 });
 

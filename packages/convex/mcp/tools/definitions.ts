@@ -5,7 +5,6 @@ import {
   DEFAULT_LIMIT,
   DEFAULT_SPAN_LIMIT,
   MAX_ANALYTICS_HOURS,
-  MAX_HOURS,
   MAX_LIMIT,
 } from './shared';
 
@@ -51,7 +50,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         hours: {
           type: 'number',
-          description: `Look back period in hours (default ${DEFAULT_HOURS}, max ${MAX_HOURS})`,
+          description: `Look back period in hours (default ${DEFAULT_HOURS}, capped by your plan's retention period)`,
         },
         cursor: {
           type: 'string',

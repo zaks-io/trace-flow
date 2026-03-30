@@ -9,7 +9,6 @@ import {
   DEFAULT_LIMIT,
   MAX_LIMIT,
   DEFAULT_HOURS,
-  MAX_HOURS,
 } from './shared';
 
 export interface TraceRow {
@@ -83,7 +82,7 @@ export async function listTraces(
 
   const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
   const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
-  const { startTimeNs } = buildTimeRangeNs(params.hours, DEFAULT_HOURS, MAX_HOURS);
+  const { startTimeNs } = buildTimeRangeNs(params.hours, DEFAULT_HOURS, retentionDays * 24);
 
   const pipeParams: Record<string, string | number | undefined> = {
     start_time_ns: startTimeNs,
