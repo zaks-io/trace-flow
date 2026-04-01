@@ -8,6 +8,8 @@ import { insertIntoTinybirdWithRetry } from './tinybird';
 const BATCH_SIZE = 10_000;
 const FLUSH_INTERVAL_MS = 5000;
 const MAX_JITTER_MS = 1000;
+// Cloudflare DO SQLite limits bind params; stay well under the limit
+const MAX_SQL_PARAMS = 90;
 const PROCESSED_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -253,10 +255,13 @@ class TraceBatcherBase extends DurableObject<Env> {
           const host = this.env.TINYBIRD_HOST ?? 'https://api.us-west-2.aws.tinybird.co';
           await insertIntoTinybirdWithRetry(traces, this.env.TINYBIRD_TOKEN, datasource, host);
 
-          this.durableState.storage.sql.exec(
-            `DELETE FROM traces WHERE id IN (${ids.map(() => '?').join(',')})`,
-            ...ids,
-          );
+          for (let j = 0; j < ids.length; j += MAX_SQL_PARAMS) {
+            const chunk = ids.slice(j, j + MAX_SQL_PARAMS);
+            this.durableState.storage.sql.exec(
+              `DELETE FROM traces WHERE id IN (${chunk.map(() => '?').join(',')})`,
+              ...chunk,
+            );
+          }
 
           this.traceCount -= traces.length;
           lastSuccessfulFlushTime = Date.now();
@@ -338,13 +343,16 @@ class TraceBatcherBase extends DurableObject<Env> {
 
       if (item.traces.length > 0) {
         const timestamp = now;
-        const values = item.traces.map(() => '(?, ?)').join(', ');
-        const params = item.traces.flatMap((trace) => [JSON.stringify(trace), timestamp]);
-
-        this.durableState.storage.sql.exec(
-          `INSERT INTO traces (data, timestamp) VALUES ${values}`,
-          ...params,
-        );
+        const chunkSize = Math.floor(MAX_SQL_PARAMS / 2); // 2 params per row
+        for (let j = 0; j < item.traces.length; j += chunkSize) {
+          const chunk = item.traces.slice(j, j + chunkSize);
+          const values = chunk.map(() => '(?, ?)').join(', ');
+          const params = chunk.flatMap((trace) => [JSON.stringify(trace), timestamp]);
+          this.durableState.storage.sql.exec(
+            `INSERT INTO traces (data, timestamp) VALUES ${values}`,
+            ...params,
+          );
+        }
         tracesInserted = item.traces.length;
       }
     });
