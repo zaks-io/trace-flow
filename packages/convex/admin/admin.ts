@@ -11,6 +11,10 @@ import { requireTraceFlowRole } from '../auth/auth';
 import { internal } from '../_generated/api';
 import { organizationValidator } from '../validators';
 import { getStripeClient } from '../billing/stripe';
+import { scheduleKVSync } from '../billing/subscriptions';
+import { ensureOrgHasSubscription } from '../auth/organizations';
+import { TIER_CONFIG } from '@trace-flow/types';
+import type { SubscriptionTier } from '@trace-flow/types';
 import type { Id } from '../_generated/dataModel';
 
 async function requireAdminAction(ctx: ActionCtx) {
@@ -70,6 +74,198 @@ export const listOrgs = query({
     return orgs.filter((o) => !o.deletedAt);
   },
 });
+
+// --- Subscription Health ---
+
+const orgHealthIssue = v.union(
+  v.literal('no_subscription'),
+  v.literal('period_expired'),
+  v.literal('suspended'),
+  v.literal('canceled'),
+);
+
+const orgHealthRowValidator = v.object({
+  _id: v.id('organizations'),
+  name: v.string(),
+  ownerEmail: v.optional(v.string()),
+  subscription: v.union(
+    v.null(),
+    v.object({
+      _id: v.id('subscriptions'),
+      tier: v.union(v.literal('hobby'), v.literal('pro')),
+      status: v.union(
+        v.literal('active'),
+        v.literal('grace'),
+        v.literal('suspended'),
+        v.literal('canceled'),
+      ),
+      monthlyUnits: v.number(),
+      addonUnits: v.number(),
+      currentPeriodStart: v.number(),
+      currentPeriodEnd: v.number(),
+      stripeSubscriptionId: v.optional(v.string()),
+    }),
+  ),
+  issues: v.array(orgHealthIssue),
+});
+
+export const listOrgSubscriptionHealth = query({
+  args: {},
+  returns: v.array(orgHealthRowValidator),
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    const orgs = await ctx.db.query('organizations').collect();
+    const activeOrgs = orgs.filter((o) => !o.deletedAt);
+
+    const rows = await Promise.all(
+      activeOrgs.map(async (org) => {
+        const sub = await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', org._id))
+          .first();
+
+        const owner = await ctx.db.get(org.ownerId);
+
+        const issues: ('no_subscription' | 'period_expired' | 'suspended' | 'canceled')[] = [];
+        if (!sub) {
+          issues.push('no_subscription');
+        } else {
+          if (sub.status === 'suspended') issues.push('suspended');
+          if (sub.status === 'canceled') issues.push('canceled');
+          if (sub.currentPeriodEnd < Date.now()) issues.push('period_expired');
+        }
+
+        return {
+          _id: org._id,
+          name: org.name,
+          ownerEmail: owner?.email,
+          subscription: sub
+            ? {
+                _id: sub._id,
+                tier: sub.tier,
+                status: sub.status,
+                monthlyUnits: sub.monthlyUnits,
+                addonUnits: sub.addonUnits,
+                currentPeriodStart: sub.currentPeriodStart,
+                currentPeriodEnd: sub.currentPeriodEnd,
+                stripeSubscriptionId: sub.stripeSubscriptionId,
+              }
+            : null,
+          issues,
+        };
+      }),
+    );
+
+    // Sort: orgs with issues first
+    rows.sort((a, b) => b.issues.length - a.issues.length);
+    return rows;
+  },
+});
+
+export const forceActivateSubscription = internalMutation({
+  args: {
+    orgId: v.id('organizations'),
+    tier: v.optional(v.union(v.literal('hobby'), v.literal('pro'))),
+    monthlyUnits: v.optional(v.number()),
+    periodDays: v.optional(v.number()),
+  },
+  returns: v.id('subscriptions'),
+  handler: async (ctx, args) => {
+    let sub = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .first();
+
+    if (!sub) {
+      await ensureOrgHasSubscription(ctx, args.orgId);
+      sub = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+        .first();
+      if (!sub) throw new Error('Failed to create subscription');
+    }
+
+    // Cancel pending schedulers
+    for (const id of [sub.gracePeriodSchedulerId, sub.deletionSchedulerId]) {
+      if (id) {
+        try {
+          await ctx.scheduler.cancel(id);
+        } catch {
+          // Already completed or canceled
+        }
+      }
+    }
+
+    const tier = args.tier ?? sub.tier ?? 'hobby';
+    const monthlyUnits = args.monthlyUnits ?? TIER_CONFIG[tier as SubscriptionTier].monthlyUnits;
+    const periodDays = args.periodDays ?? 30;
+    const now = Date.now();
+
+    await ctx.db.patch(sub._id, {
+      status: 'active',
+      tier,
+      monthlyUnits,
+      currentPeriodStart: now,
+      currentPeriodEnd: now + periodDays * 24 * 60 * 60 * 1000,
+      currentPeriodOverageSpentCents: 0,
+      gracePeriodSchedulerId: undefined,
+      deletionSchedulerId: undefined,
+    });
+
+    await scheduleKVSync(ctx, sub._id);
+    return sub._id;
+  },
+});
+
+export const forceActivateAndVerify = action({
+  args: {
+    orgId: v.id('organizations'),
+    tier: v.optional(v.union(v.literal('hobby'), v.literal('pro'))),
+    monthlyUnits: v.optional(v.number()),
+    periodDays: v.optional(v.number()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    kvVerified: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    await requireAdminAction(ctx);
+
+    await ctx.runMutation(internal.admin.admin.forceActivateSubscription, {
+      orgId: args.orgId,
+      tier: args.tier,
+      monthlyUnits: args.monthlyUnits,
+      periodDays: args.periodDays,
+    });
+
+    // Sync directly rather than relying on the scheduled sync
+    const sub = await ctx.runQuery(internal.billing.subscriptions.getByOrgId, {
+      orgId: args.orgId,
+    });
+    if (!sub) throw new Error('Subscription not found after activation');
+
+    await ctx.runAction(internal.integrations.cloudflare.syncSubscriptionToKV, {
+      orgId: sub.orgId,
+      tier: sub.tier,
+      monthlyUnits: sub.monthlyUnits,
+      addonUnits: sub.addonUnits,
+      status: sub.status,
+      currentPeriodStart: sub.currentPeriodStart,
+      currentPeriodEnd: sub.currentPeriodEnd,
+      autoOverage: sub.autoOverage,
+      overageCapCents: sub.overageCapCents,
+      cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+    });
+
+    const kvVerified = await ctx.runAction(internal.integrations.cloudflare.checkKeyInKV, {
+      key: `sub:${args.orgId}`,
+    });
+
+    return { success: true, kvVerified };
+  },
+});
+
+// --- Org Deletion ---
 
 const deleteResultValidator = v.object({
   tinybirdResults: v.union(
