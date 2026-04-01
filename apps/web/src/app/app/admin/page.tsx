@@ -171,7 +171,7 @@ function formatRelativeTime(ms: number): string {
   const diff = ms - Date.now();
   const absDiff = Math.abs(diff);
   const days = Math.floor(absDiff / (24 * 60 * 60 * 1000));
-  if (days === 0) return diff > 0 ? 'today' : 'today';
+  if (days === 0) return 'today';
   const label = days === 1 ? '1 day' : `${days} days`;
   return diff > 0 ? `in ${label}` : `${label} ago`;
 }
@@ -303,7 +303,7 @@ function SubscriptionHealthSection() {
                           key={issue}
                           className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-400"
                         >
-                          {issue.replace('_', ' ')}
+                          {issue.replaceAll('_', ' ')}
                         </span>
                       ))}
                     </div>

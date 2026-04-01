@@ -117,44 +117,47 @@ export const listOrgSubscriptionHealth = query({
     const orgs = await ctx.db.query('organizations').collect();
     const activeOrgs = orgs.filter((o) => !o.deletedAt);
 
-    const rows = await Promise.all(
-      activeOrgs.map(async (org) => {
-        const sub = await ctx.db
-          .query('subscriptions')
-          .withIndex('by_org_id', (q) => q.eq('orgId', org._id))
-          .first();
+    // Batch-load subscriptions and owners upfront to avoid N+1 queries
+    const [allSubs, allOwners] = await Promise.all([
+      ctx.db.query('subscriptions').collect(),
+      Promise.all(activeOrgs.map((org) => ctx.db.get(org.ownerId))),
+    ]);
+    const subsByOrg = new Map(allSubs.map((s) => [s.orgId, s]));
+    const ownersByOrg = new Map(activeOrgs.map((org, i) => [org._id, allOwners[i]] as const));
 
-        const owner = await ctx.db.get(org.ownerId);
+    const now = Date.now();
+    const rows = activeOrgs.map((org) => {
+      const sub = subsByOrg.get(org._id);
+      const owner = ownersByOrg.get(org._id);
 
-        const issues: ('no_subscription' | 'period_expired' | 'suspended' | 'canceled')[] = [];
-        if (!sub) {
-          issues.push('no_subscription');
-        } else {
-          if (sub.status === 'suspended') issues.push('suspended');
-          if (sub.status === 'canceled') issues.push('canceled');
-          if (sub.currentPeriodEnd < Date.now()) issues.push('period_expired');
-        }
+      const issues: ('no_subscription' | 'period_expired' | 'suspended' | 'canceled')[] = [];
+      if (!sub) {
+        issues.push('no_subscription');
+      } else {
+        if (sub.status === 'suspended') issues.push('suspended');
+        if (sub.status === 'canceled') issues.push('canceled');
+        if (sub.currentPeriodEnd < now) issues.push('period_expired');
+      }
 
-        return {
-          _id: org._id,
-          name: org.name,
-          ownerEmail: owner?.email,
-          subscription: sub
-            ? {
-                _id: sub._id,
-                tier: sub.tier,
-                status: sub.status,
-                monthlyUnits: sub.monthlyUnits,
-                addonUnits: sub.addonUnits,
-                currentPeriodStart: sub.currentPeriodStart,
-                currentPeriodEnd: sub.currentPeriodEnd,
-                stripeSubscriptionId: sub.stripeSubscriptionId,
-              }
-            : null,
-          issues,
-        };
-      }),
-    );
+      return {
+        _id: org._id,
+        name: org.name,
+        ownerEmail: owner?.email,
+        subscription: sub
+          ? {
+              _id: sub._id,
+              tier: sub.tier,
+              status: sub.status,
+              monthlyUnits: sub.monthlyUnits,
+              addonUnits: sub.addonUnits,
+              currentPeriodStart: sub.currentPeriodStart,
+              currentPeriodEnd: sub.currentPeriodEnd,
+              stripeSubscriptionId: sub.stripeSubscriptionId,
+            }
+          : null,
+        issues,
+      };
+    });
 
     // Sort: orgs with issues first
     rows.sort((a, b) => b.issues.length - a.issues.length);
@@ -198,7 +201,7 @@ export const forceActivateSubscription = internalMutation({
 
     const tier = args.tier ?? sub.tier ?? 'hobby';
     const monthlyUnits = args.monthlyUnits ?? TIER_CONFIG[tier as SubscriptionTier].monthlyUnits;
-    const periodDays = args.periodDays ?? 30;
+    const periodDays = Math.max(1, Math.min(365, Math.floor(args.periodDays ?? 30)));
     const now = Date.now();
 
     await ctx.db.patch(sub._id, {
