@@ -46,6 +46,17 @@ export declare const api: {
               };
         }
       >;
+      forceActivateAndVerify: FunctionReference<
+        "action",
+        "public",
+        {
+          monthlyUnits?: number;
+          orgId: Id<"organizations">;
+          periodDays?: number;
+          tier?: "hobby" | "pro";
+        },
+        { kvVerified: boolean; success: boolean }
+      >;
       listOrgs: FunctionReference<
         "query",
         "public",
@@ -58,6 +69,29 @@ export declare const api: {
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
           stripeCustomerId?: string;
+        }>
+      >;
+      listOrgSubscriptionHealth: FunctionReference<
+        "query",
+        "public",
+        {},
+        Array<{
+          _id: Id<"organizations">;
+          issues: Array<
+            "no_subscription" | "period_expired" | "suspended" | "canceled"
+          >;
+          name: string;
+          ownerEmail?: string;
+          subscription: null | {
+            _id: Id<"subscriptions">;
+            addonUnits: number;
+            currentPeriodEnd: number;
+            currentPeriodStart: number;
+            monthlyUnits: number;
+            status: "active" | "grace" | "suspended" | "canceled";
+            stripeSubscriptionId?: string;
+            tier: "hobby" | "pro";
+          };
         }>
       >;
       stats: FunctionReference<
@@ -1114,6 +1148,17 @@ export declare const internal: {
         "internal",
         { orgId: Id<"organizations"> },
         null
+      >;
+      forceActivateSubscription: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          monthlyUnits?: number;
+          orgId: Id<"organizations">;
+          periodDays?: number;
+          tier?: "hobby" | "pro";
+        },
+        Id<"subscriptions">
       >;
     };
   };

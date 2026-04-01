@@ -23,6 +23,8 @@ import {
   Sparkles,
   Trash2,
   AlertTriangle,
+  HeartPulse,
+  Zap,
 } from 'lucide-react';
 
 type ActionStatus = 'idle' | 'loading' | 'success' | 'error';
@@ -144,6 +146,269 @@ function SyncActionRow({
         </Button>
       </div>
     </div>
+  );
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  active: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400',
+  grace: 'border-amber-500/30 bg-amber-500/15 text-amber-400',
+  suspended: 'border-red-500/30 bg-red-500/15 text-red-400',
+  canceled: 'border-red-500/30 bg-red-500/15 text-red-400',
+  missing: 'border-red-500/30 bg-red-500/15 text-red-400',
+};
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_COLORS[status] ?? STATUS_COLORS.missing}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function formatRelativeTime(ms: number): string {
+  const diff = ms - Date.now();
+  const absDiff = Math.abs(diff);
+  const days = Math.floor(absDiff / (24 * 60 * 60 * 1000));
+  if (days === 0) return 'today';
+  const label = days === 1 ? '1 day' : `${days} days`;
+  return diff > 0 ? `in ${label}` : `${label} ago`;
+}
+
+function SubscriptionHealthSection() {
+  const isAdmin = useIsAdmin();
+  const health = useQuery(api.admin.admin.listOrgSubscriptionHealth, isAdmin ? {} : 'skip');
+  const forceActivate = useAction(api.admin.admin.forceActivateAndVerify);
+  const [showOnlyIssues, setShowOnlyIssues] = useState(true);
+  const [activatingOrgId, setActivatingOrgId] = useState<Id<'organizations'> | null>(null);
+  const [expandedOrgId, setExpandedOrgId] = useState<Id<'organizations'> | null>(null);
+  const [tier, setTier] = useState<'hobby' | 'pro'>('pro');
+  const [monthlyUnits, setMonthlyUnits] = useState<number>(999_999_999);
+  const [periodDays, setPeriodDays] = useState<number>(365);
+  const [result, setResult] = useState<{
+    orgId: string;
+    status: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  const filtered = showOnlyIssues ? health?.filter((row) => row.issues.length > 0) : health;
+
+  const issueCount = health?.filter((row) => row.issues.length > 0).length ?? 0;
+
+  async function handleForceActivate(orgId: Id<'organizations'>) {
+    setActivatingOrgId(orgId);
+    setResult(null);
+    try {
+      const r = await forceActivate({ orgId, tier, monthlyUnits, periodDays });
+      setResult({
+        orgId,
+        status: 'success',
+        message: r.kvVerified ? 'Activated & KV verified' : 'Activated (KV unverified)',
+      });
+      setExpandedOrgId(null);
+    } catch (err) {
+      setResult({
+        orgId,
+        status: 'error',
+        message: err instanceof Error ? err.message : 'Failed',
+      });
+    } finally {
+      setActivatingOrgId(null);
+    }
+  }
+
+  return (
+    <section>
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <HeartPulse className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-base font-medium text-foreground">Subscription Health</h2>
+          {issueCount > 0 && (
+            <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-400">
+              {issueCount} issue{issueCount !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={showOnlyIssues}
+            onChange={(e) => setShowOnlyIssues(e.target.checked)}
+            className="rounded border-border"
+          />
+          Issues only
+        </label>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/30 text-left text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              <th className="px-4 py-2">Organization</th>
+              <th className="px-4 py-2">Tier</th>
+              <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Period End</th>
+              <th className="px-4 py-2">Units</th>
+              <th className="px-4 py-2">Issues</th>
+              <th className="px-4 py-2" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {!filtered && (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                  <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                </td>
+              </tr>
+            )}
+            {filtered?.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                  {showOnlyIssues ? 'All orgs healthy' : 'No organizations'}
+                </td>
+              </tr>
+            )}
+            {filtered?.map((row) => (
+              <tr key={row._id} className="group hover:bg-muted/20">
+                <td className="px-4 py-2">
+                  <div className="font-medium text-foreground">{row.name}</div>
+                  {row.ownerEmail && (
+                    <div className="text-[10px] text-muted-foreground">{row.ownerEmail}</div>
+                  )}
+                </td>
+                <td className="px-4 py-2">
+                  {row.subscription ? (
+                    <span className="font-mono text-xs">{row.subscription.tier}</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">-</span>
+                  )}
+                </td>
+                <td className="px-4 py-2">
+                  <StatusBadge status={row.subscription?.status ?? 'missing'} />
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+                  {row.subscription ? formatRelativeTime(row.subscription.currentPeriodEnd) : '-'}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+                  {row.subscription
+                    ? (row.subscription.monthlyUnits + row.subscription.addonUnits).toLocaleString()
+                    : '-'}
+                </td>
+                <td className="px-4 py-2">
+                  {row.issues.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {row.issues.map((issue) => (
+                        <span
+                          key={issue}
+                          className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-400"
+                        >
+                          {issue.replaceAll('_', ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                  )}
+                </td>
+                <td className="px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    {result?.orgId === row._id && (
+                      <span
+                        className={`flex items-center gap-1 text-[10px] font-medium ${
+                          result.status === 'error' ? 'text-red-400' : 'text-emerald-400'
+                        }`}
+                      >
+                        {result.status === 'success' ? (
+                          <CheckCircle2 className="h-3 w-3" />
+                        ) : (
+                          <XCircle className="h-3 w-3" />
+                        )}
+                        {result.message}
+                      </span>
+                    )}
+                    {row.issues.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        disabled={activatingOrgId === row._id}
+                        onClick={() => setExpandedOrgId(expandedOrgId === row._id ? null : row._id)}
+                      >
+                        {activatingOrgId === row._id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <Zap className="mr-1 h-3 w-3" />
+                            Fix
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                  {expandedOrgId === row._id && (
+                    <div className="mt-2 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/30 p-3">
+                      <div>
+                        <label className="mb-1 block text-[10px] text-muted-foreground">Tier</label>
+                        <select
+                          className="rounded border border-border bg-background px-2 py-1 text-xs"
+                          value={tier}
+                          onChange={(e) => setTier(e.target.value as 'hobby' | 'pro')}
+                        >
+                          <option value="hobby">Hobby</option>
+                          <option value="pro">Pro</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] text-muted-foreground">
+                          Monthly Units
+                        </label>
+                        <select
+                          className="rounded border border-border bg-background px-2 py-1 text-xs"
+                          value={monthlyUnits}
+                          onChange={(e) => setMonthlyUnits(Number(e.target.value))}
+                        >
+                          <option value={25000}>25K (Hobby default)</option>
+                          <option value={100000}>100K (Pro default)</option>
+                          <option value={1000000}>1M</option>
+                          <option value={999999999}>Unlimited</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] text-muted-foreground">
+                          Period (days)
+                        </label>
+                        <input
+                          type="number"
+                          className="w-20 rounded border border-border bg-background px-2 py-1 text-xs"
+                          value={periodDays}
+                          min={1}
+                          max={365}
+                          onChange={(e) => setPeriodDays(Number(e.target.value))}
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={activatingOrgId === row._id}
+                        onClick={() => void handleForceActivate(row._id)}
+                      >
+                        {activatingOrgId === row._id ? (
+                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        ) : (
+                          <Zap className="mr-1 h-3 w-3" />
+                        )}
+                        Force Activate
+                      </Button>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -382,6 +647,8 @@ export default function AdminPage() {
           />
         </div>
       </section>
+
+      <SubscriptionHealthSection />
 
       <DangerZone />
     </div>
