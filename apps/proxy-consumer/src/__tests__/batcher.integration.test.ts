@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env, runInDurableObject } from 'cloudflare:test';
 import type { TraceBatcherInstance } from '../batcher';
+import { TRACE_BATCHER_MAX_SQL_PARAMS, TRACE_BATCHER_MAX_INSERT_ROWS } from '../batcher';
 import { createMockTrace } from './fixtures';
 
 describe('TraceBatcher Integration', () => {
@@ -89,5 +90,63 @@ describe('TraceBatcher Integration', () => {
 
     expect(stats.queuedTraces).toBe(0);
     expect(stats.oldestQueuedTraceTime).toBeNull();
+  });
+
+  describe('SQL param chunking', () => {
+    it('should insert traces exceeding MAX_INSERT_ROWS in a single message', async () => {
+      const traceCount = TRACE_BATCHER_MAX_INSERT_ROWS + 1;
+      const traces = Array.from({ length: traceCount }, (_, i) =>
+        createMockTrace(`chunk-insert-${i}`),
+      );
+
+      const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.addMessageTraces([{ messageId: 'msg-large-insert', traces }]);
+      });
+
+      expect(results).toEqual([{ messageId: 'msg-large-insert', status: 'inserted' }]);
+
+      const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.getStats();
+      });
+      expect(stats.queuedTraces).toBe(traceCount);
+    });
+
+    it('should insert traces at exact MAX_INSERT_ROWS boundary', async () => {
+      const traces = Array.from({ length: TRACE_BATCHER_MAX_INSERT_ROWS }, (_, i) =>
+        createMockTrace(`chunk-boundary-${i}`),
+      );
+
+      const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.addMessageTraces([{ messageId: 'msg-boundary', traces }]);
+      });
+
+      expect(results).toEqual([{ messageId: 'msg-boundary', status: 'inserted' }]);
+
+      const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.getStats();
+      });
+      expect(stats.queuedTraces).toBe(TRACE_BATCHER_MAX_INSERT_ROWS);
+    });
+
+    it('should insert a large multi-chunk batch (2x + 1 boundary)', async () => {
+      const traceCount = TRACE_BATCHER_MAX_INSERT_ROWS * 2 + 1;
+      const traces = Array.from({ length: traceCount }, (_, i) => createMockTrace(`chunk-2x-${i}`));
+
+      const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.addMessageTraces([{ messageId: 'msg-2x', traces }]);
+      });
+
+      expect(results).toEqual([{ messageId: 'msg-2x', status: 'inserted' }]);
+
+      const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.getStats();
+      });
+      expect(stats.queuedTraces).toBe(traceCount);
+    });
+
+    it('should export consistent constants', () => {
+      expect(TRACE_BATCHER_MAX_SQL_PARAMS).toBe(90);
+      expect(TRACE_BATCHER_MAX_INSERT_ROWS).toBe(45);
+    });
   });
 });
