@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 
-export const STRIPE_API_VERSION = '2026-01-28.clover';
+export const STRIPE_API_VERSION = '2026-02-25.clover';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 export const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
