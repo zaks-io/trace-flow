@@ -7,11 +7,11 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@react-email/components": "^1.0.7",
+    "@react-email/components": "^1.0.12",
     "react": "^19.2.4"
   },
   "devDependencies": {
-    "@types/react": "^19.2.13",
+    "@types/react": "^19.2.14",
     "typescript": "^5.9.3"
   }
 }

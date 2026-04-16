@@ -11,21 +11,21 @@
   },
   "dependencies": {
     "@convex-dev/rate-limiter": "^0.3.2",
-    "@react-email/components": "^1.0.8",
+    "@react-email/components": "^1.0.12",
     "@trace-flow/emails": "workspace:*",
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*",
-    "convex": "^1.32.0",
-    "convex-helpers": "^0.1.113",
-    "hono": "^4.10.2",
-    "jose": "^6.1.0",
+    "convex": "^1.35.1",
+    "convex-helpers": "^0.1.114",
+    "hono": "^4.12.12",
+    "jose": "^6.2.2",
     "react": "^19.2.4",
-    "resend": "^6.9.1",
-    "stripe": "^20.3.1"
+    "resend": "^6.11.0",
+    "stripe": "^20.4.1"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.0.18",
-    "vitest": "^4.0.18"
+    "@vitest/coverage-v8": "^4.1.4",
+    "vitest": "^4.1.4"
   }
 }
