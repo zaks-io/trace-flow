@@ -21,6 +21,7 @@ const WIRE_FIXED32 = 5;
 
 const U64_MAX = (1n << 64n) - 1n;
 const textDecoder = new TextDecoder();
+const textEncoder = new TextEncoder();
 
 export class WireReadError extends Error {
   constructor(message: string) {
@@ -135,7 +136,6 @@ export class Reader {
 
   bytes(): Uint8Array {
     const len = this.varintNumber();
-    if (len < 0) throw new WireReadError('negative length');
     if (this.pos + len > this.buf.length) {
       throw new WireReadError('unexpected EOF reading bytes');
     }
@@ -153,12 +153,22 @@ export class Reader {
     return new Reader(this.bytes());
   }
 
-  /** Skip a field whose wire type we recognise but do not care about. */
+  /**
+   * Skip a field whose wire type we recognise but do not care about.
+   *
+   * Skipping a varint scans bytes until the MSB clears rather than decoding
+   * the value. A future OTLP field may legitimately carry a uint64 larger
+   * than MAX_SAFE_INTEGER, and unknown-field skipping must not fail just
+   * because we can't represent the value in a JS number.
+   */
   skip(wire: number): void {
     switch (wire) {
       case WIRE_VARINT:
-        this.varintNumber();
-        return;
+        while (this.pos < this.buf.length) {
+          const b = this.buf[this.pos++]!;
+          if ((b & 0x80) === 0) return;
+        }
+        throw new WireReadError('unexpected EOF skipping varint');
       case WIRE_FIXED64:
         if (this.pos + 8 > this.buf.length) {
           throw new WireReadError('unexpected EOF skipping fixed64');
@@ -167,7 +177,6 @@ export class Reader {
         return;
       case WIRE_LEN: {
         const len = this.varintNumber();
-        if (len < 0) throw new WireReadError('negative length in skip');
         if (this.pos + len > this.buf.length) {
           throw new WireReadError('unexpected EOF skipping length-delimited');
         }
@@ -257,7 +266,7 @@ export class Writer {
   }
 
   string(value: string): Writer {
-    return this.bytes(new TextEncoder().encode(value));
+    return this.bytes(textEncoder.encode(value));
   }
 
   bool(value: boolean): Writer {

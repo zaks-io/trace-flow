@@ -195,7 +195,7 @@ function logPayloadSample(
             firstSpanAttrs[k] = sanitizeLogValue(raw);
           }
           // Early exit: one span's attributes is enough to verify shape.
-          if (spanCount >= 1 && firstSpanAttrs) break outer;
+          if (firstSpanAttrs) break outer;
         }
       }
     }

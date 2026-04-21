@@ -361,6 +361,34 @@ describe('decodeOTLPProtobuf', () => {
     const decoded = decodeOTLPProtobuf(top.toUint8Array());
     expect(decoded.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.name).toBe('unknown-field-tolerant');
   });
+
+  it('skips unknown varint fields carrying values larger than MAX_SAFE_INTEGER', () => {
+    // A future OTLP field might be a uint64 with any value up to 2^64-1.
+    // Skipping should scan bytes, not decode the value — so a 10-byte varint
+    // representing the uint64 max must not trip the "varint exceeds safe
+    // integer" guard that only applies to fields we actually read.
+    const top = new Writer();
+    // Unknown field 500 with a ten-byte varint (all continuation bits set
+    // except the last), encoding uint64 max.
+    top.tag(500, WIRE_VARINT).varintBigInt((1n << 64n) - 1n);
+    top.tag(1, WIRE_LEN).message((rsMsg) => {
+      rsMsg.tag(2, WIRE_LEN).message((ss) => {
+        ss.tag(2, WIRE_LEN).message((spanMsg) =>
+          writeSpan(spanMsg, {
+            traceIdHex,
+            spanIdHex,
+            name: 'tolerant-of-large-unknown-varint',
+            startNano: 1n,
+            endNano: 2n,
+          }),
+        );
+      });
+    });
+    const decoded = decodeOTLPProtobuf(top.toUint8Array());
+    expect(decoded.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.name).toBe(
+      'tolerant-of-large-unknown-varint',
+    );
+  });
 });
 
 describe('readOTLPBody', () => {
