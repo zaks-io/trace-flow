@@ -17,7 +17,7 @@
 export const WIRE_VARINT = 0;
 export const WIRE_FIXED64 = 1;
 export const WIRE_LEN = 2;
-export const WIRE_FIXED32 = 5;
+const WIRE_FIXED32 = 5;
 
 const U64_MAX = (1n << 64n) - 1n;
 const textDecoder = new TextDecoder();
