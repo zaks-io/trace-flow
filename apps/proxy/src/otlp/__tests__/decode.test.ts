@@ -362,6 +362,43 @@ describe('decodeOTLPProtobuf', () => {
     expect(decoded.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.name).toBe('unknown-field-tolerant');
   });
 
+  it('base64-encodes bytesValue for blobs larger than the fromCharCode chunk size', () => {
+    // 100KB patterned blob exercises the chunked path (BASE64_CHUNK = 32KB).
+    const size = 100 * 1024;
+    const blob = new Uint8Array(size);
+    for (let i = 0; i < size; i++) blob[i] = i & 0xff;
+
+    const buf = encodeRequest([
+      {
+        scopes: [
+          {
+            spans: [
+              {
+                traceIdHex,
+                spanIdHex,
+                name: 'large-bytes',
+                startNano: 1n,
+                endNano: 2n,
+                attributes: [{ key: 'payload', value: { bytesValue: blob } }],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const decoded = decodeOTLPProtobuf(buf);
+    const attr = decoded.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes![0]!;
+    const encoded = attr.value.bytesValue!;
+
+    // Round-trip base64 → bytes and confirm byte-for-byte equality.
+    const bin = atob(encoded);
+    expect(bin.length).toBe(size);
+    for (let i = 0; i < size; i++) {
+      expect(bin.charCodeAt(i)).toBe(blob[i]);
+    }
+  });
+
   it('skips unknown varint fields carrying values larger than MAX_SAFE_INTEGER', () => {
     // A future OTLP field might be a uint64 with any value up to 2^64-1.
     // Skipping should scan bytes, not decode the value — so a 10-byte varint
