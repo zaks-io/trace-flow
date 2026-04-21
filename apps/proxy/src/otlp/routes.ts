@@ -11,7 +11,7 @@ export const otlpTracesRoute = createRoute({
   tags: ['Traces'],
   summary: 'Ingest OpenTelemetry traces',
   description:
-    'Accepts OTLP/HTTP JSON format traces for storage and analysis. Traces are validated, batched, and stored in ClickHouse for querying.',
+    'Accepts OTLP/HTTP traces (JSON or protobuf) for storage and analysis. Traces are validated, batched, and stored in ClickHouse for querying. Supports gzip/deflate Content-Encoding.',
   security: [{ apiKey: [] }],
   request: {
     headers: z.object({
@@ -19,15 +19,26 @@ export const otlpTracesRoute = createRoute({
         description: 'API key for authentication',
         example: 'tf_xxxxxxxxxxxxxxxxxxxx',
       }),
-      'content-type': z.literal('application/json'),
+      'content-type': z.enum(['application/json', 'application/x-protobuf']).openapi({
+        description: 'OTLP/HTTP payload encoding',
+      }),
     }),
     body: {
       content: {
         'application/json': {
           schema: OTLPExportTraceServiceRequestSchema,
         },
+        'application/x-protobuf': {
+          schema: z.string().openapi({
+            type: 'string',
+            format: 'binary',
+            description:
+              'OTLP/protobuf encoded ExportTraceServiceRequest (opentelemetry.proto.trace.v1)',
+          }),
+        },
       },
-      description: 'OTLP trace export request containing resource spans',
+      description:
+        'OTLP trace export request containing resource spans. Both OTLP/HTTP JSON and protobuf encodings are accepted.',
       required: true,
     },
   },
@@ -65,7 +76,7 @@ export const otlpTracesRoute = createRoute({
       },
     },
     415: {
-      description: 'Unsupported content type - use application/json',
+      description: 'Unsupported content type - use application/json or application/x-protobuf',
       content: {
         'application/json': {
           schema: OTLPErrorResponseSchema,
