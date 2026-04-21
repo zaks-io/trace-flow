@@ -31,19 +31,19 @@
     "@types/react-dom": "19.2.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251011.0",
-    "@eslint/js": "^9.37.0",
-    "@types/node": "^24.7.2",
-    "convex": "^1.32.0",
-    "eslint": "^9.37.0",
+    "@cloudflare/workers-types": "^4.20260416.2",
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^24.12.2",
+    "convex": "^1.35.1",
+    "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^5.1.0",
     "globals": "^16.4.0",
     "husky": "^9.1.7",
-    "knip": "^5.83.1",
-    "prettier": "^3.6.2",
-    "turbo": "^2.5.8",
+    "knip": "^5.88.1",
+    "prettier": "^3.8.3",
+    "turbo": "^2.9.6",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.46.1"
+    "typescript-eslint": "^8.58.2"
   }
 }

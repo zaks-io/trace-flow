@@ -89,6 +89,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -122,6 +123,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages,
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -155,6 +157,7 @@ describe('Queue Handler Integration', () => {
           },
         },
       ],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -244,6 +247,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -278,6 +282,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -326,6 +331,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages,
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -363,6 +369,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -409,6 +416,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages,
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -426,6 +434,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -471,6 +480,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -510,6 +520,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
@@ -550,6 +561,7 @@ describe('Queue Handler Integration', () => {
     const batch: MessageBatch<QueueMessage> = {
       queue: 'test-queue',
       messages: [mockMessage],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
       retryAll: () => {
         /* noop */
       },
