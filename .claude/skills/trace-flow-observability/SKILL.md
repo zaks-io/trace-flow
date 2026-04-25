@@ -57,7 +57,7 @@ Cron: consumer runs `*/5 * * * *` to flush stale TraceBatcher shards.
 
 - Worker dataset: `cloudflare` (set as `AXIOM_DATASET` in every wrangler env). All four workers ingest via `AXIOM_TOKEN` secret.
 - Sibling datasets in this account: `convex` (Convex function logs), `vercel`, `fly-io`.
-- **Field gotcha (verified):** `service` is the runtime label and equals `"cloudflare-worker"` for every worker. The actual worker identity lives in **`runtime`** (e.g. `runtime == "proxy-consumer"`, `"proxy"`, `"api"`, `"web"`). Filtering on `service == "trace-flow-..."` returns nothing.
+- **Field gotcha (verified against source + live data):** `service` carries the worker identity (`"proxy"`, `"proxy-consumer"`, `"api"`), and `runtime` carries the execution context (`"cloudflare-worker"`, `"durable-object"`). Both are set explicitly by each worker's logger init (e.g. `apps/proxy-consumer/src/index.ts:153-154`). Filtering on `service == "trace-flow-..."` returns nothing because the value is the unprefixed role name.
 - `event` carries structured event names (e.g. `consumer.trace_batcher_unhealthy`, `consumer.flush_complete`). great for `summarize count() by event`.
 - Useful real fields: `level`, `event`, `component`, `request_id`, `trace_id`, `parent_span_id`, `org_id`, `user_id`, `provider`, `operation`, `route`, `method`, `error_name`, `error_message`, `error_stack`, `cf_ray`, `convex_function`, plus typed `data.*` fields (`data.latencyMs`, `data.status`, `data.batchSize`, `data.shardId`, `data.queuedTraces`, `data.unhealthyShards`, `data.checkedShards`, `data.lastSuccessfulFlushAgeMs`, `data.totalTokens`, `data.r2Stored`, `data.requestId`, ...).
 
@@ -126,10 +126,10 @@ The only way to read trace data without a Tinybird JWT. Scoped to the API keys t
 ### Axiom (APL)
 
 - **Discover schema before querying.** Run `['cloudflare'] | take 1` against your time window first. The tool returns every populated field for that row, which is faster than `getDatasetFields` and shows you which fields actually have data right now.
-- **Filter by `runtime`, not `service`.** `service == "cloudflare-worker"` for every Worker; the role is in `runtime` (`proxy`, `proxy-consumer`, `api`, `web`).
+- **Filter by `service`, not the worker name.** Worker role is in `service` (`"proxy"`, `"proxy-consumer"`, `"api"`); `runtime` is the execution context (`"cloudflare-worker"`, `"durable-object"`). Filtering `service == "trace-flow-consumer"` returns nothing because the value is unprefixed.
 - **Always restrict time.** Default `now-30m` is fine for live debugging; widen explicitly with `startTime: "now-24h"`. The 65k row cap is a query failure mode, not just a truncation.
-- **Aggregate, don't dump.** `summarize count() by event, runtime` over `take 100` for trends. Reserve `take` for schema discovery and single-trace inspection.
-- **Project narrowly.** `| project _time, runtime, event, level, error_message` keeps responses readable; otherwise rows include 80+ columns.
+- **Aggregate, don't dump.** `summarize count() by event, service` over `take 100` for trends. Reserve `take` for schema discovery and single-trace inspection.
+- **Project narrowly.** `| project _time, service, event, level, error_message` keeps responses readable; otherwise rows include 80+ columns.
 - **Bracket fields with dots.** `['data.latencyMs']` or just unquoted `data.latencyMs` (both work); special-char fields (e.g. `data.firstSpanAttributes.agent\.id`) need brackets.
 - **Time math:** `bin(_time, 5m)` for histograms; `ago(2h)` for relative ranges.
 
@@ -159,7 +159,7 @@ The only way to read trace data without a Tinybird JWT. Scoped to the API keys t
 ## Common investigation patterns
 
 - **"Why did this request fail?"** Get `requestId` -> `trace-flow-prod.get_trace` for spans/events -> if body needed, hit `https://api.trace-flow.dev/bodies/<requestId>` (auth required, Auth0 JWT) -> Axiom query on `cloudflare` dataset filtering `request_id` for proxy/consumer logs.
-- **"Queue is backed up."** Cloudflare MCP `workers_get_worker` for `trace-flow-consumer` deploy state -> Axiom on `runtime == "proxy-consumer"` for batcher errors (look at `data.unhealthyShards`, `data.queuedTraces`, `data.lastSuccessfulFlushAgeMs`) -> check DLQ `trace-flow-requests-dlq-prod` via Cloudflare dashboard. Recent fix history: see commits 2b45bbf (stale TraceBatcher) and 8e585ce (SQL param overflow).
+- **"Queue is backed up."** Cloudflare MCP `workers_get_worker` for `trace-flow-consumer` deploy state -> Axiom on `service == "proxy-consumer"` for batcher errors (look at `data.unhealthyShards`, `data.queuedTraces`, `data.lastSuccessfulFlushAgeMs`) -> check DLQ `trace-flow-requests-dlq-prod` via Cloudflare dashboard. Recent fix history: see commits 2b45bbf (stale TraceBatcher) and 8e585ce (SQL param overflow).
 - **"Spike in errors."** Sentry `search_issues` filtered by `environment:production` -> cross-reference Axiom `cloudflare` dataset for the same window -> if proxy error, check `trace-flow-proxy` analytics dataset for skip rate.
 - **"Tinybird query slow."** Check sorting key order in the relevant `.datasource` (highest-cardinality filter first), prefer `PREWHERE` on small columns, filter before joins. Pipes live in `pipes/`.
 - **"Schema migration."** Use `FORWARD_QUERY` for zero-downtime; validate with `tb build`; deletes need `--allow-destructive-operations`. Bad rows land in `<datasource>_quarantine`.
