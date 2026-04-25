@@ -158,14 +158,26 @@ The only way to read trace data without a Tinybird JWT. Scoped to the API keys t
 
 ## Common investigation patterns
 
-- **"Why did this request fail?"** Get `requestId` -> `trace-flow-prod.get_trace` for spans/events -> if body needed, hit `https://api.trace-flow.dev/r2/bodies/<requestId>` (auth required) -> Axiom query on `cloudflare` dataset filtering `request_id` for proxy/consumer logs.
+- **"Why did this request fail?"** Get `requestId` -> `trace-flow-prod.get_trace` for spans/events -> if body needed, hit `https://api.trace-flow.dev/bodies/<requestId>` (auth required, Auth0 JWT) -> Axiom query on `cloudflare` dataset filtering `request_id` for proxy/consumer logs.
 - **"Queue is backed up."** Cloudflare MCP `workers_get_worker` for `trace-flow-consumer` deploy state -> Axiom on `runtime == "proxy-consumer"` for batcher errors (look at `data.unhealthyShards`, `data.queuedTraces`, `data.lastSuccessfulFlushAgeMs`) -> check DLQ `trace-flow-requests-dlq-prod` via Cloudflare dashboard. Recent fix history: see commits 2b45bbf (stale TraceBatcher) and 8e585ce (SQL param overflow).
 - **"Spike in errors."** Sentry `search_issues` filtered by `environment:production` -> cross-reference Axiom `cloudflare` dataset for the same window -> if proxy error, check `trace-flow-proxy` analytics dataset for skip rate.
 - **"Tinybird query slow."** Check sorting key order in the relevant `.datasource` (highest-cardinality filter first), prefer `PREWHERE` on small columns, filter before joins. Pipes live in `pipes/`.
-- **"Schema migration."** Use `FORWARD_QUERY` for zero-downtime; validate with `tb build`; deletes need `--allow-destructive-operations`: Bad rows land in `<datasource>_quarantine`.
+- **"Schema migration."** Use `FORWARD_QUERY` for zero-downtime; validate with `tb build`; deletes need `--allow-destructive-operations`. Bad rows land in `<datasource>_quarantine`.
 
 ## Notes
 
-- Prod deploys only via GH Actions on merge to `main`: Order: Convex -> workers in parallel -> web. Never deploy prod manually.
+- Prod deploys only via GH Actions on merge to `main`. Order: Convex -> workers in parallel -> web. Never deploy prod manually.
 - Auth0 (API worker): domain `auth0.zaks.io`, client IDs `iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W` (dev/preview) and `asEG3J6UWZOeKWclu2WxONmoIhTsCfdp` (prod).
 - The Cloudflare account also holds non-trace-flow workers (`apictx-*`, `neuron-*`, `synet-*`, `otto-*`); always scope queries by worker name.
+
+## Keeping this file current
+
+Hardcoded IDs above were pulled live from the MCPs and will silently drift if a resource gets recreated (e.g. KV namespace replaced during a migration). To refresh:
+
+- **Worker tags** (the `851c8b...` IDs in the Workers table): `mcp__claude_ai_Cloudflare_Developer_Platform__workers_list`, filter by `trace-flow-` prefix.
+- **KV namespace IDs**: `mcp__claude_ai_Cloudflare_Developer_Platform__kv_namespaces_list`.
+- **R2 buckets**: `mcp__claude_ai_Cloudflare_Developer_Platform__r2_buckets_list` with `name_contains: "trace-flow"`.
+- **Cloudflare account ID**: `mcp__claude_ai_Cloudflare_Developer_Platform__accounts_list`.
+- **Sentry org/project**: `mcp__claude_ai_Sentry__find_organizations` then `find_projects`.
+- **Axiom datasets and field schema**: `mcp__claude_ai_Axiom__listDatasets`; for fields, run `['cloudflare'] | take 1` via `queryDataset` (faster than `getDatasetFields` and shows what's actually populated).
+- **Worker routes, KV bindings, queue names**: `wrangler.toml` files in `apps/<role>/` are authoritative.
