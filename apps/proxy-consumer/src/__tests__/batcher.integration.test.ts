@@ -149,4 +149,26 @@ describe('TraceBatcher Integration', () => {
       expect(TRACE_BATCHER_MAX_INSERT_ROWS).toBe(45);
     });
   });
+
+  describe('forceFlush admin recovery', () => {
+    it('should expose forceFlush returning before/after counts', async () => {
+      await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.addMessageTraces([
+          { messageId: 'force-1', traces: [createMockTrace('force-trace-1')] },
+        ]);
+      });
+
+      const result = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
+        return instance.forceFlush();
+      });
+
+      // Tinybird unreachable in tests, so 'after' may equal 'before'. The
+      // contract this test pins is shape, not drain success.
+      expect(result).toMatchObject({
+        before: expect.any(Number) as number,
+        after: expect.any(Number) as number,
+      });
+      expect(result.before).toBe(1);
+    });
+  });
 });

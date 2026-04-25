@@ -296,6 +296,29 @@ async function runTraceBatcherHealthCheck(
               cron,
               environment,
             });
+
+            // Auto-recovery: if the shard has queued traces, kick a flush.
+            // The DO's own alarm-reschedule handles the steady state, but a
+            // shard that already wedged (e.g. before the chunking fix) needs
+            // an external poke since no new alarms will fire on its own.
+            if (snapshot.queuedTraces > 0) {
+              try {
+                const result = await getTraceBatcher(env, shardId).forceFlush();
+                logger.info('consumer.trace_batcher_force_flush', {
+                  shardId,
+                  before: result.before,
+                  after: result.after,
+                  cron,
+                  environment,
+                });
+              } catch (error) {
+                logger.error('consumer.trace_batcher_force_flush_failed', error, {
+                  shardId,
+                  cron,
+                  environment,
+                });
+              }
+            }
           }
 
           return snapshot;

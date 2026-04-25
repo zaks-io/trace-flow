@@ -8,6 +8,10 @@ import { insertIntoTinybirdWithRetry } from './tinybird';
 const BATCH_SIZE = 10_000;
 const FLUSH_INTERVAL_MS = 5000;
 const MAX_JITTER_MS = 1000;
+// Threshold for emitting a Sentry alert when a shard has been unable to flush.
+// One hour gives enough headroom that a transient Tinybird outage doesn't page,
+// but catches the silent-bake scenario (shard 7 went 51 days unnoticed).
+const STALE_FLUSH_THRESHOLD_MS = 60 * 60 * 1000;
 // Cloudflare DO SQLite limits bind params; stay well under the limit
 const MAX_SQL_PARAMS = 90;
 // INSERT uses 2 params per row (data, timestamp)
@@ -46,6 +50,7 @@ class TraceBatcherBase extends DurableObject<Env> {
   private traceCount = 0;
   private flushInProgress = false;
   private lastCleanupTime = 0;
+  private lastStaleAlertTime = 0;
   private logger = createLogger({
     service: 'proxy-consumer',
     runtime: 'durable-object',
@@ -77,6 +82,26 @@ class TraceBatcherBase extends DurableObject<Env> {
     const countRows = [...countResult];
     if (countRows.length > 0 && countRows[0]) {
       this.traceCount = countRows[0].count;
+    }
+
+    // If we restart (e.g. after a deploy) with traces already queued, schedule
+    // an immediate flush. Without this, stuck traces from a previous version
+    // sit until new queue traffic happens to land on this shard.
+    if (this.traceCount > 0) {
+      void this.durableState.storage.setAlarm(Date.now() + 1000);
+      this.flushAlarmScheduled = true;
+
+      const ageMs = Date.now() - this.lastSuccessfulFlushTime;
+      if (ageMs > STALE_FLUSH_THRESHOLD_MS) {
+        Sentry.captureMessage('TraceBatcher started with stale queue', {
+          level: 'warning',
+          tags: { operation: 'startup', stale_shard: 'true' },
+          extra: {
+            queuedTraces: this.traceCount,
+            lastSuccessfulFlushAgeMs: ageMs,
+          },
+        });
+      }
     }
   }
 
@@ -277,9 +302,27 @@ class TraceBatcherBase extends DurableObject<Env> {
             .error('consumer.tinybird_flush_failed', error, {
               batchSize: traces.length,
             });
+          const ageMs = Date.now() - this.lastSuccessfulFlushTime;
+          const isStale = ageMs > STALE_FLUSH_THRESHOLD_MS;
+          // Throttle fatal alerts: with 5s retries, an extended Tinybird
+          // outage would otherwise emit ~720 fatal events/hour/shard. Cap at
+          // one fatal per stale-window per shard; downgrade the rest to error.
+          const shouldEmitFatal =
+            isStale && Date.now() - this.lastStaleAlertTime >= STALE_FLUSH_THRESHOLD_MS;
+          if (shouldEmitFatal) {
+            this.lastStaleAlertTime = Date.now();
+          }
           Sentry.captureException(error, {
-            tags: { operation: 'flush' },
-            extra: { batchSize: traces.length },
+            level: shouldEmitFatal ? 'fatal' : 'error',
+            tags: {
+              operation: 'flush',
+              stale_shard: isStale ? 'true' : 'false',
+            },
+            extra: {
+              batchSize: traces.length,
+              queuedTraces: this.traceCount,
+              lastSuccessfulFlushAgeMs: ageMs,
+            },
           });
           break;
         }
@@ -295,7 +338,19 @@ class TraceBatcherBase extends DurableObject<Env> {
       }
 
       this.flushInProgress = false;
+
+      // Flush logs BEFORE rescheduling: scheduleFlush awaits storage.setAlarm,
+      // which can throw on rare CF storage errors. If logs aren't flushed
+      // first, error context is lost at exactly the moment you need it most.
       await this.logger.flush();
+
+      // If the queue didn't fully drain (Tinybird error, SQLite error, etc),
+      // reschedule. Otherwise the residual traces sit indefinitely until new
+      // queue traffic happens to land on this shard — that's how shard 7 baked
+      // 33k traces for 51 days after a single bad flush.
+      if (this.traceCount > 0) {
+        await this.scheduleFlush();
+      }
     }
   }
 
@@ -305,6 +360,14 @@ class TraceBatcherBase extends DurableObject<Env> {
       this.lastFlushTime,
       this.lastSuccessfulFlushTime,
     );
+  }
+
+  // Manually drain stuck traces. Call via RPC from an admin endpoint when a
+  // shard has wedged for unrelated reasons (old code, prior incident, etc).
+  async forceFlush(): Promise<{ before: number; after: number }> {
+    const before = this.traceCount;
+    await this.flush();
+    return { before, after: this.traceCount };
   }
 
   getStats(): TraceBatcherStats {

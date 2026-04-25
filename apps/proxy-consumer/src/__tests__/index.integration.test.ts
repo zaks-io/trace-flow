@@ -57,18 +57,6 @@ describe('Queue Handler Integration', () => {
       },
     }) as ScheduledController;
 
-  const parseFirstLogRecord = (spy: ReturnType<typeof vi.spyOn>) => {
-    const firstCall = spy.mock.calls[0];
-    if (!firstCall) {
-      throw new Error('Expected a logged record');
-    }
-
-    return JSON.parse(String(firstCall[0])) as {
-      event: string;
-      data?: Record<string, unknown>;
-    };
-  };
-
   it('should process single message and route to correct shard', async () => {
     const message = createMockQueueMessage('test-1', 'api-key-123');
     const ackCalled = { value: false };
@@ -199,13 +187,20 @@ describe('Queue Handler Integration', () => {
     expect(statuses).toContain('stale_backlog');
     expect(statuses).toContain('healthy');
 
-    const warnRecords = warnSpy.mock.calls.map(
-      ([record]) =>
-        JSON.parse(String(record)) as {
-          event: string;
-          data?: Record<string, unknown>;
-        },
-    );
+    // Filter to JSON log records — auto-recovery triggers a forceFlush that
+    // may emit non-JSON Tinybird retry warnings via console.warn directly.
+    const warnRecords = warnSpy.mock.calls
+      .map(([record]) => {
+        try {
+          return JSON.parse(String(record)) as {
+            event: string;
+            data?: Record<string, unknown>;
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((r): r is { event: string; data?: Record<string, unknown> } => r !== null);
     expect(warnRecords.length).toBeGreaterThanOrEqual(1);
     expect(warnRecords.every((record) => record.event === 'consumer.trace_batcher_unhealthy')).toBe(
       true,
@@ -216,9 +211,23 @@ describe('Queue Handler Integration', () => {
       ),
     ).toBe(true);
 
-    const infoRecord = parseFirstLogRecord(infoSpy);
-    expect(infoRecord.event).toBe('consumer.trace_batcher_health_check_complete');
-    expect(infoRecord.data).toMatchObject({
+    const infoRecords = infoSpy.mock.calls
+      .map(([record]) => {
+        try {
+          return JSON.parse(String(record)) as {
+            event: string;
+            data?: Record<string, unknown>;
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((r): r is { event: string; data?: Record<string, unknown> } => r !== null);
+    const completeRecord = infoRecords.find(
+      (r) => r.event === 'consumer.trace_batcher_health_check_complete',
+    );
+    expect(completeRecord).toBeDefined();
+    expect(completeRecord?.data).toMatchObject({
       checkedShards: 3,
       cron: '*/5 * * * *',
     });
