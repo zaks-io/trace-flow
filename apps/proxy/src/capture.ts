@@ -10,6 +10,7 @@ import type { Logger } from '@trace-flow/logging';
 import type { ApiKeyData } from './auth';
 import type { UsageCheckResult } from './usage';
 import { parseTokenUsage } from './parsers/providers';
+import { parseGoogleModelFromPath } from './parsers/providers/google';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
 import {
@@ -145,6 +146,15 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
         responseMetadata = lastMessage?.metadata;
       } else {
         responseMetadata = extractMetadataFromResponseBody(responseBody);
+      }
+    }
+
+    // Google embed responses (and batchEmbedContents) don't include modelVersion in the body.
+    // Fall back to the model in the URL path so traces don't show 'unknown'.
+    if (route.provider.id === 'google' && !responseMetadata?.model) {
+      const pathModel = parseGoogleModelFromPath(new URL(targetUrl).pathname);
+      if (pathModel) {
+        responseMetadata = { ...(responseMetadata ?? {}), model: pathModel };
       }
     }
 

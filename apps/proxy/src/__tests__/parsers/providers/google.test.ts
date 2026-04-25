@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseGoogleTokens } from '../../../parsers/providers/google';
+import { parseGoogleTokens, parseGoogleModelFromPath } from '../../../parsers/providers/google';
 
 describe('parseGoogleTokens', () => {
   it('should parse promptTokenCount / candidatesTokenCount / totalTokenCount', () => {
@@ -96,5 +96,38 @@ describe('parseGoogleTokens', () => {
       completionTokens: 7,
       totalTokens: 15,
     });
+  });
+});
+
+describe('parseGoogleModelFromPath', () => {
+  it('extracts the model from an embedContent path', () => {
+    expect(parseGoogleModelFromPath('/v1beta/models/text-embedding-004:embedContent')).toBe(
+      'text-embedding-004',
+    );
+  });
+
+  it('extracts the model from a streamGenerateContent path', () => {
+    expect(parseGoogleModelFromPath('/v1beta/models/gemini-2.0-flash:streamGenerateContent')).toBe(
+      'gemini-2.0-flash',
+    );
+  });
+
+  it('extracts the model from a batchEmbedContents path with /google prefix', () => {
+    expect(parseGoogleModelFromPath('/google/v1beta/models/embedding-001:batchEmbedContents')).toBe(
+      'embedding-001',
+    );
+  });
+
+  it('returns undefined when there is no :action segment', () => {
+    expect(parseGoogleModelFromPath('/v1beta/models/foo')).toBeUndefined();
+  });
+
+  it('returns undefined for an unrelated path', () => {
+    expect(parseGoogleModelFromPath('/v1/chat/completions')).toBeUndefined();
+    expect(parseGoogleModelFromPath('')).toBeUndefined();
+  });
+
+  it('matches case-insensitively', () => {
+    expect(parseGoogleModelFromPath('/V1BETA/MODELS/Foo:GenerateContent')).toBe('Foo');
   });
 });

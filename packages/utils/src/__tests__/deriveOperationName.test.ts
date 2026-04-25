@@ -44,6 +44,15 @@ describe('deriveOperationName', () => {
       );
       expect(deriveOperationName('/v1/models/embedding-001:embedContent')).toBe('embeddings');
     });
+
+    it('should identify batchEmbedContents', () => {
+      expect(
+        deriveOperationName('/google/v1beta/models/gemini-embedding-001:batchEmbedContents'),
+      ).toBe('embeddings');
+      expect(deriveOperationName('/v1beta/models/embedding-001:batchEmbedContents')).toBe(
+        'embeddings',
+      );
+    });
   });
 
   describe('Groq patterns (OpenAI-compatible)', () => {
