@@ -50,6 +50,7 @@ class TraceBatcherBase extends DurableObject<Env> {
   private traceCount = 0;
   private flushInProgress = false;
   private lastCleanupTime = 0;
+  private lastStaleAlertTime = 0;
   private logger = createLogger({
     service: 'proxy-consumer',
     runtime: 'durable-object',
@@ -303,8 +304,16 @@ class TraceBatcherBase extends DurableObject<Env> {
             });
           const ageMs = Date.now() - this.lastSuccessfulFlushTime;
           const isStale = ageMs > STALE_FLUSH_THRESHOLD_MS;
+          // Throttle fatal alerts: with 5s retries, an extended Tinybird
+          // outage would otherwise emit ~720 fatal events/hour/shard. Cap at
+          // one fatal per stale-window per shard; downgrade the rest to error.
+          const shouldEmitFatal =
+            isStale && Date.now() - this.lastStaleAlertTime >= STALE_FLUSH_THRESHOLD_MS;
+          if (shouldEmitFatal) {
+            this.lastStaleAlertTime = Date.now();
+          }
           Sentry.captureException(error, {
-            level: isStale ? 'fatal' : 'error',
+            level: shouldEmitFatal ? 'fatal' : 'error',
             tags: {
               operation: 'flush',
               stale_shard: isStale ? 'true' : 'false',
@@ -330,6 +339,11 @@ class TraceBatcherBase extends DurableObject<Env> {
 
       this.flushInProgress = false;
 
+      // Flush logs BEFORE rescheduling: scheduleFlush awaits storage.setAlarm,
+      // which can throw on rare CF storage errors. If logs aren't flushed
+      // first, error context is lost at exactly the moment you need it most.
+      await this.logger.flush();
+
       // If the queue didn't fully drain (Tinybird error, SQLite error, etc),
       // reschedule. Otherwise the residual traces sit indefinitely until new
       // queue traffic happens to land on this shard — that's how shard 7 baked
@@ -337,8 +351,6 @@ class TraceBatcherBase extends DurableObject<Env> {
       if (this.traceCount > 0) {
         await this.scheduleFlush();
       }
-
-      await this.logger.flush();
     }
   }
 
