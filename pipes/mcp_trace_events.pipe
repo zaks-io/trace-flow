@@ -36,7 +36,7 @@ SQL >
             AND SpanName IN splitByChar(',', {{ String(span_names) }})
             {% end %}
             {% if defined(span_name_prefixes) %}
-            AND SpanName LIKE any(arrayMap(x -> concat(x, '%'), splitByChar(',', {{ String(span_name_prefixes) }})))
+            AND arrayExists(x -> startsWith(SpanName, x), splitByChar(',', {{ String(span_name_prefixes) }}))
             {% end %}
             {% if defined(event_names) %}
             AND `Events.Name`[idx] IN splitByChar(',', {{ String(event_names) }})
