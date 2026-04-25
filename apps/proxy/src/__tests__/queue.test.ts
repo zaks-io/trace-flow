@@ -271,4 +271,19 @@ describe('createQueueMessage', () => {
     expect(result).not.toHaveProperty('requestBodyKey');
     expect(result).not.toHaveProperty('responseBodyKey');
   });
+
+  it('uses responseMetadata.model when present (Google embed URL fallback)', () => {
+    // Simulates capture.ts having backfilled responseMetadata.model from the URL path
+    // for a Google embedContent request, since embed responses lack modelVersion.
+    const result = createQueueMessage({
+      ...baseParams,
+      targetUrl:
+        'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent',
+      responseMetadata: { model: 'text-embedding-004' },
+    });
+
+    expect(result.request.provider).toBe('google');
+    expect(result.request.model).toBe('text-embedding-004');
+    expect(result.responseMetadata).toEqual({ model: 'text-embedding-004' });
+  });
 });

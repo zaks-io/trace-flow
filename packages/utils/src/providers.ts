@@ -36,7 +36,8 @@ export function deriveOperationName(path: string): string {
 
   // Google Gemini patterns
   if (normalizedPath.includes(':generatecontent')) return 'chat';
-  if (normalizedPath.includes(':embedcontent')) return 'embeddings';
+  if (normalizedPath.includes(':embedcontent') || normalizedPath.includes(':batchembedcontents'))
+    return 'embeddings';
 
   return 'chat';
 }
