@@ -12,7 +12,6 @@ import { requireTraceFlowRole } from '../auth/auth';
 import { getCurrentUser, requireEnabledUser } from '../auth/userHelpers';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
-import type { SubscriptionTier } from '@trace-flow/types';
 import type { Id } from '../_generated/dataModel';
 import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './stripe';
 import { subscriptionValidator } from '../validators';
@@ -176,7 +175,7 @@ export const setTier = internalMutation({
 
     if (!subscription) throw new Error('Subscription not found');
 
-    const config = TIER_CONFIG[args.tier as SubscriptionTier];
+    const config = TIER_CONFIG[args.tier];
     await ctx.db.patch(subscription._id, {
       tier: args.tier,
       monthlyUnits: config.monthlyUnits,

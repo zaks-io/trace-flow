@@ -65,10 +65,7 @@ describe('openrouter-pricing', () => {
 
   describe('fetchOpenRouterPricing', () => {
     it('should return pricing for exact model match', async () => {
-      const result = await fetchOpenRouterPricing(
-        'anthropic/claude-3-5-sonnet',
-        mockKV as unknown as KVNamespace,
-      );
+      const result = await fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV);
 
       expect(result).not.toBeNull();
       // 0.000003 * 1_000_000_000_000 = 3_000_000
@@ -81,7 +78,7 @@ describe('openrouter-pricing', () => {
     });
 
     it('should handle models without cache pricing', async () => {
-      const result = await fetchOpenRouterPricing('openai/gpt-4', mockKV as unknown as KVNamespace);
+      const result = await fetchOpenRouterPricing('openai/gpt-4', mockKV);
 
       expect(result).not.toBeNull();
       expect(result?.promptCostPerMillion).toBe(30000000);
@@ -91,37 +88,28 @@ describe('openrouter-pricing', () => {
     });
 
     it('should handle models with reasoning pricing', async () => {
-      const result = await fetchOpenRouterPricing(
-        'anthropic/claude-3-5-sonnet:beta',
-        mockKV as unknown as KVNamespace,
-      );
+      const result = await fetchOpenRouterPricing('anthropic/claude-3-5-sonnet:beta', mockKV);
 
       expect(result).not.toBeNull();
       expect(result?.reasoningCostPerMillion).toBe(15000000);
     });
 
     it('should return null for unknown model', async () => {
-      const result = await fetchOpenRouterPricing(
-        'unknown/model',
-        mockKV as unknown as KVNamespace,
-      );
+      const result = await fetchOpenRouterPricing('unknown/model', mockKV);
 
       expect(result).toBeNull();
     });
 
     it('should match by suffix for versioned models', async () => {
       // Model ID ends with our search term
-      const result = await fetchOpenRouterPricing(
-        'claude-3-5-sonnet',
-        mockKV as unknown as KVNamespace,
-      );
+      const result = await fetchOpenRouterPricing('claude-3-5-sonnet', mockKV);
 
       expect(result).not.toBeNull();
       expect(result?.promptCostPerMillion).toBe(3000000);
     });
 
     it('should cache result in KV with correct key and TTL', async () => {
-      await fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV as unknown as KVNamespace);
+      await fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV);
 
       expect(mockKV.put).toHaveBeenCalledWith(
         'pricing:openrouter:anthropic/claude-3-5-sonnet',
@@ -143,10 +131,7 @@ describe('openrouter-pricing', () => {
 
       vi.resetModules();
       const module = await import('../openrouter-pricing');
-      const result = await module.fetchOpenRouterPricing(
-        'anthropic/claude-3-5-sonnet',
-        mockKV as unknown as KVNamespace,
-      );
+      const result = await module.fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV);
 
       expect(result).toBeNull();
     });
@@ -156,10 +141,7 @@ describe('openrouter-pricing', () => {
 
       vi.resetModules();
       const module = await import('../openrouter-pricing');
-      const result = await module.fetchOpenRouterPricing(
-        'anthropic/claude-3-5-sonnet',
-        mockKV as unknown as KVNamespace,
-      );
+      const result = await module.fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV);
 
       expect(result).toBeNull();
     });
@@ -167,7 +149,7 @@ describe('openrouter-pricing', () => {
     it('should cache with custom key when cacheKey is provided', async () => {
       await fetchOpenRouterPricing(
         'anthropic/claude-3-5-sonnet',
-        mockKV as unknown as KVNamespace,
+        mockKV,
         'pricing:google:gemini-2.5-pro',
       );
 
@@ -179,10 +161,7 @@ describe('openrouter-pricing', () => {
     it('should set updatedAt timestamp', async () => {
       const beforeTime = Date.now();
 
-      const result = await fetchOpenRouterPricing(
-        'anthropic/claude-3-5-sonnet',
-        mockKV as unknown as KVNamespace,
-      );
+      const result = await fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV);
 
       const afterTime = Date.now();
 
@@ -193,8 +172,8 @@ describe('openrouter-pricing', () => {
 
   describe('in-memory caching', () => {
     it('should reuse cached data within TTL', async () => {
-      await fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV as unknown as KVNamespace);
-      await fetchOpenRouterPricing('openai/gpt-4', mockKV as unknown as KVNamespace);
+      await fetchOpenRouterPricing('anthropic/claude-3-5-sonnet', mockKV);
+      await fetchOpenRouterPricing('openai/gpt-4', mockKV);
 
       // fetch should only be called once due to in-memory cache
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
