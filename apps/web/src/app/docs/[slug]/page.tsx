@@ -1,15 +1,53 @@
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { FileCode2 } from 'lucide-react';
 import { MarkdownDoc } from '@/components/docs/MarkdownDoc';
-import { getDocBySlug, getDocMarkdownPath, getDocSlugs, readDocMarkdown } from '@/lib/docs';
+import { getDocBySlug, getDocMarkdownPath, readDocMarkdown } from '@/lib/docs';
 
 type DocPageProps = {
   params: Promise<{ slug: string }>;
 };
 
-export async function generateStaticParams() {
-  return getDocSlugs().map((slug) => ({ slug }));
+export const dynamic = 'force-dynamic';
+
+const ALLOWED_DOC_HOSTS = new Set([
+  'trace-flow.dev',
+  'localhost:3000',
+  'localhost:8788',
+  '127.0.0.1:3000',
+  '127.0.0.1:8788',
+]);
+
+/**
+ * Host fallback when `APP_BASE_URL` is unset. Production should always set
+ * `APP_BASE_URL` so doc markdown fetches do not depend on the incoming `Host`
+ * header (including the `.workers.dev` wildcard used for preview convenience).
+ */
+function isAllowedDocHost(host: string): boolean {
+  if (ALLOWED_DOC_HOSTS.has(host)) {
+    return true;
+  }
+  return host.endsWith('.workers.dev');
+}
+
+function getDocsOrigin(requestHeaders: Headers): string | null {
+  const configuredOrigin = process.env.APP_BASE_URL;
+  if (configuredOrigin) {
+    try {
+      return new URL(configuredOrigin).origin;
+    } catch {
+      return null;
+    }
+  }
+
+  const host = requestHeaders.get('host')?.toLowerCase();
+  if (!host || !isAllowedDocHost(host)) {
+    return null;
+  }
+
+  const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https';
+  return `${protocol}://${host}`;
 }
 
 export async function generateMetadata({ params }: DocPageProps) {
@@ -34,7 +72,12 @@ export default async function DocPage({ params }: DocPageProps) {
     notFound();
   }
 
-  const content = await readDocMarkdown(slug);
+  const origin = getDocsOrigin(await headers());
+  if (!origin) {
+    notFound();
+  }
+
+  const content = await readDocMarkdown(slug, origin);
 
   if (!content) {
     notFound();

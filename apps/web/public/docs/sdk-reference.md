@@ -6,12 +6,13 @@ Gateway base URL: `https://gateway.trace-flow.dev`
 
 ## Route map
 
-| Provider   | Gateway Path       | Proxies To                 |
-| ---------- | ------------------ | -------------------------- |
-| OpenAI     | `/openai/v1/*`     | `api.openai.com/v1/*`      |
-| Anthropic  | `/anthropic/v1/*`  | `api.anthropic.com/v1/*`   |
-| OpenRouter | `/openrouter/v1/*` | `openrouter.ai/api/v1/*`   |
-| Groq       | `/groq/v1/*`       | `api.groq.com/openai/v1/*` |
+| Provider   | Gateway Path       | Proxies To                            |
+| ---------- | ------------------ | ------------------------------------- |
+| OpenAI     | `/openai/v1/*`     | `api.openai.com/v1/*`                 |
+| Anthropic  | `/anthropic/v1/*`  | `api.anthropic.com/v1/*`              |
+| Google     | `/google/v1beta/*` | `generativelanguage.googleapis.com/*` |
+| OpenRouter | `/openrouter/v1/*` | `openrouter.ai/api/v1/*`              |
+| Groq       | `/groq/v1/*`       | `api.groq.com/openai/v1/*`            |
 
 ## Required headers
 
@@ -50,6 +51,24 @@ const anthropic = createAnthropic({
 
 const result = await generateText({
   model: anthropic('claude-sonnet-4-20250514'),
+  prompt: 'Hello, world!',
+});
+```
+
+## Vercel AI SDK: Google
+
+```typescript
+import { generateText } from 'ai';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+
+const google = createGoogleGenerativeAI({
+  baseURL: 'https://gateway.trace-flow.dev/google/v1beta',
+  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  headers: { 'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY },
+});
+
+const result = await generateText({
+  model: google('gemini-2.5-flash'),
   prompt: 'Hello, world!',
 });
 ```

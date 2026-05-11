@@ -1,6 +1,3 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-
 type DocDefinition = {
   slug: string;
   title: string;
@@ -21,7 +18,7 @@ const DOCS: DocDefinition[] = [
     slug: 'sdk-reference',
     title: 'SDK Reference',
     description:
-      'Provider-specific examples for OpenAI, Anthropic, OpenRouter, and Groq with Vercel AI SDK and native SDKs.',
+      'Provider-specific examples for OpenAI, Anthropic, Google, OpenRouter, and Groq with Vercel AI SDK and native SDKs.',
     tag: 'Reference',
   },
   {
@@ -56,10 +53,6 @@ export function getDocBySlug(slug: string): DocDefinition | undefined {
   return DOCS.find((doc) => doc.slug === slug);
 }
 
-export function getDocSlugs(): string[] {
-  return DOCS.map((doc) => doc.slug);
-}
-
 export function getDocPath(slug: string): string {
   return `/docs/${slug}`;
 }
@@ -72,24 +65,16 @@ export function getDocMarkdownPath(slug: string): string {
   return `/docs/${slug}.md`;
 }
 
-function getDocsMarkdownFilePath(slug: string): string {
-  const doc = getDocBySlug(slug);
-  const relativePath = doc?.filePath ?? `docs/${slug}.md`;
-  return path.resolve(process.cwd(), 'public', relativePath);
-}
-
-export async function readDocMarkdown(slug: string): Promise<string | null> {
-  const publicDir = path.resolve(process.cwd(), 'public');
-  const filePath = getDocsMarkdownFilePath(slug);
-  const relativePath = path.relative(publicDir, filePath);
-
-  // Guard against path traversal even if callers pass unvalidated slugs.
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    return null;
-  }
+export async function readDocMarkdown(slug: string, origin: string): Promise<string | null> {
+  const docPath = getDocMarkdownPath(slug);
+  const url = new URL(docPath, origin);
 
   try {
-    return await fs.readFile(filePath, 'utf8');
+    const response = await fetch(url, { cache: 'force-cache' });
+    if (!response.ok) {
+      return null;
+    }
+    return await response.text();
   } catch {
     return null;
   }
