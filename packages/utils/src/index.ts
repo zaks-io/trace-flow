@@ -6,6 +6,7 @@ export * from './time';
 export * from './spans';
 export * from './body-format';
 export * from './message-parsing';
+export * from './redaction';
 
 // Backward compat — djb2Hash was previously exported as hashString
 export { djb2Hash as hashString } from './crypto';

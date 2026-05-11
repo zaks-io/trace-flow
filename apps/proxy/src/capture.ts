@@ -5,7 +5,7 @@ import type {
   LLMResponseMetadata,
   InputMessage,
 } from '@trace-flow/types';
-import { getCurrentTimestamp } from '@trace-flow/utils';
+import { getCurrentTimestamp, redactText, redactValue } from '@trace-flow/utils';
 import type { Logger } from '@trace-flow/logging';
 import type { ApiKeyData } from './auth';
 import type { UsageCheckResult } from './usage';
@@ -171,6 +171,14 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
     }
 
     const tier = usageCheck.status !== 'error' ? usageCheck.tier : undefined;
+
+    // Persist / queue redacted response copies only; parsing above used raw text.
+    const redactedResponseBody = redactText(responseBody);
+    const redactedError = error ? redactValue(error) : undefined;
+    const redactedResponseMetadata = responseMetadata ? redactValue(responseMetadata) : undefined;
+    const redactedSseStreamData =
+      isSSE && sseStreamData.messages.length > 0 ? redactValue(sseStreamData) : undefined;
+
     let stored = false;
     const storageSkipped = omitBody;
 
@@ -179,7 +187,7 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
         env.STORAGE,
         requestId,
         requestBody,
-        responseBody,
+        redactedResponseBody,
         isTruncated,
         logger,
         keyData.orgId,
@@ -208,10 +216,10 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
       responseComplete,
       latency,
       tokens,
-      error,
+      error: redactedError,
       truncated: isTruncated,
-      sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
-      responseMetadata,
+      sseStreamData: redactedSseStreamData,
+      responseMetadata: redactedResponseMetadata,
       receivedAt: requestStart * 1_000_000,
       inputMessages,
       tier,
