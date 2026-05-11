@@ -113,7 +113,7 @@ bun run deploy:prod
 
 ### Web worker: `APP_BASE_URL`
 
-Set `APP_BASE_URL` on the OpenNext web worker to the canonical public origin (for example `https://trace-flow.dev`). The app uses it for Auth0, token minting, and loading `/docs/*` markdown on the server. **Use this in production** so those flows do not fall back to the request `Host` header (the fallback only covers local dev, `trace-flow.dev`, and `*.workers.dev` for convenience).
+Set `APP_BASE_URL` on the OpenNext web worker to the canonical public origin (for example `https://trace-flow.dev`). The app uses it for Auth0, token minting, and the `/api/token` CSRF origin check.
 
 ## 6. Configure Custom Domains (Production)
 

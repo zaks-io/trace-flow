@@ -1,3 +1,5 @@
+import { DOCS_CONTENT } from '@/generated/docs-content';
+
 type DocDefinition = {
   slug: string;
   title: string;
@@ -65,17 +67,11 @@ export function getDocMarkdownPath(slug: string): string {
   return `/docs/${slug}.md`;
 }
 
-export async function readDocMarkdown(slug: string, origin: string): Promise<string | null> {
-  const docPath = getDocMarkdownPath(slug);
-  const url = new URL(docPath, origin);
-
-  try {
-    const response = await fetch(url, { cache: 'force-cache' });
-    if (!response.ok) {
-      return null;
-    }
-    return await response.text();
-  } catch {
-    return null;
-  }
+/**
+ * Returns markdown content bundled at build time. The actual file reads happen
+ * in scripts/generate-docs-content.ts (Node), so nothing here depends on a
+ * runtime filesystem, fetch, or ASSETS binding.
+ */
+export function readDocMarkdown(slug: string): string | null {
+  return DOCS_CONTENT[slug] ?? null;
 }
