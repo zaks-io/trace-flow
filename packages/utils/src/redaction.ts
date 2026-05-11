@@ -49,12 +49,12 @@ const IPV4_PATTERN = /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4
 const PHONE_PATTERN =
   /(?<![A-Za-z0-9])(?:\+1\s?)?(?:\(\d{3}\)\s*|\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}\b/g;
 
-// Authorization: Bearer … or standalone Bearer token (word chars and base64url)
-const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*\b/gi;
+// Authorization: Bearer … — trailing \b breaks on base64 padding (= is non-word); use lookahead instead
+const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*(?=\s|$|[^A-Za-z0-9\-._~+/=])/gi;
 
 // JSON-ish quoted values after sensitive keys (non-greedy string value)
 const SENSITIVE_JSON_VALUE_PATTERN =
-  /("(?:api_key|apikey|access_token|refresh_token|client_secret|password|secret|token)"\s*:\s*")((?:[^"\\]|\\.)*)(")/gi;
+  /("(?:api_key|apikey|access_token|refresh_token|client_secret|password|secret|token|authorization|auth_token|private_key|x_api_key|x-api-key)"\s*:\s*")((?:[^"\\]|\\.)*)(")/gi;
 
 /**
  * Applies common PII redaction patterns to a single string.

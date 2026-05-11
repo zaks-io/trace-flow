@@ -51,6 +51,13 @@ describe('redactText', () => {
     );
   });
 
+  it('redacts Bearer tokens with base64 padding', () => {
+    expect(redactText('Authorization: Bearer sk_live_abc==')).toBe(
+      'Authorization: Bearer [REDACTED]',
+    );
+    expect(redactText('Bearer tok==')).toBe('Bearer [REDACTED]');
+  });
+
   it('redacts sensitive JSON string values', () => {
     expect(redactText('{"access_token":"supersecret","x":1}')).toBe(
       '{"access_token":"[REDACTED]","x":1}',
@@ -58,6 +65,8 @@ describe('redactText', () => {
     expect(redactText('{"api_key":"k9","password":"p"}')).toBe(
       '{"api_key":"[REDACTED]","password":"[REDACTED]"}',
     );
+    expect(redactText('{"x-api-key":"secret"}')).toBe('{"x-api-key":"[REDACTED]"}');
+    expect(redactText('{"authorization":"Basic xyz"}')).toBe('{"authorization":"[REDACTED]"}');
   });
 
   it('returns empty string unchanged', () => {
