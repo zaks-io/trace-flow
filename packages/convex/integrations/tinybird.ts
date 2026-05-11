@@ -54,7 +54,7 @@ export const generateToken = action({
       throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
     }
 
-    // Fetch user's API keys to enforce row-level security
+    // Fetch org-visible API keys (same scope as apiKeys.list / MCP listForUser)
     const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery, {});
     const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
 
@@ -109,9 +109,14 @@ export function sanitizeApiKeys(keys: string[]): string[] {
   return keys.filter((k) => UUID_PATTERN.test(k));
 }
 
+/** Build comma-separated api_keys for JWT fixed_params from key docs (e.g. listForUser). */
+export function joinSanitizedApiKeys(apiKeys: { key: string }[]): string {
+  return sanitizeApiKeys(apiKeys.map((k) => k.key)).join(',');
+}
+
 async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
-  const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
-  return sanitizeApiKeys(apiKeys.map((k: { key: string }) => k.key)).join(',');
+  const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
+  return joinSanitizedApiKeys(apiKeys);
 }
 
 // Internal action for MCP - bypasses Convex auth, requires apiKeys parameter

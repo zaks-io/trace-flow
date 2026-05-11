@@ -1,7 +1,7 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
 import { describe, it, expect } from 'vitest';
-import { sanitizeApiKeys, UUID_PATTERN } from '../integrations/tinybird';
+import { joinSanitizedApiKeys, sanitizeApiKeys, UUID_PATTERN } from '../integrations/tinybird';
 
 describe('tinybird API key sanitization', () => {
   describe('UUID_PATTERN', () => {
@@ -94,6 +94,35 @@ describe('tinybird API key sanitization', () => {
       // Whitespace would still be interpolated and could cause query issues
       expect(sanitizeApiKeys([' 550e8400-e29b-41d4-a716-446655440000'])).toEqual([]);
       expect(sanitizeApiKeys(['550e8400-e29b-41d4-a716-446655440000 '])).toEqual([]);
+    });
+  });
+
+  describe('joinSanitizedApiKeys', () => {
+    it('includes org-shared and member-owned keys in one comma-separated string', () => {
+      // Mirrors listForUser: org keys (e.g. created by owner) plus user keys
+      const docs = [
+        { key: '11111111-1111-1111-1111-111111111111' },
+        { key: '22222222-2222-2222-2222-222222222222' },
+      ];
+      expect(joinSanitizedApiKeys(docs)).toBe(
+        '11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222',
+      );
+    });
+
+    it('filters invalid keys and still includes valid org keys', () => {
+      const docs = [
+        { key: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' },
+        { key: "bad'; DROP TABLE--" },
+        { key: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' },
+      ];
+      expect(joinSanitizedApiKeys(docs)).toBe(
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      );
+    });
+
+    it('returns empty string when no valid keys remain', () => {
+      expect(joinSanitizedApiKeys([{ key: 'not-a-uuid' }])).toBe('');
+      expect(joinSanitizedApiKeys([])).toBe('');
     });
   });
 });

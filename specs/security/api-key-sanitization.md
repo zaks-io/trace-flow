@@ -52,7 +52,7 @@ function sanitizeApiKey(key: string): string {
 }
 
 async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
-  const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
+  const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
   return apiKeys
     .map((k: { key: string }) => sanitizeApiKey(k.key))
     .filter(Boolean)
