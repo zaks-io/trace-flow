@@ -121,7 +121,6 @@ async function reconcileAcceptedInvite(
   if (user.inviteId === acceptedInvite._id) {
     if (acceptedInvite.orgId) {
       await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
-      await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, acceptedInvite.orgId);
       await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
     }
     return;
@@ -129,6 +128,7 @@ async function reconcileAcceptedInvite(
 
   let nextOrgId = user.orgId;
   if (acceptedInvite.orgId) {
+    // Invited org becomes the user's active org; prior personal org remains in DB but is unlinked from users.orgId.
     nextOrgId = acceptedInvite.orgId;
   }
 
@@ -327,18 +327,34 @@ export const findOrCreateUser = internalMutation({
           picture: args.picture,
         });
       }
-      if (existingUser.orgId) {
-        await ensureOrgHasSubscription(ctx, existingUser.orgId);
-      } else {
+      if (!existingUser.enabled) {
+        await ctx.db.patch(existingUser._id, { enabled: true });
+      }
+
+      const userInfo: UserInfo = {
+        tokenIdentifier: args.tokenIdentifier,
+        email: args.email,
+        name: args.name,
+        picture: args.picture,
+      };
+      const userAfterProfile = (await ctx.db.get(existingUser._id))!;
+      await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
+
+      const refreshed = (await ctx.db.get(existingUser._id))!;
+      if (!refreshed.orgId) {
         await createOrgWithDefaultBilling(
           ctx,
-          existingUser._id,
-          existingUser.name,
+          refreshed._id,
+          refreshed.name,
           extractSub(args.tokenIdentifier) ?? undefined,
         );
+      } else {
+        await ensureOrgHasSubscription(ctx, refreshed.orgId);
       }
       return existingUser._id;
     }
+
+    const acceptedInvite = await getAcceptedInviteForEmail(ctx, args.email);
 
     const userId = await ctx.db.insert('users', {
       tokenIdentifier: args.tokenIdentifier,
@@ -346,14 +362,22 @@ export const findOrCreateUser = internalMutation({
       name: args.name,
       picture: args.picture,
       enabled: true,
+      inviteId: acceptedInvite?._id,
     });
 
-    await createOrgWithDefaultBilling(
-      ctx,
-      userId,
-      args.name,
-      extractSub(args.tokenIdentifier) ?? undefined,
-    );
+    if (acceptedInvite?.orgId) {
+      await ctx.db.patch(userId, { orgId: acceptedInvite.orgId });
+      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+      await scheduleUserOrgSync(ctx, args.tokenIdentifier, acceptedInvite.orgId);
+      await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
+    } else {
+      await createOrgWithDefaultBilling(
+        ctx,
+        userId,
+        args.name,
+        extractSub(args.tokenIdentifier) ?? undefined,
+      );
+    }
 
     return userId;
   },

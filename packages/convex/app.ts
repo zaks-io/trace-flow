@@ -6,7 +6,6 @@ import { userValidator, subscriptionValidator } from './validators';
 export const sessionContext = query({
   args: {},
   returns: v.object({
-    isAuthenticated: v.boolean(),
     user: v.union(userValidator, v.null()),
     isAdmin: v.boolean(),
     subscription: v.union(subscriptionValidator, v.null()),
@@ -16,7 +15,7 @@ export const sessionContext = query({
     const identity = await ctx.auth.getUserIdentity();
 
     if (!identity) {
-      return { isAuthenticated: false, user: null, isAdmin: false, subscription: null };
+      return { user: null, isAdmin: false, subscription: null };
     }
 
     const user = await getCurrentUser(ctx);
@@ -36,6 +35,6 @@ export const sessionContext = query({
       onboardingCompletedAt = org?.onboardingCompletedAt;
     }
 
-    return { isAuthenticated: true, user, isAdmin, subscription, onboardingCompletedAt };
+    return { user, isAdmin, subscription, onboardingCompletedAt };
   },
 });
