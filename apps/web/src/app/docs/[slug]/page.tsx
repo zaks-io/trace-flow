@@ -8,9 +8,9 @@ type DocPageProps = {
   params: Promise<{ slug: string }>;
 };
 
-// Render at runtime via the ASSETS binding. OpenNext on Cloudflare has no
-// incremental cache backend configured for this project, so SSG-prerendered
-// HTML for dynamic segments is not served — pages must render on demand.
+// SSG'd HTML for dynamic segments needs an OpenNext incremental cache
+// backend, which this project doesn't have configured. Force runtime
+// rendering instead — the content is bundled in JS so render is ~ms.
 export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }: DocPageProps) {
@@ -35,7 +35,7 @@ export default async function DocPage({ params }: DocPageProps) {
     notFound();
   }
 
-  const content = await readDocMarkdown(slug);
+  const content = readDocMarkdown(slug);
 
   if (!content) {
     notFound();

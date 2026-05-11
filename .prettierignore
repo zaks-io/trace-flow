@@ -1,4 +1,5 @@
 _generated/
+apps/web/src/generated/
 package-lock.json
 yarn.lock
 bun.lock

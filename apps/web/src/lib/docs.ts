@@ -1,4 +1,4 @@
-import { getCloudflareContext } from '@opennextjs/cloudflare';
+import { DOCS_CONTENT } from '@/generated/docs-content';
 
 type DocDefinition = {
   slug: string;
@@ -67,46 +67,11 @@ export function getDocMarkdownPath(slug: string): string {
   return `/docs/${slug}.md`;
 }
 
-function getDocRelativePath(slug: string): string | null {
-  const doc = getDocBySlug(slug);
-  if (!doc) return null;
-  return doc.filePath ?? `docs/${slug}.md`;
-}
-
 /**
- * Reads markdown from the Cloudflare ASSETS binding at runtime. Falls back to
- * `fs.readFile` when no Worker context is available (next dev outside the
- * OpenNext Miniflare runtime, or build-time SSG). The ASSETS binding serves
- * files directly from `.open-next/assets/` without going through middleware or
- * a public self-fetch, so there's no APP_BASE_URL, host allowlist, or
- * subrequest loop in play.
+ * Returns markdown content bundled at build time. The actual file reads happen
+ * in scripts/generate-docs-content.ts (Node), so nothing here depends on a
+ * runtime filesystem, fetch, or ASSETS binding.
  */
-export async function readDocMarkdown(slug: string): Promise<string | null> {
-  const relativePath = getDocRelativePath(slug);
-  if (!relativePath) return null;
-
-  try {
-    const { env } = await getCloudflareContext({ async: true });
-    const assets = (env as { ASSETS?: { fetch(request: Request): Promise<Response> } }).ASSETS;
-    if (assets) {
-      const response = await assets.fetch(new Request(`http://assets/${relativePath}`));
-      if (!response.ok) {
-        console.warn(`docs: ASSETS.fetch returned ${response.status} for ${relativePath}`);
-        return null;
-      }
-      return await response.text();
-    }
-  } catch {
-    // No CF context (build time / pure Node). Fall through to fs read.
-  }
-
-  const { promises: fs } = await import('node:fs');
-  const path = await import('node:path');
-  const filePath = path.resolve(process.cwd(), 'public', relativePath);
-  try {
-    return await fs.readFile(filePath, 'utf8');
-  } catch (error) {
-    console.warn(`docs: fs.readFile failed for ${filePath}:`, error);
-    return null;
-  }
+export function readDocMarkdown(slug: string): string | null {
+  return DOCS_CONTENT[slug] ?? null;
 }

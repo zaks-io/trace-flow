@@ -1,4 +1,3 @@
-import { codeToHtml } from 'shiki';
 import { CopyCodeButton } from '@/components/docs/CopyCodeButton';
 
 interface CodeBlockProps {
@@ -14,13 +13,8 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   yml: 'yaml',
 };
 
-export async function CodeBlock({ code, lang = 'typescript' }: CodeBlockProps) {
+export function CodeBlock({ code, lang = 'typescript' }: CodeBlockProps) {
   const resolvedLang = LANGUAGE_ALIASES[lang] ?? lang;
-
-  const html = await codeToHtml(code, {
-    lang: resolvedLang,
-    theme: 'github-dark-default',
-  });
 
   return (
     <div className="code-block group relative">
@@ -37,10 +31,9 @@ export async function CodeBlock({ code, lang = 'typescript' }: CodeBlockProps) {
           </div>
           <CopyCodeButton code={code} />
         </div>
-        <div
-          className="overflow-x-auto p-4 text-sm leading-relaxed [&_pre]:!bg-transparent [&_code]:!bg-transparent"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
+        <pre className="overflow-x-auto p-4 text-sm leading-relaxed text-foreground/90">
+          <code className={`language-${resolvedLang} font-mono`}>{code}</code>
+        </pre>
       </div>
     </div>
   );
