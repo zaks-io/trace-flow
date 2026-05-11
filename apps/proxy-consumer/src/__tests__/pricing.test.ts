@@ -34,7 +34,7 @@ describe('pricing', () => {
     it('should return pricing when exact match found', async () => {
       mockKV.get.mockResolvedValue(samplePricing);
 
-      const result = await getPricing(mockKV as unknown as KVNamespace, 'openai', 'gpt-4');
+      const result = await getPricing(mockKV, 'openai', 'gpt-4');
 
       expect(mockKV.get).toHaveBeenCalledWith('pricing:openai:gpt-4', 'json');
       expect(result).toEqual(samplePricing);
@@ -43,11 +43,7 @@ describe('pricing', () => {
     it('should return pricing via prefix match when model has date suffix', async () => {
       mockKV.get.mockResolvedValueOnce(null).mockResolvedValueOnce(samplePricing);
 
-      const result = await getPricing(
-        mockKV as unknown as KVNamespace,
-        'anthropic',
-        'claude-3-5-sonnet-20250929',
-      );
+      const result = await getPricing(mockKV, 'anthropic', 'claude-3-5-sonnet-20250929');
 
       expect(mockKV.get).toHaveBeenCalledWith(
         'pricing:anthropic:claude-3-5-sonnet-20250929',
@@ -60,11 +56,7 @@ describe('pricing', () => {
     it('should return null when no match found', async () => {
       mockKV.get.mockResolvedValue(null);
 
-      const result = await getPricing(
-        mockKV as unknown as KVNamespace,
-        'openai',
-        'unknown-model-20250929',
-      );
+      const result = await getPricing(mockKV, 'openai', 'unknown-model-20250929');
 
       expect(result).toBeNull();
     });
@@ -72,7 +64,7 @@ describe('pricing', () => {
     it('should return null for model without date suffix when not found', async () => {
       mockKV.get.mockResolvedValue(null);
 
-      const result = await getPricing(mockKV as unknown as KVNamespace, 'openai', 'gpt-4');
+      const result = await getPricing(mockKV, 'openai', 'gpt-4');
 
       expect(mockKV.get).toHaveBeenCalledTimes(1);
       expect(result).toBeNull();
@@ -81,11 +73,7 @@ describe('pricing', () => {
     it('should not attempt prefix match for version suffixes like claude-sonnet-4-6', async () => {
       mockKV.get.mockResolvedValue(null);
 
-      const result = await getPricing(
-        mockKV as unknown as KVNamespace,
-        'anthropic',
-        'claude-sonnet-4-6',
-      );
+      const result = await getPricing(mockKV, 'anthropic', 'claude-sonnet-4-6');
 
       expect(mockKV.get).toHaveBeenCalledTimes(1);
       expect(mockKV.get).toHaveBeenCalledWith('pricing:anthropic:claude-sonnet-4-6', 'json');
@@ -95,7 +83,7 @@ describe('pricing', () => {
     it('should not attempt prefix match for partial date patterns', async () => {
       mockKV.get.mockResolvedValue(null);
 
-      const result = await getPricing(mockKV as unknown as KVNamespace, 'test', 'model-2025');
+      const result = await getPricing(mockKV, 'test', 'model-2025');
 
       // Only one call because -2025 is not a valid 8-digit date suffix
       expect(mockKV.get).toHaveBeenCalledTimes(1);

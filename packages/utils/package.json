@@ -14,7 +14,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "eventsource-parser": "^3.0.0"
+    "eventsource-parser": "^3.0.8"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.4",

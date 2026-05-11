@@ -48,14 +48,13 @@ describe('Queue Handler Integration', () => {
     receivedAt: 1000000000000000,
   });
 
-  const createScheduledController = (): ScheduledController =>
-    ({
-      cron: '*/5 * * * *',
-      scheduledTime: Date.now(),
-      noRetry() {
-        // noop for tests
-      },
-    }) as ScheduledController;
+  const createScheduledController = (): ScheduledController => ({
+    cron: '*/5 * * * *',
+    scheduledTime: Date.now(),
+    noRetry() {
+      // noop for tests
+    },
+  });
 
   it('should process single message and route to correct shard', async () => {
     const message = createMockQueueMessage('test-1', 'api-key-123');
@@ -105,7 +104,7 @@ describe('Queue Handler Integration', () => {
         retry: () => {
           /* noop */
         },
-      } as Message<QueueMessage>;
+      };
     });
 
     const batch: MessageBatch<QueueMessage> = {
@@ -419,7 +418,7 @@ describe('Queue Handler Integration', () => {
         retry: () => {
           /* noop */
         },
-      } as Message<QueueMessage>;
+      };
     });
 
     const batch: MessageBatch<QueueMessage> = {

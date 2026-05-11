@@ -1,7 +1,6 @@
 import { internalMutation } from '../_generated/server';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
-import type { SubscriptionTier } from '@trace-flow/types';
 
 export const backfillOrgBilling = internalMutation({
   handler: async (ctx) => {
@@ -44,7 +43,7 @@ export const backfillOrgBilling = internalMutation({
       if (subscription.addonPurchaseCount === undefined) patch.addonPurchaseCount = 0;
 
       // Ensure monthlyUnits matches plan-level config (not seat-multiplied)
-      const tierConfig = TIER_CONFIG[subscription.tier as SubscriptionTier];
+      const tierConfig = TIER_CONFIG[subscription.tier];
       if (tierConfig && subscription.monthlyUnits !== tierConfig.monthlyUnits) {
         patch.monthlyUnits = tierConfig.monthlyUnits;
       }

@@ -14,7 +14,6 @@ import { getStripeClient } from '../billing/stripe';
 import { scheduleKVSync } from '../billing/subscriptions';
 import { ensureOrgHasSubscription } from '../auth/organizations';
 import { TIER_CONFIG } from '@trace-flow/types';
-import type { SubscriptionTier } from '@trace-flow/types';
 import type { Id } from '../_generated/dataModel';
 
 async function requireAdminAction(ctx: ActionCtx) {
@@ -200,7 +199,7 @@ export const forceActivateSubscription = internalMutation({
     }
 
     const tier = args.tier ?? sub.tier ?? 'hobby';
-    const monthlyUnits = args.monthlyUnits ?? TIER_CONFIG[tier as SubscriptionTier].monthlyUnits;
+    const monthlyUnits = args.monthlyUnits ?? TIER_CONFIG[tier].monthlyUnits;
     const periodDays = Math.max(1, Math.min(365, Math.floor(args.periodDays ?? 30)));
     const now = Date.now();
 
