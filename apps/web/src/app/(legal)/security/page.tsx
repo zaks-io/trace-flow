@@ -159,10 +159,15 @@ export default function SecurityPage() {
           </p>
           <p>
             Proxy ingest is authenticated with opaque API keys passed in the{' '}
-            <Code>X-Trace-Flow-Api-Key</Code> header. Keys are validated against a Cloudflare KV
-            cache; cache lookups are keyed by the SHA-256 hash of the key. API keys are stripped
-            from the request before it is forwarded to the upstream LLM provider, alongside W3C
-            trace headers and the host header.
+            <Code>X-Trace-Flow-Api-Key</Code> header. Keys are looked up in a Cloudflare KV
+            namespace. Validated results are cached in memory and via the Cloudflare Cache API, with
+            cache entries keyed by the SHA-256 hash of the raw key.
+          </p>
+          <p>
+            The <Code>X-Trace-Flow-Api-Key</Code> header is stripped from the request before it is
+            forwarded upstream, alongside W3C trace headers and the host header. Your provider API
+            keys (<Code>Authorization</Code>, <Code>x-api-key</Code>) pass through to authenticate
+            with the upstream LLM provider and are not stored.
           </p>
         </Section>
 
