@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildStoredBodyKey } from '@trace-flow/types';
 import type { Logger } from '@trace-flow/logging';
+import { encryptStoredBodyPayload } from '@trace-flow/utils';
 import {
   getStoredBodies,
   isBodyVisible,
   parseStoredBodiesPayload,
   resolveVisibilityWindowDays,
 } from '../bodies';
+
+const ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
+const encryption = { rootKeyBase64: ROOT_KEY, keyId: 'v1' };
 
 const noopLogger: Logger = {
   child: () => noopLogger,
@@ -23,6 +27,20 @@ function createObjectBody(body: string, uploaded: string, orgId = 'org_123'): R2
     uploaded: new Date(uploaded),
     customMetadata: { orgId },
   } as unknown as R2ObjectBody;
+}
+
+async function createEncryptedStoredBody(
+  requestId: string,
+  payload: unknown,
+  orgId = 'org_123',
+): Promise<string> {
+  const encrypted = await encryptStoredBodyPayload(JSON.stringify(payload), {
+    rootKeyBase64: ROOT_KEY,
+    orgId,
+    objectKey: buildStoredBodyKey(requestId),
+  });
+
+  return JSON.stringify(encrypted);
 }
 
 describe('bodies helpers', () => {
@@ -112,6 +130,82 @@ describe('bodies helpers', () => {
       uploaded: new Date('2026-03-01T00:00:00.000Z'),
     });
     expect(storage.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns decrypted stored bodies from encrypted payloads', async () => {
+    const encryptedBody = await createEncryptedStoredBody('req_encrypted', {
+      requestBody: 'encrypted request body',
+      responseBody: 'encrypted response body',
+      truncated: true,
+    });
+    const combined = createObjectBody(encryptedBody, '2026-03-01T00:00:00.000Z');
+    const storage = {
+      get: vi.fn().mockResolvedValue(combined),
+    } as unknown as R2Bucket;
+
+    const result = await getStoredBodies(storage, 'req_encrypted', noopLogger, encryption);
+
+    expect(result).toEqual({
+      payload: {
+        requestBody: 'encrypted request body',
+        responseBody: 'encrypted response body',
+        truncated: true,
+      },
+      orgId: 'org_123',
+      uploaded: new Date('2026-03-01T00:00:00.000Z'),
+    });
+  });
+
+  it('returns null when encrypted org metadata does not match', async () => {
+    const encryptedBody = await createEncryptedStoredBody(
+      'req_wrong_org',
+      {
+        requestBody: 'request body',
+        responseBody: 'response body',
+      },
+      'org_123',
+    );
+    const combined = createObjectBody(encryptedBody, '2026-03-01T00:00:00.000Z', 'org_other');
+    const storage = {
+      get: vi.fn().mockResolvedValue(combined),
+    } as unknown as R2Bucket;
+
+    const result = await getStoredBodies(storage, 'req_wrong_org', noopLogger, encryption);
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when encrypted payload is missing encryption config', async () => {
+    const encryptedBody = await createEncryptedStoredBody('req_missing_key', {
+      requestBody: 'request body',
+      responseBody: 'response body',
+    });
+    const combined = createObjectBody(encryptedBody, '2026-03-01T00:00:00.000Z');
+    const storage = {
+      get: vi.fn().mockResolvedValue(combined),
+    } as unknown as R2Bucket;
+
+    const result = await getStoredBodies(storage, 'req_missing_key', noopLogger);
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when encrypted ciphertext is corrupt', async () => {
+    const encryptedBody = JSON.parse(
+      await createEncryptedStoredBody('req_corrupt_encrypted', {
+        requestBody: 'request body',
+        responseBody: 'response body',
+      }),
+    ) as Record<string, unknown>;
+    encryptedBody.data = 'corrupt';
+    const combined = createObjectBody(JSON.stringify(encryptedBody), '2026-03-01T00:00:00.000Z');
+    const storage = {
+      get: vi.fn().mockResolvedValue(combined),
+    } as unknown as R2Bucket;
+
+    const result = await getStoredBodies(storage, 'req_corrupt_encrypted', noopLogger, encryption);
+
+    expect(result).toBeNull();
   });
 
   it('returns null when stored payload is corrupt', async () => {

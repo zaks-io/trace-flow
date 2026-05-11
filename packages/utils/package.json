@@ -14,6 +14,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@trace-flow/types": "workspace:*",
     "eventsource-parser": "^3.0.0"
   },
   "devDependencies": {

@@ -23,87 +23,54 @@ Dashboard -> API Worker -> R2 Bucket -> Plain text response
 
 ## Implementation Approach
 
-Use **AES-256-GCM** encryption with the Web Crypto API (available in Cloudflare Workers).
+Use tenant-scoped **AES-256-GCM** encryption with the Web Crypto API (available in Cloudflare Workers). Body payloads are encrypted with an org-specific key derived from a shared root secret, so encryption is scoped to the owning organization.
 
 ### Key Management
 
-Store encryption keys in Cloudflare Workers secrets:
+Store the root encryption key in Cloudflare Workers secrets on both the proxy and API workers:
 
 ```bash
-wrangler secret put ENCRYPTION_KEY --env production
+wrangler secret put BODY_ENCRYPTION_ROOT_KEY --env production
 # Generate: openssl rand -base64 32
 ```
 
-For key rotation support, maintain a key ID:
+Set `BODY_ENCRYPTION_KEY_ID` for rotation support and include org context in the encrypted envelope:
 
 ```typescript
 interface EncryptedPayload {
   v: 1; // Version for future format changes
+  alg: 'AES-GCM';
+  kdf: 'HKDF-SHA-256';
   kid: string; // Key ID for rotation
+  orgId: string; // Owning organization
   iv: string; // Base64 initialization vector
   data: string; // Base64 ciphertext
-  tag: string; // Base64 auth tag
 }
 ```
 
+Workers derive an org-scoped AES key using HKDF-SHA-256 from `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ENCRYPTION_KEY_ID`, and `orgId`. AES-GCM additional authenticated data includes the envelope version, `orgId`, and R2 object key so encrypted bodies cannot be replayed across organizations or object keys.
+
 ### Encryption Module
 
-**File**: `apps/proxy/src/crypto.ts`
+**File**: `packages/utils/src/crypto.ts`
 
 ```typescript
-const ALGORITHM = 'AES-GCM';
-const KEY_LENGTH = 256;
-
-interface EncryptionEnv {
-  ENCRYPTION_KEY: string; // Base64 encoded
-  ENCRYPTION_KEY_ID?: string; // For rotation, defaults to 'v1'
+interface BodyEncryptionOptions {
+  rootKeyBase64: string; // Base64 encoded 32-byte root key
+  orgId: string;
+  objectKey: string;
+  keyId?: string; // For rotation, defaults to 'v1'
 }
 
-export async function encrypt(plaintext: string, env: EncryptionEnv): Promise<string> {
-  const keyData = Uint8Array.from(atob(env.ENCRYPTION_KEY), (c) => c.charCodeAt(0));
-  const key = await crypto.subtle.importKey(
-    'raw',
-    keyData,
-    { name: ALGORITHM, length: KEY_LENGTH },
-    false,
-    ['encrypt'],
-  );
+export async function encryptStoredBodyPayload(
+  plaintext: string,
+  options: BodyEncryptionOptions,
+): Promise<EncryptedPayload>;
 
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(plaintext);
-
-  const ciphertext = await crypto.subtle.encrypt({ name: ALGORITHM, iv }, key, encoded);
-
-  const payload: EncryptedPayload = {
-    v: 1,
-    kid: env.ENCRYPTION_KEY_ID ?? 'v1',
-    iv: btoa(String.fromCharCode(...iv)),
-    data: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
-  };
-
-  return JSON.stringify(payload);
-}
-
-export async function decrypt(encrypted: string, env: EncryptionEnv): Promise<string> {
-  const payload: EncryptedPayload = JSON.parse(encrypted);
-
-  // In future, look up key by payload.kid for rotation support
-  const keyData = Uint8Array.from(atob(env.ENCRYPTION_KEY), (c) => c.charCodeAt(0));
-  const key = await crypto.subtle.importKey(
-    'raw',
-    keyData,
-    { name: ALGORITHM, length: KEY_LENGTH },
-    false,
-    ['decrypt'],
-  );
-
-  const iv = Uint8Array.from(atob(payload.iv), (c) => c.charCodeAt(0));
-  const ciphertext = Uint8Array.from(atob(payload.data), (c) => c.charCodeAt(0));
-
-  const decrypted = await crypto.subtle.decrypt({ name: ALGORITHM, iv }, key, ciphertext);
-
-  return new TextDecoder().decode(decrypted);
-}
+export async function decryptStoredBodyPayload(
+  payload: EncryptedPayload,
+  options: BodyEncryptionOptions,
+): Promise<string>;
 ```
 
 ### Update Storage Module
@@ -111,39 +78,18 @@ export async function decrypt(encrypted: string, env: EncryptionEnv): Promise<st
 **File**: `apps/proxy/src/storage.ts`
 
 ```typescript
-import { encrypt } from './crypto';
+const payload = JSON.stringify({ requestBody, responseBody, truncated });
+const encryptedPayload = await encryptStoredBodyPayload(payload, {
+  rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
+  keyId: env.BODY_ENCRYPTION_KEY_ID,
+  orgId,
+  objectKey: bodyKey,
+});
 
-export async function storeRequestResponse(
-  storage: R2Bucket,
-  requestId: string,
-  requestBody: string,
-  responseBody: string,
-  env: EncryptionEnv,
-): Promise<{ bodyKey: string; stored: boolean }> {
-  const bodyKey = `bodies/${requestId}`;
-
-  try {
-    // Encrypt before storing
-    const [encryptedRequest, encryptedResponse] = await Promise.all([
-      encrypt(requestBody, env),
-      encrypt(responseBody, env),
-    ]);
-
-    const payload = JSON.stringify({
-      requestBody: encryptedRequest,
-      responseBody: encryptedResponse,
-    });
-
-    await storage.put(bodyKey, payload, {
-      httpMetadata: { contentType: 'application/json' },
-    });
-
-    return { bodyKey, stored: true };
-  } catch (error) {
-    console.error('Failed to store in R2:', { requestId, error });
-    return { bodyKey, stored: false };
-  }
-}
+await storage.put(bodyKey, JSON.stringify(encryptedPayload), {
+  customMetadata: { orgId },
+  httpMetadata: { contentType: 'application/json' },
+});
 ```
 
 ### Update API Worker
@@ -151,27 +97,31 @@ export async function storeRequestResponse(
 **File**: `apps/api/src/index.ts`
 
 ```typescript
-import { decrypt } from '../../proxy/src/crypto';
-
-async function getRequestBody(requestId: string, env: Env): Promise<string | null> {
-  const key = `requests/${requestId}`;
+async function getStoredBodies(requestId: string, env: Env): Promise<StoredBodiesPayload | null> {
+  const key = `bodies/${requestId}`;
   const object = await env.STORAGE.get(key);
 
   if (!object) return null;
 
-  const encrypted = await object.text();
+  const raw = await object.text();
+  const parsed = JSON.parse(raw);
 
-  // Handle both encrypted and legacy unencrypted data
-  try {
-    const parsed = JSON.parse(encrypted);
-    if (parsed.v === 1 && parsed.kid) {
-      return decrypt(encrypted, env);
+  if (isEncryptedStoredBodiesPayload(parsed)) {
+    const orgId = object.customMetadata?.orgId;
+    if (parsed.orgId !== orgId) {
+      throw new Error('Organization metadata mismatch');
     }
-  } catch {
-    // Not JSON, assume legacy unencrypted
+    const decrypted = await decryptStoredBodyPayload(parsed, {
+      rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
+      keyId: env.BODY_ENCRYPTION_KEY_ID,
+      orgId,
+      objectKey: key,
+    });
+    return parseStoredBodiesPayload(decrypted);
   }
 
-  return encrypted; // Legacy fallback
+  // Legacy plaintext fallback is logged and can be removed after the R2 TTL window.
+  return parseStoredBodiesPayload(raw);
 }
 ```
 
@@ -179,7 +129,7 @@ async function getRequestBody(requestId: string, env: Env): Promise<string | nul
 
 ### Option A: Encrypt on Read (Lazy Migration)
 
-Leave existing data unencrypted. New data is encrypted. Reads handle both formats (see API worker code above).
+Leave existing data unencrypted. New data is encrypted. Reads handle both formats (see API worker code above), but encrypted reads require matching R2 org metadata and envelope org ID.
 
 **Pros**: No downtime, simple
 **Cons**: Old data remains unencrypted until TTL expires
@@ -215,8 +165,8 @@ Future enhancement for key rotation:
 
 1. Generate new key, assign new key ID
 2. Add both keys to Workers secrets (keyed by ID)
-3. New writes use new key ID
-4. Reads look up key by ID from payload
+3. New writes use new key ID for HKDF derivation
+4. Reads use `kid` from the payload to select the matching root key material
 5. After TTL, old key can be removed
 
 ## Performance Considerations
@@ -264,7 +214,8 @@ describe('Encryption', () => {
 - [ ] New request/response bodies stored encrypted in R2
 - [ ] API worker decrypts bodies for display
 - [ ] Backward compatible with existing unencrypted data
-- [ ] Encryption key stored as Worker secret
+- [ ] Root encryption key stored as Worker secret on proxy and API
+- [ ] Org ID is included in key derivation and AES-GCM authenticated data
 - [ ] Unit tests for encrypt/decrypt
 - [ ] Integration test verifying encrypted storage
 - [ ] Documentation updated with security note

@@ -16,7 +16,7 @@ enabled = true
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 
-# Secrets: TINYBIRD_ADMIN_TOKEN, AXIOM_TOKEN
+# Secrets: TINYBIRD_ADMIN_TOKEN, AXIOM_TOKEN, BODY_ENCRYPTION_ROOT_KEY
 
 [vars]
 AUTH0_DOMAIN = "auth0.zaks.io"
@@ -24,6 +24,7 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 SENTRY_ENVIRONMENT = "development"
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
+BODY_ENCRYPTION_KEY_ID = "v1"
 
 [[r2_buckets]]
 binding = "STORAGE"
@@ -43,6 +44,7 @@ AUTH0_CLIENT_ID = "asEG3J6UWZOeKWclu2WxONmoIhTsCfdp"
 SENTRY_ENVIRONMENT = "production"
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
+BODY_ENCRYPTION_KEY_ID = "v1"
 
 [[env.production.routes]]
 pattern = "api.trace-flow.dev/*"
@@ -65,6 +67,7 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 SENTRY_ENVIRONMENT = "preview"
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
+BODY_ENCRYPTION_KEY_ID = "v1"
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"

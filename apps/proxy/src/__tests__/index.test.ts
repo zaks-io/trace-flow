@@ -795,6 +795,14 @@ describe('Proxy Worker Integration', () => {
       // Verify bodies WERE stored
       const stored = await env.STORAGE.list({ prefix: 'bodies/' });
       expect(stored.objects.length).toBeGreaterThanOrEqual(1);
+
+      const firstStoredObject = stored.objects[0];
+      expect(firstStoredObject).toBeDefined();
+      const storedObject = await env.STORAGE.get(firstStoredObject!.key);
+      expect(storedObject).not.toBeNull();
+      const storedText = await storedObject!.text();
+      expect(storedText).not.toContain('gpt-4');
+      expect(storedText).not.toContain('Hello!');
     });
 
     it('should strip X-Trace-Flow-Omit-Body header before forwarding to provider', async () => {

@@ -1,5 +1,11 @@
 import { buildStoredBodyKey, type StoredBodiesPayload } from '@trace-flow/types';
 import type { Logger } from '@trace-flow/logging';
+import { encryptStoredBodyPayload } from '@trace-flow/utils';
+
+interface BodyEncryptionConfig {
+  rootKeyBase64?: string;
+  keyId?: string;
+}
 
 /**
  * Stores request and response bodies in a single R2 object for later retrieval via the API worker.
@@ -26,7 +32,19 @@ export async function storeBodies(
   truncated: boolean,
   logger: Logger,
   orgId?: string,
+  encryption?: BodyEncryptionConfig,
 ): Promise<boolean> {
+  const bodyKey = buildStoredBodyKey(requestId);
+
+  if (!orgId || !encryption?.rootKeyBase64) {
+    logger.error('proxy.r2_store_missing_encryption_context', undefined, {
+      requestId,
+      hasOrgId: Boolean(orgId),
+      hasEncryptionKey: Boolean(encryption?.rootKeyBase64),
+    });
+    return false;
+  }
+
   const payload: StoredBodiesPayload = {
     requestBody,
     responseBody,
@@ -38,7 +56,14 @@ export async function storeBodies(
   };
 
   try {
-    await storage.put(buildStoredBodyKey(requestId), JSON.stringify(payload), putOptions);
+    const encryptedPayload = await encryptStoredBodyPayload(JSON.stringify(payload), {
+      rootKeyBase64: encryption.rootKeyBase64,
+      keyId: encryption.keyId,
+      orgId,
+      objectKey: bodyKey,
+    });
+
+    await storage.put(bodyKey, JSON.stringify(encryptedPayload), putOptions);
     return true;
   } catch (error) {
     logger.error('proxy.r2_store_exception', error, {
