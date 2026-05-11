@@ -172,12 +172,15 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
 
     const tier = usageCheck.status !== 'error' ? usageCheck.tier : undefined;
 
-    // Persist / queue redacted response copies only; parsing above used raw text.
+    // Persist / queue redacted copies; parsing above used raw request/response text.
+    const redactedRequestBody = redactText(requestBody);
     const redactedResponseBody = redactText(responseBody);
     const redactedError = error ? redactValue(error) : undefined;
     const redactedResponseMetadata = responseMetadata ? redactValue(responseMetadata) : undefined;
     const redactedSseStreamData =
       isSSE && sseStreamData.messages.length > 0 ? redactValue(sseStreamData) : undefined;
+    const redactedInputMessages =
+      inputMessages && inputMessages.length > 0 ? redactValue(inputMessages) : undefined;
 
     let stored = false;
     const storageSkipped = omitBody;
@@ -186,7 +189,7 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
       stored = await storeBodies(
         env.STORAGE,
         requestId,
-        requestBody,
+        redactedRequestBody,
         redactedResponseBody,
         isTruncated,
         logger,
@@ -221,7 +224,7 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
       sseStreamData: redactedSseStreamData,
       responseMetadata: redactedResponseMetadata,
       receivedAt: requestStart * 1_000_000,
-      inputMessages,
+      inputMessages: redactedInputMessages,
       tier,
       orgId: keyData.orgId,
     });

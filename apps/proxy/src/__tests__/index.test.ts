@@ -438,12 +438,13 @@ describe('Proxy Worker Integration', () => {
       expect(storedBodies.objects.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('should return unredacted LLM JSON to client but redact PII in R2 responseBody', async () => {
+    it('should return unredacted LLM JSON to client but redact PII in R2 bodies', async () => {
       await setupValidApiKey('test-key-pii-json');
 
       const secretEmail = 'leaky-user@example.com';
       const secretIp = '192.168.1.99';
       const secretCard = '4242424242424242';
+      const requestEmail = 'request-pii@example.com';
 
       const mockResponse = {
         id: 'chatcmpl-pii',
@@ -474,7 +475,10 @@ describe('Proxy Worker Integration', () => {
           'Content-Type': 'application/json',
           'X-Trace-Flow-Api-Key': 'test-key-pii-json',
         },
-        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+        body: JSON.stringify({
+          model: 'gpt-4',
+          messages: [{ role: 'user', content: `Question from ${requestEmail}` }],
+        }),
       });
 
       expect(res.status).toBe(200);
@@ -491,18 +495,21 @@ describe('Proxy Worker Integration', () => {
 
       const obj = await env.STORAGE.get(newKey!);
       expect(obj).not.toBeNull();
-      const stored = JSON.parse(await obj!.text()) as { responseBody: string };
+      const stored = JSON.parse(await obj!.text()) as { requestBody: string; responseBody: string };
 
+      expect(stored.requestBody).not.toContain(requestEmail);
+      expect(stored.requestBody).toContain('[REDACTED]');
       expect(stored.responseBody).not.toContain(secretEmail);
       expect(stored.responseBody).not.toContain(secretIp);
       expect(stored.responseBody).not.toContain(secretCard);
       expect(stored.responseBody).toContain('[REDACTED]');
     });
 
-    it('should return unredacted SSE stream to client but redact PII in R2 responseBody', async () => {
+    it('should return unredacted SSE stream to client but redact PII in R2 bodies', async () => {
       await setupValidApiKey('test-key-pii-sse');
 
       const secretEmail = 'stream-leak@example.com';
+      const requestEmail = 'sse-request-pii@example.com';
       const sseBody = `data: {"choices":[{"delta":{"content":"${secretEmail}"}}]}\n\ndata: [DONE]\n\n`;
 
       const keysBefore = new Set(
@@ -522,7 +529,11 @@ describe('Proxy Worker Integration', () => {
           'Content-Type': 'application/json',
           'X-Trace-Flow-Api-Key': 'test-key-pii-sse',
         },
-        body: JSON.stringify({ model: 'gpt-4', messages: [], stream: true }),
+        body: JSON.stringify({
+          model: 'gpt-4',
+          messages: [{ role: 'user', content: requestEmail }],
+          stream: true,
+        }),
       });
 
       expect(res.status).toBe(200);
@@ -538,8 +549,10 @@ describe('Proxy Worker Integration', () => {
 
       const obj = await env.STORAGE.get(newKey!);
       expect(obj).not.toBeNull();
-      const stored = JSON.parse(await obj!.text()) as { responseBody: string };
+      const stored = JSON.parse(await obj!.text()) as { requestBody: string; responseBody: string };
 
+      expect(stored.requestBody).not.toContain(requestEmail);
+      expect(stored.requestBody).toContain('[REDACTED]');
       expect(stored.responseBody).not.toContain(secretEmail);
       expect(stored.responseBody).toContain('[REDACTED]');
     });

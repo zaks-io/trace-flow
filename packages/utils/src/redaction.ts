@@ -1,5 +1,5 @@
 /**
- * Regex-based PII redaction for persisted LLM response copies.
+ * Regex-based PII redaction for persisted proxy bodies and structured queue fields.
  * Does not attempt semantic JSON parsing of full bodies — runs pattern passes on strings.
  */
 
