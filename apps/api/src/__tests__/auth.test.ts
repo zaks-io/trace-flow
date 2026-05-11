@@ -182,6 +182,36 @@ describe('validateAuth0JWT', () => {
     });
   });
 
+  it('should return 401 when JWT payload is missing sub', async () => {
+    const context = createMockContext(
+      {
+        authorization: 'Bearer valid-token',
+      },
+      mockEnv,
+    );
+
+    vi.mocked(jwtVerify).mockResolvedValue({
+      payload: {
+        iss: 'https://dev-test.auth0.com/',
+        aud: 'https://api.example.com',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      },
+      protectedHeader: { alg: 'RS256' },
+      key: {} as never,
+    });
+
+    const result = await validateAuth0JWT(context);
+
+    expect(result).not.toBeNull();
+    expect(result?.status).toBe(401);
+
+    const body = await result?.json();
+    expect(body).toEqual({
+      error: 'Invalid token',
+      message: 'JWT is missing sub claim',
+    });
+  });
+
   it('should return null when JWT is valid (no custom role claim required)', async () => {
     const context = createMockContext(
       {

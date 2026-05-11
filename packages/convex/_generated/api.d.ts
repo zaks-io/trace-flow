@@ -408,7 +408,6 @@ export declare const api: {
       'public',
       {},
       {
-        isAuthenticated: boolean;
         isAdmin: boolean;
         onboardingCompletedAt?: number;
         subscription: {

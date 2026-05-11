@@ -83,6 +83,17 @@ export async function validateAuth0JWT<
 
     const jwtPayload = payload as JWTPayload;
 
+    if (!jwtPayload.sub) {
+      logger.warn('api.auth_token_missing_sub');
+      return c.json(
+        {
+          error: 'Invalid token',
+          message: 'JWT is missing sub claim',
+        },
+        401,
+      );
+    }
+
     c.set('userSub', jwtPayload.sub);
 
     return null;
