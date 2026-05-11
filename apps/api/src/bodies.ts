@@ -1,10 +1,13 @@
 import {
   RETENTION_DAYS,
   buildStoredBodyKey,
+  isEncryptedStoredBodiesPayload,
+  type BodyEncryptionConfig,
   type StoredBodiesPayload,
   type SubscriptionTier,
 } from '@trace-flow/types';
 import type { Logger } from '@trace-flow/logging';
+import { decryptStoredBodyPayload } from '@trace-flow/utils';
 
 const MS_PER_DAY = 86_400_000;
 
@@ -24,9 +27,7 @@ export function isBodyVisible(uploaded: Date, tier?: SubscriptionTier, now = Dat
   return uploaded.getTime() + resolveVisibilityWindowDays(tier) * MS_PER_DAY > now;
 }
 
-export function parseStoredBodiesPayload(raw: string, logger: Logger): StoredBodiesPayload {
-  const parsed: unknown = JSON.parse(raw);
-
+function parseStoredBodiesRecord(parsed: unknown, logger: Logger): StoredBodiesPayload {
   if (!isStoredBodiesRecord(parsed)) {
     throw new Error('Stored body payload must be an object');
   }
@@ -60,6 +61,49 @@ export function parseStoredBodiesPayload(raw: string, logger: Logger): StoredBod
   };
 }
 
+export function parseStoredBodiesPayload(raw: string, logger: Logger): StoredBodiesPayload {
+  return parseStoredBodiesRecord(JSON.parse(raw), logger);
+}
+
+async function parsePossiblyEncryptedStoredBodiesPayload(
+  raw: string,
+  objectKey: string,
+  orgId: string | undefined,
+  encryption: BodyEncryptionConfig | undefined,
+  logger: Logger,
+): Promise<StoredBodiesPayload> {
+  const parsed: unknown = JSON.parse(raw);
+
+  if (!isEncryptedStoredBodiesPayload(parsed)) {
+    logger.error('api.stored_bodies_plaintext_fallback', undefined, {
+      objectKey,
+      hasOrgId: Boolean(orgId),
+    });
+    return parseStoredBodiesRecord(parsed, logger);
+  }
+
+  if (!orgId) {
+    throw new Error('Encrypted stored body missing org metadata');
+  }
+
+  if (parsed.orgId !== orgId) {
+    throw new Error('Encrypted stored body org does not match object metadata');
+  }
+
+  if (!encryption?.rootKeyBase64) {
+    throw new Error('Body encryption root key is not configured');
+  }
+
+  const decrypted = await decryptStoredBodyPayload(parsed, {
+    rootKeyBase64: encryption.rootKeyBase64,
+    keyId: encryption.keyId,
+    orgId,
+    objectKey,
+  });
+
+  return parseStoredBodiesPayload(decrypted, logger);
+}
+
 interface StoredBodiesResult {
   payload: StoredBodiesPayload;
   orgId?: string;
@@ -70,17 +114,26 @@ export async function getStoredBodies(
   storage: R2Bucket,
   requestId: string,
   logger: Logger,
+  encryption?: BodyEncryptionConfig,
 ): Promise<StoredBodiesResult | null> {
-  const combinedObject = await storage.get(buildStoredBodyKey(requestId));
+  const objectKey = buildStoredBodyKey(requestId);
+  const combinedObject = await storage.get(objectKey);
 
   if (!combinedObject) {
     return null;
   }
 
   try {
+    const orgId = combinedObject.customMetadata?.orgId;
     return {
-      payload: parseStoredBodiesPayload(await combinedObject.text(), logger),
-      orgId: combinedObject.customMetadata?.orgId,
+      payload: await parsePossiblyEncryptedStoredBodiesPayload(
+        await combinedObject.text(),
+        objectKey,
+        orgId,
+        encryption,
+        logger,
+      ),
+      orgId,
       uploaded: combinedObject.uploaded,
     };
   } catch (error) {

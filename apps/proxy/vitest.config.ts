@@ -10,6 +10,12 @@ export default defineWorkersConfig({
     },
     poolOptions: {
       workers: {
+        miniflare: {
+          bindings: {
+            BODY_ENCRYPTION_ROOT_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
+            BODY_ENCRYPTION_KEY_ID: 'v1',
+          },
+        },
         wrangler: {
           configPath: './wrangler.toml',
         },

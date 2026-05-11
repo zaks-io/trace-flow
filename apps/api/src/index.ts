@@ -19,6 +19,8 @@ interface Env {
   AXIOM_DOMAIN?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
+  BODY_ENCRYPTION_ROOT_KEY?: string;
+  BODY_ENCRYPTION_KEY_ID?: string;
   CF_VERSION_METADATA?: { id: string };
 }
 
@@ -83,7 +85,10 @@ app.get('/bodies/:requestId', async (c) => {
     requestId,
     operation: 'fetch_bodies',
   });
-  const storedBodies = await getStoredBodies(c.env.STORAGE, requestId, requestLogger);
+  const storedBodies = await getStoredBodies(c.env.STORAGE, requestId, requestLogger, {
+    rootKeyBase64: c.env.BODY_ENCRYPTION_ROOT_KEY,
+    keyId: c.env.BODY_ENCRYPTION_KEY_ID,
+  });
   if (!storedBodies) {
     requestLogger.warn('api.bodies_not_found');
     return c.json({ error: 'Bodies not found' }, 404);

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Logger } from '@trace-flow/logging';
+import { isEncryptedStoredBodiesPayload } from '@trace-flow/types';
+import { decryptStoredBodyPayload } from '@trace-flow/utils';
 import { storeBodies } from '../storage';
+
+const ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
+const encryption = { rootKeyBase64: ROOT_KEY, keyId: 'v1' };
 
 const noopLogger: Logger = {
   child: () => noopLogger,
@@ -11,8 +16,25 @@ const noopLogger: Logger = {
   flush: () => Promise.resolve(),
 };
 
+async function decryptPutPayload(mockStorage: R2Bucket, orgId = 'org_123') {
+  const calls = (mockStorage as unknown as { put: ReturnType<typeof vi.fn> }).put.mock.calls;
+  const [, storedBody] = calls[0] as [string, string, R2PutOptions];
+  const parsed: unknown = JSON.parse(storedBody);
+  if (!isEncryptedStoredBodiesPayload(parsed)) {
+    throw new Error('Expected encrypted stored body payload');
+  }
+
+  return JSON.parse(
+    await decryptStoredBodyPayload(parsed, {
+      rootKeyBase64: ROOT_KEY,
+      orgId,
+      objectKey: 'bodies/test-request-id',
+    }),
+  );
+}
+
 describe('storeBodies', () => {
-  it('should store request and response bodies in a single object', async () => {
+  it('should store encrypted request and response bodies in a single object', async () => {
     const mockStorage = {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
@@ -21,19 +43,31 @@ describe('storeBodies', () => {
     const requestBody = 'request body content';
     const responseBody = 'response body content';
 
-    await storeBodies(mockStorage, requestId, requestBody, responseBody, false, noopLogger);
+    await storeBodies(
+      mockStorage,
+      requestId,
+      requestBody,
+      responseBody,
+      false,
+      noopLogger,
+      'org_123',
+      encryption,
+    );
 
     expect(mockStorage.put).toHaveBeenCalledTimes(1);
-    expect(mockStorage.put).toHaveBeenCalledWith(
-      'bodies/test-request-id',
-      JSON.stringify({
-        requestBody: 'request body content',
-        responseBody: 'response body content',
-      }),
-      {
-        httpMetadata: { contentType: 'application/json' },
-      },
-    );
+    const calls = (mockStorage as unknown as { put: ReturnType<typeof vi.fn> }).put.mock.calls;
+    const [key, storedBody, options] = calls[0] as [string, string, R2PutOptions];
+    expect(key).toBe('bodies/test-request-id');
+    expect(storedBody).not.toContain(requestBody);
+    expect(storedBody).not.toContain(responseBody);
+    expect(options).toEqual({
+      customMetadata: { orgId: 'org_123' },
+      httpMetadata: { contentType: 'application/json' },
+    });
+    await expect(decryptPutPayload(mockStorage)).resolves.toEqual({
+      requestBody: 'request body content',
+      responseBody: 'response body content',
+    });
   });
 
   it('should return true on success', async () => {
@@ -48,6 +82,8 @@ describe('storeBodies', () => {
       'test response',
       false,
       noopLogger,
+      'org_123',
+      encryption,
     );
 
     expect(result).toBe(true);
@@ -69,18 +105,14 @@ describe('storeBodies', () => {
       responseBody,
       false,
       noopLogger,
+      'org_123',
+      encryption,
     );
 
-    expect(mockStorage.put).toHaveBeenCalledWith(
-      'bodies/empty-test',
-      JSON.stringify({
-        requestBody: '',
-        responseBody: '',
-      }),
-      {
-        httpMetadata: { contentType: 'application/json' },
-      },
-    );
+    expect(mockStorage.put).toHaveBeenCalledWith('bodies/empty-test', expect.any(String), {
+      customMetadata: { orgId: 'org_123' },
+      httpMetadata: { contentType: 'application/json' },
+    });
     expect(result).toBe(true);
   });
 
@@ -100,18 +132,18 @@ describe('storeBodies', () => {
       largeResponseBody,
       false,
       noopLogger,
+      'org_123',
+      encryption,
     );
 
-    expect(mockStorage.put).toHaveBeenCalledWith(
-      'bodies/large-test',
-      JSON.stringify({
-        requestBody: largeRequestBody,
-        responseBody: largeResponseBody,
-      }),
-      {
-        httpMetadata: { contentType: 'application/json' },
-      },
-    );
+    expect(mockStorage.put).toHaveBeenCalledWith('bodies/large-test', expect.any(String), {
+      customMetadata: { orgId: 'org_123' },
+      httpMetadata: { contentType: 'application/json' },
+    });
+    const [, storedBody] = (mockStorage as unknown as { put: ReturnType<typeof vi.fn> }).put.mock
+      .calls[0] as [string, string, R2PutOptions];
+    expect(storedBody).not.toContain(largeRequestBody);
+    expect(storedBody).not.toContain(largeResponseBody);
   });
 
   it('should pass orgId as custom metadata when provided', async () => {
@@ -119,19 +151,21 @@ describe('storeBodies', () => {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
 
-    await storeBodies(mockStorage, 'meta-test', 'req', 'res', false, noopLogger, 'org_123');
-
-    expect(mockStorage.put).toHaveBeenCalledWith(
-      'bodies/meta-test',
-      JSON.stringify({
-        requestBody: 'req',
-        responseBody: 'res',
-      }),
-      {
-        customMetadata: { orgId: 'org_123' },
-        httpMetadata: { contentType: 'application/json' },
-      },
+    await storeBodies(
+      mockStorage,
+      'meta-test',
+      'req',
+      'res',
+      false,
+      noopLogger,
+      'org_123',
+      encryption,
     );
+
+    expect(mockStorage.put).toHaveBeenCalledWith('bodies/meta-test', expect.any(String), {
+      customMetadata: { orgId: 'org_123' },
+      httpMetadata: { contentType: 'application/json' },
+    });
   });
 
   it('should persist the truncated flag when present', async () => {
@@ -139,19 +173,45 @@ describe('storeBodies', () => {
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
 
-    await storeBodies(mockStorage, 'truncated-test', 'req', 'res', true, noopLogger);
-
-    expect(mockStorage.put).toHaveBeenCalledWith(
-      'bodies/truncated-test',
-      JSON.stringify({
-        requestBody: 'req',
-        responseBody: 'res',
-        truncated: true,
-      }),
-      {
-        httpMetadata: { contentType: 'application/json' },
-      },
+    await storeBodies(
+      mockStorage,
+      'test-request-id',
+      'req',
+      'res',
+      true,
+      noopLogger,
+      'org_123',
+      encryption,
     );
+
+    await expect(decryptPutPayload(mockStorage)).resolves.toEqual({
+      requestBody: 'req',
+      responseBody: 'res',
+      truncated: true,
+    });
+  });
+
+  it('should return false when encryption context is missing', async () => {
+    const mockStorage = {
+      put: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+
+    await expect(
+      storeBodies(
+        mockStorage,
+        'missing-org',
+        'req',
+        'res',
+        false,
+        noopLogger,
+        undefined,
+        encryption,
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      storeBodies(mockStorage, 'missing-key', 'req', 'res', false, noopLogger, 'org_123'),
+    ).resolves.toBe(false);
+    expect(mockStorage.put).not.toHaveBeenCalled();
   });
 
   it('should handle storage errors gracefully', async () => {
@@ -170,6 +230,8 @@ describe('storeBodies', () => {
       responseBody,
       false,
       noopLogger,
+      'org_123',
+      encryption,
     );
 
     expect(result).toBe(false);

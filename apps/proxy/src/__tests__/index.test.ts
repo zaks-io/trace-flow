@@ -1,8 +1,34 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { env, fetchMock, SELF } from 'cloudflare:test';
+import { isEncryptedStoredBodiesPayload, type StoredBodiesPayload } from '@trace-flow/types';
+import { decryptStoredBodyPayload } from '@trace-flow/utils';
 
 const WAIT_UNTIL_DELAY = 100;
+const TEST_BODY_ENCRYPTION_ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 const waitForAsyncOps = () => new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+async function decryptStoredBodiesObject(
+  objectKey: string,
+  object: R2ObjectBody,
+): Promise<StoredBodiesPayload> {
+  const parsed: unknown = JSON.parse(await object.text());
+  if (!isEncryptedStoredBodiesPayload(parsed)) {
+    throw new Error('Expected encrypted stored body payload');
+  }
+
+  const orgId = object.customMetadata?.orgId;
+  if (!orgId) {
+    throw new Error('Expected stored body org metadata');
+  }
+
+  return JSON.parse(
+    await decryptStoredBodyPayload(parsed, {
+      rootKeyBase64: TEST_BODY_ENCRYPTION_ROOT_KEY,
+      orgId,
+      objectKey,
+    }),
+  ) as StoredBodiesPayload;
+}
 
 async function setupValidApiKey(key: string, orgId = 'org-test-123'): Promise<void> {
   const keyData = {
@@ -495,7 +521,7 @@ describe('Proxy Worker Integration', () => {
 
       const obj = await env.STORAGE.get(newKey!);
       expect(obj).not.toBeNull();
-      const stored = JSON.parse(await obj!.text()) as { requestBody: string; responseBody: string };
+      const stored = await decryptStoredBodiesObject(newKey!, obj!);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');
@@ -549,7 +575,7 @@ describe('Proxy Worker Integration', () => {
 
       const obj = await env.STORAGE.get(newKey!);
       expect(obj).not.toBeNull();
-      const stored = JSON.parse(await obj!.text()) as { requestBody: string; responseBody: string };
+      const stored = await decryptStoredBodiesObject(newKey!, obj!);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');
@@ -914,6 +940,14 @@ describe('Proxy Worker Integration', () => {
       // Verify bodies WERE stored
       const stored = await env.STORAGE.list({ prefix: 'bodies/' });
       expect(stored.objects.length).toBeGreaterThanOrEqual(1);
+
+      const firstStoredObject = stored.objects[0];
+      expect(firstStoredObject).toBeDefined();
+      const storedObject = await env.STORAGE.get(firstStoredObject!.key);
+      expect(storedObject).not.toBeNull();
+      const storedText = await storedObject!.text();
+      expect(storedText).not.toContain('gpt-4');
+      expect(storedText).not.toContain('Hello!');
     });
 
     it('should strip X-Trace-Flow-Omit-Body header before forwarding to provider', async () => {

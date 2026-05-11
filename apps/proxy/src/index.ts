@@ -53,6 +53,8 @@ interface Env {
   AXIOM_DOMAIN?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
+  BODY_ENCRYPTION_ROOT_KEY?: string;
+  BODY_ENCRYPTION_KEY_ID?: string;
   CF_VERSION_METADATA?: { id: string };
 }
 

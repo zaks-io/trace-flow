@@ -17,6 +17,7 @@
     "@sentry/cloudflare": "^10.51.0",
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/types": "workspace:*",
+    "@trace-flow/utils": "workspace:*",
     "hono": "^4.12.18",
     "jose": "^6.2.3"
   },

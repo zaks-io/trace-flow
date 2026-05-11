@@ -32,6 +32,8 @@ interface CaptureEnv {
   STORAGE: R2Bucket;
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
   ANALYTICS: AnalyticsEngineDataset;
+  BODY_ENCRYPTION_ROOT_KEY?: string;
+  BODY_ENCRYPTION_KEY_ID?: string;
 }
 
 interface CaptureAndEnqueueParams {
@@ -204,6 +206,10 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
         isTruncated,
         logger,
         keyData.orgId,
+        {
+          rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
+          keyId: env.BODY_ENCRYPTION_KEY_ID,
+        },
       );
 
       if (!stored) {
