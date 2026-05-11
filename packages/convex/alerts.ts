@@ -1,6 +1,6 @@
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from './auth/auth';
+import { requireAuthenticated } from './auth/auth';
 import { getCurrentUser, requireEnabledUser } from './auth/users';
 
 const alertFieldValidator = v.union(
@@ -28,7 +28,7 @@ const alertSeverityValidator = v.union(v.literal('info'), v.literal('warning'), 
 
 export const list = query({
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
 
     if (!user) {
@@ -44,7 +44,7 @@ export const list = query({
 
 export const listEnabled = query({
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
 
     if (!user) {
@@ -69,7 +69,7 @@ export const create = mutation({
     severity: alertSeverityValidator,
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
 
     const now = Date.now();
@@ -97,7 +97,7 @@ export const update = mutation({
     severity: v.optional(alertSeverityValidator),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
 
     const alert = await ctx.db.get(args.id);
@@ -125,7 +125,7 @@ export const update = mutation({
 export const toggle = mutation({
   args: { id: v.id('alerts') },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
 
     const alert = await ctx.db.get(args.id);
@@ -147,7 +147,7 @@ export const toggle = mutation({
 export const remove = mutation({
   args: { id: v.id('alerts') },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
 
     const alert = await ctx.db.get(args.id);

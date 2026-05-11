@@ -45,7 +45,7 @@ The worker validates Auth0 JWT tokens using public key verification:
 2. Fetches JWKS from Auth0's well-known endpoint
 3. Verifies signature using RS256 algorithm
 4. Validates `iss` (issuer) and `aud` (audience) claims
-5. Checks for `Trace Flow` role in `neuron/roles` claim
+5. Uses `sub` with KV `user-org:{sub}` for org-scoped body access (no custom JWT role claim required)
 
 **JWKS Caching**: The JWKS (JSON Web Key Set) is cached per domain to avoid repeated network calls. This saves 200-400ms per request after the first fetch.
 

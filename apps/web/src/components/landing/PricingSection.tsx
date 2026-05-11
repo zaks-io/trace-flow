@@ -5,7 +5,7 @@ const PLANS = [
     name: 'Hobby',
     price: 'Free',
     period: '',
-    features: ['25K traces/mo', '7 day retention', '1 API key', 'Community support'],
+    features: ['25K traces/mo', '7 day retention', 'Community support'],
     highlighted: false,
   },
   {

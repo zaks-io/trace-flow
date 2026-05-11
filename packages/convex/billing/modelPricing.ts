@@ -7,13 +7,13 @@ import {
   type ActionCtx,
 } from '../_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 import { requireAdmin } from '../auth/users';
 import { internal } from '../_generated/api';
 import { DEFAULT_PRICING } from './defaultPricing';
 
 async function requireAdminAction(ctx: ActionCtx) {
-  await requireTraceFlowRole(ctx);
+  await requireAuthenticated(ctx);
   const isAdmin = await ctx.runQuery(internal.auth.users.isAdminInternal);
   if (!isAdmin) throw new Error('Admin access required');
 }
@@ -39,7 +39,7 @@ export const list = query({
   },
   returns: v.array(modelPricingDoc),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
 
     const { provider } = args;
     if (provider) {
@@ -59,7 +59,7 @@ export const get = query({
   },
   returns: v.union(modelPricingDoc, v.null()),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
 
     return ctx.db
       .query('modelPricing')

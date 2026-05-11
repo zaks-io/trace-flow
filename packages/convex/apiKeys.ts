@@ -1,6 +1,6 @@
 import { action, mutation, query, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from './auth/auth';
+import { requireAuthenticated } from './auth/auth';
 import { internal } from './_generated/api';
 import { getCurrentUser, requireEnabledUser } from './auth/users';
 import { apiKeyValidator } from './validators';
@@ -9,7 +9,7 @@ export const list = query({
   args: {},
   returns: v.array(apiKeyValidator),
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
 
     if (!user) return [];
@@ -38,7 +38,7 @@ export const getByKey = query({
   args: { key: v.string() },
   returns: v.union(v.null(), apiKeyValidator),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     return await ctx.db
       .query('apiKeys')
       .filter((q) => q.eq(q.field('key'), args.key))
@@ -53,7 +53,7 @@ export const create = mutation({
   },
   returns: v.id('apiKeys'),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
     const key = crypto.randomUUID();
 
@@ -83,7 +83,7 @@ export const update = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
 
     const apiKey = await ctx.db.get(args.id);
@@ -115,7 +115,7 @@ export const remove = mutation({
   args: { id: v.id('apiKeys') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
 
     const apiKey = await ctx.db.get(args.id);
@@ -139,7 +139,7 @@ export const syncToKV = action({
   args: { id: v.id('apiKeys') },
   returns: v.object({ synced: v.boolean(), existed: v.boolean() }),
   handler: async (ctx, args): Promise<{ synced: boolean; existed: boolean }> => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
 
     const apiKey = await ctx.runQuery(internal.apiKeys.getByIdInternal, { id: args.id });
     if (!apiKey) {

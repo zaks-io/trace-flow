@@ -11,7 +11,7 @@ Replace the boolean `isAdmin` flag with a role-based access control system scope
 1. **Platform admin**: `users.isAdmin` boolean. Used by `requireAdmin()` in `users.ts`. Guards: invite management (`invites.ts`), waitlist (`waitlist.ts`), admin dashboard (`admin.ts`), KV sync (`cloudflare.ts`).
 2. **Org ownership**: `organizations.ownerId === user._id` check. Inline in every billing function (`subscriptions.ts` has 6 occurrences), plus `organizations.rename()` and `invites.createOrgInvite()`.
 3. **Org membership**: `organizationMembers` table with `role: 'owner' | 'member'` and `status: 'active' | 'removed'`. Invites are tracked in a separate `invites` table. The `role` field exists but is never checked -- all members have equal read access.
-4. **Auth0 role**: `requireTraceFlowRole()` checks `neuron/roles` in the Auth0 identity token. This gates platform access, not org-level permissions.
+4. **Authentication**: `requireAuthenticated()` ensures a valid Auth0 session. Platform access is not gated on custom JWT roles; org-level permissions use Convex data (`organizationMembers`, `orgId`, etc.).
 5. **Frontend**: `AdminContext.tsx` provides `useIsAdmin()` from `app.ts sessionContext` which reads `user.isAdmin`.
 
 ### Problems
@@ -183,11 +183,11 @@ Replace the 6+ inline `org.ownerId !== user._id` checks in `subscriptions.ts` wi
 
 | Function                                        | Current guard                              | New guard                              |
 | ----------------------------------------------- | ------------------------------------------ | -------------------------------------- |
-| `organizations.getMembers`                      | `requireTraceFlowRole`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
-| `organizations.get`                             | `requireTraceFlowRole`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
-| `subscriptions.getForCurrentUser`               | `requireTraceFlowRole`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
-| `subscriptions.getBillingSummaryForCurrentUser` | `requireTraceFlowRole`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
-| `subscriptions.updateAutoOverageSettings`       | `requireTraceFlowRole` + `requireOrgOwner` | `requireCurrentOrgRole(ctx, 'owner')`  |
+| `organizations.getMembers`                      | `requireAuthenticated`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
+| `organizations.get`                             | `requireAuthenticated`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
+| `subscriptions.getForCurrentUser`               | `requireAuthenticated`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
+| `subscriptions.getBillingSummaryForCurrentUser` | `requireAuthenticated`                     | `requireCurrentOrgRole(ctx, 'viewer')` |
+| `subscriptions.updateAutoOverageSettings`       | `requireAuthenticated` + `requireOrgOwner` | `requireCurrentOrgRole(ctx, 'owner')`  |
 
 API keys (future -- requires `apiKeys.ts` review):
 
@@ -301,7 +301,7 @@ export const switchOrg = mutation({
 ```ts
 export const listMyOrgs = query({
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user) return [];
 

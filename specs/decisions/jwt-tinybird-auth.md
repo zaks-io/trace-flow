@@ -161,7 +161,7 @@ export const generateToken = action({
     ttl: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
 
     const user = await ctx.runQuery(api.users.getCurrentUserQuery, {});
     const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';

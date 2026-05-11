@@ -2,13 +2,13 @@
 
 ## Overview
 
-Implement an invite-only access system for the initial launch. This includes admin-controlled invites and a public waitlist with email confirmation for interested users.
+Self-serve signup is the default: new users get an enabled account and default org on first sign-in. Admin-controlled invites and a public waitlist remain available for growth and bringing users into existing orgs.
 
 ## Current Auth Architecture
 
-- **Auth provider**: Auth0 (via `apps/web/src/components/AuthButton.tsx`)
-- **User storage**: Convex `users` table (via `convex/users.ts`)
-- **User initialization**: `useInitializeUser` hook syncs Auth0 users to Convex
+- **Auth provider**: Auth0 (Next.js Auth0 SDK in `apps/web`)
+- **User storage**: Convex `users` table (`packages/convex/auth/users.ts`)
+- **User initialization**: `useUserInitialization` calls `initializeUser` to sync Auth0 users to Convex
 
 ## Data Model
 

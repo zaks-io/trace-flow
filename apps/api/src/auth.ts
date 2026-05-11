@@ -7,7 +7,6 @@ interface JWTPayload {
   iss: string;
   aud: string | string[];
   exp: number;
-  'neuron/roles'?: string[];
 }
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -18,9 +17,10 @@ const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
  * Architecture:
  * - Fetches public keys from Auth0's JWKS endpoint for RS256 signature verification
  * - Validates iss (issuer) and aud (audience) claims to prevent token reuse attacks
- * - Checks for 'Trace Flow' role in neuron/roles claim (matches Convex pattern)
  * - Caches JWKS instances per domain to avoid repeated network calls (200-400ms savings)
  * - Uses jose library's createRemoteJWKSet which handles key rotation automatically
+ *
+ * Org-scoped access is enforced separately via KV (`user-org:{sub}`) and stored object metadata.
  *
  * Returns null on success, or an error Response with appropriate status code.
  */
@@ -82,20 +82,6 @@ export async function validateAuth0JWT<
     });
 
     const jwtPayload = payload as JWTPayload;
-    const roles = jwtPayload['neuron/roles'] ?? [];
-
-    if (!roles.includes('Trace Flow')) {
-      logger.warn('api.auth_forbidden_role', {
-        sub: jwtPayload.sub,
-      });
-      return c.json(
-        {
-          error: 'Insufficient permissions',
-          message: 'The Trace Flow role is required to access this resource',
-        },
-        403,
-      );
-    }
 
     c.set('userSub', jwtPayload.sub);
 

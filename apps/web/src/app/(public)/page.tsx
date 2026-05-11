@@ -13,7 +13,7 @@ export default async function HomePage() {
     redirect('/app');
   }
 
-  const isWaitlistMode = process.env.NEXT_PUBLIC_WAITLIST_MODE !== 'false';
+  const isWaitlistMode = process.env.NEXT_PUBLIC_WAITLIST_MODE === 'true';
 
   return (
     <main>

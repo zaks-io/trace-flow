@@ -182,7 +182,7 @@ describe('validateAuth0JWT', () => {
     });
   });
 
-  it('should return error when neuron/roles claim is missing', async () => {
+  it('should return null when JWT is valid (no custom role claim required)', async () => {
     const context = createMockContext(
       {
         authorization: 'Bearer valid-token',
@@ -195,68 +195,7 @@ describe('validateAuth0JWT', () => {
         iss: 'https://dev-test.auth0.com/',
         aud: 'https://api.example.com',
         exp: Math.floor(Date.now() / 1000) + 3600,
-      },
-      protectedHeader: { alg: 'RS256' },
-      key: {} as never,
-    });
-
-    const result = await validateAuth0JWT(context);
-
-    expect(result).not.toBeNull();
-    expect(result?.status).toBe(403);
-
-    const body = await result?.json();
-    expect(body).toEqual({
-      error: 'Insufficient permissions',
-      message: 'The Trace Flow role is required to access this resource',
-    });
-  });
-
-  it('should return error when Trace Flow role is not present', async () => {
-    const context = createMockContext(
-      {
-        authorization: 'Bearer valid-token',
-      },
-      mockEnv,
-    );
-
-    vi.mocked(jwtVerify).mockResolvedValue({
-      payload: {
-        iss: 'https://dev-test.auth0.com/',
-        aud: 'https://api.example.com',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        'neuron/roles': ['User', 'Admin'],
-      },
-      protectedHeader: { alg: 'RS256' },
-      key: {} as never,
-    });
-
-    const result = await validateAuth0JWT(context);
-
-    expect(result).not.toBeNull();
-    expect(result?.status).toBe(403);
-
-    const body = await result?.json();
-    expect(body).toEqual({
-      error: 'Insufficient permissions',
-      message: 'The Trace Flow role is required to access this resource',
-    });
-  });
-
-  it('should return null when JWT is valid and has Trace Flow role', async () => {
-    const context = createMockContext(
-      {
-        authorization: 'Bearer valid-token',
-      },
-      mockEnv,
-    );
-
-    vi.mocked(jwtVerify).mockResolvedValue({
-      payload: {
-        iss: 'https://dev-test.auth0.com/',
-        aud: 'https://api.example.com',
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        'neuron/roles': ['Trace Flow'],
+        sub: 'auth0|user-1',
       },
       protectedHeader: { alg: 'RS256' },
       key: {} as never,
@@ -265,6 +204,7 @@ describe('validateAuth0JWT', () => {
     const result = await validateAuth0JWT(context);
 
     expect(result).toBeNull();
+    expect(context.get('userSub')).toBe('auth0|user-1');
     expect(jwtVerify).toHaveBeenCalledWith(
       'valid-token',
       expect.anything(),
@@ -275,7 +215,7 @@ describe('validateAuth0JWT', () => {
     );
   });
 
-  it('should return null when JWT has Trace Flow role among multiple roles', async () => {
+  it('should return null when JWT includes neuron/roles but they are not required', async () => {
     const context = createMockContext(
       {
         authorization: 'Bearer valid-token',
@@ -288,7 +228,8 @@ describe('validateAuth0JWT', () => {
         iss: 'https://dev-test.auth0.com/',
         aud: 'https://api.example.com',
         exp: Math.floor(Date.now() / 1000) + 3600,
-        'neuron/roles': ['User', 'Trace Flow', 'Admin'],
+        sub: 'auth0|user-2',
+        'neuron/roles': ['User', 'Admin'],
       },
       protectedHeader: { alg: 'RS256' },
       key: {} as never,
@@ -297,6 +238,7 @@ describe('validateAuth0JWT', () => {
     const result = await validateAuth0JWT(context);
 
     expect(result).toBeNull();
+    expect(context.get('userSub')).toBe('auth0|user-2');
   });
 
   it('should properly strip Bearer prefix from token', async () => {
@@ -312,7 +254,7 @@ describe('validateAuth0JWT', () => {
         iss: 'https://dev-test.auth0.com/',
         aud: 'https://api.example.com',
         exp: Math.floor(Date.now() / 1000) + 3600,
-        'neuron/roles': ['Trace Flow'],
+        sub: 'auth0|strip-test',
       },
       protectedHeader: { alg: 'RS256' },
       key: {} as never,

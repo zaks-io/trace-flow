@@ -15,18 +15,23 @@ concurrency:
   group: production-deploy
   cancel-in-progress: false
 
+env:
+  TURBO_LOG_VERBOSITY: 1
+
 jobs:
   ci:
     name: CI Checks
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: oven-sh/setup-bun@v2
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Cache Turbo
         uses: actions/cache@v4
@@ -58,12 +63,14 @@ jobs:
     environment: Production
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: oven-sh/setup-bun@v2
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -100,12 +107,14 @@ jobs:
     environment: Production
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: oven-sh/setup-bun@v2
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -126,12 +135,14 @@ jobs:
     environment: Production
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: oven-sh/setup-bun@v2
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -152,12 +163,14 @@ jobs:
     environment: Production
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: oven-sh/setup-bun@v2
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

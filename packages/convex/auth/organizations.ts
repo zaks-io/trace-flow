@@ -1,7 +1,7 @@
 import { query, mutation, internalQuery, internalMutation } from '../_generated/server';
 import type { MutationCtx } from '../_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from './auth';
+import { requireAuthenticated } from './auth';
 import { getCurrentUser, requireEnabledUser } from './userHelpers';
 import { organizationValidator } from '../validators';
 import { internal } from '../_generated/api';
@@ -13,7 +13,7 @@ export const completeOnboarding = mutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
     if (!user.orgId) throw new Error('No organization found');
 
@@ -30,7 +30,7 @@ export const get = query({
   args: {},
   returns: v.union(v.null(), organizationValidator),
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
     return await ctx.db.get(user.orgId);
@@ -53,7 +53,7 @@ export const getMembers = query({
     }),
   ),
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return [];
     return await ctx.db
@@ -67,7 +67,7 @@ export const rename = mutation({
   args: { name: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
     if (!user.orgId) throw new Error('No organization found');
 

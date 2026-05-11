@@ -1,7 +1,7 @@
 import { action, internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { SignJWT } from 'jose';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 import { api, internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
@@ -44,7 +44,7 @@ export const generateToken = action({
     name: v.string(),
   }),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
 
     if (!adminToken) {
       throw new Error('TINYBIRD_ADMIN_TOKEN environment variable is not set');

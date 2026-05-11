@@ -2,7 +2,7 @@ import { internalAction, internalQuery, action } from '../_generated/server';
 import { v } from 'convex/values';
 import { axiomConfigFromEnv, createConvexLogger } from '@trace-flow/logging';
 import { internal } from '../_generated/api';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 import { extractSub } from '../auth/users';
 import { apiKeyValidator, subscriptionValidator, userValidator } from '../validators';
 
@@ -241,7 +241,7 @@ export const syncAll = action({
     userOrgSynced: v.number(),
   }),
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const isAdmin = await ctx.runQuery(internal.integrations.cloudflare.isCallerAdmin);
     if (!isAdmin) throw new Error('Admin access required');
     const { apiKeys, subscriptions, users } = await ctx.runQuery(
