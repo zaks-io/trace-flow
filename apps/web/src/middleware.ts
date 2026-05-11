@@ -22,7 +22,23 @@ const PROD_CONNECT_SRC = [
 // and the local API/Convex/Tinybird workers running on 127.0.0.1/localhost ports.
 const DEV_CONNECT_SRC = ['http://localhost:*', 'ws://localhost:*', 'http://127.0.0.1:*'];
 
-function buildCsp(nonce: string, isDev: boolean): string {
+// Turn a Sentry browser DSN into the CSP `report-uri` endpoint.
+// DSN:    https://{key}@{host}/{projectId}
+// Report: https://{host}/api/{projectId}/security/?sentry_key={key}
+function buildSentryReportUri(dsn: string | undefined): string | null {
+  if (!dsn) return null;
+  try {
+    const url = new URL(dsn);
+    const projectId = url.pathname.replace(/^\//, '');
+    const key = url.username;
+    if (!projectId || !key) return null;
+    return `${url.protocol}//${url.host}/api/${projectId}/security/?sentry_key=${key}`;
+  } catch {
+    return null;
+  }
+}
+
+function buildCsp(nonce: string, isDev: boolean, reportUri: string | null): string {
   const connectSrc = isDev ? [...PROD_CONNECT_SRC, ...DEV_CONNECT_SRC] : PROD_CONNECT_SRC;
 
   const directives = [
@@ -41,6 +57,8 @@ function buildCsp(nonce: string, isDev: boolean): string {
     'upgrade-insecure-requests',
   ];
 
+  if (reportUri) directives.push(`report-uri ${reportUri}`);
+
   return directives.join('; ');
 }
 
@@ -56,7 +74,8 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   const nonce = btoa(crypto.randomUUID());
-  const csp = buildCsp(nonce, process.env.NODE_ENV === 'development');
+  const reportUri = buildSentryReportUri(process.env.NEXT_PUBLIC_SENTRY_DSN);
+  const csp = buildCsp(nonce, process.env.NODE_ENV === 'development', reportUri);
 
   // Mutate the request Headers so downstream Server Components can read the
   // nonce via `headers().get('x-nonce')` and apply it to inline scripts.

@@ -2,8 +2,11 @@ import { RateLimiter, MINUTE, HOUR } from '@convex-dev/rate-limiter';
 import { components } from './_generated/api';
 
 export const rateLimiter = new RateLimiter(components.rateLimiter, {
-  // Unauthenticated public endpoints — keyed by IP (or email for joinWaitlist)
-  joinWaitlistIp: { kind: 'fixed window', rate: 10, period: HOUR },
+  // Unauthenticated public endpoints
+  // joinWaitlist is keyed by email only — Convex mutations called from the
+  // browser over WebSocket don't expose a trusted client IP. An HTTP-action
+  // wrapper that reads `cf-connecting-ip` is the follow-up if email-keying
+  // proves insufficient.
   joinWaitlistEmail: { kind: 'fixed window', rate: 3, period: HOUR },
   confirmEmail: { kind: 'fixed window', rate: 20, period: HOUR },
   mcpRegister: { kind: 'fixed window', rate: 10, period: HOUR },

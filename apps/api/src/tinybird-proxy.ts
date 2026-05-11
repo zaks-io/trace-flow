@@ -46,7 +46,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
   const limit = await c.env.PIPES_LIMITER.limit({ key: limitKey });
   if (!limit.success) {
     logger.warn('api.rate_limited', { route: 'pipes', keyClass: 'jwt' });
-    return c.json({ error: 'Too many requests' }, 429);
+    return c.json({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
   }
 
   const url = new URL(c.req.url);

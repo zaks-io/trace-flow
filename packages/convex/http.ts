@@ -50,9 +50,10 @@ async function enforceRateLimit(
 }
 
 function getClientIp(request: Request): string {
-  return (
-    request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown'
-  );
+  // Only trust `cf-connecting-ip` — Cloudflare injects it and clients can't set
+  // it. `x-forwarded-for` is client-controlled and trivially spoofable, which
+  // would let a caller cycle their rate-limit key at will.
+  return request.headers.get('cf-connecting-ip') ?? 'unknown';
 }
 
 // Dependencies that can be injected for testing

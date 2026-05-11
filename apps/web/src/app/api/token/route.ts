@@ -16,10 +16,9 @@ async function checkTokenRefreshRateLimit(request: NextRequest): Promise<NextRes
       | RateLimitBinding
       | undefined;
     if (!limiter) return null;
-    const ip =
-      request.headers.get('cf-connecting-ip') ??
-      request.headers.get('x-forwarded-for') ??
-      'unknown';
+    // Only trust `cf-connecting-ip` — Cloudflare injects it. `x-forwarded-for`
+    // is client-controlled and lets a caller cycle their rate-limit key.
+    const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
     const { success } = await limiter.limit({ key: ip });
     if (!success) {
       return NextResponse.json(
