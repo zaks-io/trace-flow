@@ -48,6 +48,7 @@ export default function LegalLayout({ children }: { children: React.ReactNode })
               {[
                 { href: '/', label: 'Home' },
                 ...navLinks,
+                { href: '/security', label: 'Security' },
                 { href: '/terms', label: 'Terms' },
                 { href: '/privacy', label: 'Privacy' },
               ].map((link) => (
