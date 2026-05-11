@@ -1,4 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+
+vi.mock('../rateLimits', () => ({
+  rateLimiter: {
+    limit: vi.fn().mockResolvedValue({ ok: true, retryAfter: 0 }),
+  },
+}));
+
 import { createApp, type HttpDeps } from '../http';
 
 // Type for mock Convex ActionCtx

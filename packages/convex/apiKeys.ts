@@ -4,6 +4,7 @@ import { requireAuthenticated } from './auth/auth';
 import { internal } from './_generated/api';
 import { getCurrentUser, requireEnabledUser } from './auth/users';
 import { apiKeyValidator } from './validators';
+import { rateLimiter } from './rateLimits';
 
 export const list = query({
   args: {},
@@ -55,6 +56,9 @@ export const create = mutation({
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
     const user = await requireEnabledUser(ctx);
+
+    await rateLimiter.limit(ctx, 'createApiKey', { key: user._id, throws: true });
+
     const key = crypto.randomUUID();
 
     const id = await ctx.db.insert('apiKeys', {

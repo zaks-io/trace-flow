@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/cloudflare';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
+import { applySecurityHeaders } from '@trace-flow/utils';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { validateAuth0JWT } from './auth';
 import { getStoredBodies, isBodyVisible } from './bodies';
@@ -14,6 +15,8 @@ interface Env {
   AUTH0_CLIENT_ID: string;
   TINYBIRD_API_URL: string;
   TINYBIRD_ADMIN_TOKEN: string;
+  BODIES_LIMITER: RateLimit;
+  PIPES_LIMITER: RateLimit;
   AXIOM_TOKEN?: string;
   AXIOM_DATASET?: string;
   AXIOM_DOMAIN?: string;
@@ -51,6 +54,11 @@ app.use('*', async (c, next) => {
 });
 
 app.use('*', async (c, next) => {
+  await next();
+  applySecurityHeaders(c.res.headers);
+});
+
+app.use('*', async (c, next) => {
   const logger = createWorkerLogger({
     service: 'api',
     request: c.req.raw,
@@ -85,6 +93,13 @@ app.get('/bodies/:requestId', async (c) => {
     requestId,
     operation: 'fetch_bodies',
   });
+
+  const userSubForLimit = c.get('userSub') ?? c.req.header('cf-connecting-ip') ?? 'unknown';
+  const limit = await c.env.BODIES_LIMITER.limit({ key: userSubForLimit });
+  if (!limit.success) {
+    requestLogger.warn('api.rate_limited', { route: 'bodies', keyClass: 'user' });
+    return c.json({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
+  }
   const storedBodies = await getStoredBodies(c.env.STORAGE, requestId, requestLogger, {
     rootKeyBase64: c.env.BODY_ENCRYPTION_ROOT_KEY,
     keyId: c.env.BODY_ENCRYPTION_KEY_ID,

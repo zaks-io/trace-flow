@@ -34,6 +34,18 @@ bucket_name = "trace-flow-storage-dev"
 binding = "API_KEYS"
 id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 
+# Per-user rate limit on body retrieval (enumeration protection)
+[[ratelimits]]
+name = "BODIES_LIMITER"
+namespace_id = "2003"
+simple = { limit = 120, period = 60 }
+
+# Per-user rate limit on Tinybird proxy queries
+[[ratelimits]]
+name = "PIPES_LIMITER"
+namespace_id = "2004"
+simple = { limit = 240, period = 60 }
+
 [env.production]
 name = "trace-flow-api"
 workers_dev = false
@@ -58,6 +70,16 @@ bucket_name = "trace-flow-storage-prod"
 binding = "API_KEYS"
 id = "f004c21e2b8c4754af5947c08069bd00"
 
+[[env.production.ratelimits]]
+name = "BODIES_LIMITER"
+namespace_id = "2003"
+simple = { limit = 120, period = 60 }
+
+[[env.production.ratelimits]]
+name = "PIPES_LIMITER"
+namespace_id = "2004"
+simple = { limit = 240, period = 60 }
+
 [env.preview]
 name = "trace-flow-api-preview"
 
@@ -76,3 +98,13 @@ bucket_name = "trace-flow-storage-dev"
 [[env.preview.kv_namespaces]]
 binding = "API_KEYS"
 id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
+
+[[env.preview.ratelimits]]
+name = "BODIES_LIMITER"
+namespace_id = "2003"
+simple = { limit = 120, period = 60 }
+
+[[env.preview.ratelimits]]
+name = "PIPES_LIMITER"
+namespace_id = "2004"
+simple = { limit = 240, period = 60 }

@@ -1,8 +1,37 @@
 import { auth0 } from '@/lib/auth0';
 import { clearAuthCookiesFromResponse } from '@/lib/auth-cookies';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { type NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
+
+interface RateLimitBinding {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+async function checkTokenRefreshRateLimit(request: NextRequest): Promise<NextResponse | null> {
+  try {
+    const { env } = await getCloudflareContext({ async: true });
+    const limiter = (env as Record<string, unknown>).TOKEN_REFRESH_LIMITER as
+      | RateLimitBinding
+      | undefined;
+    if (!limiter) return null;
+    // Only trust `cf-connecting-ip` — Cloudflare injects it. `x-forwarded-for`
+    // is client-controlled and lets a caller cycle their rate-limit key.
+    const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+    const { success } = await limiter.limit({ key: ip });
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': '60' } },
+      );
+    }
+    return null;
+  } catch {
+    // Binding unavailable (dev/SSR) — fail open
+    return null;
+  }
+}
 
 function tryDecodeJwtExp(token: string): number | null {
   try {
@@ -33,6 +62,9 @@ export async function GET(request: NextRequest) {
   if (origin && origin !== expectedOrigin) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+
+  const rateLimited = await checkTokenRefreshRateLimit(request);
+  if (rateLimited) return rateLimited;
 
   // Read current session first so we can decide if a refresh-token grant is actually needed.
   // Convex may ask for `forceRefreshToken: true` as part of its normal auth flow; we should

@@ -1,3 +1,4 @@
+import { applySecurityHeaders } from '@trace-flow/utils';
 import type { TracingDecision } from './tracing-decision';
 
 export function buildProxyResponse(
@@ -13,6 +14,7 @@ export function buildProxyResponse(
       headers.set('X-Trace-Flow-Period-Reset', new Date(decision.periodEnd).toISOString());
     }
   }
+  applySecurityHeaders(headers);
 
   return new Response(readable, {
     status: response.status,

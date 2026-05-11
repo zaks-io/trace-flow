@@ -19,14 +19,35 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS",
   },
+  "ratelimits": [
+    {
+      "name": "TOKEN_REFRESH_LIMITER",
+      "namespace_id": "2005",
+      "simple": { "limit": 30, "period": 60 },
+    },
+  ],
   "env": {
     "development": {
       "name": "trace-flow-web-dev",
       "workers_dev": true,
+      "ratelimits": [
+        {
+          "name": "TOKEN_REFRESH_LIMITER",
+          "namespace_id": "2005",
+          "simple": { "limit": 30, "period": 60 },
+        },
+      ],
     },
     "production": {
       "name": "trace-flow-web",
       "workers_dev": false,
+      "ratelimits": [
+        {
+          "name": "TOKEN_REFRESH_LIMITER",
+          "namespace_id": "2005",
+          "simple": { "limit": 30, "period": 60 },
+        },
+      ],
     },
   },
 }

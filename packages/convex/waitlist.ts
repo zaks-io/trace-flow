@@ -2,6 +2,7 @@ import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { requireAdmin } from './auth/users';
+import { rateLimiter } from './rateLimits';
 
 export const joinWaitlist = mutation({
   args: {
@@ -14,6 +15,8 @@ export const joinWaitlist = mutation({
   ),
   handler: async (ctx, args) => {
     const email = args.email.toLowerCase().trim();
+
+    await rateLimiter.limit(ctx, 'joinWaitlistEmail', { key: email, throws: true });
 
     const existing = await ctx.db
       .query('waitlist')
@@ -46,6 +49,8 @@ export const confirmEmail = mutation({
   args: { token: v.string() },
   returns: v.object({ alreadyConfirmed: v.boolean() }),
   handler: async (ctx, args) => {
+    await rateLimiter.limit(ctx, 'confirmEmail', { key: args.token, throws: true });
+
     const entry = await ctx.db
       .query('waitlist')
       .withIndex('by_confirmation_token', (q) => q.eq('confirmationToken', args.token))

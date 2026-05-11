@@ -19,6 +19,7 @@ import * as Sentry from '@sentry/cloudflare';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import {
+  applySecurityHeaders,
   generateId,
   generateTraceId,
   getCurrentTimestamp,
@@ -45,6 +46,8 @@ interface Env {
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
   USAGE_TRACKER: DurableObjectNamespace;
+  ORG_LIMITER: RateLimit;
+  IP_LIMITER: RateLimit;
   CONVEX_SITE_URL: string;
   USAGE_SYNC_SECRET: string;
   ANALYTICS: AnalyticsEngineDataset;
@@ -59,6 +62,11 @@ interface Env {
 }
 
 const app = new OpenAPIHono<{ Bindings: Env }>();
+
+app.use('*', async (c, next) => {
+  await next();
+  applySecurityHeaders(c.res.headers);
+});
 
 // Register security scheme for API key authentication
 app.openAPIRegistry.registerComponent('securitySchemes', 'apiKey', {
@@ -121,6 +129,30 @@ app.all('*', async (c) => {
 
   // Attach orgId to all subsequent logs for this request
   const orgLogger = requestLogger.child({ orgId: keyData.orgId });
+
+  const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
+  const [ipLimit, orgLimit] = await Promise.all([
+    c.env.IP_LIMITER.limit({ key: clientIp }),
+    c.env.ORG_LIMITER.limit({ key: keyData.orgId }),
+  ]);
+
+  if (!ipLimit.success) {
+    orgLogger.warn('proxy.rate_limited', { reason: 'per_ip', clientIp });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json({ error: 'Too many requests', message: 'Per-IP rate limit exceeded' }, 429, {
+      'Retry-After': '60',
+    });
+  }
+
+  if (!orgLimit.success) {
+    orgLogger.warn('proxy.rate_limited', { reason: 'per_org' });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json(
+      { error: 'Rate limit exceeded', message: 'Per-organization rate limit exceeded' },
+      429,
+      { 'Retry-After': '60' },
+    );
+  }
 
   const billing = await checkBillingStatus(c.env, keyData.orgId, orgLogger);
 

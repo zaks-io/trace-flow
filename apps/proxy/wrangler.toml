@@ -41,6 +41,18 @@ bucket_name = "trace-flow-storage-dev"
 binding = "ANALYTICS"
 dataset = "trace-flow-proxy-dev"
 
+# Per-org burst limit on LLM proxy + OTLP ingest
+[[ratelimits]]
+name = "ORG_LIMITER"
+namespace_id = "2001"
+simple = { limit = 300, period = 60 }
+
+# Per-IP defensive baseline (catches leaked keys and runaway scripts)
+[[ratelimits]]
+name = "IP_LIMITER"
+namespace_id = "2002"
+simple = { limit = 600, period = 60 }
+
 # Secrets required: CONVEX_SITE_URL (https://{deployment}.convex.site), USAGE_SYNC_SECRET, SENTRY_DSN, AXIOM_TOKEN, BODY_ENCRYPTION_ROOT_KEY
 
 # Durable Object for usage tracking
@@ -81,6 +93,16 @@ bucket_name = "trace-flow-storage-prod"
 binding = "ANALYTICS"
 dataset = "trace-flow-proxy"
 
+[[env.production.ratelimits]]
+name = "ORG_LIMITER"
+namespace_id = "2001"
+simple = { limit = 300, period = 60 }
+
+[[env.production.ratelimits]]
+name = "IP_LIMITER"
+namespace_id = "2002"
+simple = { limit = 600, period = 60 }
+
 [[env.production.durable_objects.bindings]]
 name = "USAGE_TRACKER"
 class_name = "UsageTracker"
@@ -108,6 +130,16 @@ bucket_name = "trace-flow-storage-dev"
 [[env.preview.analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "trace-flow-proxy-dev"
+
+[[env.preview.ratelimits]]
+name = "ORG_LIMITER"
+namespace_id = "2001"
+simple = { limit = 300, period = 60 }
+
+[[env.preview.ratelimits]]
+name = "IP_LIMITER"
+namespace_id = "2002"
+simple = { limit = 600, period = 60 }
 
 [[env.preview.durable_objects.bindings]]
 name = "USAGE_TRACKER"
