@@ -30,6 +30,9 @@
     "development": {
       "name": "trace-flow-web-dev",
       "workers_dev": true,
+      "vars": {
+        "AXIOM_DATASET": "cloudflare",
+      },
       "ratelimits": [
         {
           "name": "TOKEN_REFRESH_LIMITER",
@@ -41,6 +44,9 @@
     "production": {
       "name": "trace-flow-web",
       "workers_dev": false,
+      "vars": {
+        "AXIOM_DATASET": "cloudflare",
+      },
       "ratelimits": [
         {
           "name": "TOKEN_REFRESH_LIMITER",
