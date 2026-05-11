@@ -12,6 +12,7 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
   mcpRegister: { kind: 'fixed window', rate: 10, period: HOUR },
   mcpAuthorize: { kind: 'fixed window', rate: 30, period: MINUTE },
   mcpTokenExchange: { kind: 'fixed window', rate: 60, period: MINUTE },
+  mcpCallback: { kind: 'fixed window', rate: 30, period: MINUTE },
 
   // Authenticated user/org actions
   initializeUser: { kind: 'fixed window', rate: 5, period: HOUR },

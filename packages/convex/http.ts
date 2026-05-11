@@ -21,7 +21,7 @@ import { mapStripeStatusToInternal } from './billing/subscriptions';
 import { getStripeClient, stripeWebhookSecret, stripeProPriceId } from './billing/stripe';
 import { rateLimiter } from './rateLimits';
 
-type RateLimitName = 'mcpRegister' | 'mcpAuthorize' | 'mcpTokenExchange';
+type RateLimitName = 'mcpRegister' | 'mcpAuthorize' | 'mcpTokenExchange' | 'mcpCallback';
 
 async function enforceRateLimit(
   ctx: ActionCtx,
@@ -529,6 +529,12 @@ export function createApp(
     const logger = getRequestLogger(c.req.raw, {
       operation: 'mcp_callback',
     });
+
+    const limited = await enforceRateLimit(ctx, 'mcpCallback', getClientIp(c.req.raw), logger);
+    if (limited) {
+      await logger.flush();
+      return limited;
+    }
 
     try {
       const url = new URL(c.req.url);
