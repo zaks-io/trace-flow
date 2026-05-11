@@ -97,6 +97,56 @@ async function ensureOrgMembership(
   });
 }
 
+async function getAcceptedInviteForEmail(ctx: MutationCtx, email: string) {
+  return await ctx.db
+    .query('invites')
+    .withIndex('by_email', (q) => q.eq('email', email))
+    .filter((q) => q.eq(q.field('status'), 'accepted'))
+    .first();
+}
+
+/**
+ * Applies an accepted invite for this email: org membership, inviteId, optional org switch.
+ * Runs for self-serve users too so org invites still work after the user is already enabled.
+ */
+async function reconcileAcceptedInvite(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  user: Doc<'users'>,
+  userInfo: UserInfo,
+) {
+  const acceptedInvite = await getAcceptedInviteForEmail(ctx, userInfo.email);
+  if (!acceptedInvite) return;
+
+  if (user.inviteId === acceptedInvite._id) {
+    if (acceptedInvite.orgId) {
+      await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+      await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, acceptedInvite.orgId);
+      await ensureOrgHasSubscription(ctx, acceptedInvite.orgId);
+    }
+    return;
+  }
+
+  let nextOrgId = user.orgId;
+  if (acceptedInvite.orgId) {
+    nextOrgId = acceptedInvite.orgId;
+  }
+
+  await ctx.db.patch(userId, {
+    inviteId: acceptedInvite._id,
+    orgId: nextOrgId,
+  });
+
+  if (acceptedInvite.orgId) {
+    await ensureOrgMembership(ctx, acceptedInvite.orgId, userId, 'member');
+  }
+
+  if (nextOrgId) {
+    await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, nextOrgId);
+    await ensureOrgHasSubscription(ctx, nextOrgId);
+  }
+}
+
 export async function getCurrentUserId(ctx: AuthContext): Promise<Id<'users'> | null> {
   const user = await getCurrentUser(ctx);
   return user?._id ?? null;
@@ -180,59 +230,33 @@ export const initializeUser = mutation({
       if (hasUserDataChanged(existingUser, userInfo)) {
         await ctx.db.patch(existingUser._id, userInfo);
       }
-      if (!existingUser.orgId) {
+
+      if (!existingUser.enabled) {
+        await ctx.db.patch(existingUser._id, { enabled: true });
+      }
+
+      await reconcileAcceptedInvite(ctx, existingUser._id, existingUser, userInfo);
+
+      const refreshed = (await ctx.db.get(existingUser._id))!;
+      if (!refreshed.orgId) {
         await createOrgWithDefaultBilling(
           ctx,
-          existingUser._id,
-          existingUser.name,
+          refreshed._id,
+          refreshed.name,
           extractSub(userInfo.tokenIdentifier) ?? undefined,
         );
       } else {
-        await ensureOrgHasSubscription(ctx, existingUser.orgId);
+        await ensureOrgHasSubscription(ctx, refreshed.orgId);
       }
-      // Enable user if they have an accepted invite and aren't enabled yet
-      if (!existingUser.enabled && !existingUser.inviteId) {
-        const acceptedInvite = await ctx.db
-          .query('invites')
-          .withIndex('by_email', (q) => q.eq('email', userInfo.email))
-          .filter((q) => q.eq(q.field('status'), 'accepted'))
-          .first();
 
-        if (acceptedInvite) {
-          let nextOrgId = existingUser.orgId;
-          if (acceptedInvite.orgId) {
-            nextOrgId = acceptedInvite.orgId;
-          }
-
-          await ctx.db.patch(existingUser._id, {
-            enabled: true,
-            inviteId: acceptedInvite._id,
-            orgId: nextOrgId,
-          });
-
-          if (acceptedInvite.orgId) {
-            await ensureOrgMembership(ctx, acceptedInvite.orgId, existingUser._id, 'member');
-          }
-
-          if (nextOrgId) {
-            await scheduleUserOrgSync(ctx, userInfo.tokenIdentifier, nextOrgId);
-            await ensureOrgHasSubscription(ctx, nextOrgId);
-          }
-        }
-      }
       return { userId: existingUser._id };
     }
 
-    // Check for accepted invite for new users
-    const acceptedInvite = await ctx.db
-      .query('invites')
-      .withIndex('by_email', (q) => q.eq('email', userInfo.email))
-      .filter((q) => q.eq(q.field('status'), 'accepted'))
-      .first();
+    const acceptedInvite = await getAcceptedInviteForEmail(ctx, userInfo.email);
 
     const userId = await ctx.db.insert('users', {
       ...userInfo,
-      enabled: !!acceptedInvite,
+      enabled: true,
       inviteId: acceptedInvite?._id,
     });
 
@@ -320,7 +344,7 @@ export const findOrCreateUser = internalMutation({
       email: args.email,
       name: args.name,
       picture: args.picture,
-      enabled: false,
+      enabled: true,
     });
 
     await createOrgWithDefaultBilling(

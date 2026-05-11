@@ -7,7 +7,7 @@ import {
 } from '../_generated/server';
 import { v } from 'convex/values';
 import { requireAdmin } from '../auth/users';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 import { internal } from '../_generated/api';
 import { organizationValidator } from '../validators';
 import { getStripeClient } from '../billing/stripe';
@@ -17,7 +17,7 @@ import { TIER_CONFIG } from '@trace-flow/types';
 import type { Id } from '../_generated/dataModel';
 
 async function requireAdminAction(ctx: ActionCtx) {
-  await requireTraceFlowRole(ctx);
+  await requireAuthenticated(ctx);
   const isAdmin = await ctx.runQuery(internal.auth.users.isAdminInternal);
   if (!isAdmin) throw new Error('Admin access required');
 }

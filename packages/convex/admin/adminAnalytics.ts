@@ -1,7 +1,7 @@
 import { action, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 
 const DEFAULT_EXPLORER_LIMIT = 100;
 const MAX_EXPLORER_LIMIT = 500;
@@ -159,7 +159,7 @@ const queryRunnerValidator = v.object({
 });
 
 async function requireAdminAction(ctx: ActionCtx) {
-  await requireTraceFlowRole(ctx);
+  await requireAuthenticated(ctx);
   const isAdmin = await ctx.runQuery(internal.auth.users.isAdminInternal);
   if (!isAdmin) {
     throw new Error('Admin access required');

@@ -20,7 +20,7 @@ import {
   MCP_SERVER_CAPABILITIES,
 } from './protocol';
 import { TOOL_DEFINITIONS } from './tools';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 import { api } from '../_generated/api';
 import { listTraces } from './tools/listTracesAction';
 import { getTrace } from './tools/getTraceAction';
@@ -79,7 +79,7 @@ export const handleMessage = action({
   },
   returns: v.union(jsonRpcResponseValidator, v.null()),
   handler: async (ctx, args): Promise<JsonRpcResponse | null> => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery);
     if (!user?.enabled) {
       return createErrorResponse(
@@ -368,7 +368,7 @@ export const terminateSession = action({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
 
     await ctx.runMutation(internal.mcp.session.updateSessionState, {
       sessionId: args.sessionId,

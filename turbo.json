@@ -3,7 +3,17 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".wrangler/**"]
+      "outputs": ["dist/**", ".wrangler/**", ".next/**", "!.next/cache/**"],
+      "env": [
+        "NEXT_PUBLIC_CONVEX_URL",
+        "NEXT_PUBLIC_AUTH0_DOMAIN",
+        "NEXT_PUBLIC_AUTH0_CLIENT_ID",
+        "NEXT_PUBLIC_TINYBIRD_API_URL",
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_SENTRY_DSN",
+        "NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID",
+        "NEXT_PUBLIC_DEPLOY_ID"
+      ]
     },
     "dev": {
       "cache": false,
