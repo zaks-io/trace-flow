@@ -161,13 +161,14 @@ async function migrateR2Object(bucket: R2Bucket, key: string, env: EncryptionEnv
 
 ## Key Rotation
 
-Future enhancement for key rotation:
+`BODY_ENCRYPTION_KEY_ID` can be rotated without downtime as long as the root key remains the same:
 
-1. Generate new key, assign new key ID
-2. Add both keys to Workers secrets (keyed by ID)
-3. New writes use the new key ID for HKDF derivation and record it as `kid` in the envelope
-4. Reads use `kid` from the payload, not the currently configured write key ID, to select the matching root key material
-5. After TTL, old key can be removed
+1. Assign a new key ID
+2. New writes use the new key ID for HKDF derivation and record it as `kid` in the envelope
+3. Reads use `kid` from the payload, not the currently configured write key ID, to derive the matching tenant key from the same root
+4. After TTL, old key IDs no longer appear in stored envelopes
+
+Rotating `BODY_ENCRYPTION_ROOT_KEY` itself is a flag-day operation with the current single-root configuration. Existing encrypted objects cannot be decrypted with a new root key, even when their original `kid` is present, until a future multi-root key lookup is implemented. If the root key must be replaced, expect old encrypted objects to fail decryption until they expire via R2 TTL.
 
 ## Performance Considerations
 

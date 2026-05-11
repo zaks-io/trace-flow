@@ -50,7 +50,7 @@ export async function storeBodies(
     ...(truncated ? { truncated: true } : {}),
   };
   const putOptions: R2PutOptions = {
-    ...(orgId ? { customMetadata: { orgId } } : {}),
+    customMetadata: { orgId },
     httpMetadata: { contentType: 'application/json' },
   };
 
