@@ -7,7 +7,7 @@ API keys are passed as parameters to Tinybird queries via JWT tokens. The keys a
 ## Current Flow
 
 1. User creates API keys stored in Convex `apiKeys` table
-2. `convex/tinybird.ts` fetches keys and joins them: `apiKeys.map(k => k.key).join(',')`
+2. `packages/convex/integrations/tinybird.ts` fetches keys via `listForUser`, sanitizes UUID-shaped values, and joins them for `fixed_params.api_keys`
 3. JWT token includes `fixed_params: { api_keys: 'key1,key2,key3' }`
 4. Tinybird pipes use: `WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})`
 
@@ -41,22 +41,24 @@ function validateApiKey(key: string): void {
 
 ### 2. Sanitization at Token Generation
 
-**File**: `convex/tinybird.ts`
+**File**: `packages/convex/integrations/tinybird.ts`
 
-Add sanitization before building the JWT:
+Keys are `crypto.randomUUID()` strings in practice. Before building the JWT, only values matching a strict UUID regex are included (defense in depth for anything non-conforming in the DB):
 
 ```typescript
-function sanitizeApiKey(key: string): string {
-  // Remove any characters that could be SQL injection vectors
-  return key.replace(/[^a-zA-Z0-9_-]/g, '');
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function sanitizeApiKeys(keys: string[]): string[] {
+  return keys.filter((k) => UUID_PATTERN.test(k));
+}
+
+export function joinSanitizedApiKeys(apiKeys: { key: string }[]): string {
+  return sanitizeApiKeys(apiKeys.map((k) => k.key)).join(',');
 }
 
 async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
   const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
-  return apiKeys
-    .map((k: { key: string }) => sanitizeApiKey(k.key))
-    .filter(Boolean)
-    .join(',');
+  return joinSanitizedApiKeys(apiKeys);
 }
 ```
 
