@@ -6,6 +6,7 @@ import { internal } from '../_generated/api';
 import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from './organizations';
 import { getCurrentUser, requireEnabledUser } from './userHelpers';
 import { userValidator } from '../validators';
+import { rateLimiter } from '../rateLimits';
 
 type AuthContext = QueryCtx | MutationCtx;
 
@@ -213,6 +214,11 @@ export const initializeUser = mutation({
     if (!identity.email) {
       throw new Error('User email is required');
     }
+
+    await rateLimiter.limit(ctx, 'initializeUser', {
+      key: identity.tokenIdentifier,
+      throws: true,
+    });
 
     const userInfo: UserInfo = {
       tokenIdentifier: identity.tokenIdentifier,

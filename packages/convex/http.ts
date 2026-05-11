@@ -8,6 +8,7 @@ import {
   traceContextFromHeaders,
   type LogContext,
   type TraceContext,
+  type Logger,
 } from '@trace-flow/logging';
 import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
@@ -18,6 +19,41 @@ import type Stripe from 'stripe';
 import { UNITS_PER_ADDON } from '@trace-flow/types';
 import { mapStripeStatusToInternal } from './billing/subscriptions';
 import { getStripeClient, stripeWebhookSecret, stripeProPriceId } from './billing/stripe';
+import { rateLimiter } from './rateLimits';
+
+type RateLimitName = 'mcpRegister' | 'mcpAuthorize' | 'mcpTokenExchange';
+
+async function enforceRateLimit(
+  ctx: ActionCtx,
+  name: RateLimitName,
+  key: string,
+  logger: Logger,
+): Promise<Response | null> {
+  const result = await rateLimiter.limit(ctx, name, { key });
+  if (result.ok) return null;
+  logger.warn('convex.rate_limited', {
+    route: name,
+    keyClass: 'ip',
+    retryAfterMs: result.retryAfter,
+  });
+  const retryAfterSec = Math.max(1, Math.ceil(result.retryAfter / 1000));
+  return new Response(
+    JSON.stringify({ error: 'rate_limited', error_description: 'Too many requests' }),
+    {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': String(retryAfterSec),
+      },
+    },
+  );
+}
+
+function getClientIp(request: Request): string {
+  return (
+    request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown'
+  );
+}
 
 // Dependencies that can be injected for testing
 export interface HttpDeps {
@@ -379,6 +415,13 @@ export function createApp(
   // OAuth: Dynamic Client Registration (RFC 7591)
   app.post('/mcp/register', async (c) => {
     const ctx = c.env;
+    const logger = getRequestLogger(c.req.raw, { operation: 'mcp_register' });
+
+    const limited = await enforceRateLimit(ctx, 'mcpRegister', getClientIp(c.req.raw), logger);
+    if (limited) {
+      await logger.flush();
+      return limited;
+    }
 
     let body: {
       redirect_uris?: string[];
@@ -426,6 +469,15 @@ export function createApp(
 
   // OAuth: Start authorization flow
   app.get('/mcp/authorize', async (c) => {
+    const ctx = c.env;
+    const logger = getRequestLogger(c.req.raw, { operation: 'mcp_authorize' });
+
+    const limited = await enforceRateLimit(ctx, 'mcpAuthorize', getClientIp(c.req.raw), logger);
+    if (limited) {
+      await logger.flush();
+      return limited;
+    }
+
     const url = new URL(c.req.url);
     const clientState = url.searchParams.get('state') ?? '';
     const redirectUri = url.searchParams.get('redirect_uri');
@@ -571,6 +623,13 @@ export function createApp(
     const logger = getRequestLogger(c.req.raw, {
       operation: 'mcp_token',
     });
+
+    const limited = await enforceRateLimit(ctx, 'mcpTokenExchange', getClientIp(c.req.raw), logger);
+    if (limited) {
+      await logger.flush();
+      return limited;
+    }
+
     const body = await c.req.parseBody();
     const grantType = body.grant_type;
 

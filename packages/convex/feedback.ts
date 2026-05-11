@@ -1,12 +1,7 @@
-import { RateLimiter, HOUR } from '@convex-dev/rate-limiter';
-import { components } from './_generated/api';
 import { mutation } from './_generated/server';
 import { ConvexError, v } from 'convex/values';
 import { requireEnabledUser } from './auth/userHelpers';
-
-const rateLimiter = new RateLimiter(components.rateLimiter, {
-  submitFeedback: { kind: 'fixed window', rate: 5, period: HOUR },
-});
+import { rateLimiter } from './rateLimits';
 
 export const MAX_MESSAGE_LENGTH = 3000;
 

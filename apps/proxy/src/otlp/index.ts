@@ -13,6 +13,8 @@ interface Env {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
   API_KEYS: KVNamespace;
   USAGE_TRACKER: DurableObjectNamespace;
+  ORG_LIMITER: RateLimit;
+  IP_LIMITER: RateLimit;
   AXIOM_TOKEN?: string;
   AXIOM_DATASET?: string;
   AXIOM_DOMAIN?: string;
@@ -234,6 +236,30 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   }
   const keyData: ApiKeyData = authResult;
   const orgLogger = keyData.orgId ? logger.child({ orgId: keyData.orgId }) : logger;
+
+  const clientIp = c.req.header('cf-connecting-ip') ?? 'unknown';
+  const [ipLimit, orgLimit] = await Promise.all([
+    c.env.IP_LIMITER.limit({ key: clientIp }),
+    keyData.orgId
+      ? c.env.ORG_LIMITER.limit({ key: keyData.orgId })
+      : Promise.resolve({ success: true }),
+  ]);
+
+  if (!ipLimit.success) {
+    orgLogger.warn('otlp.rate_limited', { reason: 'per_ip', clientIp });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json({ error: { code: 429, message: 'Per-IP rate limit exceeded' } }, 429, {
+      'Retry-After': '60',
+    });
+  }
+
+  if (!orgLimit.success) {
+    orgLogger.warn('otlp.rate_limited', { reason: 'per_org' });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json({ error: { code: 429, message: 'Per-organization rate limit exceeded' } }, 429, {
+      'Retry-After': '60',
+    });
+  }
 
   const rawContentType = c.req.header('Content-Type');
   const contentType = classifyContentType(rawContentType);

@@ -5,6 +5,7 @@ import { requireAuthenticated } from '../auth/auth';
 import { api, internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
+import { rateLimiter } from '../rateLimits';
 
 const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
 const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
@@ -56,6 +57,11 @@ export const generateToken = action({
 
     // Fetch org-visible API keys (same scope as apiKeys.list / MCP listForUser)
     const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery, {});
+
+    if (user) {
+      await rateLimiter.limit(ctx, 'generateTinybirdJwt', { key: user._id, throws: true });
+    }
+
     const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
 
     // Look up subscription tier to enforce retention-based filtering

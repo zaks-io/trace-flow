@@ -6,6 +6,7 @@ import { buildCacheKey, computeTTL, hashString } from './cache';
 interface TinybirdProxyEnv {
   TINYBIRD_API_URL: string;
   TINYBIRD_ADMIN_TOKEN: string;
+  PIPES_LIMITER: RateLimit;
 }
 
 const VALID_PIPE_NAME = /^[a-z_][a-z0-9_]*$/;
@@ -38,6 +39,14 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
     cacheParams = extractCacheParams(payload);
   } catch {
     return c.json({ error: 'Invalid or expired token' }, 401);
+  }
+
+  // Rate limit per JWT (api_keys identifies the org/user scope of the token)
+  const limitKey = (await hashString(cacheParams.apiKeys)) || 'anon';
+  const limit = await c.env.PIPES_LIMITER.limit({ key: limitKey });
+  if (!limit.success) {
+    logger.warn('api.rate_limited', { route: 'pipes', keyClass: 'jwt' });
+    return c.json({ error: 'Too many requests' }, 429);
   }
 
   const url = new URL(c.req.url);
