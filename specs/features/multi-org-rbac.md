@@ -347,38 +347,38 @@ The key architectural property is that `user.orgId` is the single source of trut
 
 ### Current state
 
-Tinybird JWTs are scoped by **individual user API keys** via `fixed_params.api_keys`. The `generateToken` action in `tinybird.ts`:
+Tinybird JWTs are scoped by **API keys visible to the user** via `fixed_params.api_keys`. The `generateToken` action in `integrations/tinybird.ts`:
 
-1. Fetches the current user's API keys via `apiKeys.listByUserId`
-2. Embeds them as `api_keys` in JWT `fixed_params`
+1. Fetches keys via `apiKeys.listForUser` (same union as the dashboard: org keys plus the user’s own keys, including legacy keys without `orgId` on the document)
+2. Sanitizes UUID-shaped keys, joins them, and embeds as `api_keys` in JWT `fixed_params`
 3. Tinybird queries filter rows by `ApiKey IN (api_keys)` -- row-level security
 
-This means a user only sees traces from their own API keys, even within the same org.
+This means org members can see traces for org-shared keys, not only keys they personally created.
 
 ### Problem with RBAC
 
-When we add viewer/member roles, a viewer should see all org traces, not just traces from their own (nonexistent) API keys. The current per-user key scoping breaks this.
+When we add viewer/member roles, a **viewer** should still see org traces even if they never created a personal key; `listForUser` already includes org-scoped keys for users with `user.orgId`. Further RBAC (e.g. restricting which org keys a viewer sees) may require additional checks beyond key listing.
 
-### Solution: Scope JWTs by org, not by user
+### Solution: JWT key scope matches org visibility
 
-Change `generateToken` to fetch **all org API keys** instead of just the user's keys:
+`generateToken` uses **`listForUser`** so JWT `api_keys` match the API keys page and MCP (org keys plus the user’s own keys, legacy-safe):
 
 ```ts
-// Current (user-scoped)
-const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
+// Implemented: dashboard / JWT parity (org + own keys, legacy-safe)
+const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
 
-// New (org-scoped)
-const apiKeys = user?.orgId
+// Optional stricter org-only set (omits user-index keys without orgId — use only if product requires)
+const apiKeysOrgOnly = user?.orgId
   ? await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: user.orgId })
   : [];
 ```
 
-`listByOrgId` already exists in `apiKeys.ts`. This change:
+`listByOrgId` already exists in `apiKeys.ts` and remains useful for **admin-style org operations** (e.g. `extendRetention`, trace deletion):
 
-- Lets all org members (including viewers) see all org traces
-- Is already how `extendRetention` works (it uses `listByOrgId`)
-- Respects org switching -- when a user switches orgs, their next JWT will scope to the new org's keys
-- Maintains the `__NO_KEYS__` sentinel when an org has no keys
+- Org members see traces for keys returned by `listForUser` (includes org-shared keys for teammates)
+- `extendRetention` / bulk org operations continue to use `listByOrgId`
+- Org switching: JWTs follow `user.orgId` via `listForUser` on the next token refresh
+- Maintains the `__NO_KEYS__` sentinel when there are no valid keys
 
 ### Retention scoping
 
@@ -386,9 +386,9 @@ Already org-aware. `generateToken` looks up the subscription tier via `user.orgI
 
 ### Migration
 
-This is a **behavioral change** -- users currently only see their own traces. After the change, all org members see all org traces. This should be communicated as a feature (team visibility) but needs to ship alongside the RBAC roles so that viewer permissions are properly gated.
+JWT scoping now matches the dashboard API key list (`listForUser`). A separate **behavioral** rollout may still be needed if product policy changes (for example switching to `listByOrgId`-only JWTs and dropping legacy user-only keys from tokens).
 
-**Sequence**: Ship the org-scoped JWT change in the same release as RBAC Phase 3 (role-based action gating). This ensures viewers can see data but cannot create API keys or modify anything.
+**Sequence**: Ship RBAC Phase 3 (role-based action gating) so viewers cannot mutate org resources while still receiving org-scoped trace visibility via `listForUser`.
 
 ## Testing Considerations
 

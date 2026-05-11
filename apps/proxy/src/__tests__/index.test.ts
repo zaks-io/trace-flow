@@ -1,8 +1,34 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { env, fetchMock, SELF } from 'cloudflare:test';
+import { isEncryptedStoredBodiesPayload, type StoredBodiesPayload } from '@trace-flow/types';
+import { decryptStoredBodyPayload } from '@trace-flow/utils';
 
 const WAIT_UNTIL_DELAY = 100;
+const TEST_BODY_ENCRYPTION_ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 const waitForAsyncOps = () => new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+async function decryptStoredBodiesObject(
+  objectKey: string,
+  object: R2ObjectBody,
+): Promise<StoredBodiesPayload> {
+  const parsed: unknown = JSON.parse(await object.text());
+  if (!isEncryptedStoredBodiesPayload(parsed)) {
+    throw new Error('Expected encrypted stored body payload');
+  }
+
+  const orgId = object.customMetadata?.orgId;
+  if (!orgId) {
+    throw new Error('Expected stored body org metadata');
+  }
+
+  return JSON.parse(
+    await decryptStoredBodyPayload(parsed, {
+      rootKeyBase64: TEST_BODY_ENCRYPTION_ROOT_KEY,
+      orgId,
+      objectKey,
+    }),
+  ) as StoredBodiesPayload;
+}
 
 async function setupValidApiKey(key: string, orgId = 'org-test-123'): Promise<void> {
   const keyData = {
@@ -436,6 +462,125 @@ describe('Proxy Worker Integration', () => {
       // Verify request body was stored
       const storedBodies = await env.STORAGE.list({ prefix: 'bodies/' });
       expect(storedBodies.objects.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should return unredacted LLM JSON to client but redact PII in R2 bodies', async () => {
+      await setupValidApiKey('test-key-pii-json');
+
+      const secretEmail = 'leaky-user@example.com';
+      const secretIp = '192.168.1.99';
+      const secretCard = '4242424242424242';
+      const requestEmail = 'request-pii@example.com';
+
+      const mockResponse = {
+        id: 'chatcmpl-pii',
+        choices: [
+          {
+            message: {
+              content: `Reply to ${secretEmail} from ${secretIp} cc ${secretCard}`,
+            },
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+      };
+
+      const keysBefore = new Set(
+        (await env.STORAGE.list({ prefix: 'bodies/' })).objects.map((o) => o.key),
+      );
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, JSON.stringify(mockResponse), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'test-key-pii-json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4',
+          messages: [{ role: 'user', content: `Question from ${requestEmail}` }],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual(mockResponse);
+      expect(JSON.stringify(body)).toContain(secretEmail);
+      expect(JSON.stringify(body)).toContain(secretIp);
+
+      await waitForAsyncOps();
+
+      const after = await env.STORAGE.list({ prefix: 'bodies/' });
+      const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
+      expect(newKey, 'expected a new R2 bodies object for this request').toBeTruthy();
+
+      const obj = await env.STORAGE.get(newKey!);
+      expect(obj).not.toBeNull();
+      const stored = await decryptStoredBodiesObject(newKey!, obj!);
+
+      expect(stored.requestBody).not.toContain(requestEmail);
+      expect(stored.requestBody).toContain('[REDACTED]');
+      expect(stored.responseBody).not.toContain(secretEmail);
+      expect(stored.responseBody).not.toContain(secretIp);
+      expect(stored.responseBody).not.toContain(secretCard);
+      expect(stored.responseBody).toContain('[REDACTED]');
+    });
+
+    it('should return unredacted SSE stream to client but redact PII in R2 bodies', async () => {
+      await setupValidApiKey('test-key-pii-sse');
+
+      const secretEmail = 'stream-leak@example.com';
+      const requestEmail = 'sse-request-pii@example.com';
+      const sseBody = `data: {"choices":[{"delta":{"content":"${secretEmail}"}}]}\n\ndata: [DONE]\n\n`;
+
+      const keysBefore = new Set(
+        (await env.STORAGE.list({ prefix: 'bodies/' })).objects.map((o) => o.key),
+      );
+
+      fetchMock
+        .get('https://api.openai.com')
+        .intercept({ path: '/v1/chat/completions', method: 'POST' })
+        .reply(200, sseBody, {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'test-key-pii-sse',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4',
+          messages: [{ role: 'user', content: requestEmail }],
+          stream: true,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('text/event-stream');
+      const text = await res.text();
+      expect(text).toContain(secretEmail);
+
+      await waitForAsyncOps();
+
+      const after = await env.STORAGE.list({ prefix: 'bodies/' });
+      const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
+      expect(newKey, 'expected a new R2 bodies object for this request').toBeTruthy();
+
+      const obj = await env.STORAGE.get(newKey!);
+      expect(obj).not.toBeNull();
+      const stored = await decryptStoredBodiesObject(newKey!, obj!);
+
+      expect(stored.requestBody).not.toContain(requestEmail);
+      expect(stored.requestBody).toContain('[REDACTED]');
+      expect(stored.responseBody).not.toContain(secretEmail);
+      expect(stored.responseBody).toContain('[REDACTED]');
     });
   });
 

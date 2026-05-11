@@ -16,7 +16,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@sentry/cloudflare": "^10.46.0",
+    "@sentry/cloudflare": "^10.51.0",
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*"
@@ -27,6 +27,6 @@
     "@vitest/coverage-istanbul": "^3.2.4",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",
-    "wrangler": "^4.83.0"
+    "wrangler": "^4.88.0"
   }
 }

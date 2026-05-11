@@ -61,7 +61,7 @@ const payload = {
 
 ## Row-Level Security with fixed_params
 
-Multi-tenant isolation is critical. Users must only see traces from their own API keys.
+Multi-tenant isolation is critical. Users must only see traces for API keys they are allowed to use (same scope as the API keys page: org keys plus their own keys).
 
 Every Tinybird pipe includes an `api_keys` parameter in its WHERE clause:
 
@@ -70,11 +70,11 @@ SELECT * FROM otel_traces
 WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
 ```
 
-When generating a JWT, Convex fetches the user's API keys and injects them as `fixed_params`:
+When generating a JWT, Convex fetches API keys visible to the user (`listForUser`, same as the dashboard) and injects them as `fixed_params`:
 
 ```typescript
-const apiKeys = await ctx.runQuery(internal.apiKeys.listByUserId, { userId });
-const apiKeyString = apiKeys.map((k) => k.key).join(',');
+const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
+const apiKeyString = joinSanitizedApiKeys(apiKeys);
 
 const scopesWithApiKeys = args.scopes.map((scope) => ({
   ...scope,

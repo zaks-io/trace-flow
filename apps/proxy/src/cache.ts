@@ -51,7 +51,7 @@ async function l2Get<T>(key: string): Promise<T | undefined> {
     const cache = caches.default;
     const response = await cache.match(new Request(CACHE_URL_PREFIX + key));
     if (!response) return undefined;
-    return (await response.json()) as T;
+    return await response.json();
   } catch {
     return undefined;
   }
