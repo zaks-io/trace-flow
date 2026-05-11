@@ -19,11 +19,15 @@ const ALLOWED_DOC_HOSTS = new Set([
   '127.0.0.1:8788',
 ]);
 
+/**
+ * Host fallback when `APP_BASE_URL` is unset. Production should always set
+ * `APP_BASE_URL` so doc markdown fetches do not depend on the incoming `Host`
+ * header (including the `.workers.dev` wildcard used for preview convenience).
+ */
 function isAllowedDocHost(host: string): boolean {
   if (ALLOWED_DOC_HOSTS.has(host)) {
     return true;
   }
-  // Cloudflare Workers preview and dev hosts (no account-specific subdomain in repo)
   return host.endsWith('.workers.dev');
 }
 
