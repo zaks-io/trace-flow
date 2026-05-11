@@ -13,21 +13,32 @@ export const dynamic = 'force-dynamic';
 
 const ALLOWED_DOC_HOSTS = new Set([
   'trace-flow.dev',
-  'trace-flow-web-dev.isaac-a46.workers.dev',
   'localhost:3000',
   'localhost:8788',
   '127.0.0.1:3000',
   '127.0.0.1:8788',
 ]);
 
+function isAllowedDocHost(host: string): boolean {
+  if (ALLOWED_DOC_HOSTS.has(host)) {
+    return true;
+  }
+  // Cloudflare Workers preview and dev hosts (no account-specific subdomain in repo)
+  return host.endsWith('.workers.dev');
+}
+
 function getDocsOrigin(requestHeaders: Headers): string | null {
   const configuredOrigin = process.env.APP_BASE_URL;
   if (configuredOrigin) {
-    return new URL(configuredOrigin).origin;
+    try {
+      return new URL(configuredOrigin).origin;
+    } catch {
+      return null;
+    }
   }
 
   const host = requestHeaders.get('host')?.toLowerCase();
-  if (!host || !ALLOWED_DOC_HOSTS.has(host)) {
+  if (!host || !isAllowedDocHost(host)) {
     return null;
   }
 
