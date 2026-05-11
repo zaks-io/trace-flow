@@ -6,7 +6,7 @@ import { userValidator, subscriptionValidator } from './validators';
 export const sessionContext = query({
   args: {},
   returns: v.object({
-    hasRole: v.boolean(),
+    isAuthenticated: v.boolean(),
     user: v.union(userValidator, v.null()),
     isAdmin: v.boolean(),
     subscription: v.union(subscriptionValidator, v.null()),
@@ -16,11 +16,8 @@ export const sessionContext = query({
     const identity = await ctx.auth.getUserIdentity();
 
     if (!identity) {
-      return { hasRole: false, user: null, isAdmin: false, subscription: null };
+      return { isAuthenticated: false, user: null, isAdmin: false, subscription: null };
     }
-
-    const roles = ((identity as Record<string, unknown>)['neuron/roles'] as string[]) || [];
-    const hasRole = roles.includes('Trace Flow');
 
     const user = await getCurrentUser(ctx);
     const isAdmin = user?.isAdmin === true;
@@ -39,6 +36,6 @@ export const sessionContext = query({
       onboardingCompletedAt = org?.onboardingCompletedAt;
     }
 
-    return { hasRole, user, isAdmin, subscription, onboardingCompletedAt };
+    return { isAuthenticated: true, user, isAdmin, subscription, onboardingCompletedAt };
   },
 });

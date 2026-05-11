@@ -73,19 +73,6 @@ function AppLayoutContent({
   useUserInitialization();
   useLaunchDarklyIdentity(data.user, data.subscription);
 
-  if (!data.hasRole) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-8 text-center">
-          <h2 className="mb-2 text-xl font-semibold text-destructive">Access Denied</h2>
-          <p className="text-destructive/80">
-            You need the &quot;TraceFlow&quot; role to access this dashboard.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <AdminProvider value={data.isAdmin}>
       <SidebarProvider>

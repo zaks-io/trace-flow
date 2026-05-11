@@ -9,7 +9,7 @@ import {
 import { paginationOptsValidator } from 'convex/server';
 import { v, ConvexError } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
-import { requireTraceFlowRole } from './auth/auth';
+import { requireAuthenticated } from './auth/auth';
 import { getCurrentUser, requireEnabledUser } from './auth/users';
 import { internal } from './_generated/api';
 import {
@@ -285,7 +285,7 @@ export const listForCurrentOrg = query({
   args: {},
   returns: costAlertSettingsValidator,
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) {
       return {
@@ -306,7 +306,7 @@ export const listForCurrentOrg = query({
 export const listDeliveries = query({
   args: { paginationOpts: paginationOptsValidator },
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) {
       return { page: [], isDone: true, continueCursor: '' };
@@ -327,7 +327,7 @@ export const createChannel = mutation({
   },
   returns: v.id('costAlertChannels'),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { user, org } = await requireOrgOwner(ctx);
     const name = args.name.trim();
     if (name.length === 0) {
@@ -358,7 +358,7 @@ export const updateChannel = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { org } = await requireOrgOwner(ctx);
     const channel = await ctx.db.get(args.id);
     if (channel?.orgId !== org._id) {
@@ -391,7 +391,7 @@ export const toggleChannel = mutation({
   args: { id: v.id('costAlertChannels') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { org } = await requireOrgOwner(ctx);
     const channel = await ctx.db.get(args.id);
     if (channel?.orgId !== org._id) {
@@ -412,7 +412,7 @@ export const removeChannel = mutation({
   args: { id: v.id('costAlertChannels') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { user, org } = await requireOrgOwner(ctx);
     const channel = await ctx.db.get(args.id);
     if (channel?.orgId !== org._id) {
@@ -446,7 +446,7 @@ export const testChannel = mutation({
   args: { channelId: v.id('costAlertChannels') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { org } = await requireOrgOwner(ctx);
     const channel = await ctx.db.get(args.channelId);
     if (channel?.orgId !== org._id) {
@@ -473,7 +473,7 @@ export const createAlert = mutation({
   },
   returns: v.id('costAlerts'),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { user, org } = await requireOrgOwner(ctx);
     validateAlertCondition(args.condition);
     await assertApiKeysBelongToOrg(ctx, org._id, args.apiKeyIds);
@@ -523,7 +523,7 @@ export const updateAlert = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { user, org } = await requireOrgOwner(ctx);
     const alert = await ctx.db.get(args.id);
     if (alert?.orgId !== org._id) {
@@ -563,7 +563,7 @@ export const toggleAlert = mutation({
   args: { id: v.id('costAlerts') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { user, org } = await requireOrgOwner(ctx);
     const alert = await ctx.db.get(args.id);
     if (alert?.orgId !== org._id) {
@@ -585,7 +585,7 @@ export const removeAlert = mutation({
   args: { id: v.id('costAlerts') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { org } = await requireOrgOwner(ctx);
     const alert = await ctx.db.get(args.id);
     if (alert?.orgId !== org._id) {

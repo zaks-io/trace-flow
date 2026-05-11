@@ -1,6 +1,6 @@
 # Auth0 Integration
 
-Trace Flow uses Auth0 for authentication across the web dashboard, API worker, and Convex backend. This document covers the authentication flow, configuration, and role-based access control.
+Trace Flow uses Auth0 for authentication across the web dashboard, API worker, and Convex backend. This document covers the authentication flow, configuration, and access control.
 
 ## Architecture Overview
 
@@ -111,36 +111,28 @@ const { payload } = await jwtVerify(token, JWKS, {
 - Automatic key rotation handling via jose library
 - Issuer and audience validation prevent token reuse attacks
 
-## Role-Based Access Control
+## Access Control
 
-Trace Flow requires the `Trace Flow` role in the `neuron/roles` claim. This is checked in both Convex and the API worker.
+Product access requires a valid Auth0 session (Convex `ctx.auth.getUserIdentity()`). Convex functions use `requireAuthenticated()` for dashboard and product APIs. The `users.enabled` flag can still disable specific accounts; `users.isAdmin` gates admin tooling.
 
-### Convex Role Check
+Org-scoped data (including the API worker bodies endpoint) is enforced via KV mappings and stored metadata, not custom JWT roles.
 
-`packages/convex/auth.ts`:
+### Convex Authentication Check
+
+`packages/convex/auth/auth.ts`:
 
 ```typescript
-export async function requireTraceFlowRole(ctx: AuthContext): Promise<void> {
+export async function requireAuthenticated(ctx: AuthContext): Promise<void> {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error('Authentication required');
-
-  const roles = identity['neuron/roles'] || [];
-  if (!roles.includes('Trace Flow')) {
-    throw new Error('Access denied');
+  if (!identity) {
+    throw new Error('Authentication required');
   }
 }
 ```
 
-### API Worker Role Check
+### API Worker JWT Validation
 
-`apps/api/src/auth.ts`:
-
-```typescript
-const roles = payload['neuron/roles'] ?? [];
-if (!roles.includes('Trace Flow')) {
-  return c.json({ error: 'Insufficient permissions' }, 403);
-}
-```
+`apps/api/src/auth.ts` verifies issuer, audience, and signature, then exposes `sub` for org-scoped authorization. It does **not** require a custom `neuron/roles` claim for access.
 
 ## Token Flow
 
@@ -157,7 +149,7 @@ if (!roles.includes('Trace Flow')) {
 1. Frontend gets Auth0 access token from `useAuth0()` hook
 2. Frontend sends `Authorization: Bearer <token>` to API worker
 3. API worker validates against Auth0 JWKS
-4. API worker checks `neuron/roles` for `Trace Flow`
+4. API worker uses `sub` plus KV `user-org:{sub}` for org-scoped body access
 
 ### Web to Tinybird
 
@@ -170,20 +162,13 @@ if (!roles.includes('Trace Flow')) {
 
 ## Error Handling
 
-| Status | Cause                   | Resolution                        |
-| ------ | ----------------------- | --------------------------------- |
-| 401    | Missing/expired token   | Redirect to login                 |
-| 403    | Missing Trace Flow role | Contact admin for role assignment |
-| 500    | Auth0 config missing    | Check wrangler.toml/env vars      |
+| Status | Cause                                | Resolution                          |
+| ------ | ------------------------------------ | ----------------------------------- |
+| 401    | Missing/expired token                | Redirect to login                   |
+| 403    | Org mismatch / forbidden body access | Check org membership and KV mapping |
+| 500    | Auth0 config missing                 | Check wrangler.toml/env vars        |
 
-The API worker returns structured error responses:
-
-```json
-{
-  "error": "Insufficient permissions",
-  "message": "The Trace Flow role is required to access this resource"
-}
-```
+The API worker returns structured JSON errors for auth and validation failures.
 
 ## Local Development
 

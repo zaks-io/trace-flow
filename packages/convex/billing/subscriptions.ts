@@ -8,7 +8,7 @@ import {
 } from '../_generated/server';
 import type { MutationCtx, ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 import { getCurrentUser, requireEnabledUser } from '../auth/userHelpers';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG, UNITS_PER_ADDON } from '@trace-flow/types';
@@ -49,7 +49,7 @@ async function requireOrgOwner(ctx: Parameters<typeof requireEnabledUser>[0]) {
 }
 
 async function requireOrgOwnerAction(ctx: ActionCtx) {
-  await requireTraceFlowRole(ctx);
+  await requireAuthenticated(ctx);
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error('Authentication required');
   const user = await ctx.runQuery(internal.auth.users.getUserByTokenIdentifier, {
@@ -87,7 +87,7 @@ export const getForCurrentUser = query({
   args: {},
   returns: v.union(v.null(), subscriptionValidator),
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
 
@@ -123,7 +123,7 @@ export const getBillingSummaryForCurrentUser = query({
     }),
   ),
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
 
@@ -392,7 +392,7 @@ export const updateAutoOverageSettings = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const { user } = await requireOrgOwner(ctx);
     const subscription = await ctx.db
       .query('subscriptions')

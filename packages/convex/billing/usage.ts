@@ -1,6 +1,6 @@
 import { query, internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
-import { requireTraceFlowRole } from '../auth/auth';
+import { requireAuthenticated } from '../auth/auth';
 import { getCurrentUser } from '../auth/users';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
@@ -22,7 +22,7 @@ export const getCurrentUsage = query({
   args: {},
   returns: usageDocValidator,
   handler: async (ctx) => {
-    await requireTraceFlowRole(ctx);
+    await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
     const subscription = await ctx.db

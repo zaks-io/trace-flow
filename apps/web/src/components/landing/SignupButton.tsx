@@ -12,7 +12,7 @@ export function SignupButton({ isWaitlistMode }: SignupButtonProps) {
     return (
       <div className="flex flex-col items-center gap-3">
         <p className="text-sm text-muted-foreground">
-          Currently invite-only. Join the waitlist for early access.
+          We&apos;re in limited rollout. Join the waitlist for early access.
         </p>
         <WaitlistForm />
       </div>
