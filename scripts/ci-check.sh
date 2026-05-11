@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Public placeholders only — enough for `next build` prerender in CI-like checks.
-# Override any var by exporting it before invoking `bun run ci:check`.
+# Non-production placeholder values only — safe for local `next build` / prerender checks.
+# AUTH0_* dummies are not real credentials; override any var by exporting it before `bun run ci:check`.
 set -euo pipefail
 export NEXT_PUBLIC_CONVEX_URL="${NEXT_PUBLIC_CONVEX_URL:-https://test.convex.cloud}"
 export NEXT_PUBLIC_AUTH0_DOMAIN="${NEXT_PUBLIC_AUTH0_DOMAIN:-test.auth0.com}"

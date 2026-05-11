@@ -235,8 +235,7 @@ export const initializeUser = mutation({
         await ctx.db.patch(existingUser._id, { enabled: true });
       }
 
-      const userAfterProfile = (await ctx.db.get(existingUser._id))!;
-      await reconcileAcceptedInvite(ctx, existingUser._id, userAfterProfile, userInfo);
+      await reconcileAcceptedInvite(ctx, existingUser._id, existingUser, userInfo);
 
       const refreshed = (await ctx.db.get(existingUser._id))!;
       if (!refreshed.orgId) {
