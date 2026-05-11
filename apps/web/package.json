@@ -9,6 +9,8 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy:dev": "opennextjs-cloudflare build && opennextjs-cloudflare deploy --env development",
     "deploy:prod": "opennextjs-cloudflare build && opennextjs-cloudflare deploy --env production",
+    "docs:generate": "bun run scripts/generate-docs-content.ts",
+    "pretype-check": "bun run docs:generate",
     "type-check": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
