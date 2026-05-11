@@ -119,7 +119,12 @@ export default function PrivacyPage() {
           </dl>
           <p>
             All data is scoped to your organization. One organization cannot access another&apos;s
-            data. We use HTTPS for all data in transit.
+            data. We use HTTPS for all data in transit, and request and response bodies stored in R2
+            are encrypted at rest with per-organization AES-256-GCM keys. See our{' '}
+            <Link href="/security" className="text-primary hover:underline">
+              Security page
+            </Link>{' '}
+            for details on encryption, PII redaction, and tenant isolation.
           </p>
         </Section>
 
