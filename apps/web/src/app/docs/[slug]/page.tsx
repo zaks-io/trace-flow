@@ -2,19 +2,16 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { FileCode2 } from 'lucide-react';
 import { MarkdownDoc } from '@/components/docs/MarkdownDoc';
-import { getDocBySlug, getDocMarkdownPath, getDocSlugs, readDocMarkdown } from '@/lib/docs';
+import { getDocBySlug, getDocMarkdownPath, readDocMarkdown } from '@/lib/docs';
 
 type DocPageProps = {
   params: Promise<{ slug: string }>;
 };
 
-export async function generateStaticParams() {
-  return getDocSlugs().map((slug) => ({ slug }));
-}
-
-// fs.readFile only works at build time (Node), not at runtime on Workers.
-// Pinning dynamicParams = false ensures Next never falls back to a runtime render.
-export const dynamicParams = false;
+// Render at runtime via the ASSETS binding. OpenNext on Cloudflare has no
+// incremental cache backend configured for this project, so SSG-prerendered
+// HTML for dynamic segments is not served — pages must render on demand.
+export const dynamic = 'force-dynamic';
 
 export async function generateMetadata({ params }: DocPageProps) {
   const { slug } = await params;

@@ -1,5 +1,4 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 type DocDefinition = {
   slug: string;
@@ -56,10 +55,6 @@ export function getDocBySlug(slug: string): DocDefinition | undefined {
   return DOCS.find((doc) => doc.slug === slug);
 }
 
-export function getDocSlugs(): string[] {
-  return DOCS.map((doc) => doc.slug);
-}
-
 export function getDocPath(slug: string): string {
   return `/docs/${slug}`;
 }
@@ -72,25 +67,46 @@ export function getDocMarkdownPath(slug: string): string {
   return `/docs/${slug}.md`;
 }
 
-function getDocsMarkdownFilePath(slug: string): string {
+function getDocRelativePath(slug: string): string | null {
   const doc = getDocBySlug(slug);
-  const relativePath = doc?.filePath ?? `docs/${slug}.md`;
-  return path.resolve(process.cwd(), 'public', relativePath);
+  if (!doc) return null;
+  return doc.filePath ?? `docs/${slug}.md`;
 }
 
+/**
+ * Reads markdown from the Cloudflare ASSETS binding at runtime. Falls back to
+ * `fs.readFile` when no Worker context is available (next dev outside the
+ * OpenNext Miniflare runtime, or build-time SSG). The ASSETS binding serves
+ * files directly from `.open-next/assets/` without going through middleware or
+ * a public self-fetch, so there's no APP_BASE_URL, host allowlist, or
+ * subrequest loop in play.
+ */
 export async function readDocMarkdown(slug: string): Promise<string | null> {
-  const publicDir = path.resolve(process.cwd(), 'public');
-  const filePath = getDocsMarkdownFilePath(slug);
-  const relativePath = path.relative(publicDir, filePath);
-
-  // Guard against path traversal even if callers pass unvalidated slugs.
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    return null;
-  }
+  const relativePath = getDocRelativePath(slug);
+  if (!relativePath) return null;
 
   try {
-    return await fs.readFile(filePath, 'utf8');
+    const { env } = await getCloudflareContext({ async: true });
+    const assets = (env as { ASSETS?: { fetch(request: Request): Promise<Response> } }).ASSETS;
+    if (assets) {
+      const response = await assets.fetch(new Request(`http://assets/${relativePath}`));
+      if (!response.ok) {
+        console.warn(`docs: ASSETS.fetch returned ${response.status} for ${relativePath}`);
+        return null;
+      }
+      return await response.text();
+    }
   } catch {
+    // No CF context (build time / pure Node). Fall through to fs read.
+  }
+
+  const { promises: fs } = await import('node:fs');
+  const path = await import('node:path');
+  const filePath = path.resolve(process.cwd(), 'public', relativePath);
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (error) {
+    console.warn(`docs: fs.readFile failed for ${filePath}:`, error);
     return null;
   }
 }
