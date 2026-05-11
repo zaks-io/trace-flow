@@ -10,7 +10,7 @@ import { CostAlertEmail } from '@trace-flow/emails';
 import type { Id } from '../_generated/dataModel';
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? 'Trace Flow <noreply@updates.trace-flow.dev>';
-const APP_URL = process.env.APP_URL ?? 'http://localhost:3000';
+const APP_URL = process.env.APP_URL ?? process.env.APP_BASE_URL ?? 'http://localhost:3000';
 const TINYBIRD_API_URL = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
 const TINYBIRD_ADMIN_TOKEN = process.env.TINYBIRD_ADMIN_TOKEN;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;

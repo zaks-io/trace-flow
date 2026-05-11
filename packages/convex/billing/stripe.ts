@@ -7,7 +7,7 @@ export const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 export const stripeProPriceId = process.env.STRIPE_PRICE_ID_PRO;
 export const stripeAddonPriceId = process.env.STRIPE_PRICE_ID_ADDON;
-export const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
+export const appUrl = process.env.APP_URL ?? process.env.APP_BASE_URL ?? 'http://localhost:3000';
 
 export function getStripeClient() {
   if (!stripeSecretKey) {

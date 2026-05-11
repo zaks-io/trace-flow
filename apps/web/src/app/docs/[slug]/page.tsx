@@ -1,15 +1,38 @@
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { FileCode2 } from 'lucide-react';
 import { MarkdownDoc } from '@/components/docs/MarkdownDoc';
-import { getDocBySlug, getDocMarkdownPath, getDocSlugs, readDocMarkdown } from '@/lib/docs';
+import { getDocBySlug, getDocMarkdownPath, readDocMarkdown } from '@/lib/docs';
 
 type DocPageProps = {
   params: Promise<{ slug: string }>;
 };
 
-export async function generateStaticParams() {
-  return getDocSlugs().map((slug) => ({ slug }));
+export const dynamic = 'force-dynamic';
+
+const ALLOWED_DOC_HOSTS = new Set([
+  'trace-flow.dev',
+  'trace-flow-web-dev.isaac-a46.workers.dev',
+  'localhost:3000',
+  'localhost:8788',
+  '127.0.0.1:3000',
+  '127.0.0.1:8788',
+]);
+
+function getDocsOrigin(requestHeaders: Headers): string | null {
+  const configuredOrigin = process.env.APP_BASE_URL;
+  if (configuredOrigin) {
+    return new URL(configuredOrigin).origin;
+  }
+
+  const host = requestHeaders.get('host')?.toLowerCase();
+  if (!host || !ALLOWED_DOC_HOSTS.has(host)) {
+    return null;
+  }
+
+  const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https';
+  return `${protocol}://${host}`;
 }
 
 export async function generateMetadata({ params }: DocPageProps) {
@@ -34,7 +57,12 @@ export default async function DocPage({ params }: DocPageProps) {
     notFound();
   }
 
-  const content = await readDocMarkdown(slug);
+  const origin = getDocsOrigin(await headers());
+  if (!origin) {
+    notFound();
+  }
+
+  const content = await readDocMarkdown(slug, origin);
 
   if (!content) {
     notFound();

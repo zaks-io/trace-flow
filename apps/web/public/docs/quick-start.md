@@ -48,7 +48,7 @@ const result = await generateText({
 
 ## 5) Link requests to your app traces
 
-To stitch LLM calls into your existing trace hierarchy, pass trace context headers.
+To stitch LLM calls into your existing trace hierarchy, pass W3C trace context headers.
 
 ```typescript
 import { trace, context } from '@opentelemetry/api';
@@ -61,8 +61,8 @@ const result = await generateText({
   model: openai('gpt-5'),
   prompt: userMessage,
   headers: {
-    'X-Trace-Flow-Trace-Id': ctx.traceId,
-    'X-Trace-Flow-Parent-Span-Id': ctx.spanId,
+    traceparent: `00-${ctx.traceId}-${ctx.spanId}-01`,
+    baggage: 'operation=chat,user_id=user_123',
   },
 });
 
@@ -71,11 +71,11 @@ parentSpan.end();
 
 ## Required headers
 
-| Header                        | Format       | Purpose                                 |
-| ----------------------------- | ------------ | --------------------------------------- |
-| `X-Trace-Flow-Api-Key`        | string       | Required. Your Trace Flow API key       |
-| `X-Trace-Flow-Trace-Id`       | 32 hex chars | Optional. Join an existing trace        |
-| `X-Trace-Flow-Parent-Span-Id` | 16 hex chars | Optional. Set parent span for hierarchy |
+| Header                 | Format     | Purpose                                 |
+| ---------------------- | ---------- | --------------------------------------- |
+| `X-Trace-Flow-Api-Key` | string     | Required. Your Trace Flow API key       |
+| `traceparent`          | W3C format | Optional. Join an existing trace        |
+| `baggage`              | W3C format | Optional. Add filterable trace metadata |
 
 ## What gets tracked
 
