@@ -1,11 +1,10 @@
-import { buildStoredBodyKey, type StoredBodiesPayload } from '@trace-flow/types';
+import {
+  buildStoredBodyKey,
+  type BodyEncryptionConfig,
+  type StoredBodiesPayload,
+} from '@trace-flow/types';
 import type { Logger } from '@trace-flow/logging';
 import { encryptStoredBodyPayload } from '@trace-flow/utils';
-
-interface BodyEncryptionConfig {
-  rootKeyBase64?: string;
-  keyId?: string;
-}
 
 /**
  * Stores request and response bodies in a single R2 object for later retrieval via the API worker.

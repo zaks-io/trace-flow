@@ -81,8 +81,10 @@ async function deriveBodyKey(options: Required<BodyEncryptionOptions>): Promise<
     {
       name: KDF_ALGORITHM,
       hash: KDF_HASH,
-      salt: new TextEncoder().encode(options.keyId),
-      info: new TextEncoder().encode(`trace-flow:r2-body:${options.orgId}`),
+      salt: toArrayBuffer(new Uint8Array(ROOT_KEY_BYTES)),
+      info: toArrayBuffer(
+        new TextEncoder().encode(`trace-flow:r2-body:${options.orgId}:${options.keyId}`),
+      ),
     },
     keyMaterial,
     { name: AES_ALGORITHM, length: 256 },

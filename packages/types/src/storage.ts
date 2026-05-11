@@ -14,6 +14,11 @@ export interface EncryptedStoredBodiesPayload {
   data: string;
 }
 
+export interface BodyEncryptionConfig {
+  rootKeyBase64?: string;
+  keyId?: string;
+}
+
 export function isEncryptedStoredBodiesPayload(
   value: unknown,
 ): value is EncryptedStoredBodiesPayload {

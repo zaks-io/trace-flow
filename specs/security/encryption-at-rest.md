@@ -48,7 +48,7 @@ interface EncryptedPayload {
 }
 ```
 
-Workers derive an org-scoped AES key using HKDF-SHA-256 from `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ENCRYPTION_KEY_ID`, and `orgId`. AES-GCM additional authenticated data includes the envelope version, `orgId`, and R2 object key so encrypted bodies cannot be replayed across organizations or object keys.
+Workers derive an org-scoped AES key using HKDF-SHA-256 from `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ENCRYPTION_KEY_ID`, and `orgId`. HKDF uses a fixed zero salt because the root key provides the entropy; `orgId` and `keyId` are included in `info` as domain/context binding. AES-GCM additional authenticated data includes the envelope version, algorithm, KDF, key ID, `orgId`, and R2 object key so encrypted bodies cannot be replayed across organizations, key versions, or object keys.
 
 ### Encryption Module
 
@@ -165,8 +165,8 @@ Future enhancement for key rotation:
 
 1. Generate new key, assign new key ID
 2. Add both keys to Workers secrets (keyed by ID)
-3. New writes use new key ID for HKDF derivation
-4. Reads use `kid` from the payload to select the matching root key material
+3. New writes use the new key ID for HKDF derivation and record it as `kid` in the envelope
+4. Reads use `kid` from the payload, not the currently configured write key ID, to select the matching root key material
 5. After TTL, old key can be removed
 
 ## Performance Considerations

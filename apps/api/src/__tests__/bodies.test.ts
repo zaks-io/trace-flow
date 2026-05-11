@@ -175,6 +175,21 @@ describe('bodies helpers', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null when encrypted object key does not match', async () => {
+    const encryptedBody = await createEncryptedStoredBody('req_a', {
+      requestBody: 'request body',
+      responseBody: 'response body',
+    });
+    const combined = createObjectBody(encryptedBody, '2026-03-01T00:00:00.000Z');
+    const storage = {
+      get: vi.fn().mockResolvedValue(combined),
+    } as unknown as R2Bucket;
+
+    const result = await getStoredBodies(storage, 'req_b', noopLogger, encryption);
+
+    expect(result).toBeNull();
+  });
+
   it('returns null when encrypted payload is missing encryption config', async () => {
     const encryptedBody = await createEncryptedStoredBody('req_missing_key', {
       requestBody: 'request body',
