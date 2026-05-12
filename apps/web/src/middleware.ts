@@ -151,6 +151,6 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // Skip static files and images
-    '/((?!_next/static|_next/image|favicon.ico|favicon.svg|logo.svg|robots.txt|sitemap.xml).*)',
+    '/((?!_next/static|_next/image|favicon.ico|favicon.svg|logo.svg|robots.txt|sitemap.xml|.well-known/security.txt).*)',
   ],
 };

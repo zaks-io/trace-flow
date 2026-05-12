@@ -1,0 +1,5 @@
+Contact: mailto:security@trace-flow.dev
+Expires: 2027-05-12T07:00:00.000Z
+Preferred-Languages: en
+Canonical: https://trace-flow.dev/.well-known/security.txt
+Policy: https://trace-flow.dev/security

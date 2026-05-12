@@ -219,8 +219,8 @@ export default function SecurityPage() {
         <Section number={10} title="Reporting a vulnerability">
           <p>
             If you believe you have found a security issue in Trace Flow, please email{' '}
-            <a href="mailto:security@zaks.io" className="text-primary hover:underline">
-              security@zaks.io
+            <a href="mailto:security@trace-flow.dev" className="text-primary hover:underline">
+              security@trace-flow.dev
             </a>{' '}
             with a description, reproduction steps, and any relevant request IDs. We&apos;ll
             acknowledge receipt, investigate, and keep you informed as we work toward a fix. Please
