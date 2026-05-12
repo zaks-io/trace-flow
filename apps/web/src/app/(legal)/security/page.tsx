@@ -143,8 +143,8 @@ export default function SecurityPage() {
           </p>
           <p>
             Proxy ingest is authenticated with opaque API keys passed in the{' '}
-            <Code>X-Trace-Flow-Api-Key</Code> header. Keys are hashed before any caching or
-            comparison and are revocable from the dashboard.
+            <Code>X-Trace-Flow-Api-Key</Code> header. Keys are scoped to a single organization and
+            are revocable from the dashboard.
           </p>
           <p>
             The <Code>X-Trace-Flow-Api-Key</Code> header is stripped from the request before it is
