@@ -62,22 +62,16 @@ export default function SecurityPage() {
         <Section number={2} title="Encryption at rest">
           <p>
             Request and response bodies stored in Cloudflare R2 are encrypted with{' '}
-            <strong className="font-medium text-foreground">AES-256-GCM</strong> via the Web Crypto
-            API. Each organization gets a distinct encryption key derived with{' '}
+            <strong className="font-medium text-foreground">AES-256-GCM</strong>. Each organization
+            gets a distinct encryption key derived with{' '}
             <strong className="font-medium text-foreground">HKDF-SHA-256</strong> from a root key
-            held exclusively in Cloudflare Worker secrets on the proxy and API workers. The root key
-            is never exposed to the dashboard, the database, or any logging surface.
+            held only in Cloudflare Worker secrets. The root key is never exposed to the dashboard,
+            the database, or any logging surface.
           </p>
           <p>
-            The AES-GCM authenticated data binds the envelope version, algorithm, KDF, key ID,{' '}
-            <Code>orgId</Code>, and R2 object key. Moving a ciphertext to a different organization
-            or a different object path causes decryption to fail — the body cannot be read outside
-            the context it was written in.
-          </p>
-          <p>
-            Key rotation is supported through a <Code>kid</Code> field in each stored envelope.
-            Reads use the <Code>kid</Code> recorded with the object, not the worker&apos;s current
-            write key, so rotation does not invalidate existing data.
+            Each ciphertext is bound to its owning organization and storage location: a body cannot
+            be decrypted outside the context it was written in. Keys can be rotated without
+            re-encrypting existing data.
           </p>
         </Section>
 
@@ -96,27 +90,18 @@ export default function SecurityPage() {
             <strong className="font-medium text-foreground">not</strong> modified — your application
             receives the original, unredacted response. Redaction only affects what we keep.
           </p>
-          <p>The current ruleset replaces matches with {`'[REDACTED]'`} for:</p>
+          <p>The current ruleset targets common categories of sensitive data, including:</p>
           <ul className="list-disc space-y-1 pl-5 marker:text-muted-foreground/30">
-            <li>Email addresses</li>
-            <li>US phone numbers (including parenthesized and dashed forms)</li>
-            <li>US Social Security numbers</li>
-            <li>Credit card numbers (13–19 digits, validated with the Luhn checksum)</li>
-            <li>IPv4 addresses</li>
-            <li>
-              <Code>Authorization: Bearer</Code> tokens
-            </li>
-            <li>
-              JSON values for sensitive keys: <Code>api_key</Code>, <Code>apikey</Code>,{' '}
-              <Code>access_token</Code>, <Code>refresh_token</Code>, <Code>client_secret</Code>,{' '}
-              <Code>password</Code>, <Code>secret</Code>, <Code>token</Code>,{' '}
-              <Code>authorization</Code>, <Code>auth_token</Code>, <Code>private_key</Code>,{' '}
-              <Code>x_api_key</Code>, <Code>x-api-key</Code>
-            </li>
+            <li>Email addresses and phone numbers</li>
+            <li>Government identifiers and financial account numbers</li>
+            <li>IP addresses</li>
+            <li>Bearer tokens and credential-like fields in structured payloads</li>
           </ul>
           <p>
-            Redaction is applied to request bodies, response bodies, streaming (SSE) message data,
-            structured input messages, response metadata, and error payloads.
+            Redaction applies to request bodies, response bodies, streaming message data, structured
+            input messages, response metadata, and error payloads. Pattern matching is best-effort
+            and is not a substitute for keeping sensitive data out of prompts where possible — use
+            the body-storage opt-out below for requests you know contain regulated content.
           </p>
         </Section>
 
@@ -134,9 +119,8 @@ export default function SecurityPage() {
           <p>Data is scoped to the owning organization at every layer:</p>
           <ul className="list-disc space-y-1 pl-5 marker:text-muted-foreground/30">
             <li>
-              R2 encryption keys are derived per-<Code>orgId</Code> and the org ID is bound into
-              AES-GCM authenticated data. A ciphertext from one org cannot be decrypted under
-              another.
+              R2 encryption keys are derived per-organization. A ciphertext from one org cannot be
+              decrypted under another.
             </li>
             <li>
               Convex queries and mutations enforce organization membership before returning or
@@ -159,15 +143,14 @@ export default function SecurityPage() {
           </p>
           <p>
             Proxy ingest is authenticated with opaque API keys passed in the{' '}
-            <Code>X-Trace-Flow-Api-Key</Code> header. Keys are looked up in a Cloudflare KV
-            namespace. Validated results are cached in memory and via the Cloudflare Cache API, with
-            cache entries keyed by the SHA-256 hash of the raw key.
+            <Code>X-Trace-Flow-Api-Key</Code> header. Keys are hashed before any caching or
+            comparison and are revocable from the dashboard.
           </p>
           <p>
             The <Code>X-Trace-Flow-Api-Key</Code> header is stripped from the request before it is
-            forwarded upstream, alongside W3C trace headers and the host header. Your provider API
-            keys (<Code>Authorization</Code>, <Code>x-api-key</Code>) pass through to authenticate
-            with the upstream LLM provider and are not stored.
+            forwarded upstream. Your provider API keys (<Code>Authorization</Code>,{' '}
+            <Code>x-api-key</Code>) pass through to authenticate with the upstream LLM provider and
+            are not stored.
           </p>
         </Section>
 
