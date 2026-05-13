@@ -10,6 +10,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@convex-dev/launchdarkly": "^0.4.0",
     "@convex-dev/rate-limiter": "^0.3.2",
     "@react-email/components": "^1.0.12",
     "@trace-flow/emails": "workspace:*",

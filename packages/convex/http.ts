@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { HttpRouterWithHono } from 'convex-helpers/server/hono';
 import type { HonoWithConvex } from 'convex-helpers/server/hono';
+import { registerRoutes as registerLaunchDarklyRoutes } from '@convex-dev/launchdarkly';
 import {
   axiomConfigFromEnv,
   createConvexLogger,
@@ -12,7 +13,7 @@ import {
 } from '@trace-flow/logging';
 import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
-import { internal } from './_generated/api';
+import { components, internal } from './_generated/api';
 import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
 import type Stripe from 'stripe';
@@ -892,4 +893,9 @@ export function createApp(
 }
 
 // Production export (unchanged behavior)
-export default new HttpRouterWithHono(createApp());
+const httpRouter = new HttpRouterWithHono(createApp());
+
+// LaunchDarkly webhook (component pushes flag updates here).
+registerLaunchDarklyRoutes(components.launchdarkly, httpRouter);
+
+export default httpRouter;

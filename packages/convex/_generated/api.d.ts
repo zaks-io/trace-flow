@@ -8,8 +8,8 @@
  * @module
  */
 
-import type { FunctionReference } from 'convex/server';
-import type { GenericId as Id } from 'convex/values';
+import type { FunctionReference } from "convex/server";
+import type { GenericId as Id } from "convex/values";
 
 /**
  * A utility for referencing Convex functions in your app's public API.
@@ -23,9 +23,9 @@ export declare const api: {
   admin: {
     admin: {
       deleteOrgData: FunctionReference<
-        'action',
-        'public',
-        { orgId: Id<'organizations'> },
+        "action",
+        "public",
+        { orgId: Id<"organizations"> },
         {
           convexDeleted: {
             addonPurchases: number;
@@ -47,54 +47,56 @@ export declare const api: {
         }
       >;
       forceActivateAndVerify: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         {
           monthlyUnits?: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           periodDays?: number;
-          tier?: 'hobby' | 'pro';
+          tier?: "hobby" | "pro";
         },
         { kvVerified: boolean; success: boolean }
       >;
       listOrgs: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         Array<{
           _creationTime: number;
-          _id: Id<'organizations'>;
+          _id: Id<"organizations">;
           deletedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
-          ownerId: Id<'users'>;
+          ownerId: Id<"users">;
           stripeCustomerId?: string;
         }>
       >;
       listOrgSubscriptionHealth: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         Array<{
-          _id: Id<'organizations'>;
-          issues: Array<'no_subscription' | 'period_expired' | 'suspended' | 'canceled'>;
+          _id: Id<"organizations">;
+          issues: Array<
+            "no_subscription" | "period_expired" | "suspended" | "canceled"
+          >;
           name: string;
           ownerEmail?: string;
           subscription: null | {
-            _id: Id<'subscriptions'>;
+            _id: Id<"subscriptions">;
             addonUnits: number;
             currentPeriodEnd: number;
             currentPeriodStart: number;
             monthlyUnits: number;
-            status: 'active' | 'grace' | 'suspended' | 'canceled';
+            status: "active" | "grace" | "suspended" | "canceled";
             stripeSubscriptionId?: string;
-            tier: 'hobby' | 'pro';
+            tier: "hobby" | "pro";
           };
         }>
       >;
       stats: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         {
           apiKeyCount: number;
@@ -108,11 +110,11 @@ export declare const api: {
     };
     adminAnalytics: {
       exportExplorerCsv: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         {
           endTimeMs: number;
-          isSse?: '0' | '1';
+          isSse?: "0" | "1";
           limit?: number;
           model?: string;
           operation?: string;
@@ -125,11 +127,11 @@ export declare const api: {
         { csv: string; filename: string; rowCount: number }
       >;
       getDashboard: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         {
           endTimeMs: number;
-          isSse?: '0' | '1';
+          isSse?: "0" | "1";
           model?: string;
           operation?: string;
           orgId?: string;
@@ -248,11 +250,11 @@ export declare const api: {
         }
       >;
       getExplorerRows: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         {
           endTimeMs: number;
-          isSse?: '0' | '1';
+          isSse?: "0" | "1";
           limit?: number;
           model?: string;
           offset?: number;
@@ -292,8 +294,8 @@ export declare const api: {
         }
       >;
       runAdvancedQuery: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         { endTimeMs: number; limit?: number; sql: string; startTimeMs: number },
         {
           columns: Array<{ name: string; type: string }>;
@@ -306,48 +308,48 @@ export declare const api: {
   };
   alerts: {
     create: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       {
         field:
-          | 'duration_ms'
-          | 'tokens_per_second'
-          | 'total_tokens'
-          | 'prompt_tokens'
-          | 'completion_tokens'
-          | 'ttft_ms'
-          | 'is_error'
-          | 'http_status_code'
-          | 'cost_total';
+          | "duration_ms"
+          | "tokens_per_second"
+          | "total_tokens"
+          | "prompt_tokens"
+          | "completion_tokens"
+          | "ttft_ms"
+          | "is_error"
+          | "http_status_code"
+          | "cost_total";
         name: string;
-        operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq';
-        severity: 'info' | 'warning' | 'error';
+        operator: "gt" | "gte" | "lt" | "lte" | "eq" | "neq";
+        severity: "info" | "warning" | "error";
         value: number | string | boolean;
       },
       any
     >;
-    list: FunctionReference<'query', 'public', any, any>;
-    listEnabled: FunctionReference<'query', 'public', any, any>;
-    remove: FunctionReference<'mutation', 'public', { id: Id<'alerts'> }, any>;
-    toggle: FunctionReference<'mutation', 'public', { id: Id<'alerts'> }, any>;
+    list: FunctionReference<"query", "public", any, any>;
+    listEnabled: FunctionReference<"query", "public", any, any>;
+    remove: FunctionReference<"mutation", "public", { id: Id<"alerts"> }, any>;
+    toggle: FunctionReference<"mutation", "public", { id: Id<"alerts"> }, any>;
     update: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       {
         field?:
-          | 'duration_ms'
-          | 'tokens_per_second'
-          | 'total_tokens'
-          | 'prompt_tokens'
-          | 'completion_tokens'
-          | 'ttft_ms'
-          | 'is_error'
-          | 'http_status_code'
-          | 'cost_total';
-        id: Id<'alerts'>;
+          | "duration_ms"
+          | "tokens_per_second"
+          | "total_tokens"
+          | "prompt_tokens"
+          | "completion_tokens"
+          | "ttft_ms"
+          | "is_error"
+          | "http_status_code"
+          | "cost_total";
+        id: Id<"alerts">;
         name?: string;
-        operator?: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq';
-        severity?: 'info' | 'warning' | 'error';
+        operator?: "gt" | "gte" | "lt" | "lte" | "eq" | "neq";
+        severity?: "info" | "warning" | "error";
         value?: number | string | boolean;
       },
       any
@@ -355,64 +357,69 @@ export declare const api: {
   };
   apiKeys: {
     create: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       { expiresAt: number; name?: string },
-      Id<'apiKeys'>
+      Id<"apiKeys">
     >;
     getByKey: FunctionReference<
-      'query',
-      'public',
+      "query",
+      "public",
       { key: string },
       null | {
         _creationTime: number;
-        _id: Id<'apiKeys'>;
+        _id: Id<"apiKeys">;
         expiresAt: number;
         key: string;
         name?: string;
-        orgId?: Id<'organizations'>;
-        userId?: Id<'users'>;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
       }
     >;
     list: FunctionReference<
-      'query',
-      'public',
+      "query",
+      "public",
       {},
       Array<{
         _creationTime: number;
-        _id: Id<'apiKeys'>;
+        _id: Id<"apiKeys">;
         expiresAt: number;
         key: string;
         name?: string;
-        orgId?: Id<'organizations'>;
-        userId?: Id<'users'>;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
       }>
     >;
-    remove: FunctionReference<'mutation', 'public', { id: Id<'apiKeys'> }, null>;
+    remove: FunctionReference<
+      "mutation",
+      "public",
+      { id: Id<"apiKeys"> },
+      null
+    >;
     syncToKV: FunctionReference<
-      'action',
-      'public',
-      { id: Id<'apiKeys'> },
+      "action",
+      "public",
+      { id: Id<"apiKeys"> },
       { existed: boolean; synced: boolean }
     >;
     update: FunctionReference<
-      'mutation',
-      'public',
-      { expiresAt?: number; id: Id<'apiKeys'>; name?: string },
+      "mutation",
+      "public",
+      { expiresAt?: number; id: Id<"apiKeys">; name?: string },
       null
     >;
   };
   app: {
     sessionContext: FunctionReference<
-      'query',
-      'public',
+      "query",
+      "public",
       {},
       {
         isAdmin: boolean;
         onboardingCompletedAt?: number;
         subscription: {
           _creationTime: number;
-          _id: Id<'subscriptions'>;
+          _id: Id<"subscriptions">;
           addonPurchaseCount: number;
           addonUnits: number;
           autoOverage?: boolean;
@@ -421,26 +428,26 @@ export declare const api: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
-          deletionSchedulerId?: Id<'_scheduled_functions'>;
-          gracePeriodSchedulerId?: Id<'_scheduled_functions'>;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           overageCapCents?: number;
-          status: 'active' | 'grace' | 'suspended' | 'canceled';
+          status: "active" | "grace" | "suspended" | "canceled";
           stripeCustomerId?: string;
           stripePlanItemId?: string;
           stripeSubscriptionId?: string;
-          tier: 'hobby' | 'pro';
+          tier: "hobby" | "pro";
         } | null;
         user: {
           _creationTime: number;
-          _id: Id<'users'>;
+          _id: Id<"users">;
           email: string;
           enabled: boolean;
-          inviteId?: Id<'invites'>;
+          inviteId?: Id<"invites">;
           isAdmin?: boolean;
           name?: string;
-          orgId?: Id<'organizations'>;
+          orgId?: Id<"organizations">;
           picture?: string;
           tokenIdentifier: string;
         } | null;
@@ -449,111 +456,136 @@ export declare const api: {
   };
   auth: {
     auth: {
-      isAuthenticatedQuery: FunctionReference<'query', 'public', {}, boolean>;
+      isAuthenticatedQuery: FunctionReference<"query", "public", {}, boolean>;
     };
     invites: {
-      acceptInvite: FunctionReference<'mutation', 'public', { token: string }, { email: string }>;
-      createInvite: FunctionReference<'mutation', 'public', { email: string }, Id<'invites'>>;
-      createOrgInvite: FunctionReference<'mutation', 'public', { email: string }, Id<'invites'>>;
-      getInviteByToken: FunctionReference<
-        'query',
-        'public',
+      acceptInvite: FunctionReference<
+        "mutation",
+        "public",
         { token: string },
-        null | { status: 'pending' | 'accepted' | 'expired' }
+        { email: string }
+      >;
+      createInvite: FunctionReference<
+        "mutation",
+        "public",
+        { email: string },
+        Id<"invites">
+      >;
+      createOrgInvite: FunctionReference<
+        "mutation",
+        "public",
+        { email: string },
+        Id<"invites">
+      >;
+      getInviteByToken: FunctionReference<
+        "query",
+        "public",
+        { token: string },
+        null | { status: "pending" | "accepted" | "expired" }
       >;
       listInvites: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         Array<{
           _creationTime: number;
-          _id: Id<'invites'>;
+          _id: Id<"invites">;
           acceptedAt?: number;
           email: string;
           expiresAt: number;
-          invitedBy: Id<'users'>;
-          orgId?: Id<'organizations'>;
-          status: 'pending' | 'accepted' | 'expired';
+          invitedBy: Id<"users">;
+          orgId?: Id<"organizations">;
+          status: "pending" | "accepted" | "expired";
           token: string;
         }>
       >;
-      revokeInvite: FunctionReference<'mutation', 'public', { inviteId: Id<'invites'> }, null>;
+      revokeInvite: FunctionReference<
+        "mutation",
+        "public",
+        { inviteId: Id<"invites"> },
+        null
+      >;
     };
     organizations: {
-      completeOnboarding: FunctionReference<'mutation', 'public', {}, null>;
+      completeOnboarding: FunctionReference<"mutation", "public", {}, null>;
       get: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         null | {
           _creationTime: number;
-          _id: Id<'organizations'>;
+          _id: Id<"organizations">;
           deletedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
-          ownerId: Id<'users'>;
+          ownerId: Id<"users">;
           stripeCustomerId?: string;
         }
       >;
       getMembers: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         Array<{
           _creationTime: number;
-          _id: Id<'organizationMembers'>;
+          _id: Id<"organizationMembers">;
           invitedAt?: number;
           joinedAt?: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           removedAt?: number;
-          role: 'owner' | 'member';
-          status: 'active' | 'removed';
-          userId: Id<'users'>;
+          role: "owner" | "member";
+          status: "active" | "removed";
+          userId: Id<"users">;
         }>
       >;
-      rename: FunctionReference<'mutation', 'public', { name: string }, null>;
+      rename: FunctionReference<"mutation", "public", { name: string }, null>;
     };
     users: {
       getCurrentUserQuery: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         {
           _creationTime: number;
-          _id: Id<'users'>;
+          _id: Id<"users">;
           email: string;
           enabled: boolean;
-          inviteId?: Id<'invites'>;
+          inviteId?: Id<"invites">;
           isAdmin?: boolean;
           name?: string;
-          orgId?: Id<'organizations'>;
+          orgId?: Id<"organizations">;
           picture?: string;
           tokenIdentifier: string;
         } | null
       >;
       getUser: FunctionReference<
-        'query',
-        'public',
-        { id: Id<'users'> },
+        "query",
+        "public",
+        { id: Id<"users"> },
         {
           _creationTime: number;
-          _id: Id<'users'>;
+          _id: Id<"users">;
           email: string;
           enabled: boolean;
-          inviteId?: Id<'invites'>;
+          inviteId?: Id<"invites">;
           isAdmin?: boolean;
           name?: string;
-          orgId?: Id<'organizations'>;
+          orgId?: Id<"organizations">;
           picture?: string;
           tokenIdentifier: string;
         } | null
       >;
-      initializeUser: FunctionReference<'mutation', 'public', {}, { userId: Id<'users'> }>;
-      isAdmin: FunctionReference<'query', 'public', {}, boolean>;
+      initializeUser: FunctionReference<
+        "mutation",
+        "public",
+        {},
+        { userId: Id<"users"> }
+      >;
+      isAdmin: FunctionReference<"query", "public", {}, boolean>;
       removeMember: FunctionReference<
-        'mutation',
-        'public',
-        { memberId: Id<'organizationMembers'> },
+        "mutation",
+        "public",
+        { memberId: Id<"organizationMembers"> },
         null
       >;
     };
@@ -561,12 +593,12 @@ export declare const api: {
   billing: {
     modelPricing: {
       get: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         { model: string; provider: string },
         {
           _creationTime: number;
-          _id: Id<'modelPricing'>;
+          _id: Id<"modelPricing">;
           cacheReadCostPerMillion?: number;
           cacheWrite1hCostPerMillion?: number;
           cacheWriteCostPerMillion?: number;
@@ -575,18 +607,23 @@ export declare const api: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
-          source: 'manual' | 'openrouter' | 'default';
+          source: "manual" | "openrouter" | "default";
           updatedAt: number;
         } | null
       >;
-      importFromOpenRouter: FunctionReference<'action', 'public', {}, { imported: number }>;
+      importFromOpenRouter: FunctionReference<
+        "action",
+        "public",
+        {},
+        { imported: number }
+      >;
       list: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         { provider?: string },
         Array<{
           _creationTime: number;
-          _id: Id<'modelPricing'>;
+          _id: Id<"modelPricing">;
           cacheReadCostPerMillion?: number;
           cacheWrite1hCostPerMillion?: number;
           cacheWriteCostPerMillion?: number;
@@ -595,16 +632,31 @@ export declare const api: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
-          source: 'manual' | 'openrouter' | 'default';
+          source: "manual" | "openrouter" | "default";
           updatedAt: number;
         }>
       >;
-      remove: FunctionReference<'mutation', 'public', { id: Id<'modelPricing'> }, null>;
-      syncAllToKV: FunctionReference<'action', 'public', {}, { synced: number }>;
-      syncDefaults: FunctionReference<'action', 'public', {}, { synced: number }>;
+      remove: FunctionReference<
+        "mutation",
+        "public",
+        { id: Id<"modelPricing"> },
+        null
+      >;
+      syncAllToKV: FunctionReference<
+        "action",
+        "public",
+        {},
+        { synced: number }
+      >;
+      syncDefaults: FunctionReference<
+        "action",
+        "public",
+        {},
+        { synced: number }
+      >;
       upsert: FunctionReference<
-        'mutation',
-        'public',
+        "mutation",
+        "public",
         {
           cacheReadCostPerMillion?: number;
           cacheWrite1hCostPerMillion?: number;
@@ -614,42 +666,47 @@ export declare const api: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
-          source: 'manual' | 'openrouter' | 'default';
+          source: "manual" | "openrouter" | "default";
         },
-        Id<'modelPricing'>
+        Id<"modelPricing">
       >;
     };
     subscriptions: {
       createAddonCheckoutSession: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         { cancelUrl?: string; quantity: number; successUrl?: string },
         { url: string | null }
       >;
       createBillingPortalSession: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         { returnUrl?: string },
         { url: string }
       >;
       createOrgCheckoutSession: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         { cancelUrl?: string; successUrl?: string },
         { url: string | null }
       >;
-      ensureBillingForCurrentUser: FunctionReference<'mutation', 'public', {}, null>;
+      ensureBillingForCurrentUser: FunctionReference<
+        "mutation",
+        "public",
+        {},
+        null
+      >;
       getBillingSummaryForCurrentUser: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         null | {
           currentPeriodEnd: number;
           remaining: number;
-          role: 'owner' | 'member';
+          role: "owner" | "member";
           subscription: {
             _creationTime: number;
-            _id: Id<'subscriptions'>;
+            _id: Id<"subscriptions">;
             addonPurchaseCount: number;
             addonUnits: number;
             autoOverage?: boolean;
@@ -658,28 +715,28 @@ export declare const api: {
             currentPeriodEnd: number;
             currentPeriodOverageSpentCents: number;
             currentPeriodStart: number;
-            deletionSchedulerId?: Id<'_scheduled_functions'>;
-            gracePeriodSchedulerId?: Id<'_scheduled_functions'>;
+            deletionSchedulerId?: Id<"_scheduled_functions">;
+            gracePeriodSchedulerId?: Id<"_scheduled_functions">;
             monthlyUnits: number;
-            orgId: Id<'organizations'>;
+            orgId: Id<"organizations">;
             overageCapCents?: number;
-            status: 'active' | 'grace' | 'suspended' | 'canceled';
+            status: "active" | "grace" | "suspended" | "canceled";
             stripeCustomerId?: string;
             stripePlanItemId?: string;
             stripeSubscriptionId?: string;
-            tier: 'hobby' | 'pro';
+            tier: "hobby" | "pro";
           };
           totalAvailable: number;
           totalUsed: number;
         }
       >;
       getForCurrentUser: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         null | {
           _creationTime: number;
-          _id: Id<'subscriptions'>;
+          _id: Id<"subscriptions">;
           addonPurchaseCount: number;
           addonUnits: number;
           autoOverage?: boolean;
@@ -688,41 +745,41 @@ export declare const api: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
-          deletionSchedulerId?: Id<'_scheduled_functions'>;
-          gracePeriodSchedulerId?: Id<'_scheduled_functions'>;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           overageCapCents?: number;
-          status: 'active' | 'grace' | 'suspended' | 'canceled';
+          status: "active" | "grace" | "suspended" | "canceled";
           stripeCustomerId?: string;
           stripePlanItemId?: string;
           stripeSubscriptionId?: string;
-          tier: 'hobby' | 'pro';
+          tier: "hobby" | "pro";
         }
       >;
       reconcileCurrentOrgWithStripe: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         {},
         { reason: string; reconciled: false } | { reconciled: true }
       >;
       updateAutoOverageSettings: FunctionReference<
-        'mutation',
-        'public',
+        "mutation",
+        "public",
         { autoOverage: boolean; overageCapCents?: number },
         null
       >;
     };
     usage: {
       getCurrentUsage: FunctionReference<
-        'query',
-        'public',
+        "query",
+        "public",
         {},
         {
           _creationTime: number;
-          _id: Id<'usage'>;
+          _id: Id<"usage">;
           addonUnitsUsed: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           periodEnd: number;
           periodStart: number;
           subscriptionUnitsUsed: number;
@@ -732,51 +789,51 @@ export declare const api: {
   };
   costAlerts: {
     createAlert: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       {
-        apiKeyIds?: Array<Id<'apiKeys'>>;
-        channelIds: Array<Id<'costAlertChannels'>>;
+        apiKeyIds?: Array<Id<"apiKeys">>;
+        channelIds: Array<Id<"costAlertChannels">>;
         condition:
           | {
               thresholdUsd: number;
-              type: 'absolute_spend_threshold';
-              window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+              type: "absolute_spend_threshold";
+              window: "last_hour" | "last_24_hours" | "month_to_date";
             }
-          | { thresholdUsd: number; type: 'projected_monthly_over' }
+          | { thresholdUsd: number; type: "projected_monthly_over" }
           | {
               baselineHours: number;
               minCurrentHourUsd: number;
               minIncreaseUsd: number;
               multiplier: number;
-              type: 'hourly_spend_spike';
+              type: "hourly_spend_spike";
             };
         cooldownMinutes: number;
         name: string;
         notifyOnRecovery: boolean;
-        severity: 'info' | 'warning' | 'error';
+        severity: "info" | "warning" | "error";
       },
-      Id<'costAlerts'>
+      Id<"costAlerts">
     >;
     createChannel: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       {
         config:
-          | { recipients: Array<string>; type: 'email' }
+          | { recipients: Array<string>; type: "email" }
           | {
               headers?: Array<{ key: string; value: string }>;
               secret?: string;
-              type: 'webhook';
+              type: "webhook";
               url: string;
             };
         name: string;
       },
-      Id<'costAlertChannels'>
+      Id<"costAlertChannels">
     >;
     listDeliveries: FunctionReference<
-      'query',
-      'public',
+      "query",
+      "public",
       {
         paginationOpts: {
           cursor: string | null;
@@ -790,73 +847,73 @@ export declare const api: {
       any
     >;
     listForCurrentOrg: FunctionReference<
-      'query',
-      'public',
+      "query",
+      "public",
       {},
       {
         apiKeys: Array<{
           _creationTime: number;
-          _id: Id<'apiKeys'>;
+          _id: Id<"apiKeys">;
           expiresAt: number;
           key: string;
           name?: string;
-          orgId?: Id<'organizations'>;
-          userId?: Id<'users'>;
+          orgId?: Id<"organizations">;
+          userId?: Id<"users">;
         }>;
         channels: Array<{
           _creationTime: number;
-          _id: Id<'costAlertChannels'>;
+          _id: Id<"costAlertChannels">;
           config:
-            | { recipients: Array<string>; type: 'email' }
+            | { recipients: Array<string>; type: "email" }
             | {
                 headers?: Array<{ key: string; value: string }>;
                 secret?: string;
-                type: 'webhook';
+                type: "webhook";
                 url: string;
               };
           createdAt: number;
-          createdByUserId: Id<'users'>;
+          createdByUserId: Id<"users">;
           enabled: boolean;
           name: string;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           updatedAt: number;
         }>;
         isOwner: boolean;
         rules: Array<{
           _creationTime: number;
-          _id: Id<'costAlerts'>;
-          apiKeyIds?: Array<Id<'apiKeys'>>;
-          channelIds: Array<Id<'costAlertChannels'>>;
+          _id: Id<"costAlerts">;
+          apiKeyIds?: Array<Id<"apiKeys">>;
+          channelIds: Array<Id<"costAlertChannels">>;
           condition:
             | {
                 thresholdUsd: number;
-                type: 'absolute_spend_threshold';
-                window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+                type: "absolute_spend_threshold";
+                window: "last_hour" | "last_24_hours" | "month_to_date";
               }
-            | { thresholdUsd: number; type: 'projected_monthly_over' }
+            | { thresholdUsd: number; type: "projected_monthly_over" }
             | {
                 baselineHours: number;
                 minCurrentHourUsd: number;
                 minIncreaseUsd: number;
                 multiplier: number;
-                type: 'hourly_spend_spike';
+                type: "hourly_spend_spike";
               };
           cooldownMinutes: number;
           createdAt: number;
-          createdByUserId: Id<'users'>;
+          createdByUserId: Id<"users">;
           enabled: boolean;
           name: string;
           notifyOnRecovery: boolean;
-          orgId: Id<'organizations'>;
-          severity: 'info' | 'warning' | 'error';
+          orgId: Id<"organizations">;
+          severity: "info" | "warning" | "error";
           updatedAt: number;
-          updatedByUserId: Id<'users'>;
+          updatedByUserId: Id<"users">;
         }>;
         states: Array<{
           _creationTime: number;
-          _id: Id<'costAlertStates'>;
+          _id: Id<"costAlertStates">;
           active: boolean;
-          costAlertId: Id<'costAlerts'>;
+          costAlertId: Id<"costAlerts">;
           lastDeliveryError?: string;
           lastEvaluatedAt: number;
           lastMetricLabel?: string;
@@ -865,82 +922,102 @@ export declare const api: {
           lastRecoveredAt?: number;
           lastSummary?: string;
           lastTriggeredAt?: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
         }>;
       }
     >;
-    removeAlert: FunctionReference<'mutation', 'public', { id: Id<'costAlerts'> }, null>;
-    removeChannel: FunctionReference<'mutation', 'public', { id: Id<'costAlertChannels'> }, null>;
-    testChannel: FunctionReference<
-      'mutation',
-      'public',
-      { channelId: Id<'costAlertChannels'> },
+    removeAlert: FunctionReference<
+      "mutation",
+      "public",
+      { id: Id<"costAlerts"> },
       null
     >;
-    toggleAlert: FunctionReference<'mutation', 'public', { id: Id<'costAlerts'> }, null>;
-    toggleChannel: FunctionReference<'mutation', 'public', { id: Id<'costAlertChannels'> }, null>;
+    removeChannel: FunctionReference<
+      "mutation",
+      "public",
+      { id: Id<"costAlertChannels"> },
+      null
+    >;
+    testChannel: FunctionReference<
+      "mutation",
+      "public",
+      { channelId: Id<"costAlertChannels"> },
+      null
+    >;
+    toggleAlert: FunctionReference<
+      "mutation",
+      "public",
+      { id: Id<"costAlerts"> },
+      null
+    >;
+    toggleChannel: FunctionReference<
+      "mutation",
+      "public",
+      { id: Id<"costAlertChannels"> },
+      null
+    >;
     updateAlert: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       {
-        apiKeyIds?: Array<Id<'apiKeys'>>;
-        channelIds?: Array<Id<'costAlertChannels'>>;
+        apiKeyIds?: Array<Id<"apiKeys">>;
+        channelIds?: Array<Id<"costAlertChannels">>;
         condition?:
           | {
               thresholdUsd: number;
-              type: 'absolute_spend_threshold';
-              window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+              type: "absolute_spend_threshold";
+              window: "last_hour" | "last_24_hours" | "month_to_date";
             }
-          | { thresholdUsd: number; type: 'projected_monthly_over' }
+          | { thresholdUsd: number; type: "projected_monthly_over" }
           | {
               baselineHours: number;
               minCurrentHourUsd: number;
               minIncreaseUsd: number;
               multiplier: number;
-              type: 'hourly_spend_spike';
+              type: "hourly_spend_spike";
             };
         cooldownMinutes?: number;
-        id: Id<'costAlerts'>;
+        id: Id<"costAlerts">;
         name?: string;
         notifyOnRecovery?: boolean;
-        severity?: 'info' | 'warning' | 'error';
+        severity?: "info" | "warning" | "error";
       },
       null
     >;
     updateChannel: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       {
         config?:
-          | { recipients: Array<string>; type: 'email' }
+          | { recipients: Array<string>; type: "email" }
           | {
               headers?: Array<{ key: string; value: string }>;
               secret?: string;
-              type: 'webhook';
+              type: "webhook";
               url: string;
             };
-        id: Id<'costAlertChannels'>;
+        id: Id<"costAlertChannels">;
         name?: string;
       },
       null
     >;
   };
   feedback: {
-    submit: FunctionReference<'mutation', 'public', { message: string }, any>;
+    submit: FunctionReference<"mutation", "public", { message: string }, any>;
   };
   integrations: {
     cloudflare: {
       syncAll: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         {},
         { keySynced: number; subSynced: number; userOrgSynced: number }
       >;
     };
     tinybird: {
       generateToken: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         {
           name?: string;
           scopes: Array<{
@@ -957,46 +1034,51 @@ export declare const api: {
   mcp: {
     handler: {
       handleMessage: FunctionReference<
-        'action',
-        'public',
+        "action",
+        "public",
         { message: any; sessionId?: string },
         {
           error?: { code: number; data?: any; message: string };
           id: string | number | null;
-          jsonrpc: '2.0';
+          jsonrpc: "2.0";
           result?: any;
         } | null
       >;
-      terminateSession: FunctionReference<'action', 'public', { sessionId: string }, null>;
+      terminateSession: FunctionReference<
+        "action",
+        "public",
+        { sessionId: string },
+        null
+      >;
     };
   };
   waitlist: {
     bulkInviteFromWaitlist: FunctionReference<
-      'mutation',
-      'public',
-      { waitlistIds: Array<Id<'waitlist'>> },
+      "mutation",
+      "public",
+      { waitlistIds: Array<Id<"waitlist">> },
       { invited: number }
     >;
     confirmEmail: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       { token: string },
       { alreadyConfirmed: boolean }
     >;
     joinWaitlist: FunctionReference<
-      'mutation',
-      'public',
+      "mutation",
+      "public",
       { email: string; source?: string },
-      | { confirmed: boolean; status: 'already_on_waitlist' }
-      | { id: Id<'waitlist'>; status: 'joined' }
+      | { confirmed: boolean; status: "already_on_waitlist" }
+      | { id: Id<"waitlist">; status: "joined" }
     >;
     listWaitlist: FunctionReference<
-      'query',
-      'public',
+      "query",
+      "public",
       {},
       Array<{
         _creationTime: number;
-        _id: Id<'waitlist'>;
+        _id: Id<"waitlist">;
         confirmationToken: string;
         confirmed: boolean;
         email: string;
@@ -1019,9 +1101,9 @@ export declare const internal: {
   admin: {
     admin: {
       deleteOrgDataScheduled: FunctionReference<
-        'action',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "action",
+        "internal",
+        { orgId: Id<"organizations"> },
         {
           convexDeleted: {
             addonPurchases: number;
@@ -1043,9 +1125,9 @@ export declare const internal: {
         }
       >;
       deleteOrgRecordsBatch: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations"> },
         {
           counts: {
             addonPurchases: number;
@@ -1061,183 +1143,183 @@ export declare const internal: {
         }
       >;
       finalizeOrgDeletion: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations"> },
         null
       >;
       forceActivateSubscription: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           monthlyUnits?: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           periodDays?: number;
-          tier?: 'hobby' | 'pro';
+          tier?: "hobby" | "pro";
         },
-        Id<'subscriptions'>
+        Id<"subscriptions">
       >;
     };
   };
   apiKeys: {
     getByIdInternal: FunctionReference<
-      'query',
-      'internal',
-      { id: Id<'apiKeys'> },
+      "query",
+      "internal",
+      { id: Id<"apiKeys"> },
       null | {
         _creationTime: number;
-        _id: Id<'apiKeys'>;
+        _id: Id<"apiKeys">;
         expiresAt: number;
         key: string;
         name?: string;
-        orgId?: Id<'organizations'>;
-        userId?: Id<'users'>;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
       }
     >;
     listByOrgId: FunctionReference<
-      'query',
-      'internal',
-      { orgId: Id<'organizations'> },
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
       Array<{
         _creationTime: number;
-        _id: Id<'apiKeys'>;
+        _id: Id<"apiKeys">;
         expiresAt: number;
         key: string;
         name?: string;
-        orgId?: Id<'organizations'>;
-        userId?: Id<'users'>;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
       }>
     >;
     listByUserId: FunctionReference<
-      'query',
-      'internal',
-      { userId: Id<'users'> },
+      "query",
+      "internal",
+      { userId: Id<"users"> },
       Array<{
         _creationTime: number;
-        _id: Id<'apiKeys'>;
+        _id: Id<"apiKeys">;
         expiresAt: number;
         key: string;
         name?: string;
-        orgId?: Id<'organizations'>;
-        userId?: Id<'users'>;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
       }>
     >;
     listForUser: FunctionReference<
-      'query',
-      'internal',
-      { userId: Id<'users'> },
+      "query",
+      "internal",
+      { userId: Id<"users"> },
       Array<{
         _creationTime: number;
-        _id: Id<'apiKeys'>;
+        _id: Id<"apiKeys">;
         expiresAt: number;
         key: string;
         name?: string;
-        orgId?: Id<'organizations'>;
-        userId?: Id<'users'>;
+        orgId?: Id<"organizations">;
+        userId?: Id<"users">;
       }>
     >;
   };
   auth: {
     organizations: {
       getActiveMemberCountInternal: FunctionReference<
-        'query',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "query",
+        "internal",
+        { orgId: Id<"organizations"> },
         number
       >;
       getByIdInternal: FunctionReference<
-        'query',
-        'internal',
-        { id: Id<'organizations'> },
+        "query",
+        "internal",
+        { id: Id<"organizations"> },
         null | {
           _creationTime: number;
-          _id: Id<'organizations'>;
+          _id: Id<"organizations">;
           deletedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
-          ownerId: Id<'users'>;
+          ownerId: Id<"users">;
           stripeCustomerId?: string;
         }
       >;
       getByStripeCustomerId: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { stripeCustomerId: string },
         null | {
           _creationTime: number;
-          _id: Id<'organizations'>;
+          _id: Id<"organizations">;
           deletedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
-          ownerId: Id<'users'>;
+          ownerId: Id<"users">;
           stripeCustomerId?: string;
         }
       >;
       setStripeCustomerId: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'>; stripeCustomerId: string },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations">; stripeCustomerId: string },
         null
       >;
     };
     users: {
       findOrCreateUser: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           email: string;
           name?: string;
           picture?: string;
           tokenIdentifier: string;
         },
-        Id<'users'>
+        Id<"users">
       >;
       getUserById: FunctionReference<
-        'query',
-        'internal',
-        { id: Id<'users'> },
+        "query",
+        "internal",
+        { id: Id<"users"> },
         {
           _creationTime: number;
-          _id: Id<'users'>;
+          _id: Id<"users">;
           email: string;
           enabled: boolean;
-          inviteId?: Id<'invites'>;
+          inviteId?: Id<"invites">;
           isAdmin?: boolean;
           name?: string;
-          orgId?: Id<'organizations'>;
+          orgId?: Id<"organizations">;
           picture?: string;
           tokenIdentifier: string;
         } | null
       >;
       getUserByTokenIdentifier: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { tokenIdentifier: string },
         {
           _creationTime: number;
-          _id: Id<'users'>;
+          _id: Id<"users">;
           email: string;
           enabled: boolean;
-          inviteId?: Id<'invites'>;
+          inviteId?: Id<"invites">;
           isAdmin?: boolean;
           name?: string;
-          orgId?: Id<'organizations'>;
+          orgId?: Id<"organizations">;
           picture?: string;
           tokenIdentifier: string;
         } | null
       >;
-      isAdminInternal: FunctionReference<'query', 'internal', {}, boolean>;
+      isAdminInternal: FunctionReference<"query", "internal", {}, boolean>;
     };
   };
   billing: {
     modelPricing: {
       getInternal: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { model: string; provider: string },
         {
           _creationTime: number;
-          _id: Id<'modelPricing'>;
+          _id: Id<"modelPricing">;
           cacheReadCostPerMillion?: number;
           cacheWrite1hCostPerMillion?: number;
           cacheWriteCostPerMillion?: number;
@@ -1246,17 +1328,17 @@ export declare const internal: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
-          source: 'manual' | 'openrouter' | 'default';
+          source: "manual" | "openrouter" | "default";
           updatedAt: number;
         } | null
       >;
       listAll: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         any,
         Array<{
           _creationTime: number;
-          _id: Id<'modelPricing'>;
+          _id: Id<"modelPricing">;
           cacheReadCostPerMillion?: number;
           cacheWrite1hCostPerMillion?: number;
           cacheWriteCostPerMillion?: number;
@@ -1265,13 +1347,13 @@ export declare const internal: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
-          source: 'manual' | 'openrouter' | 'default';
+          source: "manual" | "openrouter" | "default";
           updatedAt: number;
         }>
       >;
       upsertInternal: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           cacheReadCostPerMillion?: number;
           cacheWrite1hCostPerMillion?: number;
@@ -1281,80 +1363,95 @@ export declare const internal: {
           promptCostPerMillion: number;
           provider: string;
           reasoningCostPerMillion?: number;
-          source: 'manual' | 'openrouter' | 'default';
+          source: "manual" | "openrouter" | "default";
         },
-        Id<'modelPricing'>
+        Id<"modelPricing">
       >;
     };
     pricingSync: {
       deleteFromKV: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         { model: string; provider: string },
         null
       >;
-      syncToKV: FunctionReference<'action', 'internal', { model: string; provider: string }, null>;
+      syncToKV: FunctionReference<
+        "action",
+        "internal",
+        { model: string; provider: string },
+        null
+      >;
     };
     stripeEvents: {
-      cleanupOldEvents: FunctionReference<'mutation', 'internal', {}, { deleted: number }>;
+      cleanupOldEvents: FunctionReference<
+        "mutation",
+        "internal",
+        {},
+        { deleted: number }
+      >;
       getByEventId: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { eventId: string },
         {
           _creationTime: number;
-          _id: Id<'stripeEvents'>;
+          _id: Id<"stripeEvents">;
           error?: string;
           eventId: string;
           eventType: string;
           processedAt?: number;
           processingStartedAt?: number;
-          status: 'processing' | 'processed' | 'failed';
+          status: "processing" | "processed" | "failed";
           stripeObjectId?: string;
         } | null
       >;
       markFailed: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         { error: string; eventId: string },
         null
       >;
-      markProcessed: FunctionReference<'mutation', 'internal', { eventId: string }, null>;
+      markProcessed: FunctionReference<
+        "mutation",
+        "internal",
+        { eventId: string },
+        null
+      >;
       startProcessing: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         { eventId: string; eventType: string; stripeObjectId?: string },
-        { alreadyProcessed: boolean; eventDocId: Id<'stripeEvents'> }
+        { alreadyProcessed: boolean; eventDocId: Id<"stripeEvents"> }
       >;
     };
     subscriptions: {
       addAddonUnits: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'>; units: number },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations">; units: number },
         null
       >;
       creditAddonPurchase: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           amountCents: number;
-          mode: 'manual' | 'auto';
-          orgId: Id<'organizations'>;
+          mode: "manual" | "auto";
+          orgId: Id<"organizations">;
           stripeInvoiceId?: string;
           stripePaymentIntentId: string;
-          triggeredByUserId?: Id<'users'>;
+          triggeredByUserId?: Id<"users">;
           units: number;
         },
         null
       >;
       getByOrgId: FunctionReference<
-        'query',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "query",
+        "internal",
+        { orgId: Id<"organizations"> },
         null | {
           _creationTime: number;
-          _id: Id<'subscriptions'>;
+          _id: Id<"subscriptions">;
           addonPurchaseCount: number;
           addonUnits: number;
           autoOverage?: boolean;
@@ -1363,25 +1460,25 @@ export declare const internal: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
-          deletionSchedulerId?: Id<'_scheduled_functions'>;
-          gracePeriodSchedulerId?: Id<'_scheduled_functions'>;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           overageCapCents?: number;
-          status: 'active' | 'grace' | 'suspended' | 'canceled';
+          status: "active" | "grace" | "suspended" | "canceled";
           stripeCustomerId?: string;
           stripePlanItemId?: string;
           stripeSubscriptionId?: string;
-          tier: 'hobby' | 'pro';
+          tier: "hobby" | "pro";
         }
       >;
       getByStripeCustomerId: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { stripeCustomerId: string },
         null | {
           _creationTime: number;
-          _id: Id<'subscriptions'>;
+          _id: Id<"subscriptions">;
           addonPurchaseCount: number;
           addonUnits: number;
           autoOverage?: boolean;
@@ -1390,25 +1487,25 @@ export declare const internal: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
-          deletionSchedulerId?: Id<'_scheduled_functions'>;
-          gracePeriodSchedulerId?: Id<'_scheduled_functions'>;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           overageCapCents?: number;
-          status: 'active' | 'grace' | 'suspended' | 'canceled';
+          status: "active" | "grace" | "suspended" | "canceled";
           stripeCustomerId?: string;
           stripePlanItemId?: string;
           stripeSubscriptionId?: string;
-          tier: 'hobby' | 'pro';
+          tier: "hobby" | "pro";
         }
       >;
       getByStripeSubscriptionId: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { stripeSubscriptionId: string },
         null | {
           _creationTime: number;
-          _id: Id<'subscriptions'>;
+          _id: Id<"subscriptions">;
           addonPurchaseCount: number;
           addonUnits: number;
           autoOverage?: boolean;
@@ -1417,86 +1514,86 @@ export declare const internal: {
           currentPeriodEnd: number;
           currentPeriodOverageSpentCents: number;
           currentPeriodStart: number;
-          deletionSchedulerId?: Id<'_scheduled_functions'>;
-          gracePeriodSchedulerId?: Id<'_scheduled_functions'>;
+          deletionSchedulerId?: Id<"_scheduled_functions">;
+          gracePeriodSchedulerId?: Id<"_scheduled_functions">;
           monthlyUnits: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           overageCapCents?: number;
-          status: 'active' | 'grace' | 'suspended' | 'canceled';
+          status: "active" | "grace" | "suspended" | "canceled";
           stripeCustomerId?: string;
           stripePlanItemId?: string;
           stripeSubscriptionId?: string;
-          tier: 'hobby' | 'pro';
+          tier: "hobby" | "pro";
         }
       >;
       releaseAutoTopupReservation: FunctionReference<
-        'mutation',
-        'internal',
-        { amountCents: number; orgId: Id<'organizations'> },
+        "mutation",
+        "internal",
+        { amountCents: number; orgId: Id<"organizations"> },
         null
       >;
       reserveAutoTopup: FunctionReference<
-        'mutation',
-        'internal',
-        { amountCents: number; orgId: Id<'organizations'> },
+        "mutation",
+        "internal",
+        { amountCents: number; orgId: Id<"organizations"> },
         { idempotencyKey: string; ok: true } | { ok: false; reason: string }
       >;
       revertToHobby: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations"> },
         null
       >;
       revokeAddonPurchase: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         { stripePaymentIntentId: string },
         null
       >;
       scheduleGraceSuspension: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations"> },
         null
       >;
       setStripeCustomerId: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'>; stripeCustomerId: string },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations">; stripeCustomerId: string },
         null
       >;
       setTier: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'>; tier: 'hobby' | 'pro' },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations">; tier: "hobby" | "pro" },
         null
       >;
       transitionGraceToSuspended: FunctionReference<
-        'mutation',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations"> },
         null
       >;
       triggerAutoTopup: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         {
           amountCents: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           quantity?: number;
           reason?: string;
         },
         { ok: false; reason: string } | { invoiceId: string; ok: true }
       >;
       upsertStripeSubscriptionState: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           cancelAtPeriodEnd?: boolean;
           currentPeriodEnd?: number;
           currentPeriodStart?: number;
-          orgId: Id<'organizations'>;
-          status: 'active' | 'grace' | 'suspended' | 'canceled';
+          orgId: Id<"organizations">;
+          status: "active" | "grace" | "suspended" | "canceled";
           stripeCustomerId?: string;
           stripePlanItemId?: string;
           stripeSubscriptionId?: string;
@@ -1506,35 +1603,35 @@ export declare const internal: {
     };
     usage: {
       checkAutoTopup: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           addonUnitsUsed: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           subscriptionUnitsUsed: number;
         },
         null
       >;
       getForOrgInternal: FunctionReference<
-        'query',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "query",
+        "internal",
+        { orgId: Id<"organizations"> },
         {
           _creationTime: number;
-          _id: Id<'usage'>;
+          _id: Id<"usage">;
           addonUnitsUsed: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           periodEnd: number;
           periodStart: number;
           subscriptionUnitsUsed: number;
         } | null
       >;
       recordUsage: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           addonUnitsUsed: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           periodEnd: number;
           periodStart: number;
           subscriptionUnitsUsed: number;
@@ -1545,87 +1642,87 @@ export declare const internal: {
   };
   costAlerts: {
     cleanupDeliveries: FunctionReference<
-      'mutation',
-      'internal',
-      { costAlertId: Id<'costAlerts'> },
+      "mutation",
+      "internal",
+      { costAlertId: Id<"costAlerts"> },
       null
     >;
     getRuntimeContext: FunctionReference<
-      'query',
-      'internal',
-      { orgId: Id<'organizations'> },
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
       {
         alerts: Array<{
           _creationTime: number;
-          _id: Id<'costAlerts'>;
-          apiKeyIds?: Array<Id<'apiKeys'>>;
-          channelIds: Array<Id<'costAlertChannels'>>;
+          _id: Id<"costAlerts">;
+          apiKeyIds?: Array<Id<"apiKeys">>;
+          channelIds: Array<Id<"costAlertChannels">>;
           condition:
             | {
                 thresholdUsd: number;
-                type: 'absolute_spend_threshold';
-                window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+                type: "absolute_spend_threshold";
+                window: "last_hour" | "last_24_hours" | "month_to_date";
               }
-            | { thresholdUsd: number; type: 'projected_monthly_over' }
+            | { thresholdUsd: number; type: "projected_monthly_over" }
             | {
                 baselineHours: number;
                 minCurrentHourUsd: number;
                 minIncreaseUsd: number;
                 multiplier: number;
-                type: 'hourly_spend_spike';
+                type: "hourly_spend_spike";
               };
           cooldownMinutes: number;
           createdAt: number;
-          createdByUserId: Id<'users'>;
+          createdByUserId: Id<"users">;
           enabled: boolean;
           name: string;
           notifyOnRecovery: boolean;
-          orgId: Id<'organizations'>;
-          severity: 'info' | 'warning' | 'error';
+          orgId: Id<"organizations">;
+          severity: "info" | "warning" | "error";
           updatedAt: number;
-          updatedByUserId: Id<'users'>;
+          updatedByUserId: Id<"users">;
         }>;
         apiKeys: Array<{
           _creationTime: number;
-          _id: Id<'apiKeys'>;
+          _id: Id<"apiKeys">;
           expiresAt: number;
           key: string;
           name?: string;
-          orgId?: Id<'organizations'>;
-          userId?: Id<'users'>;
+          orgId?: Id<"organizations">;
+          userId?: Id<"users">;
         }>;
         channels: Array<{
           _creationTime: number;
-          _id: Id<'costAlertChannels'>;
+          _id: Id<"costAlertChannels">;
           config:
-            | { recipients: Array<string>; type: 'email' }
+            | { recipients: Array<string>; type: "email" }
             | {
                 headers?: Array<{ key: string; value: string }>;
                 secret?: string;
-                type: 'webhook';
+                type: "webhook";
                 url: string;
               };
           createdAt: number;
-          createdByUserId: Id<'users'>;
+          createdByUserId: Id<"users">;
           enabled: boolean;
           name: string;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
           updatedAt: number;
         }>;
         org: {
           _creationTime: number;
-          _id: Id<'organizations'>;
+          _id: Id<"organizations">;
           deletedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
-          ownerId: Id<'users'>;
+          ownerId: Id<"users">;
           stripeCustomerId?: string;
         } | null;
         states: Array<{
           _creationTime: number;
-          _id: Id<'costAlertStates'>;
+          _id: Id<"costAlertStates">;
           active: boolean;
-          costAlertId: Id<'costAlerts'>;
+          costAlertId: Id<"costAlerts">;
           lastDeliveryError?: string;
           lastEvaluatedAt: number;
           lastMetricLabel?: string;
@@ -1634,33 +1731,33 @@ export declare const internal: {
           lastRecoveredAt?: number;
           lastSummary?: string;
           lastTriggeredAt?: number;
-          orgId: Id<'organizations'>;
+          orgId: Id<"organizations">;
         }>;
       }
     >;
     recordDelivery: FunctionReference<
-      'mutation',
-      'internal',
+      "mutation",
+      "internal",
       {
         attemptedAt: number;
-        channelId: Id<'costAlertChannels'>;
-        costAlertId?: Id<'costAlerts'>;
+        channelId: Id<"costAlertChannels">;
+        costAlertId?: Id<"costAlerts">;
         deliveredAt?: number;
         error?: string;
-        eventType: 'triggered' | 'recovered' | 'test';
+        eventType: "triggered" | "recovered" | "test";
         idempotencyKey: string;
-        orgId: Id<'organizations'>;
+        orgId: Id<"organizations">;
         payloadSummary: string;
-        status: 'success' | 'failed';
+        status: "success" | "failed";
       },
-      Id<'costAlertDeliveries'>
+      Id<"costAlertDeliveries">
     >;
     recordState: FunctionReference<
-      'mutation',
-      'internal',
+      "mutation",
+      "internal",
       {
         active: boolean;
-        costAlertId: Id<'costAlerts'>;
+        costAlertId: Id<"costAlerts">;
         lastDeliveryError?: string;
         lastEvaluatedAt: number;
         lastMetricLabel?: string;
@@ -1669,50 +1766,60 @@ export declare const internal: {
         lastRecoveredAt?: number;
         lastSummary?: string;
         lastTriggeredAt?: number;
-        orgId: Id<'organizations'>;
+        orgId: Id<"organizations">;
       },
-      Id<'costAlertStates'>
+      Id<"costAlertStates">
     >;
-    recoverStaleMonitors: FunctionReference<'mutation', 'internal', {}, null>;
+    recoverStaleMonitors: FunctionReference<"mutation", "internal", {}, null>;
     syncMonitor: FunctionReference<
-      'mutation',
-      'internal',
+      "mutation",
+      "internal",
       {
         delayMs: number | null;
         lastError?: string;
         lastEvaluatedAt?: number;
-        orgId: Id<'organizations'>;
+        orgId: Id<"organizations">;
       },
       null
     >;
   };
   integrations: {
     cloudflare: {
-      checkKeyInKV: FunctionReference<'action', 'internal', { key: string }, boolean>;
-      deleteKeyFromKV: FunctionReference<'action', 'internal', { key: string }, null>;
+      checkKeyInKV: FunctionReference<
+        "action",
+        "internal",
+        { key: string },
+        boolean
+      >;
+      deleteKeyFromKV: FunctionReference<
+        "action",
+        "internal",
+        { key: string },
+        null
+      >;
       deleteUserOrgFromKV: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         { retryCount?: number; sub: string },
         null
       >;
       getAllSyncData: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         {},
         {
           apiKeys: Array<{
             _creationTime: number;
-            _id: Id<'apiKeys'>;
+            _id: Id<"apiKeys">;
             expiresAt: number;
             key: string;
             name?: string;
-            orgId?: Id<'organizations'>;
-            userId?: Id<'users'>;
+            orgId?: Id<"organizations">;
+            userId?: Id<"users">;
           }>;
           subscriptions: Array<{
             _creationTime: number;
-            _id: Id<'subscriptions'>;
+            _id: Id<"subscriptions">;
             addonPurchaseCount: number;
             addonUnits: number;
             autoOverage?: boolean;
@@ -1721,41 +1828,41 @@ export declare const internal: {
             currentPeriodEnd: number;
             currentPeriodOverageSpentCents: number;
             currentPeriodStart: number;
-            deletionSchedulerId?: Id<'_scheduled_functions'>;
-            gracePeriodSchedulerId?: Id<'_scheduled_functions'>;
+            deletionSchedulerId?: Id<"_scheduled_functions">;
+            gracePeriodSchedulerId?: Id<"_scheduled_functions">;
             monthlyUnits: number;
-            orgId: Id<'organizations'>;
+            orgId: Id<"organizations">;
             overageCapCents?: number;
-            status: 'active' | 'grace' | 'suspended' | 'canceled';
+            status: "active" | "grace" | "suspended" | "canceled";
             stripeCustomerId?: string;
             stripePlanItemId?: string;
             stripeSubscriptionId?: string;
-            tier: 'hobby' | 'pro';
+            tier: "hobby" | "pro";
           }>;
           users: Array<{
             _creationTime: number;
-            _id: Id<'users'>;
+            _id: Id<"users">;
             email: string;
             enabled: boolean;
-            inviteId?: Id<'invites'>;
+            inviteId?: Id<"invites">;
             isAdmin?: boolean;
             name?: string;
-            orgId?: Id<'organizations'>;
+            orgId?: Id<"organizations">;
             picture?: string;
             tokenIdentifier: string;
           }>;
         }
       >;
-      isCallerAdmin: FunctionReference<'query', 'internal', {}, boolean>;
+      isCallerAdmin: FunctionReference<"query", "internal", {}, boolean>;
       syncKeyToKV: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         { expiresAt: number; key: string; orgId?: string },
         null
       >;
       syncSubscriptionToKV: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         {
           addonUnits: number;
           autoOverage?: boolean;
@@ -1772,40 +1879,45 @@ export declare const internal: {
         null
       >;
       syncUserOrgToKV: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         { orgId: string; retryCount?: number; sub: string },
         null
       >;
     };
     costAlerts: {
-      evaluateOrg: FunctionReference<'action', 'internal', { orgId: Id<'organizations'> }, null>;
+      evaluateOrg: FunctionReference<
+        "action",
+        "internal",
+        { orgId: Id<"organizations"> },
+        null
+      >;
       sendTestChannel: FunctionReference<
-        'action',
-        'internal',
-        { channelId: Id<'costAlertChannels'>; orgId: Id<'organizations'> },
+        "action",
+        "internal",
+        { channelId: Id<"costAlertChannels">; orgId: Id<"organizations"> },
         null
       >;
     };
     emails: {
       sendConfirmationEmail: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         { confirmationToken: string; email: string },
         null
       >;
       sendInviteEmail: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         { email: string; token: string },
         null
       >;
     };
     tinybird: {
       deleteOrgTraces: FunctionReference<
-        'action',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "action",
+        "internal",
+        { orgId: Id<"organizations"> },
         | { deleted: false; reason: string }
         | {
             deleted: true;
@@ -1813,9 +1925,9 @@ export declare const internal: {
           }
       >;
       extendRetention: FunctionReference<
-        'action',
-        'internal',
-        { orgId: Id<'organizations'> },
+        "action",
+        "internal",
+        { orgId: Id<"organizations"> },
         | { reason: string; updated: false }
         | {
             results: Record<string, { error?: string; success: boolean }>;
@@ -1823,8 +1935,8 @@ export declare const internal: {
           }
       >;
       generateTokenInternal: FunctionReference<
-        'action',
-        'internal',
+        "action",
+        "internal",
         {
           apiKeys: Array<string>;
           retentionDays?: number;
@@ -1837,305 +1949,224 @@ export declare const internal: {
   };
   mcp: {
     clients: {
-      getClient: FunctionReference<'query', 'internal', { clientId: string }, any>;
+      getClient: FunctionReference<
+        "query",
+        "internal",
+        { clientId: string },
+        any
+      >;
       registerClient: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         { clientId: string; clientName?: string; redirectUris: Array<string> },
         any
       >;
     };
     handler: {
       handleMessageWithUser: FunctionReference<
-        'action',
-        'internal',
-        { message: any; sessionId?: string; userId: Id<'users'> },
+        "action",
+        "internal",
+        { message: any; sessionId?: string; userId: Id<"users"> },
         {
           error?: { code: number; data?: any; message: string };
           id: string | number | null;
-          jsonrpc: '2.0';
+          jsonrpc: "2.0";
           result?: any;
         } | null
       >;
     };
     session: {
-      cleanupSession: FunctionReference<'mutation', 'internal', { sessionId: string }, null>;
+      cleanupSession: FunctionReference<
+        "mutation",
+        "internal",
+        { sessionId: string },
+        null
+      >;
       createSession: FunctionReference<
-        'mutation',
-        'internal',
-        { protocolVersion: string; userId: Id<'users'> },
+        "mutation",
+        "internal",
+        { protocolVersion: string; userId: Id<"users"> },
         string
       >;
-      deleteSession: FunctionReference<'mutation', 'internal', { sessionId: string }, null>;
+      deleteSession: FunctionReference<
+        "mutation",
+        "internal",
+        { sessionId: string },
+        null
+      >;
       getSession: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { sessionId: string },
         {
           _creationTime: number;
-          _id: Id<'mcpSessions'>;
+          _id: Id<"mcpSessions">;
           expiresAt: number;
           protocolVersion: string;
           sessionId: string;
-          state: 'initializing' | 'ready' | 'shutdown';
-          userId: Id<'users'>;
+          state: "initializing" | "ready" | "shutdown";
+          userId: Id<"users">;
         } | null
       >;
       getSessionInternal: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { sessionId: string },
         {
           _creationTime: number;
-          _id: Id<'mcpSessions'>;
+          _id: Id<"mcpSessions">;
           expiresAt: number;
           protocolVersion: string;
           sessionId: string;
-          state: 'initializing' | 'ready' | 'shutdown';
-          userId: Id<'users'>;
+          state: "initializing" | "ready" | "shutdown";
+          userId: Id<"users">;
         } | null
       >;
       getUserSessions: FunctionReference<
-        'query',
-        'internal',
-        { userId: Id<'users'> },
+        "query",
+        "internal",
+        { userId: Id<"users"> },
         Array<{
           _creationTime: number;
-          _id: Id<'mcpSessions'>;
+          _id: Id<"mcpSessions">;
           expiresAt: number;
           protocolVersion: string;
           sessionId: string;
-          state: 'initializing' | 'ready' | 'shutdown';
-          userId: Id<'users'>;
+          state: "initializing" | "ready" | "shutdown";
+          userId: Id<"users">;
         }>
       >;
       updateSessionState: FunctionReference<
-        'mutation',
-        'internal',
-        { sessionId: string; state: 'initializing' | 'ready' | 'shutdown' },
+        "mutation",
+        "internal",
+        { sessionId: string; state: "initializing" | "ready" | "shutdown" },
         null
       >;
     };
     tokens: {
-      cleanupAuthCode: FunctionReference<'mutation', 'internal', { code: string }, null>;
+      cleanupAuthCode: FunctionReference<
+        "mutation",
+        "internal",
+        { code: string },
+        null
+      >;
       cleanupRefreshToken: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         { hashedTokenId: string },
         null
       >;
       createAuthCode: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         {
           auth0RefreshToken: string;
           clientId?: string;
           codeChallenge?: string;
           codeChallengeMethod?: string;
           redirectUri: string;
-          userId: Id<'users'>;
+          userId: Id<"users">;
         },
         string
       >;
       createRefreshToken: FunctionReference<
-        'mutation',
-        'internal',
-        { auth0RefreshToken: string; userId: Id<'users'> },
+        "mutation",
+        "internal",
+        { auth0RefreshToken: string; userId: Id<"users"> },
         string
       >;
-      deleteRefreshToken: FunctionReference<'mutation', 'internal', { tokenId: string }, null>;
+      deleteRefreshToken: FunctionReference<
+        "mutation",
+        "internal",
+        { tokenId: string },
+        null
+      >;
       deleteUserRefreshTokens: FunctionReference<
-        'mutation',
-        'internal',
-        { userId: Id<'users'> },
+        "mutation",
+        "internal",
+        { userId: Id<"users"> },
         null
       >;
       exchangeAuthCode: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         { code: string; codeVerifier?: string; redirectUri: string },
-        { error: string; error_description: string } | { tokenId: string; userId: Id<'users'> }
+        | { error: string; error_description: string }
+        | { tokenId: string; userId: Id<"users"> }
       >;
       getRefreshToken: FunctionReference<
-        'query',
-        'internal',
+        "query",
+        "internal",
         { tokenId: string },
         {
           _creationTime: number;
-          _id: Id<'mcpRefreshTokens'>;
+          _id: Id<"mcpRefreshTokens">;
           auth0RefreshToken: string;
           expiresAt: number;
           hashedTokenId: string;
           tokenId?: string;
-          userId: Id<'users'>;
+          userId: Id<"users">;
         } | null
       >;
       updateRefreshToken: FunctionReference<
-        'mutation',
-        'internal',
+        "mutation",
+        "internal",
         { auth0RefreshToken: string; tokenId: string },
         null
       >;
     };
     tools: {
       index: {
-        listApiKeys: FunctionReference<'action', 'internal', { userId: Id<'users'> }, any>;
+        listApiKeys: FunctionReference<
+          "action",
+          "internal",
+          { userId: Id<"users"> },
+          any
+        >;
       };
-      listApiKeys: FunctionReference<'action', 'internal', { userId: Id<'users'> }, any>;
+      listApiKeys: FunctionReference<
+        "action",
+        "internal",
+        { userId: Id<"users"> },
+        any
+      >;
       listApiKeysAction: {
-        listApiKeys: FunctionReference<'action', 'internal', { userId: Id<'users'> }, any>;
+        listApiKeys: FunctionReference<
+          "action",
+          "internal",
+          { userId: Id<"users"> },
+          any
+        >;
       };
     };
   };
   migrations: {
     advanceBillingPeriod: FunctionReference<
-      'mutation',
-      'internal',
-      { orgId: Id<'organizations'> },
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
       any
     >;
-    backfillAll: FunctionReference<'mutation', 'internal', {}, any>;
-    backfillHashedTokenIds: FunctionReference<'mutation', 'internal', {}, any>;
+    backfillAll: FunctionReference<"mutation", "internal", {}, any>;
+    backfillHashedTokenIds: FunctionReference<"mutation", "internal", {}, any>;
     backfillOrgBilling: {
-      backfillOrgBilling: FunctionReference<'mutation', 'internal', any, any>;
+      backfillOrgBilling: FunctionReference<"mutation", "internal", any, any>;
     };
     backfillOrgs: {
-      backfillOrgs: FunctionReference<'mutation', 'internal', any, any>;
+      backfillOrgs: FunctionReference<"mutation", "internal", any, any>;
     };
     backfillStripeCustomerIdToOrgs: {
-      backfillStripeCustomerIdToOrgs: FunctionReference<'mutation', 'internal', any, any>;
+      backfillStripeCustomerIdToOrgs: FunctionReference<
+        "mutation",
+        "internal",
+        any,
+        any
+      >;
     };
   };
 };
 
 export declare const components: {
-  rateLimiter: {
-    lib: {
-      checkRateLimit: FunctionReference<
-        'query',
-        'internal',
-        {
-          config:
-            | {
-                capacity?: number;
-                kind: 'token bucket';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: null;
-              }
-            | {
-                capacity?: number;
-                kind: 'fixed window';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: number;
-              };
-          count?: number;
-          key?: string;
-          name: string;
-          reserve?: boolean;
-          throws?: boolean;
-        },
-        { ok: true; retryAfter?: number } | { ok: false; retryAfter: number }
-      >;
-      clearAll: FunctionReference<'mutation', 'internal', { before?: number }, null>;
-      getServerTime: FunctionReference<'mutation', 'internal', {}, number>;
-      getValue: FunctionReference<
-        'query',
-        'internal',
-        {
-          config:
-            | {
-                capacity?: number;
-                kind: 'token bucket';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: null;
-              }
-            | {
-                capacity?: number;
-                kind: 'fixed window';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: number;
-              };
-          key?: string;
-          name: string;
-          sampleShards?: number;
-        },
-        {
-          config:
-            | {
-                capacity?: number;
-                kind: 'token bucket';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: null;
-              }
-            | {
-                capacity?: number;
-                kind: 'fixed window';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: number;
-              };
-          shard: number;
-          ts: number;
-          value: number;
-        }
-      >;
-      rateLimit: FunctionReference<
-        'mutation',
-        'internal',
-        {
-          config:
-            | {
-                capacity?: number;
-                kind: 'token bucket';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: null;
-              }
-            | {
-                capacity?: number;
-                kind: 'fixed window';
-                maxReserved?: number;
-                period: number;
-                rate: number;
-                shards?: number;
-                start?: number;
-              };
-          count?: number;
-          key?: string;
-          name: string;
-          reserve?: boolean;
-          throws?: boolean;
-        },
-        { ok: true; retryAfter?: number } | { ok: false; retryAfter: number }
-      >;
-      resetRateLimit: FunctionReference<
-        'mutation',
-        'internal',
-        { key?: string; name: string },
-        null
-      >;
-    };
-    time: {
-      getServerTime: FunctionReference<'mutation', 'internal', {}, number>;
-    };
-  };
+  rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+  launchdarkly: import("@convex-dev/launchdarkly/_generated/component.js").ComponentApi<"launchdarkly">;
 };

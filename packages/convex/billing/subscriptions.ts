@@ -16,6 +16,7 @@ import type { Id } from '../_generated/dataModel';
 import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './stripe';
 import { subscriptionValidator } from '../validators';
 import { ensureOrgHasSubscription } from '../auth/organizations';
+import { isProSubscriptionEnabled } from '../integrations/launchdarkly';
 
 export function mapStripeStatusToInternal(
   status: string,
@@ -251,6 +252,10 @@ export const createOrgCheckoutSession = action({
   returns: v.object({ url: v.union(v.string(), v.null()) }),
   handler: async (ctx, args) => {
     const { user, org, subscription } = await requireOrgOwnerAction(ctx);
+    const proEnabled = await isProSubscriptionEnabled(ctx, user);
+    if (!proEnabled) {
+      throw new Error('Pro subscription is not yet available. Stay tuned!');
+    }
     if (
       subscription?.stripeSubscriptionId &&
       (subscription.status === 'active' || subscription.status === 'grace')
@@ -327,6 +332,8 @@ export const createAddonCheckoutSession = action({
     const { user, org, subscription } = await requireOrgOwnerAction(ctx);
     const quantity = Math.max(1, Math.floor(args.quantity));
     const units = quantity * UNITS_PER_ADDON;
+    // Addons are gated by tier, not the launch flag. Existing Pro subscribers
+    // must keep the ability to top up while the flag is OFF for new signups.
     if (subscription?.tier !== 'pro') {
       throw new Error('Addons require a Pro subscription');
     }
