@@ -7,6 +7,7 @@ const PLANS = [
     period: '',
     features: ['25K traces/mo', '7 day retention', 'Community support'],
     highlighted: false,
+    comingSoon: false,
   },
   {
     name: 'Pro',
@@ -20,6 +21,7 @@ const PLANS = [
       'Team members',
     ],
     highlighted: true,
+    comingSoon: true,
   },
   {
     name: 'Addon',
@@ -27,6 +29,7 @@ const PLANS = [
     period: '/ 100K',
     features: ['Stackable traces', 'Extends Pro plan', 'Same retention', 'Volume discounts'],
     highlighted: false,
+    comingSoon: true,
   },
 ];
 
@@ -47,21 +50,41 @@ export function PricingSection() {
               key={plan.name}
               className={cn(
                 'relative rounded-lg border p-6 transition-colors',
-                plan.highlighted
-                  ? 'border-primary/30 bg-primary/3'
-                  : 'border-border bg-card/50 hover:border-border/80',
+                plan.comingSoon
+                  ? 'border-border/60 bg-card/30'
+                  : plan.highlighted
+                    ? 'border-primary/30 bg-primary/3'
+                    : 'border-border bg-card/50 hover:border-border/80',
               )}
             >
-              {plan.highlighted && (
+              {plan.comingSoon ? (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                  <span className="rounded-full border border-border bg-muted px-3 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Coming Soon
+                  </span>
+                </div>
+              ) : plan.highlighted ? (
                 <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                   <span className="rounded-full bg-primary px-3 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-primary-foreground">
                     Popular
                   </span>
                 </div>
-              )}
-              <h3 className="mb-4 font-mono text-sm font-semibold text-foreground">{plan.name}</h3>
+              ) : null}
+              <h3
+                className={cn(
+                  'mb-4 font-mono text-sm font-semibold',
+                  plan.comingSoon ? 'text-muted-foreground' : 'text-foreground',
+                )}
+              >
+                {plan.name}
+              </h3>
               <div className="mb-6">
-                <span className="text-3xl font-bold tracking-tight text-foreground">
+                <span
+                  className={cn(
+                    'text-3xl font-bold tracking-tight',
+                    plan.comingSoon ? 'text-muted-foreground' : 'text-foreground',
+                  )}
+                >
                   {plan.price}
                 </span>
                 {plan.period && (
@@ -72,7 +95,10 @@ export function PricingSection() {
                 {plan.features.map((feature) => (
                   <li key={feature} className="flex items-center gap-2">
                     <svg
-                      className="h-3.5 w-3.5 shrink-0 text-primary/60"
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0',
+                        plan.comingSoon ? 'text-muted-foreground/50' : 'text-primary/60',
+                      )}
                       viewBox="0 0 24 24"
                       fill="none"
                       stroke="currentColor"

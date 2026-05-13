@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { useProSubscriptionEnabled } from '@/hooks/useProSubscriptionEnabled';
 
 function formatCents(cents?: number): string {
   if (cents === undefined || cents === null) return '$0.00';
@@ -36,6 +37,7 @@ export default function Billing() {
   const reconcile = useAction(api.billing.subscriptions.reconcileCurrentOrgWithStripe);
   const ensureBilling = useMutation(api.billing.subscriptions.ensureBillingForCurrentUser);
   const updateAutoOverage = useMutation(api.billing.subscriptions.updateAutoOverageSettings);
+  const proEnabled = useProSubscriptionEnabled();
 
   const [addonPackages, setAddonPackages] = useState('1');
   const [autoOverage, setAutoOverage] = useState(false);
@@ -138,17 +140,23 @@ export default function Billing() {
               {busy === 'portal' ? 'Opening...' : 'Manage Billing'}
             </Button>
           ) : isOwner && !(subscription.tier === 'pro' && subscription.status === 'active') ? (
-            <Button
-              onClick={() =>
-                void withBusy('upgrade', async () => {
-                  const res = await createCheckout({});
-                  if (res.url) window.location.href = res.url;
-                })
-              }
-              disabled={busy !== null}
-            >
-              {busy === 'upgrade' ? 'Opening...' : 'Upgrade to Pro'}
-            </Button>
+            proEnabled ? (
+              <Button
+                onClick={() =>
+                  void withBusy('upgrade', async () => {
+                    const res = await createCheckout({});
+                    if (res.url) window.location.href = res.url;
+                  })
+                }
+                disabled={busy !== null}
+              >
+                {busy === 'upgrade' ? 'Opening...' : 'Upgrade to Pro'}
+              </Button>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Pro plan coming soon. We&apos;re onboarding testers first.
+              </p>
+            )
           ) : null}
         </CardContent>
       </Card>
