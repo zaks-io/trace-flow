@@ -85,19 +85,3 @@ describe('isProSubscriptionEnabled', () => {
     vi.doUnmock('@convex-dev/launchdarkly');
   });
 });
-
-describe('checkout gate logic', () => {
-  it('throws the coming-soon error when flag is false', async () => {
-    const enabled = false;
-    expect(() => {
-      if (!enabled) throw new Error('Pro subscription is not yet available. Stay tuned!');
-    }).toThrow('Pro subscription is not yet available. Stay tuned!');
-  });
-
-  it('does not throw when flag is true', async () => {
-    const enabled = true;
-    expect(() => {
-      if (!enabled) throw new Error('Pro subscription is not yet available. Stay tuned!');
-    }).not.toThrow();
-  });
-});
