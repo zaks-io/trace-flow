@@ -445,4 +445,61 @@ describe('extractTokenUsageFromSSEData', () => {
 
     expect(usage.reasoning_tokens).toBeUndefined();
   });
+
+  describe('cached_tokens (OpenAI/OpenRouter)', () => {
+    it('should extract cached_tokens from Chat Completions final usage chunk', () => {
+      const data = JSON.stringify({
+        usage: {
+          prompt_tokens: 1500,
+          completion_tokens: 50,
+          total_tokens: 1550,
+          prompt_tokens_details: {
+            cached_tokens: 1280,
+          },
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cached_tokens).toBe(1280);
+      expect(usage.input_tokens).toBe(1500);
+    });
+
+    it('should extract cached_tokens from Responses API completed event', () => {
+      const data = JSON.stringify({
+        type: 'response.completed',
+        response: {
+          usage: {
+            input_tokens: 2006,
+            output_tokens: 300,
+            total_tokens: 2306,
+            input_tokens_details: { cached_tokens: 1920 },
+            output_tokens_details: { reasoning_tokens: 0 },
+          },
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cached_tokens).toBe(1920);
+      expect(usage.input_tokens).toBe(2006);
+      expect(usage.output_tokens).toBe(300);
+    });
+
+    it('should not set cached_tokens when only Anthropic cache_read_input_tokens is present', () => {
+      const data = JSON.stringify({
+        type: 'message_delta',
+        usage: {
+          input_tokens: 10,
+          cache_read_input_tokens: 50,
+          output_tokens: 5,
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cached_tokens).toBeUndefined();
+      expect(usage.cache_read_input_tokens).toBe(50);
+    });
+  });
 });

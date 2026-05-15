@@ -1,12 +1,18 @@
 import type { LLMTokenUsage } from '@trace-flow/types';
 
 /**
- * OpenAI's `prompt_tokens` already includes cached tokens (total input).
- * `cached_tokens` is the cached subset within `prompt_tokens_details`.
+ * Handles both Chat Completions (`prompt_tokens`/`completion_tokens`) and
+ * Responses API (`input_tokens`/`output_tokens`) shapes. Prompt tokens
+ * already include cached tokens (total input). `cached_tokens` is the cached
+ * subset, nested under `prompt_tokens_details` (Chat Completions) or
+ * `input_tokens_details` (Responses API) — same field name in both, so the
+ * nested regex matches either shape.
  */
 export function parseOpenAITokens(body: string): LLMTokenUsage | undefined {
-  const promptMatch = /"prompt_tokens"\s*:\s*(\d+)/.exec(body);
-  const completionMatch = /"completion_tokens"\s*:\s*(\d+)/.exec(body);
+  const promptMatch =
+    /"prompt_tokens"\s*:\s*(\d+)/.exec(body) ?? /"input_tokens"\s*:\s*(\d+)/.exec(body);
+  const completionMatch =
+    /"completion_tokens"\s*:\s*(\d+)/.exec(body) ?? /"output_tokens"\s*:\s*(\d+)/.exec(body);
   const totalMatch = /"total_tokens"\s*:\s*(\d+)/.exec(body);
 
   if (!promptMatch && !completionMatch && !totalMatch) {

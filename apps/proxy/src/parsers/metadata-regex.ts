@@ -44,6 +44,9 @@ const COMPLETION_TOKENS_PATTERN = /"completion_tokens"\s*:\s*(\d+)/;
 const CACHE_CREATION_INPUT_TOKENS_PATTERN = /"cache_creation_input_tokens"\s*:\s*(\d+)/;
 const CACHE_READ_INPUT_TOKENS_PATTERN = /"cache_read_input_tokens"\s*:\s*(\d+)/;
 const CACHE_WRITE_TOKENS_PATTERN = /"cache_write_tokens"\s*:\s*(\d+)/;
+// OpenAI cache field — nested under `prompt_tokens_details` (Chat Completions)
+// or `input_tokens_details` (Responses API). Same field name, so this matches both.
+const CACHED_TOKENS_PATTERN = /"cached_tokens"\s*:\s*(\d+)/;
 const EPHEMERAL_5M_INPUT_TOKENS_PATTERN = /"ephemeral_5m_input_tokens"\s*:\s*(\d+)/;
 const EPHEMERAL_1H_INPUT_TOKENS_PATTERN = /"ephemeral_1h_input_tokens"\s*:\s*(\d+)/;
 // Scoped to usage context — only matches "cost" that appears after "usage" in the data.
@@ -236,6 +239,7 @@ export function extractTokenUsageFromSSEData(data: string): {
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
   cache_write_tokens?: number;
+  cached_tokens?: number;
   ephemeral_5m_input_tokens?: number;
   ephemeral_1h_input_tokens?: number;
   output_tokens?: number;
@@ -252,6 +256,7 @@ export function extractTokenUsageFromSSEData(data: string): {
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
     cache_write_tokens?: number;
+    cached_tokens?: number;
     ephemeral_5m_input_tokens?: number;
     ephemeral_1h_input_tokens?: number;
     output_tokens?: number;
@@ -302,6 +307,11 @@ export function extractTokenUsageFromSSEData(data: string): {
   const cacheWriteMatch = CACHE_WRITE_TOKENS_PATTERN.exec(data);
   if (cacheWriteMatch?.[1]) {
     usage.cache_write_tokens = parseInt(cacheWriteMatch[1], 10);
+  }
+
+  const cachedTokensMatch = CACHED_TOKENS_PATTERN.exec(data);
+  if (cachedTokensMatch?.[1]) {
+    usage.cached_tokens = parseInt(cachedTokensMatch[1], 10);
   }
 
   const ephemeral5mMatch = EPHEMERAL_5M_INPUT_TOKENS_PATTERN.exec(data);
