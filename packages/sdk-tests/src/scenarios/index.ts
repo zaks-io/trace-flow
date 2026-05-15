@@ -2,6 +2,7 @@ import type { Scenario } from './types';
 import { basicScenario } from './basic';
 import { comprehensiveScenario } from './comprehensive';
 import { promptCachingScenario } from './prompt-caching';
+import { responsesApiScenario } from './responses-api';
 import { sharedTraceMultiStreamScenario } from './shared-trace-multi-stream';
 import { toolsScenario } from './tools';
 
@@ -12,6 +13,7 @@ export const scenarios: Scenario[] = [
   toolsScenario,
   sharedTraceMultiStreamScenario,
   promptCachingScenario,
+  responsesApiScenario,
   comprehensiveScenario,
 ];
 

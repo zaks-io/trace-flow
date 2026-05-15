@@ -82,4 +82,65 @@ describe('parseOpenAITokens', () => {
     const body = JSON.stringify({ id: 'chatcmpl-123', choices: [] });
     expect(parseOpenAITokens(body)).toBeUndefined();
   });
+
+  describe('Responses API shape', () => {
+    it('should parse input_tokens/output_tokens/total_tokens', () => {
+      const body = JSON.stringify({
+        usage: {
+          input_tokens: 200,
+          output_tokens: 80,
+          total_tokens: 280,
+        },
+      });
+
+      const result = parseOpenAITokens(body);
+
+      expect(result).toEqual({
+        promptTokens: 200,
+        uncachedInputTokens: 200,
+        completionTokens: 80,
+        totalTokens: 280,
+      });
+    });
+
+    it('should map cached_tokens under input_tokens_details to cacheReadTokens', () => {
+      const body = JSON.stringify({
+        usage: {
+          input_tokens: 2006,
+          output_tokens: 300,
+          total_tokens: 2306,
+          input_tokens_details: { cached_tokens: 1920 },
+          output_tokens_details: { reasoning_tokens: 0 },
+        },
+      });
+
+      const result = parseOpenAITokens(body);
+
+      expect(result).toEqual({
+        promptTokens: 2006,
+        uncachedInputTokens: 86,
+        completionTokens: 300,
+        totalTokens: 2306,
+        cacheReadTokens: 1920,
+        reasoningTokens: 0,
+      });
+    });
+
+    it('should parse reasoning_tokens nested under output_tokens_details', () => {
+      const body = JSON.stringify({
+        usage: {
+          input_tokens: 100,
+          output_tokens: 500,
+          total_tokens: 600,
+          output_tokens_details: { reasoning_tokens: 350 },
+        },
+      });
+
+      const result = parseOpenAITokens(body);
+
+      expect(result?.reasoningTokens).toBe(350);
+      expect(result?.promptTokens).toBe(100);
+      expect(result?.completionTokens).toBe(500);
+    });
+  });
 });

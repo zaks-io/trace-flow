@@ -127,6 +127,7 @@ export function processSSEEvent(
         const hasUsageData =
           mergedUsage.input_tokens !== undefined ||
           mergedUsage.output_tokens !== undefined ||
+          mergedUsage.cached_tokens !== undefined ||
           mergedUsage.prompt_token_count !== undefined ||
           mergedUsage.candidates_token_count !== undefined;
         if (hasUsageData) currentMessage.usage = mergedUsage;
@@ -157,8 +158,10 @@ export function processSSEEvent(
       data: event.data,
     };
 
-    if (eventType === 'message_start') {
-      // Extract metadata and usage from message_start (Anthropic includes usage here)
+    // message_start (Anthropic) and response.created (OpenAI Responses API) both
+    // open a new message span — Anthropic includes initial usage here, Responses
+    // API only ships an id/model shell.
+    if (eventType === 'message_start' || eventType === 'response.created') {
       const metadata = extractMetadataFromSSEData(event.data);
       const usage = event.data ? extractTokenUsageFromSSEData(event.data) : undefined;
 
@@ -171,6 +174,7 @@ export function processSSEEvent(
           usage?.output_tokens !== undefined ||
           usage?.cache_creation_input_tokens !== undefined ||
           usage?.cache_read_input_tokens !== undefined ||
+          usage?.cached_tokens !== undefined ||
           usage?.ephemeral_5m_input_tokens !== undefined ||
           usage?.ephemeral_1h_input_tokens !== undefined
             ? usage
@@ -233,13 +237,28 @@ export function processSSEEvent(
       }
     }
 
-    if (eventType === 'message_stop' || eventType === 'message_delta') {
-      // Update messageStop timestamp for message_stop events
-      if (eventType === 'message_stop') {
+    // Events that carry usage data we want to extract. message_delta is mid-stream
+    // for Anthropic (carries incremental output_tokens) so it's grouped here even
+    // though it isn't a stream-closing event.
+    const shouldExtractUsage =
+      eventType === 'message_stop' ||
+      eventType === 'message_delta' ||
+      eventType === 'response.completed' ||
+      eventType === 'response.failed' ||
+      eventType === 'response.incomplete';
+
+    if (shouldExtractUsage) {
+      // Stream-closing events (everything except message_delta) also stamp messageStop
+      if (
+        eventType === 'message_stop' ||
+        eventType === 'response.completed' ||
+        eventType === 'response.failed' ||
+        eventType === 'response.incomplete'
+      ) {
         currentMessage.messageStop = timestamp;
       }
 
-      // Extract usage from stop/delta events using regex (for token counts)
+      // Extract usage from terminal events using regex (for token counts)
       if (event.data) {
         const extractedUsage = extractTokenUsageFromSSEData(event.data);
         // Merge with existing usage (accumulate across events)
@@ -253,6 +272,7 @@ export function processSSEEvent(
           mergedUsage.output_tokens !== undefined ||
           mergedUsage.cache_creation_input_tokens !== undefined ||
           mergedUsage.cache_read_input_tokens !== undefined ||
+          mergedUsage.cached_tokens !== undefined ||
           mergedUsage.ephemeral_5m_input_tokens !== undefined ||
           mergedUsage.ephemeral_1h_input_tokens !== undefined;
         currentMessage.usage = hasUsageData ? mergedUsage : undefined;
@@ -339,8 +359,15 @@ export function aggregateSSETokens(
       totalReasoningTokens += message.usage.reasoning_tokens;
       hasAnyTokens = true;
     }
+    // cache_read_input_tokens (Anthropic) and cached_tokens (OpenAI/OpenRouter)
+    // are assumed mutually exclusive per provider — no real upstream returns
+    // both. If a bridging proxy ever does, this will double-count.
     if (message.usage.cache_read_input_tokens !== undefined) {
       totalCacheReadTokens += message.usage.cache_read_input_tokens;
+      hasAnyTokens = true;
+    }
+    if (message.usage.cached_tokens !== undefined) {
+      totalCacheReadTokens += message.usage.cached_tokens;
       hasAnyTokens = true;
     }
     if (message.usage.cache_creation_input_tokens !== undefined) {

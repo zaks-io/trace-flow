@@ -8,6 +8,7 @@
     "type-check": "tsc --noEmit",
     "integration": "bun run src/cli.ts run",
     "integration:openai": "bun run src/cli.ts run -p openai",
+    "integration:responses": "bun run src/cli.ts run -p openai-responses -s responses-api",
     "integration:anthropic": "bun run src/cli.ts run -p anthropic",
     "integration:google": "bun run src/cli.ts run -p google",
     "integration:google-embed": "bun run src/test-google-embed.ts",
