@@ -1268,5 +1268,49 @@ describe('aggregateSSETokens', () => {
         cacheReadTokens: 1920,
       });
     });
+
+    it('should stamp messageStop and capture partial usage on response.failed', () => {
+      const streamData: SSEStreamData = { messages: [] };
+
+      processSSEEvent(
+        {
+          event: 'response.created',
+          data: JSON.stringify({
+            type: 'response.created',
+            response: { id: 'resp_failed', created_at: 1, model: 'gpt-4.1-mini' },
+          }),
+        },
+        1000,
+        streamData,
+      );
+
+      processSSEEvent(
+        {
+          event: 'response.failed',
+          data: JSON.stringify({
+            type: 'response.failed',
+            response: {
+              usage: {
+                input_tokens: 150,
+                output_tokens: 12,
+                total_tokens: 162,
+              },
+            },
+          }),
+        },
+        1500,
+        streamData,
+      );
+
+      expect(streamData.messages[0]?.messageStop).toBe(1500);
+
+      const result = aggregateSSETokens(streamData, 'openai');
+      expect(result).toEqual({
+        promptTokens: 150,
+        uncachedInputTokens: 150,
+        completionTokens: 12,
+        totalTokens: 162,
+      });
+    });
   });
 });

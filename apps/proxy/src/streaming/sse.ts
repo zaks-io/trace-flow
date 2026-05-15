@@ -237,18 +237,18 @@ export function processSSEEvent(
       }
     }
 
-    // Anthropic terminal events (message_stop/message_delta) and Responses API
-    // terminal events (response.completed/failed/incomplete) both carry the
-    // final usage payload.
-    const isTerminalEvent =
+    // Events that carry usage data we want to extract. message_delta is mid-stream
+    // for Anthropic (carries incremental output_tokens) so it's grouped here even
+    // though it isn't a stream-closing event.
+    const shouldExtractUsage =
       eventType === 'message_stop' ||
       eventType === 'message_delta' ||
       eventType === 'response.completed' ||
       eventType === 'response.failed' ||
       eventType === 'response.incomplete';
 
-    if (isTerminalEvent) {
-      // Update messageStop timestamp for any terminal-stop event
+    if (shouldExtractUsage) {
+      // Stream-closing events (everything except message_delta) also stamp messageStop
       if (
         eventType === 'message_stop' ||
         eventType === 'response.completed' ||
@@ -359,6 +359,9 @@ export function aggregateSSETokens(
       totalReasoningTokens += message.usage.reasoning_tokens;
       hasAnyTokens = true;
     }
+    // cache_read_input_tokens (Anthropic) and cached_tokens (OpenAI/OpenRouter)
+    // are assumed mutually exclusive per provider — no real upstream returns
+    // both. If a bridging proxy ever does, this will double-count.
     if (message.usage.cache_read_input_tokens !== undefined) {
       totalCacheReadTokens += message.usage.cache_read_input_tokens;
       hasAnyTokens = true;
