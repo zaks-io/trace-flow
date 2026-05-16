@@ -314,6 +314,33 @@ describe('buildTraces', () => {
       );
     });
 
+    it('should include TTFT attribute on root span when response.output_text.delta is present (Responses API)', () => {
+      const message: QueueMessage = {
+        ...baseQueueMessage,
+        sseStreamData: {
+          messages: [
+            {
+              messageStart: 1150,
+              messageStop: 1480,
+              events: [
+                { type: 'response.created', timestamp: 1150, data: '{}' },
+                { type: 'response.output_text.delta', timestamp: 1250, data: '{}' },
+                { type: 'response.completed', timestamp: 1480, data: '{}' },
+              ],
+            },
+          ],
+        },
+      };
+
+      const traces = buildTraces(message);
+
+      const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
+      expect(rootSpan).toBeDefined();
+      expect(rootSpan?.SpanAttributes['gen_ai.server.time_to_first_token']).toBe(
+        String(1250 - baseQueueMessage.timing.requestStart),
+      );
+    });
+
     it('should not include TTFT attribute when no content_block_delta present', () => {
       const message: QueueMessage = {
         ...baseQueueMessage,

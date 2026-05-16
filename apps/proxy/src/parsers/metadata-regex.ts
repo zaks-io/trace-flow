@@ -11,8 +11,18 @@ const OPENAI_ID_PATTERN = /"id"\s*:\s*"([^"]+)"/;
 const OPENAI_MODEL_PATTERN = /"model"\s*:\s*"([^"]+)"/;
 const OPENAI_OBJECT_PATTERN = /"object"\s*:\s*"([^"]+)"/;
 const OPENAI_CREATED_PATTERN = /"created"\s*:\s*(\d+)/;
+// Responses API uses `created_at` (epoch seconds) instead of `created`.
+const OPENAI_CREATED_AT_PATTERN = /"created_at"\s*:\s*(\d+)/;
 const OPENAI_FINISH_REASON_PATTERN = /"finish_reason"\s*:\s*"([^"]+)"/;
 const OPENAI_NATIVE_FINISH_REASON_PATTERN = /"native_finish_reason"\s*:\s*"([^"]+)"/;
+// Responses API uses top-level `status` (in_progress -> completed | failed | incomplete |
+// cancelled) instead of choices[].finish_reason. The first `status` field in any Responses API
+// payload is the response's top-level status — OpenAI emits it before nested output_item.status.
+const OPENAI_RESPONSE_STATUS_PATTERN = /"status"\s*:\s*"([^"]+)"/;
+// Marker that lets us detect "this payload is from the Responses API" so the status mapping
+// doesn't fire on unrelated OpenAI-style bodies (Chat Completions doesn't have an `object:response`
+// or `type:response.*` field).
+const OPENAI_RESPONSES_API_MARKER = /"object"\s*:\s*"response"|"type"\s*:\s*"response\./;
 const OPENAI_REASONING_TOKENS_PATTERN = /"reasoning_tokens"\s*:\s*(\d+)/;
 const OPENAI_HAS_LOGPROBS_PATTERN = /"logprobs"\s*:\s*(?:null|{)/;
 const OPENAI_REFUSAL_PATTERN = /"refusal"\s*:\s*(?:null|"([^"]*)")/;
@@ -85,10 +95,28 @@ export function extractOpenAIMetadata(
     metadata.created = parseInt(createdMatch[1], 10);
   }
 
+  // Responses API fallback: `created_at` (epoch seconds) replaces `created`.
+  if (!metadata.created) {
+    const createdAtMatch = OPENAI_CREATED_AT_PATTERN.exec(data);
+    if (createdAtMatch?.[1]) {
+      metadata.created = parseInt(createdAtMatch[1], 10);
+    }
+  }
+
   // Extract finish_reason from choices array (may appear in multiple events)
   const finishReasonMatch = OPENAI_FINISH_REASON_PATTERN.exec(data);
   if (finishReasonMatch && !metadata.finishReason) {
     metadata.finishReason = finishReasonMatch[1];
+  }
+
+  // Responses API: map top-level `status` to `finishReason`. Always overwrite so the terminal
+  // status (completed | failed | incomplete | cancelled) wins over earlier in_progress states
+  // as events stream in. Scoped to Responses-API payloads via marker to avoid false matches.
+  if (OPENAI_RESPONSES_API_MARKER.test(data)) {
+    const statusMatch = OPENAI_RESPONSE_STATUS_PATTERN.exec(data);
+    if (statusMatch?.[1]) {
+      metadata.finishReason = statusMatch[1];
+    }
   }
 
   const nativeFinishReasonMatch = OPENAI_NATIVE_FINISH_REASON_PATTERN.exec(data);

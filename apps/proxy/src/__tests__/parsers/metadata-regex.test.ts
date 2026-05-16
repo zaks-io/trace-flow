@@ -68,6 +68,63 @@ describe('extractOpenAIMetadata', () => {
     expect(metadata2.object).toBe('chat.completion');
     expect(metadata2.finishReason).toBe('stop');
   });
+
+  describe('Responses API', () => {
+    it('should extract created from created_at fallback', () => {
+      const data =
+        '{"id":"resp_x","object":"response","created_at":1778889561,"model":"gpt-4.1-mini-2025-04-14"}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.created).toBe(1778889561);
+    });
+
+    it('should prefer `created` over `created_at` when both present', () => {
+      const data = '{"created":1000000000,"created_at":2000000000}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.created).toBe(1000000000);
+    });
+
+    it('should map top-level status to finishReason on response.completed', () => {
+      const data =
+        '{"type":"response.completed","sequence_number":12,"response":{"id":"resp_x","status":"completed","model":"gpt-4.1-mini"}}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('completed');
+    });
+
+    it('should overwrite earlier in_progress status with terminal status', () => {
+      const created =
+        '{"type":"response.created","response":{"id":"resp_x","object":"response","status":"in_progress"}}';
+      const completed =
+        '{"type":"response.completed","response":{"id":"resp_x","status":"completed"}}';
+      const m1 = extractOpenAIMetadata(created);
+      expect(m1.finishReason).toBe('in_progress');
+      const m2 = extractOpenAIMetadata(completed, m1);
+      expect(m2.finishReason).toBe('completed');
+    });
+
+    it('should capture response.status, not nested item.status', () => {
+      // OpenAI emits the response-level status before any nested output_item.status,
+      // so the first regex match is the one we want.
+      const data =
+        '{"type":"response.completed","response":{"id":"resp_x","status":"completed","output":[{"id":"msg_1","status":"completed","type":"message"}]}}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('completed');
+    });
+
+    it('should map status:failed to finishReason', () => {
+      const data =
+        '{"type":"response.failed","response":{"id":"resp_x","status":"failed","model":"gpt-4.1"}}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('failed');
+    });
+
+    it('should not map status to finishReason for Chat Completions bodies', () => {
+      // Status field shouldn't be touched outside Responses API context. The marker check
+      // ensures Chat Completions bodies aren't accidentally captured.
+      const data = '{"object":"chat.completion","choices":[{"finish_reason":"stop"}]}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('stop');
+    });
+  });
 });
 
 describe('extractAnthropicMetadata', () => {
