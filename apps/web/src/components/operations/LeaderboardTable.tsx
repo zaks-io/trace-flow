@@ -3,7 +3,11 @@
 import { ArrowUpDown, ChevronDown, ChevronUp, Layers } from 'lucide-react';
 import { type OperationLeaderboardRow } from '@/components/usage/types';
 import { formatCurrency, formatDuration, formatNumber } from '@/lib/format';
-import { getAggregateCacheHitRate, getCostPerRequest } from '@/lib/operations';
+import {
+  getAggregateCacheHitRate,
+  getCostPerRequest,
+  getLeaderboardSortValue,
+} from '@/lib/operations';
 import { formatCacheHitRate, getCacheHitRateAccent } from '@/lib/cacheMetrics';
 import type { LeaderboardSortKey } from './useOperationsFilters';
 
@@ -59,7 +63,8 @@ export function LeaderboardTable({
     );
   }
 
-  const maxRequests = Math.max(...data.map((r) => r.request_count));
+  const barValues = data.map((row) => getLeaderboardSortValue(row, sortKey));
+  const maxBarValue = Math.max(0, ...barValues);
 
   const cols: { key: LeaderboardSortKey; label: string }[] = [
     { key: 'request_count', label: 'Requests' },
@@ -91,7 +96,7 @@ export function LeaderboardTable({
           </tr>
         </thead>
         <tbody>
-          {data.map((row) => {
+          {data.map((row, index) => {
             const isSelected = row.operation === selectedOperation;
             const cacheHitRate = getAggregateCacheHitRate(row);
             const costPerRequest = getCostPerRequest(row);
@@ -106,7 +111,7 @@ export function LeaderboardTable({
                 }`}
               >
                 <td className="relative py-2.5 pl-3 font-medium text-foreground">
-                  <ProportionBar value={row.request_count} max={maxRequests} />
+                  <ProportionBar value={barValues[index]!} max={maxBarValue} />
                   {isSelected && (
                     <span className="absolute inset-y-0 left-0 w-[3px] rounded-r bg-primary" />
                   )}

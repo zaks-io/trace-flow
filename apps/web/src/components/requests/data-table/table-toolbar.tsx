@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Search, ChevronDown, X, Filter, Settings2 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -12,6 +12,7 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { sortFilterOptions } from '@/lib/sortFilterOptions';
 import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
 import type { Alert } from '@/types/alerts';
@@ -40,6 +41,7 @@ function FilterDropdown({
 }: FilterDropdownProps) {
   const hasValue = value !== null;
   const displayValue = hasValue ? (labelMap?.get(value) ?? value) : `${label}`;
+  const sortedOptions = useMemo(() => sortFilterOptions(options, labelMap), [options, labelMap]);
 
   return (
     <DropdownMenu>
@@ -63,7 +65,7 @@ function FilterDropdown({
           All {label}s
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        {options.map((opt) => (
+        {sortedOptions.map((opt) => (
           <DropdownMenuItem
             key={opt}
             onClick={() => onChange(opt)}
@@ -84,6 +86,10 @@ interface AlertFilterDropdownProps {
 }
 
 function AlertFilterDropdown({ value, alerts, onChange }: AlertFilterDropdownProps) {
+  const sortedAlerts = useMemo(
+    () => [...alerts].sort((a, b) => a.name.localeCompare(b.name)),
+    [alerts],
+  );
   const hasValue = value !== 'all';
   const displayValue =
     value === 'all'
@@ -120,8 +126,8 @@ function AlertFilterDropdown({ value, alerts, onChange }: AlertFilterDropdownPro
         >
           Has Alerts
         </DropdownMenuItem>
-        {alerts.length > 0 && <DropdownMenuSeparator />}
-        {alerts.map((alert) => (
+        {sortedAlerts.length > 0 && <DropdownMenuSeparator />}
+        {sortedAlerts.map((alert) => (
           <DropdownMenuItem
             key={alert._id}
             onClick={() => onChange(alert._id)}

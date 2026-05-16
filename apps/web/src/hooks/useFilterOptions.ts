@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
+import { sortFilterOptions } from '@/lib/sortFilterOptions';
 
 export interface FilterOptions {
   providers: string[];
@@ -33,10 +34,10 @@ export function useFilterOptions(): UseFilterOptionsResult {
   const options: FilterOptions = useMemo(() => {
     const row = data?.data?.[0];
     return {
-      providers: row?.providers ?? [],
-      models: row?.models ?? [],
-      statuses: row?.statuses ?? [],
-      operations: row?.operations ?? [],
+      providers: sortFilterOptions(row?.providers ?? []),
+      models: sortFilterOptions(row?.models ?? []),
+      statuses: sortFilterOptions(row?.statuses ?? []),
+      operations: sortFilterOptions(row?.operations ?? []),
     };
   }, [data]);
 
