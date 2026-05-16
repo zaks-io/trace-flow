@@ -34,7 +34,7 @@ export function FilterDropdown({
         className={cn(
           'flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium transition-colors',
           'hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
-          hasValue ? 'text-foreground' : 'text-foreground',
+          hasValue ? 'border-primary/30 bg-primary/10 text-primary' : 'text-foreground',
         )}
       >
         <span className="max-w-[140px] truncate">
