@@ -192,13 +192,6 @@ export interface OperationUserRow extends CostBreakdownRow, LatencyRow {
   cache_hit_rate: number | null;
 }
 
-export interface OperationsFilterOptionsRow {
-  providers: string[];
-  models: string[];
-  operations: string[];
-  api_keys: string[];
-}
-
 export interface ApiKeyRow extends CostBreakdownRow, LatencyRow {
   api_key: string;
   request_count: number;
