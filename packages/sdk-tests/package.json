@@ -14,6 +14,7 @@
     "integration:google-embed": "bun run src/test-google-embed.ts",
     "integration:openrouter": "bun run src/cli.ts run -p openrouter",
     "integration:openrouter-parser": "bun run src/test-openrouter-parser.ts",
+    "integration:openai-parser": "bun run src/test-openai-parser.ts",
     "integration:groq": "bun run src/cli.ts run -p groq",
     "integration:groq-tools": "bun run src/cli.ts run -p groq -s tools",
     "integration:all": "bun run src/cli.ts run",

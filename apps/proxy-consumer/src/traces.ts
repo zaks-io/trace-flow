@@ -261,10 +261,14 @@ export function buildTraces(data: QueueMessage, pricing?: ModelPricing | null): 
   const allContentBlocks: { block: AnthropicContentBlock; messageIndex: number }[] = [];
 
   if (data.sseStreamData?.messages && data.sseStreamData.messages.length > 0) {
-    // Find first content_block_delta across ALL messages for TTFT tracking
+    // Find first content-emitting delta event across ALL messages for TTFT tracking.
+    // Chat Completions (OpenAI/Anthropic-style streaming): content_block_delta.
+    // OpenAI Responses API: response.output_text.delta (text content stream).
     let firstContentDelta: { timestamp: number } | undefined;
     for (const message of data.sseStreamData.messages) {
-      const delta = message.events.find((e) => e.type === 'content_block_delta');
+      const delta = message.events.find(
+        (e) => e.type === 'content_block_delta' || e.type === 'response.output_text.delta',
+      );
       if (delta) {
         firstContentDelta = delta;
         break;
