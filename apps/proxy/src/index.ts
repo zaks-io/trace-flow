@@ -33,7 +33,7 @@ import type { ApiKeyData } from './auth';
 import { checkUsage, type UsageCheckResult } from './usage';
 import { createResponseCapture } from './streaming/capture';
 import { createSSEParser } from './streaming/sse';
-import { resolveRoute, PROVIDERS } from './providers';
+import { resolveRoute, PROVIDERS } from '@trace-flow/llm-providers';
 import { handleOTLPTraces } from './otlp';
 import { otlpTracesRoute } from './otlp/routes';
 import { resolveTracingDecision } from './tracing-decision';

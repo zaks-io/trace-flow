@@ -449,7 +449,7 @@ describe('aggregateSSETokens', () => {
   it('should return undefined for empty stream data', () => {
     const streamData: SSEStreamData = { messages: [] };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toBeUndefined();
   });
@@ -459,7 +459,7 @@ describe('aggregateSSETokens', () => {
       messages: [{ messageStart: 1000, events: [] }],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toBeUndefined();
   });
@@ -478,7 +478,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -504,7 +504,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -538,7 +538,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 300,
@@ -568,7 +568,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result?.promptTokens).toBe(100);
     expect(result?.completionTokens).toBe(50);
@@ -601,7 +601,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 150,
@@ -626,7 +626,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -655,7 +655,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result?.reasoningTokens).toBe(100); // Math.ceil(400 / 4)
   });
@@ -678,7 +678,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result?.reasoningTokens).toBe(350);
   });

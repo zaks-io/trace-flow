@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseGroqTokens } from '../../../parsers/providers/groq';
+import { parseTokenUsage } from '../parseTokenUsage';
 
-describe('parseGroqTokens', () => {
+describe('parseTokenUsage (groq)', () => {
   it('should parse basic tokens with reasoning_tokens', () => {
     const body = JSON.stringify({
       usage: {
@@ -18,7 +18,7 @@ describe('parseGroqTokens', () => {
       },
     });
 
-    const result = parseGroqTokens(body);
+    const result = parseTokenUsage(body, 'groq');
 
     expect(result).toEqual({
       promptTokens: 399,
@@ -38,7 +38,7 @@ describe('parseGroqTokens', () => {
       },
     });
 
-    const result = parseGroqTokens(body);
+    const result = parseTokenUsage(body, 'groq');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -50,6 +50,6 @@ describe('parseGroqTokens', () => {
 
   it('should return undefined when no token fields found', () => {
     const body = JSON.stringify({ id: 'chat-123', choices: [] });
-    expect(parseGroqTokens(body)).toBeUndefined();
+    expect(parseTokenUsage(body, 'groq')).toBeUndefined();
   });
 });

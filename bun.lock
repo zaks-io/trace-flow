@@ -47,6 +47,7 @@
       "dependencies": {
         "@hono/zod-openapi": "^1.3.0",
         "@sentry/cloudflare": "^10.51.0",
+        "@trace-flow/llm-providers": "workspace:*",
         "@trace-flow/logging": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
@@ -175,6 +176,18 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/llm-providers": {
+      "name": "@trace-flow/llm-providers",
+      "version": "0.0.1",
+      "dependencies": {
+        "@trace-flow/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@vitest/coverage-v8": "^4.1.4",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.4",
+      },
+    },
     "packages/logging": {
       "name": "@trace-flow/logging",
       "version": "0.0.1",
@@ -197,6 +210,7 @@
         "@ai-sdk/openai": "^3",
         "@inkjs/ui": "^2.0.0",
         "@openrouter/ai-sdk-provider": "^2",
+        "@trace-flow/llm-providers": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "ai": "^6",
@@ -1245,6 +1259,8 @@
     "@trace-flow/convex": ["@trace-flow/convex@workspace:packages/convex"],
 
     "@trace-flow/emails": ["@trace-flow/emails@workspace:packages/emails"],
+
+    "@trace-flow/llm-providers": ["@trace-flow/llm-providers@workspace:packages/llm-providers"],
 
     "@trace-flow/logging": ["@trace-flow/logging@workspace:packages/logging"],
 

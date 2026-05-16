@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTokenUsage } from '../parsers/providers';
+import { parseTokenUsage } from '@trace-flow/llm-providers';
 import { parseGoogleRequestBody } from '../parsers/request-body';
 import { extractGoogleMetadata, extractTokenUsageFromSSEData } from '../parsers/metadata-regex';
 
@@ -15,7 +15,7 @@ describe('Google Gemini API Support', () => {
         },
       });
 
-      const tokens = parseTokenUsage(response);
+      const tokens = parseTokenUsage(response, 'google');
       expect(tokens).toEqual({
         promptTokens: 10,
         completionTokens: 5,
@@ -34,7 +34,7 @@ describe('Google Gemini API Support', () => {
         },
       });
 
-      const tokens = parseTokenUsage(response);
+      const tokens = parseTokenUsage(response, 'google');
       expect(tokens?.promptTokens).toBe(100);
       expect(tokens?.completionTokens).toBe(50);
       expect(tokens?.cacheReadTokens).toBe(80);
@@ -48,7 +48,7 @@ describe('Google Gemini API Support', () => {
         },
       });
 
-      const tokens = parseTokenUsage(response);
+      const tokens = parseTokenUsage(response, 'google');
       expect(tokens?.promptTokens).toBe(42);
       expect(tokens?.completionTokens).toBeUndefined();
     });
@@ -63,7 +63,7 @@ describe('Google Gemini API Support', () => {
         },
       });
 
-      const tokens = parseTokenUsage(response);
+      const tokens = parseTokenUsage(response, 'google');
       expect(tokens?.promptTokens).toBe(50);
       expect(tokens?.completionTokens).toBe(200);
       expect(tokens?.totalTokens).toBe(250);

@@ -9,8 +9,7 @@ import { getCurrentTimestamp, redactText, redactValue } from '@trace-flow/utils'
 import type { Logger } from '@trace-flow/logging';
 import type { ApiKeyData } from './auth';
 import type { UsageCheckResult } from './usage';
-import { parseTokenUsage } from './parsers/providers';
-import { parseGoogleModelFromPath } from './parsers/providers/google';
+import { parseTokenUsage, parseGoogleModelFromPath } from '@trace-flow/llm-providers';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
 import {
@@ -24,7 +23,7 @@ import { aggregateSSETokens } from './streaming/sse';
 import type { EventSourceParser } from 'eventsource-parser';
 import { storeBodies } from './storage';
 import { createQueueMessage } from './queue';
-import type { ResolvedRoute } from './providers';
+import type { ResolvedRoute } from '@trace-flow/llm-providers';
 import { writeRequestAnalytics, writeSkippedAnalytics } from './analytics';
 import type { TracingDecision } from './tracing-decision';
 

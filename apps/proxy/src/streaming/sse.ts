@@ -7,6 +7,7 @@ import type {
   LLMTokenUsage,
 } from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
+import { createTokenAccumulator, type ProviderId } from '@trace-flow/llm-providers';
 import {
   extractMetadataFromSSEData,
   extractTokenUsageFromSSEData,
@@ -303,179 +304,32 @@ export function createSSEParser(streamData: SSEStreamData): EventSourceParser {
 
 /**
  * Aggregates token usage from all SSE messages into a unified LLMTokenUsage format.
- * Handles both OpenAI-style (input_tokens/output_tokens in streaming chunks)
- * and Anthropic-style (input_tokens, output_tokens, cache tokens in message_start/message_delta).
- *
- * For multi-message streams, sums token counts across all messages.
+ * Provider-specific normalization (Anthropic input+cache reconstruction, Google
+ * cachedContent unification, Anthropic thinking-token estimation) lives in the
+ * shared `createTokenAccumulator` so streaming and whole-body extraction stay in sync.
  */
 export function aggregateSSETokens(
   streamData: SSEStreamData,
-  provider?: string,
+  provider: ProviderId,
 ): LLMTokenUsage | undefined {
   if (!streamData.messages || streamData.messages.length === 0) {
     return undefined;
   }
 
-  let totalPromptTokens = 0;
-  let totalUncachedInputTokens = 0;
-  let totalCompletionTokens = 0;
-  let totalReasoningTokens = 0;
-  let totalCacheReadTokens = 0;
-  let totalCacheCreationTokens = 0;
-  let totalCacheCreation5mTokens = 0;
-  let googleTotalTokenCount = 0;
-  let totalCacheCreation1hTokens = 0;
-  let totalGoogleCachedTokens = 0;
-  let totalThinkingChars = 0;
-  let lastUpstreamCost: number | undefined;
-  let hasAnyTokens = false;
+  const accumulator = createTokenAccumulator(provider);
 
   for (const message of streamData.messages) {
-    // Accumulate thinking text length from content blocks (for Anthropic estimation)
     if (message.contentBlocks) {
       for (const block of message.contentBlocks) {
         if (block.type === 'thinking' && block.thinkingTextLength) {
-          totalThinkingChars += block.thinkingTextLength;
+          accumulator.acceptThinkingChars(block.thinkingTextLength);
         }
       }
     }
-
-    if (!message.usage) continue;
-
-    // OpenAI/Anthropic style
-    if (message.usage.input_tokens !== undefined) {
-      totalPromptTokens += message.usage.input_tokens;
-      // For Anthropic, input_tokens IS the uncached portion (excludes cache reads/writes)
-      if (provider === 'anthropic') {
-        totalUncachedInputTokens += message.usage.input_tokens;
-      }
-      hasAnyTokens = true;
-    }
-    if (message.usage.output_tokens !== undefined) {
-      totalCompletionTokens += message.usage.output_tokens;
-      hasAnyTokens = true;
-    }
-    if (message.usage.reasoning_tokens !== undefined) {
-      totalReasoningTokens += message.usage.reasoning_tokens;
-      hasAnyTokens = true;
-    }
-    // cache_read_input_tokens (Anthropic) and cached_tokens (OpenAI/OpenRouter)
-    // are assumed mutually exclusive per provider — no real upstream returns
-    // both. If a bridging proxy ever does, this will double-count.
-    if (message.usage.cache_read_input_tokens !== undefined) {
-      totalCacheReadTokens += message.usage.cache_read_input_tokens;
-      hasAnyTokens = true;
-    }
-    if (message.usage.cached_tokens !== undefined) {
-      totalCacheReadTokens += message.usage.cached_tokens;
-      hasAnyTokens = true;
-    }
-    if (message.usage.cache_creation_input_tokens !== undefined) {
-      totalCacheCreationTokens += message.usage.cache_creation_input_tokens;
-      hasAnyTokens = true;
-    }
-    if (message.usage.ephemeral_5m_input_tokens !== undefined) {
-      totalCacheCreation5mTokens += message.usage.ephemeral_5m_input_tokens;
-      hasAnyTokens = true;
-    }
-    if (message.usage.ephemeral_1h_input_tokens !== undefined) {
-      totalCacheCreation1hTokens += message.usage.ephemeral_1h_input_tokens;
-      hasAnyTokens = true;
-    }
-    if (message.usage.cache_write_tokens !== undefined) {
-      totalCacheCreationTokens += message.usage.cache_write_tokens;
-      hasAnyTokens = true;
-    }
-    if (message.usage.cost !== undefined) {
-      lastUpstreamCost = message.usage.cost;
-      hasAnyTokens = true;
-    }
-
-    // Google style (usageMetadata)
-    if (message.usage.prompt_token_count !== undefined) {
-      totalPromptTokens += message.usage.prompt_token_count;
-      hasAnyTokens = true;
-    }
-    if (message.usage.candidates_token_count !== undefined) {
-      totalCompletionTokens += message.usage.candidates_token_count;
-      hasAnyTokens = true;
-    }
-    if (message.usage.cached_content_token_count !== undefined) {
-      totalGoogleCachedTokens += message.usage.cached_content_token_count;
-      hasAnyTokens = true;
-    }
-    if (message.usage.thoughts_token_count !== undefined) {
-      totalReasoningTokens += message.usage.thoughts_token_count;
-      hasAnyTokens = true;
-    }
-    if (message.usage.total_token_count !== undefined) {
-      googleTotalTokenCount = message.usage.total_token_count;
+    if (message.usage) {
+      accumulator.acceptEvent(message.usage);
     }
   }
 
-  if (!hasAnyTokens) {
-    return undefined;
-  }
-
-  const result: LLMTokenUsage = {};
-
-  // Normalize Anthropic to full prompt-side tokens: uncached + cache reads + cache writes.
-  if (
-    totalCacheCreationTokens === 0 &&
-    (totalCacheCreation5mTokens > 0 || totalCacheCreation1hTokens > 0)
-  ) {
-    totalCacheCreationTokens = totalCacheCreation5mTokens + totalCacheCreation1hTokens;
-  }
-  if (provider === 'anthropic' && (totalCacheReadTokens > 0 || totalCacheCreationTokens > 0)) {
-    totalPromptTokens += totalCacheReadTokens + totalCacheCreationTokens;
-  }
-
-  // Unify Google's cachedContentTokenCount → cacheReadTokens
-  if (totalGoogleCachedTokens > 0) {
-    totalCacheReadTokens += totalGoogleCachedTokens;
-  }
-
-  if (totalPromptTokens > 0) {
-    result.promptTokens = totalPromptTokens;
-  }
-  const derivedUncachedInputTokens =
-    provider === 'anthropic'
-      ? totalUncachedInputTokens
-      : Math.max(0, totalPromptTokens - totalCacheReadTokens - totalCacheCreationTokens);
-  if (totalPromptTokens > 0) {
-    result.uncachedInputTokens = derivedUncachedInputTokens;
-  }
-  if (totalCompletionTokens > 0) {
-    result.completionTokens = totalCompletionTokens;
-  }
-  if (totalCacheReadTokens > 0) {
-    result.cacheReadTokens = totalCacheReadTokens;
-  }
-  if (totalCacheCreationTokens > 0) {
-    result.cacheCreationTokens = totalCacheCreationTokens;
-  }
-  if (totalCacheCreation5mTokens > 0) {
-    result.cacheCreation5mTokens = totalCacheCreation5mTokens;
-  }
-  if (totalCacheCreation1hTokens > 0) {
-    result.cacheCreation1hTokens = totalCacheCreation1hTokens;
-  }
-  // Use provider-reported reasoning tokens, or estimate from Anthropic thinking blocks
-  if (totalReasoningTokens > 0) {
-    result.reasoningTokens = totalReasoningTokens;
-  } else if (totalThinkingChars > 0) {
-    result.reasoningTokens = Math.ceil(totalThinkingChars / 4);
-  }
-  if (lastUpstreamCost !== undefined) {
-    result.upstreamCost = lastUpstreamCost;
-  }
-
-  // Prefer provider-reported total (Google's includes thinking tokens)
-  if (googleTotalTokenCount > 0) {
-    result.totalTokens = googleTotalTokenCount;
-  } else if (result.promptTokens !== undefined && result.completionTokens !== undefined) {
-    result.totalTokens = result.promptTokens + result.completionTokens;
-  }
-
-  return result;
+  return accumulator.finalize();
 }

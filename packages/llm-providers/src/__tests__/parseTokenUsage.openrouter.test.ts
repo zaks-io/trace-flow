@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseOpenRouterTokens } from '../../../parsers/providers/openrouter';
+import { parseTokenUsage } from '../parseTokenUsage';
 
-describe('parseOpenRouterTokens', () => {
+describe('parseTokenUsage (openrouter)', () => {
   it('should parse full response with cost, cache_write_tokens, cached_tokens', () => {
     const body = JSON.stringify({
       id: 'gen-1768355145-SgNmN4luqmA9SQbSNGfU',
@@ -29,7 +29,7 @@ describe('parseOpenRouterTokens', () => {
       },
     });
 
-    const result = parseOpenRouterTokens(body);
+    const result = parseTokenUsage(body, 'openrouter');
 
     expect(result).toEqual({
       promptTokens: 6497,
@@ -53,7 +53,7 @@ describe('parseOpenRouterTokens', () => {
       },
     });
 
-    const result = parseOpenRouterTokens(body);
+    const result = parseTokenUsage(body, 'openrouter');
 
     expect(result?.upstreamCost).toBe(0.012);
   });
@@ -71,7 +71,7 @@ describe('parseOpenRouterTokens', () => {
       },
     });
 
-    const result = parseOpenRouterTokens(body);
+    const result = parseTokenUsage(body, 'openrouter');
 
     expect(result?.cacheReadTokens).toBe(3000);
     expect(result?.cacheCreationTokens).toBe(2000);
@@ -79,6 +79,6 @@ describe('parseOpenRouterTokens', () => {
 
   it('should return undefined when no token fields found', () => {
     const body = JSON.stringify({ id: 'gen-123', choices: [] });
-    expect(parseOpenRouterTokens(body)).toBeUndefined();
+    expect(parseTokenUsage(body, 'openrouter')).toBeUndefined();
   });
 });

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { parseGoogleTokens, parseGoogleModelFromPath } from '../../../parsers/providers/google';
+import { parseTokenUsage } from '../parseTokenUsage';
+import { parseGoogleModelFromPath } from '../googlePath';
 
-describe('parseGoogleTokens', () => {
+describe('parseTokenUsage (google)', () => {
   it('should parse promptTokenCount / candidatesTokenCount / totalTokenCount', () => {
     const body = JSON.stringify({
       usageMetadata: {
@@ -11,7 +12,7 @@ describe('parseGoogleTokens', () => {
       },
     });
 
-    const result = parseGoogleTokens(body);
+    const result = parseTokenUsage(body, 'google');
 
     expect(result).toEqual({
       promptTokens: 10,
@@ -31,7 +32,7 @@ describe('parseGoogleTokens', () => {
       },
     });
 
-    const result = parseGoogleTokens(body);
+    const result = parseTokenUsage(body, 'google');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -47,7 +48,7 @@ describe('parseGoogleTokens', () => {
       usageMetadata: { promptTokenCount: 42 },
     });
 
-    const result = parseGoogleTokens(body);
+    const result = parseTokenUsage(body, 'google');
 
     expect(result?.promptTokens).toBe(42);
     expect(result?.completionTokens).toBeUndefined();
@@ -63,7 +64,7 @@ describe('parseGoogleTokens', () => {
       },
     });
 
-    const result = parseGoogleTokens(body);
+    const result = parseTokenUsage(body, 'google');
 
     expect(result).toEqual({
       promptTokens: 50,
@@ -76,19 +77,17 @@ describe('parseGoogleTokens', () => {
 
   it('should return undefined when no Google token fields found', () => {
     const body = JSON.stringify({ candidates: [{ content: {} }] });
-    expect(parseGoogleTokens(body)).toBeUndefined();
+    expect(parseTokenUsage(body, 'google')).toBeUndefined();
   });
 
   it('should match last occurrence in multi-chunk SSE body text', () => {
-    // Simulates raw SSE text from a streaming response where candidatesTokenCount
-    // starts at 0 and increases cumulatively across chunks
     const body = [
       `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 0, totalTokenCount: 8 } })}`,
       `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 3, totalTokenCount: 11 } })}`,
       `data: ${JSON.stringify({ usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 7, totalTokenCount: 15 } })}`,
     ].join('\n\n');
 
-    const result = parseGoogleTokens(body);
+    const result = parseTokenUsage(body, 'google');
 
     expect(result).toEqual({
       promptTokens: 8,

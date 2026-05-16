@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveRoute, PROVIDERS } from '../providers';
+import { resolveRoute, PROVIDERS } from '../routing';
 
 describe('Provider Routing', () => {
   describe('resolveRoute', () => {
@@ -80,13 +80,11 @@ describe('Provider Routing', () => {
 
   describe('PROVIDERS config', () => {
     it('should have correct base URLs', () => {
-      /* eslint-disable @typescript-eslint/dot-notation */
-      expect(PROVIDERS['openai']!.baseUrl).toBe('https://api.openai.com');
-      expect(PROVIDERS['anthropic']!.baseUrl).toBe('https://api.anthropic.com');
-      expect(PROVIDERS['openrouter']!.baseUrl).toBe('https://openrouter.ai/api');
-      expect(PROVIDERS['groq']!.baseUrl).toBe('https://api.groq.com/openai');
-      expect(PROVIDERS['google']!.baseUrl).toBe('https://generativelanguage.googleapis.com');
-      /* eslint-enable @typescript-eslint/dot-notation */
+      expect(PROVIDERS.openai.baseUrl).toBe('https://api.openai.com');
+      expect(PROVIDERS.anthropic.baseUrl).toBe('https://api.anthropic.com');
+      expect(PROVIDERS.openrouter.baseUrl).toBe('https://openrouter.ai/api');
+      expect(PROVIDERS.groq.baseUrl).toBe('https://api.groq.com/openai');
+      expect(PROVIDERS.google.baseUrl).toBe('https://generativelanguage.googleapis.com');
     });
   });
 });

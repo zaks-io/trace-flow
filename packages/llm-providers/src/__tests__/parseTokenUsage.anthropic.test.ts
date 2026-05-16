@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseAnthropicTokens } from '../../../parsers/providers/anthropic';
+import { parseTokenUsage } from '../parseTokenUsage';
 
-describe('parseAnthropicTokens', () => {
+describe('parseTokenUsage (anthropic)', () => {
   it('should normalize promptTokens = uncached + cache_read + cache_write', () => {
     const body = JSON.stringify({
       usage: {
@@ -11,10 +11,10 @@ describe('parseAnthropicTokens', () => {
       },
     });
 
-    const result = parseAnthropicTokens(body);
+    const result = parseTokenUsage(body, 'anthropic');
 
     expect(result).toEqual({
-      promptTokens: 3208, // 972 + 2236
+      promptTokens: 3208,
       uncachedInputTokens: 972,
       completionTokens: 150,
       totalTokens: 3358,
@@ -30,7 +30,7 @@ describe('parseAnthropicTokens', () => {
       },
     });
 
-    const result = parseAnthropicTokens(body);
+    const result = parseTokenUsage(body, 'anthropic');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -50,7 +50,7 @@ describe('parseAnthropicTokens', () => {
       },
     });
 
-    const result = parseAnthropicTokens(body);
+    const result = parseTokenUsage(body, 'anthropic');
 
     expect(result).toEqual({
       promptTokens: 600,
@@ -78,10 +78,10 @@ describe('parseAnthropicTokens', () => {
       },
     });
 
-    const result = parseAnthropicTokens(body);
+    const result = parseTokenUsage(body, 'anthropic');
 
     expect(result).toEqual({
-      promptTokens: 3283, // 643 + 2640
+      promptTokens: 3283,
       uncachedInputTokens: 643,
       completionTokens: 43,
       totalTokens: 3326,
@@ -102,7 +102,7 @@ describe('parseAnthropicTokens', () => {
       },
     });
 
-    const result = parseAnthropicTokens(body);
+    const result = parseTokenUsage(body, 'anthropic');
 
     expect(result).toEqual({
       promptTokens: 500,
@@ -116,7 +116,7 @@ describe('parseAnthropicTokens', () => {
 
   it('should return undefined when no token fields found', () => {
     const body = JSON.stringify({ id: 'msg_123', type: 'message' });
-    expect(parseAnthropicTokens(body)).toBeUndefined();
+    expect(parseTokenUsage(body, 'anthropic')).toBeUndefined();
   });
 
   it('should extract ephemeral_5m and ephemeral_1h cache creation breakdown', () => {
@@ -133,7 +133,7 @@ describe('parseAnthropicTokens', () => {
       },
     });
 
-    const result = parseAnthropicTokens(body);
+    const result = parseTokenUsage(body, 'anthropic');
 
     expect(result).toEqual({
       promptTokens: 656,
@@ -161,13 +161,13 @@ describe('parseAnthropicTokens', () => {
       },
     });
 
-    const result = parseAnthropicTokens(body);
+    const result = parseTokenUsage(body, 'anthropic');
 
     expect(result?.cacheCreation5mTokens).toBe(0);
     expect(result?.cacheCreation1hTokens).toBe(0);
   });
 
   it('should return undefined for invalid JSON', () => {
-    expect(parseAnthropicTokens('not json')).toBeUndefined();
+    expect(parseTokenUsage('not json', 'anthropic')).toBeUndefined();
   });
 });

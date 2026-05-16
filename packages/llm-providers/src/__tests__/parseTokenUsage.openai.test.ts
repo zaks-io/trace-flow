@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseOpenAITokens } from '../../../parsers/providers/openai';
+import { parseTokenUsage } from '../parseTokenUsage';
 
-describe('parseOpenAITokens', () => {
+describe('parseTokenUsage (openai)', () => {
   it('should parse basic prompt/completion/total', () => {
     const body = JSON.stringify({
       usage: {
@@ -11,7 +11,7 @@ describe('parseOpenAITokens', () => {
       },
     });
 
-    const result = parseOpenAITokens(body);
+    const result = parseTokenUsage(body, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -33,7 +33,7 @@ describe('parseOpenAITokens', () => {
       },
     });
 
-    const result = parseOpenAITokens(body);
+    const result = parseTokenUsage(body, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -56,7 +56,7 @@ describe('parseOpenAITokens', () => {
       },
     });
 
-    const result = parseOpenAITokens(body);
+    const result = parseTokenUsage(body, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -72,7 +72,7 @@ describe('parseOpenAITokens', () => {
       usage: { prompt_tokens: 100 },
     });
 
-    const result = parseOpenAITokens(body);
+    const result = parseTokenUsage(body, 'openai');
 
     expect(result?.promptTokens).toBe(100);
     expect(result?.completionTokens).toBeUndefined();
@@ -80,7 +80,7 @@ describe('parseOpenAITokens', () => {
 
   it('should return undefined when no token fields found', () => {
     const body = JSON.stringify({ id: 'chatcmpl-123', choices: [] });
-    expect(parseOpenAITokens(body)).toBeUndefined();
+    expect(parseTokenUsage(body, 'openai')).toBeUndefined();
   });
 
   describe('Responses API shape', () => {
@@ -93,7 +93,7 @@ describe('parseOpenAITokens', () => {
         },
       });
 
-      const result = parseOpenAITokens(body);
+      const result = parseTokenUsage(body, 'openai');
 
       expect(result).toEqual({
         promptTokens: 200,
@@ -114,7 +114,7 @@ describe('parseOpenAITokens', () => {
         },
       });
 
-      const result = parseOpenAITokens(body);
+      const result = parseTokenUsage(body, 'openai');
 
       expect(result).toEqual({
         promptTokens: 2006,
@@ -136,7 +136,7 @@ describe('parseOpenAITokens', () => {
         },
       });
 
-      const result = parseOpenAITokens(body);
+      const result = parseTokenUsage(body, 'openai');
 
       expect(result?.reasoningTokens).toBe(350);
       expect(result?.promptTokens).toBe(100);
