@@ -10,6 +10,7 @@ import { FilterDropdown } from '@/components/usage/FilterDropdown';
 import { TIME_RANGES } from '@/components/usage/types';
 import { Input } from '@/components/ui/input';
 import { formatNumber } from '@/lib/format';
+import { sortFilterOptions } from '@/lib/sortFilterOptions';
 import { useOperationsFilters } from './useOperationsFilters';
 import { useOperationsData } from './useOperationsData';
 import { SummaryCards } from './SummaryCards';
@@ -24,7 +25,6 @@ export function OperationsAnalytics({
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
 
-  const filters = useOperationsFilters();
   const {
     timeRange,
     setTimeRange,
@@ -47,36 +47,46 @@ export function OperationsAnalytics({
     activeOperation,
     hasActiveFilters,
     clearFilters,
-    seenProviders,
-    seenModels,
-    seenOperations,
-  } = filters;
+  } = useOperationsFilters();
 
   const {
     operations,
     sortedOperations,
     users,
-    filterOptions,
+    providers,
+    models,
     selectedOperation,
     isInitialLoading,
     isUsersLoading,
     hasError,
   } = useOperationsData({ filterParams, activeOperation, sortKey, sortDesc });
 
-  // Accumulate filter options across queries so dropdowns don't collapse when a filter is applied
-  filterOptions?.providers.forEach((p) => seenProviders.current.add(p));
-  filterOptions?.models.forEach((m) => seenModels.current.add(m));
-  filterOptions?.operations.forEach((o) => seenOperations.current.add(o));
-  operations.forEach((row) => seenOperations.current.add(row.operation));
+  const providerOptions = useMemo(() => {
+    const values = providers.map((p) => p.provider);
+    if (providerFilter) values.push(providerFilter);
+    return sortFilterOptions(values);
+  }, [providers, providerFilter]);
 
-  if (providerFilter) seenProviders.current.add(providerFilter);
-  if (modelFilter) seenModels.current.add(modelFilter);
-  if (operationFilter) seenOperations.current.add(operationFilter);
+  const modelOptions = useMemo(() => {
+    const values = models.map((m) => m.model);
+    if (modelFilter) values.push(modelFilter);
+    return sortFilterOptions(values);
+  }, [models, modelFilter]);
 
-  const providerOptions = Array.from(seenProviders.current);
-  const modelOptions = Array.from(seenModels.current);
-  const operationOptions = Array.from(seenOperations.current);
-  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key), [apiKeys]);
+  const operationOptions = useMemo(() => {
+    const values = operations.map((o) => o.operation);
+    if (operationFilter) values.push(operationFilter);
+    return sortFilterOptions(values);
+  }, [operations, operationFilter]);
+
+  const apiKeyOptions = useMemo(
+    () =>
+      sortFilterOptions(
+        apiKeys.map((k) => k.key),
+        apiKeyMap,
+      ),
+    [apiKeys, apiKeyMap],
+  );
 
   function handleSort(key: typeof sortKey) {
     if (sortKey === key) {
