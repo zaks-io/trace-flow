@@ -1,16 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type TimeRange, TIME_RANGES } from '@/components/usage/types';
+import { type LeaderboardSortKey } from '@/lib/operations';
 import { snapToMinute } from '@/lib/tinybird';
 
-export type LeaderboardSortKey =
-  | 'request_count'
-  | 'total_cost_usd'
-  | 'cost_per_request'
-  | 'cost_per_user'
-  | 'unique_user_count'
-  | 'cache_hit_rate'
-  | 'avg_duration_ms'
-  | 'p95_duration_ms';
+export type { LeaderboardSortKey };
 
 type OperationsFiltersState = {
   timeRange: TimeRange;
