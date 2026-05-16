@@ -21,7 +21,7 @@ export const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
  * rate limit, billing block, payload-too-large, or an invalid route. Otherwise
  * the validated record is everything `forwardToUpstream` needs.
  */
-export type ValidateResult =
+type ValidateResult =
   | { kind: 'reject'; response: Response }
   | { kind: 'accept'; validated: ValidatedRequest };
 

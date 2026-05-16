@@ -3,7 +3,7 @@ import type { EventSourceParser } from 'eventsource-parser';
 import { createResponseCapture } from '../streaming/capture';
 import { createSSEParser } from '../streaming/sse';
 
-export interface AttachedCapture {
+interface AttachedCapture {
   isSSE: boolean;
   sseStreamData: SSEStreamData;
   parser: EventSourceParser | null;

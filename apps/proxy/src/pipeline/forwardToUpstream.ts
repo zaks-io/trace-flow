@@ -3,7 +3,7 @@ import { getCurrentTimestamp } from '@trace-flow/utils';
 import type { ProxyEnv } from '../context';
 import type { ValidatedRequest } from './validateRequest';
 
-export interface ForwardedRequest {
+interface ForwardedRequest {
   targetUrl: string;
   streamToCapture: ReadableStream | null;
   response: Response;
