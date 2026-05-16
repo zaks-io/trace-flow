@@ -1,6 +1,6 @@
 import type { LLMTokenUsage, LLMResponseMetadata } from '@trace-flow/types';
 import type { ResolvedRoute } from '@trace-flow/llm-providers';
-import type { TracingDecision } from './tracing-decision';
+import type { TracingDecision } from './context';
 
 // Analytics Engine slot layout:
 // blobs:   provider, status_code, operation, skip_reason, is_sse, model
