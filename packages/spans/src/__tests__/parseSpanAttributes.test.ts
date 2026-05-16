@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSpanAttributes } from '../index';
+import { parseSpanAttributes } from '../parseSpanAttributes';
 
 describe('parseSpanAttributes', () => {
   it('parses a valid JSON string', () => {

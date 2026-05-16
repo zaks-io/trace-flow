@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { parseSpanAttributes } from '@trace-flow/utils';
+import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
 import {
   BarCard,
   type Segment,
@@ -10,11 +10,7 @@ import {
 } from '@/components/shared/BarCard';
 import { formatModelDisplay } from '@/lib/format';
 
-interface TraceSpan {
-  SpanAttributes: string;
-  Duration: number;
-  Timestamp: number;
-}
+type TraceSpan = Pick<TraceSpanRow, 'SpanAttributes' | 'Duration' | 'Timestamp'>;
 
 interface TokenSummaryCardsProps {
   spans: TraceSpan[];

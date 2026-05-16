@@ -1,7 +1,7 @@
 'use client';
 
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
-import { parseSpanAttributes } from '@trace-flow/utils';
+import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber, formatRelativeTime } from '@/lib/format';
 import { calculateCacheHitRate } from '@/lib/cacheMetrics';
@@ -10,18 +10,20 @@ import { ModelPill } from '@/components/traces/spans-table/ModelPill';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { TraceAlertSummary } from '@/types/alerts';
 
-export interface RequestRow {
+export type RequestRow = Pick<
+  TraceSpanRow,
+  | 'Timestamp'
+  | 'TraceId'
+  | 'SpanId'
+  | 'SpanName'
+  | 'ServiceName'
+  | 'Duration'
+  | 'StatusCode'
+  | 'SpanAttributes'
+> & {
   ReceivedAt: number;
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
-  SpanName: string;
-  ServiceName: string;
-  Duration: number;
-  StatusCode: string;
-  SpanAttributes: string;
   BaggageOperation: string;
-}
+};
 
 declare module '@tanstack/react-table' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

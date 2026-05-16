@@ -1,5 +1,5 @@
 {
-  "name": "@trace-flow/utils",
+  "name": "@trace-flow/spans",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -14,9 +14,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@trace-flow/spans": "workspace:*",
-    "@trace-flow/types": "workspace:*",
-    "eventsource-parser": "^3.0.8"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.4",

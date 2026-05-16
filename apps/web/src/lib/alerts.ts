@@ -1,4 +1,4 @@
-import { parseSpanAttributes } from '@trace-flow/utils';
+import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
 import type { RequestRow } from '@/components/requests/data-table/columns';
 import type {
   Alert,
@@ -9,18 +9,19 @@ import type {
   TraceAlertSummary,
 } from '@/types/alerts';
 
-interface TraceSpanInput {
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
-  SpanName: string;
-  ServiceName: string;
-  Duration: number;
-  StatusCode: string;
-  SpanAttributes: string;
-  ReceivedAt?: number;
-  BaggageOperation?: string;
-}
+type TraceSpanInput = Pick<
+  TraceSpanRow,
+  | 'Timestamp'
+  | 'TraceId'
+  | 'SpanId'
+  | 'SpanName'
+  | 'ServiceName'
+  | 'Duration'
+  | 'StatusCode'
+  | 'SpanAttributes'
+  | 'ReceivedAt'
+  | 'BaggageOperation'
+>;
 
 export function traceSpanToRequestRow(span: TraceSpanInput): RequestRow {
   return {
