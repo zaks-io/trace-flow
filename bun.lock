@@ -101,6 +101,7 @@
         "@tanstack/react-query-persist-client": "^5.100.9",
         "@tanstack/react-table": "^8.21.3",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "class-variance-authority": "^0.7.1",
@@ -146,6 +147,7 @@
         "@react-email/components": "^1.0.12",
         "@trace-flow/emails": "workspace:*",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "convex": "^1.37.0",
@@ -207,6 +209,15 @@
         "@types/node": "^22",
         "@types/react": "^19.2.14",
         "typescript": "^5",
+      },
+    },
+    "packages/tinybird-client": {
+      "name": "@trace-flow/tinybird-client",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@vitest/coverage-v8": "^4.1.4",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.4",
       },
     },
     "packages/types": {
@@ -1242,6 +1253,8 @@
     "@trace-flow/proxy-consumer": ["@trace-flow/proxy-consumer@workspace:apps/proxy-consumer"],
 
     "@trace-flow/sdk-tests": ["@trace-flow/sdk-tests@workspace:packages/sdk-tests"],
+
+    "@trace-flow/tinybird-client": ["@trace-flow/tinybird-client@workspace:packages/tinybird-client"],
 
     "@trace-flow/types": ["@trace-flow/types@workspace:packages/types"],
 

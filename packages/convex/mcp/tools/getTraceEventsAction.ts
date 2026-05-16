@@ -2,13 +2,12 @@ import type { ToolCallResult } from '../protocol';
 import {
   jsonReplacer,
   stripNulls,
-  queryTinybirdPipe,
   noApiKeysError,
   invalidTraceIdError,
-  generateTinybirdToken,
   TRACE_ID_PATTERN,
   splitPatterns,
 } from './shared';
+import { generateMcpToken, queryPipe, type TinybirdAccessCtx } from './tinybirdAccess';
 
 const DEFAULT_EVENT_LIMIT = 20;
 const MAX_EVENT_LIMIT = 100;
@@ -88,6 +87,7 @@ interface GetTraceEventsParams {
 }
 
 export async function getTraceEvents(
+  ctx: TinybirdAccessCtx,
   apiKeys: string[],
   params: GetTraceEventsParams,
   retentionDays: number,
@@ -100,7 +100,8 @@ export async function getTraceEvents(
     return invalidTraceIdError();
   }
 
-  const token = await generateTinybirdToken(
+  const token = await generateMcpToken(
+    ctx,
     [{ type: 'PIPES:READ', resource: 'mcp_trace_events' }],
     apiKeys,
     retentionDays,
@@ -133,7 +134,7 @@ export async function getTraceEvents(
     pipeParams.order = params.order;
   }
 
-  const data = await queryTinybirdPipe(token, 'mcp_trace_events', pipeParams);
+  const data = await queryPipe(token, 'mcp_trace_events', pipeParams);
 
   const totalCount = data.length > 0 ? (data[0] as unknown as EventRow).total_count : 0;
   const hasMore = totalCount > offset + data.length;

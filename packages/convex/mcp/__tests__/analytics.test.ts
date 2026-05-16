@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getUsageSummary, listModelUsage, listOperationUsage } from '../tools/analytics';
+import type { TinybirdAccessCtx } from '../tools/tinybirdAccess';
+
+const mockCtx = {
+  runAction: vi.fn().mockResolvedValue('mock-jwt-token'),
+} as unknown as TinybirdAccessCtx;
 
 describe('analytics MCP helpers', () => {
   const originalFetch = globalThis.fetch;
@@ -48,7 +53,12 @@ describe('analytics MCP helpers', () => {
         }),
     });
 
-    const result = await getUsageSummary(['raw-key'], { hours: 24, operation: 'heartbeat' }, 7);
+    const result = await getUsageSummary(
+      mockCtx,
+      ['raw-key'],
+      { hours: 24, operation: 'heartbeat' },
+      7,
+    );
     const payload = JSON.parse(result.content[0]!.text!);
 
     expect(payload.window.hours).toBe(24);
@@ -96,6 +106,7 @@ describe('analytics MCP helpers', () => {
     });
 
     const result = await listOperationUsage(
+      mockCtx,
       ['raw-key'],
       {
         hours: 48,
@@ -151,6 +162,7 @@ describe('analytics MCP helpers', () => {
     });
 
     const result = await listModelUsage(
+      mockCtx,
       ['raw-key'],
       {
         hours: 72,

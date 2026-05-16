@@ -8,16 +8,13 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { internal } from '../_generated/api';
 import { CostAlertEmail } from '@trace-flow/emails';
 import type { Id } from '../_generated/dataModel';
+import { fetchPipe as fetchPipeShared } from '@trace-flow/tinybird-client';
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? 'Trace Flow <noreply@updates.trace-flow.dev>';
 const APP_URL = process.env.APP_URL ?? process.env.APP_BASE_URL ?? 'http://localhost:3000';
 const TINYBIRD_API_URL = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
 const TINYBIRD_ADMIN_TOKEN = process.env.TINYBIRD_ADMIN_TOKEN;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-
-interface TinybirdResponse<T> {
-  data: T[];
-}
 
 interface UsageSummaryRow {
   total_cost_usd: number;
@@ -55,33 +52,17 @@ type EventType = 'triggered' | 'recovered' | 'test';
 async function fetchPipe<T>(
   pipe: string,
   params: Record<string, string | number | undefined>,
-): Promise<TinybirdResponse<T>> {
+): Promise<T[]> {
   if (!TINYBIRD_ADMIN_TOKEN) {
     throw new Error('TINYBIRD_ADMIN_TOKEN environment variable is not set');
   }
 
-  const url = new URL(`${TINYBIRD_API_URL}/v0/pipes/${pipe}.json`);
-
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${TINYBIRD_ADMIN_TOKEN}`,
-    },
+  return fetchPipeShared<T>({
+    baseUrl: TINYBIRD_API_URL,
+    token: TINYBIRD_ADMIN_TOKEN,
+    pipe,
+    params,
   });
-
-  if (!response.ok) {
-    const message = (await response.text()).slice(0, 500);
-    throw new Error(`Tinybird pipe ${pipe} failed: ${response.status} ${message}`);
-  }
-
-  const result: TinybirdResponse<T> = await response.json();
-  return result;
 }
 
 export function buildApiKeyParam(selectedKeys: string[]): string {
@@ -139,12 +120,12 @@ async function evaluateAlert(
 
   if (condition.type === 'absolute_spend_threshold') {
     const window = getAbsoluteWindow(condition);
-    const response = await fetchPipe<UsageSummaryRow>('llm_usage_summary', {
+    const rows = await fetchPipe<UsageSummaryRow>('llm_usage_summary', {
       api_keys: apiKeys,
       start_time_ns: nsFromMs(window.startMs),
       end_time_ns: nsFromMs(window.endMs),
     });
-    const totalCost = Number(response.data[0]?.total_cost_usd ?? 0);
+    const totalCost = Number(rows[0]?.total_cost_usd ?? 0);
     return {
       triggered: totalCost >= condition.thresholdUsd,
       metricValue: totalCost,
@@ -156,8 +137,8 @@ async function evaluateAlert(
   }
 
   if (condition.type === 'projected_monthly_over') {
-    const response = await fetchPipe<ForecastRow>('llm_cost_forecast', { api_keys: apiKeys });
-    const forecast = response.data[0];
+    const rows = await fetchPipe<ForecastRow>('llm_cost_forecast', { api_keys: apiKeys });
+    const forecast = rows[0];
     const projected = Number(forecast?.projected_monthly_cost ?? 0);
     const monthToDate = Number(forecast?.month_to_date_cost ?? 0);
     const insufficientData = Number(forecast?.insufficient_data ?? 1) === 1;
@@ -180,12 +161,12 @@ async function evaluateAlert(
     };
   }
 
-  const response = await fetchPipe<HourlySpikeRow>('llm_cost_hourly_spike', {
+  const rows = await fetchPipe<HourlySpikeRow>('llm_cost_hourly_spike', {
     api_keys: apiKeys,
     baseline_hours: condition.baselineHours,
     use_previous_hour: 1,
   });
-  const spike = response.data[0];
+  const spike = rows[0];
   const hourCost = Number(spike?.current_hour_cost_usd ?? 0);
   const baseline = Number(spike?.baseline_hourly_cost_usd ?? 0);
   const increase = Number(spike?.absolute_increase_usd ?? 0);

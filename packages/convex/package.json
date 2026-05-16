@@ -15,6 +15,7 @@
     "@react-email/components": "^1.0.12",
     "@trace-flow/emails": "workspace:*",
     "@trace-flow/logging": "workspace:*",
+    "@trace-flow/tinybird-client": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*",
     "convex": "^1.37.0",

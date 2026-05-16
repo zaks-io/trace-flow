@@ -1,6 +1,7 @@
 import { action, internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { SignJWT } from 'jose';
+import { runAdminSql, TinybirdQueryError } from '@trace-flow/tinybird-client';
 import { requireAuthenticated } from '../auth/auth';
 import { api, internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
@@ -211,24 +212,13 @@ export const deleteOrgTraces = internalAction({
     for (const datasource of datasources) {
       const sql = `ALTER TABLE ${datasource} DELETE WHERE ApiKey IN (${apiKeysInClause})`;
 
-      const response = await fetch(`${tinybirdApiUrl}/v0/sql`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-          'Content-Type': 'text/plain',
-        },
-        body: sql,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        results[datasource] = {
-          success: false,
-          error: `${response.status}: ${errorText}`,
-        };
-        console.error(`Failed to delete traces for ${datasource}:`, errorText);
-      } else {
+      try {
+        await runAdminSql({ baseUrl: tinybirdApiUrl, adminToken, sql });
         results[datasource] = { success: true };
+      } catch (err) {
+        const message = err instanceof TinybirdQueryError ? err.message : (err as Error).message;
+        results[datasource] = { success: false, error: message };
+        console.error(`Failed to delete traces for ${datasource}:`, message);
       }
     }
 
@@ -284,9 +274,9 @@ export const extendRetention = internalAction({
     const results: Record<string, { success: boolean; error?: string }> = {};
 
     for (const datasource of datasources) {
-      // Use ALTER TABLE UPDATE to extend retention for all traces with these API keys
-      // Only update rows where RetentionExpiresAt > now (not yet expired)
-      // and TierAtIngestion is 'hobby' or 'unknown' (not already pro)
+      // ALTER TABLE UPDATE extends retention for all traces with these API keys.
+      // Only rows where RetentionExpiresAt > now (not yet expired) and
+      // TierAtIngestion is 'hobby' or '' (not already pro).
       const sql = `
         ALTER TABLE ${datasource}
         UPDATE
@@ -297,24 +287,13 @@ export const extendRetention = internalAction({
           AND TierAtIngestion IN ('hobby', '')
       `;
 
-      const response = await fetch(`${tinybirdApiUrl}/v0/sql`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-          'Content-Type': 'text/plain',
-        },
-        body: sql,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        results[datasource] = {
-          success: false,
-          error: `${response.status}: ${errorText}`,
-        };
-        console.error(`Failed to extend retention for ${datasource}:`, errorText);
-      } else {
+      try {
+        await runAdminSql({ baseUrl: tinybirdApiUrl, adminToken, sql });
         results[datasource] = { success: true };
+      } catch (err) {
+        const message = err instanceof TinybirdQueryError ? err.message : (err as Error).message;
+        results[datasource] = { success: false, error: message };
+        console.error(`Failed to extend retention for ${datasource}:`, message);
       }
     }
 
