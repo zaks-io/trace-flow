@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { type TimeRange, TIME_RANGES } from '@/components/usage/types';
 import { type LeaderboardSortKey } from '@/lib/operations';
 import { snapToMinute } from '@/lib/tinybird';
@@ -28,9 +28,6 @@ type OperationsFiltersState = {
   activeOperation: string;
   hasActiveFilters: boolean;
   clearFilters: () => void;
-  seenProviders: React.MutableRefObject<Set<string>>;
-  seenModels: React.MutableRefObject<Set<string>>;
-  seenOperations: React.MutableRefObject<Set<string>>;
 };
 
 export function useOperationsFilters(): OperationsFiltersState {
@@ -85,18 +82,6 @@ export function useOperationsFilters(): OperationsFiltersState {
     debouncedUserId,
   ]);
 
-  const seenProviders = useRef(new Set<string>());
-  const seenModels = useRef(new Set<string>());
-  const seenOperations = useRef(new Set<string>());
-  const prevTimeRange = useRef(timeRange);
-
-  if (prevTimeRange.current !== timeRange) {
-    seenProviders.current.clear();
-    seenModels.current.clear();
-    seenOperations.current.clear();
-    prevTimeRange.current = timeRange;
-  }
-
   function clearFilters() {
     setProviderFilter('');
     setModelFilter('');
@@ -138,8 +123,5 @@ export function useOperationsFilters(): OperationsFiltersState {
     activeOperation,
     hasActiveFilters,
     clearFilters,
-    seenProviders,
-    seenModels,
-    seenOperations,
   };
 }

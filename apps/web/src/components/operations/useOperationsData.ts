@@ -4,7 +4,8 @@ import {
   type TinybirdResponse,
   type OperationLeaderboardRow,
   type OperationUserRow,
-  type OperationsFilterOptionsRow,
+  type ModelRow,
+  type ProviderRow,
 } from '@/components/usage/types';
 import { getAggregateCacheHitRate, getLeaderboardSortValue } from '@/lib/operations';
 import type { LeaderboardSortKey } from './useOperationsFilters';
@@ -33,18 +34,26 @@ export function useOperationsData({
     enabled: activeOperation !== '',
   });
 
-  const filterOptionsQuery = useTinybirdQuery<TinybirdResponse<OperationsFilterOptionsRow>>({
-    pipe: 'operations_filter_options',
+  const providersQuery = useTinybirdQuery<TinybirdResponse<ProviderRow>>({
+    pipe: 'llm_usage_by_provider',
+    params: filterParams,
+  });
+
+  const modelsQuery = useTinybirdQuery<TinybirdResponse<ModelRow>>({
+    pipe: 'llm_usage_by_model',
     params: filterParams,
   });
 
   const operations = useMemo(() => operationsQuery.data?.data ?? [], [operationsQuery.data]);
   const users = usersQuery.data?.data ?? [];
-  const filterOptions = filterOptionsQuery.data?.data?.[0];
+  const providers = useMemo(() => providersQuery.data?.data ?? [], [providersQuery.data]);
+  const models = useMemo(() => modelsQuery.data?.data ?? [], [modelsQuery.data]);
 
-  const isInitialLoading = operationsQuery.isLoading || filterOptionsQuery.isLoading;
+  const isInitialLoading =
+    operationsQuery.isLoading || providersQuery.isLoading || modelsQuery.isLoading;
   const isUsersLoading = usersQuery.isLoading;
-  const hasError = operationsQuery.error ?? usersQuery.error ?? filterOptionsQuery.error;
+  const hasError =
+    operationsQuery.error ?? usersQuery.error ?? providersQuery.error ?? modelsQuery.error;
 
   const selectedOperation = operations.find((row) => row.operation === activeOperation) ?? null;
 
@@ -65,7 +74,8 @@ export function useOperationsData({
     operations,
     sortedOperations,
     users,
-    filterOptions,
+    providers,
+    models,
     selectedOperation,
     isInitialLoading,
     isUsersLoading,
