@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { Users } from 'lucide-react';
 import {
   Sheet,
@@ -29,9 +30,17 @@ export function OperationDetailPanel({
   isOpen,
   onClose,
 }: OperationDetailPanelProps) {
+  const displayNameRef = useRef(operationName);
+  const displayOperationRef = useRef(operation);
+  if (operationName) displayNameRef.current = operationName;
+  if (operation) displayOperationRef.current = operation;
+
   const handleOpenChange = (open: boolean) => {
     if (!open) onClose();
   };
+
+  const displayName = displayNameRef.current;
+  const displayOperation = displayOperationRef.current;
 
   return (
     <Sheet open={isOpen} onOpenChange={handleOpenChange}>
@@ -44,14 +53,14 @@ export function OperationDetailPanel({
           <SheetDescription className="text-xs text-muted-foreground">
             Per-user metrics for{' '}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
-              {operationName}
+              {displayName}
             </code>
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto">
           <div className="space-y-6 p-6">
-            {operation && <SummaryCards operation={operation} />}
+            {displayOperation && <SummaryCards operation={displayOperation} />}
 
             <div>
               <div className="mb-3 flex items-center gap-2">
