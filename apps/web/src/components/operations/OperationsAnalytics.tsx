@@ -73,10 +73,10 @@ export function OperationsAnalytics({
   if (modelFilter) seenModels.current.add(modelFilter);
   if (operationFilter) seenOperations.current.add(operationFilter);
 
-  const providerOptions = Array.from(seenProviders.current).sort();
-  const modelOptions = Array.from(seenModels.current).sort();
-  const operationOptions = Array.from(seenOperations.current).sort();
-  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key).sort(), [apiKeys]);
+  const providerOptions = Array.from(seenProviders.current);
+  const modelOptions = Array.from(seenModels.current);
+  const operationOptions = Array.from(seenOperations.current);
+  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key), [apiKeys]);
 
   function handleSort(key: typeof sortKey) {
     if (sortKey === key) {

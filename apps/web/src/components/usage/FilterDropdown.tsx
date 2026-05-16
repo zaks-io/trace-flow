@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { sortFilterOptions } from '@/lib/sortFilterOptions';
 
 export function FilterDropdown({
   label,
@@ -18,6 +19,7 @@ export function FilterDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const sortedOptions = useMemo(() => sortFilterOptions(options, labelMap), [options, labelMap]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -49,7 +51,7 @@ export function FilterDropdown({
           >
             All {label}s
           </button>
-          {options.map((opt) => (
+          {sortedOptions.map((opt) => (
             <button
               key={opt}
               onClick={() => {
