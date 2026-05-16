@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { Database, Layers, Users } from 'lucide-react';
+import { Layers } from 'lucide-react';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { FilterDropdown } from '@/components/usage/FilterDropdown';
@@ -13,9 +13,8 @@ import { formatNumber } from '@/lib/format';
 import { sortFilterOptions } from '@/lib/sortFilterOptions';
 import { useOperationsFilters } from './useOperationsFilters';
 import { useOperationsData } from './useOperationsData';
-import { SummaryCards } from './SummaryCards';
 import { LeaderboardTable } from './LeaderboardTable';
-import { UsersTable } from './UsersTable';
+import { OperationDetailPanel } from './OperationDetailPanel';
 
 export function OperationsAnalytics({
   preloadedApiKeys,
@@ -186,77 +185,40 @@ export function OperationsAnalytics({
           Loading operations analytics...
         </div>
       ) : (
-        <div className="space-y-6">
-          {selectedOperation && <SummaryCards operation={selectedOperation} />}
-
-          <div className="rounded-xl bg-card/40 p-6">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <h2 className="text-base font-medium text-foreground">Operations</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Click a row to drill into user-level breakdown.
-                  </p>
-                </div>
-              </div>
-              <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground">
-                {formatNumber(operations.length)} ops
-              </span>
-            </div>
-            <LeaderboardTable
-              data={sortedOperations}
-              selectedOperation={activeOperation}
-              onSelectOperation={setSelectedOperationName}
-              sortKey={sortKey}
-              sortDesc={sortDesc}
-              onSort={handleSort}
-            />
-          </div>
-
-          <div className="rounded-xl bg-card/40 p-6">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <h2 className="text-base font-medium text-foreground">User breakdown</h2>
-                  {activeOperation ? (
-                    <p className="text-xs text-muted-foreground">
-                      Top users for{' '}
-                      <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-                        {activeOperation}
-                      </code>
-                    </p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Select an operation above to see per-user metrics.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-            {activeOperation ? (
-              isUsersLoading ? (
-                <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  Loading user breakdown...
-                </div>
-              ) : (
-                <UsersTable data={users} />
-              )
-            ) : (
-              <div className="flex flex-col items-center gap-2 py-12 text-center">
-                <Database className="h-8 w-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">
-                  Choose an operation from the table above to inspect{' '}
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs">baggage.user_id</code>{' '}
-                  breakdowns.
+        <div className="rounded-xl bg-card/40 p-6">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <h2 className="text-base font-medium text-foreground">Operations</h2>
+                <p className="text-xs text-muted-foreground">
+                  Click a row to view per-user breakdown.
                 </p>
               </div>
-            )}
+            </div>
+            <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground">
+              {formatNumber(operations.length)} ops
+            </span>
           </div>
+          <LeaderboardTable
+            data={sortedOperations}
+            selectedOperation={activeOperation}
+            onSelectOperation={setSelectedOperationName}
+            sortKey={sortKey}
+            sortDesc={sortDesc}
+            onSort={handleSort}
+          />
         </div>
       )}
+
+      <OperationDetailPanel
+        operation={selectedOperation}
+        operationName={activeOperation}
+        users={users}
+        isUsersLoading={isUsersLoading}
+        isOpen={!!activeOperation}
+        onClose={() => setSelectedOperationName('')}
+      />
     </div>
   );
 }
