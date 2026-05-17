@@ -12,7 +12,7 @@
  * Surfaces (does not auto-fix) parser bugs.
  */
 import type { SSEStreamData, LLMTokenUsage, LLMResponseMetadata } from '@trace-flow/types';
-import { parseOpenAITokens } from '../../../apps/proxy/src/parsers/providers/openai';
+import { parseTokenUsage } from '@trace-flow/llm-providers';
 import { createSSEParser, aggregateSSETokens } from '../../../apps/proxy/src/streaming/sse';
 import { extractMetadataFromResponseBody } from '../../../apps/proxy/src/parsers/metadata-regex';
 import { parseOpenAIStyleRequestBody } from '../../../apps/proxy/src/parsers/request-body';
@@ -271,7 +271,7 @@ async function testChatNonStreaming(apiKey: string): Promise<boolean> {
   };
   console.log(`    OpenAI reported usage: ${JSON.stringify(parsedRes.usage)}`);
 
-  const parsed = parseOpenAITokens(body);
+  const parsed = parseTokenUsage(body, 'openai');
   console.log(`    parser tokens: ${JSON.stringify(parsed)}`);
 
   const metadata = extractMetadataFromResponseBody(body);
@@ -396,7 +396,7 @@ async function testResponsesNonStreaming(apiKey: string): Promise<boolean> {
   console.log(`    OpenAI reported usage: ${JSON.stringify(parsedRes.usage)}`);
   console.log(`    OpenAI status: ${parsedRes.status}, object: ${parsedRes.object}`);
 
-  const parsed = parseOpenAITokens(body);
+  const parsed = parseTokenUsage(body, 'openai');
   console.log(`    parser tokens: ${JSON.stringify(parsed)}`);
 
   const metadata = extractMetadataFromResponseBody(body);
@@ -530,7 +530,7 @@ async function testChatToolCalls(apiKey: string): Promise<boolean> {
   const toolCall = parsedRes.choices?.[0]?.message?.tool_calls?.[0];
   console.log(`    upstream tool_call: ${JSON.stringify(toolCall)}`);
 
-  const parsed = parseOpenAITokens(body);
+  const parsed = parseTokenUsage(body, 'openai');
   const metadata = extractMetadataFromResponseBody(body);
   console.log(`    parser tokens: ${JSON.stringify(parsed)}`);
   console.log(`    parser metadata.finishReason: ${metadata.finishReason}`);

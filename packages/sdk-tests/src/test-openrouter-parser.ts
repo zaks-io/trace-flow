@@ -8,7 +8,7 @@
  * to rule out parser drift against current OpenRouter response shapes.
  */
 import type { SSEStreamData } from '@trace-flow/types';
-import { parseOpenRouterTokens } from '../../../apps/proxy/src/parsers/providers/openrouter';
+import { parseTokenUsage } from '@trace-flow/llm-providers';
 import { createSSEParser, aggregateSSETokens } from '../../../apps/proxy/src/streaming/sse';
 import { extractMetadataFromResponseBody } from '../../../apps/proxy/src/parsers/metadata-regex';
 import { requireEnv, log, success, error } from './config';
@@ -27,7 +27,7 @@ function check(label: string, ok: boolean, detail: string): void {
 }
 
 function assertParsed(
-  parsed: ReturnType<typeof parseOpenRouterTokens>,
+  parsed: ReturnType<typeof parseTokenUsage>,
   source: 'body' | 'sse',
 ): CheckResult {
   const details: string[] = [];
@@ -72,7 +72,7 @@ interface OpenRouterUsage {
 }
 
 function compareToReportedUsage(
-  parsedTokens: ReturnType<typeof parseOpenRouterTokens>,
+  parsedTokens: ReturnType<typeof parseTokenUsage>,
   reported: OpenRouterUsage | undefined,
 ): boolean {
   if (!parsedTokens || !reported) return false;
@@ -135,7 +135,7 @@ async function testNonStreamingParse(apiKey: string): Promise<boolean> {
   const reportedUsage = (JSON.parse(body) as { usage?: OpenRouterUsage }).usage;
   console.log(`    OpenRouter reported usage: ${JSON.stringify(reportedUsage)}`);
 
-  const parsed = parseOpenRouterTokens(body);
+  const parsed = parseTokenUsage(body, 'openrouter');
   console.log(`    parser result: ${JSON.stringify(parsed)}`);
 
   const metadata = extractMetadataFromResponseBody(body);

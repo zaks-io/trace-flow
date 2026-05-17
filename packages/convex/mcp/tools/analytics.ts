@@ -1,12 +1,6 @@
 import type { ToolCallResult } from '../protocol';
-import {
-  buildTimeRangeNs,
-  generateTinybirdToken,
-  jsonReplacer,
-  noApiKeysError,
-  queryTinybirdPipe,
-  stripNulls,
-} from './shared';
+import { buildTimeRangeNs, jsonReplacer, noApiKeysError, stripNulls } from './shared';
+import { generateMcpToken, queryPipe, type TinybirdAccessCtx } from './tinybirdAccess';
 
 interface AnalyticsParams {
   hours?: number;
@@ -110,6 +104,7 @@ function buildPipeParams(params: AnalyticsParams) {
 }
 
 export async function getUsageSummary(
+  ctx: TinybirdAccessCtx,
   apiKeys: string[],
   params: AnalyticsParams,
   retentionDays: number,
@@ -118,13 +113,14 @@ export async function getUsageSummary(
     return noApiKeysError();
   }
 
-  const token = await generateTinybirdToken(
+  const token = await generateMcpToken(
+    ctx,
     [{ type: 'PIPES:READ', resource: 'llm_usage_summary' }],
     apiKeys,
     retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
-  const data = await queryTinybirdPipe(token, 'llm_usage_summary', pipeParams);
+  const data = await queryPipe(token, 'llm_usage_summary', pipeParams);
   const row = data[0] as unknown as UsageSummaryRow | undefined;
 
   const result = {
@@ -147,6 +143,7 @@ export async function getUsageSummary(
 }
 
 export async function listOperationUsage(
+  ctx: TinybirdAccessCtx,
   apiKeys: string[],
   params: AnalyticsParams,
   retentionDays: number,
@@ -155,7 +152,8 @@ export async function listOperationUsage(
     return noApiKeysError();
   }
 
-  const token = await generateTinybirdToken(
+  const token = await generateMcpToken(
+    ctx,
     [{ type: 'PIPES:READ', resource: 'operations_leaderboard' }],
     apiKeys,
     retentionDays,
@@ -163,7 +161,7 @@ export async function listOperationUsage(
   const { hours, pipeParams } = buildPipeParams(params);
   pipeParams.limit = Math.min(params.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT);
 
-  const data = await queryTinybirdPipe(token, 'operations_leaderboard', pipeParams);
+  const data = await queryPipe(token, 'operations_leaderboard', pipeParams);
   const rows = data as unknown as OperationUsageRow[];
 
   const result = {
@@ -187,6 +185,7 @@ export async function listOperationUsage(
 }
 
 export async function listModelUsage(
+  ctx: TinybirdAccessCtx,
   apiKeys: string[],
   params: AnalyticsParams,
   retentionDays: number,
@@ -195,14 +194,15 @@ export async function listModelUsage(
     return noApiKeysError();
   }
 
-  const token = await generateTinybirdToken(
+  const token = await generateMcpToken(
+    ctx,
     [{ type: 'PIPES:READ', resource: 'llm_usage_by_model' }],
     apiKeys,
     retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
   pipeParams.limit = Math.min(params.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT);
-  const data = await queryTinybirdPipe(token, 'llm_usage_by_model', pipeParams);
+  const data = await queryPipe(token, 'llm_usage_by_model', pipeParams);
   const rows = data as unknown as ModelUsageRow[];
 
   const result = {

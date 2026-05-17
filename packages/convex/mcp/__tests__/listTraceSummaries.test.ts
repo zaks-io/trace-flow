@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listTraceSummaries } from '../tools/listTraceSummaries';
+import type { TinybirdAccessCtx } from '../tools/tinybirdAccess';
+
+const mockCtx = {
+  runAction: vi.fn().mockResolvedValue('mock-jwt-token'),
+} as unknown as TinybirdAccessCtx;
 
 describe('listTraceSummaries', () => {
   const originalFetch = globalThis.fetch;
@@ -43,6 +48,7 @@ describe('listTraceSummaries', () => {
     });
 
     const result = await listTraceSummaries(
+      mockCtx,
       ['raw-key'],
       {
         limit: 1,
@@ -87,6 +93,7 @@ describe('listTraceSummaries', () => {
     });
 
     await listTraceSummaries(
+      mockCtx,
       ['raw-key'],
       {
         operation: 'key-art',

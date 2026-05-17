@@ -2,14 +2,13 @@ import type { ToolCallResult } from '../protocol';
 import {
   jsonReplacer,
   stripNulls,
-  queryTinybirdPipe,
   noApiKeysError,
-  generateTinybirdToken,
   buildTimeRangeNs,
   DEFAULT_LIMIT,
   MAX_LIMIT,
   DEFAULT_HOURS,
 } from './shared';
+import { generateMcpToken, queryPipe, type TinybirdAccessCtx } from './tinybirdAccess';
 
 export interface TraceRow {
   trace_id: string;
@@ -66,6 +65,7 @@ interface ListTracesParams {
 }
 
 export async function listTraces(
+  ctx: TinybirdAccessCtx,
   apiKeys: string[],
   params: ListTracesParams,
   retentionDays: number,
@@ -74,7 +74,8 @@ export async function listTraces(
     return noApiKeysError();
   }
 
-  const token = await generateTinybirdToken(
+  const token = await generateMcpToken(
+    ctx,
     [{ type: 'PIPES:READ', resource: 'mcp_traces_list' }],
     apiKeys,
     retentionDays,
@@ -96,7 +97,7 @@ export async function listTraces(
   if (params.sort_by) pipeParams.sort_by = params.sort_by;
   if (params.order) pipeParams.order = params.order;
 
-  const data = await queryTinybirdPipe(token, 'mcp_traces_list', pipeParams);
+  const data = await queryPipe(token, 'mcp_traces_list', pipeParams);
 
   const totalCount = data.length > 0 ? (data[0] as unknown as TraceRow).total_count : 0;
   const hasMore = totalCount > offset + data.length;

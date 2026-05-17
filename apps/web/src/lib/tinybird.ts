@@ -1,9 +1,9 @@
-class TinybirdAuthError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TinybirdAuthError';
-  }
-}
+import {
+  fetchPipe as fetchPipeCore,
+  type FetchPipeOptions,
+  type PipeParam,
+  TinybirdAuthError,
+} from '@trace-flow/tinybird-client';
 
 interface TokenEntry {
   token: string;
@@ -22,9 +22,15 @@ type GenerateTokenFn = (args: {
 
 interface FetchTinybirdPipeOptions<T> {
   pipe: string;
-  params?: Record<string, string | number | boolean | undefined>;
+  params?: Record<string, PipeParam>;
   ttl?: number;
+  /**
+   * Receives the full Tinybird response wrapper (`{ data: rows }`) for backward
+   * compatibility with existing call sites. Phase 2 of the spans deepening will
+   * flip this to receive `rows` directly.
+   */
   transform?: (data: unknown) => T;
+  schema?: FetchPipeOptions<unknown>['schema'];
   generateToken: GenerateTokenFn;
 }
 
@@ -59,55 +65,38 @@ export function clearTokenCache() {
   tokenCache.clear();
 }
 
-async function fetchWithToken<T>(
-  token: string,
-  pipe: string,
-  params?: Record<string, string | number | boolean | undefined>,
-  transform?: (data: unknown) => T,
-): Promise<T> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
-  const url = new URL(`${apiUrl}/v0/pipes/${pipe}.json`);
+function baseUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+}
 
-  if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value));
-      }
-    }
-  }
-
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${token}` },
+async function fetchOnce<T>(token: string, opts: FetchTinybirdPipeOptions<T>): Promise<T> {
+  const rows = await fetchPipeCore({
+    baseUrl: baseUrl(),
+    token,
+    pipe: opts.pipe,
+    params: opts.params,
+    retry: true,
+    schema: opts.schema,
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    const message = `Tinybird pipe query failed: ${response.status} - ${errorText}`;
-    if (response.status === 403) {
-      throw new TinybirdAuthError(message);
-    }
-    throw new Error(message);
+  const wrapped = { data: rows };
+  if (opts.transform) {
+    return opts.transform(wrapped);
   }
-
-  const result = await response.json();
-  return transform ? transform(result) : result;
+  return wrapped as unknown as T;
 }
 
 export async function fetchTinybirdPipe<T = unknown>(
   opts: FetchTinybirdPipeOptions<T>,
 ): Promise<T> {
-  const { pipe, params, ttl, transform, generateToken } = opts;
-
   try {
-    const token = await getToken(pipe, generateToken, ttl);
-    return await fetchWithToken<T>(token, pipe, params, transform);
+    const token = await getToken(opts.pipe, opts.generateToken, opts.ttl);
+    return await fetchOnce<T>(token, opts);
   } catch (err) {
     if (err instanceof TinybirdAuthError) {
       // Evict stale token and retry once
-      evictToken(pipe);
-      const freshToken = await getToken(pipe, generateToken, ttl);
-      return await fetchWithToken<T>(freshToken, pipe, params, transform);
+      evictToken(opts.pipe);
+      const freshToken = await getToken(opts.pipe, opts.generateToken, opts.ttl);
+      return await fetchOnce<T>(freshToken, opts);
     }
     throw err;
   }

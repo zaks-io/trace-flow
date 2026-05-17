@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef } from 'react';
-import { parseSpanAttributes } from '@trace-flow/utils';
+import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
 import { formatDuration as formatDurationMs, formatNumber, formatCurrency } from '@/lib/format';
 import {
   Bot,
@@ -22,17 +22,19 @@ import {
 } from 'lucide-react';
 import type { TraceAlertSummary, AlertSeverity } from '@/types/alerts';
 
-interface TraceSpan {
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
+type TraceSpan = Pick<
+  TraceSpanRow,
+  | 'Timestamp'
+  | 'TraceId'
+  | 'SpanId'
+  | 'SpanName'
+  | 'ServiceName'
+  | 'Duration'
+  | 'StatusCode'
+  | 'SpanAttributes'
+> & {
   ParentSpanId: string;
-  SpanName: string;
-  ServiceName: string;
-  Duration: number;
-  StatusCode: string;
-  SpanAttributes: string;
-}
+};
 
 interface AgentGanttChartProps {
   spans: TraceSpan[];

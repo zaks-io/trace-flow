@@ -47,6 +47,7 @@
       "dependencies": {
         "@hono/zod-openapi": "^1.3.0",
         "@sentry/cloudflare": "^10.51.0",
+        "@trace-flow/llm-providers": "workspace:*",
         "@trace-flow/logging": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
@@ -101,6 +102,8 @@
         "@tanstack/react-query-persist-client": "^5.100.9",
         "@tanstack/react-table": "^8.21.3",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/spans": "workspace:*",
+        "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "class-variance-authority": "^0.7.1",
@@ -146,6 +149,7 @@
         "@react-email/components": "^1.0.12",
         "@trace-flow/emails": "workspace:*",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "convex": "^1.37.0",
@@ -173,6 +177,18 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/llm-providers": {
+      "name": "@trace-flow/llm-providers",
+      "version": "0.0.1",
+      "dependencies": {
+        "@trace-flow/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@vitest/coverage-v8": "^4.1.4",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.4",
+      },
+    },
     "packages/logging": {
       "name": "@trace-flow/logging",
       "version": "0.0.1",
@@ -195,6 +211,7 @@
         "@ai-sdk/openai": "^3",
         "@inkjs/ui": "^2.0.0",
         "@openrouter/ai-sdk-provider": "^2",
+        "@trace-flow/llm-providers": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "ai": "^6",
@@ -209,6 +226,27 @@
         "typescript": "^5",
       },
     },
+    "packages/spans": {
+      "name": "@trace-flow/spans",
+      "version": "0.0.1",
+      "dependencies": {
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@vitest/coverage-v8": "^4.1.4",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.4",
+      },
+    },
+    "packages/tinybird-client": {
+      "name": "@trace-flow/tinybird-client",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@vitest/coverage-v8": "^4.1.4",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.4",
+      },
+    },
     "packages/types": {
       "name": "@trace-flow/types",
       "version": "0.0.1",
@@ -220,6 +258,7 @@
       "name": "@trace-flow/utils",
       "version": "0.0.1",
       "dependencies": {
+        "@trace-flow/spans": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "eventsource-parser": "^3.0.8",
       },
@@ -1235,6 +1274,8 @@
 
     "@trace-flow/emails": ["@trace-flow/emails@workspace:packages/emails"],
 
+    "@trace-flow/llm-providers": ["@trace-flow/llm-providers@workspace:packages/llm-providers"],
+
     "@trace-flow/logging": ["@trace-flow/logging@workspace:packages/logging"],
 
     "@trace-flow/proxy": ["@trace-flow/proxy@workspace:apps/proxy"],
@@ -1242,6 +1283,10 @@
     "@trace-flow/proxy-consumer": ["@trace-flow/proxy-consumer@workspace:apps/proxy-consumer"],
 
     "@trace-flow/sdk-tests": ["@trace-flow/sdk-tests@workspace:packages/sdk-tests"],
+
+    "@trace-flow/spans": ["@trace-flow/spans@workspace:packages/spans"],
+
+    "@trace-flow/tinybird-client": ["@trace-flow/tinybird-client@workspace:packages/tinybird-client"],
 
     "@trace-flow/types": ["@trace-flow/types@workspace:packages/types"],
 
