@@ -16,14 +16,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@sentry/cloudflare": "^10.51.0",
+    "@sentry/cloudflare": "^10.53.1",
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.14",
-    "@cloudflare/workers-types": "^4.20260416.2",
+    "@cloudflare/workers-types": "^4.20260511.1",
     "@vitest/coverage-istanbul": "^3.2.4",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4",

@@ -56,7 +56,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
-  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key).sort(), [apiKeys]);
+  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key), [apiKeys]);
 
   const pipeParams = useMemo(() => {
     const params: Record<string, string | number | undefined> = {

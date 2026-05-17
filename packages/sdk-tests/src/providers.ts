@@ -30,6 +30,19 @@ const providers: ProviderConfig[] = [
       })('gpt-4o-mini'),
   },
   {
+    id: 'openai-responses',
+    name: 'OpenAI (Responses API)',
+    envKey: 'OPENAI_API_KEY',
+    basePath: '/openai/v1',
+    model: 'gpt-4.1-mini',
+    createModel: (apiKey) =>
+      createOpenAI({
+        baseURL: `${PROXY_URL}/openai/v1`,
+        apiKey,
+        headers: getProxyHeaders(),
+      }).responses('gpt-4.1-mini'),
+  },
+  {
     id: 'anthropic',
     name: 'Anthropic',
     envKey: 'ANTHROPIC_API_KEY',

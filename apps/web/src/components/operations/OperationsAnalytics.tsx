@@ -3,18 +3,18 @@
 import { useMemo } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import { Database, Layers, Users } from 'lucide-react';
+import { Layers } from 'lucide-react';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { FilterDropdown } from '@/components/usage/FilterDropdown';
 import { TIME_RANGES } from '@/components/usage/types';
 import { Input } from '@/components/ui/input';
 import { formatNumber } from '@/lib/format';
+import { sortFilterOptions } from '@/lib/sortFilterOptions';
 import { useOperationsFilters } from './useOperationsFilters';
 import { useOperationsData } from './useOperationsData';
-import { SummaryCards } from './SummaryCards';
 import { LeaderboardTable } from './LeaderboardTable';
-import { UsersTable } from './UsersTable';
+import { OperationDetailPanel } from './OperationDetailPanel';
 
 export function OperationsAnalytics({
   preloadedApiKeys,
@@ -24,7 +24,6 @@ export function OperationsAnalytics({
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
 
-  const filters = useOperationsFilters();
   const {
     timeRange,
     setTimeRange,
@@ -47,36 +46,46 @@ export function OperationsAnalytics({
     activeOperation,
     hasActiveFilters,
     clearFilters,
-    seenProviders,
-    seenModels,
-    seenOperations,
-  } = filters;
+  } = useOperationsFilters();
 
   const {
     operations,
     sortedOperations,
     users,
-    filterOptions,
+    providers,
+    models,
     selectedOperation,
     isInitialLoading,
     isUsersLoading,
     hasError,
   } = useOperationsData({ filterParams, activeOperation, sortKey, sortDesc });
 
-  // Accumulate filter options across queries so dropdowns don't collapse when a filter is applied
-  filterOptions?.providers.forEach((p) => seenProviders.current.add(p));
-  filterOptions?.models.forEach((m) => seenModels.current.add(m));
-  filterOptions?.operations.forEach((o) => seenOperations.current.add(o));
-  operations.forEach((row) => seenOperations.current.add(row.operation));
+  const providerOptions = useMemo(() => {
+    const values = providers.map((p) => p.provider);
+    if (providerFilter) values.push(providerFilter);
+    return sortFilterOptions(values);
+  }, [providers, providerFilter]);
 
-  if (providerFilter) seenProviders.current.add(providerFilter);
-  if (modelFilter) seenModels.current.add(modelFilter);
-  if (operationFilter) seenOperations.current.add(operationFilter);
+  const modelOptions = useMemo(() => {
+    const values = models.map((m) => m.model);
+    if (modelFilter) values.push(modelFilter);
+    return sortFilterOptions(values);
+  }, [models, modelFilter]);
 
-  const providerOptions = Array.from(seenProviders.current).sort();
-  const modelOptions = Array.from(seenModels.current).sort();
-  const operationOptions = Array.from(seenOperations.current).sort();
-  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key).sort(), [apiKeys]);
+  const operationOptions = useMemo(() => {
+    const values = operations.map((o) => o.operation);
+    if (operationFilter) values.push(operationFilter);
+    return sortFilterOptions(values);
+  }, [operations, operationFilter]);
+
+  const apiKeyOptions = useMemo(
+    () =>
+      sortFilterOptions(
+        apiKeys.map((k) => k.key),
+        apiKeyMap,
+      ),
+    [apiKeys, apiKeyMap],
+  );
 
   function handleSort(key: typeof sortKey) {
     if (sortKey === key) {
@@ -176,77 +185,40 @@ export function OperationsAnalytics({
           Loading operations analytics...
         </div>
       ) : (
-        <div className="space-y-6">
-          {selectedOperation && <SummaryCards operation={selectedOperation} />}
-
-          <div className="rounded-xl bg-card/40 p-6">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Layers className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <h2 className="text-base font-medium text-foreground">Operations</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Click a row to drill into user-level breakdown.
-                  </p>
-                </div>
-              </div>
-              <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground">
-                {formatNumber(operations.length)} ops
-              </span>
-            </div>
-            <LeaderboardTable
-              data={sortedOperations}
-              selectedOperation={activeOperation}
-              onSelectOperation={setSelectedOperationName}
-              sortKey={sortKey}
-              sortDesc={sortDesc}
-              onSort={handleSort}
-            />
-          </div>
-
-          <div className="rounded-xl bg-card/40 p-6">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <h2 className="text-base font-medium text-foreground">User breakdown</h2>
-                  {activeOperation ? (
-                    <p className="text-xs text-muted-foreground">
-                      Top users for{' '}
-                      <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-                        {activeOperation}
-                      </code>
-                    </p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Select an operation above to see per-user metrics.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-            {activeOperation ? (
-              isUsersLoading ? (
-                <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  Loading user breakdown...
-                </div>
-              ) : (
-                <UsersTable data={users} />
-              )
-            ) : (
-              <div className="flex flex-col items-center gap-2 py-12 text-center">
-                <Database className="h-8 w-8 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">
-                  Choose an operation from the table above to inspect{' '}
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs">baggage.user_id</code>{' '}
-                  breakdowns.
+        <div className="rounded-xl bg-card/40 p-6">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <h2 className="text-base font-medium text-foreground">Operations</h2>
+                <p className="text-xs text-muted-foreground">
+                  Click a row to view per-user breakdown.
                 </p>
               </div>
-            )}
+            </div>
+            <span className="rounded-md bg-muted/60 px-2 py-1 font-mono text-xs tabular-nums text-muted-foreground">
+              {formatNumber(operations.length)} ops
+            </span>
           </div>
+          <LeaderboardTable
+            data={sortedOperations}
+            selectedOperation={activeOperation}
+            onSelectOperation={setSelectedOperationName}
+            sortKey={sortKey}
+            sortDesc={sortDesc}
+            onSort={handleSort}
+          />
         </div>
       )}
+
+      <OperationDetailPanel
+        operation={selectedOperation}
+        operationName={activeOperation}
+        users={users}
+        isUsersLoading={isUsersLoading}
+        isOpen={!!activeOperation}
+        onClose={() => setSelectedOperationName('')}
+      />
     </div>
   );
 }

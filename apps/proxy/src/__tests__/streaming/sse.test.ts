@@ -449,7 +449,7 @@ describe('aggregateSSETokens', () => {
   it('should return undefined for empty stream data', () => {
     const streamData: SSEStreamData = { messages: [] };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toBeUndefined();
   });
@@ -459,7 +459,7 @@ describe('aggregateSSETokens', () => {
       messages: [{ messageStart: 1000, events: [] }],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toBeUndefined();
   });
@@ -478,7 +478,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -504,7 +504,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -538,7 +538,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 300,
@@ -568,7 +568,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result?.promptTokens).toBe(100);
     expect(result?.completionTokens).toBe(50);
@@ -601,7 +601,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 150,
@@ -626,7 +626,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result).toEqual({
       promptTokens: 100,
@@ -655,7 +655,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result?.reasoningTokens).toBe(100); // Math.ceil(400 / 4)
   });
@@ -678,7 +678,7 @@ describe('aggregateSSETokens', () => {
       ],
     };
 
-    const result = aggregateSSETokens(streamData);
+    const result = aggregateSSETokens(streamData, 'openai');
 
     expect(result?.reasoningTokens).toBe(350);
   });
@@ -1175,6 +1175,142 @@ describe('aggregateSSETokens', () => {
       uncachedInputTokens: 8,
       completionTokens: 5,
       totalTokens: 13,
+    });
+  });
+
+  describe('OpenAI Responses API + cached_tokens', () => {
+    it('should aggregate cached_tokens from Chat Completions stream into cacheReadTokens', () => {
+      const streamData: SSEStreamData = { messages: [] };
+      const finalChunk = JSON.stringify({
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: {
+          prompt_tokens: 1500,
+          completion_tokens: 50,
+          total_tokens: 1550,
+          prompt_tokens_details: { cached_tokens: 1280 },
+        },
+      });
+
+      processSSEEvent({ data: finalChunk }, 1000, streamData);
+
+      const result = aggregateSSETokens(streamData, 'openai');
+      expect(result).toEqual({
+        promptTokens: 1500,
+        uncachedInputTokens: 220,
+        completionTokens: 50,
+        totalTokens: 1550,
+        cacheReadTokens: 1280,
+      });
+    });
+
+    it('should create a message on response.created (Responses API stream open)', () => {
+      const streamData: SSEStreamData = { messages: [] };
+      const createdData = JSON.stringify({
+        type: 'response.created',
+        response: {
+          id: 'resp_abc123',
+          created_at: 1762193197,
+          model: 'gpt-4.1-mini',
+        },
+      });
+
+      processSSEEvent({ event: 'response.created', data: createdData }, 1000, streamData);
+
+      expect(streamData.messages.length).toBe(1);
+      expect(streamData.messages[0]?.messageStart).toBe(1000);
+      expect(streamData.messages[0]?.metadata?.id).toBe('resp_abc123');
+      expect(streamData.messages[0]?.metadata?.model).toBe('gpt-4.1-mini');
+    });
+
+    it('should extract usage on response.completed (Responses API terminal event)', () => {
+      const streamData: SSEStreamData = { messages: [] };
+
+      processSSEEvent(
+        {
+          event: 'response.created',
+          data: JSON.stringify({
+            type: 'response.created',
+            response: { id: 'resp_xyz', created_at: 1, model: 'gpt-4.1-mini' },
+          }),
+        },
+        1000,
+        streamData,
+      );
+
+      processSSEEvent(
+        {
+          event: 'response.completed',
+          data: JSON.stringify({
+            type: 'response.completed',
+            response: {
+              usage: {
+                input_tokens: 2006,
+                output_tokens: 300,
+                total_tokens: 2306,
+                input_tokens_details: { cached_tokens: 1920 },
+                output_tokens_details: { reasoning_tokens: 0 },
+              },
+            },
+          }),
+        },
+        2000,
+        streamData,
+      );
+
+      expect(streamData.messages[0]?.messageStop).toBe(2000);
+
+      const result = aggregateSSETokens(streamData, 'openai');
+      expect(result).toEqual({
+        promptTokens: 2006,
+        uncachedInputTokens: 86,
+        completionTokens: 300,
+        totalTokens: 2306,
+        cacheReadTokens: 1920,
+      });
+    });
+
+    it('should stamp messageStop and capture partial usage on response.failed', () => {
+      const streamData: SSEStreamData = { messages: [] };
+
+      processSSEEvent(
+        {
+          event: 'response.created',
+          data: JSON.stringify({
+            type: 'response.created',
+            response: { id: 'resp_failed', created_at: 1, model: 'gpt-4.1-mini' },
+          }),
+        },
+        1000,
+        streamData,
+      );
+
+      processSSEEvent(
+        {
+          event: 'response.failed',
+          data: JSON.stringify({
+            type: 'response.failed',
+            response: {
+              usage: {
+                input_tokens: 150,
+                output_tokens: 12,
+                total_tokens: 162,
+              },
+            },
+          }),
+        },
+        1500,
+        streamData,
+      );
+
+      expect(streamData.messages[0]?.messageStop).toBe(1500);
+
+      const result = aggregateSSETokens(streamData, 'openai');
+      expect(result).toEqual({
+        promptTokens: 150,
+        uncachedInputTokens: 150,
+        completionTokens: 12,
+        totalTokens: 162,
+      });
     });
   });
 });

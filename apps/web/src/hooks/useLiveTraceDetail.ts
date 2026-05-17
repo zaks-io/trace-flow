@@ -4,25 +4,9 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { TraceSpanRowSchema } from '@trace-flow/spans';
 import { fetchTinybirdPipe, tinybirdKeys } from '@/lib/tinybird';
-
-interface TraceSpan {
-  ReceivedAt: number;
-  Timestamp: number;
-  TraceId: string;
-  SpanId: string;
-  ParentSpanId: string;
-  SpanName: string;
-  ServiceName: string;
-  Duration: number;
-  StatusCode: string;
-  StatusMessage: string;
-  SpanAttributes: string;
-  ResourceAttributes: string;
-  'Events.Timestamp': number[];
-  'Events.Name': string[];
-  'Events.Attributes': string[];
-}
+import type { TraceSpan } from '@/lib/spans';
 
 interface TinybirdResponse {
   data: TraceSpan[];
@@ -117,6 +101,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
         pipe: PIPE_NAME,
         params,
         generateToken,
+        schema: TraceSpanRowSchema,
       });
 
       const incoming = result.data;

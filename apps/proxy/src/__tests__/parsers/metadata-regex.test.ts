@@ -68,6 +68,63 @@ describe('extractOpenAIMetadata', () => {
     expect(metadata2.object).toBe('chat.completion');
     expect(metadata2.finishReason).toBe('stop');
   });
+
+  describe('Responses API', () => {
+    it('should extract created from created_at fallback', () => {
+      const data =
+        '{"id":"resp_x","object":"response","created_at":1778889561,"model":"gpt-4.1-mini-2025-04-14"}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.created).toBe(1778889561);
+    });
+
+    it('should prefer `created` over `created_at` when both present', () => {
+      const data = '{"created":1000000000,"created_at":2000000000}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.created).toBe(1000000000);
+    });
+
+    it('should map top-level status to finishReason on response.completed', () => {
+      const data =
+        '{"type":"response.completed","sequence_number":12,"response":{"id":"resp_x","status":"completed","model":"gpt-4.1-mini"}}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('completed');
+    });
+
+    it('should overwrite earlier in_progress status with terminal status', () => {
+      const created =
+        '{"type":"response.created","response":{"id":"resp_x","object":"response","status":"in_progress"}}';
+      const completed =
+        '{"type":"response.completed","response":{"id":"resp_x","status":"completed"}}';
+      const m1 = extractOpenAIMetadata(created);
+      expect(m1.finishReason).toBe('in_progress');
+      const m2 = extractOpenAIMetadata(completed, m1);
+      expect(m2.finishReason).toBe('completed');
+    });
+
+    it('should capture response.status, not nested item.status', () => {
+      // OpenAI emits the response-level status before any nested output_item.status,
+      // so the first regex match is the one we want.
+      const data =
+        '{"type":"response.completed","response":{"id":"resp_x","status":"completed","output":[{"id":"msg_1","status":"completed","type":"message"}]}}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('completed');
+    });
+
+    it('should map status:failed to finishReason', () => {
+      const data =
+        '{"type":"response.failed","response":{"id":"resp_x","status":"failed","model":"gpt-4.1"}}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('failed');
+    });
+
+    it('should not map status to finishReason for Chat Completions bodies', () => {
+      // Status field shouldn't be touched outside Responses API context. The marker check
+      // ensures Chat Completions bodies aren't accidentally captured.
+      const data = '{"object":"chat.completion","choices":[{"finish_reason":"stop"}]}';
+      const metadata = extractOpenAIMetadata(data);
+      expect(metadata.finishReason).toBe('stop');
+    });
+  });
 });
 
 describe('extractAnthropicMetadata', () => {
@@ -444,5 +501,62 @@ describe('extractTokenUsageFromSSEData', () => {
     const usage = extractTokenUsageFromSSEData(data);
 
     expect(usage.reasoning_tokens).toBeUndefined();
+  });
+
+  describe('cached_tokens (OpenAI/OpenRouter)', () => {
+    it('should extract cached_tokens from Chat Completions final usage chunk', () => {
+      const data = JSON.stringify({
+        usage: {
+          prompt_tokens: 1500,
+          completion_tokens: 50,
+          total_tokens: 1550,
+          prompt_tokens_details: {
+            cached_tokens: 1280,
+          },
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cached_tokens).toBe(1280);
+      expect(usage.input_tokens).toBe(1500);
+    });
+
+    it('should extract cached_tokens from Responses API completed event', () => {
+      const data = JSON.stringify({
+        type: 'response.completed',
+        response: {
+          usage: {
+            input_tokens: 2006,
+            output_tokens: 300,
+            total_tokens: 2306,
+            input_tokens_details: { cached_tokens: 1920 },
+            output_tokens_details: { reasoning_tokens: 0 },
+          },
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cached_tokens).toBe(1920);
+      expect(usage.input_tokens).toBe(2006);
+      expect(usage.output_tokens).toBe(300);
+    });
+
+    it('should not set cached_tokens when only Anthropic cache_read_input_tokens is present', () => {
+      const data = JSON.stringify({
+        type: 'message_delta',
+        usage: {
+          input_tokens: 10,
+          cache_read_input_tokens: 50,
+          output_tokens: 5,
+        },
+      });
+
+      const usage = extractTokenUsageFromSSEData(data);
+
+      expect(usage.cached_tokens).toBeUndefined();
+      expect(usage.cache_read_input_tokens).toBe(50);
+    });
   });
 });

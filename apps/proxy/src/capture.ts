@@ -1,16 +1,6 @@
-import type {
-  SSEStreamData,
-  QueueMessageUnion,
-  LLMTokenUsage,
-  LLMResponseMetadata,
-  InputMessage,
-} from '@trace-flow/types';
+import type { LLMTokenUsage, LLMResponseMetadata, InputMessage } from '@trace-flow/types';
 import { getCurrentTimestamp, redactText, redactValue } from '@trace-flow/utils';
-import type { Logger } from '@trace-flow/logging';
-import type { ApiKeyData } from './auth';
-import type { UsageCheckResult } from './usage';
-import { parseTokenUsage } from './parsers/providers';
-import { parseGoogleModelFromPath } from './parsers/providers/google';
+import { parseTokenUsage, parseGoogleModelFromPath } from '@trace-flow/llm-providers';
 import { parseError } from './parsers/errors';
 import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
 import {
@@ -19,53 +9,14 @@ import {
   parseGoogleRequestBody,
 } from './parsers/request-body';
 import { captureStream, chunksToString } from './streaming/capture';
-import type { createResponseCapture } from './streaming/capture';
 import { aggregateSSETokens } from './streaming/sse';
-import type { EventSourceParser } from 'eventsource-parser';
 import { storeBodies } from './storage';
 import { createQueueMessage } from './queue';
-import type { ResolvedRoute } from './providers';
 import { writeRequestAnalytics, writeSkippedAnalytics } from './analytics';
-import type { TracingDecision } from './tracing-decision';
+import { MAX_REQUEST_SIZE } from './pipeline/validateRequest';
+import type { CaptureContext } from './context';
 
-interface CaptureEnv {
-  STORAGE: R2Bucket;
-  REQUEST_QUEUE: Queue<QueueMessageUnion>;
-  ANALYTICS: AnalyticsEngineDataset;
-  BODY_ENCRYPTION_ROOT_KEY?: string;
-  BODY_ENCRYPTION_KEY_ID?: string;
-}
-
-interface CaptureAndEnqueueParams {
-  env: CaptureEnv;
-  logger: Logger;
-  keyData: ApiKeyData;
-  usageCheck: UsageCheckResult;
-  requestId: string;
-  traceId: string;
-  parentSpanId: string | undefined;
-  traceFlags: number;
-  traceState: string;
-  baggage: Record<string, string>;
-  operationName: string | undefined;
-  apiKey: string;
-  route: ResolvedRoute;
-  targetUrl: string;
-  streamToCapture: ReadableStream | null;
-  response: Response;
-  capture: ReturnType<typeof createResponseCapture>;
-  isSSE: boolean;
-  sseStreamData: SSEStreamData;
-  parser: EventSourceParser | null;
-  pipePromise: Promise<void> | undefined;
-  requestStart: number;
-  requestSent: number;
-  responseReceived: number;
-  omitBody: boolean;
-  maxRequestSize: number;
-}
-
-export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promise<void> {
+export async function captureAndEnqueue(ctx: CaptureContext): Promise<void> {
   const {
     env,
     logger,
@@ -92,11 +43,10 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
     requestSent,
     responseReceived,
     omitBody,
-    maxRequestSize,
-  } = params;
+  } = ctx;
 
   try {
-    const requestBody = await captureStream(streamToCapture, maxRequestSize);
+    const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
     await pipePromise;
 
     // Flush any pending SSE event — some providers (Google) may not send
@@ -283,20 +233,7 @@ export async function captureAndEnqueue(params: CaptureAndEnqueueParams): Promis
   }
 }
 
-interface CleanupSkippedCaptureParams {
-  env: Pick<CaptureEnv, 'ANALYTICS'>;
-  logger: Logger;
-  keyData: ApiKeyData;
-  route: ResolvedRoute;
-  response: Response;
-  operationName: string | undefined;
-  decision: TracingDecision;
-  isSSE: boolean;
-  streamToCapture: ReadableStream | null;
-  pipePromise: Promise<void> | undefined;
-}
-
-export async function cleanupSkippedCapture(params: CleanupSkippedCaptureParams): Promise<void> {
+export async function cleanupSkippedCapture(ctx: CaptureContext): Promise<void> {
   const {
     env,
     logger,
@@ -308,7 +245,7 @@ export async function cleanupSkippedCapture(params: CleanupSkippedCaptureParams)
     isSSE,
     streamToCapture,
     pipePromise,
-  } = params;
+  } = ctx;
 
   try {
     writeSkippedAnalytics(

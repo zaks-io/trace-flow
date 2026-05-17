@@ -4,9 +4,10 @@ import {
   type TinybirdResponse,
   type OperationLeaderboardRow,
   type OperationUserRow,
-  type OperationsFilterOptionsRow,
+  type ModelRow,
+  type ProviderRow,
 } from '@/components/usage/types';
-import { getAggregateCacheHitRate, getCostPerRequest } from '@/lib/operations';
+import { getAggregateCacheHitRate, getLeaderboardSortValue } from '@/lib/operations';
 import type { LeaderboardSortKey } from './useOperationsFilters';
 
 type UseOperationsDataParams = {
@@ -33,41 +34,39 @@ export function useOperationsData({
     enabled: activeOperation !== '',
   });
 
-  const filterOptionsQuery = useTinybirdQuery<TinybirdResponse<OperationsFilterOptionsRow>>({
-    pipe: 'operations_filter_options',
+  const providersQuery = useTinybirdQuery<TinybirdResponse<ProviderRow>>({
+    pipe: 'llm_usage_by_provider',
+    params: filterParams,
+  });
+
+  const modelsQuery = useTinybirdQuery<TinybirdResponse<ModelRow>>({
+    pipe: 'llm_usage_by_model',
     params: filterParams,
   });
 
   const operations = useMemo(() => operationsQuery.data?.data ?? [], [operationsQuery.data]);
   const users = usersQuery.data?.data ?? [];
-  const filterOptions = filterOptionsQuery.data?.data?.[0];
+  const providers = useMemo(() => providersQuery.data?.data ?? [], [providersQuery.data]);
+  const models = useMemo(() => modelsQuery.data?.data ?? [], [modelsQuery.data]);
 
-  const isInitialLoading = operationsQuery.isLoading || filterOptionsQuery.isLoading;
+  const isInitialLoading =
+    operationsQuery.isLoading || providersQuery.isLoading || modelsQuery.isLoading;
   const isUsersLoading = usersQuery.isLoading;
-  const hasError = operationsQuery.error ?? usersQuery.error ?? filterOptionsQuery.error;
+  const hasError =
+    operationsQuery.error ?? usersQuery.error ?? providersQuery.error ?? modelsQuery.error;
 
   const selectedOperation = operations.find((row) => row.operation === activeOperation) ?? null;
 
   const sortedOperations = useMemo(() => {
     return [...operations].sort((a, b) => {
-      let aVal: number;
-      let bVal: number;
+      const aVal = getLeaderboardSortValue(a, sortKey);
+      const bVal = getLeaderboardSortValue(b, sortKey);
+      const adjustedA =
+        sortKey === 'cache_hit_rate' && getAggregateCacheHitRate(a) == null ? -1 : aVal;
+      const adjustedB =
+        sortKey === 'cache_hit_rate' && getAggregateCacheHitRate(b) == null ? -1 : bVal;
 
-      if (sortKey === 'cost_per_request') {
-        aVal = getCostPerRequest(a) ?? 0;
-        bVal = getCostPerRequest(b) ?? 0;
-      } else if (sortKey === 'cost_per_user') {
-        aVal = a.cost_per_user_usd ?? 0;
-        bVal = b.cost_per_user_usd ?? 0;
-      } else if (sortKey === 'cache_hit_rate') {
-        aVal = getAggregateCacheHitRate(a) ?? -1;
-        bVal = getAggregateCacheHitRate(b) ?? -1;
-      } else {
-        aVal = a[sortKey] ?? 0;
-        bVal = b[sortKey] ?? 0;
-      }
-
-      return sortDesc ? bVal - aVal : aVal - bVal;
+      return sortDesc ? adjustedB - adjustedA : adjustedA - adjustedB;
     });
   }, [operations, sortKey, sortDesc]);
 
@@ -75,7 +74,8 @@ export function useOperationsData({
     operations,
     sortedOperations,
     users,
-    filterOptions,
+    providers,
+    models,
     selectedOperation,
     isInitialLoading,
     isUsersLoading,

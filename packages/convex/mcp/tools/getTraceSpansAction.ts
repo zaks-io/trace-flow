@@ -2,16 +2,15 @@ import type { ToolCallResult } from '../protocol';
 import {
   jsonReplacer,
   stripNulls,
-  queryTinybirdPipe,
   noApiKeysError,
   invalidTraceIdError,
   traceNotFoundError,
-  generateTinybirdToken,
   TRACE_ID_PATTERN,
   DEFAULT_SPAN_LIMIT,
   MAX_SPAN_LIMIT,
   splitPatterns,
 } from './shared';
+import { generateMcpToken, queryPipe, type TinybirdAccessCtx } from './tinybirdAccess';
 import { parseSpanRow, buildOutputSpan, type SpanRow } from '../helpers/getTrace';
 
 interface SpanRowWithCount extends SpanRow {
@@ -32,6 +31,7 @@ interface GetTraceSpansParams {
 }
 
 export async function getTraceSpans(
+  ctx: TinybirdAccessCtx,
   apiKeys: string[],
   params: GetTraceSpansParams,
   retentionDays: number,
@@ -44,7 +44,8 @@ export async function getTraceSpans(
     return invalidTraceIdError();
   }
 
-  const token = await generateTinybirdToken(
+  const token = await generateMcpToken(
+    ctx,
     [{ type: 'PIPES:READ', resource: 'mcp_trace_detail' }],
     apiKeys,
     retentionDays,
@@ -92,7 +93,7 @@ export async function getTraceSpans(
     detailParams.order = 'desc';
   }
 
-  const data = await queryTinybirdPipe(token, 'mcp_trace_detail', detailParams);
+  const data = await queryPipe(token, 'mcp_trace_detail', detailParams);
 
   if (data.length === 0) {
     return traceNotFoundError(params.trace_id);

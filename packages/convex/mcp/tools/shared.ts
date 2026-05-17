@@ -1,4 +1,3 @@
-import { SignJWT } from 'jose';
 import type { ToolCallResult } from '../protocol';
 
 // JSON formatting utilities
@@ -72,58 +71,6 @@ export function buildTimeRangeNs(
   };
 }
 
-interface TinybirdResponse {
-  data?: Record<string, unknown>[];
-}
-
-export async function queryTinybird(
-  token: string,
-  sql: string,
-): Promise<Record<string, unknown>[]> {
-  const apiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
-  const url = new URL(`${apiUrl}/v0/sql`);
-  url.searchParams.set('q', sql);
-
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`TinyBird query failed: ${response.status} - ${text}`);
-  }
-
-  const result: TinybirdResponse = await response.json();
-  return result.data ?? [];
-}
-
-export async function queryTinybirdPipe(
-  token: string,
-  pipe: string,
-  params: Record<string, string | number | undefined> = {},
-): Promise<Record<string, unknown>[]> {
-  const apiUrl = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
-  const url = new URL(`${apiUrl}/v0/pipes/${pipe}.json`);
-
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
-      url.searchParams.set(key, String(value));
-    }
-  }
-
-  const response = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`TinyBird pipe query failed: ${response.status} - ${text}`);
-  }
-
-  const result: TinybirdResponse = await response.json();
-  return result.data ?? [];
-}
-
 export function noApiKeysError(): ToolCallResult {
   return {
     content: [{ type: 'text', text: 'No API keys configured. Please create an API key first.' }],
@@ -145,44 +92,4 @@ export function traceNotFoundError(traceId: string): ToolCallResult {
     content: [{ type: 'text', text: `Trace not found: ${traceId}` }],
     isError: true,
   };
-}
-
-interface TinybirdScope {
-  type: string;
-  resource: string;
-  fixed_params?: Record<string, unknown>;
-}
-
-export async function generateTinybirdToken(
-  scopes: { type: string; resource: string }[],
-  apiKeys: string[],
-  retentionDays: number,
-  ttlSeconds = 600,
-): Promise<string> {
-  const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
-  const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
-
-  if (!adminToken || !workspaceId) {
-    throw new Error('Tinybird credentials not configured');
-  }
-
-  // Add api_keys and retention_days to fixed_params for row-level security
-  // Use sentinel value when no keys to prevent matching empty strings
-  const apiKeyString = apiKeys.join(',') || '__NO_KEYS__';
-  const scopesWithApiKeys: TinybirdScope[] = scopes.map((scope) => ({
-    ...scope,
-    fixed_params: { api_keys: apiKeyString, retention_days: retentionDays },
-  }));
-
-  const payload = {
-    workspace_id: workspaceId,
-    name: `mcp_jwt_${Date.now()}`,
-    scopes: scopesWithApiKeys,
-  };
-
-  const secret = new TextEncoder().encode(adminToken);
-  return new SignJWT(payload)
-    .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime(Math.floor(Date.now() / 1000) + ttlSeconds)
-    .sign(secret);
 }

@@ -1,26 +1,22 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "ignore": ["datasources/**", "pipes/**", "scripts/**"],
+  "ignore": ["scripts/**"],
   "ignoreBinaries": ["wrangler"],
   "ignoreDependencies": ["cloudflare"],
   "workspaces": {
     "packages/convex": {
       "entry": ["**/*.ts"],
-      "project": ["**/*.ts"],
-      "ignore": ["_generated/**"]
+      "project": ["**/*.ts"]
     },
     "packages/sdk-tests": {
       "entry": ["src/**/*.ts"]
     },
-    "apps/proxy": {
-      "ignoreDependencies": ["@vitest/coverage-v8"]
-    },
-    "apps/proxy-consumer": {
-      "ignoreDependencies": ["@vitest/coverage-v8"]
-    },
+    "apps/proxy": {},
+    "apps/proxy-consumer": {},
     "apps/web": {
-      "entry": ["src/worker-entry.ts", "open-next.config.ts"],
-      "ignoreDependencies": ["postcss"]
+      "entry": ["open-next.config.ts"],
+      "ignoreDependencies": ["postcss"],
+      "ignoreUnresolved": ["@/generated/*"]
     }
   }
 }

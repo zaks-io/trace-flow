@@ -86,3 +86,23 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - Self-documenting code. JSDoc only for "why" (architecture decisions, CF Workers gotchas), never for "what"
 - Stale comments are worse than no comments
 - Pre-commit runs lint + prettier check; pre-push runs knip, type-check, and tests
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in Linear (team `TRA`), accessed via the `claude.ai_Linear` MCP server. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default canonical label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Session Notes
+
+When a Claude session encounters something confusing or spends significant debugging time, add a note here for future sessions.
+
+<!-- Add session notes below this line -->

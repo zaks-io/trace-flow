@@ -14,12 +14,13 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@trace-flow/spans": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "eventsource-parser": "^3.0.8"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/coverage-v8": "^4.1.6",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.6"
   }
 }

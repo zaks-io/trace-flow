@@ -339,8 +339,13 @@ async function handleToolsCall(
 
   const toolHandlers: Record<
     string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (keys: string[], args: any, retentionDays: number) => Promise<ToolCallResult>
+    (
+      ctx: { runAction: typeof action.prototype.runAction },
+      keys: string[],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      args: any,
+      retentionDays: number,
+    ) => Promise<ToolCallResult>
   > = {
     list_traces: listTraces,
     list_trace_summaries: listTraceSummaries,
@@ -358,7 +363,7 @@ async function handleToolsCall(
   }
 
   const args = params.arguments ?? {};
-  const result = await handler(apiKeyStrings, args, retentionDays);
+  const result = await handler(ctx, apiKeyStrings, args, retentionDays);
   return createSuccessResponse(id, result);
 }
 
