@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
+import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE } from '@trace-flow/otel-conventions';
 import {
   BarCard,
   type Segment,
@@ -68,12 +69,12 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
   for (const span of spans) {
     const attrs = parseSpanAttributes(span.SpanAttributes);
 
-    const inputTokens = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
-    const uncachedInputTokens = parseInt(attrs['gen_ai.usage.input_tokens_uncached'] ?? '0', 10);
-    const outputTokens = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
-    const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
-    const cacheWrite = parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10);
-    const reasoning = parseInt(attrs['gen_ai.usage.reasoning_tokens'] ?? '0', 10);
+    const inputTokens = parseInt(attrs[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10);
+    const uncachedInputTokens = parseInt(attrs[GEN_AI_USAGE.INPUT_TOKENS_UNCACHED] ?? '0', 10);
+    const outputTokens = parseInt(attrs[GEN_AI_USAGE.OUTPUT_TOKENS] ?? '0', 10);
+    const cacheRead = parseInt(attrs[GEN_AI_USAGE.CACHE_READ_INPUT_TOKENS] ?? '0', 10);
+    const cacheWrite = parseInt(attrs[GEN_AI_USAGE.CACHE_CREATION_INPUT_TOKENS] ?? '0', 10);
+    const reasoning = parseInt(attrs[GEN_AI_USAGE.REASONING_TOKENS] ?? '0', 10);
 
     summary.tokens.input +=
       uncachedInputTokens > 0
@@ -85,47 +86,47 @@ function aggregateSummary(spans: TraceSpan[]): AggregatedSummary {
     summary.tokens.reasoning += reasoning;
 
     let spanCost = 0;
-    if (attrs['gen_ai.cost.input']) {
-      const v = parseFloat(attrs['gen_ai.cost.input']);
+    if (attrs[GEN_AI_COST.INPUT]) {
+      const v = parseFloat(attrs[GEN_AI_COST.INPUT]);
       summary.cost.input += v;
       spanCost += v;
     }
-    if (attrs['gen_ai.cost.output']) {
-      const v = parseFloat(attrs['gen_ai.cost.output']);
+    if (attrs[GEN_AI_COST.OUTPUT]) {
+      const v = parseFloat(attrs[GEN_AI_COST.OUTPUT]);
       summary.cost.output += v;
       spanCost += v;
     }
-    if (attrs['gen_ai.cost.cache_read']) {
-      const v = parseFloat(attrs['gen_ai.cost.cache_read']);
+    if (attrs[GEN_AI_COST.CACHE_READ]) {
+      const v = parseFloat(attrs[GEN_AI_COST.CACHE_READ]);
       summary.cost.cacheRead += v;
       spanCost += v;
     }
-    if (attrs['gen_ai.cost.cache_creation']) {
-      const v = parseFloat(attrs['gen_ai.cost.cache_creation']);
+    if (attrs[GEN_AI_COST.CACHE_CREATION]) {
+      const v = parseFloat(attrs[GEN_AI_COST.CACHE_CREATION]);
       summary.cost.cacheWrite += v;
       spanCost += v;
     }
-    if (attrs['gen_ai.cost.reasoning']) {
-      const v = parseFloat(attrs['gen_ai.cost.reasoning']);
+    if (attrs[GEN_AI_COST.REASONING]) {
+      const v = parseFloat(attrs[GEN_AI_COST.REASONING]);
       summary.cost.reasoning += v;
       spanCost += v;
     }
 
-    if (attrs['gen_ai.tokens_per_second']) {
-      const tps = parseFloat(attrs['gen_ai.tokens_per_second']);
+    if (attrs[GEN_AI.TOKENS_PER_SECOND]) {
+      const tps = parseFloat(attrs[GEN_AI.TOKENS_PER_SECOND]);
       if (tps > 0) summary.tpsSpans.push({ tps, outputTokens });
     }
-    if (attrs['gen_ai.server.time_to_first_token']) {
-      const ttft = parseFloat(attrs['gen_ai.server.time_to_first_token']);
+    if (attrs[GEN_AI.SERVER_TTFT]) {
+      const ttft = parseFloat(attrs[GEN_AI.SERVER_TTFT]);
       if (ttft > 0) {
         summary.ttftValues.push(ttft);
         if (summary.ttftMs === null) summary.ttftMs = ttft;
       }
     }
 
-    const rawModel = attrs['gen_ai.request.model'];
+    const rawModel = attrs[GEN_AI.REQUEST_MODEL];
     if (rawModel) {
-      const display = formatModelDisplay(rawModel, attrs['gen_ai.system']);
+      const display = formatModelDisplay(rawModel, attrs[GEN_AI.SYSTEM]);
       modelCosts.set(display, (modelCosts.get(display) ?? 0) + spanCost);
     }
 

@@ -1,5 +1,6 @@
 import { RETENTION_DAYS } from '@trace-flow/types';
 import type { TinybirdTrace } from '@trace-flow/types';
+import { SPAN_KIND, STATUS_CODE } from '@trace-flow/otel-conventions';
 import type {
   OTLPExportTraceServiceRequest,
   OTLPKeyValue,
@@ -8,19 +9,23 @@ import type {
   OTLPResource,
 } from './types';
 
+// OTLP carries the full OTel SpanKind set. The consumer path's createSpan covers
+// only the CLIENT/INTERNAL pair used by the LLM Request flow; the broader set
+// lives here at the bring-your-own-keys ingestion boundary. (Per the OTel
+// semantic-conventions ADR, OTLP attributes pass through verbatim.)
 const SPAN_KIND_MAP: Record<number, string> = {
   0: 'SPAN_KIND_UNSPECIFIED',
-  1: 'SPAN_KIND_INTERNAL',
+  1: SPAN_KIND.INTERNAL,
   2: 'SPAN_KIND_SERVER',
-  3: 'SPAN_KIND_CLIENT',
+  3: SPAN_KIND.CLIENT,
   4: 'SPAN_KIND_PRODUCER',
   5: 'SPAN_KIND_CONSUMER',
 };
 
 const STATUS_CODE_MAP: Record<number, string> = {
   0: 'STATUS_CODE_UNSET',
-  1: 'STATUS_CODE_OK',
-  2: 'STATUS_CODE_ERROR',
+  1: STATUS_CODE.OK,
+  2: STATUS_CODE.ERROR,
 };
 
 /**

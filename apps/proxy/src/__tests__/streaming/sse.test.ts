@@ -707,6 +707,7 @@ describe('aggregateSSETokens', () => {
       completionTokens: 150,
       totalTokens: 3358,
       cacheReadTokens: 2236,
+      cacheCreationTokens: 0, // explicit 0 from upstream is preserved
     });
   });
 
@@ -958,7 +959,7 @@ describe('aggregateSSETokens', () => {
     expect(result?.cacheReadTokens).toBe(50);
   });
 
-  it('should omit ephemeral fields when they are zero', () => {
+  it('should preserve ephemeral fields when explicitly zero (upstream signal, not absence)', () => {
     const streamData: SSEStreamData = {
       messages: [
         {
@@ -978,8 +979,8 @@ describe('aggregateSSETokens', () => {
     const result = aggregateSSETokens(streamData, 'anthropic');
 
     expect(result?.cacheCreationTokens).toBe(200);
-    expect(result?.cacheCreation5mTokens).toBeUndefined();
-    expect(result?.cacheCreation1hTokens).toBeUndefined();
+    expect(result?.cacheCreation5mTokens).toBe(0);
+    expect(result?.cacheCreation1hTokens).toBe(0);
   });
 
   it('should persist Google tokens from processSSEEvent (no event type)', () => {
@@ -1266,6 +1267,7 @@ describe('aggregateSSETokens', () => {
         completionTokens: 300,
         totalTokens: 2306,
         cacheReadTokens: 1920,
+        reasoningTokens: 0, // explicit 0 from upstream is preserved
       });
     });
 

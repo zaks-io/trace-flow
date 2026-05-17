@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Clock, Hash, GitBranch, ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, BAGGAGE_PREFIX } from '@trace-flow/otel-conventions';
 import {
   formatBodyForDisplay,
   mergeSSEEvents,
@@ -173,28 +174,28 @@ function extractOutputContent(
 
 // ── Keys already shown in header / BarCard ──
 
-const displayedKeys = new Set([
-  'gen_ai.system',
-  'gen_ai.request.model',
-  'gen_ai.usage.input_tokens',
-  'gen_ai.usage.input_tokens_uncached',
-  'gen_ai.usage.output_tokens',
-  'gen_ai.usage.reasoning_tokens',
-  'gen_ai.usage.cache_read_input_tokens',
-  'gen_ai.usage.cache_creation_input_tokens',
-  'gen_ai.server.time_to_first_token',
+const displayedKeys = new Set<string>([
+  GEN_AI.SYSTEM,
+  GEN_AI.REQUEST_MODEL,
+  GEN_AI_USAGE.INPUT_TOKENS,
+  GEN_AI_USAGE.INPUT_TOKENS_UNCACHED,
+  GEN_AI_USAGE.OUTPUT_TOKENS,
+  GEN_AI_USAGE.REASONING_TOKENS,
+  GEN_AI_USAGE.CACHE_READ_INPUT_TOKENS,
+  GEN_AI_USAGE.CACHE_CREATION_INPUT_TOKENS,
+  GEN_AI.SERVER_TTFT,
   'service.name',
-  'gen_ai.cost.input',
-  'gen_ai.cost.output',
-  'gen_ai.cost.total',
-  'gen_ai.cost.cache_read',
-  'gen_ai.cost.cache_creation',
-  'gen_ai.cost.reasoning',
-  'gen_ai.cost.prompt_baseline',
-  'gen_ai.cost.cache_impact',
-  'gen_ai.cost.upstream',
-  'gen_ai.request_id',
-  'baggage.operation',
+  GEN_AI_COST.INPUT,
+  GEN_AI_COST.OUTPUT,
+  GEN_AI_COST.TOTAL,
+  GEN_AI_COST.CACHE_READ,
+  GEN_AI_COST.CACHE_CREATION,
+  GEN_AI_COST.REASONING,
+  GEN_AI_COST.PROMPT_BASELINE,
+  GEN_AI_COST.CACHE_IMPACT,
+  GEN_AI_COST.UPSTREAM,
+  GEN_AI.REQUEST_ID,
+  `${BAGGAGE_PREFIX}operation`,
 ]);
 
 // ── Message rendering ──
@@ -503,54 +504,51 @@ export function SpanDetailPanel({
     [spanAttributes, resourceAttributes],
   );
 
-  const provider = allAttributes['gen_ai.system'] ?? '';
-  const model = allAttributes['gen_ai.request.model'] ?? '';
-  const operation = allAttributes['baggage.operation'] ?? '';
+  const provider = allAttributes[GEN_AI.SYSTEM] ?? '';
+  const model = allAttributes[GEN_AI.REQUEST_MODEL] ?? '';
+  const operation = allAttributes[`${BAGGAGE_PREFIX}operation`] ?? '';
 
   // Token data
-  const promptTokens = parseInt(allAttributes['gen_ai.usage.input_tokens'] ?? '0', 10);
-  const completionTokens = parseInt(allAttributes['gen_ai.usage.output_tokens'] ?? '0', 10);
-  const reasoningTokens = parseInt(allAttributes['gen_ai.usage.reasoning_tokens'] ?? '0', 10);
-  const cacheReadTokens = parseInt(
-    allAttributes['gen_ai.usage.cache_read_input_tokens'] ?? '0',
-    10,
-  );
+  const promptTokens = parseInt(allAttributes[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10);
+  const completionTokens = parseInt(allAttributes[GEN_AI_USAGE.OUTPUT_TOKENS] ?? '0', 10);
+  const reasoningTokens = parseInt(allAttributes[GEN_AI_USAGE.REASONING_TOKENS] ?? '0', 10);
+  const cacheReadTokens = parseInt(allAttributes[GEN_AI_USAGE.CACHE_READ_INPUT_TOKENS] ?? '0', 10);
   const cacheWriteTokens = parseInt(
-    allAttributes['gen_ai.usage.cache_creation_input_tokens'] ?? '0',
+    allAttributes[GEN_AI_USAGE.CACHE_CREATION_INPUT_TOKENS] ?? '0',
     10,
   );
-  const ttftMs = allAttributes['gen_ai.server.time_to_first_token']
-    ? parseFloat(allAttributes['gen_ai.server.time_to_first_token'])
+  const ttftMs = allAttributes[GEN_AI.SERVER_TTFT]
+    ? parseFloat(allAttributes[GEN_AI.SERVER_TTFT])
     : null;
   // Cost breakdown
-  const costInput = allAttributes['gen_ai.cost.input']
-    ? parseFloat(allAttributes['gen_ai.cost.input'])
+  const costInput = allAttributes[GEN_AI_COST.INPUT]
+    ? parseFloat(allAttributes[GEN_AI_COST.INPUT])
     : 0;
-  const costOutput = allAttributes['gen_ai.cost.output']
-    ? parseFloat(allAttributes['gen_ai.cost.output'])
+  const costOutput = allAttributes[GEN_AI_COST.OUTPUT]
+    ? parseFloat(allAttributes[GEN_AI_COST.OUTPUT])
     : 0;
-  const costCacheRead = allAttributes['gen_ai.cost.cache_read']
-    ? parseFloat(allAttributes['gen_ai.cost.cache_read'])
+  const costCacheRead = allAttributes[GEN_AI_COST.CACHE_READ]
+    ? parseFloat(allAttributes[GEN_AI_COST.CACHE_READ])
     : 0;
-  const costCacheWrite = allAttributes['gen_ai.cost.cache_creation']
-    ? parseFloat(allAttributes['gen_ai.cost.cache_creation'])
+  const costCacheWrite = allAttributes[GEN_AI_COST.CACHE_CREATION]
+    ? parseFloat(allAttributes[GEN_AI_COST.CACHE_CREATION])
     : 0;
-  const costReasoning = allAttributes['gen_ai.cost.reasoning']
-    ? parseFloat(allAttributes['gen_ai.cost.reasoning'])
+  const costReasoning = allAttributes[GEN_AI_COST.REASONING]
+    ? parseFloat(allAttributes[GEN_AI_COST.REASONING])
     : 0;
-  const costPromptBaseline = allAttributes['gen_ai.cost.prompt_baseline']
-    ? parseFloat(allAttributes['gen_ai.cost.prompt_baseline'])
+  const costPromptBaseline = allAttributes[GEN_AI_COST.PROMPT_BASELINE]
+    ? parseFloat(allAttributes[GEN_AI_COST.PROMPT_BASELINE])
     : 0;
-  const costCacheImpact = allAttributes['gen_ai.cost.cache_impact']
-    ? parseFloat(allAttributes['gen_ai.cost.cache_impact'])
+  const costCacheImpact = allAttributes[GEN_AI_COST.CACHE_IMPACT]
+    ? parseFloat(allAttributes[GEN_AI_COST.CACHE_IMPACT])
     : 0;
-  const costUpstream = allAttributes['gen_ai.cost.upstream']
-    ? parseFloat(allAttributes['gen_ai.cost.upstream'])
+  const costUpstream = allAttributes[GEN_AI_COST.UPSTREAM]
+    ? parseFloat(allAttributes[GEN_AI_COST.UPSTREAM])
     : 0;
   const costTotal = costInput + costOutput + costCacheRead + costCacheWrite + costReasoning;
 
-  const inputTokens = allAttributes['gen_ai.usage.input_tokens_uncached']
-    ? parseInt(allAttributes['gen_ai.usage.input_tokens_uncached'], 10)
+  const inputTokens = allAttributes[GEN_AI_USAGE.INPUT_TOKENS_UNCACHED]
+    ? parseInt(allAttributes[GEN_AI_USAGE.INPUT_TOKENS_UNCACHED], 10)
     : Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
   const totalTokens =
     inputTokens + cacheReadTokens + cacheWriteTokens + completionTokens + reasoningTokens;
@@ -587,7 +585,7 @@ export function SpanDetailPanel({
   const isOutputSpan =
     span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i) !== null;
   const contentType = (() => {
-    const attrType = spanAttributes['gen_ai.content.type'];
+    const attrType = spanAttributes[GEN_AI.CONTENT_TYPE];
     if (attrType) return attrType;
     const spanMatch = span?.SpanName.match(/^gen_ai\.response\.(text|thinking|tool_use)/i);
     return spanMatch?.[1]?.toLowerCase() ?? '';
@@ -606,7 +604,7 @@ export function SpanDetailPanel({
     }
 
     const attrs = parseSpanAttributes(span.SpanAttributes);
-    const requestId = attrs['gen_ai.request_id'];
+    const requestId = attrs[GEN_AI.REQUEST_ID];
     if (!requestId) return;
 
     const isLLMRoot = isRootSpan && isLLMRequestSpan(span);

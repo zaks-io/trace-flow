@@ -49,6 +49,7 @@
         "@sentry/cloudflare": "^10.53.1",
         "@trace-flow/llm-providers": "workspace:*",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/otel-conventions": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
         "eventsource-parser": "^3.0.8",
@@ -70,6 +71,7 @@
       "dependencies": {
         "@sentry/cloudflare": "^10.53.1",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/otel-conventions": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
       },
@@ -102,6 +104,7 @@
         "@tanstack/react-query-persist-client": "^5.100.10",
         "@tanstack/react-table": "^8.21.3",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/otel-conventions": "workspace:*",
         "@trace-flow/spans": "workspace:*",
         "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
@@ -149,6 +152,7 @@
         "@react-email/components": "^1.0.12",
         "@trace-flow/emails": "workspace:*",
         "@trace-flow/logging": "workspace:*",
+        "@trace-flow/otel-conventions": "workspace:*",
         "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
@@ -201,6 +205,20 @@
         "vitest": "^4.1.6",
       },
     },
+    "packages/otel-conventions": {
+      "name": "@trace-flow/otel-conventions",
+      "version": "0.0.1",
+      "dependencies": {
+        "@trace-flow/types": "*",
+        "@trace-flow/utils": "*",
+      },
+      "devDependencies": {
+        "@types/node": "^24.12.3",
+        "@vitest/coverage-v8": "^4.1.6",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.6",
+      },
+    },
     "packages/sdk-tests": {
       "name": "@trace-flow/sdk-tests",
       "version": "0.0.1",
@@ -230,6 +248,7 @@
       "name": "@trace-flow/spans",
       "version": "0.0.1",
       "dependencies": {
+        "@trace-flow/otel-conventions": "*",
         "zod": "^4.4.3",
       },
       "devDependencies": {
@@ -258,7 +277,6 @@
       "name": "@trace-flow/utils",
       "version": "0.0.1",
       "dependencies": {
-        "@trace-flow/spans": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "eventsource-parser": "^3.0.8",
       },
@@ -1277,6 +1295,8 @@
     "@trace-flow/llm-providers": ["@trace-flow/llm-providers@workspace:packages/llm-providers"],
 
     "@trace-flow/logging": ["@trace-flow/logging@workspace:packages/logging"],
+
+    "@trace-flow/otel-conventions": ["@trace-flow/otel-conventions@workspace:packages/otel-conventions"],
 
     "@trace-flow/proxy": ["@trace-flow/proxy@workspace:apps/proxy"],
 

@@ -18,6 +18,7 @@
   "dependencies": {
     "@sentry/cloudflare": "^10.53.1",
     "@trace-flow/logging": "workspace:*",
+    "@trace-flow/otel-conventions": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*"
   },
