@@ -116,16 +116,14 @@ export function createTokenAccumulator(providerId: ProviderId): TokenAccumulator
     finalize() {
       if (!hasAnyTokens && thinkingChars === 0) return undefined;
 
-      // Promote nested ephemeral breakdown to a cacheCreation total when the
-      // top-level field never appeared in the stream.
-      if (cacheCreationTokens === 0 && (cacheCreation5mTokens > 0 || cacheCreation1hTokens > 0)) {
-        cacheCreationTokens = cacheCreation5mTokens + cacheCreation1hTokens;
+      // Use locals so finalize() doesn't mutate the accumulator — repeated calls
+      // must return the same value, and a future caller might call this twice.
+      let finalCacheCreation = cacheCreationTokens;
+      if (finalCacheCreation === 0 && (cacheCreation5mTokens > 0 || cacheCreation1hTokens > 0)) {
+        finalCacheCreation = cacheCreation5mTokens + cacheCreation1hTokens;
       }
 
-      // Google: cachedContentTokenCount → cacheReadTokens.
-      if (googleCachedTokens > 0) {
-        cacheReadTokens += googleCachedTokens;
-      }
+      const finalCacheRead = cacheReadTokens + googleCachedTokens;
 
       const result: LLMTokenUsage = {};
 
@@ -133,19 +131,19 @@ export function createTokenAccumulator(providerId: ProviderId): TokenAccumulator
       if (hasInputTokens) {
         promptTokens = schema.promptIncludesCache
           ? inputTokens
-          : inputTokens + cacheReadTokens + cacheCreationTokens;
+          : inputTokens + finalCacheRead + finalCacheCreation;
       }
 
       if (promptTokens !== undefined && promptTokens > 0) {
         result.promptTokens = promptTokens;
         result.uncachedInputTokens = schema.promptIncludesCache
-          ? Math.max(0, inputTokens - cacheReadTokens - cacheCreationTokens)
+          ? Math.max(0, inputTokens - finalCacheRead - finalCacheCreation)
           : inputTokens;
       }
 
       if (completionTokens > 0) result.completionTokens = completionTokens;
-      if (cacheReadTokens > 0) result.cacheReadTokens = cacheReadTokens;
-      if (cacheCreationTokens > 0) result.cacheCreationTokens = cacheCreationTokens;
+      if (finalCacheRead > 0) result.cacheReadTokens = finalCacheRead;
+      if (finalCacheCreation > 0) result.cacheCreationTokens = finalCacheCreation;
       if (cacheCreation5mTokens > 0) result.cacheCreation5mTokens = cacheCreation5mTokens;
       if (cacheCreation1hTokens > 0) result.cacheCreation1hTokens = cacheCreation1hTokens;
 

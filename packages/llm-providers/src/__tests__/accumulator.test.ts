@@ -150,4 +150,36 @@ describe('createTokenAccumulator', () => {
       expect(result?.uncachedInputTokens).toBe(200);
     });
   });
+
+  describe('finalize() is non-mutating', () => {
+    it('returns identical results across repeated calls (anthropic ephemeral)', () => {
+      const acc = createTokenAccumulator('anthropic');
+      acc.acceptEvent({
+        input_tokens: 100,
+        output_tokens: 50,
+        ephemeral_5m_input_tokens: 200,
+        ephemeral_1h_input_tokens: 50,
+      });
+
+      const first = acc.finalize();
+      const second = acc.finalize();
+
+      expect(second).toEqual(first);
+    });
+
+    it('returns identical results across repeated calls (google cached content)', () => {
+      const acc = createTokenAccumulator('google');
+      acc.acceptEvent({
+        prompt_token_count: 500,
+        candidates_token_count: 100,
+        cached_content_token_count: 300,
+        total_token_count: 600,
+      });
+
+      const first = acc.finalize();
+      const second = acc.finalize();
+
+      expect(second).toEqual(first);
+    });
+  });
 });
