@@ -65,7 +65,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - **Stream handling**: Always `tee()`, both streams must be consumed
 - **Queue consumer**: Must call `message.ack()` after processing
 - **OTel**: Consumer uses `@microlabs/otel-cf-workers`
-- **Design context**: `specs/decisions/` holds ADRs (queue processing, JWT auth, R2 storage, OTel conventions, etc.) — read before refactoring core flow
+- **Design context**: `docs/adr/` holds ADRs (queue processing, JWT auth, R2 storage, OTel conventions, etc.) — read before refactoring core flow
 
 ## Deployment
 
