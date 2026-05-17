@@ -17,12 +17,14 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 **Why `waitUntil()`**: Without it, the Worker terminates before async ops complete → data loss. Response returns immediately for low latency.
 
+**Why `TraceBatcher` (Durable Object)**: Queue messages fan out across sharded DO instances (`apps/proxy-consumer/src/batcher.ts`). Each shard batches traces (10k rows or 5s) before inserting into Tinybird to amortize ingest cost. A 5-min cron (`*/5 * * * *`) acts as a safety net to flush stale shards — silent-bake scenario where a shard sat unflushed for 51 days is the reason for the alert threshold.
+
 ## Development Gotchas
 
 - **`--persist-to` must match** across all workers or R2/KV storage is isolated per worker
 - **Queue consumers only work** when workers run together via `bun run dev:all` (or multi `-c` flags). Running separately won't connect the queue.
 - **Consumer requires `nodejs_compat`** compatibility flag for OpenTelemetry
-- **Web requires Convex** running in a separate terminal (`bunx convex dev`)
+- **Web requires Convex** running in a separate terminal (`bunx convex dev --once` for one-shot, or leave running)
 - For scripts, bindings, and env details — read `package.json` and `wrangler.toml` files directly
 
 ## Tinybird / ClickHouse
@@ -57,10 +59,13 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 - **Shared types**: `@trace-flow/types` — defines contract between workers
 - **Shared utils**: `@trace-flow/utils`
+- **Shared logging**: `@trace-flow/logging` — Axiom-backed logger; wired into worker entries
+- **Emails**: `@trace-flow/emails` — React Email templates for transactional mail
 - **R2 keys**: `bodies/${requestId}` (single object with request + response)
 - **Stream handling**: Always `tee()`, both streams must be consumed
 - **Queue consumer**: Must call `message.ack()` after processing
 - **OTel**: Consumer uses `@microlabs/otel-cf-workers`
+- **Design context**: `specs/decisions/` holds ADRs (queue processing, JWT auth, R2 storage, OTel conventions, etc.) — read before refactoring core flow
 
 ## Deployment
 
@@ -81,9 +86,3 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - Self-documenting code. JSDoc only for "why" (architecture decisions, CF Workers gotchas), never for "what"
 - Stale comments are worse than no comments
 - Pre-commit runs lint + prettier check; pre-push runs knip, type-check, and tests
-
-## Session Notes
-
-When a Claude session encounters something confusing or spends significant debugging time, add a note here for future sessions.
-
-<!-- Add session notes below this line -->
