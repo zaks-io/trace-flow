@@ -1,3 +1,4 @@
+import { SOURCE_PROXY, TRACE_FLOW } from '@trace-flow/otel-conventions';
 import { parseSpanAttributes } from './parseSpanAttributes';
 import type { TraceSpanRow } from './TraceSpanRow';
 
@@ -7,5 +8,5 @@ import type { TraceSpanRow } from './TraceSpanRow';
  */
 export function isLLMRequestSpan(span: Pick<TraceSpanRow, 'SpanName' | 'SpanAttributes'>): boolean {
   const attrs = parseSpanAttributes(span.SpanAttributes);
-  return attrs['trace_flow.source'] === 'proxy';
+  return attrs[TRACE_FLOW.SOURCE] === SOURCE_PROXY;
 }

@@ -34,6 +34,15 @@ _Avoid_: using "trace" to mean a single row.
 One row in Tinybird's `otel_traces`. Write-shape is `TinybirdTrace` (`@trace-flow/types`); read-shape is `TraceSpanRow` (`@trace-flow/spans`).
 _Avoid_: "trace row", "trace record".
 
+**Span Variant**:
+One of four roles a Span plays within a Trace. The Consumer emits each variant from `buildTraces`:
+
+- **Root Span** — `SPAN_KIND_CLIENT`, named `{operation} {model}`. Carries request-level attributes (tokens, cost, latency, TTFT, response metadata).
+- **Response Span** — `SPAN_KIND_INTERNAL`, named `gen_ai.response.{text|embedding}`. Emitted for non-streaming responses, child of Root Span.
+- **Content Block Span** — `SPAN_KIND_INTERNAL`, named `gen_ai.response.{type}[.{N}]`. One per streaming content block (text, thinking, tool_use), child of Root Span.
+- **Tool Execution Span** — `SPAN_KIND_INTERNAL`, named `gen_ai.tool.execution`. Cross-Trace tool-call duration, child of Root Span with a `Links.TraceId` back to the originating Trace.
+  _Avoid_: "non-streaming child", "block span" (unqualified), "tool span".
+
 ### Workers and stages
 
 **Proxy**:
@@ -80,6 +89,9 @@ _Avoid_: "action", "verb".
 
 **Token Accumulator**:
 The per-Provider SSE state machine in `@trace-flow/llm-providers/accumulator` that folds events into a final `LLMTokenUsage`.
+
+**Raw Token Totals**:
+The pre-normalization shape both the Token Accumulator (streaming) and `parseTokenUsage` (whole-body) produce before `applyTokenSchema` turns them into a canonical `LLMTokenUsage`. Carries upstream-named running sums (`inputTokens`, `cacheCreation5mTokens`, `explicitTotal`, `thinkingChars`, …); the schema rules that turn those into `promptTokens` / `uncachedInputTokens` / derived `totalTokens` live in one place rather than at each call site.
 
 **SSE Event**:
 A single parsed Server-Sent Events frame from an upstream stream.

@@ -1,3 +1,4 @@
+import { GEN_AI } from '@trace-flow/otel-conventions';
 import type { ToolCallResult } from '../protocol';
 import {
   jsonReplacer,
@@ -30,14 +31,14 @@ interface FormattedEvent {
   attributes: Record<string, string>;
 }
 
-const SAFE_EVENT_ATTRIBUTE_KEYS = new Set([
-  'gen_ai.content.type',
-  'gen_ai.message.index',
-  'gen_ai.message.role',
-  'gen_ai.response.streaming',
-  'gen_ai.server.time_to_first_token',
-  'gen_ai.tool.id',
-  'gen_ai.tool.name',
+const SAFE_EVENT_ATTRIBUTE_KEYS = new Set<string>([
+  GEN_AI.CONTENT_TYPE,
+  GEN_AI.MESSAGE_INDEX,
+  GEN_AI.MESSAGE_ROLE,
+  GEN_AI.RESPONSE_STREAMING,
+  GEN_AI.SERVER_TTFT,
+  GEN_AI.TOOL_ID,
+  GEN_AI.TOOL_NAME,
 ]);
 
 function sanitizeEventAttributes(attributes: Record<string, unknown>): Record<string, string> {

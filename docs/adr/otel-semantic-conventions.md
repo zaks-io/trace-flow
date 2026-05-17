@@ -118,6 +118,8 @@ The consumer worker transforms each provider's response format to OTel conventio
 
 This normalization happens once in the consumer worker. All downstream code works with a single format.
 
+The attribute key strings and span-name conventions listed in this ADR are canonicalized in **`@trace-flow/otel-conventions`** — `keys.ts` for constants, `attributes/` for per-concern mappers, `createSpan` for the row builder. Consumer writes, `packages/spans` reads, web/MCP read sites, and the OTLP transform all import from this single module. A `sqlConsistency` test in that package scans `pipes/` and `datasources/` for `JSONExtract*(SpanAttributes, '...')` calls and asserts every SQL key has a TS constant counterpart — the line of defense against silent materialized-view drift when an attribute is renamed.
+
 ## Span Naming Convention
 
 OTel GenAI conventions specify span naming as `{gen_ai.operation.name} {gen_ai.request.model}`:

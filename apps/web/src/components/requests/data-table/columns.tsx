@@ -2,6 +2,7 @@
 
 import type { ColumnDef, VisibilityState } from '@tanstack/react-table';
 import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
+import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, HTTP } from '@trace-flow/otel-conventions';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber, formatRelativeTime } from '@/lib/format';
 import { calculateCacheHitRate } from '@/lib/cacheMetrics';
@@ -81,7 +82,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'aiProvider',
-    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.system'),
+    accessorFn: (row) => getSpanAttribute(row, GEN_AI.SYSTEM),
     header: 'Provider',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -97,7 +98,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     id: 'aiModel',
     accessorFn: (row) => {
       const attrs = parseSpanAttributes(row.SpanAttributes);
-      return { model: attrs['gen_ai.request.model'], provider: attrs['gen_ai.system'] };
+      return { model: attrs[GEN_AI.REQUEST_MODEL], provider: attrs[GEN_AI.SYSTEM] };
     },
     header: 'Model',
     cell: ({ getValue }) => {
@@ -142,7 +143,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'promptTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.usage.input_tokens'),
+    accessorFn: (row) => getSpanAttribute(row, GEN_AI_USAGE.INPUT_TOKENS),
     header: 'Prompt',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -158,7 +159,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'completionTokens',
-    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.usage.output_tokens'),
+    accessorFn: (row) => getSpanAttribute(row, GEN_AI_USAGE.OUTPUT_TOKENS),
     header: 'Completion',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -174,7 +175,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'cost',
-    accessorFn: (row) => getSpanAttribute(row, 'gen_ai.cost.total'),
+    accessorFn: (row) => getSpanAttribute(row, GEN_AI_COST.TOTAL),
     header: 'Cost',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -188,10 +189,10 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     id: 'cacheHitRate',
     accessorFn: (row) => {
       const attrs = parseSpanAttributes(row.SpanAttributes);
-      const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10) || 0;
+      const cacheRead = parseInt(attrs[GEN_AI_USAGE.CACHE_READ_INPUT_TOKENS] ?? '0', 10) || 0;
       const cacheCreation =
-        parseInt(attrs['gen_ai.usage.cache_creation_input_tokens'] ?? '0', 10) || 0;
-      const promptTotal = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) || 0;
+        parseInt(attrs[GEN_AI_USAGE.CACHE_CREATION_INPUT_TOKENS] ?? '0', 10) || 0;
+      const promptTotal = parseInt(attrs[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10) || 0;
       return calculateCacheHitRate(cacheRead, cacheCreation, promptTotal);
     },
     header: 'Cache',
@@ -218,7 +219,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
   },
   {
     id: 'httpStatusCode',
-    accessorFn: (row) => getSpanAttribute(row, 'http.response.status_code'),
+    accessorFn: (row) => getSpanAttribute(row, HTTP.RESPONSE_STATUS_CODE),
     header: 'HTTP',
     cell: ({ getValue }) => {
       const value = getValue<string | undefined>();
@@ -318,8 +319,8 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     id: 'totalTokens',
     accessorFn: (row) => {
       const attrs = parseSpanAttributes(row.SpanAttributes);
-      const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10) || 0;
-      const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10) || 0;
+      const input = parseInt(attrs[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10) || 0;
+      const output = parseInt(attrs[GEN_AI_USAGE.OUTPUT_TOKENS] ?? '0', 10) || 0;
       return input + output > 0 ? input + output : undefined;
     },
     header: 'Tokens',

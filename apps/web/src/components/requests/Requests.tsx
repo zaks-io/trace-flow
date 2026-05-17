@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { type api } from '@convex/_generated/api';
-import { parseSpanAttributes } from '@trace-flow/utils';
+import { parseSpanAttributes } from '@trace-flow/spans';
+import { GEN_AI } from '@trace-flow/otel-conventions';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
@@ -26,7 +27,7 @@ interface TinybirdResponse {
 }
 
 function getRequestId(row: RequestRow): string | undefined {
-  return parseSpanAttributes(row.SpanAttributes)['gen_ai.request_id'];
+  return parseSpanAttributes(row.SpanAttributes)[GEN_AI.REQUEST_ID];
 }
 
 interface RequestsProps {

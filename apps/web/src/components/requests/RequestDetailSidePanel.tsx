@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { parseSpanAttributes } from '@trace-flow/utils';
+import { parseSpanAttributes } from '@trace-flow/spans';
+import { GEN_AI, HTTP } from '@trace-flow/otel-conventions';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Sheet,
@@ -95,21 +96,21 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
     [request?.SpanAttributes],
   );
 
-  const requestId = parsedAttributes['gen_ai.request_id'];
-  const provider = parsedAttributes['gen_ai.system'] ?? '';
-  const model = parsedAttributes['gen_ai.request.model'] ?? '';
-  const targetUrl = parsedAttributes['http.url'] ?? '';
-  const statusCode = parsedAttributes['http.response.status_code'] ?? '';
-  const responseId = parsedAttributes['gen_ai.response.id'] ?? '';
+  const requestId = parsedAttributes[GEN_AI.REQUEST_ID];
+  const provider = parsedAttributes[GEN_AI.SYSTEM] ?? '';
+  const model = parsedAttributes[GEN_AI.REQUEST_MODEL] ?? '';
+  const targetUrl = parsedAttributes[HTTP.URL] ?? '';
+  const statusCode = parsedAttributes[HTTP.RESPONSE_STATUS_CODE] ?? '';
+  const responseId = parsedAttributes[GEN_AI.RESPONSE_ID] ?? '';
 
   const remainingAttributes = useMemo(() => {
-    const displayedKeys = new Set([
-      'gen_ai.system',
-      'gen_ai.request.model',
-      'http.url',
-      'http.response.status_code',
-      'gen_ai.response.id',
-      'gen_ai.request_id',
+    const displayedKeys = new Set<string>([
+      GEN_AI.SYSTEM,
+      GEN_AI.REQUEST_MODEL,
+      HTTP.URL,
+      HTTP.RESPONSE_STATUS_CODE,
+      GEN_AI.RESPONSE_ID,
+      GEN_AI.REQUEST_ID,
       'service.name',
     ]);
     return Object.entries(parsedAttributes).filter(([key]) => !displayedKeys.has(key));

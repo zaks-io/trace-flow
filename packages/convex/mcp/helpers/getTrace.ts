@@ -2,6 +2,14 @@
  * Helper functions for parsing and formatting trace spans.
  * SQL building has been moved to Tinybird Pipes for security.
  */
+import {
+  BAGGAGE_PREFIX,
+  GEN_AI,
+  GEN_AI_COST,
+  GEN_AI_USAGE,
+  HTTP,
+  STATUS_CODE,
+} from '@trace-flow/otel-conventions';
 
 export interface SpanRow {
   ReceivedAt: unknown;
@@ -45,14 +53,14 @@ function parseSpanAttributes(spanAttributes: unknown): Record<string, unknown> {
 function extractBaggage(attrs: Record<string, unknown>): Record<string, string> | undefined {
   const baggage: Record<string, string> = {};
   for (const [key, value] of Object.entries(attrs)) {
-    if (key.startsWith('baggage.') && value != null) {
+    if (key.startsWith(BAGGAGE_PREFIX) && value != null) {
       const strValue =
         typeof value === 'string'
           ? value
           : typeof value === 'number' || typeof value === 'boolean'
             ? String(value)
             : JSON.stringify(value);
-      baggage[key.slice(8)] = strValue;
+      baggage[key.slice(BAGGAGE_PREFIX.length)] = strValue;
     }
   }
   return Object.keys(baggage).length > 0 ? baggage : undefined;
@@ -61,15 +69,15 @@ function extractBaggage(attrs: Record<string, unknown>): Record<string, string> 
 export function parseSpanRow(row: SpanRow): ParsedSpan {
   const attrs = parseSpanAttributes(row.SpanAttributes);
 
-  const promptTokens = Number(attrs['gen_ai.usage.input_tokens']) || 0;
-  const completionTokens = Number(attrs['gen_ai.usage.output_tokens']) || 0;
+  const promptTokens = Number(attrs[GEN_AI_USAGE.INPUT_TOKENS]) || 0;
+  const completionTokens = Number(attrs[GEN_AI_USAGE.OUTPUT_TOKENS]) || 0;
   const totalTokens = promptTokens + completionTokens;
-  const cachedTokens = Number(attrs['gen_ai.usage.cache_read_input_tokens']) || 0;
-  const reasoningTokens = Number(attrs['gen_ai.usage.reasoning_tokens']) || 0;
+  const cachedTokens = Number(attrs[GEN_AI_USAGE.CACHE_READ_INPUT_TOKENS]) || 0;
+  const reasoningTokens = Number(attrs[GEN_AI_USAGE.REASONING_TOKENS]) || 0;
 
-  const inputCost = Number(attrs['gen_ai.cost.input']) || 0;
-  const outputCost = Number(attrs['gen_ai.cost.output']) || 0;
-  const totalCost = Number(attrs['gen_ai.cost.total']) || 0;
+  const inputCost = Number(attrs[GEN_AI_COST.INPUT]) || 0;
+  const outputCost = Number(attrs[GEN_AI_COST.OUTPUT]) || 0;
+  const totalCost = Number(attrs[GEN_AI_COST.TOTAL]) || 0;
 
   // Build tokens object with only non-zero values
   const tokens: Record<string, number> = {};
@@ -91,17 +99,17 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     name: row.SpanName as string,
     timestamp: new Date(Number(row.Timestamp) / 1_000_000).toISOString(),
     duration_ms: Number(row.Duration) / 1_000_000,
-    status: row.StatusCode === 'STATUS_CODE_OK' ? 'ok' : 'error',
+    status: row.StatusCode === STATUS_CODE.OK ? 'ok' : 'error',
     status_message: row.StatusMessage as string | undefined,
-    provider: attrs['gen_ai.system'] as string | undefined,
-    model: attrs['gen_ai.request.model'] as string | undefined,
-    target_url: attrs['http.url'] as string | undefined,
-    http_status: attrs['http.response.status_code'] as string | undefined,
+    provider: attrs[GEN_AI.SYSTEM] as string | undefined,
+    model: attrs[GEN_AI.REQUEST_MODEL] as string | undefined,
+    target_url: attrs[HTTP.URL] as string | undefined,
+    http_status: attrs[HTTP.RESPONSE_STATUS_CODE] as string | undefined,
     tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
     cost_usd: Object.keys(costUsd).length > 0 ? costUsd : undefined,
-    time_to_first_token_ms: Number(attrs['gen_ai.server.time_to_first_token']) || undefined,
+    time_to_first_token_ms: Number(attrs[GEN_AI.SERVER_TTFT]) || undefined,
     baggage: extractBaggage(attrs),
-    operation: attrs['gen_ai.operation.name'] as string | undefined,
+    operation: attrs[GEN_AI.OPERATION_NAME] as string | undefined,
   };
 }
 

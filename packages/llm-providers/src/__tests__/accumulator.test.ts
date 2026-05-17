@@ -151,6 +151,38 @@ describe('createTokenAccumulator', () => {
     });
   });
 
+  describe('zero values flow through (!== undefined semantics)', () => {
+    it('preserves completionTokens = 0 from a refusal event', () => {
+      const acc = createTokenAccumulator('openai');
+      acc.acceptEvent({ input_tokens: 100, output_tokens: 0 });
+
+      const result = acc.finalize();
+
+      expect(result?.completionTokens).toBe(0);
+      expect(result?.promptTokens).toBe(100);
+    });
+
+    it('preserves reasoningTokens = 0 from a model that reports zero', () => {
+      const acc = createTokenAccumulator('openai');
+      acc.acceptEvent({ input_tokens: 100, output_tokens: 50, reasoning_tokens: 0 });
+
+      const result = acc.finalize();
+
+      expect(result?.reasoningTokens).toBe(0);
+    });
+
+    it('does not derive total when only completion observed', () => {
+      const acc = createTokenAccumulator('openai');
+      acc.acceptEvent({ output_tokens: 50 });
+
+      const result = acc.finalize();
+
+      expect(result?.completionTokens).toBe(50);
+      expect(result?.promptTokens).toBeUndefined();
+      expect(result?.totalTokens).toBeUndefined();
+    });
+  });
+
   describe('finalize() is non-mutating', () => {
     it('returns identical results across repeated calls (anthropic ephemeral)', () => {
       const acc = createTokenAccumulator('anthropic');

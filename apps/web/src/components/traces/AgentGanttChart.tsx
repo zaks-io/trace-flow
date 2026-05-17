@@ -1,5 +1,12 @@
 import { useMemo, useState, useRef } from 'react';
 import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
+import {
+  GEN_AI,
+  GEN_AI_COST,
+  GEN_AI_USAGE,
+  SPAN_NAME_PREFIXES,
+  SPAN_NAMES,
+} from '@trace-flow/otel-conventions';
 import { formatDuration as formatDurationMs, formatNumber, formatCurrency } from '@/lib/format';
 import {
   Bot,
@@ -108,9 +115,9 @@ interface SpanRow {
 
 function getSpanModel(attrs: Record<string, string>): string | null {
   const raw =
-    attrs['gen_ai.request.model'] || attrs['llm.request.model'] || attrs['gen_ai.system'] || null;
+    attrs[GEN_AI.REQUEST_MODEL] || attrs['llm.request.model'] || attrs[GEN_AI.SYSTEM] || null;
   if (!raw) return null;
-  const provider = attrs['gen_ai.system'];
+  const provider = attrs[GEN_AI.SYSTEM];
   if (!provider) return raw;
   const name = raw.includes('/') ? raw.split('/').slice(1).join('/') : raw;
   return `${provider}/${name}`;
@@ -177,7 +184,7 @@ function getSpanType(span: TraceSpan, attrs: Record<string, string>): SpanType {
 
   // OTel GenAI semantic conventions: span names like "chat gpt-4", "embeddings text-embedding-3-small"
   // Also check gen_ai.operation.name attribute for new-style spans
-  const operationName = attrs['gen_ai.operation.name']?.toLowerCase();
+  const operationName = attrs[GEN_AI.OPERATION_NAME]?.toLowerCase();
   if (
     operationName === 'chat' ||
     operationName === 'text_completion' ||
@@ -192,34 +199,34 @@ function getSpanType(span: TraceSpan, attrs: Record<string, string>): SpanType {
   if (name === 'gen_ai.request' || name.includes('chat/completions')) return 'llm';
 
   // Output spans (cool/vibrant tones) - gen_ai.response.{type} pattern
-  if (name.startsWith('gen_ai.response.text')) return 'assistant_text';
-  if (name.startsWith('gen_ai.response.thinking')) return 'assistant_thinking';
-  if (name.startsWith('gen_ai.response.tool_use')) return 'assistant_tool_use';
+  if (name.startsWith(SPAN_NAMES.responseFor('text'))) return 'assistant_text';
+  if (name.startsWith(SPAN_NAMES.responseFor('thinking'))) return 'assistant_thinking';
+  if (name.startsWith(SPAN_NAMES.responseFor('tool_use'))) return 'assistant_tool_use';
 
   // Tool execution
-  if (name === 'gen_ai.tool.execution') return 'tool_execution';
+  if (name === SPAN_NAMES.TOOL_EXECUTION) return 'tool_execution';
 
   // Fallback for other response outputs (numbered variants like gen_ai.response.text.2)
-  if (name.startsWith('gen_ai.response.')) return 'assistant_text';
+  if (name.startsWith(SPAN_NAME_PREFIXES.RESPONSE)) return 'assistant_text';
 
   return 'internal';
 }
 
 function getSpanTokens(attrs: Record<string, string>): number | null {
-  const input = parseInt(attrs['gen_ai.usage.input_tokens'] ?? '0', 10);
-  const output = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+  const input = parseInt(attrs[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10);
+  const output = parseInt(attrs[GEN_AI_USAGE.OUTPUT_TOKENS] ?? '0', 10);
   const total = input + output;
 
   return total > 0 ? total : null;
 }
 
 function getSpanTokensPerSecond(_span: TraceSpan, attrs: Record<string, string>): number | null {
-  const tps = attrs['gen_ai.tokens_per_second'];
+  const tps = attrs[GEN_AI.TOKENS_PER_SECOND];
   return tps ? parseFloat(tps) : null;
 }
 
 function getSpanCost(attrs: Record<string, string>): number | null {
-  const cost = attrs['gen_ai.cost.total'];
+  const cost = attrs[GEN_AI_COST.TOTAL];
   return cost ? parseFloat(cost) : null;
 }
 
@@ -234,7 +241,7 @@ function getBaggageAttributes(attrs: Record<string, string>): Record<string, str
 }
 
 function getMessageIndex(attrs: Record<string, string>): number | null {
-  const index = attrs['gen_ai.message.index'];
+  const index = attrs[GEN_AI.MESSAGE_INDEX];
   return index !== undefined ? parseInt(index, 10) : null;
 }
 
@@ -532,9 +539,7 @@ export function AgentGanttChart({
         // Get operation from first child's gen_ai.operation.name or baggage for labeling
         const firstChildAttrs = parseSpanAttributes(childSpans[0].SpanAttributes);
         const operation =
-          firstChildAttrs['gen_ai.operation.name'] ??
-          firstChildAttrs['baggage.operation'] ??
-          'group';
+          firstChildAttrs[GEN_AI.OPERATION_NAME] ?? firstChildAttrs['baggage.operation'] ?? 'group';
 
         syntheticSpans.push({
           Timestamp: earliestStart,
@@ -547,7 +552,7 @@ export function AgentGanttChart({
           StatusCode: 'OK',
           SpanAttributes: JSON.stringify({
             synthetic: 'true',
-            'gen_ai.operation.name': operation,
+            [GEN_AI.OPERATION_NAME]: operation,
           }),
         });
       }
@@ -630,7 +635,7 @@ export function AgentGanttChart({
         if (op) operations.add(op);
 
         const tps = getSpanTokensPerSecond(span, attrs);
-        const outputTokens = parseInt(attrs['gen_ai.usage.output_tokens'] ?? '0', 10);
+        const outputTokens = parseInt(attrs[GEN_AI_USAGE.OUTPUT_TOKENS] ?? '0', 10);
         if (tps !== null && outputTokens > 0) {
           tpsSpans.push({ tps, outputTokens });
         }
@@ -659,7 +664,7 @@ export function AgentGanttChart({
 
     const buildSpanRow = (span: TraceSpan, depth: number, isLastPath: boolean[]): SpanRow => {
       const attrs = parsedAttrs.get(span.SpanId)!;
-      const cacheRead = parseInt(attrs['gen_ai.usage.cache_read_input_tokens'] ?? '0', 10);
+      const cacheRead = parseInt(attrs[GEN_AI_USAGE.CACHE_READ_INPUT_TOKENS] ?? '0', 10);
       const metrics = subtreeMetrics.get(span.SpanId)!;
       const startOffset = ((span.Timestamp - traceStart) / total) * 100;
       const width = (span.Duration / total) * 100;
@@ -672,7 +677,7 @@ export function AgentGanttChart({
         width: Math.max(width, 0.5),
         type: getSpanType(span, attrs),
         model: getSpanModel(attrs),
-        operationName: attrs['gen_ai.operation.name'] || null,
+        operationName: attrs[GEN_AI.OPERATION_NAME] || null,
         tokens: getSpanTokens(attrs),
         tokensPerSecond: getSpanTokensPerSecond(span, attrs),
         messageIndex: getMessageIndex(attrs),

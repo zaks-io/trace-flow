@@ -1,4 +1,5 @@
 import { parseSpanAttributes, type TraceSpanRow } from '@trace-flow/spans';
+import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, HTTP } from '@trace-flow/otel-conventions';
 import type { RequestRow } from '@/components/requests/data-table/columns';
 import type {
   Alert,
@@ -46,8 +47,8 @@ function extractMetricValue(row: RequestRow, field: AlertField): number | string
       return row.Duration / 1_000_000;
 
     case 'total_tokens': {
-      const input = attrs['gen_ai.usage.input_tokens'];
-      const output = attrs['gen_ai.usage.output_tokens'];
+      const input = attrs[GEN_AI_USAGE.INPUT_TOKENS];
+      const output = attrs[GEN_AI_USAGE.OUTPUT_TOKENS];
       if (input || output) {
         return (parseInt(input ?? '0', 10) || 0) + (parseInt(output ?? '0', 10) || 0);
       }
@@ -55,22 +56,22 @@ function extractMetricValue(row: RequestRow, field: AlertField): number | string
     }
 
     case 'prompt_tokens': {
-      const prompt = attrs['gen_ai.usage.input_tokens'];
+      const prompt = attrs[GEN_AI_USAGE.INPUT_TOKENS];
       return prompt ? parseInt(prompt, 10) : null;
     }
 
     case 'completion_tokens': {
-      const completion = attrs['gen_ai.usage.output_tokens'];
+      const completion = attrs[GEN_AI_USAGE.OUTPUT_TOKENS];
       return completion ? parseInt(completion, 10) : null;
     }
 
     case 'tokens_per_second': {
-      const tps = attrs['gen_ai.tokens_per_second'];
+      const tps = attrs[GEN_AI.TOKENS_PER_SECOND];
       return tps ? parseFloat(tps) : null;
     }
 
     case 'ttft_ms': {
-      const ttft = attrs['gen_ai.server.time_to_first_token'];
+      const ttft = attrs[GEN_AI.SERVER_TTFT];
       return ttft ? parseFloat(ttft) : null;
     }
 
@@ -78,12 +79,12 @@ function extractMetricValue(row: RequestRow, field: AlertField): number | string
       return row.StatusCode === 'ERROR';
 
     case 'http_status_code': {
-      const statusCode = attrs['http.response.status_code'];
+      const statusCode = attrs[HTTP.RESPONSE_STATUS_CODE];
       return statusCode ? parseInt(statusCode, 10) : null;
     }
 
     case 'cost_total': {
-      const cost = attrs['gen_ai.cost.total'];
+      const cost = attrs[GEN_AI_COST.TOTAL];
       return cost ? parseFloat(cost) : null;
     }
 

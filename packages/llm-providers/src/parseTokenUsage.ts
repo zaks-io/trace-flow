@@ -1,6 +1,7 @@
 import type { LLMTokenUsage } from '@trace-flow/types';
 import { PROVIDER_SCHEMAS } from './schemas';
 import type { ProviderId, ProviderTokenSchema } from './types';
+import { applyTokenSchema, type RawTokenTotals } from './applyTokenSchema';
 
 function matchIntField(body: string, field: string, lastMatchOnly: boolean): number | undefined {
   if (lastMatchOnly) {
@@ -38,16 +39,54 @@ function findUpstreamCost(body: string): number | undefined {
   return undefined;
 }
 
+function extractRawTotals(body: string, schema: ProviderTokenSchema): RawTokenTotals {
+  const raw: RawTokenTotals = {};
+
+  const inputTokens = firstIntMatch(body, schema.promptFields, schema.lastMatchOnly);
+  if (inputTokens !== undefined) raw.inputTokens = inputTokens;
+
+  const completionTokens = firstIntMatch(body, schema.completionFields, schema.lastMatchOnly);
+  if (completionTokens !== undefined) raw.completionTokens = completionTokens;
+
+  if (schema.totalFields) {
+    const total = firstIntMatch(body, schema.totalFields, schema.lastMatchOnly);
+    if (total !== undefined) raw.explicitTotal = total;
+  }
+
+  if (schema.cacheReadFields) {
+    const cacheRead = firstIntMatch(body, schema.cacheReadFields, schema.lastMatchOnly);
+    if (cacheRead !== undefined) raw.cacheReadTokens = cacheRead;
+  }
+
+  if (schema.cacheCreationFields) {
+    const cacheCreation = firstIntMatch(body, schema.cacheCreationFields, schema.lastMatchOnly);
+    if (cacheCreation !== undefined) raw.cacheCreationTokens = cacheCreation;
+  }
+
+  if (schema.reasoningFields) {
+    const reasoning = firstIntMatch(body, schema.reasoningFields, schema.lastMatchOnly);
+    if (reasoning !== undefined) raw.reasoningTokens = reasoning;
+  }
+
+  if (schema.nestedCacheCreation) {
+    const m5 = matchIntField(body, schema.nestedCacheCreation.field5m, false);
+    if (m5 !== undefined) raw.cacheCreation5mTokens = m5;
+    const m1h = matchIntField(body, schema.nestedCacheCreation.field1h, false);
+    if (m1h !== undefined) raw.cacheCreation1hTokens = m1h;
+  }
+
+  if (schema.hasUpstreamCost) {
+    const cost = findUpstreamCost(body);
+    if (cost !== undefined) raw.upstreamCost = cost;
+  }
+
+  return raw;
+}
+
 /**
- * Schema-driven whole-body token extraction. Returns canonical LLMTokenUsage.
- *
- * Normalizations applied here:
- *  - Anthropic (promptIncludesCache=false): promptTokens = input + cacheRead + cacheCreation
- *  - Everyone else (promptIncludesCache=true): uncachedInputTokens = prompt - cacheRead - cacheCreation
- *  - Google (lastMatchOnly=true): each field uses the last regex match in the body
- *    (Google streams cumulative usageMetadata in every chunk).
- *  - When nested cache_creation (Anthropic ephemeral_5m / ephemeral_1h) is present but
- *    the top-level cache_creation_input_tokens is missing, the sum becomes cacheCreationTokens.
+ * Schema-driven whole-body token extraction. Regex-extracts raw fields into a
+ * `RawTokenTotals`, then defers to `applyTokenSchema` for canonical normalization
+ * — the same normalizer the streaming accumulator uses, so the two paths can't drift.
  */
 export function parseTokenUsage(body: string, providerId: ProviderId): LLMTokenUsage | undefined {
   const schema = PROVIDER_SCHEMAS[providerId];
@@ -58,72 +97,5 @@ export function parseTokenUsageWithSchema(
   body: string,
   schema: ProviderTokenSchema,
 ): LLMTokenUsage | undefined {
-  const inputTokens = firstIntMatch(body, schema.promptFields, schema.lastMatchOnly);
-  const outputTokens = firstIntMatch(body, schema.completionFields, schema.lastMatchOnly);
-  const totalTokens = schema.totalFields
-    ? firstIntMatch(body, schema.totalFields, schema.lastMatchOnly)
-    : undefined;
-
-  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
-    return undefined;
-  }
-
-  const cacheReadTokens = schema.cacheReadFields
-    ? firstIntMatch(body, schema.cacheReadFields, schema.lastMatchOnly)
-    : undefined;
-  let cacheCreationTokens = schema.cacheCreationFields
-    ? firstIntMatch(body, schema.cacheCreationFields, schema.lastMatchOnly)
-    : undefined;
-  const reasoningTokens = schema.reasoningFields
-    ? firstIntMatch(body, schema.reasoningFields, schema.lastMatchOnly)
-    : undefined;
-  const upstreamCost = schema.hasUpstreamCost ? findUpstreamCost(body) : undefined;
-
-  let cacheCreation5mTokens: number | undefined;
-  let cacheCreation1hTokens: number | undefined;
-  if (schema.nestedCacheCreation) {
-    cacheCreation5mTokens = matchIntField(body, schema.nestedCacheCreation.field5m, false);
-    cacheCreation1hTokens = matchIntField(body, schema.nestedCacheCreation.field1h, false);
-    if (
-      cacheCreationTokens === undefined &&
-      (cacheCreation5mTokens !== undefined || cacheCreation1hTokens !== undefined)
-    ) {
-      cacheCreationTokens = (cacheCreation5mTokens ?? 0) + (cacheCreation1hTokens ?? 0);
-    }
-  }
-
-  const result: LLMTokenUsage = {};
-
-  let promptTokens: number | undefined = inputTokens;
-  if (!schema.promptIncludesCache && inputTokens !== undefined) {
-    promptTokens = inputTokens + (cacheReadTokens ?? 0) + (cacheCreationTokens ?? 0);
-  }
-
-  if (promptTokens !== undefined) result.promptTokens = promptTokens;
-
-  if (inputTokens !== undefined) {
-    result.uncachedInputTokens = schema.promptIncludesCache
-      ? Math.max(0, inputTokens - (cacheReadTokens ?? 0) - (cacheCreationTokens ?? 0))
-      : inputTokens;
-  }
-
-  if (outputTokens !== undefined) result.completionTokens = outputTokens;
-  if (totalTokens !== undefined) result.totalTokens = totalTokens;
-  if (cacheReadTokens !== undefined) result.cacheReadTokens = cacheReadTokens;
-  if (cacheCreationTokens !== undefined) result.cacheCreationTokens = cacheCreationTokens;
-  if (cacheCreation5mTokens !== undefined) result.cacheCreation5mTokens = cacheCreation5mTokens;
-  if (cacheCreation1hTokens !== undefined) result.cacheCreation1hTokens = cacheCreation1hTokens;
-  if (reasoningTokens !== undefined) result.reasoningTokens = reasoningTokens;
-  if (upstreamCost !== undefined) result.upstreamCost = upstreamCost;
-
-  // Derive total from prompt + completion when the body doesn't carry one (Anthropic).
-  if (
-    result.totalTokens === undefined &&
-    result.promptTokens !== undefined &&
-    result.completionTokens !== undefined
-  ) {
-    result.totalTokens = result.promptTokens + result.completionTokens;
-  }
-
-  return result;
+  return applyTokenSchema(extractRawTotals(body, schema), schema);
 }
