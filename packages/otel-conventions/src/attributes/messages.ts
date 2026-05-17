@@ -1,21 +1,12 @@
 import type { AnthropicContentBlock, InputMessage } from '@trace-flow/types';
 import { GEN_AI, EVENT_NAMES, inputEventName, outputEventName } from '../keys';
 
-/**
- * Span event for the timeline-encoded log of inputs and outputs. Caller packs
- * these into the TinybirdTrace's parallel `Events.*` arrays via `packEvents`.
- */
 export interface SpanEventInput {
   timestampMs: number;
   name: string;
   attributes: Record<string, string>;
 }
 
-/**
- * Build span events for input messages. System prompts collapse to a single
- * `input.system` event; user/assistant messages emit one event per content
- * block (`input.text` / `input.tool_use` / `input.tool_result`).
- */
 export function inputMessageEvents(
   inputMessages: InputMessage[],
   requestTimestampMs: number,
@@ -58,11 +49,6 @@ export function inputMessageEvents(
   return events;
 }
 
-/**
- * Build span events for output content blocks (text/thinking/tool_use). Uses
- * the block's stop timestamp when available, falling back to a caller-provided
- * timestamp (typically responseComplete).
- */
 export function outputBlockEvents(
   blocks: AnthropicContentBlock[],
   fallbackTimestampMs: number,
@@ -85,9 +71,9 @@ export function outputBlockEvents(
 }
 
 /**
- * Attributes for a Content Block Span. The unified message-index calculation
- * (inputMessageCount + messageIndex*100 + block.index) is preserved from the
- * pre-refactor logic to keep span ordering stable across the migration.
+ * The unified message-index calculation (`inputMessageCount + messageIndex*100
+ * + block.index`) is preserved from the pre-refactor logic to keep span
+ * ordering stable across the migration.
  */
 export function contentBlockSpanAttributes(
   block: AnthropicContentBlock,
@@ -107,10 +93,6 @@ export function contentBlockSpanAttributes(
   return attributes;
 }
 
-/**
- * Bracketed tool_call.start / tool_call.end events on a Content Block Span
- * when the block is a tool_use.
- */
 export function toolCallBracketEvents(block: AnthropicContentBlock): SpanEventInput[] {
   if (block.type !== 'tool_use' || block.stopTimestamp === undefined) return [];
   const toolId = block.toolUseId ?? '';

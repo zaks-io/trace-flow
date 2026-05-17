@@ -66,7 +66,7 @@ export function packEvents(events: SpanEventInput[]): {
  *  - tier + retention stamping
  *
  * Callers compose attribute helpers and decide which Span Variant to emit; the
- * 22-field literal lives here, once.
+ * full TinybirdTrace literal lives here, once.
  */
 export function createSpan(base: SpanBase, variant: SpanVariant): TinybirdTrace {
   const events = variant.events

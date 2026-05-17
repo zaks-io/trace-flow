@@ -14,8 +14,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@trace-flow/types": "*",
-    "@trace-flow/utils": "*"
+    "@trace-flow/types": "workspace:*",
+    "@trace-flow/utils": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.12.3",

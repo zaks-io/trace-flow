@@ -35,16 +35,15 @@ function findFilesRecursive(dir: string, suffixes: string[]): string[] {
   return out;
 }
 
-const SQL_EXTRACT_PATTERN = /JSONExtract\w+\(SpanAttributes,\s*'([^']+)'/g;
+const SQL_EXTRACT_PATTERN = /JSONExtract\w+\(\s*SpanAttributes\s*,\s*['"]([^'"]+)['"]/gi;
 
 describe('SpanAttributes SQL ↔ TS constant consistency', () => {
-  const files = [
-    ...findFilesRecursive(join(REPO_ROOT, 'pipes'), ['.pipe']),
-    ...findFilesRecursive(join(REPO_ROOT, 'datasources'), ['.datasource']),
-  ];
+  const pipeFiles = findFilesRecursive(join(REPO_ROOT, 'pipes'), ['.pipe']);
+  const datasourceFiles = findFilesRecursive(join(REPO_ROOT, 'datasources'), ['.datasource']);
+  const files = [...pipeFiles, ...datasourceFiles];
 
-  it('finds at least some pipe files to scan', () => {
-    expect(files.length).toBeGreaterThan(0);
+  it('finds at least one .pipe file to scan', () => {
+    expect(pipeFiles.length).toBeGreaterThan(0);
   });
 
   const knownKeys = new Set(ALL_ATTRIBUTE_KEYS);

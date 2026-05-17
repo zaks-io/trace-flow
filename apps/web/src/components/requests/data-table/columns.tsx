@@ -319,14 +319,15 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     id: 'totalTokens',
     accessorFn: (row) => {
       const attrs = parseSpanAttributes(row.SpanAttributes);
-      const input = parseInt(attrs[GEN_AI_USAGE.INPUT_TOKENS] ?? '0', 10) || 0;
-      const output = parseInt(attrs[GEN_AI_USAGE.OUTPUT_TOKENS] ?? '0', 10) || 0;
-      return input + output > 0 ? input + output : undefined;
+      const inputRaw = attrs[GEN_AI_USAGE.INPUT_TOKENS];
+      const outputRaw = attrs[GEN_AI_USAGE.OUTPUT_TOKENS];
+      if (inputRaw === undefined && outputRaw === undefined) return undefined;
+      return (parseInt(inputRaw ?? '0', 10) || 0) + (parseInt(outputRaw ?? '0', 10) || 0);
     },
     header: 'Tokens',
     cell: ({ getValue }) => {
       const value = getValue<number | undefined>();
-      return value ? (
+      return value !== undefined ? (
         <span className="font-mono text-sm tabular-nums text-muted-foreground">
           {formatNumber(value)}
         </span>

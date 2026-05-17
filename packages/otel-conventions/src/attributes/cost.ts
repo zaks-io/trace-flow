@@ -43,6 +43,6 @@ export function costAttributes(cost: CostBreakdown): Record<string, string> {
  * NOTE: input is dollars (provider sends a float), not microdollars.
  */
 export function upstreamCostAttribute(upstreamCost: number | undefined): Record<string, string> {
-  if (upstreamCost === undefined) return {};
+  if (upstreamCost === undefined || !Number.isFinite(upstreamCost)) return {};
   return { [GEN_AI_COST.UPSTREAM]: String(upstreamCost) };
 }
