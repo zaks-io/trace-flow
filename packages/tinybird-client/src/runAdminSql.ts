@@ -45,8 +45,7 @@ export async function runAdminSql({
 
 /**
  * Variant for SQL statements that don't return rows (ALTER TABLE DELETE / UPDATE).
- * Same auth, same error mapping, but uses GET-style query parameter shape used
- * by the deleteOrgTraces/extendRetention call sites historically.
+ * Discards the response body — same auth, same error mapping.
  */
 export async function runAdminSqlNoResult(opts: RunAdminSqlOptions): Promise<void> {
   await runAdminSql(opts);

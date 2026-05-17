@@ -112,6 +112,15 @@ describe('createTokenAccumulator', () => {
       expect(result?.uncachedInputTokens).toBe(200);
       expect(result?.totalTokens).toBe(600);
     });
+
+    it('returns totals when only total_token_count is provided', () => {
+      const acc = createTokenAccumulator('google');
+      acc.acceptEvent({ total_token_count: 42 });
+
+      const result = acc.finalize();
+
+      expect(result?.totalTokens).toBe(42);
+    });
   });
 
   describe('openrouter', () => {

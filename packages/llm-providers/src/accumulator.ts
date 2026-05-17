@@ -105,6 +105,7 @@ export function createTokenAccumulator(providerId: ProviderId): TokenAccumulator
       if (usage.total_token_count !== undefined) {
         // Google sends cumulative totals — last wins, not summed.
         googleTotalTokenCount = usage.total_token_count;
+        hasAnyTokens = true;
       }
     },
 
