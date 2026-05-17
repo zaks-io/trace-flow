@@ -94,8 +94,9 @@ describe('costAttributes', () => {
 });
 
 describe('upstreamCostAttribute', () => {
-  it('normalizes dollars through the microdollar formatter', () => {
+  it('stringifies provider dollars without microdollar rounding', () => {
     expect(upstreamCostAttribute(0.0042)).toEqual({ 'gen_ai.cost.upstream': '0.0042' });
+    expect(upstreamCostAttribute(1e-7)).toEqual({ 'gen_ai.cost.upstream': '1e-7' });
   });
   it('returns empty when undefined', () => {
     expect(upstreamCostAttribute(undefined)).toEqual({});

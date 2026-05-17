@@ -34,15 +34,15 @@ export function costAttributes(cost: CostBreakdown): Record<string, string> {
 
 /**
  * Upstream-reported cost (OpenRouter `usage.cost`). Lives on `tokens.upstreamCost`,
- * separate from the pricing-derived CostBreakdown. Normalized through the same
- * microdollar-string formatter so all `gen_ai.cost.*` attributes look the same
- * in storage — fixes the pre-refactor inconsistency where `upstream` was raw
- * `String(...)` while siblings were formatted dollars.
+ * separate from the pricing-derived CostBreakdown. Stringified with `String(...)`
+ * so the stored attribute matches the JS float (including scientific notation and
+ * sub-microdollar magnitudes). Pricing-derived costs still use integer microdollars
+ * + `microdollarsToString`; rounding upstream dollars to microdollars would zero
+ * tiny values and change `parseFloat` semantics for existing consumers.
  *
  * NOTE: input is dollars (provider sends a float), not microdollars.
  */
 export function upstreamCostAttribute(upstreamCost: number | undefined): Record<string, string> {
   if (upstreamCost === undefined) return {};
-  const microdollars = Math.round(upstreamCost * 1_000_000);
-  return { [GEN_AI_COST.UPSTREAM]: microdollarsToString(microdollars) };
+  return { [GEN_AI_COST.UPSTREAM]: String(upstreamCost) };
 }
