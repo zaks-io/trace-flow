@@ -106,7 +106,7 @@ function runRegex(pattern: RegExp, data: string): RegExpExecArray | null {
   return pattern.exec(data);
 }
 
-export function extractOpenAIStyleMetadata(
+function extractOpenAIStyleMetadata(
   data: string,
   existing: Partial<LLMResponseMetadata> = {},
 ): Partial<LLMResponseMetadata> {
@@ -164,7 +164,7 @@ export function extractOpenAIStyleMetadata(
   return metadata;
 }
 
-export function extractOpenAIStyleUsage(data: string, includeCost = false): RawTokenUsage {
+function extractOpenAIStyleUsage(data: string, includeCost = false): RawTokenUsage {
   const usage: RawTokenUsage = {};
 
   const inputTokensMatch = runRegex(INPUT_TOKENS_PATTERN, data);

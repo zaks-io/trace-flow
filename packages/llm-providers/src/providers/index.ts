@@ -17,5 +17,3 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
 export function getProvider(id: ProviderId): Provider {
   return PROVIDERS[id];
 }
-
-export type { Provider, ParsedSSEEvent } from './types';
