@@ -104,7 +104,7 @@ describe('openai provider — quirks', () => {
       expect(messages?.[1]?.contentBlocks[0]?.type).toBe('tool_call');
       expect(messages?.[1]?.contentBlocks[0]?.toolUseId).toBe('call_1');
       const toolResultBlock = messages?.[2]?.contentBlocks.find((b) => b.type === 'tool_result');
-      expect(toolResultBlock?.toolCallId).toBe('call_1');
+      expect(toolResultBlock?.toolResultId).toBe('call_1');
     });
   });
 

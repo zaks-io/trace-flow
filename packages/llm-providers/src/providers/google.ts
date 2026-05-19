@@ -180,7 +180,6 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
       error: e,
       eventType: event.event,
       timestamp,
-      dataPreview: event.data?.substring(0, 100),
     });
   }
 }

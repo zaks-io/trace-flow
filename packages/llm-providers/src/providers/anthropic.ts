@@ -200,7 +200,6 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
           error: parseError,
           eventType,
           timestamp,
-          dataPreview: event.data?.substring(0, 100),
         });
         return;
       }
@@ -250,7 +249,13 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
           const blockIndex = parseInt(indexMatch[1], 10);
           const block = current.contentBlocks.find((b) => b.index === blockIndex);
           if (block) {
-            block.thinkingTextLength = (block.thinkingTextLength ?? 0) + textMatch[1].length;
+            let decodedLength: number;
+            try {
+              decodedLength = (JSON.parse(`"${textMatch[1]}"`) as string).length;
+            } catch {
+              decodedLength = textMatch[1].length;
+            }
+            block.thinkingTextLength = (block.thinkingTextLength ?? 0) + decodedLength;
           }
         }
       }
@@ -279,7 +284,6 @@ function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStre
       error: e,
       eventType: event.event,
       timestamp,
-      dataPreview: event.data?.substring(0, 100),
     });
   }
 }

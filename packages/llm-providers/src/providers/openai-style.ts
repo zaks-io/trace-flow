@@ -65,7 +65,7 @@ export function parseOpenAIStyleRequestBody(body: string): InputMessage[] | null
         contentBlocks.push({
           index: contentBlocks.length,
           type: 'tool_result',
-          toolCallId: msg.tool_call_id,
+          toolResultId: msg.tool_call_id,
         });
       }
 
@@ -274,7 +274,6 @@ export function handleOpenAIStyleSSEEvent(
           error: parseError,
           eventType,
           timestamp,
-          dataPreview: event.data?.substring(0, 100),
         });
         return;
       }
@@ -326,7 +325,6 @@ export function handleOpenAIStyleSSEEvent(
       error: e,
       eventType: event.event,
       timestamp,
-      dataPreview: event.data?.substring(0, 100),
     });
   }
 }
