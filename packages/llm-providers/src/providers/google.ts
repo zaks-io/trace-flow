@@ -18,8 +18,8 @@ interface GoogleRequestBody {
     parts: {
       text?: string;
       inlineData?: unknown;
-      functionCall?: { name: string; args: unknown };
-      functionResponse?: { name: string; response: unknown };
+      functionCall?: { id?: string; name: string; args: unknown };
+      functionResponse?: { id?: string; name: string; response: unknown };
     }[];
   }[];
   systemInstruction?: {
@@ -66,7 +66,7 @@ function parseGoogleRequestBody(body: string): InputMessage[] | null {
           contentBlocks.push({
             index: partIndex,
             type: 'tool_result',
-            toolResultId: part.functionResponse.name,
+            toolResultId: part.functionResponse.id ?? part.functionResponse.name,
           });
         }
       }

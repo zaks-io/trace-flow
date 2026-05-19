@@ -131,11 +131,21 @@ describe('google provider — quirks', () => {
           contents: [
             {
               role: 'model',
-              parts: [{ functionCall: { name: 'getWeather', args: { location: 'SF' } } }],
+              parts: [
+                { functionCall: { id: 'call_abc', name: 'getWeather', args: { location: 'SF' } } },
+              ],
             },
             {
               role: 'user',
-              parts: [{ functionResponse: { name: 'getWeather', response: { temp: 72 } } }],
+              parts: [
+                {
+                  functionResponse: {
+                    id: 'call_abc',
+                    name: 'getWeather',
+                    response: { temp: 72 },
+                  },
+                },
+              ],
             },
           ],
         }),
@@ -143,7 +153,21 @@ describe('google provider — quirks', () => {
       expect(messages?.[0]?.contentBlocks[0]?.type).toBe('tool_call');
       expect(messages?.[0]?.contentBlocks[0]?.toolName).toBe('getWeather');
       expect(messages?.[1]?.contentBlocks[0]?.type).toBe('tool_result');
-      expect(messages?.[1]?.contentBlocks[0]?.toolResultId).toBe('getWeather');
+      expect(messages?.[1]?.contentBlocks[0]?.toolResultId).toBe('call_abc');
+    });
+
+    it('falls back to function name when functionResponse has no id', () => {
+      const messages = google.parseRequestBody(
+        JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ functionResponse: { name: 'getWeather', response: { temp: 72 } } }],
+            },
+          ],
+        }),
+      );
+      expect(messages?.[0]?.contentBlocks[0]?.toolResultId).toBe('getWeather');
     });
 
     it('handles inlineData (image) parts', () => {

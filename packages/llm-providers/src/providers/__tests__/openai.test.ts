@@ -24,6 +24,13 @@ describe('openai provider — quirks', () => {
       expect(metadata?.finishReason).toBe('failed');
     });
 
+    it('ignores non-terminal in_progress status', () => {
+      const metadata = openai.parseResponseMetadata(
+        JSON.stringify({ object: 'response', status: 'in_progress' }),
+      );
+      expect(metadata?.finishReason).toBeUndefined();
+    });
+
     it('drives Responses API streaming via response.created + response.completed', () => {
       const state: SSEStreamData = { messages: [] };
       openai.handleSSEEvent(

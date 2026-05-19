@@ -89,6 +89,7 @@ const FINISH_REASON_PATTERN = /"finish_reason"\s*:\s*"([^"]+)"/;
 const NATIVE_FINISH_REASON_PATTERN = /"native_finish_reason"\s*:\s*"([^"]+)"/;
 const RESPONSE_STATUS_PATTERN = /"status"\s*:\s*"([^"]+)"/;
 const RESPONSES_API_MARKER = /"object"\s*:\s*"response"|"type"\s*:\s*"response\./;
+const TERMINAL_RESPONSE_STATUSES = new Set(['completed', 'failed', 'incomplete', 'cancelled']);
 const REASONING_TOKENS_PATTERN = /"reasoning_tokens"\s*:\s*(\d+)/;
 const HAS_LOGPROBS_PATTERN = /"logprobs"\s*:\s*(?:null|{)/;
 const REFUSAL_PATTERN = /"refusal"\s*:\s*(?:null|"([^"]*)")/;
@@ -134,7 +135,9 @@ function extractOpenAIStyleMetadata(
 
   if (RESPONSES_API_MARKER.test(data)) {
     const statusMatch = runRegex(RESPONSE_STATUS_PATTERN, data);
-    if (statusMatch?.[1]) metadata.finishReason = statusMatch[1];
+    if (statusMatch?.[1] && TERMINAL_RESPONSE_STATUSES.has(statusMatch[1])) {
+      metadata.finishReason = statusMatch[1];
+    }
   }
 
   const nativeFinishReasonMatch = runRegex(NATIVE_FINISH_REASON_PATTERN, data);
