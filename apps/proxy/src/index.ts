@@ -57,7 +57,7 @@ app.all('*', async (c) => {
   const validated = validateResult.validated;
 
   const forwarded = await forwardToUpstream(c, validated);
-  const attached = attachCapture(forwarded.response);
+  const attached = attachCapture(forwarded.response, validated.route.provider);
 
   const ctx: CaptureContext = {
     env: c.env,

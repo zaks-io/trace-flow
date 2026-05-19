@@ -1,15 +1,7 @@
 import type { LLMTokenUsage, LLMResponseMetadata, InputMessage } from '@trace-flow/types';
 import { getCurrentTimestamp, redactText, redactValue } from '@trace-flow/utils';
-import { parseTokenUsage, parseGoogleModelFromPath } from '@trace-flow/llm-providers';
 import { parseError } from './parsers/errors';
-import { extractMetadataFromResponseBody } from './parsers/metadata-regex';
-import {
-  parseAnthropicRequestBody,
-  parseOpenAIStyleRequestBody,
-  parseGoogleRequestBody,
-} from './parsers/request-body';
 import { captureStream, chunksToString } from './streaming/capture';
-import { aggregateSSETokens } from './streaming/sse';
 import { storeBodies } from './storage';
 import { createQueueMessage } from './queue';
 import { writeRequestAnalytics, writeSkippedAnalytics } from './analytics';
@@ -44,6 +36,8 @@ export async function captureAndEnqueue(ctx: CaptureContext): Promise<void> {
     responseReceived,
     omitBody,
   } = ctx;
+
+  const provider = route.provider;
 
   try {
     const requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
@@ -85,9 +79,9 @@ export async function captureAndEnqueue(ctx: CaptureContext): Promise<void> {
     // SSE text would match partial data from individual events and could leak stale fields.
     let tokens: LLMTokenUsage | undefined;
     if (isSSE && sseStreamData.messages.length > 0) {
-      tokens = aggregateSSETokens(sseStreamData, route.provider.id);
+      tokens = provider.aggregateSSETokens(sseStreamData);
     } else if (response.status < 400) {
-      tokens = parseTokenUsage(responseBody, route.provider.id);
+      tokens = provider.parseResponseTokenUsage(responseBody);
     }
     const error = response.status >= 400 ? parseError(responseBody, response.status) : undefined;
 
@@ -97,14 +91,14 @@ export async function captureAndEnqueue(ctx: CaptureContext): Promise<void> {
         const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
         responseMetadata = lastMessage?.metadata;
       } else {
-        responseMetadata = extractMetadataFromResponseBody(responseBody);
+        responseMetadata = provider.parseResponseMetadata(responseBody);
       }
     }
 
     // Google embed responses (and batchEmbedContents) don't include modelVersion in the body.
     // Fall back to the model in the URL path so traces don't show 'unknown'.
-    if (route.provider.id === 'google' && !responseMetadata?.model) {
-      const pathModel = parseGoogleModelFromPath(new URL(targetUrl).pathname);
+    if (!responseMetadata?.model && provider.resolveModelFromUrl) {
+      const pathModel = provider.resolveModelFromUrl(targetUrl);
       if (pathModel) {
         responseMetadata = { ...(responseMetadata ?? {}), model: pathModel };
       }
@@ -114,19 +108,7 @@ export async function captureAndEnqueue(ctx: CaptureContext): Promise<void> {
 
     if (requestBody) {
       try {
-        switch (route.provider.id) {
-          case 'anthropic':
-            inputMessages = parseAnthropicRequestBody(requestBody) ?? undefined;
-            break;
-          case 'google':
-            inputMessages = parseGoogleRequestBody(requestBody) ?? undefined;
-            break;
-          case 'openai':
-          case 'groq':
-          case 'openrouter':
-            inputMessages = parseOpenAIStyleRequestBody(requestBody) ?? undefined;
-            break;
-        }
+        inputMessages = provider.parseRequestBody(requestBody) ?? undefined;
       } catch (err) {
         logger.error('proxy.request_body_parse_failed', err);
       }

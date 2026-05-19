@@ -76,7 +76,7 @@ The single record passed between Pipeline Stages and into `captureAndEnqueue`. R
 ### LLM domain
 
 **Provider**:
-One of `openai`, `anthropic`, `google`, `openrouter`, `groq`. Each has a schema entry in `@trace-flow/llm-providers`.
+One of `openai`, `anthropic`, `google`, `openrouter`, `groq`. Each Provider is a module under `packages/llm-providers/src/providers/` that owns request-body parsing, response metadata + token extraction (whole-body and streaming), SSE event handling, and routing config behind a single `Provider` interface. Callers reach the adapter via `getProvider(id)` or `route.provider` instead of switching on `ProviderId`.
 _Avoid_: "vendor", "backend".
 
 **Route**:

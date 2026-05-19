@@ -12,11 +12,28 @@
  * Surfaces (does not auto-fix) parser bugs.
  */
 import type { SSEStreamData, LLMTokenUsage, LLMResponseMetadata } from '@trace-flow/types';
-import { parseTokenUsage } from '@trace-flow/llm-providers';
-import { createSSEParser, aggregateSSETokens } from '../../../apps/proxy/src/streaming/sse';
-import { extractMetadataFromResponseBody } from '../../../apps/proxy/src/parsers/metadata-regex';
-import { parseOpenAIStyleRequestBody } from '../../../apps/proxy/src/parsers/request-body';
+import { parseTokenUsage, getProvider } from '@trace-flow/llm-providers';
+import { createParser } from 'eventsource-parser';
+import { getCurrentTimestamp } from '@trace-flow/utils';
 import { requireEnv, log, success, error } from './config';
+
+const openai = getProvider('openai');
+
+function createSSEParser(streamData: SSEStreamData): ReturnType<typeof createParser> {
+  return createParser({
+    onEvent(event) {
+      openai.handleSSEEvent(event, getCurrentTimestamp(), streamData);
+    },
+  });
+}
+
+const aggregateSSETokens = (streamData: SSEStreamData): LLMTokenUsage | undefined =>
+  openai.aggregateSSETokens(streamData);
+
+const extractMetadataFromResponseBody = (body: string): Partial<LLMResponseMetadata> | undefined =>
+  openai.parseResponseMetadata(body);
+
+const parseOpenAIStyleRequestBody = (body: string) => openai.parseRequestBody(body);
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
@@ -137,7 +154,7 @@ function assertTokens(
 }
 
 function assertMetadata(
-  meta: Partial<LLMResponseMetadata>,
+  meta: Partial<LLMResponseMetadata> | undefined,
   expected: {
     expectId?: boolean;
     expectModel?: string | RegExp;
@@ -147,6 +164,11 @@ function assertMetadata(
   },
 ): CheckResult {
   const failures: string[] = [];
+
+  if (!meta) {
+    failures.push('metadata is undefined');
+    return { ok: false, failures };
+  }
 
   if (expected.expectId) {
     check(
@@ -321,7 +343,7 @@ async function testChatStreaming(apiKey: string): Promise<boolean> {
   const { streamData, rawTail, totalBytes } = await readStreamToData(res);
   console.log(`    stream bytes: ${totalBytes}, parsed messages: ${streamData.messages.length}`);
 
-  const aggregated = aggregateSSETokens(streamData, 'openai');
+  const aggregated = aggregateSSETokens(streamData);
   console.log(`    aggregated tokens: ${JSON.stringify(aggregated)}`);
 
   const lastMessage = streamData.messages[streamData.messages.length - 1];
@@ -441,7 +463,7 @@ async function testResponsesStreaming(apiKey: string): Promise<boolean> {
   console.log(`    last message metadata: ${JSON.stringify(lastMessage?.metadata)}`);
   console.log(`    last message usage (raw): ${JSON.stringify(lastMessage?.usage)}`);
 
-  const aggregated = aggregateSSETokens(streamData, 'openai');
+  const aggregated = aggregateSSETokens(streamData);
   console.log(`    aggregated tokens: ${JSON.stringify(aggregated)}`);
 
   // Find the response.completed event and extract OpenAI's reported usage from it
@@ -533,7 +555,7 @@ async function testChatToolCalls(apiKey: string): Promise<boolean> {
   const parsed = parseTokenUsage(body, 'openai');
   const metadata = extractMetadataFromResponseBody(body);
   console.log(`    parser tokens: ${JSON.stringify(parsed)}`);
-  console.log(`    parser metadata.finishReason: ${metadata.finishReason}`);
+  console.log(`    parser metadata.finishReason: ${metadata?.finishReason}`);
 
   // Request body should be parsed back into structured InputMessages.
   // Then feed THAT request plus a follow-up tool message into the parser
@@ -563,8 +585,8 @@ async function testChatToolCalls(apiKey: string): Promise<boolean> {
   check(
     failures,
     'metadata.finishReason is tool_calls',
-    metadata.finishReason === 'tool_calls',
-    metadata.finishReason ?? '<missing>',
+    metadata?.finishReason === 'tool_calls',
+    metadata?.finishReason ?? '<missing>',
   );
   check(failures, 'tokens parsed', !!parsed?.totalTokens, String(parsed?.totalTokens));
 

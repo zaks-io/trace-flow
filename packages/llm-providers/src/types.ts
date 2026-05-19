@@ -1,15 +1,5 @@
 export type ProviderId = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'groq';
 
-export interface ProviderConfig {
-  id: ProviderId;
-  baseUrl: string;
-}
-
-export interface ResolvedRoute {
-  provider: ProviderConfig;
-  targetUrl: string;
-}
-
 /**
  * Per-provider description of where token fields live in the response body. Drives
  * BOTH whole-body extraction (parseTokenUsage) and streaming SSE accumulation

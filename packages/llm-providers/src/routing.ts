@@ -1,12 +1,14 @@
-import type { ProviderConfig, ProviderId, ResolvedRoute } from './types';
+import { PROVIDERS as PROVIDER_ADAPTERS } from './providers';
+import type { Provider, ResolvedRoute } from './providers/types';
+import type { ProviderId } from './types';
 
-export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
-  openai: { id: 'openai', baseUrl: 'https://api.openai.com' },
-  anthropic: { id: 'anthropic', baseUrl: 'https://api.anthropic.com' },
-  openrouter: { id: 'openrouter', baseUrl: 'https://openrouter.ai/api' },
-  groq: { id: 'groq', baseUrl: 'https://api.groq.com/openai' },
-  google: { id: 'google', baseUrl: 'https://generativelanguage.googleapis.com' },
-};
+/**
+ * Public listing of all Providers. Each entry is the full Provider adapter
+ * (token schema, request/response/SSE parsers), keyed by id. Use
+ * `Object.keys(PROVIDERS)` for validation messages and `PROVIDERS[id]` to
+ * fetch an adapter directly.
+ */
+export const PROVIDERS: Record<ProviderId, Provider> = PROVIDER_ADAPTERS;
 
 const ROUTE_PATTERN = /^\/([^/]+)(\/.*)?$/;
 
