@@ -103,7 +103,6 @@ describe('evaluateRecordingPolicy', () => {
     const env = makeEnv({ billing: JSON.stringify(ACTIVE_SUB), doResponse: { allowed: true } });
     await evaluateRecordingPolicy(env, 'org-1', 7);
     const req: Request = env._doFetch.mock.calls[0]![0];
-    const body = await req.json();
-    expect(body.count).toBe(7);
+    expect(await req.json()).toMatchObject({ count: 7 });
   });
 });
