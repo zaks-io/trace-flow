@@ -35,7 +35,7 @@ One row in Tinybird's `otel_traces`. Write-shape is `TinybirdTrace` (`@trace-flo
 _Avoid_: "trace row", "trace record".
 
 **Span Variant**:
-One of four roles a Span plays within a Trace. The Consumer emits each variant from `buildTraces`:
+One of four roles a Span plays within a Trace. The Consumer emits each variant from `buildSpans`:
 
 - **Root Span** — `SPAN_KIND_CLIENT`, named `{operation} {model}`. Carries request-level attributes (tokens, cost, latency, TTFT, response metadata).
 - **Response Span** — `SPAN_KIND_INTERNAL`, named `gen_ai.response.{text|embedding}`. Emitted for non-streaming responses, child of Root Span.
@@ -72,6 +72,10 @@ One of the proxy's four named handler stages: **validateRequest** → **forwardT
 
 **CaptureContext**:
 The single record passed between Pipeline Stages and into `captureAndEnqueue`. Replaced the prior 23-field params object.
+
+**Recording Policy**:
+The module (`apps/proxy/src/recordingPolicy.ts`) that owns the billing + usage + decision dance. Both ingress paths (proxy and OTLP) call `evaluateRecordingPolicy(env, orgId, count)` and switch on `decision.reason` instead of sequencing `checkBillingStatus` → skip rule → `checkUsage` → combinator themselves. Emits a `TracingDecision` (`record: boolean` + `reason`) plus the underlying `UsageCheckResult`. The skip rule (suspended/canceled/no-subscription short-circuit usage) lives here so both paths agree.
+_Avoid_: "tracing gate", "ingest gate" (used to mean similar things but blur with rate limits).
 
 ### LLM domain
 

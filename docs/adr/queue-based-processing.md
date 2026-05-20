@@ -78,7 +78,7 @@ export default {
   async queue(batch: MessageBatch<QueueMessageUnion>, env: Env) {
     for (const message of batch.messages) {
       try {
-        const traces = buildTraces(message.body);
+        const traces = buildSpans(message.body);
         await batcher.addTraces(traces);
         message.ack();
       } catch (error) {

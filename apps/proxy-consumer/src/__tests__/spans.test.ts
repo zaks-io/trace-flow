@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildTraces } from '../traces';
+import { buildSpans } from '../spans';
 import type { QueueMessage } from '@trace-flow/types';
 
-describe('buildTraces', () => {
+describe('buildSpans', () => {
   const baseQueueMessage: QueueMessage = {
     requestId: 'test-request-123',
     apiKey: 'test-api-key',
@@ -33,7 +33,7 @@ describe('buildTraces', () => {
 
   describe('basic trace generation', () => {
     it('should generate root span with correct structure', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
 
       expect(traces.length).toBeGreaterThanOrEqual(1);
       const rootSpan = traces[0]!;
@@ -49,7 +49,7 @@ describe('buildTraces', () => {
     });
 
     it('should set root span attributes correctly', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes).toMatchObject({
@@ -64,7 +64,7 @@ describe('buildTraces', () => {
     });
 
     it('should calculate root span timing correctly', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.Timestamp).toBe(1000 * 1000000);
@@ -72,7 +72,7 @@ describe('buildTraces', () => {
     });
 
     it('should include proxy overhead and upstream TTFB attributes', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['trace_flow.proxy_overhead_ms']).toBe('100');
@@ -92,7 +92,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens']).toBe('100');
@@ -111,7 +111,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens']).toBe('25');
@@ -128,7 +128,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.reasoning_tokens']).toBe('20');
@@ -145,7 +145,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.cache_read_input_tokens']).toBe('30');
@@ -164,7 +164,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, {
+      const traces = buildSpans(message, {
         promptCostPerMillion: 3_000_000,
         completionCostPerMillion: 15_000_000,
         cacheReadCostPerMillion: 300_000,
@@ -190,7 +190,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.cache_creation_input_tokens']).toBe('556');
@@ -208,7 +208,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.cost.upstream']).toBe('0.06713');
@@ -222,7 +222,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens']).toBe('100');
@@ -230,7 +230,7 @@ describe('buildTraces', () => {
     });
 
     it('should handle no token usage', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.usage.input_tokens']).toBeUndefined();
@@ -253,7 +253,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.StatusCode).toBe('STATUS_CODE_ERROR');
@@ -276,7 +276,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.StatusCode).toBe('STATUS_CODE_ERROR');
@@ -305,7 +305,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -332,7 +332,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -358,7 +358,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -381,7 +381,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const textSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(textSpan).toBeUndefined();
@@ -410,7 +410,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined)!;
       const textSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text')!;
@@ -422,7 +422,7 @@ describe('buildTraces', () => {
     });
 
     it('should generate unique span IDs', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
 
       const spanIds = traces.map((t) => t.SpanId);
       const uniqueSpanIds = new Set(spanIds);
@@ -431,7 +431,7 @@ describe('buildTraces', () => {
     });
 
     it('should use same trace ID for all spans', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
 
       const traceIds = traces.map((t) => t.TraceId);
       expect(new Set(traceIds).size).toBe(1);
@@ -454,7 +454,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.system']).toBe('anthropic');
@@ -475,7 +475,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.system']).toBe('google');
@@ -484,7 +484,7 @@ describe('buildTraces', () => {
 
   describe('API key propagation', () => {
     it('should include API key in all spans', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
 
       traces.forEach((trace) => {
         expect(trace.ApiKey).toBe('test-api-key');
@@ -513,7 +513,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const contentBlockSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(contentBlockSpan).toBeDefined();
@@ -550,7 +550,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const contentBlockSpan = traces.find((t) => t.SpanName === 'gen_ai.response.tool_use');
       expect(contentBlockSpan).toBeDefined();
@@ -580,7 +580,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const contentBlockSpan = traces.find((t) => t.SpanName.includes('gen_ai.response.'));
       expect(contentBlockSpan).toBeUndefined();
@@ -612,7 +612,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       // When there are multiple of the same type, they should be numbered
       const textSpans = traces.filter((t) => t.SpanName.startsWith('gen_ai.response.text'));
@@ -647,7 +647,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const thinkingSpan = traces.find((t) => t.SpanName === 'gen_ai.response.thinking');
       const textSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
@@ -671,7 +671,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -694,7 +694,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -717,7 +717,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -740,7 +740,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -762,7 +762,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -787,7 +787,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -827,7 +827,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -861,7 +861,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -873,7 +873,7 @@ describe('buildTraces', () => {
     });
 
     it('should add output event for non-streaming responses', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -909,7 +909,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const rootSpan = traces.find((t) => t.SpanAttributes['gen_ai.operation.name'] !== undefined);
       expect(rootSpan).toBeDefined();
@@ -934,7 +934,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const toolExecSpan = traces.find((t) => t.SpanName === 'gen_ai.tool.execution');
       expect(toolExecSpan).toBeDefined();
@@ -967,7 +967,7 @@ describe('buildTraces', () => {
         ],
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const toolExecSpans = traces.filter((t) => t.SpanName === 'gen_ai.tool.execution');
       expect(toolExecSpans.length).toBe(2);
@@ -976,7 +976,7 @@ describe('buildTraces', () => {
 
   describe('non-streaming responses', () => {
     it('should create assistant response span for non-streaming responses', () => {
-      const traces = buildTraces(baseQueueMessage);
+      const traces = buildSpans(baseQueueMessage);
 
       const responseSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(responseSpan).toBeDefined();
@@ -992,7 +992,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const responseSpan = traces.find((t) => t.SpanName === 'gen_ai.response.text');
       expect(responseSpan).toBeUndefined();
@@ -1009,7 +1009,7 @@ describe('buildTraces', () => {
         operationName: 'embeddings',
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
 
       const responseSpan = traces.find((t) => t.SpanName === 'gen_ai.response.embedding');
       expect(responseSpan).toBeDefined();
@@ -1046,7 +1046,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       // 1000 * 3M / 1M = 3000 microdollars = $0.003
@@ -1066,7 +1066,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message);
+      const traces = buildSpans(message);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.cost.input']).toBeUndefined();
@@ -1083,7 +1083,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, null);
+      const traces = buildSpans(message, null);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.cost.input']).toBeUndefined();
@@ -1101,7 +1101,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       // 2000 * 300K / 1M = 600 microdollars = $0.0006
@@ -1118,7 +1118,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       // 1000 * 3.75M / 1M = 3750 microdollars = $0.00375
@@ -1135,7 +1135,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       // 200 * 15M / 1M = 3000 microdollars = $0.003
@@ -1152,7 +1152,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.cost.cache_read']).toBeUndefined();
@@ -1168,7 +1168,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.cost.cache_creation']).toBeUndefined();
@@ -1184,7 +1184,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       expect(rootSpan.SpanAttributes['gen_ai.cost.reasoning']).toBeUndefined();
@@ -1199,7 +1199,7 @@ describe('buildTraces', () => {
         },
       };
 
-      const traces = buildTraces(message, samplePricing);
+      const traces = buildSpans(message, samplePricing);
       const rootSpan = traces[0]!;
 
       // 1M * 3M / 1M = 3M microdollars = $3

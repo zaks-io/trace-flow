@@ -11,7 +11,7 @@ The cost model in `cost-analysis.md` is directionally correct but has gaps that 
 **Model assumes:** 2-5 rows per trace (implied by "5 spans")
 **Reality:** 3-15+ rows per trace depending on response type
 
-`buildTraces()` in `apps/proxy-consumer/src/traces.ts` creates:
+`buildSpans()` in `apps/proxy-consumer/src/spans.ts` creates:
 
 - 1 root span (always)
 - 1 span per content block (thinking, text, tool_use) for streaming responses
