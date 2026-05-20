@@ -292,13 +292,8 @@ function buildToolExecutions(
   );
 }
 
-/**
- * Transform a Queue Message into the Span Variants it emits per OTel GenAI
- * conventions: one Root Span plus zero or more child Spans (Response, Content
- * Block, Tool Execution). Attribute and span-name vocabularies live in
- * `@trace-flow/otel-conventions`; this module decides which variants apply
- * and composes the per-concern helpers into each Span.
- */
+// Single seam for Span Variant selection. Keeping the decision tree here
+// stops streaming and non-streaming ingest from drifting on which Spans emit.
 export function buildSpans(data: QueueMessage, pricing?: ModelPricing | null): TinybirdTrace[] {
   const shared = deriveSharedState(data);
   const sseWalk: SSEWalk = shared.isStreaming ? walkSSEStream(data) : { allContentBlocks: [] };
