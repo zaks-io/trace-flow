@@ -75,7 +75,7 @@ export function isAuthError(result: Response | ApiKeyData): result is Response {
   return result instanceof Response;
 }
 
-export interface BillingCheckResult {
+interface BillingCheckResult {
   status: 'active' | 'grace' | 'suspended' | 'canceled' | 'not_found';
   subscription?: SubscriptionKVData;
 }

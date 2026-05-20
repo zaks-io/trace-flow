@@ -8,7 +8,7 @@ interface RecordingPolicyEnv {
   USAGE_TRACKER: DurableObjectNamespace;
 }
 
-export interface RecordingPolicyEvaluation {
+interface RecordingPolicyEvaluation {
   decision: TracingDecision;
   usageCheck: UsageCheckResult;
 }
