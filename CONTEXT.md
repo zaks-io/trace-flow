@@ -35,7 +35,7 @@ One row in Tinybird's `otel_traces`. Write-shape is `TinybirdTrace` (`@trace-flo
 _Avoid_: "trace row", "trace record".
 
 **Span Variant**:
-One of four roles a Span plays within a Trace. The Consumer emits each variant from `buildTraces`:
+One of four roles a Span plays within a Trace. The Consumer emits each variant from `buildSpans`:
 
 - **Root Span** — `SPAN_KIND_CLIENT`, named `{operation} {model}`. Carries request-level attributes (tokens, cost, latency, TTFT, response metadata).
 - **Response Span** — `SPAN_KIND_INTERNAL`, named `gen_ai.response.{text|embedding}`. Emitted for non-streaming responses, child of Root Span.

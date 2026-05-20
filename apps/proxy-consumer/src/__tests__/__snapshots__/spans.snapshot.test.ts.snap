@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`buildTraces snapshot > matches the canonical TinybirdTrace[] shape for a representative non-streaming request 1`] = `
+exports[`buildSpans snapshot > matches the canonical TinybirdTrace[] shape for a representative non-streaming request 1`] = `
 [
   {
     "ApiKey": "tf-snapshot",

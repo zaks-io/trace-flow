@@ -6,7 +6,7 @@ import {
   type TraceBatcherInstance,
   type TraceBatcherStats,
 } from './batcher';
-import { buildTraces } from './traces';
+import { buildSpans } from './spans';
 import { calculateShardId } from './sharding';
 import { getPricing, type ModelPricing } from './pricing';
 import { fetchOpenRouterPricing } from './openrouter-pricing';
@@ -184,7 +184,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
           messageId = `otlp:${apiKey}:${message.body.receivedAt}:${traces.length}`;
         } else {
           const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
-          traces = buildTraces(message.body, pricing);
+          traces = buildSpans(message.body, pricing);
           apiKey = message.body.apiKey;
           messageId = `llm:${message.body.requestId}`;
         }

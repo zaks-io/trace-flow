@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildTraces } from '../traces';
+import { buildSpans } from '../spans';
 import type { QueueMessage, TinybirdTrace } from '@trace-flow/types';
 
 /**
- * Snapshot test for `buildTraces` — protects against silent attribute drops
+ * Snapshot test for `buildSpans` — protects against silent attribute drops
  * during the otel-conventions migration and any future refactor of the per-
  * concern helpers. Generated SpanId values are normalized to "<generated>" so
  * the snapshot stays stable across runs.
@@ -59,9 +59,9 @@ function normalize(traces: TinybirdTrace[]): TinybirdTrace[] {
   }));
 }
 
-describe('buildTraces snapshot', () => {
+describe('buildSpans snapshot', () => {
   it('matches the canonical TinybirdTrace[] shape for a representative non-streaming request', () => {
-    const traces = buildTraces(fixtureMessage);
+    const traces = buildSpans(fixtureMessage);
     expect(normalize(traces)).toMatchSnapshot();
   });
 });
