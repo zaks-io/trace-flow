@@ -1,4 +1,5 @@
 import type { SSEStreamData } from '@trace-flow/types';
+import type { Provider } from '@trace-flow/llm-providers';
 import type { EventSourceParser } from 'eventsource-parser';
 import { createResponseCapture } from '../streaming/capture';
 import { createSSEParser } from '../streaming/sse';
@@ -20,11 +21,11 @@ interface AttachedCapture {
  * the client immediately, and capture runs inside `waitUntil` after the
  * response stream finishes draining.
  */
-export function attachCapture(response: Response): AttachedCapture {
+export function attachCapture(response: Response, provider: Provider): AttachedCapture {
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
   const sseStreamData: SSEStreamData = { messages: [] };
-  const parser = isSSE ? createSSEParser(sseStreamData) : null;
+  const parser = isSSE ? createSSEParser(sseStreamData, provider) : null;
 
   const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: false });
 

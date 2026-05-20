@@ -7,11 +7,27 @@
  * runs in production. Useful when traces look incomplete in prod and we want
  * to rule out parser drift against current OpenRouter response shapes.
  */
-import type { SSEStreamData } from '@trace-flow/types';
-import { parseTokenUsage } from '@trace-flow/llm-providers';
-import { createSSEParser, aggregateSSETokens } from '../../../apps/proxy/src/streaming/sse';
-import { extractMetadataFromResponseBody } from '../../../apps/proxy/src/parsers/metadata-regex';
+import type { SSEStreamData, LLMResponseMetadata, LLMTokenUsage } from '@trace-flow/types';
+import { parseTokenUsage, getProvider } from '@trace-flow/llm-providers';
+import { createParser } from 'eventsource-parser';
+import { getCurrentTimestamp } from '@trace-flow/utils';
 import { requireEnv, log, success, error } from './config';
+
+const openrouter = getProvider('openrouter');
+
+function createSSEParser(streamData: SSEStreamData): ReturnType<typeof createParser> {
+  return createParser({
+    onEvent(event) {
+      openrouter.handleSSEEvent(event, getCurrentTimestamp(), streamData);
+    },
+  });
+}
+
+const aggregateSSETokens = (streamData: SSEStreamData): LLMTokenUsage | undefined =>
+  openrouter.aggregateSSETokens(streamData);
+
+const extractMetadataFromResponseBody = (body: string): Partial<LLMResponseMetadata> | undefined =>
+  openrouter.parseResponseMetadata(body);
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL = 'openai/gpt-4o-mini';
@@ -140,13 +156,13 @@ async function testNonStreamingParse(apiKey: string): Promise<boolean> {
 
   const metadata = extractMetadataFromResponseBody(body);
   console.log(
-    `    metadata: id=${metadata.id} model=${metadata.model} finish=${metadata.finishReason}`,
+    `    metadata: id=${metadata?.id} model=${metadata?.model} finish=${metadata?.finishReason}`,
   );
 
   const parserChecks = assertParsed(parsed, 'body');
   const matchOk = compareToReportedUsage(parsed, reportedUsage);
-  const metadataOk = !!metadata.id && !!metadata.model;
-  check('metadata extracted (id + model)', metadataOk, `${metadata.id} / ${metadata.model}`);
+  const metadataOk = !!metadata?.id && !!metadata?.model;
+  check('metadata extracted (id + model)', metadataOk, `${metadata?.id} / ${metadata?.model}`);
 
   const ok = parserChecks.ok && matchOk && metadataOk;
   if (ok) success('OpenRouter:parser', 'Non-streaming parse OK');
@@ -200,7 +216,7 @@ async function testStreamingParse(apiKey: string): Promise<boolean> {
   console.log(`    total stream bytes: ${totalBytes}`);
   console.log(`    SSE messages parsed: ${streamData.messages.length}`);
 
-  const aggregated = aggregateSSETokens(streamData, 'openrouter');
+  const aggregated = aggregateSSETokens(streamData);
   console.log(`    aggregated usage: ${JSON.stringify(aggregated)}`);
 
   // Pull out what OpenRouter actually reported in its terminal usage chunk
