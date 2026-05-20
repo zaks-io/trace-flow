@@ -73,6 +73,10 @@ One of the proxy's four named handler stages: **validateRequest** → **forwardT
 **CaptureContext**:
 The single record passed between Pipeline Stages and into `captureAndEnqueue`. Replaced the prior 23-field params object.
 
+**Recording Policy**:
+The module (`apps/proxy/src/recordingPolicy.ts`) that owns the billing + usage + decision dance. Both ingress paths (proxy and OTLP) call `evaluateRecordingPolicy(env, orgId, count)` and switch on `decision.reason` instead of sequencing `checkBillingStatus` → skip rule → `checkUsage` → combinator themselves. Emits a `TracingDecision` (`record: boolean` + `reason`) plus the underlying `UsageCheckResult`. The skip rule (suspended/canceled/no-subscription short-circuit usage) lives here so both paths agree.
+_Avoid_: "tracing gate", "ingest gate" (used to mean similar things but blur with rate limits).
+
 ### LLM domain
 
 **Provider**:

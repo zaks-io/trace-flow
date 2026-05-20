@@ -9,9 +9,10 @@ import {
   deriveOperationName,
 } from '@trace-flow/utils';
 import { PROVIDERS, resolveRoute } from '@trace-flow/llm-providers';
-import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
-import type { ApiKeyData, BillingCheckResult } from '../auth';
-import { checkUsage, type UsageCheckResult } from '../usage';
+import { validateApiKey, isAuthError } from '../auth';
+import type { ApiKeyData } from '../auth';
+import type { UsageCheckResult } from '../usage';
+import { evaluateRecordingPolicy } from '../recordingPolicy';
 import type { ProxyEnv, TracingDecision } from '../context';
 
 export const MAX_REQUEST_SIZE = 10 * 1024 * 1024;
@@ -40,21 +41,6 @@ export interface ValidatedRequest {
   operationName: string | undefined;
   apiKey: string;
   omitBody: boolean;
-}
-
-function resolveTracingDecision(
-  billing: BillingCheckResult,
-  usage: UsageCheckResult,
-): TracingDecision {
-  if (billing.status === 'suspended') return { record: false, reason: 'suspended' };
-  if (billing.status === 'canceled') return { record: false, reason: 'canceled' };
-  if (billing.status === 'not_found') return { record: false, reason: 'no_subscription' };
-
-  if (usage.status === 'allowed') return { record: true, reason: 'ok', tier: usage.tier };
-  if (usage.status === 'exceeded')
-    return { record: false, reason: 'exceeded', tier: usage.tier, periodEnd: usage.periodEnd };
-
-  return { record: false, reason: 'internal_error' };
 }
 
 export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promise<ValidateResult> {
@@ -119,23 +105,17 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
     };
   }
 
-  const billing = await checkBillingStatus(c.env, keyData.orgId, orgLogger);
-
-  const skipUsageCheck =
-    billing.status === 'suspended' ||
-    billing.status === 'canceled' ||
-    billing.status === 'not_found';
-
-  const usageCheck: UsageCheckResult = skipUsageCheck
-    ? { status: 'error', reason: 'billing_not_active' }
-    : await checkUsage(c.env, keyData.orgId, 1, billing.subscription);
-
-  const decision = resolveTracingDecision(billing, usageCheck);
+  const { decision, usageCheck } = await evaluateRecordingPolicy(
+    c.env,
+    keyData.orgId,
+    1,
+    orgLogger,
+  );
 
   if (decision.reason === 'internal_error') {
     orgLogger.error('proxy.tracing_disabled', undefined, {
-      billingStatus: billing.status,
       usageStatus: usageCheck.status,
+      usageReason: usageCheck.status === 'error' ? usageCheck.reason : undefined,
     });
   }
 

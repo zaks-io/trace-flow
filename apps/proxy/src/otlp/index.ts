@@ -2,9 +2,10 @@ import type { Context } from 'hono';
 import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
-import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
+import { validateApiKey, isAuthError } from '../auth';
 import type { ApiKeyData } from '../auth';
-import { checkUsage } from '../usage';
+import { evaluateRecordingPolicy } from '../recordingPolicy';
+import type { TracingDecision } from '../context';
 import { transformOTLPToTraces } from './transform';
 import { decodeOTLPProtobuf, readOTLPBody, OTLPProtoDecodeError } from './decode';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
@@ -39,6 +40,28 @@ interface ValidationResult {
   valid: boolean;
   error?: string;
   rejectedSpans?: number;
+}
+
+interface OTLPRejection {
+  logReason: string;
+  errorMessage: string;
+}
+
+function otlpRejectionFor(reason: TracingDecision['reason']): OTLPRejection {
+  switch (reason) {
+    case 'suspended':
+      return { logReason: 'suspended', errorMessage: 'Account suspended' };
+    case 'canceled':
+      return { logReason: 'canceled', errorMessage: 'Account canceled' };
+    case 'no_subscription':
+      return { logReason: 'not_found', errorMessage: 'Subscription not found' };
+    case 'exceeded':
+      return { logReason: 'exceeded', errorMessage: 'Usage limit exceeded' };
+    case 'internal_error':
+      return { logReason: 'usage_error', errorMessage: 'Usage check failed' };
+    case 'ok':
+      throw new Error('otlpRejectionFor called with reason=ok');
+  }
 }
 
 function validateOTLPRequest(request: unknown): ValidationResult {
@@ -379,55 +402,18 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
-  const billing = await checkBillingStatus(c.env, keyData.orgId, orgLogger);
+  const { decision } = await evaluateRecordingPolicy(
+    c.env,
+    keyData.orgId,
+    traces.length,
+    orgLogger,
+  );
 
-  if (
-    billing.status === 'suspended' ||
-    billing.status === 'canceled' ||
-    billing.status === 'not_found'
-  ) {
-    orgLogger.warn('otlp.reject', {
-      reason: billing.status,
-      rejectedSpans: traces.length,
-    });
+  if (!decision.record) {
+    const rejection = otlpRejectionFor(decision.reason);
+    orgLogger.warn('otlp.reject', { reason: rejection.logReason, rejectedSpans: traces.length });
     const response: OTLPExportTraceServiceResponse = {
-      partialSuccess: {
-        rejectedSpans: traces.length,
-        errorMessage:
-          billing.status === 'suspended'
-            ? 'Account suspended'
-            : billing.status === 'canceled'
-              ? 'Account canceled'
-              : 'Subscription not found',
-      },
-    };
-    c.header('X-Trace-Flow-Recording', 'false');
-    c.executionCtx.waitUntil(orgLogger.flush());
-    return c.json(response, 200);
-  }
-
-  const usageCheck = await checkUsage(c.env, keyData.orgId, traces.length, billing.subscription);
-
-  if (usageCheck.status === 'exceeded') {
-    orgLogger.warn('otlp.reject', { reason: 'exceeded', rejectedSpans: traces.length });
-    const response: OTLPExportTraceServiceResponse = {
-      partialSuccess: {
-        rejectedSpans: traces.length,
-        errorMessage: 'Usage limit exceeded',
-      },
-    };
-    c.header('X-Trace-Flow-Recording', 'false');
-    c.executionCtx.waitUntil(orgLogger.flush());
-    return c.json(response, 200);
-  }
-
-  if (usageCheck.status === 'error') {
-    orgLogger.warn('otlp.reject', { reason: 'usage_error', rejectedSpans: traces.length });
-    const response: OTLPExportTraceServiceResponse = {
-      partialSuccess: {
-        rejectedSpans: traces.length,
-        errorMessage: 'Usage check failed',
-      },
+      partialSuccess: { rejectedSpans: traces.length, errorMessage: rejection.errorMessage },
     };
     c.header('X-Trace-Flow-Recording', 'false');
     c.executionCtx.waitUntil(orgLogger.flush());
