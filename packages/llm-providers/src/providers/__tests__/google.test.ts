@@ -152,6 +152,7 @@ describe('google provider — quirks', () => {
       );
       expect(messages?.[0]?.contentBlocks[0]?.type).toBe('tool_call');
       expect(messages?.[0]?.contentBlocks[0]?.toolName).toBe('getWeather');
+      expect(messages?.[0]?.contentBlocks[0]?.toolUseId).toBe('call_abc');
       expect(messages?.[1]?.contentBlocks[0]?.type).toBe('tool_result');
       expect(messages?.[1]?.contentBlocks[0]?.toolResultId).toBe('call_abc');
     });

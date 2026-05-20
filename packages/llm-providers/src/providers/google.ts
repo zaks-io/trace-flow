@@ -60,6 +60,7 @@ function parseGoogleRequestBody(body: string): InputMessage[] | null {
           contentBlocks.push({
             index: partIndex,
             type: 'tool_call',
+            toolUseId: part.functionCall.id ?? part.functionCall.name,
             toolName: part.functionCall.name,
           });
         } else if (part.functionResponse) {

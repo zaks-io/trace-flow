@@ -115,6 +115,27 @@ describe('openai provider — quirks', () => {
     });
   });
 
+  describe('multimodal content arrays', () => {
+    it('maps text + image_url parts to separate content blocks', () => {
+      const messages = openai.parseRequestBody(
+        JSON.stringify({
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'what is this?' },
+                { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBOR...' } },
+              ],
+            },
+          ],
+        }),
+      );
+      expect(messages?.[0]?.contentBlocks).toHaveLength(2);
+      expect(messages?.[0]?.contentBlocks[0]?.type).toBe('text');
+      expect(messages?.[0]?.contentBlocks[1]?.type).toBe('image');
+    });
+  });
+
   describe('cached_tokens → cacheReadTokens', () => {
     it('extracts prompt cache reads', () => {
       const tokens = openai.parseResponseTokenUsage(

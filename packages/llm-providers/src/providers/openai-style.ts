@@ -12,11 +12,18 @@ import { parseTokenUsage } from '../parseTokenUsage';
 import type { ProviderId, RawTokenUsage } from '../types';
 import type { ParsedSSEEvent } from './types';
 
+type OpenAIContentPart =
+  | { type: 'text'; text?: string }
+  | { type: 'image_url'; image_url?: unknown }
+  | { type: 'input_audio'; input_audio?: unknown }
+  | { type: 'file'; file?: unknown }
+  | { type: string; [key: string]: unknown };
+
 interface OpenAIStyleRequestBody {
   model?: string;
   messages?: {
     role: 'user' | 'assistant' | 'system' | 'tool';
-    content?: string | null;
+    content?: string | null | OpenAIContentPart[];
     tool_calls?: {
       id: string;
       type: 'function';
@@ -45,8 +52,17 @@ export function parseOpenAIStyleRequestBody(body: string): InputMessage[] | null
 
       const contentBlocks: InputContentBlock[] = [];
 
-      if (msg.content) {
-        contentBlocks.push({ index: 0, type: 'text' });
+      if (typeof msg.content === 'string') {
+        contentBlocks.push({ index: contentBlocks.length, type: 'text' });
+      } else if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (!part || typeof part !== 'object') continue;
+          if (part.type === 'image_url') {
+            contentBlocks.push({ index: contentBlocks.length, type: 'image' });
+          } else if (part.type === 'text') {
+            contentBlocks.push({ index: contentBlocks.length, type: 'text' });
+          }
+        }
       }
 
       if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
