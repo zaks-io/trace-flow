@@ -134,6 +134,22 @@ describe('openai provider — quirks', () => {
       expect(messages?.[0]?.contentBlocks[0]?.type).toBe('text');
       expect(messages?.[0]?.contentBlocks[1]?.type).toBe('image');
     });
+
+    it('captures audio-only messages as a text block so they are not dropped', () => {
+      const messages = openai.parseRequestBody(
+        JSON.stringify({
+          messages: [
+            {
+              role: 'user',
+              content: [{ type: 'input_audio', input_audio: { data: 'AAAA', format: 'wav' } }],
+            },
+          ],
+        }),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages?.[0]?.contentBlocks).toHaveLength(1);
+      expect(messages?.[0]?.contentBlocks[0]?.type).toBe('text');
+    });
   });
 
   describe('cached_tokens → cacheReadTokens', () => {

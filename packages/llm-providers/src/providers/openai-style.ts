@@ -16,7 +16,6 @@ type OpenAIContentPart =
   | { type: 'text'; text?: string }
   | { type: 'image_url'; image_url?: unknown }
   | { type: 'input_audio'; input_audio?: unknown }
-  | { type: 'file'; file?: unknown }
   | { type: string; [key: string]: unknown };
 
 interface OpenAIStyleRequestBody {
@@ -59,7 +58,7 @@ export function parseOpenAIStyleRequestBody(body: string): InputMessage[] | null
           if (!part || typeof part !== 'object') continue;
           if (part.type === 'image_url') {
             contentBlocks.push({ index: contentBlocks.length, type: 'image' });
-          } else if (part.type === 'text') {
+          } else {
             contentBlocks.push({ index: contentBlocks.length, type: 'text' });
           }
         }
