@@ -46,25 +46,39 @@ describe('google provider — quirks', () => {
     });
   });
 
-  describe('resolveModelFromUrl', () => {
-    it('extracts model from generateContent path', () => {
-      expect(
-        google.resolveModelFromUrl?.(
-          'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
-        ),
-      ).toBe('gemini-2.0-flash');
+  describe('parseResponseMetadata URL fallback', () => {
+    it('falls back to model in URL path when body omits modelVersion', () => {
+      const metadata = google.parseResponseMetadata(
+        JSON.stringify({ embedding: { values: [0.1, 0.2] } }),
+        {
+          targetUrl:
+            'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent',
+        },
+      );
+      expect(metadata?.model).toBe('text-embedding-004');
     });
 
-    it('extracts model from embedContent path', () => {
-      expect(
-        google.resolveModelFromUrl?.(
-          'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent',
-        ),
-      ).toBe('text-embedding-004');
+    it('prefers modelVersion from body when present', () => {
+      const metadata = google.parseResponseMetadata(
+        JSON.stringify({ modelVersion: 'gemini-2.0-flash-001' }),
+        {
+          targetUrl:
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+        },
+      );
+      expect(metadata?.model).toBe('gemini-2.0-flash-001');
     });
 
-    it('returns undefined for malformed URL', () => {
-      expect(google.resolveModelFromUrl?.('not a url')).toBeUndefined();
+    it('returns undefined when both body and URL are empty', () => {
+      expect(google.parseResponseMetadata('{}')).toBeUndefined();
+    });
+
+    it('ignores malformed targetUrl', () => {
+      const metadata = google.parseResponseMetadata(JSON.stringify({ responseId: 'res_xyz' }), {
+        targetUrl: 'not a url',
+      });
+      expect(metadata?.id).toBe('res_xyz');
+      expect(metadata?.model).toBeUndefined();
     });
   });
 

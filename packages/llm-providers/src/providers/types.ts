@@ -17,15 +17,24 @@ export interface ParsedSSEEvent {
 }
 
 /**
+ * Optional context for `parseResponseMetadata`. `targetUrl` lets providers fall
+ * back to URL-path parsing when the response body lacks the model field —
+ * Gemini's `embedContent` and `batchEmbedContents` responses don't include
+ * `modelVersion`, so Google's adapter recovers it from the path.
+ */
+export interface ResponseMetadataContext {
+  targetUrl: string;
+}
+
+/**
  * The deep module a Provider becomes. One adapter per provider lives under
  * `packages/llm-providers/src/providers/`; callers route through
  * `getProvider(id)` rather than switching on `ProviderId`.
  *
  * Every Provider owns the full per-provider shape: routing config, token schema,
  * request-body parsing, response metadata + token extraction (whole-body and
- * streaming), and SSE event handling. Google additionally exposes
- * `resolveModelFromUrl` because Gemini's embed responses don't carry the model
- * in the body.
+ * streaming), and SSE event handling. Per-provider quirks (Google's URL fallback
+ * for embed-shaped responses) live inside the adapter, not at call sites.
  */
 export interface Provider {
   readonly id: ProviderId;
@@ -33,13 +42,14 @@ export interface Provider {
   readonly tokenSchema: ProviderTokenSchema;
 
   parseRequestBody(body: string): InputMessage[] | null;
-  parseResponseMetadata(body: string): Partial<LLMResponseMetadata> | undefined;
+  parseResponseMetadata(
+    body: string,
+    ctx?: ResponseMetadataContext,
+  ): Partial<LLMResponseMetadata> | undefined;
   parseResponseTokenUsage(body: string): LLMTokenUsage | undefined;
 
   handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStreamData): void;
   aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | undefined;
-
-  resolveModelFromUrl?(targetUrl: string): string | undefined;
 }
 
 /**

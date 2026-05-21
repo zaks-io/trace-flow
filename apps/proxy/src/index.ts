@@ -12,14 +12,19 @@
 import * as Sentry from '@sentry/cloudflare';
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { applySecurityHeaders } from '@trace-flow/utils';
-import { captureAndEnqueue, cleanupSkippedCapture } from './capture';
-import type { CaptureContext, ProxyEnv } from './context';
+import type { ProxyEnv } from './context';
 import { handleOTLPTraces } from './otlp';
 import { otlpTracesRoute } from './otlp/routes';
 import { validateRequest } from './pipeline/validateRequest';
 import { forwardToUpstream } from './pipeline/forwardToUpstream';
 import { attachCapture } from './pipeline/attachCapture';
 import { respond } from './pipeline/respond';
+import {
+  buildTransaction,
+  drainCapture,
+  persistTransaction,
+  recordSkippedExchange,
+} from './transaction';
 export { UsageTracker } from './usage-tracker';
 
 const app = new OpenAPIHono<{ Bindings: ProxyEnv }>();
@@ -54,23 +59,30 @@ app.openAPIRegistry.registerPath(otlpTracesRoute);
 app.all('*', async (c) => {
   const validateResult = await validateRequest(c);
   if (validateResult.kind === 'reject') return validateResult.response;
-  const validated = validateResult.validated;
+  const { validated } = validateResult;
 
   const forwarded = await forwardToUpstream(c, validated);
-  const attached = attachCapture(forwarded.response, validated.route.provider);
+  const attached = attachCapture(forwarded);
 
-  const ctx: CaptureContext = {
-    env: c.env,
-    ...validated,
-    ...forwarded,
-    ...attached,
-  };
+  const { decision, route, omitBody, logger } = validated;
+  const tier = validated.usageCheck.status !== 'error' ? validated.usageCheck.tier : undefined;
 
   c.executionCtx.waitUntil(
-    ctx.decision.record ? captureAndEnqueue(ctx) : cleanupSkippedCapture(ctx),
+    decision.record
+      ? (async () => {
+          try {
+            const drained = await drainCapture(attached);
+            const transaction = buildTransaction(drained, logger);
+            await persistTransaction(c.env, transaction, { tier, route, omitBody, logger });
+          } catch (err) {
+            logger.error('proxy.capture_failed', err);
+            await logger.flush();
+          }
+        })()
+      : recordSkippedExchange(c.env, attached, { decision, route, logger }),
   );
 
-  return respond(ctx);
+  return respond(attached);
 });
 
 export default Sentry.withSentry(

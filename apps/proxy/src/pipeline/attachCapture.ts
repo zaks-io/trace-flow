@@ -1,10 +1,15 @@
 import type { SSEStreamData } from '@trace-flow/types';
-import type { Provider } from '@trace-flow/llm-providers';
 import type { EventSourceParser } from 'eventsource-parser';
 import { createResponseCapture } from '../streaming/capture';
 import { createSSEParser } from '../streaming/sse';
+import type { ForwardedExchange } from './forwardToUpstream';
 
-interface AttachedCapture {
+/**
+ * Output of the attach stage. Composes the forwarded exchange so callers can
+ * walk back to the validated request via `attached.forwarded.validated`.
+ */
+export interface AttachedCapture {
+  forwarded: ForwardedExchange;
   isSSE: boolean;
   sseStreamData: SSEStreamData;
   parser: EventSourceParser | null;
@@ -21,7 +26,10 @@ interface AttachedCapture {
  * the client immediately, and capture runs inside `waitUntil` after the
  * response stream finishes draining.
  */
-export function attachCapture(response: Response, provider: Provider): AttachedCapture {
+export function attachCapture(forwarded: ForwardedExchange): AttachedCapture {
+  const { response } = forwarded;
+  const provider = forwarded.validated.route.provider;
+
   const isSSE = response.headers.get('Content-Type')?.includes('text/event-stream') ?? false;
 
   const sseStreamData: SSEStreamData = { messages: [] };
@@ -39,5 +47,5 @@ export function attachCapture(response: Response, provider: Provider): AttachedC
   const { readable, writable } = capture.transform;
   const pipePromise = response.body?.pipeTo(writable);
 
-  return { isSSE, sseStreamData, parser, capture, readable, pipePromise };
+  return { forwarded, isSSE, sseStreamData, parser, capture, readable, pipePromise };
 }
