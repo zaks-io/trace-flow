@@ -27,9 +27,7 @@ Two problems:
 
 **`CaptureContext` was a 30-field wide record.** Every stage took the same shape and the type system tracked "what's been filled in" by spread-merge convention. JSDoc admitted it directly: _"One record, not a chain of refined subtypes — every stage takes/returns the same shape and the type system tracks 'what's been filled in' by convention rather than nominal narrowing."_ Downstream stages had no nominal way to assert "the response field is populated by now." Refactoring a single stage required scanning the whole context for which fields it actually touched.
 
-**`captureAndEnqueue` was a 200-line procedure** that interleaved five concerns: stream draining (await pipePromise, flush SSE parser, fixup messageStop, gather captured chunks), extraction (tokens, metadata, error, input messages), redaction, persistence (R2 + queue), and analytics. `CONTEXT.md` already named this artifact "Transaction" — "the combined captured artifact for one LLM Request + LLM Response, the unit the platform produces and the unit of metering" — but no module owned it.
-
-This was a shallow module wearing a long signature. Each new concern (truncation flag, retention stamp, encryption key) widened the procedure.
+**`captureAndEnqueue` was a 200-line procedure** that interleaved five concerns: stream draining (await pipePromise, flush SSE parser, fixup messageStop, gather captured chunks), extraction (tokens, metadata, error, input messages), redaction, persistence (R2 + queue), and analytics. `CONTEXT.md` already named this artifact "Transaction" — "the combined captured artifact for one LLM Request + LLM Response, the unit the platform produces and the unit of metering" — but no module owned it. Each new concern (truncation flag, retention stamp, encryption key) widened the procedure rather than landing in a named module.
 
 ## Why Compose Instead of Extend
 
@@ -60,13 +58,13 @@ interface Transaction {
 }
 ```
 
-Notably, Transaction does **not** include `decision` or `tier`. Those are policy concerns. A Transaction is what was captured; whether it gets persisted, and under what retention, is a separate axis. The policy stamp is passed alongside the Transaction to `persistTransaction`, not baked into it.
+Notably, Transaction does **not** include `decision` or `tier`. Those are policy concerns. A Transaction is what was captured; whether it gets persisted, and under what retention, is a separate axis. The policy stamp varies independently of the captured artifact: `decision.record` can flip between attempts on the same Transaction shape (suspended account, exceeded quota, internal error), and `tier` can be unknown at build time when subscription lookup fails. Passing them alongside means `buildTransaction` stays pure, and `persistTransaction` is the only place that needs to know the policy.
 
-Three functions split the old procedure:
+Three functions split the old procedure (all in `apps/proxy/src/transaction.ts`):
 
 - **`drainCapture(attached)`** — awaits the pipePromise, flushes the SSE parser, fixes up messageStop on Google streams, snapshots `firstTokenReceived` / `isTruncated` / `totalSize`, and returns request + response strings. Pure stream-side work; no extraction, no IO.
-- **`buildTransaction(drained)`** — the pure extraction step: tokens (streaming-vs-whole-body branch), input messages, error parsing, response metadata (via `provider.parseResponseMetadata(body, { targetUrl })`). No redaction, no R2, no queue.
-- **`persistTransaction(env, transaction, { tier, route, omitBody, logger })`** — redacts, writes the Body Object, builds and sends the Queue Message, records analytics. Bundled because they all consume the same redacted shape and write to org-scoped destinations together.
+- **`buildTransaction(drained, logger)`** — the pure extraction step: tokens (streaming-vs-whole-body branch), input messages, error parsing, response metadata (via `provider.parseResponseMetadata(body, { targetUrl })`). No redaction, no R2, no queue.
+- **`persistTransaction(env, transaction, { tier, route, omitBody, logger })`** — redacts, writes the Body Object, builds and sends the Queue Message, records analytics. Each side effect is wrapped in its own try/catch so a queue failure can be distinguished from an R2 or analytics failure in logs. Bundled because they all consume the same redacted shape and write to org-scoped destinations together.
 
 The skip path stays separate: `recordSkippedExchange(env, attached, { decision, route, logger })` cancels the capture stream and writes skip analytics without producing a Transaction.
 
@@ -93,13 +91,27 @@ parseResponseMetadata(body: string, ctx?: { targetUrl: string }): Partial<LLMRes
 
 Google's adapter merges its URL-path fallback into `parseResponseMetadata`; every other Provider ignores the optional `ctx`. `resolveModelFromUrl` is removed from the interface entirely.
 
+## Trade-offs
+
+### Nested accessor paths
+
+`attached.forwarded.validated.keyData.orgId` is more characters than `ctx.orgId`. The proxy pipeline is short (four stages, max nesting depth of three) so it stays readable, but adding a fifth stage would push toward six-character chain accesses at call sites. If the pipeline grows further, the alternative is to either destructure at the function head or revisit composition vs intersection.
+
+### Refactoring a stage type changes downstream call paths
+
+Renaming a field on `ForwardedExchange` ripples into every `.forwarded.<field>` access in `AttachedCapture` consumers. With intersection, the same rename would be a single-step refactor at the consumer. The trade is paid for nominal clarity about which stage owns each field.
+
+### Bundled persistence couples three writes
+
+`persistTransaction` writes to R2, the queue, and Analytics Engine. If a future destination (Tinybird direct, S3, etc.) needs different sequencing or different retention semantics, the bundling becomes a constraint. Today they share the same redacted shape and org-scoped target set, so the bundle is load-bearing; if those assumptions break, the function splits.
+
 ## Outcome
 
 After the refactor:
 
 - **Pipeline stages**: 4 named records that compose. No spread-merged grab-bag.
-- **Transaction module**: one type, three functions (`drainCapture`, `buildTransaction`, `persistTransaction`) plus the skip-path companion (`recordSkippedExchange`).
-- **Provider interface**: one fewer optional method; Google's URL-path quirk lives inside Google.
+- **Transaction module**: one type, three functions (`drainCapture`, `buildTransaction`, `persistTransaction`) plus the skip-path companion (`recordSkippedExchange`), all in `apps/proxy/src/transaction.ts`.
+- **Provider interface**: one fewer optional method; Google's URL-path quirk lives inside Google (`packages/llm-providers/src/providers/google.ts`).
 - **`CaptureContext`**: deleted.
 
-The deletion test: removing the Transaction module would force the caller to interleave five concerns inline again. Removing `CaptureContext` forces nothing — it was a passing record, not a behavior.
+Reversing the Transaction module would force the caller to interleave five concerns inline again. Reversing `CaptureContext` would force nothing — it was a passing record, not a behavior. That asymmetry is what made the two refactors land together.

@@ -243,21 +243,25 @@ export async function persistTransaction(
 
     let stored = false;
     if (!omitBody) {
-      stored = await storeBodies(
-        env.STORAGE,
-        transaction.requestId,
-        redactedRequestBody,
-        redactedResponseBody,
-        transaction.isTruncated,
-        logger,
-        transaction.orgId,
-        {
-          rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
-          keyId: env.BODY_ENCRYPTION_KEY_ID,
-        },
-      );
-      if (!stored) {
-        logger.warn('proxy.r2_storage_failed');
+      try {
+        stored = await storeBodies(
+          env.STORAGE,
+          transaction.requestId,
+          redactedRequestBody,
+          redactedResponseBody,
+          transaction.isTruncated,
+          logger,
+          transaction.orgId,
+          {
+            rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
+            keyId: env.BODY_ENCRYPTION_KEY_ID,
+          },
+        );
+        if (!stored) {
+          logger.warn('proxy.r2_storage_failed');
+        }
+      } catch (err) {
+        logger.error('proxy.r2_storage_failed', err);
       }
     }
 
@@ -265,7 +269,7 @@ export async function persistTransaction(
     const queueMessage = createQueueMessage({
       requestId: transaction.requestId,
       traceId: transaction.traceId,
-      parentSpanId: transaction.parentSpanId ?? undefined,
+      parentSpanId: transaction.parentSpanId,
       traceFlags: transaction.traceFlags,
       traceState: transaction.traceState || undefined,
       baggage: Object.keys(transaction.baggage).length > 0 ? transaction.baggage : undefined,
@@ -290,24 +294,28 @@ export async function persistTransaction(
       orgId: transaction.orgId,
     });
 
-    writeRequestAnalytics({
-      analytics: env.ANALYTICS,
-      orgId: transaction.orgId,
-      route,
-      responseStatus: transaction.responseStatus,
-      operationName: transaction.operationName,
-      isSSE: transaction.isSSE,
-      responseMetadata: transaction.responseMetadata,
-      requestStart: transaction.requestStart,
-      requestSent: transaction.requestSent,
-      responseReceived: transaction.responseReceived,
-      responseComplete: transaction.responseComplete,
-      firstTokenReceived: transaction.firstTokenReceived,
-      tokens: transaction.tokens,
-      totalSize: transaction.totalSize,
-      storageSkipped: omitBody,
-      stored,
-    });
+    try {
+      writeRequestAnalytics({
+        analytics: env.ANALYTICS,
+        orgId: transaction.orgId,
+        route,
+        responseStatus: transaction.responseStatus,
+        operationName: transaction.operationName,
+        isSSE: transaction.isSSE,
+        responseMetadata: transaction.responseMetadata,
+        requestStart: transaction.requestStart,
+        requestSent: transaction.requestSent,
+        responseReceived: transaction.responseReceived,
+        responseComplete: transaction.responseComplete,
+        firstTokenReceived: transaction.firstTokenReceived,
+        tokens: transaction.tokens,
+        totalSize: transaction.totalSize,
+        storageSkipped: omitBody,
+        stored,
+      });
+    } catch (err) {
+      logger.error('proxy.analytics_write_failed', err);
+    }
 
     logger.info('proxy.capture_metrics', {
       status: transaction.responseStatus,
@@ -322,7 +330,11 @@ export async function persistTransaction(
       r2Stored: omitBody ? 'skipped' : stored ? 'stored' : 'failed',
     });
 
-    await env.REQUEST_QUEUE.send(queueMessage);
+    try {
+      await env.REQUEST_QUEUE.send(queueMessage);
+    } catch (err) {
+      logger.error('proxy.queue_send_failed', err);
+    }
   } catch (err) {
     logger.error('proxy.capture_failed', err);
   } finally {
