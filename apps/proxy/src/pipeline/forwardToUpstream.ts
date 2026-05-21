@@ -3,7 +3,12 @@ import { getCurrentTimestamp } from '@trace-flow/utils';
 import type { ProxyEnv } from '../context';
 import type { ValidatedRequest } from './validateRequest';
 
-interface ForwardedRequest {
+/**
+ * Output of the forward stage. Composes the validated request by inclusion —
+ * `forwarded.validated.keyData.orgId` traces back to where it was set.
+ */
+export interface ForwardedExchange {
+  validated: ValidatedRequest;
   targetUrl: string;
   streamToCapture: ReadableStream | null;
   response: Response;
@@ -26,7 +31,7 @@ interface ForwardedRequest {
 export async function forwardToUpstream(
   c: Context<{ Bindings: ProxyEnv }>,
   validated: ValidatedRequest,
-): Promise<ForwardedRequest> {
+): Promise<ForwardedExchange> {
   const requestStart = getCurrentTimestamp();
 
   const query = new URL(c.req.url).search;
@@ -53,6 +58,7 @@ export async function forwardToUpstream(
   const responseReceived = getCurrentTimestamp();
 
   return {
+    validated,
     targetUrl,
     streamToCapture,
     response,

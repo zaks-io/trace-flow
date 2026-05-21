@@ -146,7 +146,7 @@ function hasUsageData(usage: RawTokenUsage): boolean {
  * Google's streaming Gemini API uses the OpenAI SSE shape (no event type, just
  * JSON data lines) but ships cumulative usageMetadata in every chunk — the
  * final chunk has the totals. There's no `[DONE]` terminator, so the message
- * stop timestamp is set by capture.ts after the stream drains.
+ * stop timestamp is stamped by `drainCapture` after the stream drains.
  */
 function handleSSEEvent(event: ParsedSSEEvent, timestamp: number, state: SSEStreamData): void {
   try {
@@ -195,27 +195,37 @@ function aggregateSSETokens(streamData: SSEStreamData): LLMTokenUsage | undefine
   return accumulator.finalize();
 }
 
+/**
+ * Gemini's `embedContent` and `batchEmbedContents` responses don't include
+ * `modelVersion` in the body — only the URL path carries the model. The
+ * adapter falls back to path parsing when the body extract comes up empty so
+ * traces don't show 'unknown' for embeddings.
+ */
+function modelFromTargetUrl(targetUrl: string): string | undefined {
+  try {
+    const { pathname } = new URL(targetUrl);
+    return parseGoogleModelFromPath(pathname);
+  } catch {
+    return undefined;
+  }
+}
+
 export const google: Provider = {
   id: 'google',
   baseUrl: 'https://generativelanguage.googleapis.com',
   tokenSchema: PROVIDER_SCHEMAS.google,
 
   parseRequestBody: parseGoogleRequestBody,
-  parseResponseMetadata: (body) => {
+  parseResponseMetadata: (body, ctx) => {
     const metadata = extractMetadata(body);
+    if (!metadata.model && ctx?.targetUrl) {
+      const pathModel = modelFromTargetUrl(ctx.targetUrl);
+      if (pathModel) metadata.model = pathModel;
+    }
     return Object.keys(metadata).length > 0 ? metadata : undefined;
   },
   parseResponseTokenUsage: (body) => parseTokenUsage(body, 'google'),
 
   handleSSEEvent,
   aggregateSSETokens,
-
-  resolveModelFromUrl: (targetUrl) => {
-    try {
-      const { pathname } = new URL(targetUrl);
-      return parseGoogleModelFromPath(pathname);
-    } catch {
-      return undefined;
-    }
-  },
 };
