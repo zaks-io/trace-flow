@@ -130,6 +130,8 @@ describe('buildTransaction', () => {
       noopLogger,
     );
     expect(txn.sseStreamData).toBeUndefined();
+    expect(txn.tokens).toBeUndefined();
+    expect(txn.responseMetadata).toBeUndefined();
   });
 
   it('uses Google URL-path fallback when modelVersion is missing from body', () => {

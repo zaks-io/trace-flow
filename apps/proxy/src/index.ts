@@ -70,9 +70,14 @@ app.all('*', async (c) => {
   c.executionCtx.waitUntil(
     decision.record
       ? (async () => {
-          const drained = await drainCapture(attached);
-          const transaction = buildTransaction(drained, logger);
-          await persistTransaction(c.env, transaction, { tier, route, omitBody, logger });
+          try {
+            const drained = await drainCapture(attached);
+            const transaction = buildTransaction(drained, logger);
+            await persistTransaction(c.env, transaction, { tier, route, omitBody, logger });
+          } catch (err) {
+            logger.error('proxy.capture_failed', err);
+            await logger.flush();
+          }
         })()
       : recordSkippedExchange(c.env, attached, { decision, route, logger }),
   );
