@@ -110,11 +110,15 @@ The tenant entity (`orgId`). Owns API Keys, has one Subscription Tier, and is th
 _Avoid_: "account", "workspace", "team" (Convex has its own `organizationMembers` table for the membership relation).
 
 **API Key**:
-The org-scoped credential sent as `X-Trace-Flow-Api-Key`. Distinct from upstream provider API keys, which the proxy forwards untouched.
+The org-scoped credential sent as `X-Trace-Flow-Api-Key`. Distinct from upstream provider API keys, which the proxy forwards untouched. Carries both an `orgId` and an optional `userId`, so data stamped with an API Key resolves to a User and an Organization.
 _Avoid_: shortening to "key" without context.
 
+**Project**:
+A user-declared grouping that unifies all activity for one app or initiative — spanning both agent conversations (**Agent Sessions**) and proxied **LLM Requests** — so it can be viewed as a whole. May span many **API Keys** and many repositories. A Project groups data for viewing; it is not a property stamped onto the data. Not yet built.
+_Avoid_: confusing with `~/.claude/projects` (Claude Code's local per-workspace directory, which is closer to a single repository).
+
 **Subscription Tier**:
-`hobby` or `pro`. Drives `monthlyUnits`, overage pricing, Retention Window, and read-time Span visibility.
+`hobby` or `pro`. Drives `monthlyUnits`, overage pricing, **Retention Window**, and **Visibility Window**.
 _Avoid_: "plan".
 
 **Billing Status**:
@@ -128,8 +132,12 @@ Purchased block of `UNITS_PER_ADDON` (100k) units beyond the Monthly Units allot
 _Avoid_: "topup" (means the auto-recharge feature, a different thing).
 
 **Retention Window**:
-The Subscription Tier's visibility window (hobby: 7d, pro: 30d). Stamped into Spans as `RetentionExpiresAt` at write-time and enforced again at read-time.
-_Avoid_: "TTL", "lifecycle".
+How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: flat and Tier-independent (raw kept longer than any Tier can see). May exceed the **Visibility Window**.
+_Avoid_: "TTL" as the user-facing name; conflating with **Visibility Window**.
+
+**Visibility Window**:
+How far back a Subscription Tier may query, enforced at read-time. Can be shorter than what is retained, so upgrading a Tier reveals already-stored history without re-ingesting. For proxy Spans it equals the Retention Window; for agent facts a hobby org sees only the last week of a longer-retained store.
+_Avoid_: "retention" when you mean what a Tier can see.
 
 ### Tinybird
 
@@ -163,6 +171,32 @@ A Model Context Protocol session (Convex table `mcpSessions`), scoped to one use
 **MCP Tool**:
 A tool exposed by the MCP server (e.g. `getTraceAction`, `listTracesAction`). MCP Tools obtain Pipe Tokens via `generateTokenInternal`, not the user-facing path.
 
+### Agent analytics
+
+**Collector**:
+The local Trace Flow desktop app (menu-bar tray) that parses **Source** transcripts into facts and syncs them to ingestion. Parsing is local; raw transcript text is not uploaded.
+_Avoid_: "agent", "parser" (the parser is one component of the Collector).
+
+**Source**:
+The agent tool that produced an **Agent Session** — `claude`, `codex`, or `cursor`. Sources overlap but differ in field coverage, so facts must tolerate sparse source-specific fields.
+_Avoid_: "vendor", "agent".
+
+**Agent Session**:
+One canonical AI-agent conversation, identified by its **Source** plus the source's own session ID (a stable UUID for Claude and Codex). The agent-analytics analogue of a **Trace**, but a separate table and ID space.
+_Avoid_: bare "session" (collides with **MCP Session**), "conversation".
+
+**Agent Message**:
+One turn within an **Agent Session**, a single assistant or user record. The grain at which `model`, token counts (input, output, cache read, cache creation, reasoning), and `cost` are recorded. The agent-analytics analogue of an **LLM Request**.
+_Avoid_: unqualified "message" (collides with chat-UI message), "turn" alone.
+
+**Tool Event**:
+A single tool invocation inside an **Agent Message**, carrying the tool name, command family (the first one or two tokens of a shell command, e.g. `git commit`), exit code, and success or failure. The grain at which agent failures are measured.
+_Avoid_: "tool call" when you mean its result; not an **LLM Request**.
+
+**Repo**:
+The canonical git repository an Agent Session acted in, identified by its normalized git remote so worktrees and renamed checkouts collapse to one identity. Path/`cwd` is a fallback, never the identity.
+_Avoid_: "worktree", "checkout", "path"; not a **Project** (which may span many Repos).
+
 ## Relationships
 
 - A **Client** calls the **Proxy**, which forwards to a **Provider** matched by **Route**.
@@ -187,3 +221,5 @@ A tool exposed by the MCP server (e.g. `getTraceAction`, `listTracesAction`). MC
 - **"trace"** was used to mean both a single Tinybird row and the OTel grouping. _Resolved_: row is a **Span**, the grouping is a **Trace**.
 - **"body"** was used to mean both raw request/response text and the encrypted R2 wrapper. _Resolved_: raw text is "the request/response body"; the R2 artifact is a **Body Object**.
 - **Root key naming** — `EncryptedStoredBodiesPayload` references a root key threaded into the worker as `rootKeyBase64`, but there's no canonical noun for the key itself. _Unresolved_: pick a project term ("Root Encryption Key"? "Body Root Key"?) and align the env var with it.
+- **"project"** was used for both a Trace Flow **Project** (a declared cross-source grouping) and `~/.claude/projects` (Claude Code's local per-workspace storage). _Resolved_: capitalized **Project** is the Trace Flow grouping; the local directory is "the local projects directory" and maps closer to a single repository.
+- **"session"** means three different things: an **Agent Session** (a parsed agent conversation), an **MCP Session** (a Model Context Protocol session), and a vendor "session id" inside Source transcripts. _Resolved_: always qualify as **Agent Session** or **MCP Session**; "vendor session ID" is the raw Source identifier that seeds an Agent Session's identity.
