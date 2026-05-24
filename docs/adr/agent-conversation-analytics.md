@@ -110,7 +110,7 @@ Trace Flow Desktop uses signed prompted updates. The app may check the updater m
 
 Trace Flow Desktop versions independently from the repo root, Web app, and Worker deploy cadence. The desktop app uses its own SemVer (starting at `0.1.0` unless changed during implementation), release tags like `traceflow-desktop-v{version}`, and the `traceflow-desktop-latest.json` updater manifest. This keeps desktop updater compatibility and signing cadence separate from Cloudflare/Web releases.
 
-Four modifications make it Trace Flow's:
+Five modifications make it Trace Flow's:
 
 1. Strip local pricing. Otto's parser computes `cost_usd` from a price map; Trace Flow prices server-side (Cost and pricing), so that path is removed and the Collector ships tokens and model only.
 2. Point sync at the `ApiKey` ingest Worker instead of Otto's backend, with Trace Flow `ApiKey` auth and the opt-in raw-transcript upload.

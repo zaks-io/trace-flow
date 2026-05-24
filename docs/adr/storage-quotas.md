@@ -133,7 +133,7 @@ Cache lookups are fast (in-process), and the cost of a miss is one KV read per o
 
 Cloudflare KV holds the month-to-date cumulative bytes per org:
 
-```
+```text
 trace-flow:quota:usage:{orgId}:{YYYYMM} = "{bytes: number, lastUpdatedAt: ISO8601}"
 ```
 
@@ -175,7 +175,7 @@ interface OrgBillingFlags {
 
 At month-end, billing calculates overage:
 
-```
+```text
 overage_bytes = max(0, totalUsage - softCap)
 overage_cost = overage_bytes * OVERAGE_RATE
 

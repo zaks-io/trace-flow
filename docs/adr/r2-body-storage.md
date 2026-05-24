@@ -173,7 +173,7 @@ Bodies are retained for 30 days, then deleted via R2 lifecycle rules:
 - **Cost management**: Storage accumulates at ~10KB per request
 - **Compliance**: Avoid indefinite storage of potentially sensitive data
 
-Lifecycle is an age bound, not the full cost control. Body Objects also count against the org's shared R2 Storage Budget; see [R2 Storage Caps](./r2-storage-caps.md).
+Lifecycle is an age-bound, not the full cost control. Body Objects also count against the org's shared R2 Storage Budget; see [R2 Storage Caps](./r2-storage-caps.md).
 
 Read-time visibility still depends on the caller's current tier:
 
