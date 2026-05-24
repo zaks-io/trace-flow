@@ -132,7 +132,7 @@ Purchased block of `UNITS_PER_ADDON` (100k) units beyond the Monthly Units allot
 _Avoid_: "topup" (means the auto-recharge feature, a different thing).
 
 **Retention Window**:
-How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: flat and Tier-independent (raw kept longer than any Tier can see). May exceed the **Visibility Window**.
+How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: flat and Tier-independent; the **Raw Transcript** shares that flat horizon, while aggregates outlive it. May exceed the **Visibility Window**.
 _Avoid_: "TTL" as the user-facing name; conflating with **Visibility Window**.
 
 **Visibility Window**:
@@ -174,7 +174,7 @@ A tool exposed by the MCP server (e.g. `getTraceAction`, `listTracesAction`). MC
 ### Agent analytics
 
 **Collector**:
-The local Trace Flow desktop app (menu-bar tray) that parses **Source** transcripts into facts and syncs them to ingestion. Parsing is local; raw transcript text is not uploaded.
+The local Trace Flow desktop app (menu-bar tray) that parses **Source** transcripts into facts and uploads them to ingestion. Raw transcript upload is a separate, explicit opt-in (default off): when enabled it also sends the gzip-compressed **Raw Transcript**, encrypted at rest server-side, never stored as plaintext, and kept only for the replay window. Parsing is always local.
 _Avoid_: "agent", "parser" (the parser is one component of the Collector).
 
 **Source**:
@@ -196,6 +196,10 @@ _Avoid_: "tool call" when you mean its result; not an **LLM Request**.
 **Repo**:
 The canonical git repository an Agent Session acted in, identified by its normalized git remote so worktrees and renamed checkouts collapse to one identity. Path/`cwd` is a fallback, never the identity.
 _Avoid_: "worktree", "checkout", "path"; not a **Project** (which may span many Repos).
+
+**Raw Transcript**:
+The compressed, server-encrypted copy of one **Source** transcript, uploaded only when the user opts in (default off) and retained only for the replay window, then purged. The replay source for re-deriving facts server-side when the parser improves (so ingestion is one-time), and the substrate for bounded deep analysis. The agent-analytics analogue of a **Body Object**.
+_Avoid_: "conversation dump"; not a fact table and not an **Agent Session**.
 
 ## Relationships
 
