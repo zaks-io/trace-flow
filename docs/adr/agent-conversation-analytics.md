@@ -60,11 +60,19 @@ Identity is vendor-ID-first, assembled at the ingest Worker:
 - `session_pk` = hash(`source`, vendor session ID), a stable UUID for Claude, Codex, and Cursor.
 - `message_pk` adds the vendor message ID. Claude and Cursor carry one; Codex does not, so for Codex it falls back to (vendor session ID, positional turn index). That positional surrogate is the only identity component derived from parse position rather than vendor bytes, so a re-parse that renumbers Codex turns can move it; it is the weakest dedupe key and is flagged as provisional (Trust boundary).
 - `tool_use_pk` adds the tool-use block's `tool_use_id`; when that is absent, substitute (vendor message ID, block index).
-- `repo_fingerprint` = hash(normalized git remote); the Collector resolves the remote string and the ingest Worker hashes it, keeping hashing in one place. Codex carries the remote in-band (`session_meta.payload.git.repository_url`); Claude and Cursor do not, so the Collector resolves it from the session's `cwd` the moment it first observes the session — while that worktree is still live — and freezes it, keeping a durable `cwd → remote` cache so a worktree deleted before sync stays resolvable. SSH and HTTPS remote forms normalize to one fingerprint. When no remote resolves (pre-install history, an already-deleted uncached worktree, a local-only repo), the fact falls back to a normalized path hash stamped `repo_source = path`; since `repo_fingerprint` is a regular column, a later remote-bearing re-sync heals the rows upward. Path/`cwd` is never the trusted identity.
+- `repo_fingerprint` = hash(normalized git remote); the Collector resolves the remote string and the ingest Worker hashes it, keeping hashing in one place. Codex carries the remote in-band (`session_meta.payload.git.repository_url`); Claude and Cursor do not, so the Collector resolves it from the session's `cwd` the moment it first observes the session — while that worktree is still live — and freezes it, keeping a durable `cwd → remote` cache so a worktree deleted before sync stays resolvable. SSH and HTTPS remote forms normalize to one fingerprint. When no remote resolves (pre-install history, an already-deleted uncached worktree, a local-only repo), the fact falls back to a normalized path hash stamped `repo_source = path`; since `repo_fingerprint` is a regular column, a later remote-bearing re-sync heals the rows upward. Path/`cwd` is never the trusted identity. v1 assigns one primary Repo per Agent Session, chosen from the Source's session metadata or observed `cwd`; other repos mentioned or touched during the session are a known limitation rather than split-cost inputs.
 - Content-hash is a last-resort session identity for any source where no vendor UUID is recoverable, not a Cursor default. Cursor exposes a UUID (the `acp-sessions` directory name, and the `projects/.../agent-transcripts/<uuid>/` path), so it normally takes `session_pk` like the others. Where the fallback is unavoidable, the hash must be over stable vendor bytes (never parser output) and byte-stable across versions, the same determinism `StartedAt` requires, or a re-sync mints a new identity and inflates counts.
-- Cursor stores subagent transcripts as separate files (`agent-transcripts/<parent>/subagents/<uuid>.jsonl`). The Collector links them to the parent `session_pk` from the path and emits their facts under it with `agent_depth` > 0, never as standalone Agent Sessions. Claude subagents are inline (`isSidechain`); Codex subagents run in the same transcript.
+- Claude and Cursor can store subagent transcripts as separate files (`.../<session>/subagents/<agent>.jsonl`, or Cursor's `agent-transcripts/<parent>/subagents/<uuid>.jsonl`). The Collector links them to the parent `session_pk` from the path/session id and emits their facts under it with `agent_depth` > 0, never as standalone Agent Sessions. Claude also marks those rows with `isSidechain` and an `agentId`, which can be joined back to the parent tool result. Codex subagents run in the same transcript.
 
 This replaces the research note's compound `session_fingerprint` algorithm. Hashing and ID assembly live in one place (the ingest Worker), not in the Collector or scattered across the consumer.
+
+### Repo and pull request attribution
+
+Repo is a first-class Trace Flow concept, not just an agent fact dimension. Agent facts still carry `repo_fingerprint`, but the read side normalizes repositories around the same remote identity so Agent Sessions, Pull Requests, and future code-aware views share one code anchor. Fact rows keep the fingerprint as the stable join key; the Repo record carries normalized display metadata such as host, owner, and repository name. Local-only repositories without a remote still create Provisional Repos from the path fallback, so pre-push work is captured and groupable; when a later observation resolves a remote from the same observed local path/worktree history, that Provisional Repo heals into the remote-backed Repo. Name similarity alone is not merge evidence. v1 assigns one primary Repo per Agent Session; multi-repo work is a known limitation documented under Trust boundary.
+
+Pull Request authoring cost is session-based and uses the canonical Agent Session Authoring Cost, not an ad hoc sum over one fact table. A Pull Request is the preferred reporting unit because it represents reviewable work and can contain many commits, but attribution stays best-effort: an Agent Session is assigned to at most one Pull Request in the same Repo only when local evidence is unambiguous, such as an explicit PR reference or observed PR creation/update in the transcript. If the evidence points to multiple PRs or none, the cost remains Unattributed Repo Authoring Cost. Trace Flow does not split one Agent Session across several PRs in v1.
+
+PR attribution must work without a GitHub/GitLab integration in v1. The Collector supplies passive local evidence from transcripts and git metadata; it does not run `gh` or other provider CLIs for discovery, so local provider auth is not a dependency. Git provider integrations are deferred enrichment for fresher metadata and stronger branch-to-PR resolution, not a prerequisite for the analytics slice.
 
 ### Transport
 
@@ -110,14 +118,14 @@ Three base tables, two rollups, one session aggregate:
 
 | Table                    | Grain                                        | Role                                                            |
 | ------------------------ | -------------------------------------------- | --------------------------------------------------------------- |
-| `agent_messages`         | one turn (Agent Message)                     | model, tokens, cost. The `llm_requests` twin.                   |
-| `agent_tool_events`      | one tool invocation (Tool Event)             | failures, command families, durations, subagent facts.          |
+| `agent_messages`         | one turn (Agent Message)                     | direct model-call tokens and cost. The `llm_requests` twin.     |
+| `agent_tool_events`      | one tool invocation (Tool Event)             | failures, command families, durations, subagent/result facts.   |
 | `agent_file_events`      | one file touch                               | repeated-path attention and hotspots. Repo-relative paths only. |
 | `agent_usage_1h` / `_1d` | hour / day, by org/source/repo/model         | token, cost, cache, message, session trends.                    |
 | `agent_tool_usage_1h`    | hour, by org/source/repo/tool/command_family | tool mix and failure rates.                                     |
 | `agent_sessions`         | one Agent Session (aggregate)                | session-level outliers (cost, file count, duration).            |
 
-Tool mix, web/research domains, and task subjects/statuses are cheap queries over the base tables, not their own rollups. Subagent patterns ride on `is_subagent_spawn` / `agent_depth` (messages) and `extracted_subagent_*` (tool events), not a separate table.
+Tool mix, web/research domains, and task subjects/statuses are cheap queries over the base tables, not their own rollups. Subagent patterns ride on `is_subagent_spawn` / `agent_depth` (messages) and `extracted_subagent_*` (tool events), not a separate table. Tool-event subagent fields are evidence used by the cost classifier and subagent dashboards; PR authoring cost reads the canonical session aggregate after dedupe/classification, not raw tool-event cost fields directly.
 
 #### Tool use/result reconciliation
 
@@ -155,6 +163,15 @@ ReplacingMergeTree keyed on the stable surrogate identity (`*_pk`), with `Ingest
 
 Cost is computed server-side in the consumer from tokens and model, reusing the chain Trace Flow already runs for proxied LLM Requests. The Collector ships tokens and model only and never prices. Otto's parser computes `cost_usd` locally from a price map; that path is removed when the parser is vendored (Collector), so pricing exists in exactly one place. Server-side is the natural home: it is one pricing implementation to maintain and correct, it is where proxied LLM Requests are already priced, and it keeps the per-model price catalog and KV out of the desktop client.
 
+The canonical cost unit is Agent Session Authoring Cost: every billable model usage record represented in the Agent Session, including nested/subagent work, counted exactly once. It is built from an explicit priced-usage view before session, hourly/daily, and PR aggregates are calculated:
+
+- Include direct Agent Message usage for top-level, nested, and sidechain messages.
+- Include source-reported subagent/result usage only when there is no matching nested/sidechain Agent Message usage for the same Source, `session_pk`, and subagent agent id.
+
+This rule comes from checking Otto's parser and local Claude Code data, not from a theoretical schema. Otto persists `extracted_subagent_*` token fields on tool-result rows, while Claude Code also writes subagent transcript files under the same session with `isSidechain=true` and `agentId`. In current Claude data the parent/subagent `toolUseResult.usage` can match one sidechain assistant call, not the whole subagent transcript; blindly adding both over-counts, while ignoring the tool-result usage can under-count older or incomplete imports where the sidechain transcript is missing. Trace Flow stores both forms as facts, classifies them into one priced-usage view, and exposes coverage when only summary/fallback subagent usage is available.
+
+`agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and Pull Request authoring-cost queries must all read from that same canonical priced-usage view or aggregate. No code path should define PR cost as "sum `agent_messages.cost_usd`" or "sum messages plus all tool subagent costs" independently, because those two shortcuts fail in opposite directions.
+
 A shared `@trace-flow/pricing` workspace package holds the calculation, used by both the proxy consumer and the agent consumer. A daily Convex cron `importFromModelsDev` mirrors `importFromOpenRouter`: it pulls `models.dev/api.json` into the `modelPricing` table, then syncs to Cloudflare KV. First-party providers only; gateway re-listings of the same model are skipped. `importFromOpenRouter` stays for `provider=openrouter`. The `source` enum gains `'models.dev'` (three files: `schema.ts`, `modelPricing.ts`, `pricing.ts`).
 
 models.dev does not publish reasoning or 1-hour-cache rates, so `calculateCost` falls back gracefully for those components. `cost_usd` is `Nullable(Float64)`: null means no price exists for the model, 0 means a genuinely free model. This is the one deliberate exception to the avoid-Nullable rule. That rule targets always-present and sorting-key columns, where the hidden null-map is pure overhead; `cost_usd` is neither, and it needs a real not-applicable state, so the null-map is the honest representation rather than waste. null drives the coverage metric below (`count(cost_usd) / count(*)`) and backfills to a price on re-sync once the catalog covers the model.
@@ -187,7 +204,13 @@ Trusted in v1: deduped counts, windowed trends, source attribution, remote-resol
 
 Provisional, surfaced honestly rather than hidden:
 
-- Path-fallback repo attribution (`repo_source = path`), shown as low-confidence until a remote-bearing re-sync heals it. Affects pre-install history and worktrees deleted before the Collector first observed the session.
+- Path-fallback repo attribution (`repo_source = path`) creates a Provisional Repo until a remote-bearing re-sync heals it. This includes local-only repositories before their first push, so the work is visible before a remote exists. It also affects pre-install history and worktrees deleted before the Collector first observed the session.
+
+- Multi-repo Agent Sessions. v1 keeps one primary Repo per Agent Session, so work that spans several repositories is not split across repos or pull requests. Secondary repo references can be added later if real workflows need that precision.
+
+- Multi-PR Agent Sessions. v1 attributes an Agent Session's authoring cost to at most one primary Pull Request. If one session has credible evidence for several pull requests, Trace Flow does not split the session cost or pick one; the cost remains repo-level. Clean PR-cost reporting therefore depends on the workflow convention of keeping one pull request per Agent Session when precise attribution matters; for now that convention lives in docs, not in product UI guidance.
+
+- Subagent cost coverage. Direct nested/sidechain Agent Message usage is authoritative when present. Tool-result subagent usage without matching nested/sidechain messages is counted as fallback evidence and surfaced as lower coverage, because some Sources/versions report only a partial result summary there.
 
 - Codex per-message dedupe. Codex exposes no vendor message ID, so its `message_pk` uses a positional turn index; a re-parse that renumbers turns can move it, splitting or merging a Codex message row. Claude and Cursor, with real message IDs, are unaffected.
 
@@ -206,6 +229,8 @@ Explicitly out of v1, to be added when a real need appears:
 - Separate `agent_subagent_events` table (covered by message and tool-event fields).
 - Anomaly-feature table (`agent_anomaly_features_1h`) and z-score detectors.
 - `agent_source_observations` and `agent_import_batches` provenance tables.
+- Secondary Repo references and split-cost attribution for multi-repo Agent Sessions.
+- Split-cost attribution for Agent Sessions that span multiple Pull Requests.
 - The Project Convex entity.
 
 ## Trade-offs
@@ -221,9 +246,15 @@ Explicitly out of v1, to be added when a real need appears:
 Verifiable outcomes for the v1 slice:
 
 - A local transcript parsed by the Collector becomes queryable typed facts (`agent_messages`, `agent_tool_events`, `agent_file_events`) for the owning org, filterable by `source` and `repo_fingerprint`.
-- A Claude session, a Codex session, and a Cursor session (from both `~/.cursor/projects` and `~/.cursor/acp-sessions`) each parse to facts under a vendor-UUID `session_pk`; a Cursor subagent file lands under its parent's `session_pk` with `agent_depth` > 0, not as a standalone Agent Session.
+- A remote-backed Agent Session resolves to one first-class Repo record with normalized display metadata; multiple worktrees or renamed checkouts for the same normalized remote collapse to that Repo.
+- A local-only Agent Session without a remote still creates a Provisional Repo; after the same observed path/worktree later resolves a remote, the Provisional Repo heals into the remote-backed Repo, while same-name-only repos do not merge.
+- Pull Request authoring cost is queryable from canonical Agent Session Authoring Cost when passive transcript evidence names or creates/updates exactly one Pull Request in the same Repo; no GitHub/GitLab integration or local `gh` auth is required.
+- If an Agent Session has no Pull Request evidence, or credible evidence for multiple Pull Requests, its cost remains Unattributed Repo Authoring Cost and is not split across pull requests.
+- A Claude session, a Codex session, and a Cursor session (from both `~/.cursor/projects` and `~/.cursor/acp-sessions`) each parse to facts under a vendor-UUID `session_pk`; Claude and Cursor subagent files land under their parent's `session_pk` with `agent_depth` > 0, not as standalone Agent Sessions.
+- Agent Session Authoring Cost includes top-level, nested, and sidechain model usage exactly once; `agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and PR authoring-cost queries all agree because they use the same canonical priced-usage view.
+- A Claude fixture with both a subagent transcript file and a matching `toolUseResult.usage` row does not double-count the overlapping subagent usage; a fixture with only tool-result subagent usage counts that fallback usage and marks the session's subagent cost coverage as partial/fallback.
 - Re-syncing the same Agent Session twice does not change counts after `FINAL`; rollups built `FROM ... FINAL` match the deduped base counts.
-- `agent_messages.cost_usd` is computed in the consumer from KV pricing; no pricing math runs in the Collector; priced-token coverage % is queryable.
+- Direct `agent_messages.cost_usd` and any included fallback subagent usage cost are computed in the consumer from KV pricing; no pricing math runs in the Collector; priced-token coverage % is queryable.
 - The vendored parser's local pricing path is gone: the Collector source has no cost calculation, and a fact reaches the consumer carrying tokens and model but no price.
 - The daily `importFromModelsDev` cron populates `modelPricing` with `source='models.dev'`; a known first-party model resolves to a non-zero price; an unknown model lands with null `cost_usd` and is backfilled on a later run once the catalog covers it.
 - The failure leaderboard returns ranked (`tool_name`, `command_family`) with the display floor applied; the period delta returns movers via the rollup self-join; the session-outlier query returns top sessions by cost and file count.

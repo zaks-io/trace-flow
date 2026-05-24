@@ -185,8 +185,12 @@ _Avoid_: "vendor", "agent".
 One canonical AI-agent conversation, identified by its **Source** plus the source's own session ID (a stable UUID for Claude, Codex, and Cursor). The agent-analytics analogue of a **Trace**, but a separate table and ID space.
 _Avoid_: bare "session" (collides with **MCP Session**), "conversation".
 
+**Agent Session Authoring Cost**:
+The complete billable model cost represented by one **Agent Session**, including top-level and nested/subagent model usage exactly once. The cost unit used for **Pull Request Authoring Cost**.
+_Avoid_: equating session cost with only top-level **Agent Message** rows when the **Source** records nested/subagent usage separately.
+
 **Agent Message**:
-One turn within an **Agent Session**, a single assistant or user record. The grain at which `model`, token counts (input, output, cache read, cache creation, reasoning), and `cost` are recorded. The agent-analytics analogue of an **LLM Request**.
+One turn within an **Agent Session**, a single assistant or user record. The grain at which direct model-call fields such as `model`, token counts (input, output, cache read, cache creation, reasoning), and cost are recorded. The agent-analytics analogue of an **LLM Request**.
 _Avoid_: unqualified "message" (collides with chat-UI message), "turn" alone.
 
 **Tool Event**:
@@ -194,8 +198,28 @@ A single tool invocation inside an **Agent Message**, carrying the tool name, co
 _Avoid_: "tool call" when you mean its result; not an **LLM Request**.
 
 **Repo**:
-The canonical git repository an Agent Session acted in, identified by its normalized git remote so worktrees and renamed checkouts collapse to one identity. Path/`cwd` is a fallback, never the identity.
+The first-class Trace Flow representation of a git repository. Identified by its normalized git remote so worktrees and renamed checkouts collapse to one identity. The common code-level anchor for **Agent Sessions**, **Pull Requests**, and future code-aware views. An **Agent Session** has one primary Repo; other repos mentioned or touched during that session are outside the primary relationship.
 _Avoid_: "worktree", "checkout", "path"; not a **Project** (which may span many Repos).
+
+**Provisional Repo**:
+A **Repo** created from a path/`cwd` fallback before Trace Flow has observed a normalized git remote. It keeps local-only and pre-push work visible and groupable, then can heal into a remote-backed **Repo** when a later observation from the same local path/worktree resolves a remote.
+_Avoid_: treating path identity as equivalent to remote identity; merging by repository name alone.
+
+**Pull Request**:
+A reviewable unit of work in a **Repo**. The preferred grain for authoring-cost reporting because it can include many commits and represents the change as reviewed or merged.
+_Avoid_: using individual commits as the primary authoring-cost unit when a Pull Request exists.
+
+**Pull Request Authoring Cost**:
+The agent-analytics cost attributed to creating or modifying a pull request. Sums **Agent Session Authoring Cost** from local coding conversations attributed to that pull request; excludes runtime **LLM Request** cost from deployed application traffic and excludes inferred incremental cost caused by the change.
+_Avoid_: "PR cost" without saying whether it means authoring, runtime, or incremental cost.
+
+**Pull Request Attribution**:
+A confidence-bearing association between **Agent Session Authoring Cost** and one primary **Pull Request** in the same **Repo**. Used only when Trace Flow can map the session to a pull request with enough evidence, such as an explicit pull request reference or observed pull request creation/update. Otherwise the cost remains repo-level. Cost is not split across multiple pull requests; if a session has credible evidence for more than one pull request, it remains unattributed at the Repo level.
+_Avoid_: forcing every Agent Session into a Pull Request; splitting one Agent Session across several pull requests.
+
+**Unattributed Repo Authoring Cost**:
+Agent-analytics cost known to belong to a **Repo** but not confidently assigned to a **Pull Request**. Expected for exploratory work, detached worktrees, local-only branches, and sessions before a pull request exists.
+_Avoid_: treating unattributed cost as an ingestion error.
 
 **Raw Transcript**:
 The compressed, server-encrypted copy of one **Source** transcript, uploaded only when the user opts in (default off) and retained only for the replay window, then purged. The replay source for re-deriving facts server-side when the parser improves (so ingestion is one-time), and the substrate for bounded deep analysis. The agent-analytics analogue of a **Body Object**.
