@@ -58,17 +58,31 @@ Workers have 128MB memory limits. Holding multiple large bodies in memory during
 The proxy stores bodies immediately after capture:
 
 ```typescript
-const bodyKey = `bodies/${requestId}`;
+const bodyKey = `bodies/${orgId}/${requestId}`;
 const payload = JSON.stringify({
   requestBody,
   responseBody,
   truncated,
 });
+const payloadBytes = new TextEncoder().encode(payload).byteLength;
+
+const reservation = await storageBudget.reserveStorage({
+  orgId,
+  objectClass: 'proxy_body',
+  objectKey: bodyKey,
+  bytes: payloadBytes,
+  expiresAt,
+});
+
+if (!reservation.allowed) {
+  return { bodyKey, stored: false, reason: 'storage_cap_exceeded' };
+}
 
 await storage.put(bodyKey, payload, {
   customMetadata: { orgId },
   httpMetadata: { contentType: 'application/json' },
 });
+await storageBudget.commitStorage({ orgId, objectKey: bodyKey });
 ```
 
 This reduces body storage from two Class A operations to one. The queue message is still under 1KB because it contains metadata, not raw bodies.
@@ -91,15 +105,15 @@ Bodies are fetched only when users expand trace details, not during initial page
 Keys follow a predictable pattern:
 
 ```
-bodies/{requestId}
+bodies/{orgId}/{requestId}
 ```
 
-Where `requestId` is a unique identifier generated per request (UUID format).
+Where `orgId` is the owning organization and `requestId` is a unique identifier generated per request (UUID format). Legacy objects under `bodies/{requestId}` remain readable until they age out, but new objects include `orgId` so storage-budget reconciliation and support tooling can reason per org.
 
 This structure provides:
 
-- **Simple lookups**: Given a requestId, construct one key
-- **Flat namespace**: No nested directories to traverse
+- **Simple lookups**: Given an orgId and requestId, construct one key
+- **Org attribution**: Prefix scans and support tooling can isolate one org's objects
 - **Unique keys**: No collisions between requests
 - **Consistent pattern**: Same structure across all providers
 
@@ -159,6 +173,8 @@ Bodies are retained for 30 days, then deleted via R2 lifecycle rules:
 - **Cost management**: Storage accumulates at ~10KB per request
 - **Compliance**: Avoid indefinite storage of potentially sensitive data
 
+Lifecycle is an age bound, not the full cost control. Body Objects also count against the org's shared R2 Storage Budget; see [R2 Storage Caps](./r2-storage-caps.md).
+
 Read-time visibility still depends on the caller's current tier:
 
 - **Hobby**: last 7 days
@@ -178,30 +194,49 @@ For 1 million requests/month with average 20KB body size:
 - Writes: 1M \* $0.36/M = $0.36/month
 - Reads: Varies with UI usage
 
-Cost is minimal compared to LLM API costs for the same traffic.
+Cost is minimal compared to LLM API costs for the same traffic, but it is still bounded by the org's Storage Budget so abnormal traffic or abuse cannot grow R2 cost indefinitely.
 
 ## Handling Storage Failures
 
 R2 writes can fail (network issues, rate limits). The proxy handles this gracefully:
 
 ```typescript
+let reserved = false;
+
 try {
-  await storage.put(bodyKey, JSON.stringify(payload), putOptions);
+  const reservation = await storageBudget.reserveStorage({
+    orgId,
+    objectClass: 'proxy_body',
+    objectKey: bodyKey,
+    bytes: payloadBytes,
+    expiresAt,
+  });
+
+  if (!reservation.allowed) {
+    return { bodyKey, stored: false, reason: 'storage_cap_exceeded' };
+  }
+
+  reserved = true;
+  await storage.put(bodyKey, payload, putOptions);
+  await storageBudget.commitStorage({ orgId, objectKey: bodyKey });
   return { bodyKey, stored: true };
 } catch (error) {
+  if (reserved) {
+    await storageBudget.releaseStorage({ orgId, objectKey: bodyKey });
+  }
   console.error('R2 storage failed:', error);
   return { bodyKey, stored: false };
 }
 ```
 
-When storage fails:
+When storage fails or the org is over its Storage Budget:
 
 1. The queue message is still sent without stored body data
 2. Trace metadata is still captured in Tinybird
 3. The web UI shows "Body not available" for affected requests
 4. Users can still see timing, tokens, and error information
 
-This degraded mode preserves observability even when storage fails.
+This degraded mode preserves observability even when storage fails or storage is deliberately blocked to protect Trace Flow from runaway cost.
 
 ## Size Limits and Truncation
 
@@ -259,13 +294,17 @@ We accepted this limitation. Search by trace metadata (model, error code, latenc
 
 R2 lifecycle is separate from Tinybird retention. If Tinybird data is deleted before R2 lifecycle runs, orphaned bodies exist briefly. This is benign (no cost impact) and self-corrects via lifecycle rules.
 
+### Budget Ledger Lag
+
+The Storage Budget ledger decrements by declared expiration and scheduled reconciliation, not by an R2 lifecycle callback. It may temporarily over-count storage if reconciliation lags. We accept that because over-counting blocks optional body storage, while under-counting could allow runaway R2 cost.
+
 ## Outcome
 
 R2 storage solves the body size problem while maintaining:
 
 - **Queue efficiency**: Sub-1KB messages regardless of body size
 - **Analytics performance**: Tinybird contains only trace metadata
-- **Cost control**: Predictable storage costs with lifecycle management
+- **Cost control**: Predictable storage costs with lifecycle management and org-level storage caps
 - **Graceful degradation**: Storage failures don't block observability
 
 The separation of concerns (trace metadata in Tinybird, bodies in R2) matches how users interact with the data: aggregate analytics on metadata, detailed inspection on demand.
