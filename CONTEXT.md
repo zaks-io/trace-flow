@@ -174,8 +174,12 @@ A tool exposed by the MCP server (e.g. `getTraceAction`, `listTracesAction`). MC
 ### Agent analytics
 
 **Collector**:
-The local Trace Flow desktop app (menu-bar tray) that parses **Source** transcripts into facts and uploads them to ingestion. Raw transcript upload is a separate, explicit opt-in (default off): when enabled it also sends the gzip-compressed **Raw Transcript**, encrypted at rest server-side, never stored as plaintext, and kept only for the replay window. Parsing is always local.
-_Avoid_: "agent", "parser" (the parser is one component of the Collector).
+The local Trace Flow component that parses **Source** transcripts into facts and uploads them to ingestion. Its user-facing desktop product is **Trace Flow Desktop**. Raw transcript upload is a separate, explicit opt-in (default off): when enabled it also sends the gzip-compressed **Raw Transcript**, encrypted at rest server-side, never stored as plaintext, and kept only for the replay window. Parsing is always local.
+_Avoid_: "agent", "parser" (the parser is one component of the Collector), using the product name when discussing architecture boundaries.
+
+**Trace Flow Desktop**:
+The user-facing desktop app for the **Collector**. It is the installed app name users see in menus, release artifacts, permissions, and support docs.
+_Avoid_: "TF Desktop" (ambiguous with Terraform), "Otto Desktop".
 
 **Source**:
 The agent tool that produced an **Agent Session** — `claude`, `codex`, or `cursor`. Sources overlap but differ in field coverage, so facts must tolerate sparse source-specific fields.
@@ -209,17 +213,25 @@ _Avoid_: treating path identity as equivalent to remote identity; merging by rep
 A reviewable unit of work in a **Repo**. The preferred grain for authoring-cost reporting because it can include many commits and represents the change as reviewed or merged.
 _Avoid_: using individual commits as the primary authoring-cost unit when a Pull Request exists.
 
+**Pull Request Link**:
+An explicit link to a **Pull Request** in an **Agent Session** transcript. It is the v1 evidence Trace Flow trusts for **Pull Request Attribution** because it names both the code host repository and the pull request number.
+_Avoid_: treating generic git commands, branch names, or bare numbers as Pull Request Links.
+
 **Pull Request Authoring Cost**:
 The agent-analytics cost attributed to creating or modifying a pull request. Sums **Agent Session Authoring Cost** from local coding conversations attributed to that pull request; excludes runtime **LLM Request** cost from deployed application traffic and excludes inferred incremental cost caused by the change.
 _Avoid_: "PR cost" without saying whether it means authoring, runtime, or incremental cost.
 
 **Pull Request Attribution**:
-A confidence-bearing association between **Agent Session Authoring Cost** and one primary **Pull Request** in the same **Repo**. Used only when Trace Flow can map the session to a pull request with enough evidence, such as an explicit pull request reference or observed pull request creation/update. Otherwise the cost remains repo-level. Cost is not split across multiple pull requests; if a session has credible evidence for more than one pull request, it remains unattributed at the Repo level.
+A confidence-bearing association between **Agent Session Authoring Cost** and one primary **Pull Request** in the same **Repo**. In v1 it is made only from exactly one **Pull Request Link** for that Repo. Otherwise the cost remains repo-level. Cost is not split across multiple pull requests; if a session has credible evidence for more than one pull request, it remains unattributed at the Repo level.
 _Avoid_: forcing every Agent Session into a Pull Request; splitting one Agent Session across several pull requests.
 
 **Unattributed Repo Authoring Cost**:
 Agent-analytics cost known to belong to a **Repo** but not confidently assigned to a **Pull Request**. Expected for exploratory work, detached worktrees, local-only branches, and sessions before a pull request exists.
 _Avoid_: treating unattributed cost as an ingestion error.
+
+**Provider Usage Snapshot**:
+A point-in-time personal provider subscription, quota, credit, or rate-limit observation collected by **Trace Flow Desktop** through optional external tooling such as `codexbar`. It is connected to a **User** inside an **Organization**, but not to a **Project**, **Repo**, **Agent Session**, or **Pull Request**. Provider account identity is grouped by a stable hash; human labels are redacted hints, such as `i***@zaks.io`, never full raw emails.
+_Avoid_: mixing with **Agent Message** token usage or **Pull Request Authoring Cost**; storing raw provider account emails as identity.
 
 **Raw Transcript**:
 The compressed, server-encrypted copy of one **Source** transcript, uploaded only when the user opts in (default off) and retained only for the replay window, then purged. The replay source for re-deriving facts server-side when the parser improves (so ingestion is one-time), and the substrate for bounded deep analysis. The agent-analytics analogue of a **Body Object**.
