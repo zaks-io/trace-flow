@@ -147,7 +147,7 @@ PR attribution must work without a GitHub/GitLab integration in v1. The Collecto
 
 Local parse, then upload the facts and, when the user opts in, the compressed raw transcript. Raw upload is explicit and default-off; the facts path works without it.
 
-```
+```text
 Collector (desktop tray)            ApiKey ingest Worker              Queue              Consumer
   parse transcripts          ->     auth + ORG rate limit      ->   durable buffer ->   price (KV)
   resolve repo_fingerprint          size cap, chunk to <128KB         DLQ                reconcile
@@ -216,7 +216,7 @@ Branch name and HEAD SHA are optional attribution hints, not identity. When chea
 
 ### Table physics
 
-```
+```sql
 agent_messages
   ENGINE ReplacingMergeTree(IngestedAt)
   SORTING KEY ApiKey, session_pk, message_pk
