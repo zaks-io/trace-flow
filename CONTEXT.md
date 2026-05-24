@@ -132,7 +132,7 @@ Purchased block of `UNITS_PER_ADDON` (100k) units beyond the Monthly Units allot
 _Avoid_: "topup" (means the auto-recharge feature, a different thing).
 
 **Retention Window**:
-How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: flat and Tier-independent; the **Raw Transcript** shares that flat horizon, while aggregates outlive it. May exceed the **Visibility Window**.
+How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: a flat one-year, Tier-independent horizon; the **Raw Transcript** lives on a shorter flat horizon (its replay-and-analysis window), and aggregates live as long or longer than the facts. May exceed the **Visibility Window**.
 _Avoid_: "TTL" as the user-facing name; conflating with **Visibility Window**.
 
 **Visibility Window**:
@@ -182,7 +182,7 @@ The agent tool that produced an **Agent Session** — `claude`, `codex`, or `cur
 _Avoid_: "vendor", "agent".
 
 **Agent Session**:
-One canonical AI-agent conversation, identified by its **Source** plus the source's own session ID (a stable UUID for Claude and Codex). The agent-analytics analogue of a **Trace**, but a separate table and ID space.
+One canonical AI-agent conversation, identified by its **Source** plus the source's own session ID (a stable UUID for Claude, Codex, and Cursor). The agent-analytics analogue of a **Trace**, but a separate table and ID space.
 _Avoid_: bare "session" (collides with **MCP Session**), "conversation".
 
 **Agent Message**:
@@ -200,6 +200,14 @@ _Avoid_: "worktree", "checkout", "path"; not a **Project** (which may span many 
 **Raw Transcript**:
 The compressed, server-encrypted copy of one **Source** transcript, uploaded only when the user opts in (default off) and retained only for the replay window, then purged. The replay source for re-deriving facts server-side when the parser improves (so ingestion is one-time), and the substrate for bounded deep analysis. The agent-analytics analogue of a **Body Object**.
 _Avoid_: "conversation dump"; not a fact table and not an **Agent Session**.
+
+**StartedAt**:
+The earliest point of an **Agent Session** that Trace Flow can observe from the transcript, stamped on every fact and used as the time anchor for retention and partitioning. Deliberately "first activity we can see," distinct from the **Source**'s own declared session start.
+_Avoid_: "session start" (the Source's claim — that's **VendorStartedAt**), "ingest time".
+
+**VendorStartedAt**:
+The session-start time a **Source** declares for itself, captured as metadata when the Source provides it (Codex does; Claude, with a UUIDv4 session id, does not). Never used as the retention anchor.
+_Avoid_: conflating with **StartedAt**.
 
 ## Relationships
 
@@ -227,3 +235,4 @@ _Avoid_: "conversation dump"; not a fact table and not an **Agent Session**.
 - **Root key naming** — `EncryptedStoredBodiesPayload` references a root key threaded into the worker as `rootKeyBase64`, but there's no canonical noun for the key itself. _Unresolved_: pick a project term ("Root Encryption Key"? "Body Root Key"?) and align the env var with it.
 - **"project"** was used for both a Trace Flow **Project** (a declared cross-source grouping) and `~/.claude/projects` (Claude Code's local per-workspace storage). _Resolved_: capitalized **Project** is the Trace Flow grouping; the local directory is "the local projects directory" and maps closer to a single repository.
 - **"session"** means three different things: an **Agent Session** (a parsed agent conversation), an **MCP Session** (a Model Context Protocol session), and a vendor "session id" inside Source transcripts. _Resolved_: always qualify as **Agent Session** or **MCP Session**; "vendor session ID" is the raw Source identifier that seeds an Agent Session's identity.
+- **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn (the retention and partition anchor); **VendorStartedAt** is the Source's own declared start, captured as metadata where available.
