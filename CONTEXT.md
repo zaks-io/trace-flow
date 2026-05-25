@@ -106,15 +106,19 @@ Proxy-side flag set when a response body exceeds the capture limit; the Transact
 ### Billing and tenancy
 
 **Organization**:
-The tenant entity (`orgId`). Owns API Keys, has one Subscription Tier, and is the unit of retention and rate limiting.
+The tenant entity (`orgId`). Owns user-facing **API Keys** and hidden **Collector Credentials**, has one Subscription Tier, and is the unit of retention and rate limiting.
 _Avoid_: "account", "workspace", "team" (Convex has its own `organizationMembers` table for the membership relation).
 
 **API Key**:
-The org-scoped credential sent as `X-Trace-Flow-Api-Key`. Distinct from upstream provider API keys, which the proxy forwards untouched. Carries both an `orgId` and an optional `userId`, so data stamped with an API Key resolves to a User and an Organization.
+The user-facing org-scoped credential sent as `X-Trace-Flow-Api-Key` for proxied **LLM Requests** and API-key-scoped dashboards. Distinct from upstream provider API keys, which the proxy forwards untouched, and distinct from a **Collector Credential**.
 _Avoid_: shortening to "key" without context.
 
+**Collector Credential**:
+A hidden desktop-ingest credential minted for **Trace Flow Desktop**, scoped to one **Organization**, one **User**, one **Collector**, and allowed Collector capabilities. It authenticates Agent Session fact upload (and, if the separate **Provider Usage Tracking** feature ships, **Provider Usage Snapshots**), but it is not a user-facing **API Key**, cannot proxy LLM Requests, and must not appear in API key lists, admin-managed credential inventories, filters, alerts, or Tinybird API-key JWT scopes. Rotating or replacing it must not fragment Agent Session identity.
+_Avoid_: "desktop API key" when discussing the product surface.
+
 **Project**:
-A user-declared grouping that unifies all activity for one app or initiative — spanning both agent conversations (**Agent Sessions**) and proxied **LLM Requests** — so it can be viewed as a whole. May span many **API Keys** and many repositories. A Project groups data for viewing; it is not a property stamped onto the data. Not yet built.
+A user-declared grouping that unifies all activity for one app or initiative — spanning both agent conversations (**Agent Sessions**) and proxied **LLM Requests** — so it can be viewed as a whole. May span many **API Keys**, Collector-originated **Agent Sessions**, and repositories. A Project groups data for viewing; it is not a property stamped onto the data. Not yet built.
 _Avoid_: confusing with `~/.claude/projects` (Claude Code's local per-workspace directory, which is closer to a single repository).
 
 **Subscription Tier**:
@@ -148,7 +152,7 @@ A named Tinybird query, e.g. `trace_detail.pipe`. Frontend calls Pipes via the T
 A Tinybird table, e.g. `otel_traces.datasource`. Has an attached `_quarantine` datasource for schema-rejected rows.
 
 **Pipe Token**:
-Short-lived JWT (HS256, 10-minute TTL) signed by Convex with `fixed_params` for `api_keys` and `retention_days`. Used by Web and MCP for direct Tinybird reads.
+Short-lived JWT (HS256, 10-minute TTL) signed by Convex with `fixed_params` for row-level read constraints. Proxied **LLM Request** pipes use `api_keys` and `retention_days`; agent-analytics pipes use organization scope; the separate **Provider Usage Tracking** feature adds user scope for user-private **Provider Usage Snapshots**.
 _Avoid_: "user token", "JWT" (too generic).
 
 **Admin Token**:
@@ -201,6 +205,30 @@ _Avoid_: unqualified "message" (collides with chat-UI message), "turn" alone.
 A single tool invocation inside an **Agent Message**, carrying the tool name, command family (the first one or two tokens of a shell command, e.g. `git commit`), exit code, and success or failure. The grain at which agent failures are measured.
 _Avoid_: "tool call" when you mean its result; not an **LLM Request**.
 
+**Agent Capability**:
+A tool, MCP-exposed tool, skill, slash command, or other local extension that a **Source** records as available to or used by an **Agent Session**. Trace Flow only knows about capabilities visible in the Source transcript or Source session metadata.
+_Avoid_: using "tool" when you mean the whole available capability surface rather than an invoked **Tool Event**.
+
+**Capability Snapshot**:
+A point-in-time observation of **Agent Capabilities** inferred from a Source transcript or Source session metadata, with privacy-safe counts, stable IDs, and size estimates. It describes the conversation-visible capability surface, not local configuration.
+_Avoid_: "tool usage" (that's observed through **Tool Events**), "MCP config dump" (raw config/schema text is not the product artifact).
+
+**Context Bloat**:
+The cost and quality drag caused by loading too many, too large, or too irrelevant **Agent Capabilities** into an agent's working context. It is estimated from transcript-visible capability-surface size, token usage, cache behavior, and actual **Tool Event** utilization.
+_Avoid_: equating with high model usage alone; high useful context is not bloat.
+
+**Effective Context Length**:
+The empirically usable context size for a model under a benchmark or task class, which may be smaller than the advertised context window.
+_Avoid_: treating the advertised context window as the effective one.
+
+**Context Rot**:
+The degradation in model accuracy, recall, or focus as input context grows.
+_Avoid_: presenting as a hard cliff; it is usually a performance gradient.
+
+**Context Rot Exposure**:
+The amount of **Agent Session** activity running in token ranges where **Context Rot** is more likely for the session's model and task shape.
+_Avoid_: treating as proof that a specific answer failed because of context length.
+
 **Repo**:
 The first-class Trace Flow representation of a git repository. Identified by its normalized git remote so worktrees and renamed checkouts collapse to one identity. The common code-level anchor for **Agent Sessions**, **Pull Requests**, and future code-aware views. An **Agent Session** has one primary Repo; other repos mentioned or touched during that session are outside the primary relationship.
 _Avoid_: "worktree", "checkout", "path"; not a **Project** (which may span many Repos).
@@ -230,7 +258,7 @@ Agent-analytics cost known to belong to a **Repo** but not confidently assigned 
 _Avoid_: treating unattributed cost as an ingestion error.
 
 **Provider Usage Snapshot**:
-A point-in-time personal provider subscription, quota, credit, or rate-limit observation collected by **Trace Flow Desktop** through optional external tooling such as `codexbar`. It is connected to a **User** inside an **Organization**, but not to a **Project**, **Repo**, **Agent Session**, or **Pull Request**. Provider account identity is grouped by a stable hash; human labels are redacted hints, such as `i***@zaks.io`, never full raw emails.
+A point-in-time personal provider subscription, quota, credit, or rate-limit observation collected by **Trace Flow Desktop** through optional external tooling such as `codexbar` and uploaded with a **Collector Credential**. It is connected to a **User** inside an **Organization**, but not to a **Project**, **Repo**, **Agent Session**, or **Pull Request**. Provider account identity is grouped by a stable hash; human labels are redacted hints, such as `i***@zaks.io`, never full raw emails. Provider Usage Snapshots belong to the separate **Provider Usage Tracking** feature, not Collector v1.
 _Avoid_: mixing with **Agent Message** token usage or **Pull Request Authoring Cost**; storing raw provider account emails as identity.
 
 **Raw Transcript**:
@@ -252,8 +280,10 @@ _Avoid_: conflating with **StartedAt**.
 - The **Consumer** receives **Queue Message** batches, builds **Spans**, and hands them to a **Trace Shard**.
 - A **Trace Shard** flushes accumulated **Spans** into the `otel_traces` **Datasource**.
 - The **Web** app reads **Spans** through Tinybird **Pipes** (using a **Pipe Token**) and fetches **Body Objects** through the **API Worker**.
-- An **Organization** owns its **API Keys** and has exactly one **Subscription Tier**; the Tier determines the **Retention Window** stamped onto each **Span**.
+- An **Organization** owns its user-facing **API Keys** and hidden **Collector Credentials**, and has exactly one **Subscription Tier**; the Tier determines the **Retention Window** stamped onto each **Span**.
 - A **Pipe Token** is scoped to an **Organization**'s **API Keys** and **Retention Window**.
+- Agent-analytics reads are scoped by **Organization** and do not use user-facing **API Keys** as identity; the separate **Provider Usage Tracking** feature adds **User** scope for user-private **Provider Usage Snapshots**.
+- **Context Bloat** consumes part of an **Agent Session**'s working context and can increase **Context Rot Exposure**, but it is not the same signal.
 
 ## Example dialogue
 
