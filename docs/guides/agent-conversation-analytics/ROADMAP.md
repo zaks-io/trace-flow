@@ -82,12 +82,20 @@ Verifiable with synthetic rows alone. Columns/engines per ADR "Data model" + "Ta
   `agent_capability_snapshots`, `agent_pull_request_links`, `agent_sessions`, `agent_usage_1h`,
   `agent_usage_1d`, `agent_tool_usage_1h`. Mirror `datasources/llm_requests.datasource`.
 - **Do:** Base facts → `ReplacingMergeTree(IngestedAt)`, sorting key `OrgId, session_pk, <row>_pk`,
-  partition `toYYYYMMDD(EventAt)`, TTL `EventAt + 1 YEAR`. `agent_sessions` → sorting key
-  `OrgId, session_pk`, partition/TTL on `LastEventAt`. Rollups → `AggregatingMergeTree` keyed
-  `BucketStart, OrgId, source, repo_fingerprint, …`. `cost_usd Nullable(Float64)` is the **only**
-  nullable column; sparse metrics use `0` + coverage columns (`token_coverage`, `cache_coverage`);
-  `status` in {success, failure, unknown}. Sorting key holds **stable identity only** — re-parsed
-  columns (`model`, `command_family`) are regular columns.
+  partition `toYYYYMMDD(EventAt)`, TTL `EventAt + 1 YEAR`. Event timestamps (`EventAt`, `IngestedAt`,
+  `LastEventAt`, `StartedAt`, `VendorStartedAt`) are `DateTime64(3)` (not `llm_requests`' Int64
+  epoch-nanos: agent facts are parsed transcripts with no ns source), so partition/TTL read the
+  column directly with no `/1e9`. `agent_sessions` is **rebuilt from base `FINAL`** via the canonical
+  priced-usage view (Copy Pipe, `COPY_MODE replace`); `ReplacingMergeTree(IngestedAt)` keyed
+  `OrgId, session_pk`, **no partition key** (partitioning by the mutable `LastEventAt` would split a
+  re-synced session across partitions where `FINAL` cannot dedupe), TTL `LastEventAt + 1 YEAR`.
+  Rollups → `AggregatingMergeTree` keyed `BucketStart, OrgId, source, model, repo_fingerprint, …`
+  (low to high cardinality; the `repo_fingerprint` hash last). `cost_usd Nullable(Float64)` is the
+  **only** nullable column; sparse metrics use `0` + coverage columns (`token_coverage`,
+  `cache_coverage`); `status` in {success, failure, unknown}. Mark `source`, `command_family`,
+  `tool_name`, `repo_source`, `model`, `token_coverage`, `cache_coverage`, `status`
+  `LowCardinality(String)`, never the `*_pk` / `repo_fingerprint` hashes. Sorting key holds **stable
+  identity only**: re-parsed columns (`model`, `command_family`) are regular columns.
 - **Verify:** `tb build` validates every file; POST synthetic NDJSON to `/v0/events?name=agent_messages`,
   `SELECT … FINAL` returns it; insert the same `message_pk` twice with newer `IngestedAt`, `FINAL`
   count stays 1.
@@ -102,12 +110,16 @@ Verifiable with synthetic rows alone. Columns/engines per ADR "Data model" + "Ta
 
 ### 1c — COPY rollup pipes
 
-- **Files:** `pipes/agent_usage_1h_copy.pipe`, `agent_usage_1d_copy.pipe`, `agent_tool_usage_1h_copy.pipe`.
-  Mirror `pipes/llm_usage_1h_copy.pipe`.
-- **Do:** `COPY_MODE replace` behind a bucket-replace job, **not** materialized-view append (avoids
-  the ReplacingMergeTree retraction trap). Optimization layer over 1b.
-- **Verify:** `tb build`; COPY populates the rollup; re-running over a complete bucket replaces it
-  (no double count).
+- **Files:** `pipes/agent_priced_usage.pipe` (canonical priced-usage view: applies the subagent
+  dedup rule once), `pipes/agent_sessions_copy.pipe`, `pipes/agent_usage_1h_copy.pipe`,
+  `agent_usage_1d_copy.pipe`, `agent_tool_usage_1h_copy.pipe`. Mirror `pipes/llm_usage_1h_copy.pipe`.
+- **Do:** `COPY_MODE replace` reading base `FINAL` (whole-target swap, **not** materialized-view
+  append, which hits the ReplacingMergeTree retraction trap). `agent_sessions`, `agent_usage_*`, and
+  PR cost all read `agent_priced_usage`, so the subagent-dedup rule lives in one place and they agree
+  by construction. Optimization layer over 1b. Tune `COPY_SCHEDULE` for a one-year base scan (less
+  frequent than the proxy's 10-min cadence); do not copy the proxy cadence verbatim.
+- **Verify:** `tb build`; COPY populates each target; re-running replaces (no double count); a session
+  whose facts span two `EventAt` days yields exactly **one** `agent_sessions` row after rebuild.
 
 ## Phase 2 — Server ingest pipeline
 
@@ -146,11 +158,15 @@ Proves the whole backend with curl + synthetic envelopes, no client needed.
 
 - **Files:** `apps/agent-consumer/` (new, stateless, **NO** batching DO);
   `packages/tinybird-client/` (factor `insertIntoTinybird` out of `apps/proxy-consumer/src/tinybird.ts`).
-- **Do:** Read `AGENT_QUEUE`, price via `@trace-flow/pricing` from tokens+model (KV catalog), compute
-  the canonical priced-usage view for `agent_sessions.cost_usd`, one batched insert per datasource
-  reusing `insertIntoTinybird`. `cost_usd` null when token coverage is missing or the model is unpriced.
-- **Verify:** queue → consumer → priced rows in `agent_messages`/`agent_sessions FINAL`; re-post an
-  identical envelope, `FINAL` counts unchanged; unpriced model → `cost_usd` null.
+- **Do:** Read `AGENT_QUEUE`, price each message via `@trace-flow/pricing` from tokens+model (KV
+  catalog), one batched insert per **base** datasource reusing `insertIntoTinybird`. The consumer
+  writes base facts only (per-message `cost_usd`, etc.); it does **not** compute or insert
+  `agent_sessions` or the rollups. Session cost, hourly/daily usage, and PR cost are derived in
+  Tinybird from `agent_priced_usage` (1c), so the subagent-dedup rule lives in exactly one place.
+  `cost_usd` null when token coverage is missing or the model is unpriced.
+- **Verify:** queue → consumer → priced rows in `agent_messages FINAL`; rebuild `agent_sessions` and
+  confirm its cost matches a hand-summed `agent_priced_usage` for the session; re-post an identical
+  envelope, base `FINAL` counts unchanged; unpriced model → `cost_usd` null.
 
 ### 2d — models.dev pricing import
 
