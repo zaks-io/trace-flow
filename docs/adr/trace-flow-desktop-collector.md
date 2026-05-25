@@ -4,7 +4,7 @@ Status: accepted
 
 Captured: 2026-05-24
 
-Trace Flow Desktop is the v1 product surface for the local **Collector**. The Collector vendors and refactors Otto's working code (parser, source discovery, sync, and remote resolution) behind Trace Flow-owned contracts rather than rebuilding it; what it does not inherit is Otto's product identity or runtime state. Trace Flow Desktop gets new branding, app identity, local state, release channels, consent flow, and packaging. The goal is a legacy-free desktop app that users install, connect once, explicitly start, and then leave running in the menu bar/tray.
+Trace Flow Desktop is the v1 product surface for the local **Collector**. The Collector vendors and refactors Otto's working code (parser, source discovery, sync, and remote resolution) behind Trace Flow-owned contracts rather than rebuilding it; what it does not inherit is Otto's product identity or runtime state. Trace Flow Desktop gets new branding, app identity, local state, release channels, consent flow, and packaging. The goal is a legacy-free desktop app that users install, connect once, explicitly start, and then leave running in the menu bar/tray. See [Otto Extraction Reference](./otto-extraction-reference.md) for the implementation reference map.
 
 ## Decision
 
@@ -21,6 +21,10 @@ Otto is not a state lineage. Trace Flow Desktop gets a new Tauri identifier, app
 ## Setup And Consent
 
 Login alone does not start syncing. First-run setup shows detected Sources, raw-transcript upload choice, and autostart. Detected Claude, Codex, and Cursor Sources are enabled by default, visible before data egress, and can be disabled before the user clicks **Start syncing**. Sync begins only after the user clicks **Start syncing**.
+
+Sources differ in what they yield, which sets implementation expectations. Claude and Codex carry full token, model, and cache economics. Cursor's real store is `state.vscdb` (a VS Code-style SQLite key-value DB, table `cursorDiskKV`, in globalStorage and per-workspace storage), not the `~/.cursor/projects` JSONL or `~/.cursor/acp-sessions` protobuf stores; it carries session-grain model (`composerData:` rows, Cursor-specific labels needing normalization) and sparse message-grain token counts (`bubbleId:` rows, nonzero on ~1% of bubbles), with cache coverage marked missing. So the full cost, token, and cache product is Claude plus Codex; Cursor adds model attribution and partial tokens. The Collector snapshots Cursor's DB before reading and uses `GLOB` prefix scans, never `LIKE`. See [Agent Conversation Analytics](./agent-conversation-analytics.md) Data quality verification.
+
+Default Source paths are platform-specific. On macOS, defaults are `~/.claude/projects`, `~/.codex/sessions`, and `~/Library/Application Support/Cursor/User/{globalStorage,workspaceStorage}`. On Windows, defaults are `%USERPROFILE%\.claude\projects`, `%USERPROFILE%\.codex\sessions`, and `%APPDATA%\Cursor\User\{globalStorage,workspaceStorage}`. Linux defaults are deferred with Linux packaging. Users can add custom Source paths when defaults are wrong; absolute Source paths stay local-only.
 
 Raw Transcript upload is explicit and default-off. Parsed fact sync is the normal analytics path; raw upload enables replay and bounded deeper analysis and remains capped to the raw replay window even during a broader history import.
 
@@ -52,7 +56,7 @@ The v1 SQLite database is not encrypted because it stores non-secret resumable s
 
 Desktop connect mints a hidden Collector Credential scoped to the selected Organization, current User, stable Collector identity, local machine identity, and Collector ingest capabilities. Trace Flow Desktop stores that secret with Tauri Stronghold. Stronghold is unlocked with locally generated secret material protected by the OS credential store/keychain where available, not a hardcoded vault password and not the user's Trace Flow account password. If unlock fails, the user reconnects and gets a replacement Collector Credential.
 
-Collector Credentials are not user-facing API Keys. They are managed by a separate desktop credential control plane, accepted only by Collector ingest routes, and hidden from the normal API Keys page, org-admin credential inventories, API-key filters, cost alerts, MCP `list_api_keys`, and Tinybird API-key JWT scopes. The product exposes only desktop connection status, not a manageable Collector Credential list. The corresponding server record carries Organization, User, Collector, machine, capabilities, revocation state, and internal audit metadata. Reconnect, rotation, revocation, or Stronghold recovery can replace the secret without changing Agent Session identity or dedupe behavior.
+Collector Credentials are not user-facing API Keys. They are managed by a separate desktop credential control plane, accepted only by Collector ingest routes, and hidden from the normal API Keys page, API-key filters, cost alerts, MCP `list_api_keys`, and Tinybird API-key JWT scopes. The product may expose a separate Connected Desktops/security surface for the current user and org admins, showing device label, platform, last seen, status, and a revoke action, but it never shows the secret and never treats the credential as a reusable API key. The corresponding server record carries Organization, User, Collector, machine, capabilities, revocation state, and internal audit metadata. Reconnect, rotation, revocation, admin revocation, or Stronghold recovery can replace or revoke the secret without changing Agent Session identity or dedupe behavior.
 
 Trace Flow Desktop supports one active Organization in v1. Switching Organizations requires disconnect/reconnect and mints a new Collector Credential.
 

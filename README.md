@@ -107,6 +107,7 @@ The proxy automatically captures request/response bodies, token usage, performan
 Related design notes:
 
 - [Agent Conversation Analytics](./docs/adr/agent-conversation-analytics.md) - data model and ingestion design for local AI agent conversation analytics in Trace Flow.
+- [Otto Extraction Reference](./docs/adr/otto-extraction-reference.md) - source files and modules to consult when extracting Collector code from Otto.
 
 ## Development
 

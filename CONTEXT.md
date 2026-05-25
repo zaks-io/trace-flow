@@ -114,7 +114,7 @@ The user-facing org-scoped credential sent as `X-Trace-Flow-Api-Key` for proxied
 _Avoid_: shortening to "key" without context.
 
 **Collector Credential**:
-A hidden desktop-ingest credential minted for **Trace Flow Desktop**, scoped to one **Organization**, one **User**, one **Collector**, and allowed Collector capabilities. It authenticates Agent Session fact upload (and, if the separate **Provider Usage Tracking** feature ships, **Provider Usage Snapshots**), but it is not a user-facing **API Key**, cannot proxy LLM Requests, and must not appear in API key lists, admin-managed credential inventories, filters, alerts, or Tinybird API-key JWT scopes. Rotating or replacing it must not fragment Agent Session identity.
+A hidden desktop-ingest credential minted for **Trace Flow Desktop**, scoped to one **Organization**, one **User**, one **Collector**, and allowed Collector capabilities. It authenticates Agent Session fact upload (and, if the separate **Provider Usage Tracking** feature ships, **Provider Usage Snapshots**), but it is not a user-facing **API Key**, cannot proxy LLM Requests, and must not appear in API key lists, filters, alerts, or Tinybird API-key JWT scopes. It can be revoked through a separate Connected Desktops/security surface or support/admin path without exposing the secret. Rotating, replacing, or revoking it must not fragment Agent Session identity.
 _Avoid_: "desktop API key" when discussing the product surface.
 
 **Project**:
@@ -136,7 +136,7 @@ Purchased block of `UNITS_PER_ADDON` (100k) units beyond the Monthly Units allot
 _Avoid_: "topup" (means the auto-recharge feature, a different thing).
 
 **Retention Window**:
-How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: a flat one-year, Tier-independent horizon; the **Raw Transcript** lives on a shorter flat horizon (its replay-and-analysis window), and aggregates live as long or longer than the facts. May exceed the **Visibility Window**.
+How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: a flat one-year, Tier-independent horizon keyed by **EventAt**; the **Raw Transcript** lives on a shorter flat horizon (its replay-and-analysis window), and **Agent Session** summaries are keyed by **LastEventAt**. May exceed the **Visibility Window**.
 _Avoid_: "TTL" as the user-facing name; conflating with **Visibility Window**.
 
 **Visibility Window**:
@@ -186,7 +186,7 @@ The user-facing desktop app for the **Collector**. It is the installed app name 
 _Avoid_: "TF Desktop" (ambiguous with Terraform), "Otto Desktop".
 
 **Source**:
-The agent tool that produced an **Agent Session** — `claude`, `codex`, or `cursor`. Sources overlap but differ in field coverage, so facts must tolerate sparse source-specific fields.
+The agent tool that produced an **Agent Session** — `claude`, `codex`, or `cursor`. Sources overlap but differ in field coverage, so facts must tolerate sparse source-specific fields. Full economics (token, cost, cache) come from `claude` and `codex`; `cursor` carries partial economics from its `state.vscdb` store (`cursorDiskKV`) — session-grain model and sparse message-grain tokens, with cache coverage marked missing — not the `~/.cursor/projects` or `~/.cursor/acp-sessions` stores, which carry none.
 _Avoid_: "vendor", "agent".
 
 **Agent Session**:
@@ -194,11 +194,11 @@ One canonical AI-agent conversation, identified by its **Source** plus the sourc
 _Avoid_: bare "session" (collides with **MCP Session**), "conversation".
 
 **Agent Session Authoring Cost**:
-The complete billable model cost represented by one **Agent Session**, including top-level and nested/subagent model usage exactly once. The cost unit used for **Pull Request Authoring Cost**.
-_Avoid_: equating session cost with only top-level **Agent Message** rows when the **Source** records nested/subagent usage separately.
+The API-equivalent estimated billable model cost represented by one **Agent Session**, including top-level and nested/subagent model usage exactly once. The cost unit used for **Pull Request Authoring Cost**. It is estimated from transcript tokens and model pricing; it is not actual provider spend, subscription amortization, credits, discounts, or invoice data.
+_Avoid_: equating session cost with only top-level **Agent Message** rows when the **Source** records nested/subagent usage separately; calling it "$X spent" without saying it is estimated authoring cost.
 
 **Agent Message**:
-One turn within an **Agent Session**, a single assistant or user record. The grain at which direct model-call fields such as `model`, token counts (input, output, cache read, cache creation, reasoning), and cost are recorded. The agent-analytics analogue of an **LLM Request**.
+One turn within an **Agent Session**, a single assistant or user record. The grain at which direct model-call fields such as `model`, token counts (input, output, cache read, cache creation, reasoning), coverage fields (`token_coverage`, `cache_coverage`), and estimated cost are recorded. The agent-analytics analogue of an **LLM Request**.
 _Avoid_: unqualified "message" (collides with chat-UI message), "turn" alone.
 
 **Tool Event**:
@@ -246,8 +246,8 @@ An explicit link to a **Pull Request** in an **Agent Session** transcript. It is
 _Avoid_: treating generic git commands, branch names, or bare numbers as Pull Request Links.
 
 **Pull Request Authoring Cost**:
-The agent-analytics cost attributed to creating or modifying a pull request. Sums **Agent Session Authoring Cost** from local coding conversations attributed to that pull request; excludes runtime **LLM Request** cost from deployed application traffic and excludes inferred incremental cost caused by the change.
-_Avoid_: "PR cost" without saying whether it means authoring, runtime, or incremental cost.
+The estimated agent-analytics cost attributed to creating or modifying a pull request. Sums **Agent Session Authoring Cost** from local coding conversations attributed to that pull request; excludes runtime **LLM Request** cost from deployed application traffic, actual provider account spend, and inferred incremental cost caused by the change.
+_Avoid_: "PR cost" without saying whether it means estimated authoring, runtime, actual spend, or incremental cost.
 
 **Pull Request Attribution**:
 A confidence-bearing association between **Agent Session Authoring Cost** and one primary **Pull Request** in the same **Repo**. In v1 it is made only from exactly one **Pull Request Link** for that Repo. Otherwise the cost remains repo-level. Cost is not split across multiple pull requests; if a session has credible evidence for more than one pull request, it remains unattributed at the Repo level.
@@ -262,12 +262,20 @@ A point-in-time personal provider subscription, quota, credit, or rate-limit obs
 _Avoid_: mixing with **Agent Message** token usage or **Pull Request Authoring Cost**; storing raw provider account emails as identity.
 
 **Raw Transcript**:
-The compressed, server-encrypted copy of one **Source** transcript, uploaded only when the user opts in (default off) and retained only for the replay window, then purged. The replay source for re-deriving facts server-side when the parser improves (so ingestion is one-time), and the substrate for bounded deep analysis. The agent-analytics analogue of a **Body Object**.
+The compressed, server-encrypted Raw Session Bundle for one **Agent Session**, uploaded only when the user opts in (default off) and retained only for the replay window, then purged. It contains a manifest plus the exact Source transcript records, Cursor row values, and subagent parts needed to replay that Agent Session, not unrelated Source store contents. The replay source for re-deriving facts server-side when the parser improves (so ingestion is one-time), and the substrate for bounded deep analysis. The agent-analytics analogue of a **Body Object**.
 _Avoid_: "conversation dump"; not a fact table and not an **Agent Session**.
 
 **StartedAt**:
-The earliest point of an **Agent Session** that Trace Flow can observe from the transcript, stamped on every fact and used as the time anchor for retention and partitioning. Deliberately "first activity we can see," distinct from the **Source**'s own declared session start.
-_Avoid_: "session start" (the Source's claim — that's **VendorStartedAt**), "ingest time".
+The earliest point of an **Agent Session** that Trace Flow can observe from conversation-turn records. Deliberately "first activity we can see," distinct from the **Source**'s own declared session start. It is session metadata, not the retention or partitioning key.
+_Avoid_: "session start" (the Source's claim — that's **VendorStartedAt**), "ingest time", using it as the TTL anchor.
+
+**EventAt**:
+The timestamp of a specific **Agent Message**, **Tool Event**, file event, **Capability Snapshot**, or **Pull Request Link** fact. Agent fact tables partition and expire by EventAt so old long-lived sessions can still retain recent work.
+_Avoid_: using **StartedAt** when deciding whether a fact row is inside the retained window.
+
+**LastEventAt**:
+The newest **EventAt** observed for an **Agent Session**. Used for **Agent Session** summary retention and Raw Transcript replay-window eligibility.
+_Avoid_: treating it as Source-declared metadata; it is derived from observed facts.
 
 **VendorStartedAt**:
 The session-start time a **Source** declares for itself, captured as metadata when the Source provides it (Codex does; Claude, with a UUIDv4 session id, does not). Never used as the retention anchor.
@@ -301,4 +309,4 @@ _Avoid_: conflating with **StartedAt**.
 - **Root key naming** — `EncryptedStoredBodiesPayload` references a root key threaded into the worker as `rootKeyBase64`, but there's no canonical noun for the key itself. _Unresolved_: pick a project term ("Root Encryption Key"? "Body Root Key"?) and align the env var with it.
 - **"project"** was used for both a Trace Flow **Project** (a declared cross-source grouping) and `~/.claude/projects` (Claude Code's local per-workspace storage). _Resolved_: capitalized **Project** is the Trace Flow grouping; the local directory is "the local projects directory" and maps closer to a single repository.
 - **"session"** means three different things: an **Agent Session** (a parsed agent conversation), an **MCP Session** (a Model Context Protocol session), and a vendor "session id" inside Source transcripts. _Resolved_: always qualify as **Agent Session** or **MCP Session**; "vendor session ID" is the raw Source identifier that seeds an Agent Session's identity.
-- **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn (the retention and partition anchor); **VendorStartedAt** is the Source's own declared start, captured as metadata where available.
+- **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn; **EventAt** is the fact retention and partition anchor; **LastEventAt** anchors session-summary retention and raw replay eligibility; **VendorStartedAt** is the Source's own declared start, captured as metadata where available.

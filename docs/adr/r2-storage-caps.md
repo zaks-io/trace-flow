@@ -20,10 +20,10 @@ Those controls bound individual objects and age. They do not bound an org's tota
 
 Introduce a shared org-scoped Storage Budget for all optional raw-object classes:
 
-| Object class         | Prefix                                   | Default retention | Counts toward cap |
-| -------------------- | ---------------------------------------- | ----------------: | ----------------- |
-| Proxy Body Object    | `bodies/{orgId}/{requestId}`             |           30 days | yes               |
-| Agent Raw Transcript | `agent-transcripts/{orgId}/{session_pk}` |           90 days | yes               |
+| Object class         | Prefix                                                       | Default retention | Counts toward cap |
+| -------------------- | ------------------------------------------------------------ | ----------------: | ----------------- |
+| Proxy Body Object    | `bodies/{orgId}/{requestId}`                                 |           30 days | yes               |
+| Agent Raw Transcript | `agent-transcripts/{orgId}/{session_pk}/latest.jsonl.gz.enc` |           90 days | yes               |
 
 The cap is enforced before every R2 write. The write path asks the storage budget service to reserve `contentLength` bytes for `(orgId, objectClass, objectKey, expiresAt)`. If the reservation would exceed the org's cap, Trace Flow skips the R2 write and records `storage_cap_exceeded` in metadata. If the write succeeds, the reservation is committed; if it fails, the reservation is released.
 
