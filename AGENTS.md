@@ -86,7 +86,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 ### Issue tracker
 
-Issues live in Linear (team `TRA`), accessed via the `Codex.ai_Linear` MCP server. See `docs/agents/issue-tracker.md`.
+Issues live in Linear (team `TRA`), accessed via the `claude.ai_Linear` MCP server. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

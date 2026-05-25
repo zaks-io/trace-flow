@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import json, sys; data=json.load(sys.stdin); cmd=data.get('tool_input',{}).get('command','').lower().strip(); forbidden=['convex deploy', 'convex@latest deploy']; sys.exit(2 if any(cmd.startswith(f) for f in forbidden) else 0)\""
+            "command": "python3 -c \"import json, re, sys; data=json.load(sys.stdin); cmd=data.get('tool_input',{}).get('command','').lower(); forbidden=[r'\\bconvex\\s+deploy\\b', r'\\bconvex@latest\\s+deploy\\b']; sys.exit(2 if any(re.search(p, cmd) for p in forbidden) else 0)\""
           }
         ]
       },
