@@ -1,0 +1,5 @@
+[mcp_servers.trace-flow-dev]
+url = "https://hardy-iguana-812.convex.site/mcp"
+
+[mcp_servers.trace-flow-prod]
+url = "https://mcp.trace-flow.dev/mcp"
