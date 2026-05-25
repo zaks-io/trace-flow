@@ -14,9 +14,9 @@ Conversation analytics answers "what did agents do and what did it cost to attri
 
 ## Sketch
 
-If built, Provider Usage Tracking could be hosted by the same Trace Flow Desktop app as an independent, opt-in capability, reusing the Collector Credential, ingest Worker, org rate limiting, and queue infrastructure, but with its own route, queue message variant, and storage shape. None of that is wired into the Collector's first-run setup, watcher, sync loop, SQLite state, or diagnostics.
+If built, Provider Usage Tracking could be hosted by the same Trace Flow Desktop app as an independent, opt-in capability, reusing the ingest Worker, org rate limiting, and queue infrastructure, but with its own route, queue message variant, and storage shape. To preserve least privilege between the two ingest paths, provider-usage writes authenticate with a distinct ingest scope (a separate Collector Credential capability, or a separate credential), not the transcript-ingest capability; the exact scope mechanics are an implementation detail. None of that is wired into the Collector's first-run setup, watcher, sync loop, SQLite state, or diagnostics.
 
-- **Source.** `codexbar` is an optional external dependency. Where present, the app can run `codexbar usage --json --provider all` to collect provider subscription, quota, credit, and rate-limit snapshots. If it is missing, the feature shows as unavailable without an error; nothing else degrades.
+- **Source.** `codexbar` is an optional external dependency. Where present, the app can run `codexbar usage --json --provider all` to collect provider subscription, quota, credit, and rate-limit snapshots. If it is missing, the feature shows as unavailable without an error. A probe that hangs, times out, or errors must not block the app: it is bounded by a timeout, surfaces as stale or unavailable, and falls back to the last known snapshot. Concrete timeout, retry, and staleness thresholds are an implementation detail.
 - **Cadence.** When enabled, it runs once after start, every 5 minutes while active, and on manual refresh. It does not run while paused.
 - **Scope.** Snapshots are user-private inside the Organization and are never mixed into Repo, Project, Agent Session, or Pull Request attribution.
 

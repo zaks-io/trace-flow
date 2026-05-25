@@ -359,7 +359,8 @@ Provisional, surfaced honestly rather than hidden:
 
 - Codex per-message dedupe. Codex exposes no vendor message ID, so its `message_pk` uses a positional turn index; a re-parse that renumbers turns can move it, splitting or merging a Codex message row. Claude and Cursor, with real message IDs, are unaffected.
 
-- Absolute cost. Show priced-token coverage % (the share of rows with non-null `cost_usd`), not a bare "$X spent," until coverage is high.- Cross-version totals. Every fact carries `parser_version`; re-ingest self-heals via newer `IngestedAt`; windows mixing versions are flagged.
+- Absolute cost. Show priced-token coverage % (the share of rows with non-null `cost_usd`), not a bare "$X spent," until coverage is high.
+- Cross-version totals. Every fact carries `parser_version`; re-ingest self-heals via newer `IngestedAt`; windows mixing versions are flagged.
 - Outcome attribution beyond `status` is deferred; facts stay descriptive.
 - Raw rows are counted only through `FINAL`/rollups, never trusted pre-merge.
 - Paths are normalized to repo-relative at ingest, which doubles as a privacy guard stripping the home directory and username.
