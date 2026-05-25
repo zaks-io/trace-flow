@@ -4,22 +4,22 @@ Status: accepted
 
 Captured: 2026-05-23
 
-Trace Flow becomes the analytics system of record for local AI-agent activity (Claude Code, Codex, Cursor), alongside proxied LLM Requests. A local Collector parses transcripts into typed facts and syncs them to an ApiKey-authed ingest Worker. The Worker rate-limits, assembles canonical IDs, and enqueues. A stateless consumer prices the facts server-side and writes them into bespoke Tinybird datasources that mirror the `llm_requests` pattern. The Collector is Otto's CLI and desktop code vendored into this repo and modified for Trace Flow; Otto's Convex backend is not ported.
+Trace Flow becomes the analytics system of record for local AI-agent activity (Claude Code, Codex, Cursor), alongside proxied LLM Requests. A local Collector parses transcripts into typed facts and syncs them to a Collector Credential-authenticated ingest Worker. The Worker rate-limits, assembles canonical IDs, and enqueues. A stateless consumer prices the facts server-side and writes them into bespoke Tinybird datasources that mirror the `llm_requests` pattern without reusing API-key identity. Otto is the proof of concept this is extracted from: Trace Flow vendors and refactors Otto's working parser, source discovery, remote resolution, and desktop shell, and replaces the contracts around that code (wire format, local pricing, app/state model, IDs). Trace Flow owns the ingest contract, the storage design, and the Trace Flow types and tests the vendored code is refactored behind, but it does not rebuild what already works.
 
 ## Context
 
 Otto proved the data is valuable and exposed the hard parts: identity is unstable across worktrees, dedupe is easy to get wrong, raw conversation rows are expensive, and wide aggregate documents rot. Trace Flow already has the architecture this needs: edge ingestion, a durable queue, Tinybird with materialized rollups, retention-aware reads, and a working server-side pricing chain.
 
-Otto is an incomplete prototype, not a system to port. Its parser, source discovery, and git/sync layers work and encode hard-won transcript knowledge, but it prices locally, its Cursor support targets the older `~/.cursor/projects` JSONL layout (not the current `acp-sessions` store), and it folds nothing at the tool-pair level. We vendor that code rather than rebuild it (see Collector below) and redo the parts that conflict with the decisions here. The parser already normalizes sources into one `NormalizedEvent` stream (a Turn), resolves the git remote in its sync layer, extracts Codex exit codes, command families, and subagent facts, and stamps `parser_version`. The research note's open questions (Codex-first vs Claude-first, weak Codex repo attribution, a bespoke `session_fingerprint` hash) are dissolved by the decisions below, not by the prototype.
+Otto is an incomplete prototype, but a lot of it works and is worth extracting rather than rebuilding. Its parser, source discovery, and git/sync layers encode hard-won transcript knowledge; they are vendored into Trace Flow and refactored, not rewritten. What changes is the contracts around that code: Otto prices locally, its Cursor support targets the older `~/.cursor/projects` JSONL layout (not the current `acp-sessions` store), it folds nothing at the tool-pair level, and it has no Capability Snapshot contract. Trace Flow keeps the working parsing and discovery code, refactors it behind Trace Flow-owned types, tests, privacy boundaries, and IDs, and adds the Worker ingest path, Tinybird tables, and replay behavior Otto lacks. The research note's open questions (Codex-first vs Claude-first, weak Codex repo attribution, a bespoke `session_fingerprint` hash) are dissolved by the decisions below, not by the prototype.
 
 ### Local survey
 
-| Store                    | Shape                 |        Size / count | Notes                                                                               |
-| ------------------------ | --------------------- | ------------------: | ----------------------------------------------------------------------------------- |
-| `~/.claude/projects`     | JSONL conversations   | 6,619 files, 1.8 GB | Rich model/token/cache/tool data; many worktree variants.                           |
-| `~/.codex/sessions`      | JSONL sessions        |     70 files, 84 MB | Rich tool execution, exit codes, command families.                                  |
-| `~/.cursor/projects`     | JSONL conversations   |             ~173 MB | UUID session id in path; subagents as separate files. The layout Otto parses today. |
-| `~/.cursor/acp-sessions` | Agent Client Protocol |  ~808 MB, 102k dirs | Current Cursor store; UUID dir name + `meta.json`. Not parsed by Otto yet.          |
+| Store                    | Shape                         |        Size / count | Notes                                                                                           |
+| ------------------------ | ----------------------------- | ------------------: | ----------------------------------------------------------------------------------------------- |
+| `~/.claude/projects`     | JSONL conversations           | 6,680 files, 1.8 GB | Rich model/token/cache/tool data; many worktree variants.                                       |
+| `~/.codex/sessions`      | JSONL sessions                |    98 files, 139 MB | Rich tool execution, exit codes, command families, base instructions, dynamic tool metadata.    |
+| `~/.cursor/projects`     | JSONL conversations + caches  |             ~174 MB | UUID session id in path; subagents as separate files. The layout the Otto prototype parses.     |
+| `~/.cursor/acp-sessions` | Agent Client Protocol + cache |  ~893 MB, 117k dirs | Current Cursor store; mostly UUID dir + `meta.json`, with SQLite blob stores for some sessions. |
 
 Those totals are mostly raw conversation text. (The `~/.cursor` directory is ~37 GB on disk, but ~35 GB of that is git worktrees, actual checkouts, not transcripts; the two rows above are the real Cursor corpus.) The Collector always ships parsed facts; when raw upload is enabled it also sends a gzip-compressed copy of each processed transcript (see Raw transcript storage and replay), a fraction of the on-disk size at roughly 10x compression, with the fact rows smaller still. All three sources reduce to similar fact volumes.
 
@@ -38,21 +38,23 @@ A vertical slice that proves ingestion, dedupe, pricing, rollup, and the three l
 
 ## Decisions
 
-### Collector (vendored, not rewritten)
+### Collector (Trace Flow implementation, Otto-informed)
 
-The Collector is Otto's Rust CLI and desktop (Tauri tray) code, pulled into this repo, rebranded, and modified for Trace Flow rather than rewritten. Otto is an incomplete prototype, but its multi-source parser, source discovery, and git-remote resolution work and carry format-specific detail that is expensive to rediscover. Vendoring keeps that head start.
+The Collector is built by vendoring Otto's working code and refactoring it behind the decisions in this ADR. Otto's parser, source discovery, and git-remote resolution are extracted into Trace Flow and reused; what Trace Flow does not inherit is Otto's wire contract, storage schema, local-pricing behavior, app state, and backend assumptions. The vendored parsing and discovery code is refactored to land behind Trace Flow-owned types, tests, redaction rules, and ingest compatibility policy rather than rebuilt from scratch.
 
-Trace Flow keeps Otto's useful binary split without copying its directory split exactly: the Collector has two first-class binaries over shared core packages, but Trace Flow Desktop is the v1 product surface. The desktop app is the default user experience and owns connect, continuous watching, autostart, pause/resume, status, and background sync. A user should be able to install it, log in quickly, and let it run without thinking about the CLI. The desktop embeds the shared sync libraries directly rather than shelling out to the CLI, so normal background behavior is not coupled to subprocess management, stdout parsing, or CLI exit semantics. Shared Rust crates live under `packages/` alongside the rest of the monorepo packages, with thin apps under `apps/`. See [Trace Flow Desktop Collector](./trace-flow-desktop-collector.md) for the desktop product, local state, privacy, release, and update decisions.
+Trace Flow uses the same useful binary split that Otto explored without copying its directory split or state model: the Collector has two first-class binaries over shared core packages, but Trace Flow Desktop is the v1 product surface. The desktop app is the default user experience and owns connect, continuous watching, autostart, pause/resume, status, and background sync. A user should be able to install it, log in quickly, and let it run without thinking about the CLI. The desktop embeds the shared sync libraries directly rather than shelling out to the CLI, so normal background behavior is not coupled to subprocess management, stdout parsing, or CLI exit semantics. Shared Rust crates live under `packages/` alongside the rest of the monorepo packages, with thin apps under `apps/`. See [Trace Flow Desktop Collector](./trace-flow-desktop-collector.md) for the desktop product, local state, privacy, release, and update decisions.
 
 The repo layout follows the existing Turborepo shape. Trace Flow Desktop lives at `apps/desktop` with package name `@trace-flow/desktop` and Tauri product name `Trace Flow Desktop`. If the CLI is scaffolded in v1, it lives at `apps/cli` and builds the `trace-flow` binary. Shared Rust packages live under `packages/` with Collector-oriented names such as `collector-sync`, `collector-parser`, `collector-api-client`, `collector-common`, and `collector-contracts`.
 
-The CLI binary is `trace-flow`, matching the repo and package spelling, but it is not the primary v1 interface and does not drive the desktop experience. It can be built as a thin, flat command surface over the same packages for future headless, diagnostic, CI, or agent-friendly workflows, but v1 does not spend product effort on CLI installation, desktop integration, or a polished command taxonomy. The CLI must not accept an API key as a command-line argument because argv leaks through shell history, process listings, logs, and agent transcripts; if a headless path needs credentials, it uses the existing `TRACE_FLOW_API_KEY` environment convention or the shared credential store once that CLI behavior is deliberately designed.
+The CLI binary is `trace-flow`, matching the repo and package spelling, but it is not the primary v1 interface and does not drive the desktop experience. It can be built as a thin, flat command surface over the same packages for future headless, diagnostic, CI, or agent-friendly workflows, but v1 does not spend product effort on CLI installation, desktop integration, or a polished command taxonomy. The CLI must not accept credentials as command-line arguments because argv leaks through shell history, process listings, logs, and agent transcripts. A future proxy-oriented CLI may keep the existing `TRACE_FLOW_API_KEY` environment convention, but a future headless Collector path must use a Collector Credential through the shared credential store or another deliberately designed non-argv credential flow.
 
-Desktop connect mints a dedicated Collector API Key scoped to the selected Organization, current User, machine identity, and Collector ingest capabilities. Trace Flow Desktop stores that secret with Tauri Stronghold, not SQLite or plain config, and uses it for Collector ingest. Stronghold is unlocked with locally generated secret material protected by the OS credential store/keychain where available, not a hardcoded vault password and not the user's Trace Flow account password. If Stronghold unlock fails, the app requires reconnect/login and mints a replacement Collector API Key rather than exposing or recovering the old secret. The ingest Worker authenticates Collector API Keys through the same API-key control plane while preserving user identity for user-private Provider Usage Snapshots. Browser/session tokens are not sent to the ingest Worker as the long-lived desktop credential.
+Desktop connect mints a hidden Collector Credential scoped to the selected Organization, current User, stable Collector identity, local machine identity, and Collector ingest capabilities. Trace Flow Desktop stores that secret with Tauri Stronghold, not SQLite or plain config, and uses it only for Collector ingest. Stronghold is unlocked with locally generated secret material protected by the OS credential store/keychain where available, not a hardcoded vault password and not the user's Trace Flow account password. If Stronghold unlock fails, the app requires reconnect/login and mints a replacement Collector Credential rather than exposing or recovering the old secret. The ingest Worker authenticates Collector Credentials through a separate control-plane record and Cloudflare KV namespace from user-facing API Keys. Browser/session tokens are not sent to the ingest Worker as the long-lived desktop credential.
 
-Disconnect revokes and stops. When the user signs out or disconnects Trace Flow Desktop, the app stops watcher, sync, and provider-usage loops; revokes the Collector API Key server-side; removes the Stronghold secret and local unlock material; and returns to a disconnected state. Non-secret SQLite state is kept by default to avoid unnecessary rescans on reconnect, but a separate explicit "Delete local data" control can remove local Collector state.
+Collector Credentials are not user-facing API Keys. They do not appear on the API Keys page, in org-admin credential inventories, in API-key filters, in cost alerts, in MCP `list_api_keys`, or in Tinybird `api_keys` JWT fixed parameters. They cannot call the Proxy or authorize LLM Request reads. The product exposes only desktop connection status, not a manageable Collector Credential list. Revoking, rotating, or replacing a Collector Credential changes authentication and internal server audit metadata only; it must not change Agent Session identity, Repo identity, or dedupe keys.
 
-Trace Flow Desktop supports one active Organization in v1. Connect chooses one Organization, and all Agent Session facts plus Provider Usage Snapshots upload there. Switching Organizations requires disconnect/reconnect and mints a new Collector API Key. Local SQLite state records the active Organization and must not silently reuse sync cursors across Organizations. Simultaneous multi-org sync is deferred.
+Disconnect revokes and stops. When the user signs out or disconnects Trace Flow Desktop, the app stops watcher and sync loops; revokes the Collector Credential server-side; removes the Stronghold secret and local unlock material; and returns to a disconnected state. Non-secret SQLite state is kept by default to avoid unnecessary rescans on reconnect, but a separate explicit "Delete local data" control can remove local Collector state.
+
+Trace Flow Desktop supports one active Organization in v1. Connect chooses one Organization, and all Agent Session facts upload there. Switching Organizations requires disconnect/reconnect and mints a new Collector Credential. Local SQLite state records the active Organization and must not silently reuse sync cursors across Organizations. Simultaneous multi-org sync is deferred.
 
 Disconnect, Delete Local Data, and Reset App are separate controls. Disconnect revokes the credential and removes secrets while keeping non-secret SQLite state by default. Delete Local Data removes SQLite state, logs, and caches and is only available while disconnected or after stopping sync. Reset App is the explicit combined destructive path that disconnects, revokes, and deletes local data.
 
@@ -60,15 +62,11 @@ Trace Flow Desktop is a menu-bar/tray app with a small settings window. The menu
 
 The tray menu shows compact operational status for detected enabled Sources only. Disabled, missing, or custom-path Source configuration lives in settings. This keeps the tray as a status/control surface rather than a full configuration inventory.
 
-Source discovery and provider usage are related but separate. Trace Flow Desktop detects transcript Sources from the local Source transcript stores and shows detected Claude, Codex, and Cursor Sources before sync starts; detected Sources are enabled by default but can be turned off before the user clicks "Start syncing." Provider usage/quota snapshots can use `codexbar usage --json --provider all` through a separate loop, following Otto's implementation, because `codexbar` already knows how to read enabled provider/account usage and rate-limit state. `codexbar` is an optional external dependency in v1: if present, provider usage can be shown and uploaded; if missing, conversation sync still works and the app reports provider usage as unavailable without an error notification. `codexbar` does not replace transcript Source discovery in v1 unless its command surface grows a dedicated source-discovery API.
+Trace Flow Desktop detects transcript Sources from the local Source transcript stores and shows detected Claude, Codex, and Cursor Sources before sync starts; detected Sources are enabled by default but can be turned off before the user clicks "Start syncing." Source discovery reads only the local transcript stores and does not depend on any external CLI.
 
 Source settings are cursor-scoped. Disabling a Source stops watching and syncing it but keeps its local cursor/cache. Re-enabling the same Source path resumes from the existing cursor. Changing a Source path creates a new local cursor namespace for that path and follows the normal incremental/default import rules; it does not reuse the old path's cursor. If a path change broadens scan scope, the settings UI asks for confirmation before applying it.
 
-When `codexbar` is present, provider usage/quota upload is enabled by default after the user clicks "Start syncing," but it is shown as a separate setup capability from Agent Session sync and can be disabled before start. This keeps provider-usage egress visible without making it a blocker for the core Collector path. If enabled, Trace Flow Desktop runs provider usage collection once after start, every 5 minutes while active, and on manual refresh. It does not run while paused.
-
-Provider usage uses the same Collector ingest Worker, API key auth, org rate limiting, and queue infrastructure as Agent Session facts, but it has a separate route, queue message variant, and storage shape. It is not mixed into `agent_messages`, `agent_tool_events`, or Repo/Project attribution tables because it observes personal provider subscription/quota state rather than a conversation, repository, or pull request. Provider Usage Snapshots are scoped to the collecting User inside an Organization: rows carry org, user, API-key or credential identity, provider, provider-account identity, and timestamp, but read APIs default to the current user's snapshots only. They are not shown to teammates in v1. Provider account identity is privacy-first: grouping uses a stable hash of provider plus normalized account identifier, and any human-readable label is redacted before upload or storage. Emails become hints like `i***@zaks.io`, not full addresses; raw provider emails, cookies, and tokens are never stored. The intended questions are subscription/quota history over time and rough comparison between provider-reported usage movement and Trace Flow's observed Agent Message token/output volume to detect changing effective usage rates or surcharges across time windows.
-
-Provider-usage redaction happens as early as possible. Trace Flow Desktop redacts account labels, emails, API tokens, cookies, and other known sensitive strings before upload; the ingest Worker validates and re-redacts defensively before enqueue or storage. Tinybird receives only stable machine identity fields such as `provider_account_hash` plus redacted human hints. If a label or field cannot be confidently redacted, Trace Flow drops the human label and keeps the hash rather than storing raw personal or secret-bearing text.
+Provider usage and subscription-cost tracking (the `codexbar` idea) are a separate feature with their own ADR ([Provider Usage Tracking](./provider-usage-tracking.md)). They are out of scope here, are not wired into Collector ingest, queue, storage, or first-run setup, and are not a v1 dependency. The desktop app may host that feature later, but it observes personal provider subscription/quota state rather than agent conversations, so it does not belong in this pipeline.
 
 First-run setup presents raw-transcript upload before background sync begins. Parsed fact sync is the product's normal analytics path; raw transcript upload is optional, explicit, and default-off. The setup copy must distinguish parsed facts from Raw Transcripts, explain that raw upload enables replay and bounded deeper analysis, and state the encryption and replay-window retention behavior without implying raw upload is required.
 
@@ -86,43 +84,46 @@ Trace Flow Desktop runs one sync job at a time. A scoped history import pauses w
 
 Pause is a full local-work pause, not upload-only. While paused, Trace Flow Desktop does not process watcher batches, parse transcripts, read git fallback state, or upload. In-flight work may finish or cancel cleanly, but no new local scanning or network sync begins until the user resumes. This matches Pause as a privacy and control affordance rather than a background queue mode.
 
-Quit and Pause are distinct controls. Quit cancels watcher, sync, and provider-usage loops and exits Trace Flow Desktop; it does not disable autostart, so the app starts again on next login if autostart remains enabled. Pause keeps the app running but stops local Collector work until resumed. Menu labels should make that distinction clear, for example `Pause Sync`, `Resume Sync`, and `Quit Trace Flow Desktop`.
+Quit and Pause are distinct controls. Quit cancels watcher and sync loops and exits Trace Flow Desktop; it does not disable autostart, so the app starts again on next login if autostart remains enabled. Pause keeps the app running but stops local Collector work until resumed. Menu labels should make that distinction clear, for example `Pause Sync`, `Resume Sync`, and `Quit Trace Flow Desktop`.
 
-Trace Flow Desktop uses a local SQLite database for durable Collector state, managed through Tauri's SQL plugin with the SQLite feature. The database stores sync cursors, processed file metadata, Source enablement and paths, path/worktree-to-remote cache entries, machine id, parser-version observations, last successful sync timestamps, provider-usage refresh state, and job/status metadata. The database lives under the Trace Flow Desktop app config/data location, not an Otto path. Local state is an optimization and UX aid; server-side stable IDs and Tinybird dedupe remain authoritative, so losing or rebuilding the SQLite state may cause reprocessing but must not create lasting duplicate facts.
+Trace Flow Desktop uses a local SQLite database for durable Collector state, managed through Tauri's SQL plugin with the SQLite feature. The database stores sync cursors, processed file metadata, Source enablement and paths, path/worktree-to-remote cache entries, machine id, parser-version observations, last successful sync timestamps, and job/status metadata. The database lives under the Trace Flow Desktop app config/data location, not an Otto path. Local state is an optimization and UX aid; server-side stable IDs and Tinybird dedupe remain authoritative, so losing or rebuilding the SQLite state may cause reprocessing but must not create lasting duplicate facts.
 
-SQLite is not a durable upload queue in v1. It does not store pending fact payloads, Raw Transcripts, command excerpts waiting to upload, or provider-usage payloads. If upload fails, the Collector leaves or rewinds cursors so it can re-read from Source files later; server dedupe absorbs repeats. This avoids local queued sensitive payloads and keeps retry semantics simple.
+SQLite is not a durable upload queue in v1. It does not store pending fact payloads, Raw Transcripts, or command excerpts waiting to upload. If upload fails, the Collector leaves or rewinds cursors so it can re-read from Source files later; server dedupe absorbs repeats. This avoids local queued sensitive payloads and keeps retry semantics simple.
 
 The v1 SQLite database is not encrypted because it stores non-secret resumable state derived from local files that already exist on disk. Secrets do not live there: Trace Flow credentials belong in the OS credential store, and raw/pending payloads are not stored locally. If a future feature stores secrets or sensitive queued payloads in SQLite, encryption becomes part of that feature's design rather than an afterthought.
 
 SQLite may store absolute local paths for local-only cursor/cache lookup because those paths already exist on the user's disk and are useful for reliable watching and debugging. Absolute paths are not uploaded. Logs, support exports, and server facts use repo-relative, redacted, hashed, or coarse path forms unless a local settings screen is showing the user their own configured paths.
 
-Trace Flow Desktop includes a sanitized diagnostics export in v1. The default export includes app version, OS/arch, sync status, recent error classes, Source detection summary, processed file/event counts, last sync timestamps, redaction counters, `codexbar` present/missing plus last provider-usage status, and configuration toggles. It excludes raw transcripts, command/error excerpts, secrets, and absolute local paths by default. If an "include local paths" option exists, it must be explicit.
+Trace Flow Desktop includes a sanitized diagnostics export in v1. The default export includes app version, OS/arch, sync status, recent error classes, Source detection summary, processed file/event counts, last sync timestamps, redaction counters, and configuration toggles. It excludes raw transcripts, command/error excerpts, secrets, and absolute local paths by default. If an "include local paths" option exists, it must be explicit.
 
 Trace Flow Desktop is quiet by default. The menu and settings/log views show recent errors and degraded status, but the app only sends desktop notifications for action-required failures: disconnected or expired auth that stops sync, storage/raw-upload budget exhaustion when raw upload is enabled, a Source path inaccessible for a sustained period, or repeated sync failure after retries. Transient parse errors, individual failed files, retryable rate limits, and temporary server errors stay in status/log surfaces. Notifications should open the relevant settings or error view.
 
-Otto is a reference implementation, not a state lineage. Trace Flow Desktop gets a new Tauri identifier, app data directory, config path, keychain/credential service name, autostart entry, log directory, machine id, release channel, and updater URL. It does not automatically import Otto config, API keys, last-sync state, path caches, local databases, or any other Otto-branded state. If migration is ever useful, it must be an explicit command, not first-launch behavior.
+Otto is a reference point, not a state lineage. Trace Flow Desktop gets a new Tauri identifier, app data directory, config path, keychain/credential service name, autostart entry, log directory, machine id, release channel, and updater URL. It does not automatically import Otto config, API keys, last-sync state, path caches, local databases, or any other Otto-branded state. If migration is ever useful, it must be an explicit command, not first-launch behavior.
 
 The Collector is transcript-led, not repo-monitoring-led. It watches Source transcript stores and parses Agent Sessions; it only reads git state on demand when the transcript lacks enough repository evidence. That fallback is scoped to attribution fields such as normalized remote, git root, branch/head when available, and the durable path-to-remote cache. It does not scan every checkout for arbitrary git changes or act as a general repository monitor.
 
-Collector CI and release are part of the port, not deferred cleanup. The user-facing desktop product is Trace Flow Desktop; Collector remains the architecture term for the local parsing and sync component. PR CI verifies the Rust workspace and Tauri desktop crate with normal checks, while Otto's desktop release workflow is ported into Trace Flow as the production packaging path. The release workflow remains a manual `workflow_dispatch` pipeline that builds signed macOS arm64 (`aarch64-apple-darwin`) and Windows x64 (`x86_64-pc-windows-msvc`) desktop artifacts, writes the Tauri updater release config, publishes GitHub Release assets, and uploads the updater manifest. Required signing and updater secrets are configured in GitHub rather than stripping the release path down to unsigned builds. External release assets carry the Trace Flow Desktop brand (`traceflow-desktop-latest.json`, platform artifact names such as `traceflow-desktop-macos-arm64` and `traceflow-desktop-windows-x64`) so updater URLs, support docs, and downloaded files are unambiguous; generic names are acceptable only for internal workflow labels. Linux and macOS Intel are deferred until there is real demand; building unused platforms adds CI and signing cost without improving v1.
+Collector CI and release are v1 scope, not deferred cleanup. The user-facing desktop product is Trace Flow Desktop; Collector remains the architecture term for the local parsing and sync component. PR CI verifies the Rust workspace and Tauri desktop crate with normal checks, while Otto's desktop release workflow is reference material for Trace Flow's production packaging path. The release workflow remains a manual `workflow_dispatch` pipeline that builds signed macOS arm64 (`aarch64-apple-darwin`) and Windows x64 (`x86_64-pc-windows-msvc`) desktop artifacts, writes the Tauri updater release config, publishes GitHub Release assets, and uploads the updater manifest. Required signing and updater secrets are configured in GitHub rather than stripping the release path down to unsigned builds. External release assets carry the Trace Flow Desktop brand (`traceflow-desktop-latest.json`, platform artifact names such as `traceflow-desktop-macos-arm64` and `traceflow-desktop-windows-x64`) so updater URLs, support docs, and downloaded files are unambiguous; generic names are acceptable only for internal workflow labels. Linux and macOS Intel are deferred until there is real demand; building unused platforms adds CI and signing cost without improving v1.
 
 Trace Flow Desktop uses signed prompted updates. The app may check the updater manifest on startup and periodically, but it shows an update badge/prompt instead of silently installing and restarting. Updates are installed only when the user chooses, and not in the middle of an active sync or history import; the app waits until idle or asks the user to confirm interruption. Stronger behavior for critical security updates is deferred.
 
 Trace Flow Desktop versions independently from the repo root, Web app, and Worker deploy cadence. The desktop app uses its own SemVer (starting at `0.1.0` unless changed during implementation), release tags like `traceflow-desktop-v{version}`, and the `traceflow-desktop-latest.json` updater manifest. This keeps desktop updater compatibility and signing cadence separate from Cloudflare/Web releases.
 
-Five modifications make it Trace Flow's:
+The Otto survey creates explicit Trace Flow implementation obligations:
 
-1. Strip local pricing. Otto's parser computes `cost_usd` from a price map; Trace Flow prices server-side (Cost and pricing), so that path is removed and the Collector ships tokens and model only.
-2. Point sync at the `ApiKey` ingest Worker instead of Otto's backend, with Trace Flow `ApiKey` auth and the opt-in raw-transcript upload.
-3. Assemble canonical IDs in the ingest Worker, not the Collector (Tenancy and identity); the parser's own `source_record_id` (which mixes in redacted text and line position) is not used as a dedupe key.
+1. Strip local pricing. Otto's parser computes `cost_usd` from a price map; Trace Flow prices server-side (Cost and pricing), so the Collector ships tokens and model only.
+2. Sync to the Collector ingest Worker with Trace Flow Collector Credential auth, Worker-side compatibility policy, org rate limits, queue buffering, and the opt-in raw-transcript upload.
+3. Assemble canonical IDs in the ingest Worker, not the Collector (Tenancy and identity); parser-local IDs that mix in redacted text or line position are not dedupe keys.
 4. Extend Cursor coverage to the current `acp-sessions` store; Otto only parses the older `~/.cursor/projects` JSONL layout.
-5. Redact early while preserving operational context. The Collector redacts known API tokens, cookies, secret-looking strings, absolute home paths, and other obvious sensitive values from Agent Session facts before upload; the ingest Worker re-redacts defensively. Facts should carry analytics fields, command families, tool names, what commands/tools ran, relevant arguments or targets, status, exit codes, durations, token counts, model names, repo-relative paths, and redacted error detail. This operational context is necessary for tool/failure analytics, but it is bounded and best-effort redacted before leaving the machine. Full prompt/response transcript text belongs only to the opt-in Raw Transcript path.
+5. Add first-class Capability Snapshots. Otto has useful Codex hints (`base_instructions`, `dynamic_tools`) but no normalized upload contract, no Tinybird table, and no coverage semantics. Trace Flow defines that contract for the opportunistic capability capture described under Data model; the Context Bloat analysis built on top of it is deferred.
+6. Redact early while preserving operational context. The Collector redacts known API tokens, cookies, secret-looking strings, absolute home paths, and other obvious sensitive values from Agent Session facts before upload; the ingest Worker re-redacts defensively. Facts should carry analytics fields, command families, tool names, what commands/tools ran, relevant arguments or targets, status, exit codes, durations, token counts, model names, repo-relative paths, and redacted error detail. This operational context is necessary for tool/failure analytics, but it is bounded and best-effort redacted before leaving the machine. Full prompt/response transcript text belongs only to the opt-in Raw Transcript path.
 
-The trade-off: we inherit Otto's parser shape and its gaps as known work (unparsed Cursor `acp-sessions`, no tool-pair folding, synthetic Codex message IDs) in exchange for not rebuilding a working parser. Vendoring is close to one-way once we begin modifying, which is why it is recorded here.
+The trade-off: refactoring the vendored Otto code behind Trace Flow-owned contracts costs more upfront than using it wholesale unchanged, but it keeps the product boundary clean: server-side pricing, Worker-owned identity, Tinybird-native tables, conversation-only capability extraction, and source-specific coverage are not retrofits. Otto's gaps (unparsed Cursor `acp-sessions`, no tool-pair folding, synthetic Codex message IDs, no Capability Snapshot contract) are treated as requirements to close, not inherited behavior.
 
 ### Tenancy and identity
 
-Facts are org-scoped and stamped with `ApiKey` only. Org, User, and Project resolve at read time through Convex, the same way Span reads work. Project is a read-time grouping that spans agent and LLM data; it is not stamped onto facts and its Convex entity is deferred.
+Agent facts are org-scoped, not API-key-scoped. The Collector Credential authenticates upload, but fact rows carry durable identity columns: `OrgId`, `UserId`, `CollectorId`, and `CollectorCredentialId` for internal audit. `OrgId`, `UserId`, and `CollectorId` come from the credential record; `CollectorCredentialId` is not a dedupe key and may change on reconnect, rotation, or Stronghold recovery. Project is a read-time grouping that spans agent and LLM data; it is not stamped onto facts and its Convex entity is deferred.
+
+This diverges from the proxied LLM Request path on purpose. User-facing API Keys remain the row-security and dashboard filter for `llm_requests`; hidden Collector Credentials are short-lived/replaceable desktop credentials and should not pollute a user's API key inventory or fragment Agent Sessions. Agent Tinybird pipes use Convex-generated fixed params such as `org_id`, not the existing `api_keys` parameter.
 
 Identity is vendor-ID-first, assembled at the ingest Worker:
 
@@ -148,7 +149,7 @@ PR attribution must work without a GitHub/GitLab integration in v1. The Collecto
 Local parse, then upload the facts and, when the user opts in, the compressed raw transcript. Raw upload is explicit and default-off; the facts path works without it.
 
 ```text
-Collector (desktop tray)            ApiKey ingest Worker              Queue              Consumer
+Collector (desktop tray)            Collector ingest Worker           Queue              Consumer
   parse transcripts          ->     auth + ORG rate limit      ->   durable buffer ->   price (KV)
   resolve repo_fingerprint          size cap, chunk to <128KB         DLQ                reconcile
   POST facts + gzip(raw)            assemble IDs                                         one batched insert
@@ -158,9 +159,20 @@ Collector (desktop tray)            ApiKey ingest Worker              Queue     
 
 The Collector parses locally, ships facts, and never computes price. When raw upload is enabled it also sends the gzip-compressed transcript over TLS; the ingest Worker reserves bytes against the org's shared R2 Storage Budget, encrypts accepted bytes with the org's Tenant Encryption Key (the mechanism Body Objects already use), and writes them to R2, where plaintext is never persisted. See Raw transcript storage and replay below and [R2 Storage Caps](./r2-storage-caps.md).
 
-The ingest Worker authenticates the `ApiKey`, applies a per-org rate limit (new `AGENT_INGEST_LIMITER`, namespace `2005`, mirroring `ORG_LIMITER`'s pattern) and a request-size cap, returns 202/429/413, and chunks oversized POSTs into sub-128KB queue messages.
+The ingest Worker authenticates the Collector Credential, resolves `OrgId`, `UserId`, `CollectorId`, and credential audit identity from the control plane, applies a per-org rate limit (new `AGENT_INGEST_LIMITER`, namespace `2005`, mirroring `ORG_LIMITER`'s pattern) and a request-size cap, returns 202/429/413, and chunks oversized POSTs into sub-128KB queue messages.
 
 Every Collector payload includes Trace Flow Desktop version and parser version. The ingest Worker records both and enforces supported semantic version ranges plus an emergency denylist; it does not accept old clients indefinitely. The compatibility policy is owned in Convex, not environment variables, so minimum versions and denylisted releases can change without a Worker deploy. The Worker caches the policy using the existing edge-cache pattern (short-lived module-scope L1 plus Cache API where appropriate) and falls back gracefully on cache miss. If policy refresh fails but a recent cached policy exists, the Worker uses that stale policy briefly and logs degraded; if no cached policy exists, it fails closed with a retryable `policy_unavailable` response rather than accepting unknown desktop/parser versions. Trace Flow Desktop treats `policy_unavailable` as temporary service unavailability: it does not advance cursors, retries with backoff or the next scheduled sync, and only notifies if the condition persists. The normal path is minimum supported desktop/parser versions or ranges, while the denylist blocks specific bad releases known to produce unsafe identity, schema, or redaction output. If a desktop/parser version is too old, unsafe, or denied, the Worker returns a structured `upgrade_required` error with the minimum required version and reason category. Trace Flow Desktop surfaces that as an update-required state and stops syncing until updated.
+
+The fact upload envelope is explicit because the Collector emits several fact types but the Worker owns tenancy and final IDs:
+
+```text
+AgentIngestEnvelope
+  batch: source, collector_batch_id, desktop_version, parser_version, raw_upload_requested
+  facts: messages[], tool_events[], file_events[], capability_snapshots[], pull_request_links[]
+  raw_transcripts?: gzip blobs keyed by source transcript id, only when opted in
+```
+
+The Collector does not send trusted `OrgId`, `UserId`, cost, or final Tinybird primary keys. It sends source-visible vendor IDs, timestamps, parsed fields, redaction counters, and optional raw blobs. The Worker authenticates the Collector Credential, stamps tenancy/audit identity, assembles `session_pk` and row keys, reserves raw storage, chunks queue messages, and drops or rejects fields that violate the ingest contract. This keeps reconnect/credential churn out of row identity and gives parser upgrades a single compatibility boundary.
 
 The consumer is stateless: bounded `max_concurrency`, one batched insert per invocation, with the queue's DLQ for poison messages.
 
@@ -185,18 +197,31 @@ The proxy path uses `TraceBatcher` (a Durable Object) because individual LLM Req
 
 Bespoke typed fact tables written directly by the consumer, the `llm_requests` analogue. Never routed through `otel_traces`. Agent conversations are not proxied LLM Requests; forcing them into the span schema would lose the turn and tool grain.
 
-Three base tables, two rollups, one session aggregate:
+Five base tables, two rollups, one session aggregate:
 
-| Table                    | Grain                                        | Role                                                            |
-| ------------------------ | -------------------------------------------- | --------------------------------------------------------------- |
-| `agent_messages`         | one turn (Agent Message)                     | direct model-call tokens and cost. The `llm_requests` twin.     |
-| `agent_tool_events`      | one tool invocation (Tool Event)             | failures, command families, durations, subagent/result facts.   |
-| `agent_file_events`      | one file touch                               | repeated-path attention and hotspots. Repo-relative paths only. |
-| `agent_usage_1h` / `_1d` | hour / day, by org/source/repo/model         | token, cost, cache, message, session trends.                    |
-| `agent_tool_usage_1h`    | hour, by org/source/repo/tool/command_family | tool mix and failure rates.                                     |
-| `agent_sessions`         | one Agent Session (aggregate)                | session-level outliers (cost, file count, duration).            |
+| Table                        | Grain                                           | Role                                                                                                                |
+| ---------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `agent_messages`             | one turn (Agent Message)                        | direct model-call tokens and cost. The `llm_requests` twin.                                                         |
+| `agent_tool_events`          | one tool invocation (Tool Event)                | failures, command families, durations, subagent/result facts.                                                       |
+| `agent_file_events`          | one file touch                                  | repeated-path attention and hotspots. Repo-relative paths only.                                                     |
+| `agent_capability_snapshots` | one conversation-visible capability observation | opportunistic capability metadata (Codex strongest); retained for later Context Bloat analysis, no v1 launch query. |
+| `agent_pull_request_links`   | one canonical Pull Request Link observation     | passive PR attribution evidence without GitHub/GitLab API calls.                                                    |
+| `agent_usage_1h` / `_1d`     | hour / day, by org/source/repo/model            | token, cost, cache, message, session trends.                                                                        |
+| `agent_tool_usage_1h`        | hour, by org/source/repo/tool/command_family    | tool mix and failure rates.                                                                                         |
+| `agent_sessions`             | one Agent Session (aggregate)                   | session-level outliers (cost, file count, duration).                                                                |
 
-Tool mix, web/research domains, and task subjects/statuses are cheap queries over the base tables, not their own rollups. Subagent patterns ride on `is_subagent_spawn` / `agent_depth` (messages) and `extracted_subagent_*` (tool events), not a separate table. Tool-event subagent fields are evidence used by the cost classifier and subagent dashboards; PR authoring cost reads the canonical session aggregate after dedupe/classification, not raw tool-event cost fields directly.
+Tool mix, web/research domains, and task subjects/statuses are cheap queries over the base tables, not their own rollups. Subagent patterns ride on `is_subagent_spawn` / `agent_depth` (messages) and `extracted_subagent_*` (tool events), not a separate table. Tool-event subagent fields are evidence used by the cost classifier and subagent dashboards. Pull Request Links are extracted into their own fact table so PR attribution can work when the link appears in assistant text, tool output, or another transcript record; PR authoring cost reads the canonical session aggregate after dedupe/classification, not raw tool-event cost fields directly.
+
+#### Context bloat and context rot (deferred, data retained)
+
+Context Bloat and Context Rot Exposure are deferred. They began as exploratory questions about whether the conversation data even supports them, and the honest answer is: only partially, and only for some Sources. A 2026-05-25 structural sample showed available-capability inventory is essentially absent from Claude transcripts, weak in Cursor, and strong only in Codex `session_meta` (`base_instructions`, `dynamic_tools`). Building utilization rates, context-tax estimates, a Convex Effective Context Length benchmark catalog (HELM/MRCR/RULER), and a context-engineering report on data we mostly cannot see is not a v1 bet.
+
+v1 keeps the door open by retaining the inputs, not by computing the signals:
+
+- `agent_messages` already stores input/cache/output tokens for cost, which is also the raw material for any later session-token analysis (first-call context load, cache-creation spikes, tokens per Tool Event). No extra work.
+- `agent_capability_snapshots` opportunistically captures conversation-visible capability metadata where a Source exposes it (Codex strongest), so a later analysis has historical coverage instead of starting from zero. It is best-effort and backs no v1 launch query. Capture stays passive and conversation-only: privacy-safe counts, hashed/redacted identities, and size estimates; never raw schema text, skill bodies, config values, environment variables, secrets, or absolute paths. If a transcript does not record the available surface, Trace Flow does not infer it from local config. It never starts MCP servers, calls `list_tools`, shells out to CLIs, or scans agent config.
+
+The metrics, the benchmark catalog, and the report are listed under Deferred. If the retained data later shows the signal is real, that work can be picked up without a re-ingest.
 
 #### Tool use/result reconciliation
 
@@ -219,24 +244,61 @@ Branch name and HEAD SHA are optional attribution hints, not identity. When chea
 ```sql
 agent_messages
   ENGINE ReplacingMergeTree(IngestedAt)
-  SORTING KEY ApiKey, session_pk, message_pk
+  SORTING KEY OrgId, session_pk, message_pk
   PARTITION BY toYYYYMMDD(StartedAt)
   TTL StartedAt + INTERVAL 1 YEAR
 
 agent_tool_events
   ENGINE ReplacingMergeTree(IngestedAt)
-  SORTING KEY ApiKey, session_pk, tool_use_pk
+  SORTING KEY OrgId, session_pk, tool_use_pk
   PARTITION BY toYYYYMMDD(StartedAt)
   TTL StartedAt + INTERVAL 1 YEAR
+
+agent_file_events
+  ENGINE ReplacingMergeTree(IngestedAt)
+  SORTING KEY OrgId, session_pk, file_event_pk
+  PARTITION BY toYYYYMMDD(StartedAt)
+  TTL StartedAt + INTERVAL 1 YEAR
+
+agent_capability_snapshots
+  ENGINE ReplacingMergeTree(IngestedAt)
+  SORTING KEY OrgId, session_pk, capability_snapshot_pk
+  PARTITION BY toYYYYMMDD(StartedAt)
+  TTL StartedAt + INTERVAL 1 YEAR
+
+agent_pull_request_links
+  ENGINE ReplacingMergeTree(IngestedAt)
+  SORTING KEY OrgId, session_pk, pull_request_link_pk
+  PARTITION BY toYYYYMMDD(StartedAt)
+  TTL StartedAt + INTERVAL 1 YEAR
+
+agent_sessions
+  ENGINE ReplacingMergeTree(IngestedAt)
+  SORTING KEY OrgId, session_pk
+  PARTITION BY toYYYYMMDD(StartedAt)
+  TTL StartedAt + INTERVAL 1 YEAR
+
+agent_usage_1h / agent_usage_1d
+  ENGINE AggregatingMergeTree()
+  SORTING KEY BucketStart, OrgId, source, repo_fingerprint, model
+  TTL BucketStart + INTERVAL 1 YEAR
+
+agent_tool_usage_1h
+  ENGINE AggregatingMergeTree()
+  SORTING KEY BucketStart, OrgId, source, repo_fingerprint, tool_name, command_family
+  TTL BucketStart + INTERVAL 1 YEAR
 
 session_pk  = hash(source, vendor_session_id)
 message_pk  = hash(source, vendor_session_id, vendor_message_id)
 tool_use_pk = hash(source, vendor_session_id, tool_use_id)
+file_event_pk = hash(source, vendor_session_id, vendor_message_id, normalized_repo_path, operation, source_block_index)
+capability_snapshot_pk = hash(source, vendor_session_id, source_snapshot_id_or_stable_turn_index)
+pull_request_link_pk = hash(source, vendor_session_id, source_event_id_or_stable_turn_index, canonical_pull_request_url)
 ```
 
-The sorting key holds stable identity only, because ReplacingMergeTree dedupes on the entire sorting key, so any column in it becomes part of row identity. `llm_requests` can keep `Model`, `Provider`, and the rest in its key because the proxy emits those once and never re-derives them. Agent facts are the opposite: they are re-parsed, and `model`, `repo_fingerprint`, `command_family`, and `tool_name` are parser outputs that improve over time. In the key, a better `command_family` on re-sync would mint a new row instead of replacing the old one, and counts would inflate. So they live as regular columns, free to change, while the `*_pk` surrogates hash immutable vendor IDs and never move. This gives up `repo`/`model` locality on raw scans (the rollups carry those dimensions) in exchange for making re-import idempotent and self-healing.
+The sorting key holds stable identity only, because ReplacingMergeTree dedupes on the entire sorting key, so any column in it becomes part of row identity. `llm_requests` can keep `Model`, `Provider`, and the rest in its key because the proxy emits those once and never re-derives them. Agent facts are the opposite: they are re-parsed, and `model`, `repo_fingerprint`, `command_family`, `tool_name`, capability labels, size estimates, and PR-link confidence are parser outputs that improve over time. In the key, a better `command_family` on re-sync would mint a new row instead of replacing the old one, and counts would inflate. So they live as regular columns, free to change, while the `*_pk` surrogates hash immutable vendor IDs and stable source positions and never move. This gives up `repo`/`model` locality on raw scans (the rollups carry those dimensions) in exchange for making re-import idempotent and self-healing.
 
-`ApiKey` leads for org-scoped reads; `session_pk` groups a session's rows for drilldown. Partition and TTL both key on `StartedAt` (transcript time), never ingest time. Partitioning there lets a re-synced old session land in its original partition and dedupe; anchoring TTL there too makes retention a rolling one-year window of agent facts, expired by cheap whole-partition drops rather than row-level rewrites. The consequence is deliberate: a one-time historical backfill keeps only the last year of facts, because rows with an older `StartedAt` are TTL-eligible on arrival (raw transcripts upload only for the last 90 days, their shorter window). `StartedAt` is the earliest observed conversation-turn timestamp (`user`/`assistant` records only), computed in the ingest Worker rather than the fact parser so it stays a pure function of the session's turn bytes and never moves when derived columns improve. It is deliberately the first activity we can observe, not the Source's declared session start; that declared value is captured separately as `VendorStartedAt` (Codex emits it in `session_meta`; Claude's UUIDv4 id does not, so it stores a zero sentinel to preserve the single-Nullable-column rule). Excluding app-metadata record types (`ai-title`, `queue-operation`, `attachment`, `pr-link`, `last-prompt`) from the anchor keeps Claude Code version drift from shifting it; a change that does shift the earliest turn splits the event across partitions and never collapses, so it is handled like any `StartedAt` correction — drop the affected partitions before replaying (Raw transcript storage covers the deliberate-change path).
+`OrgId` leads for org-scoped reads; `session_pk` groups a session's rows for drilldown. `UserId`, `CollectorId`, and `CollectorCredentialId` are regular columns because they are attribution and internal audit metadata, not row identity. Partition and TTL both key on `StartedAt` (transcript time), never ingest time. Partitioning there lets a re-synced old session land in its original partition and dedupe; anchoring TTL there too makes retention a rolling one-year window of agent facts, expired by cheap whole-partition drops rather than row-level rewrites. The consequence is deliberate: a one-time historical backfill keeps only the last year of facts, because rows with an older `StartedAt` are TTL-eligible on arrival (raw transcripts upload only for the last 90 days, their shorter window). `StartedAt` is the earliest observed conversation-turn timestamp (`user`/`assistant` records only), computed in the ingest Worker rather than the fact parser so it stays a pure function of the session's turn bytes and never moves when derived columns improve. It is deliberately the first activity we can observe, not the Source's declared session start; that declared value is captured separately as `VendorStartedAt` (Codex emits it in `session_meta`; Claude's UUIDv4 id does not, so it stores a zero sentinel to preserve the single-Nullable-column rule). Excluding app-metadata record types (`ai-title`, `queue-operation`, `attachment`, `pr-link`, `last-prompt`) from the anchor keeps Claude Code version drift from shifting it; a change that does shift the earliest turn splits the event across partitions and never collapses, so it is handled like any `StartedAt` correction — drop the affected partitions before replaying (Raw transcript storage covers the deliberate-change path).
 
 ### Dedupe
 
@@ -244,7 +306,7 @@ ReplacingMergeTree keyed on the stable surrogate identity (`*_pk`), with `Ingest
 
 ### Cost and pricing
 
-Cost is computed server-side in the consumer from tokens and model, reusing the chain Trace Flow already runs for proxied LLM Requests. The Collector ships tokens and model only and never prices. Otto's parser computes `cost_usd` locally from a price map; that path is removed when the parser is vendored (Collector), so pricing exists in exactly one place. Server-side is the natural home: it is one pricing implementation to maintain and correct, it is where proxied LLM Requests are already priced, and it keeps the per-model price catalog and KV out of the desktop client.
+Cost is computed server-side in the consumer from tokens and model, reusing the chain Trace Flow already runs for proxied LLM Requests. The Collector ships tokens and model only and never prices. Otto's parser computes `cost_usd` locally from a price map; that behavior is not carried into Trace Flow, so pricing exists in exactly one place. Server-side is the natural home: it is one pricing implementation to maintain and correct, it is where proxied LLM Requests are already priced, and it keeps the per-model price catalog and KV out of the desktop client.
 
 The canonical cost unit is Agent Session Authoring Cost: every billable model usage record represented in the Agent Session, including nested/subagent work, counted exactly once. It is built from an explicit priced-usage view before session, hourly/daily, and PR aggregates are calculated:
 
@@ -279,7 +341,7 @@ All deterministic, zero tuning. The research note's "failing above baseline" det
 2. **Period-over-period delta.** This window versus the prior, sorted by movement, via a self-join on `agent_tool_usage_1h`.
 3. **Session outliers.** Top sessions by cost and file count (the "$400 and 200 files" case) from the `agent_sessions` aggregate.
 
-`agent_tool_usage_1h` is an `AggregatingMergeTree` keyed on `BucketStart` (hour), `ApiKey`, `source`, `repo_fingerprint`, `tool_name`, `command_family`, with `countState()` for success/failure/unknown and `sumState()` for duration.
+`agent_tool_usage_1h` is an `AggregatingMergeTree` keyed on `BucketStart` (hour), `OrgId`, `source`, `repo_fingerprint`, `tool_name`, `command_family`, with `countState()` for success/failure/unknown and `sumState()` for duration.
 
 ### Trust boundary
 
@@ -315,6 +377,10 @@ Explicitly out of v1, to be added when a real need appears:
 - Secondary Repo references and split-cost attribution for multi-repo Agent Sessions.
 - Split-cost attribution for Agent Sessions that span multiple Pull Requests.
 - The Project Convex entity.
+- Context Bloat metrics: capability utilization rate, unused-capability context tokens, and context-tax estimate. v1 opportunistically stores `agent_capability_snapshots` but computes and reports none of these.
+- Context Rot Exposure and its Convex Effective Context Length benchmark catalog (HELM/MRCR/RULER bands), plus the context-engineering report. v1 retains session token/cache facts but ships no bands, no catalog, and no report.
+- Active MCP probing or local config scanning. Starting MCP servers, calling dynamic tool-list APIs, or reading agent configuration files outside the Source transcript stores is out of scope; any later Context Bloat work stays derived from conversations, not direct tool discovery.
+- Running Trace Flow's own long-context benchmark suite. Independent verification is deferred until the signal proves valuable; any earlier Context Rot work would use public/curated Effective Context Length data only.
 
 ## Trade-offs
 
@@ -328,19 +394,22 @@ Explicitly out of v1, to be added when a real need appears:
 
 Verifiable outcomes for the v1 slice:
 
-- A local transcript parsed by the Collector becomes queryable typed facts (`agent_messages`, `agent_tool_events`, `agent_file_events`) for the owning org, filterable by `source` and `repo_fingerprint`.
+- A local transcript parsed by the Collector becomes queryable typed facts (`agent_messages`, `agent_tool_events`, `agent_file_events`, `agent_capability_snapshots`, `agent_pull_request_links`) for the owning org, filterable by `source` and `repo_fingerprint`.
 - A remote-backed Agent Session resolves to one first-class Repo record with normalized display metadata; multiple worktrees or renamed checkouts for the same normalized remote collapse to that Repo.
 - A local-only Agent Session without a remote still creates a Provisional Repo; after the same observed path/worktree later resolves a remote, the Provisional Repo heals into the remote-backed Repo, while same-name-only repos do not merge.
-- Pull Request authoring cost is queryable from canonical Agent Session Authoring Cost when passive transcript evidence names or creates/updates exactly one Pull Request in the same Repo; no GitHub/GitLab integration or local `gh` auth is required.
+- Pull Request authoring cost is queryable from canonical Agent Session Authoring Cost when passive transcript evidence contains exactly one Pull Request Link in the same Repo; no GitHub/GitLab integration or local `gh` auth is required.
+- Pull Request Link evidence lands in `agent_pull_request_links` with canonical host/owner/repo/number/url fields, source evidence metadata, and confidence; links are extracted passively from transcripts only.
 - If an Agent Session has no Pull Request evidence, or credible evidence for multiple Pull Requests, its cost remains Unattributed Repo Authoring Cost and is not split across pull requests.
 - A Claude session, a Codex session, and a Cursor session (from both `~/.cursor/projects` and `~/.cursor/acp-sessions`) each parse to facts under a vendor-UUID `session_pk`; Claude and Cursor subagent files land under their parent's `session_pk` with `agent_depth` > 0, not as standalone Agent Sessions.
 - Agent Session Authoring Cost includes top-level, nested, and sidechain model usage exactly once; `agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and PR authoring-cost queries all agree because they use the same canonical priced-usage view.
 - A Claude fixture with both a subagent transcript file and a matching `toolUseResult.usage` row does not double-count the overlapping subagent usage; a fixture with only tool-result subagent usage counts that fallback usage and marks the session's subagent cost coverage as partial/fallback.
 - Re-syncing the same Agent Session twice does not change counts after `FINAL`; rollups built `FROM ... FINAL` match the deduped base counts.
 - Direct `agent_messages.cost_usd` and any included fallback subagent usage cost are computed in the consumer from KV pricing; no pricing math runs in the Collector; priced-token coverage % is queryable.
-- The vendored parser's local pricing path is gone: the Collector source has no cost calculation, and a fact reaches the consumer carrying tokens and model but no price.
+- The Collector source has no local cost calculation, and a fact reaches the consumer carrying tokens and model but no price.
 - The daily `importFromModelsDev` cron populates `modelPricing` with `source='models.dev'`; a known first-party model resolves to a non-zero price; an unknown model lands with null `cost_usd` and is backfilled on a later run once the catalog covers it.
 - The failure leaderboard returns ranked (`tool_name`, `command_family`) with the display floor applied; the period delta returns movers via the rollup self-join; the session-outlier query returns top sessions by cost and file count.
+- Capability Snapshot upload excludes raw MCP schemas, skill bodies, config values, secrets, environment variables, and absolute local paths; sample rows contain counts, stable hashes, redacted labels, and size/token estimates only.
+- Collector Credential creation, rotation, revocation, and Stronghold recovery do not create user-facing API Keys and do not fragment Agent Session rows; the same transcript re-synced under a replacement Collector Credential dedupes by `OrgId` + `session_pk` + row key, with the new credential retained only as hidden internal audit metadata.
 - `status` is one of {`success`, `failure`, `unknown`}; `unknown` is excluded from the failure-rate denominator; the schema's only Nullable column is `cost_usd` (null = unpriced model).
 - No stored `agent_file_events` path contains a home directory or username (verified by scanning a sample for `/Users/` and `$HOME`); stored paths are repo-relative.
 - An oversized POST returns 413; an over-rate org returns 429; the ingest Worker chunks a large batch into sub-128KB queue messages; a backfill of the 135-day heavy-user corpus drains through the queue without the consumer hitting CPU/subrequest limits or shedding to the DLQ.

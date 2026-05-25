@@ -4,13 +4,13 @@ Status: accepted
 
 Captured: 2026-05-24
 
-Trace Flow Desktop is the v1 product surface for the local **Collector**. Otto remains a loose reference implementation, but Trace Flow Desktop gets new branding, app identity, local state, release channels, consent flow, and packaging. The goal is a legacy-free desktop app that users install, connect once, explicitly start, and then leave running in the menu bar/tray.
+Trace Flow Desktop is the v1 product surface for the local **Collector**. The Collector vendors and refactors Otto's working code (parser, source discovery, sync, and remote resolution) behind Trace Flow-owned contracts rather than rebuilding it; what it does not inherit is Otto's product identity or runtime state. Trace Flow Desktop gets new branding, app identity, local state, release channels, consent flow, and packaging. The goal is a legacy-free desktop app that users install, connect once, explicitly start, and then leave running in the menu bar/tray.
 
 ## Decision
 
 Trace Flow Desktop lives at `apps/desktop` with package name `@trace-flow/desktop` and Tauri product name `Trace Flow Desktop`. Shared Rust packages live under `packages/collector-*` (`collector-sync`, `collector-parser`, `collector-api-client`, `collector-common`, `collector-contracts`). A `trace-flow` CLI may be scaffolded under `apps/cli`, but it is not the primary v1 interface and does not drive desktop behavior.
 
-The desktop app embeds shared Collector libraries directly rather than shelling out to the CLI. It owns connect, continuous watching, autostart, pause/resume, status, source settings, history import, provider-usage collection, and background sync.
+The desktop app embeds shared Collector libraries directly rather than shelling out to the CLI. It owns connect, continuous watching, autostart, pause/resume, status, source settings, history import, and background sync.
 
 ## Product Boundary
 
@@ -20,7 +20,7 @@ Otto is not a state lineage. Trace Flow Desktop gets a new Tauri identifier, app
 
 ## Setup And Consent
 
-Login alone does not start syncing. First-run setup shows detected Sources, provider-usage capability when `codexbar` is present, raw-transcript upload choice, and autostart. Detected Claude, Codex, and Cursor Sources are enabled by default, visible before data egress, and can be disabled before the user clicks **Start syncing**. Sync begins only after the user clicks **Start syncing**.
+Login alone does not start syncing. First-run setup shows detected Sources, raw-transcript upload choice, and autostart. Detected Claude, Codex, and Cursor Sources are enabled by default, visible before data egress, and can be disabled before the user clicks **Start syncing**. Sync begins only after the user clicks **Start syncing**.
 
 Raw Transcript upload is explicit and default-off. Parsed fact sync is the normal analytics path; raw upload enables replay and bounded deeper analysis and remains capped to the raw replay window even during a broader history import.
 
@@ -32,7 +32,7 @@ Autostart is visible and enabled by default before **Start syncing**. Users can 
 
 Trace Flow Desktop is a menu-bar/tray app with a small settings window. The tray shows compact operational status for detected enabled Sources, last sync, pause/resume, run sync/import controls, recent errors, logs, and quit. Settings owns connect/login, raw upload, Source enablement, custom Source paths, autostart, diagnostics export, and dashboard links.
 
-Pause is a full local-work pause: no watcher processing, transcript parsing, git fallback reads, provider usage collection, or uploads. Quit cancels loops and exits the app, but does not disable autostart. Disconnect stops work, revokes the Collector API Key, removes Stronghold secrets and unlock material, and leaves non-secret SQLite state unless the user explicitly deletes local data.
+Pause is a full local-work pause: no watcher processing, transcript parsing, git fallback reads, or uploads. Quit cancels loops and exits the app, but does not disable autostart. Disconnect stops work, revokes the Collector Credential, removes Stronghold secrets and unlock material, and leaves non-secret SQLite state unless the user explicitly deletes local data.
 
 Disconnect, Delete Local Data, and Reset App are separate controls. Disconnect revokes the credential and removes secrets while keeping non-secret SQLite state by default. Delete Local Data removes SQLite state, logs, and caches and is only available while disconnected or after stopping sync. Reset App is the explicit combined destructive path that disconnects, revokes, and deletes local data.
 
@@ -44,15 +44,17 @@ Source settings are cursor-scoped. Disabling a Source stops watching and syncing
 
 ## Local State And Secrets
 
-Trace Flow Desktop uses local SQLite, managed through Tauri's SQL plugin with SQLite support, for non-secret durable Collector state: sync cursors, processed file metadata, Source settings, path/worktree-to-remote cache, machine id, parser-version observations, last sync timestamps, provider-usage refresh state, and job/status metadata.
+Trace Flow Desktop uses local SQLite, managed through Tauri's SQL plugin with SQLite support, for non-secret durable Collector state: sync cursors, processed file metadata, Source settings, path/worktree-to-remote cache, machine id, parser-version observations, last sync timestamps, and job/status metadata.
 
-SQLite is not a durable upload queue. It does not store pending facts, Raw Transcripts, command excerpts waiting to upload, or provider-usage payloads. If upload fails, the Collector re-reads from Source files later; server-side stable IDs and Tinybird dedupe are authoritative.
+SQLite is not a durable upload queue. It does not store pending facts, Raw Transcripts, or command excerpts waiting to upload. If upload fails, the Collector re-reads from Source files later; server-side stable IDs and Tinybird dedupe are authoritative.
 
 The v1 SQLite database is not encrypted because it stores non-secret resumable state derived from local files that already exist on disk. Secrets do not live there. SQLite may store absolute paths for local-only cursor/cache lookup, but uploads, logs, support exports, and server facts use repo-relative, redacted, hashed, or coarse path forms.
 
-Desktop connect mints a dedicated Collector API Key scoped to the selected Organization, current User, machine identity, and Collector ingest capabilities. Trace Flow Desktop stores that secret with Tauri Stronghold. Stronghold is unlocked with locally generated secret material protected by the OS credential store/keychain where available, not a hardcoded vault password and not the user's Trace Flow account password. If unlock fails, the user reconnects and gets a replacement Collector API Key.
+Desktop connect mints a hidden Collector Credential scoped to the selected Organization, current User, stable Collector identity, local machine identity, and Collector ingest capabilities. Trace Flow Desktop stores that secret with Tauri Stronghold. Stronghold is unlocked with locally generated secret material protected by the OS credential store/keychain where available, not a hardcoded vault password and not the user's Trace Flow account password. If unlock fails, the user reconnects and gets a replacement Collector Credential.
 
-Trace Flow Desktop supports one active Organization in v1. Switching Organizations requires disconnect/reconnect and mints a new Collector API Key.
+Collector Credentials are not user-facing API Keys. They are managed by a separate desktop credential control plane, accepted only by Collector ingest routes, and hidden from the normal API Keys page, org-admin credential inventories, API-key filters, cost alerts, MCP `list_api_keys`, and Tinybird API-key JWT scopes. The product exposes only desktop connection status, not a manageable Collector Credential list. The corresponding server record carries Organization, User, Collector, machine, capabilities, revocation state, and internal audit metadata. Reconnect, rotation, revocation, or Stronghold recovery can replace the secret without changing Agent Session identity or dedupe behavior.
+
+Trace Flow Desktop supports one active Organization in v1. Switching Organizations requires disconnect/reconnect and mints a new Collector Credential.
 
 ## Privacy And Redaction
 
@@ -62,13 +64,13 @@ Tool Event facts are structured first, excerpt second. `command_excerpt` is capp
 
 Local logs and diagnostics exports are safe to share by default. They exclude raw transcripts, raw command/output blobs, secrets, dropped redaction content, command/error excerpts, and absolute paths unless an explicit local-path option is chosen.
 
-The default diagnostics export includes app version, OS/arch, sync status, recent error classes, Source detection summary, processed file/event counts, last sync timestamps, redaction counters, `codexbar` present/missing plus last provider-usage status, and configuration toggles.
+The default diagnostics export includes app version, OS/arch, sync status, recent error classes, Source detection summary, processed file/event counts, last sync timestamps, redaction counters, and configuration toggles.
 
 File facts store repo-relative paths only. Files outside the primary Repo are dropped or represented by a coarse category such as `outside_repo`, never by an absolute local path.
 
 ## Source, Git, And Pull Request Evidence
 
-The Collector is transcript-led, not repo-monitoring-led. It watches Source transcript stores and reads git state only on demand when transcripts lack enough repository evidence. Source discovery comes from local Source transcript stores; `codexbar` does not replace transcript Source discovery in v1 unless its command surface grows a dedicated source-discovery API. Allowed git enrichment includes repo root, normalized remote, branch, HEAD, and a durable path/worktree-to-remote cache. Branch and HEAD are optional hints, not identity.
+The Collector is transcript-led, not repo-monitoring-led. It watches Source transcript stores and reads git state only on demand when transcripts lack enough repository evidence. Source discovery comes from local Source transcript stores. Allowed git enrichment includes repo root, normalized remote, branch, HEAD, and a durable path/worktree-to-remote cache. Branch and HEAD are optional hints, not identity.
 
 Repo identity for worktrees resolves from the observed worktree's own git metadata and normalized remote, not from the main checkout path. Absolute worktree paths are local-only state and are not uploaded.
 
@@ -76,19 +78,11 @@ Pull Request Attribution in v1 trusts exactly one GitHub Pull Request Link for t
 
 ## Provider Usage
 
-`codexbar` is an optional external dependency in v1. If present, Trace Flow Desktop can run `codexbar usage --json --provider all` to collect provider subscription, quota, credit, and rate-limit snapshots. If missing, conversation sync still works and provider usage is shown as unavailable without an error notification.
-
-Provider usage is visible in setup as a separate capability from Agent Session sync, enabled by default when `codexbar` is present, and toggleable before **Start syncing**. If enabled, it runs once after start, every 5 minutes while active, and on manual refresh. It does not run while paused.
-
-Provider Usage Snapshots use the same Collector ingest Worker, API key auth, org rate limiting, and queue infrastructure as Agent Session facts, but a separate route, queue message variant, and storage shape. They are user-private by default inside the Organization and are not mixed into Repo, Project, Agent Session, or Pull Request attribution.
-
-Provider usage exists to track personal subscription/quota history over time and compare provider-reported usage movement against Trace Flow's observed Agent Message token/output volume by time window. That comparison should support rough investigation into effective usage rates or possible time-varying surcharges, without forcing provider usage into Repo or Project attribution.
-
-Provider account identity is privacy-first: grouping uses a stable hash of provider plus normalized account identifier, and any human-readable label is redacted before upload or storage. Emails become hints like `i***@zaks.io`, not full addresses. Raw provider emails, cookies, tokens, and other known sensitive strings are never stored.
+Provider usage and subscription-cost tracking (the `codexbar` idea) is a separate feature with its own ADR ([Provider Usage Tracking](./provider-usage-tracking.md)). It is not part of Collector v1: it is absent from first-run setup, is not a default-on capability, and is not wired into the watcher, sync loop, SQLite state, diagnostics, or ingest. Trace Flow Desktop may host it later as an independent capability, but it observes personal provider subscription/quota state rather than agent transcripts, so it stays out of scope here.
 
 ## Release And Updates
 
-Otto's desktop release workflow is ported into Trace Flow as part of the work, not deferred. The release workflow remains manual `workflow_dispatch`, builds signed macOS arm64 (`aarch64-apple-darwin`) and Windows x64 (`x86_64-pc-windows-msvc`) artifacts, writes the Tauri updater release config, publishes GitHub Release assets, and uploads the updater manifest. Linux and macOS Intel are deferred until there is real demand.
+Otto's desktop release workflow is reference material for Trace Flow's release workflow, not code to port wholesale. The Trace Flow release workflow remains manual `workflow_dispatch`, builds signed macOS arm64 (`aarch64-apple-darwin`) and Windows x64 (`x86_64-pc-windows-msvc`) artifacts, writes the Tauri updater release config, publishes GitHub Release assets, and uploads the updater manifest. Linux and macOS Intel are deferred until there is real demand.
 
 Trace Flow Desktop versions independently from the repo root, Web app, and Worker deploy cadence. The desktop app uses its own SemVer, release tags like `traceflow-desktop-v{version}`, and the `traceflow-desktop-latest.json` updater manifest.
 
