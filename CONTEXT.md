@@ -110,11 +110,15 @@ The tenant entity (`orgId`). Owns API Keys, has one Subscription Tier, and is th
 _Avoid_: "account", "workspace", "team" (Convex has its own `organizationMembers` table for the membership relation).
 
 **API Key**:
-The org-scoped credential sent as `X-Trace-Flow-Api-Key`. Distinct from upstream provider API keys, which the proxy forwards untouched.
+The org-scoped credential sent as `X-Trace-Flow-Api-Key`. Distinct from upstream provider API keys, which the proxy forwards untouched. Carries both an `orgId` and an optional `userId`, so data stamped with an API Key resolves to a User and an Organization.
 _Avoid_: shortening to "key" without context.
 
+**Project**:
+A user-declared grouping that unifies all activity for one app or initiative — spanning both agent conversations (**Agent Sessions**) and proxied **LLM Requests** — so it can be viewed as a whole. May span many **API Keys** and many repositories. A Project groups data for viewing; it is not a property stamped onto the data. Not yet built.
+_Avoid_: confusing with `~/.claude/projects` (Claude Code's local per-workspace directory, which is closer to a single repository).
+
 **Subscription Tier**:
-`hobby` or `pro`. Drives `monthlyUnits`, overage pricing, Retention Window, and read-time Span visibility.
+`hobby` or `pro`. Drives `monthlyUnits`, overage pricing, **Retention Window**, and **Visibility Window**.
 _Avoid_: "plan".
 
 **Billing Status**:
@@ -128,8 +132,12 @@ Purchased block of `UNITS_PER_ADDON` (100k) units beyond the Monthly Units allot
 _Avoid_: "topup" (means the auto-recharge feature, a different thing).
 
 **Retention Window**:
-The Subscription Tier's visibility window (hobby: 7d, pro: 30d). Stamped into Spans as `RetentionExpiresAt` at write-time and enforced again at read-time.
-_Avoid_: "TTL", "lifecycle".
+How long data is physically stored before deletion. Proxy Spans: Tier-based (hobby 7d, pro 30d), stamped as `RetentionExpiresAt` at write-time. Agent facts: a flat one-year, Tier-independent horizon; the **Raw Transcript** lives on a shorter flat horizon (its replay-and-analysis window), and aggregates live as long or longer than the facts. May exceed the **Visibility Window**.
+_Avoid_: "TTL" as the user-facing name; conflating with **Visibility Window**.
+
+**Visibility Window**:
+How far back a Subscription Tier may query, enforced at read-time. Can be shorter than what is retained, so upgrading a Tier reveals already-stored history without re-ingesting. For proxy Spans it equals the Retention Window; for agent facts a hobby org sees only the last week of a longer-retained store.
+_Avoid_: "retention" when you mean what a Tier can see.
 
 ### Tinybird
 
@@ -163,6 +171,80 @@ A Model Context Protocol session (Convex table `mcpSessions`), scoped to one use
 **MCP Tool**:
 A tool exposed by the MCP server (e.g. `getTraceAction`, `listTracesAction`). MCP Tools obtain Pipe Tokens via `generateTokenInternal`, not the user-facing path.
 
+### Agent analytics
+
+**Collector**:
+The local Trace Flow component that parses **Source** transcripts into facts and uploads them to ingestion. Its user-facing desktop product is **Trace Flow Desktop**. Raw transcript upload is a separate, explicit opt-in (default off): when enabled it also sends the gzip-compressed **Raw Transcript**, encrypted at rest server-side, never stored as plaintext, and kept only for the replay window. Parsing is always local.
+_Avoid_: "agent", "parser" (the parser is one component of the Collector), using the product name when discussing architecture boundaries.
+
+**Trace Flow Desktop**:
+The user-facing desktop app for the **Collector**. It is the installed app name users see in menus, release artifacts, permissions, and support docs.
+_Avoid_: "TF Desktop" (ambiguous with Terraform), "Otto Desktop".
+
+**Source**:
+The agent tool that produced an **Agent Session** — `claude`, `codex`, or `cursor`. Sources overlap but differ in field coverage, so facts must tolerate sparse source-specific fields.
+_Avoid_: "vendor", "agent".
+
+**Agent Session**:
+One canonical AI-agent conversation, identified by its **Source** plus the source's own session ID (a stable UUID for Claude, Codex, and Cursor). The agent-analytics analogue of a **Trace**, but a separate table and ID space.
+_Avoid_: bare "session" (collides with **MCP Session**), "conversation".
+
+**Agent Session Authoring Cost**:
+The complete billable model cost represented by one **Agent Session**, including top-level and nested/subagent model usage exactly once. The cost unit used for **Pull Request Authoring Cost**.
+_Avoid_: equating session cost with only top-level **Agent Message** rows when the **Source** records nested/subagent usage separately.
+
+**Agent Message**:
+One turn within an **Agent Session**, a single assistant or user record. The grain at which direct model-call fields such as `model`, token counts (input, output, cache read, cache creation, reasoning), and cost are recorded. The agent-analytics analogue of an **LLM Request**.
+_Avoid_: unqualified "message" (collides with chat-UI message), "turn" alone.
+
+**Tool Event**:
+A single tool invocation inside an **Agent Message**, carrying the tool name, command family (the first one or two tokens of a shell command, e.g. `git commit`), exit code, and success or failure. The grain at which agent failures are measured.
+_Avoid_: "tool call" when you mean its result; not an **LLM Request**.
+
+**Repo**:
+The first-class Trace Flow representation of a git repository. Identified by its normalized git remote so worktrees and renamed checkouts collapse to one identity. The common code-level anchor for **Agent Sessions**, **Pull Requests**, and future code-aware views. An **Agent Session** has one primary Repo; other repos mentioned or touched during that session are outside the primary relationship.
+_Avoid_: "worktree", "checkout", "path"; not a **Project** (which may span many Repos).
+
+**Provisional Repo**:
+A **Repo** created from a path/`cwd` fallback before Trace Flow has observed a normalized git remote. It keeps local-only and pre-push work visible and groupable, then can heal into a remote-backed **Repo** when a later observation from the same local path/worktree resolves a remote.
+_Avoid_: treating path identity as equivalent to remote identity; merging by repository name alone.
+
+**Pull Request**:
+A reviewable unit of work in a **Repo**. The preferred grain for authoring-cost reporting because it can include many commits and represents the change as reviewed or merged.
+_Avoid_: using individual commits as the primary authoring-cost unit when a Pull Request exists.
+
+**Pull Request Link**:
+An explicit link to a **Pull Request** in an **Agent Session** transcript. It is the v1 evidence Trace Flow trusts for **Pull Request Attribution** because it names both the code host repository and the pull request number.
+_Avoid_: treating generic git commands, branch names, or bare numbers as Pull Request Links.
+
+**Pull Request Authoring Cost**:
+The agent-analytics cost attributed to creating or modifying a pull request. Sums **Agent Session Authoring Cost** from local coding conversations attributed to that pull request; excludes runtime **LLM Request** cost from deployed application traffic and excludes inferred incremental cost caused by the change.
+_Avoid_: "PR cost" without saying whether it means authoring, runtime, or incremental cost.
+
+**Pull Request Attribution**:
+A confidence-bearing association between **Agent Session Authoring Cost** and one primary **Pull Request** in the same **Repo**. In v1 it is made only from exactly one **Pull Request Link** for that Repo. Otherwise the cost remains repo-level. Cost is not split across multiple pull requests; if a session has credible evidence for more than one pull request, it remains unattributed at the Repo level.
+_Avoid_: forcing every Agent Session into a Pull Request; splitting one Agent Session across several pull requests.
+
+**Unattributed Repo Authoring Cost**:
+Agent-analytics cost known to belong to a **Repo** but not confidently assigned to a **Pull Request**. Expected for exploratory work, detached worktrees, local-only branches, and sessions before a pull request exists.
+_Avoid_: treating unattributed cost as an ingestion error.
+
+**Provider Usage Snapshot**:
+A point-in-time personal provider subscription, quota, credit, or rate-limit observation collected by **Trace Flow Desktop** through optional external tooling such as `codexbar`. It is connected to a **User** inside an **Organization**, but not to a **Project**, **Repo**, **Agent Session**, or **Pull Request**. Provider account identity is grouped by a stable hash; human labels are redacted hints, such as `i***@zaks.io`, never full raw emails.
+_Avoid_: mixing with **Agent Message** token usage or **Pull Request Authoring Cost**; storing raw provider account emails as identity.
+
+**Raw Transcript**:
+The compressed, server-encrypted copy of one **Source** transcript, uploaded only when the user opts in (default off) and retained only for the replay window, then purged. The replay source for re-deriving facts server-side when the parser improves (so ingestion is one-time), and the substrate for bounded deep analysis. The agent-analytics analogue of a **Body Object**.
+_Avoid_: "conversation dump"; not a fact table and not an **Agent Session**.
+
+**StartedAt**:
+The earliest point of an **Agent Session** that Trace Flow can observe from the transcript, stamped on every fact and used as the time anchor for retention and partitioning. Deliberately "first activity we can see," distinct from the **Source**'s own declared session start.
+_Avoid_: "session start" (the Source's claim — that's **VendorStartedAt**), "ingest time".
+
+**VendorStartedAt**:
+The session-start time a **Source** declares for itself, captured as metadata when the Source provides it (Codex does; Claude, with a UUIDv4 session id, does not). Never used as the retention anchor.
+_Avoid_: conflating with **StartedAt**.
+
 ## Relationships
 
 - A **Client** calls the **Proxy**, which forwards to a **Provider** matched by **Route**.
@@ -187,3 +269,6 @@ A tool exposed by the MCP server (e.g. `getTraceAction`, `listTracesAction`). MC
 - **"trace"** was used to mean both a single Tinybird row and the OTel grouping. _Resolved_: row is a **Span**, the grouping is a **Trace**.
 - **"body"** was used to mean both raw request/response text and the encrypted R2 wrapper. _Resolved_: raw text is "the request/response body"; the R2 artifact is a **Body Object**.
 - **Root key naming** — `EncryptedStoredBodiesPayload` references a root key threaded into the worker as `rootKeyBase64`, but there's no canonical noun for the key itself. _Unresolved_: pick a project term ("Root Encryption Key"? "Body Root Key"?) and align the env var with it.
+- **"project"** was used for both a Trace Flow **Project** (a declared cross-source grouping) and `~/.claude/projects` (Claude Code's local per-workspace storage). _Resolved_: capitalized **Project** is the Trace Flow grouping; the local directory is "the local projects directory" and maps closer to a single repository.
+- **"session"** means three different things: an **Agent Session** (a parsed agent conversation), an **MCP Session** (a Model Context Protocol session), and a vendor "session id" inside Source transcripts. _Resolved_: always qualify as **Agent Session** or **MCP Session**; "vendor session ID" is the raw Source identifier that seeds an Agent Session's identity.
+- **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn (the retention and partition anchor); **VendorStartedAt** is the Source's own declared start, captured as metadata where available.
