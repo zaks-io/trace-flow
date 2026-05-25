@@ -104,6 +104,10 @@ The proxy automatically captures request/response bodies, token usage, performan
 
 **For complete integration guide, see [agents.md](./apps/web/public/agents.md).**
 
+Related design notes:
+
+- [Agent Conversation Analytics](./docs/adr/agent-conversation-analytics.md) - data model and ingestion design for local AI agent conversation analytics in Trace Flow.
+
 ## Development
 
 ### Full Local Stack (Recommended)
