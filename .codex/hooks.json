@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import json, sys; data=json.load(sys.stdin); path=data.get('tool_input',{}).get('file_path',''); sensitive_patterns=['bun.lock', 'package-lock.json', '.git/', '.credentials', 'secret', 'credential']; sys.exit(2 if any(p in path.lower() for p in sensitive_patterns) else 0)\""
+            "command": "python3 -c \"import json, sys; data=json.load(sys.stdin); path=str(data.get('tool_input',{}).get('file_path','')).lower(); sensitive_patterns=['bun.lock', 'package-lock.json', 'pnpm-lock.yaml', '.git/', '.credentials', '.env', '.env.', '.pem', '.p12', 'id_rsa', 'id_ed25519', 'credentials.json', 'aws_credentials', 'aws_secret', '.aws/credentials', 'gcloud', 'google-credentials', 'azure', 'ssh/', 'secret', 'secrets', 'credential', 'credentials']; sys.exit(2 if any(p in path for p in sensitive_patterns) else 0)\""
           }
         ]
       }

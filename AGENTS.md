@@ -84,6 +84,12 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 ## Agent skills
 
+### Agent configuration
+
+Shared agent context lives in `AGENTS.md` and `.agents/skills/...`; update those files first so Claude Code and Codex stay aligned. Claude-facing redirects under `.claude` point back to the shared `.agents`, `.codex`, and `AGENTS.md` paths, while `CLAUDE.md` points at `AGENTS.md`.
+
+Codex project settings live in `.codex/config.toml` for MCP endpoints and main config values, and `.codex/hooks.json` for hook wiring and shell commands. After changing agent config or hooks, restart the relevant agent session so it reloads the files. Issue tracker and triage behavior still come from the Linear and label docs below.
+
 ### Issue tracker
 
 Issues live in Linear (team `TRA`), accessed via the `claude.ai_Linear` MCP server. See `docs/agents/issue-tracker.md`.
