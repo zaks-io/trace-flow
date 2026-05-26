@@ -35,16 +35,18 @@ Vocabulary: `CONTEXT.md`. This skill never restates the design — the ADR wins.
 
 ## Verification matrix (surface every command + result)
 
-| Task kind                          | Verify with                                                                         |
-| ---------------------------------- | ----------------------------------------------------------------------------------- |
-| Types / contract (0a)              | `bun run type-check`; Rust round-trip fixture (`cargo test -p collector-contracts`) |
-| Rust crates (0b, 3a–3d)            | `cargo test`, `cargo clippy`, `cargo fmt --check` on the workspace                  |
-| Pricing pkg (0c)                   | `bun run --filter @trace-flow/pricing test`                                         |
-| Tinybird datasources/pipes (1a–1c) | `tb build`; live insert + `SELECT … FINAL` against the **dev** workspace            |
-| Convex (2a, 2d)                    | `bunx convex dev --once`; `bunx convex run …` (NEVER `convex deploy`)               |
-| Workers (2b, 2c, 2e)               | per-pkg vitest (`@cloudflare/vitest-pool-workers`); `bun run dev:all` curl          |
-| Dashboards (4a–4c)                 | build + render in the **preview** deploy; verify in a browser (Playwright)          |
-| Repo gates (always)                | `bunx turbo run lint type-check test build --filter=<changed pkg>`                  |
+| Task kind                          | Verify with                                                                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Types / contract (0a)              | `bun run type-check`; Rust round-trip fixture (`cargo test -p collector-contracts`)                                        |
+| Rust crates (0b, 3a–3d)            | `cargo test`, `cargo clippy`, `cargo fmt --check` on the workspace                                                         |
+| Pricing pkg (0c)                   | `bun run --filter @trace-flow/pricing test`                                                                                |
+| CF provisioning (0d)               | `wrangler queues list` / `kv namespace list` show the resources; the CI deploy workflow excludes both new workers until 2e |
+| Tinybird datasources/pipes (1a–1c) | `tb build`; live insert + `SELECT … FINAL` against the **dev** workspace                                                   |
+| Convex (2a, 2d)                    | `bunx convex dev --once`; `bunx convex run …` (NEVER `convex deploy`)                                                      |
+| Workers (2b, 2c, 2e)               | per-pkg vitest (`@cloudflare/vitest-pool-workers`); `bun run dev:all` curl                                                 |
+| Observability (2f)                 | forced consumer error → Sentry; DLQ-non-empty + priced-coverage% alerts fire; runbook names the `tb`/`wrangler` teardown   |
+| Dashboards (4a, 4b)                | build + render in the **preview** deploy; verify in a browser (Playwright)                                                 |
+| Repo gates (always)                | `bunx turbo run lint type-check test build --filter=<changed pkg>`                                                         |
 
 If a verify step needs infra the agent can't reach (e.g. `tb` not logged into a dev workspace),
 **stop and report** — do not mark a task done on `tb build` alone when its verify line requires a
@@ -68,8 +70,10 @@ live insert.
 
 ## Stop conditions (print board + reason, then stop)
 
-- **Ceiling reached:** all Phase 0–4 tasks `✅`. Hand off Phases 5–6 (Tauri GUI first-run + macOS
-  signed release need a GUI + Apple secrets and can't be verified headlessly).
+- **Ceiling reached:** every Phase 0–4 task is `✅` **except `4c`** (Connected Desktops is fast-follow:
+  it needs the Phase 5 desktop connect flow that mints device credentials, so it can't be built or
+  verified headlessly). Never claim `4c`; don't let it block the ceiling. Hand off Phases 5–6 (Tauri
+  GUI first-run + macOS signed release need a GUI + Apple secrets and can't be verified headlessly).
 - A task is `⛔ blocked`, or needs a design decision **not** answered by the ADR.
 - A verify step needs infra the agent can't reach (Tinybird dev workspace, etc.).
 - `coderabbit` is rate-limited, or 4 review passes didn't reach 0 findings.

@@ -29,7 +29,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 3d  | Headless end-to-end run                     | ☐ todo | 2e, 3a, 3b, 3c |
 | 4a  | Dashboard pages                             | ☐ todo | 1b, 2a         |
 | 4b  | `org_id` agent JWT in web                   | ☐ todo | 2a             |
-| 4c  | Connected Desktops surface                  | ☐ todo | 2a             |
+| 4c  | Connected Desktops surface                  | ☐ todo | 2a, 5b         |
 | 5a  | Tauri desktop shell                         | ☐ todo | 3d             |
 | 5b  | Connect + Stronghold credential             | ☐ todo | 3d, 5a         |
 | 5c  | Notifications + diagnostics                 | ☐ todo | 5a             |

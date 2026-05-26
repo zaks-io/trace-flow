@@ -57,13 +57,14 @@ First wave (no deps):   0a   0b   0c   0d
 After 0a:               1a       2a       3a   3c
 After 0c:               2d
 After 1a:               1b   1c   (+ unblocks 2c's insert target)
-After 2a:               2b   4b   4c•
+After 2a:               2b   4b
 After 2b:               2c (also needs 0c, 1a)
 After 2b + 2c:          2e   2f
 After 2e + 3a/3b/3c:    3d        (3b needs 3a)
 After 1b + 2a:          4a        (meaningful once 3d lands real data)
 After 3d:               5a• -> 5b• -> 6b•
 After 5a:               5c•
+After 5b:               4c•
 After 0b:               6a•
 
 • = fast-follow, not slice B. The Cursor parser inside 3a is also deferred (3a ships Claude + Codex
