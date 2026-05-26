@@ -55,11 +55,13 @@ Claim only tasks whose dependencies are all `✅`. Tasks on the same line can ru
 ```text
 First wave (no deps):   0a   0b   0c   0d
 After 0a:               1a       2a       3a   3c
-After 0c:               2d
+After 0c + 2a:          2d
 After 1a:               1b   1c   (+ unblocks 2c's insert target)
+After 1a + 1b + 1c:     1d
 After 2a:               2b   4b
 After 2b:               2c (also needs 0c, 1a)
-After 2b + 2c:          2e   2f
+After 2b + 2c:          2f   2g   (2g also needs 0c)
+After 2c + 1d:          2e
 After 2e + 3a/3b/3c:    3d        (3b needs 3a)
 After 1b + 2a:          4a        (meaningful once 3d lands real data)
 After 3d:               5a• -> 5b• -> 6b•
@@ -93,6 +95,10 @@ for slice B). Everything unmarked is the v1 autonomous milestone — see the ROA
   it activates without a rewrite.
 - **Rate-limit namespace:** `AGENT_INGEST_LIMITER` = **2006**. The ADR said `2005`, but that's
   already `TOKEN_REFRESH_LIMITER` in `apps/web/wrangler.jsonc`.
+- **New workers use `wrangler.jsonc`, not `.toml`.** `agent-ingest` and `agent-consumer` ship
+  `wrangler.jsonc`, matching `apps/web` (the newest worker) and Wrangler's current default, not the
+  `.toml` that `proxy` / `proxy-consumer` / `api` still use. Deliberate: don't normalize the new
+  workers down to `.toml`, and don't convert the existing `.toml` workers as part of this feature.
 - **Provider usage / codexbar is out of scope** — separate feature, separate ingest path.
 
 ## Status at a glance

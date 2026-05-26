@@ -15,6 +15,52 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-25 — review hardening II (autonomous-safety rails) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Second eng-review pass over the guide, focused on the rails an autonomous self-merging
+driver needs. Docs only, no feature code. **ROADMAP:** added task **1d** (explicit `tb deploy` of the
+`agent_*` schema to the dev workspace; Tinybird is not in CI, so without it 2c/2e would POST to
+datasources that do not exist) and task **2g** (PR CI for the new TS packages: `ci.yml`'s `changes`
+filter and `status.needs` enumerate only the existing packages, so a PR touching
+`pricing`/`agent-ingest`/`agent-consumer` runs no typed job and goes false-green; 2g adds their filters,
+per-package jobs, and `status` needs, plus `packages/pricing/**` to the existing `proxy-consumer`
+filter). Reworked the **2c** insert path from "reuse `insertIntoTinybird`" to a clean split: extract the
+generic transport core (NDJSON + POST + `TinybirdInsertError`) into `packages/tinybird-client` as
+`insertRows`, leave the OTel reshape in `proxy-consumer` as a thin caller; noted that non-idempotent
+requeue is safe here only because `ReplacingMergeTree(IngestedAt)` keyed on `*_pk` collapses dupes under
+`FINAL`. Declared **2d depends-on 2a** so the two tasks that both edit Convex `schema.ts` serialize (2a
+lands the tables first). Made the **redaction canary corpus shared**: one `fixtures/redaction-canary.json`
+authored in 0a, asserted against by both the Rust parser (3a) and the TS server re-redact (2b). Added
+two trust-boundary tests: **2a** concurrent first-writer claim (two simultaneous claims for one
+`OrgId+session_pk`, exactly one wins via Convex OCC) and **2b** policy cold-miss fail-closed (a cold
+cache plus a failed policy fetch returns 503 `policy_unavailable`, never a fail-open 202). Hardened
+**2e/2f** deploy completeness (new workers added to `deploy-status.needs`, not just the deploy jobs;
+1d schema must be live on dev first; the 1d deploy command recorded in the 2f runbook). Pinned **1c**
+`COPY_SCHEDULE` to hourly and added an `agent_sessions` whole-table-rebuild Watch-item (its `replace`
+cost scales with total session count, not the recent window). Carried 1d and 2g into the slice-B task
+list and "v1 slice complete when". **README:** dependency graph now shows `1d` (after 1a+1b+1c), `2g`
+(after 2b+2c), and `2d` after `0c + 2a`; added a scope note that the new workers use `wrangler.jsonc`
+(matching `apps/web`), not the `.toml` of the older workers, and that normalizing either way is out of
+scope. An **Outside Voice** (independent sonnet review) then surfaced three more autonomous-safety
+gaps, all applied: a **shared envelope contract fixture** in 0a (`fixtures/agent-envelope.sample.json`,
+loaded by both the Rust round-trip and a TS deserialize test, replacing the single-sided check so a
+serde or TS rename cannot silently drift); the **`agent_sessions` rebuild assertion relocated from 2c
+to 1c** (2c does not depend on 1c, so it now asserts base-fact inserts only and the rollup check lives
+with the pipe that owns it); and a **file_events path-privacy assertion in 3a** (every path
+repo-relative, no `/Users/` or `$HOME`, outside-repo maps to `outside_repo`), so a relativization bug
+fails at 3a, not only at 3d. Its proposed scope cut (drop `agent_capability_snapshots`) was
+**rejected**: the ADR retains that data deliberately for deferred Context Bloat analysis, and
+re-ingesting aged-out local transcripts is unreliable. The accepted **ADR was left unedited**.
+**Verified:** Docs only, no build run. ROADMAP board carries 1d and 2g with resolvable `depends-on`;
+the README dependency graph, Milestones legend, and slice-B task list all match the board; the new
+tasks reference real anchors (`ci.yml` paths-filter and `status.needs`;
+`apps/proxy-consumer/src/tinybird.ts` transport core; `apps/web/wrangler.jsonc`).
+**Next / blockers:** None. Slice B is still the build target; first wave (0a 0b 0c 0d) is open. 1d is
+claimable after 1a+1b+1c; 2g after 2b+2c.
+
+---
+
 ## 2026-05-25 — review hardening (slice B + 13 edits) — t3code/ab83918d
 
 **Status:** ✅ done

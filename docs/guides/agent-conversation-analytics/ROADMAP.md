@@ -17,12 +17,14 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 1a  | 9 `agent_*` datasources                     | ☐ todo | 0a             |
 | 1b  | Launch-query pipes                          | ☐ todo | 1a             |
 | 1c  | COPY rollup pipes                           | ☐ todo | 1a             |
+| 1d  | Deploy `agent_*` schema (Tinybird)          | ☐ todo | 1a, 1b, 1c     |
 | 2a  | Convex control plane                        | ☐ todo | 0a             |
 | 2b  | `apps/agent-ingest` worker                  | ☐ todo | 0a, 2a         |
 | 2c  | `apps/agent-consumer` worker                | ☐ todo | 0c, 1a, 2b     |
-| 2d  | models.dev pricing import                   | ☐ todo | 0c             |
-| 2e  | Wrangler / dev wiring                       | ☐ todo | 2b, 2c         |
+| 2d  | models.dev pricing import                   | ☐ todo | 0c, 2a         |
+| 2e  | Wrangler / dev wiring                       | ☐ todo | 2b, 2c, 1d     |
 | 2f  | Observability + ops runbook                 | ☐ todo | 2b, 2c         |
+| 2g  | PR CI for new TS packages                   | ☐ todo | 0c, 2b, 2c     |
 | 3a  | `collector-parser`                          | ☐ todo | 0a             |
 | 3b  | `collector-sync`                            | ☐ todo | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ☐ todo | 0a             |
@@ -42,7 +44,7 @@ The accepted ADR designs all three sources and the desktop app. This board seque
 first autonomously-built milestone (**slice B**) ships the economic-truth path for the two sources that
 carry full economics, then Cursor and the desktop wrapper land as a fast-follow.
 
-- **v1 (slice B — Claude + Codex economic-truth):** `0a 0b 0c 0d` · `1a 1b 1c` · `2a 2b 2c 2d 2e 2f` ·
+- **v1 (slice B — Claude + Codex economic-truth):** `0a 0b 0c 0d` · `1a 1b 1c 1d` · `2a 2b 2c 2d 2e 2f 2g` ·
   `3a*` `3b 3c 3d` · `4a 4b`. End state: headless collector → deduped, server-priced facts → the three
   launch dashboards on real Claude/Codex data.
 - **Fast-follow:** Cursor `state.vscdb` parser (the `3a*` portion) · `4c` · `5a 5b 5c` · `6a 6b`.
@@ -61,16 +63,26 @@ Locks the seam between the Rust collector and the TS backend so later phases pro
 ### 0a — Wire contract + Rust mirror
 
 - **Files:** `packages/types/src/agent-ingest.ts` (new, mirror `packages/types/src/queue.ts`);
-  `packages/collector-contracts/` (new Rust crate).
+  `packages/collector-contracts/` (new Rust crate); `fixtures/redaction-canary.json` (new, shared
+  redaction test corpus consumed by 2b and 3a); `fixtures/agent-envelope.sample.json` (new, shared
+  envelope contract fixture loaded by both the Rust and the TS round-trip tests).
 - **Do:** Define `AgentIngestEnvelope` (`batch{source, collector_batch_id, desktop_version,
 parser_version, raw_upload_requested}`, `facts{messages[], tool_events[], file_events[],
 capability_snapshots[], pull_request_links[]}`) and the typed `Agent*Fact` shapes. The collector
   sends vendor IDs, timestamps, tokens, model, redaction counters, normalized git remote string —
   **never** OrgId/UserId/cost/final `*_pk`. Also define `AgentIngestQueueMessage` (worker → consumer,
   carries the assembled `*_pk`). Rust mirror with serde renames matching the JSON exactly; keep both
-  in lockstep. Explicit named types, no `Partial<>` chains.
-- **Verify:** `bun run type-check`; a Rust round-trip fixture test serializes an envelope in Rust and
-  deserializes it against the TS shape (guards drift).
+  in lockstep. Explicit named types, no `Partial<>` chains. Also commit
+  `fixtures/redaction-canary.json`: one language-neutral redaction canary corpus (AWS keys,
+  GitHub/`Bearer` tokens, `.env` values, JWTs, absolute home paths) that **both** the Rust parser test
+  (3a) and the TS server re-redact test (2b) load and assert against, so the two layers of the
+  redaction trust boundary cannot drift.
+- **Verify:** `bun run type-check`; **one committed `fixtures/agent-envelope.sample.json` is the
+  shared contract fixture**: the Rust test serializes a fully-populated `AgentIngestEnvelope` and
+  asserts it is field-equal to that file, and a TS test deserializes the **same** file into the TS
+  `AgentIngestEnvelope`, asserting every field is present and typed; a serde or type rename on either
+  side then fails its own assertion, so the contract cannot silently drift to 3d; `redaction-canary.json`
+  parses and is referenced by the 3a and 2b test specs.
 
 ### 0b — Rust workspace scaffold
 
@@ -166,14 +178,33 @@ Verifiable with synthetic rows alone. Columns/engines per ADR "Data model" + "Ta
 - **Do:** `COPY_MODE replace` reading base `FINAL` (whole-target swap, **not** materialized-view
   append, which hits the ReplacingMergeTree retraction trap). `agent_sessions`, `agent_usage_*`, and
   PR cost all read `agent_priced_usage`, so the subagent-dedup rule lives in one place and they agree
-  by construction. Optimization layer over 1b. Tune `COPY_SCHEDULE` for a one-year base scan (less
-  frequent than the proxy's 10-min cadence); do not copy the proxy cadence verbatim.
+  by construction. Optimization layer over 1b. Set `COPY_SCHEDULE` to a concrete starting cadence of
+  **hourly** (`0 * * * *`), deliberately slower than the proxy's 10-min; revisit under load (see
+  Watch-items: `agent_sessions` whole-table rebuild). Do not copy the proxy cadence verbatim.
 - **Verify:** `tb build`; COPY populates each target; re-running replaces (no double count); a session
-  whose facts span two `EventAt` days yields exactly **one** `agent_sessions` row after rebuild.
+  whose facts span two `EventAt` days yields exactly **one** `agent_sessions` row after rebuild; a
+  **constant-cost fixture** (N base messages × one fixed price) rebuilds `agent_sessions` to the
+  **exact** expected total (relocated from 2c, which writes those base rows but does not depend on 1c,
+  so the rollup assertion lives where the pipe does).
   **Subagent no-double-count (canonical-rule gate, the one place dedup is proven — see 0c):** a
   committed fixture carrying both a sidechain subagent message and a matching tool-result subagent
   usage row asserts `agent_priced_usage` counts the overlap **exactly once**; a fallback-only fixture
   (tool-result usage, no sidechain) counts that usage and marks subagent cost coverage `fallback`.
+
+### 1d — Deploy `agent_*` schema (Tinybird)
+
+- **Files:** none new. Deploys the `datasources/agent_*` and `pipes/agent_*` files from 1a/1b/1c to
+  the Tinybird **dev** workspace; optionally a `scripts/deploy-agent-tinybird.sh` wrapper.
+- **Do:** Tinybird has no CI deploy today (`SETUP.md` deploys manually), so the autonomous path needs
+  an explicit schema deploy or the consumer (2c) and the end-to-end run (2e) POST to datasources that
+  do not exist. Deploy the agent data layer to the **dev** workspace with `tb deploy` (confirm the verb
+  against the installed CLI: `SETUP.md` still uses the older `tb push`). Keep the **prod** deploy gated
+  (manual, aligned with the 0d deploy-gate) until 2e lifts it, so a mid-phase self-merge to `main`
+  stays inert. Local fixture tests (1a/1b/1c, 2c) can run against `tb build` or a local `tb` workspace;
+  this task owns the **cloud dev** deploy that 2e's end-to-end run reads. Record the exact deploy
+  command in the 2f runbook.
+- **Verify:** `tb build` is clean; the dev deploy succeeds; `tb --cloud sql "SELECT count() FROM
+agent_messages"` resolves where it errored before the deploy; prod is not deployed until 2e.
 
 ## Phase 2 — Server ingest pipeline
 
@@ -193,7 +224,9 @@ Proves the whole backend with curl + synthetic envelopes, no client needed.
   issues an unscoped agent JWT. Dev only: `bunx convex dev --once`.
 - **Verify:** `bunx convex dev --once`; `bunx convex run collectorCredentials:mint …` returns a test
   secret; credential absent from `apiKeys.list`; **both** `generateToken` and `generateTokenInternal`
-  emit the `org_id` fixed_param.
+  emit the `org_id` fixed_param; a **concurrent first-writer claim** test fires two simultaneous
+  `claim-sessions` mutations for the same `OrgId+session_pk` and asserts exactly one wins (the other
+  resolves to `session_owner_conflict`), no torn state (Convex OCC).
 
 ### 2b — `apps/agent-ingest` worker
 
@@ -210,21 +243,32 @@ Proves the whole backend with curl + synthetic envelopes, no client needed.
   **Named failure paths (never a silent drop or false 202):** `ownership.ts` Convex unreachable →
   retryable **503** (do not drop, do not 202); `AGENT_QUEUE.send()` failure → **5xx** (never 202 on
   lost data); an envelope with empty `facts` arrays → **202 no-op** (not 400); partial-conflict
-  batches skip only the conflicting sessions and continue. The re-redact step runs a **canary corpus**
-  (AWS keys, GitHub/`Bearer` tokens, `.env` values, JWTs, absolute home paths) and drops/masks each,
-  incrementing `dropped_sensitive`.
+  batches skip only the conflicting sessions and continue. The re-redact step runs the **shared
+  redaction canary corpus** (`fixtures/redaction-canary.json` from 0a, the same fixture the 3a parser
+  test asserts against) and drops/masks each, incrementing `dropped_sensitive`.
 - **Verify:** curl a synthetic `AgentIngestEnvelope` → 202; assert 401 (no cred), 429 (over limit),
   413 (oversized), `upgrade_required` (bump min version), `session_owner_conflict` (second user,
   same session); **Convex-down → 503** (not 202/drop); **enqueue failure → 5xx** (not 202);
-  **empty-facts envelope → 202 no-op**; the **redaction canary corpus** is fully dropped/masked and
-  `dropped_sensitive` increments per planted secret.
+  **empty-facts envelope → 202 no-op**; **policy cold-miss → fail-closed** (cold cache plus a failed
+  policy fetch returns **503 `policy_unavailable`**, never a fail-open 202); the **shared redaction
+  canary corpus** (0a) is fully dropped/masked and `dropped_sensitive` increments per planted secret.
 
 ### 2c — `apps/agent-consumer` worker
 
 - **Files:** `apps/agent-consumer/` (new, stateless, **NO** batching DO);
-  `packages/tinybird-client/` (factor `insertIntoTinybird` out of `apps/proxy-consumer/src/tinybird.ts`).
+  `packages/tinybird-client/` (extract a generic insert transport core out of
+  `apps/proxy-consumer/src/tinybird.ts`); `apps/proxy-consumer/src/tinybird.ts` (refactored to call the
+  shared core).
 - **Do:** Read `AGENT_QUEUE`, price each message via `@trace-flow/pricing` from tokens+model (KV
-  catalog), one batched insert per **base** datasource reusing `insertIntoTinybird`. The consumer
+  catalog), one batched insert per **base** datasource. **Insert path (split, not verbatim reuse):**
+  `insertIntoTinybird` (`apps/proxy-consumer/src/tinybird.ts:46`) is typed to `TinybirdTrace[]` and
+  hard-codes OTel reshaping (it rebuilds nested `Events{}`/`Links{}`), so it cannot take flat agent
+  rows as-is. Extract the generic transport core (NDJSON + POST + `TinybirdInsertError`) as
+  `insertRows(rows, token, datasource, host)` in `packages/tinybird-client`; leave the OTel reshape in
+  proxy-consumer as a thin caller of the core; agent-consumer calls the core with flat rows. **Requeue
+  safety:** the Events API is non-idempotent, so a queue-redelivery re-POST writes duplicate physical
+  rows, safe here only because `ReplacingMergeTree(IngestedAt)` keyed on `*_pk` collapses them under
+  `FINAL` (proxy-consumer cannot lean on this, hence its DO-alarm retry). The consumer
   writes base facts only (per-message `cost_usd`, etc.); it does **not** compute or insert
   `agent_sessions` or the rollups. Session cost, hourly/daily usage, and PR cost are derived in
   Tinybird from `agent_priced_usage` (1c), so the subagent-dedup rule lives in exactly one place.
@@ -233,12 +277,15 @@ Proves the whole backend with curl + synthetic envelopes, no client needed.
   KV reads, not O(messages). **Named failure paths:** a malformed queue message → **DLQ** (never a
   silent drop); a Tinybird insert failure → **retry then DLQ** (queue `max_retries`, then dead-letter),
   never a silent drop. `cost_usd` null when token coverage is missing or the model is unpriced.
-- **Verify:** queue → consumer → priced rows in `agent_messages FINAL`; a **constant-cost session
-  fixture** (N messages × one fixed price) rebuilds `agent_sessions` to the **exact** expected total
-  (no hand-summing); re-post an identical envelope, base `FINAL` counts unchanged; unpriced model →
-  `cost_usd` null; a **malformed message → DLQ**; a forced Tinybird insert failure → **retry then
-  DLQ**; a **backfill load test** replaying thousands of synthetic messages asserts **no per-message
-  KV read** (O(distinct models) only) and bounded subrequests (drains without shedding to the DLQ).
+- **Verify:** queue → consumer → priced rows in `agent_messages FINAL`; a **constant-cost fixture**
+  (N messages × one fixed price) sums to the **exact** expected per-message total in
+  `agent_messages FINAL` (no hand-summing); the downstream `agent_sessions` rollup is **1c's to
+  verify** (2c does not depend on 1c, so it asserts only the base facts it writes); re-post an
+  identical envelope, base `FINAL` counts unchanged; unpriced model → `cost_usd` null; a **malformed
+  message → DLQ**; a forced Tinybird insert failure → **retry then DLQ**; a **backfill load test** replaying thousands of synthetic messages asserts **no per-message
+  KV read** (O(distinct models) only) and bounded subrequests (drains without shedding to the DLQ);
+  **proxy-consumer regression**: its existing `tinybird` tests still pass after the transport-core
+  extraction.
 
 ### 2d — models.dev pricing import
 
@@ -256,11 +303,14 @@ Proves the whole backend with curl + synthetic envelopes, no client needed.
 - **Do:** Bind the **0d-provisioned** `AGENT_QUEUE` + DLQ and `COLLECTOR_CREDS` KV (by their recorded
   IDs) plus `AGENT_INGEST_LIMITER` (2006); add both workers to `dev:all` with the shared
   `--persist-to`. Queue consumers only connect under `bun run dev:all`. **Lift the 0d deploy-gate
-  here:** the end-to-end path is complete, so add both workers to the CI deploy workflow now (before
-  this, a `main` merge left them inert).
-- **Verify:** `bun run dev:all` boots both workers; an envelope flows ingest → queue → consumer
-  locally; shared `--persist-to` makes KV/queue visible across workers; the CI deploy workflow now
-  includes both workers and `deploy:dev` brings the path up on dev.
+  here:** the end-to-end path is complete, so add both workers as deploy jobs in
+  `.github/workflows/deploy.yml` **and** to that workflow's `deploy-status.needs` list (a deploy job
+  missing from `needs` lets a failed agent deploy report green). The `agent_*` Tinybird schema must
+  already be live on dev (**1d**) for the end-to-end run.
+- **Verify:** `bun run dev:all` boots both workers (new `.jsonc` config alongside the existing `.toml`
+  workers) under one shared `--persist-to`; an envelope flows ingest → queue → consumer locally; the CI
+  deploy workflow includes both workers **and** lists them in `deploy-status.needs`; the agent\_\*
+  datasources are live on dev (1d) so `deploy:dev` brings the full path up.
 
 ### 2f — Observability + ops runbook
 
@@ -270,11 +320,29 @@ Proves the whole backend with curl + synthetic envelopes, no client needed.
   request/collector/session context — **never** secrets or excerpts. Sentry on consumer errors and DLQ
   sends. Alerts: **DLQ non-empty**, **consumer error rate**, and **priced-coverage% health**
   (`count(cost_usd) / count(*)` drop → fires if a `models.dev` import silently regresses to
-  gateway/empty prices). A **DLQ-drain runbook** stub: how to inspect, re-drive, and the manual
-  `tb` / `wrangler` teardown that a `git revert` does **not** perform (dev-only blast radius, per §9).
+  gateway/empty prices). A **DLQ-drain runbook** stub: how to inspect, re-drive, the manual
+  `tb` / `wrangler` teardown that a `git revert` does **not** perform (dev-only blast radius, per §9),
+  and the **1d** Tinybird deploy command (Tinybird is not in CI, so schema deploy is manual/scripted).
 - **Verify:** a forced consumer error surfaces in Sentry; a message diverted to the DLQ raises the
   DLQ-non-empty alert; dropping a priced model from the catalog fixture trips the coverage% alert; the
   runbook names the exact `tb` / `wrangler` cleanup commands.
+
+### 2g — PR CI for new TS packages
+
+- **Files:** `.github/workflows/ci.yml`.
+- **Do:** `ci.yml` runs only on PRs, and its `changes` paths-filter plus `status.needs` enumerate only
+  the existing workers/packages, so a PR touching `packages/pricing`, `apps/agent-ingest`, or
+  `apps/agent-consumer` matches no filter, runs no typed job, and `status` goes green regardless. For a
+  self-merging driver that is a false green: the first compile of the new code happens only in
+  `deploy.yml`'s root `ci` job post-merge, where a type error blocks **all** production deploys (every
+  deploy job is `needs: [ci]`). Add `pricing`, `agent-ingest`, `agent-consumer` outputs to the
+  `changes` filter (glob `packages/pricing/**`, `apps/agent-ingest/**`, `apps/agent-consumer/**` plus
+  their `packages/types` / `utils` deps); add `packages/pricing/**` to the **existing** `proxy-consumer`
+  filter too (it now imports the extracted package); add a per-package lint/type-check/test job for each
+  (mirror the `proxy-consumer` job, with `build` for the two workers); add all three to the `status`
+  job's `needs`. Rust CI stays in 6a; do not duplicate it here.
+- **Verify:** a PR touching only `apps/agent-ingest` runs its job; an intentional type error in any of
+  the three fails `status` (not a false green); the `status` job's `needs` includes the three new jobs.
 
 ## Phase 3 — Headless Rust collector
 
@@ -288,16 +356,21 @@ Build and test headless against fixtures + the real local stores + the Phase 2 w
 - **Do:** Strip local pricing (ship tokens+model only). Claude: collapse repeated `message.usage` by
   `message.id`. Codex: sum `last_token_usage` deltas, **NEVER** `total_token_usage` (the ~331x trap).
   Fold tool-use + tool-result (same `tool_use_id`) into ONE Tool Event. Reuse `redaction.rs` with
-  drop-not-upload + counters, validated against a **canary corpus** (AWS keys, GitHub/`Bearer` tokens,
-  `.env` values, JWTs, absolute home paths). Emit Capability Snapshots (Codex
+  drop-not-upload + counters, validated against the **shared redaction canary corpus**
+  (`fixtures/redaction-canary.json` from 0a, the same fixture the 2b server re-redact asserts against).
+  Emit Capability Snapshots (Codex
   `base_instructions`/`dynamic_tools`, counts/hashes/sizes only). **Cursor `state.vscdb` parser is
   fast-follow, not slice B:** when built — read-only snapshot via SQLite backup API, `GLOB` never
   `LIKE`, `composerData:`=sessions, `bubbleId:`=messages, ~0.9% nonzero tokens →
   `partial`/`missing` coverage, model-label normalization, degrade gracefully on an inconsistent
   snapshot. Slice B ships Claude + Codex only; `source` is a dimension, so Cursor is purely additive.
 - **Verify (cargo):** canary fixtures — Claude `message.id` collapse, Codex cumulative-token trap
-  (session sum matches final `total_token_usage`), tool-pair fold; the **redaction canary corpus** is
-  fully dropped/masked; **Codex turn-index determinism** — re-parsing the same Codex session does
+  (session sum matches final `total_token_usage`), tool-pair fold; the **shared redaction canary
+  corpus** (0a) is fully dropped/masked; **every `agent_file_events` path is repo-relative** (no
+  `/Users/`, no `$HOME`, no username; a file outside the primary repo collapses to the `outside_repo`
+  coarse category, never an absolute path), so a path-relativization bug fails here at 3a, not only at
+  3d's end-to-end scan; **Codex turn-index determinism** — re-parsing the same Codex
+  session does
   **not** renumber `message_pk` positional turn indices (stable pk across re-parse); no `cost_usd` on
   any fact. (Cursor `GLOB` index-plan canary lands with the fast-follow Cursor parser.)
 
@@ -442,13 +515,19 @@ Per `trace-flow-desktop-collector.md`. Fresh Tauri id `com.traceflow.desktop`, *
   `parser_version` + canary fixtures; never touch the live DB; leave `agentKv:` blobs unparsed.
 - **Rollup correctness**: COPY `replace` over complete buckets, never MV append; any `EventAt`
   correction needs an affected-partition rebuild before replay.
+- **`agent_sessions` whole-table rebuild**: unlike the time-bucketed `agent_usage_*` rollups,
+  `agent_sessions` is keyed per session, so `COPY_MODE replace` re-swaps the entire table every cycle
+  and its cost scales with total session count, not the recent window. This is why 1c starts
+  `COPY_SCHEDULE` at hourly, not the proxy's 10-min. If the cycle time creeps under load, partition
+  the target on a coarse bucket (e.g. session-start month) so `replace` can target partitions, or move
+  it incremental. Revisit before the table is large, not after.
 - **Stronghold unlock UX** and macOS FSEvents missing atomic renames (mitigated by the 5-min poll).
 - **models.dev first-party pinning** is mandatory or models silently mis-price.
 
 ## v1 slice complete when (slice B — the autonomous milestone)
 
-This is the bar the driver builds to (tasks `0a 0b 0c 0d · 1a 1b 1c · 2a 2b 2c 2d 2e 2f · 3a 3b 3c
-3d · 4a 4b`). Verifiable outcomes:
+This is the bar the driver builds to (tasks `0a 0b 0c 0d · 1a 1b 1c 1d · 2a 2b 2c 2d 2e 2f 2g · 3a 3b
+3c 3d · 4a 4b`). Verifiable outcomes:
 
 - A **Claude** and a **Codex** session each parse to deduped, server-priced typed facts in `agent_*`
   for the owning org, filterable by `source` and `repo_fingerprint`; subagent transcripts attach to
@@ -469,6 +548,10 @@ This is the bar the driver builds to (tasks `0a 0b 0c 0d · 1a 1b 1c · 2a 2b 2c
   does not perform.
 - Both workers reach dev **only after 2e** wires the full path and lifts the 0d deploy-gate; a `main`
   merge before 2e leaves them inert (deploy-safe), per the autonomous self-merge model.
+- **The build's own safety nets hold:** the `agent_*` schema is live on dev before 2e lifts the gate
+  (1d), and every new TS package (`agent-ingest`, `agent-consumer`, `pricing`) is gated by PR CI with
+  a typed job in the `status` check (2g), so a type or test failure in new code red-X's the PR instead
+  of slipping through to a post-merge deploy.
 
 ## Feature complete when (full feature — adds the fast-follow)
 
