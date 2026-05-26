@@ -60,6 +60,32 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  agentSessionOwners: {
+    document: {
+      claimedAt: number;
+      collectorId: string;
+      orgId: Id<"organizations">;
+      sessionPk: string;
+      userId: Id<"users">;
+      _id: Id<"agentSessionOwners">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "claimedAt"
+      | "collectorId"
+      | "orgId"
+      | "sessionPk"
+      | "userId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_session: ["orgId", "sessionPk", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   alerts: {
     document: {
       createdAt: number;
@@ -115,6 +141,70 @@ export type DataModel = {
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+      by_user_id: ["userId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  collectorCompatibilityPolicy: {
+    document: {
+      denylistedVersions: Array<string>;
+      minDesktopVersion: string;
+      minParserVersion: string;
+      updatedAt: number;
+      updatedByUserId?: Id<"users">;
+      _id: Id<"collectorCompatibilityPolicy">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "denylistedVersions"
+      | "minDesktopVersion"
+      | "minParserVersion"
+      | "updatedAt"
+      | "updatedByUserId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_updated_at: ["updatedAt", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  collectorCredentials: {
+    document: {
+      collectorId: string;
+      expiresAt: number;
+      hashedSecret: string;
+      lastSeenAt?: number;
+      name?: string;
+      orgId: Id<"organizations">;
+      platform?: string;
+      revokedAt?: number;
+      status: "active" | "revoked";
+      userId: Id<"users">;
+      _id: Id<"collectorCredentials">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "collectorId"
+      | "expiresAt"
+      | "hashedSecret"
+      | "lastSeenAt"
+      | "name"
+      | "orgId"
+      | "platform"
+      | "revokedAt"
+      | "status"
+      | "userId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_hashed_secret: ["hashedSecret", "_creationTime"];
       by_org_id: ["orgId", "_creationTime"];
       by_user_id: ["userId", "_creationTime"];
     };

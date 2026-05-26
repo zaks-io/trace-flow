@@ -1,0 +1,118 @@
+DESCRIPTION >
+    Rebuild the agent_sessions aggregate (one row per session) from base FINAL via the
+    canonical agent_priced_usage view, so session cost stays consistent with
+    agent_usage_* and the PR cost path by construction. COPY_MODE replace swaps the
+    whole table every run; the target is not partitioned, so a session whose facts span
+    multiple EventAt days still collapses to exactly one row. Token/cost columns come
+    from agent_priced_usage; tool/file/PR counts join from their base tables. Staggered
+    45 min after the hourly usage copy.
+
+NODE session_usage
+SQL >
+    SELECT
+        OrgId,
+        session_pk,
+        argMaxIf(source, EventAt, usage_kind = 'direct') AS source,
+        argMaxIf(UserId, EventAt, usage_kind = 'direct') AS UserId,
+        argMaxIf(CollectorId, EventAt, usage_kind = 'direct') AS CollectorId,
+        argMaxIf(CollectorCredentialId, EventAt, usage_kind = 'direct') AS CollectorCredentialId,
+        argMaxIf(repo_fingerprint, EventAt, usage_kind = 'direct') AS repo_fingerprint,
+        argMaxIf(repo_source, EventAt, usage_kind = 'direct') AS repo_source,
+        argMaxIf(model, EventAt, usage_kind = 'direct') AS model,
+        argMaxIf(parser_version, EventAt, usage_kind = 'direct') AS parser_version,
+        min(EventAt) AS StartedAt,
+        max(EventAt) AS LastEventAt,
+        maxIf(VendorStartedAt, usage_kind = 'direct') AS VendorStartedAt,
+        max(IngestedAt) AS IngestedAt,
+        argMaxIf(git_branch, EventAt, usage_kind = 'direct') AS git_branch,
+        argMaxIf(git_head_sha, EventAt, usage_kind = 'direct') AS git_head_sha,
+        countIf(usage_kind = 'direct') AS message_count,
+        sum(input_tokens) AS input_tokens,
+        sum(output_tokens) AS output_tokens,
+        sum(cache_read_tokens) AS cache_read_tokens,
+        sum(cache_creation_tokens) AS cache_creation_tokens,
+        sum(reasoning_tokens) AS reasoning_tokens,
+        multiIf(
+            countIf(usage_kind = 'direct' AND token_coverage = 'missing') > 0, 'missing',
+            countIf(usage_kind = 'direct' AND token_coverage = 'partial') > 0, 'partial',
+            'full') AS token_coverage,
+        if(countIf(usage_kind = 'direct' AND cache_coverage = 'missing') > 0, 'missing', 'full') AS cache_coverage,
+        if(
+            countIf(cost_usd IS NOT NULL) = 0,
+            CAST(NULL AS Nullable(Float64)),
+            CAST(sum(ifNull(cost_usd, 0.)) AS Nullable(Float64))
+        ) AS cost_usd
+    FROM agent_priced_usage
+    GROUP BY OrgId, session_pk
+
+NODE session_tools
+SQL >
+    SELECT
+        OrgId,
+        session_pk,
+        toUInt32(count()) AS tool_event_count,
+        toUInt32(countIf(status = 'failure')) AS failure_count
+    FROM agent_tool_events FINAL
+    GROUP BY OrgId, session_pk
+
+NODE session_files
+SQL >
+    SELECT
+        OrgId,
+        session_pk,
+        toUInt32(count()) AS file_event_count
+    FROM agent_file_events FINAL
+    GROUP BY OrgId, session_pk
+
+NODE session_prs
+SQL >
+    SELECT
+        OrgId,
+        session_pk,
+        if(uniqExact(url) = 1, any(url), '') AS primary_pull_request_url
+    FROM agent_pull_request_links FINAL
+    WHERE url != ''
+    GROUP BY OrgId, session_pk
+
+NODE assemble
+SQL >
+    SELECT
+        u.OrgId AS OrgId,
+        u.session_pk AS session_pk,
+        u.source AS source,
+        u.UserId AS UserId,
+        u.CollectorId AS CollectorId,
+        u.CollectorCredentialId AS CollectorCredentialId,
+        u.repo_fingerprint AS repo_fingerprint,
+        u.repo_source AS repo_source,
+        u.model AS model,
+        u.parser_version AS parser_version,
+        u.StartedAt AS StartedAt,
+        u.LastEventAt AS LastEventAt,
+        u.VendorStartedAt AS VendorStartedAt,
+        u.IngestedAt AS IngestedAt,
+        u.git_branch AS git_branch,
+        u.git_head_sha AS git_head_sha,
+        p.primary_pull_request_url AS primary_pull_request_url,
+        toUInt32(u.message_count) AS message_count,
+        toUInt32(t.tool_event_count) AS tool_event_count,
+        toUInt32(f.file_event_count) AS file_event_count,
+        toUInt32(t.failure_count) AS failure_count,
+        u.input_tokens AS input_tokens,
+        u.output_tokens AS output_tokens,
+        u.cache_read_tokens AS cache_read_tokens,
+        u.cache_creation_tokens AS cache_creation_tokens,
+        u.reasoning_tokens AS reasoning_tokens,
+        u.token_coverage AS token_coverage,
+        u.cache_coverage AS cache_coverage,
+        toUInt64(toInt64(toUnixTimestamp64Milli(u.LastEventAt) - toUnixTimestamp64Milli(u.StartedAt))) AS duration_ms,
+        u.cost_usd AS cost_usd
+    FROM session_usage AS u
+    LEFT JOIN session_tools AS t USING (OrgId, session_pk)
+    LEFT JOIN session_files AS f USING (OrgId, session_pk)
+    LEFT JOIN session_prs AS p USING (OrgId, session_pk)
+
+TYPE COPY
+TARGET_DATASOURCE agent_sessions
+COPY_SCHEDULE 45 * * * *
+COPY_MODE replace

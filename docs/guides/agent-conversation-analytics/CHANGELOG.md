@@ -15,6 +15,161 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2a (Convex control plane) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the Convex control plane for collector ingestion. `schema.ts`: three new tables —
+`collectorCredentials` (hidden hashed-secret creds, never user-facing API keys; indexes
+`by_org_id`/`by_user_id`/`by_hashed_secret`), `agentSessionOwners` (OCC first-writer `OrgId+session_pk`
+claim, `by_org_session`), `collectorCompatibilityPolicy` (Convex-owned min-versions + denylist,
+`by_updated_at`). New files beyond the named lane (one component per file): `collectorCredentials.ts`
+(generate `tfc_`-prefixed secret + SHA-256 hash, `mint`/`revoke`/`list` returning the secret hash never
+to the client, KV sync on write), `agentSessionOwners.ts` (`claimSession` + pure `decideClaim`),
+`collectorCompatibilityPolicy.ts` (active = latest by `updatedAt`, fail-closed). `integrations/cloudflare.ts`:
+collector creds sync to a **separate** KV namespace (`CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID`, fails
+loudly if unset), `syncAll` syncs only `active` creds, both collector sync actions use the same
+retry/backoff as the existing sync\* actions. `integrations/tinybird.ts`: single `withRowSecurityParams`
+helper stamps `api_keys`+`retention_days`+`org_id` (sentinels when absent) so **both** `generateToken`
+and `generateTokenInternal` emit `org_id` — neither path can issue an agent JWT unscoped on org. `http.ts`:
+shared-secret-guarded `/agent-ingest/claim-sessions` (validates org + user-in-org, capped batch, sequential
+OCC claims) and `/agent-ingest/compatibility-policy` (404 `policy_unavailable` on empty = fail-closed).
+`rateLimits.ts`: `mintCollectorCredential` (10/hr). New `__tests__/collectorControlPlane.test.ts`.
+**Verified:** `bunx convex codegen` (run from repo root where `convex.json` lives — the functions dir is
+`packages/convex` with static codegen) regenerated `_generated` and ran `tsc` clean.
+`bunx turbo run lint type-check test --filter=@trace-flow/convex --force` → lint 0 errors, type-check
+clean, **474 tests pass**. Collector creds absent from `apiKeys.list` (separate tables, verified by
+inspection). Both token paths route through `withRowSecurityParams` (unit-tested for `org_id` emission +
+sentinels). First-writer logic unit-tested (`decideClaim`); "no torn state" is the Convex OCC platform
+guarantee. CodeRabbit `--agent --type uncommitted`: 9 → 3 → 2 findings across three passes, all addressed
+(dropped duplicate `createdAt` for `_creationTime`; retry/backoff on collector KV sync; validate `userId`
+
+- org membership; `.omit('hashedSecret')` public validator; `Infer`-derived `ActivePolicy`; bounded claim
+  batch). Skipped with reason: KV-sync `orgId`/`userId` as `v.string()` (matches sibling sync\* actions);
+  export status validator (YAGNI); `decideClaim` param `string` (keeps it a pure testable helper). The 4th
+  confirmation pass was blocked by a CodeRabbit credit/rate limit; the GitHub bot review on the phase PR is
+  the backstop.
+  **Next / blockers:** Live `mint`/`list` runtime checks are Convex-auth-gated and not headlessly drivable
+  (no `convex-test` harness here); covered by unit tests + structural inspection. Mint schedules a KV sync
+  needing `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` (provisioned in 0d) and `AGENT_INGEST_SHARED_SECRET` for
+  the claim route — wire these in 2e. Next: 2b (`apps/agent-ingest`).
+
+## 2026-05-26 — 1d (Deploy `agent_*` schema to Tinybird) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Deployed the full agent data layer (9 `datasources/agent_*` + the 1b launch pipes, the 1c
+canonical view, and the four COPY pipes) to the **cloud dev** workspace `trace_flow_dev`. Tinybird is
+not in CI, so this is the manual/scripted path 2c (consumer) and 2e (end-to-end) depend on. Added
+`scripts/deploy-agent-tinybird.sh`: it refuses to run unless the current cloud workspace is
+`trace_flow_dev` (prod stays gated until 2e), validates offline (`tb build`) and via
+`tb --cloud deploy --check`, then `tb --cloud deploy`. No new pipe/datasource files (this task only
+deploys 1a/1b/1c). Prod was not touched.
+**Verified:** pre-deploy, `tb --cloud sql "SELECT count() FROM agent_messages"` → `Forbidden: Resource
+'agent_messages' not found`. `tb build` clean; `tb --cloud deploy --check` → all `agent_*` resources
+`status: new`, no destructive ops, "Deployment is valid". Ran the wrapper → deployment #67 promoted and
+live. Post-deploy, `agent_messages`, `agent_priced_usage`, and `agent_sessions` all resolve (count 0,
+empty as expected — no rows inserted into shared dev); `tb --cloud datasource ls` shows all 9
+`agent_*` datasources. CodeRabbit clean (pass 2; pass 1 added the offline `tb build` step to the
+wrapper).
+**Next / blockers:** **Phase 1 complete** (1a–1d all ✅) → phase-boundary self-merge PR to `main`.
+Merging is inert for prod: Tinybird isn't in CI and `deploy.yml` has no jobs touching the agent layer
+yet (added in 2e). Next claimable work is Phase 2 — 2a (Convex control plane, dep 0a ✅) is the entry
+point.
+
+## 2026-05-26 — 1c (COPY rollup pipes) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the canonical priced-usage view + four COPY rollups so session cost, the usage
+rollups, and PR authoring cost agree by construction. `pipes/agent_priced_usage.pipe` is a generic
+pipe (no `TYPE` — Forward's include-file replacement, referenced by name) that lives the subagent
+dedup rule once: every direct Agent Message (top-level, nested, sidechain) counts; source-reported
+subagent usage (`agent_tool_events.extracted_subagent_*`) counts only when no matching
+nested/sidechain message exists for `(source, session_pk, agent_id)`, and the fallback row carries
+tokens with `cost_usd` NULL + `subagent_cost_coverage = 'fallback'` (lowers priced coverage instead of
+mis-counting). `pipes/agent_sessions_copy.pipe` (5 nodes) rebuilds one row per session over the view,
+joining tool/file/PR base tables; `COPY_MODE replace` + unpartitioned target means a session spanning
+multiple `EventAt` days collapses to one row; PR url is set only when exactly one distinct link
+exists. `pipes/agent_usage_1h_copy.pipe` / `_1d_copy.pipe` roll up `usage_kind = 'direct'` rows
+(MessageCount stays a true message count); `pipes/agent_tool_usage_1h_copy.pipe` reads base
+`agent_tool_events FINAL` (tool mix is not a cost surface) and keeps success/failure/unknown separate.
+Schedules staggered (1h `0 * * * *`, 1d `15 * * * *`, tool `30 * * * *`, sessions `45 * * * *`),
+matching the `llm_usage_*_copy` hourly-refresh-of-daily-bucket convention. Added
+`scripts/gen_1c_fixtures.py` and additive `org_1c` fixture rows (the 1b `org_test` endpoint tests are
+untouched — every launch pipe filters by org).
+**Verified:** `tb build` clean; `tb --local deploy` materialized schema; appended fixtures with zero
+quarantine rows; `tb copy run` populated all four targets and a second run left counts identical
+(idempotent `replace`). Asserted via `tb --local sql`: `agent_priced_usage` org*1c = 10 rows, exactly
+1 `subagent_fallback` (sub1 both-forms counts the overlap once with no fallback row; sub2 fallback-only
+adds one row, output 70, NULL cost, coverage `fallback`); `agent_sessions` cc1 constant-cost = 4 msgs
+× 0.25 → cost 1.0 (input 400, tools 2, failure 1, files 2, PR pull/1); span1 = ONE row across
+2026-05-20→05-21 (duration 86400000 ms, cost 1.0, ambiguous PR url ''); sub1 cost 0.8, sub2 cost 0.4 /
+output 90. `agent_usage_1h` 10:00 bucket = 7 msgs / 3 sessions / 2.2 cost; `agent_usage_1d` 05-20 = 8
+msgs / 4 sessions / 2.7; `agent_tool_usage_1h` git 3/3 success, npm 1/1 failure. `tb test run` 3/3
+(1b endpoint tests green with org_1c added). CodeRabbit: pass 1 fixed 3 script nits; pass 2's 6
+findings all verified false-positive (1d cron matches `llm_usage_1d_copy`; branch label correct;
+ruff/ANN401 not configured; `CacheCoverage = 'full' | 'missing'` has no 'partial'; duration
+non-negative by min/max; sentinel = over-engineering).
+**Next / blockers:** 1c done → Phase 1 has only 1d (Deploy `agent*\*`schema to Tinybird) left. Claim
+1d next; completing it closes Phase 1 and triggers the phase-boundary self-merge PR to`main`.
+
+## 2026-05-25 — 1b (Launch-query pipes) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the three query-time-first launch pipes, each reading base `… FINAL` (not the 1c
+rollups). `pipes/agent_failure_leaderboard.pipe` ranks `(tool_name, command_family)` by `failure_rate`
+over a window, with a `min_events` display floor; `failure_rate = failure / (success + failure)` —
+`unknown` is counted in `event_count` but excluded from the denominator (ADR §357), and is null when
+the denominator is 0. `pipes/agent_tool_period_delta.pipe` compares the requested window against the
+immediately-preceding equal-length window, ranking by `abs(count_delta)`. `pipes/agent_session_outliers.pipe`
+(three nodes) aggregates per session from `agent_messages FINAL` (cost via `sum(cost_usd)`, which skips
+the lone nullable column) LEFT JOIN `agent_file_events FINAL` (event + unique-path counts), ranked by
+estimated cost. All three enforce `org_id` (JWT `fixed_params`), accept optional `source` /
+`repo_fingerprint` filters, and clamp to `retention_days`. **Bootstrapped the repo's first `tb` test
+harness:** `tests/{agent_failure_leaderboard,agent_tool_period_delta,agent_session_outliers}.yaml` plus
+full-column fixtures `fixtures/agent_{tool_events,messages,file_events}.ndjson`.
+**Verified:** `tb build` clean; `tb test run` 3/3 pipes (4 cases) green against committed NDJSON
+fixtures with hand-computed expected aggregates — exact rows/values, not "returns rows": leaderboard
+`failure_rate` excludes `unknown` (git 1/4 = 0.25 with the unknown still in `event_count` = 5), the
+`min_events` floor hides the single-failure Read at 5 and surfaces it (rate 1.0) at 1; period movers
+ranked by `abs(count_delta)`; null per-message cost skipped by `sum`. CodeRabbit `--type uncommitted`:
+no findings (clean first pass). Four gotchas resolved: (1) String params + `parseDateTime64BestEffort`
+fail `tb build` because the builder substitutes the `__no_value__` sentinel over declared defaults —
+switched to `Int64` epoch-ms params + `fromUnixTimestamp64Milli` with a `now()`-relative default; (2)
+`start_dt - (end_dt - start_dt)` errors (`subtractSeconds` needs a number) — compute `span_ms` in
+integer ms first; (3) strict JSONPath ingestion quarantines any row missing a non-Nullable column, so
+fixtures carry every column; (4) `now() - toIntervalDay(36500)` underflows DateTime's 1970 floor and
+wraps to 2062 — tests pass `retention_days=20000` to neutralize the tier floor for fixed-date fixtures
+(production passes 7..365).
+**Next / blockers:** 1c (COPY rollup pipes) is the next claimable task (deps 1a ✅). The pipes are not
+yet deployed to the cloud dev workspace — that is 1d, gated until 2e.
+
+## 2026-05-25 — 1a (9 `agent_*` datasources) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the 9 `agent_*` Tinybird datasources. Five base fact tables
+(`agent_messages`, `agent_tool_events`, `agent_file_events`, `agent_capability_snapshots`,
+`agent_pull_request_links`) are `ReplacingMergeTree(IngestedAt)` keyed `OrgId, session_pk, <row>_pk`,
+partitioned `toYYYYMMDD(EventAt)`, TTL `toDateTime(EventAt) + 1y`. `agent_sessions` is
+`ReplacingMergeTree(IngestedAt)` keyed `OrgId, session_pk` with no partition key, TTL on `LastEventAt`.
+Three rollups (`agent_usage_1h`, `agent_usage_1d`, `agent_tool_usage_1h`) are `AggregatingMergeTree`
+keyed low-to-high cardinality with `BucketStart` leading (mirroring `llm_usage_1h`). `cost_usd
+Nullable(Float64)` is the only nullable column. The 5 base fact tables carry `json:$.<col>` JSONPaths
+(keys == column names) because the consumer POSTs to them via `/v0/events`; `agent_sessions` + rollups
+omit JSONPaths since they are rebuilt from base `FINAL` by Copy Pipes (1c), like `llm_requests`.
+**Verified:** `tb build` clean across the full project (datasources + all existing pipes). Live insert
+against a local `tb` instance via `POST /v0/events?name=agent_messages` (2 rows, 0 quarantined):
+same `message_pk` twice with newer `IngestedAt` → `SELECT … FINAL` count = 1 keeping the newer row
+(output_tokens 999, cost_usd 0.99); a distinct `message_pk` → `FINAL` count = 2; `cost_usd: null`
+ingests as `None`. Root-caused a pre-existing `tb build` failure on `otel_traces` to a stale local CLI
+(4.2.1 → 4.5.8) — out of lane, fixed by updating the CLI, not the datasource. CodeRabbit: 2 trivial
+findings (move `OrgId` before `BucketStart` in the two rollup sorting keys) declined as false positives
+— the ADR (§Table physics, line 373) and ROADMAP (1a) explicitly specify low-to-high cardinality with
+`BucketStart` leading, matching the `llm_usage_1h` template; the high-cardinality-first rule applies to
+the base fact tables, which already lead with `OrgId`.
+**Next / blockers:** 1b (launch-query pipes) and 1c (COPY rollup pipes) now unblocked. Schema is not
+deployed to the cloud dev workspace yet — that is 1d (gated until 2e per the deploy-gate).
+
+---
+
 ## 2026-05-25 — 0d (CF resource provisioning + deploy-gate) — t3code/ab83918d
 
 **Status:** ✅ done

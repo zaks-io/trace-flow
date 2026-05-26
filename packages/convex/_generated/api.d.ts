@@ -787,6 +787,66 @@ export declare const api: {
       >;
     };
   };
+  collectorCompatibilityPolicy: {
+    getActivePolicy: FunctionReference<
+      "query",
+      "public",
+      {},
+      null | {
+        denylistedVersions: Array<string>;
+        minDesktopVersion: string;
+        minParserVersion: string;
+        updatedAt: number;
+      }
+    >;
+    setPolicy: FunctionReference<
+      "mutation",
+      "public",
+      {
+        denylistedVersions: Array<string>;
+        minDesktopVersion: string;
+        minParserVersion: string;
+      },
+      Id<"collectorCompatibilityPolicy">
+    >;
+  };
+  collectorCredentials: {
+    list: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"collectorCredentials">;
+        collectorId: string;
+        expiresAt: number;
+        lastSeenAt?: number;
+        name?: string;
+        orgId: Id<"organizations">;
+        platform?: string;
+        revokedAt?: number;
+        status: "active" | "revoked";
+        userId: Id<"users">;
+      }>
+    >;
+    mint: FunctionReference<
+      "mutation",
+      "public",
+      {
+        collectorId: string;
+        expiresAt: number;
+        name?: string;
+        platform?: string;
+      },
+      { id: Id<"collectorCredentials">; secret: string }
+    >;
+    revoke: FunctionReference<
+      "mutation",
+      "public",
+      { id: Id<"collectorCredentials"> },
+      null
+    >;
+  };
   costAlerts: {
     createAlert: FunctionReference<
       "mutation",
@@ -1011,7 +1071,12 @@ export declare const api: {
         "action",
         "public",
         {},
-        { keySynced: number; subSynced: number; userOrgSynced: number }
+        {
+          collectorCredSynced: number;
+          keySynced: number;
+          subSynced: number;
+          userOrgSynced: number;
+        }
       >;
     };
     tinybird: {
@@ -1160,6 +1225,19 @@ export declare const internal: {
         Id<"subscriptions">
       >;
     };
+  };
+  agentSessionOwners: {
+    claimSession: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        collectorId: string;
+        orgId: Id<"organizations">;
+        sessionPk: string;
+        userId: Id<"users">;
+      },
+      { ownerUserId: Id<"users">; status: "claimed" | "owned" | "conflict" }
+    >;
   };
   apiKeys: {
     getByIdInternal: FunctionReference<
@@ -1640,6 +1718,59 @@ export declare const internal: {
       >;
     };
   };
+  collectorCompatibilityPolicy: {
+    getActivePolicyInternal: FunctionReference<
+      "query",
+      "internal",
+      {},
+      null | {
+        denylistedVersions: Array<string>;
+        minDesktopVersion: string;
+        minParserVersion: string;
+        updatedAt: number;
+      }
+    >;
+  };
+  collectorCredentials: {
+    getByIdInternal: FunctionReference<
+      "query",
+      "internal",
+      { id: Id<"collectorCredentials"> },
+      null | {
+        _creationTime: number;
+        _id: Id<"collectorCredentials">;
+        collectorId: string;
+        expiresAt: number;
+        hashedSecret: string;
+        lastSeenAt?: number;
+        name?: string;
+        orgId: Id<"organizations">;
+        platform?: string;
+        revokedAt?: number;
+        status: "active" | "revoked";
+        userId: Id<"users">;
+      }
+    >;
+    listByOrgId: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      Array<{
+        _creationTime: number;
+        _id: Id<"collectorCredentials">;
+        collectorId: string;
+        expiresAt: number;
+        hashedSecret: string;
+        lastSeenAt?: number;
+        name?: string;
+        orgId: Id<"organizations">;
+        platform?: string;
+        revokedAt?: number;
+        status: "active" | "revoked";
+        userId: Id<"users">;
+      }>
+    >;
+  };
   costAlerts: {
     cleanupDeliveries: FunctionReference<
       "mutation",
@@ -1791,6 +1922,12 @@ export declare const internal: {
         { key: string },
         boolean
       >;
+      deleteCollectorCredFromKV: FunctionReference<
+        "action",
+        "internal",
+        { hashedSecret: string; retryCount?: number },
+        null
+      >;
       deleteKeyFromKV: FunctionReference<
         "action",
         "internal",
@@ -1816,6 +1953,20 @@ export declare const internal: {
             name?: string;
             orgId?: Id<"organizations">;
             userId?: Id<"users">;
+          }>;
+          collectorCredentials: Array<{
+            _creationTime: number;
+            _id: Id<"collectorCredentials">;
+            collectorId: string;
+            expiresAt: number;
+            hashedSecret: string;
+            lastSeenAt?: number;
+            name?: string;
+            orgId: Id<"organizations">;
+            platform?: string;
+            revokedAt?: number;
+            status: "active" | "revoked";
+            userId: Id<"users">;
           }>;
           subscriptions: Array<{
             _creationTime: number;
@@ -1854,6 +2005,21 @@ export declare const internal: {
         }
       >;
       isCallerAdmin: FunctionReference<"query", "internal", {}, boolean>;
+      syncCollectorCredToKV: FunctionReference<
+        "action",
+        "internal",
+        {
+          collectorId: string;
+          createdAt: number;
+          expiresAt: number;
+          hashedSecret: string;
+          orgId: string;
+          retryCount?: number;
+          status: "active" | "revoked";
+          userId: string;
+        },
+        null
+      >;
       syncKeyToKV: FunctionReference<
         "action",
         "internal",
@@ -1939,6 +2105,7 @@ export declare const internal: {
         "internal",
         {
           apiKeys: Array<string>;
+          orgId?: string;
           retentionDays?: number;
           scopes: Array<{ resource: string; type: string }>;
           ttl?: number;

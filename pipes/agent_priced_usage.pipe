@@ -1,0 +1,94 @@
+DESCRIPTION >
+    Canonical Agent Session Authoring Cost view: one row per billable model-usage
+    record, each counted exactly once. This is the single place the subagent dedup
+    rule lives (ADR "Cost and pricing"); agent_sessions, agent_usage_1h/_1d, and PR
+    authoring-cost all read this pipe so they agree by construction. Generic pipe (no
+    TYPE) — Tinybird Forward's replacement for include files, referenced by name from
+    the copy pipes.
+
+    Dedup rule:
+      - Include every direct Agent Message usage (top-level, nested, sidechain).
+      - Include source-reported subagent/result usage (agent_tool_events
+        extracted_subagent_*) ONLY when no matching nested/sidechain Agent Message
+        exists for the same (source, session_pk, subagent agent id). The fallback row
+        carries tokens but cost_usd is null (the consumer prices messages, not tool
+        events) and subagent_cost_coverage = 'fallback', so it lowers priced-token
+        coverage rather than silently under/over-counting.
+
+NODE direct_usage
+SQL >
+    SELECT
+        OrgId,
+        UserId,
+        CollectorId,
+        CollectorCredentialId,
+        session_pk,
+        toString(source) AS source,
+        repo_fingerprint,
+        toString(repo_source) AS repo_source,
+        toString(model) AS model,
+        toString(parser_version) AS parser_version,
+        EventAt,
+        IngestedAt,
+        VendorStartedAt,
+        git_branch,
+        git_head_sha,
+        toUInt64(input_tokens) AS input_tokens,
+        toUInt64(output_tokens) AS output_tokens,
+        toUInt64(cache_read_tokens) AS cache_read_tokens,
+        toUInt64(cache_creation_tokens) AS cache_creation_tokens,
+        toUInt64(reasoning_tokens) AS reasoning_tokens,
+        toString(token_coverage) AS token_coverage,
+        toString(cache_coverage) AS cache_coverage,
+        cost_usd,
+        'direct' AS usage_kind,
+        if(is_sidechain = 1 OR agent_depth > 0, 'direct', 'none') AS subagent_cost_coverage
+    FROM agent_messages FINAL
+
+NODE subagent_fallback_usage
+SQL >
+    SELECT
+        t.OrgId AS OrgId,
+        t.UserId AS UserId,
+        t.CollectorId AS CollectorId,
+        t.CollectorCredentialId AS CollectorCredentialId,
+        t.session_pk AS session_pk,
+        toString(t.source) AS source,
+        t.repo_fingerprint AS repo_fingerprint,
+        toString(t.repo_source) AS repo_source,
+        t.extracted_subagent_model AS model,
+        toString(t.parser_version) AS parser_version,
+        t.EventAt AS EventAt,
+        t.IngestedAt AS IngestedAt,
+        toDateTime64(0, 3) AS VendorStartedAt,
+        '' AS git_branch,
+        '' AS git_head_sha,
+        toUInt64(t.extracted_subagent_input_tokens) AS input_tokens,
+        toUInt64(t.extracted_subagent_output_tokens) AS output_tokens,
+        toUInt64(t.extracted_subagent_cache_read_tokens) AS cache_read_tokens,
+        toUInt64(t.extracted_subagent_cache_creation_tokens) AS cache_creation_tokens,
+        toUInt64(0) AS reasoning_tokens,
+        'full' AS token_coverage,
+        'missing' AS cache_coverage,
+        CAST(NULL AS Nullable(Float64)) AS cost_usd,
+        'subagent_fallback' AS usage_kind,
+        'fallback' AS subagent_cost_coverage
+    FROM agent_tool_events AS t FINAL
+    WHERE t.extracted_subagent_agent_id != ''
+        AND (
+            t.extracted_subagent_input_tokens > 0
+            OR t.extracted_subagent_output_tokens > 0
+            OR t.extracted_subagent_cache_read_tokens > 0
+            OR t.extracted_subagent_cache_creation_tokens > 0
+        )
+        AND (t.source, t.session_pk, t.extracted_subagent_agent_id) NOT IN (
+            SELECT source, session_pk, agent_id
+            FROM agent_messages FINAL
+            WHERE agent_id != '' AND (is_sidechain = 1 OR agent_depth > 0)
+        )
+
+NODE priced_usage
+SQL >
+    SELECT * FROM direct_usage
+    UNION ALL
+    SELECT * FROM subagent_fallback_usage

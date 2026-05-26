@@ -4,9 +4,20 @@ import { axiomConfigFromEnv, createConvexLogger } from '@trace-flow/logging';
 import { internal } from '../_generated/api';
 import { requireAuthenticated } from '../auth/auth';
 import { extractSub } from '../auth/users';
-import { apiKeyValidator, subscriptionValidator, userValidator } from '../validators';
+import {
+  apiKeyValidator,
+  collectorCredentialValidator,
+  subscriptionValidator,
+  userValidator,
+} from '../validators';
 
-function getCloudflareConfig() {
+interface KvConfig {
+  accountId: string;
+  apiToken: string;
+  namespaceId: string;
+}
+
+function getCloudflareConfig(): KvConfig {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   const namespaceId = process.env.CLOUDFLARE_KV_NAMESPACE_ID;
@@ -18,14 +29,31 @@ function getCloudflareConfig() {
   return { accountId, apiToken, namespaceId };
 }
 
-async function putKV(key: string, value: string) {
-  const { accountId, apiToken, namespaceId } = getCloudflareConfig();
-  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
+// Collector Credentials live in their own KV namespace, separate from the
+// API-key store, so a hidden desktop credential never collides with or leaks
+// into the user-facing API-key path.
+function getCollectorCredsConfig(): KvConfig {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  const namespaceId = process.env.CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID;
 
-  const response = await fetch(url, {
+  if (!accountId) throw new Error('CLOUDFLARE_ACCOUNT_ID environment variable is not set');
+  if (!apiToken) throw new Error('CLOUDFLARE_API_TOKEN environment variable is not set');
+  if (!namespaceId)
+    throw new Error('CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID environment variable is not set');
+
+  return { accountId, apiToken, namespaceId };
+}
+
+function kvValueUrl({ accountId, namespaceId }: KvConfig, key: string): string {
+  return `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
+}
+
+async function kvPut(config: KvConfig, key: string, value: string) {
+  const response = await fetch(kvValueUrl(config, key), {
     method: 'PUT',
     headers: {
-      Authorization: `Bearer ${apiToken}`,
+      Authorization: `Bearer ${config.apiToken}`,
       'Content-Type': 'text/plain',
     },
     body: value,
@@ -37,6 +65,31 @@ async function putKV(key: string, value: string) {
       `Failed to write KV key ${key}: ${response.status} ${response.statusText} - ${errorText}`,
     );
   }
+}
+
+async function kvDelete(config: KvConfig, key: string) {
+  const response = await fetch(kvValueUrl(config, key), {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${config.apiToken}` },
+  });
+
+  // 404 means the key is already gone — the desired end state, not a failure.
+  if (!response.ok && response.status !== 404) {
+    const errorText = await response.text();
+    throw new Error(
+      `Failed to delete KV key ${key}: ${response.status} ${response.statusText} - ${errorText}`,
+    );
+  }
+}
+
+async function putKV(key: string, value: string) {
+  await kvPut(getCloudflareConfig(), key, value);
+}
+
+// KV key for a Collector Credential. The Worker hashes the header secret with
+// SHA-256 and looks up `collector:<hash>`; the plaintext secret is never stored.
+function collectorKvKey(hashedSecret: string): string {
+  return `collector:${hashedSecret}`;
 }
 
 export const syncKeyToKV = internalAction({
@@ -54,6 +107,71 @@ export const syncKeyToKV = internalAction({
     });
 
     await putKV(args.key, value);
+  },
+});
+
+export const syncCollectorCredToKV = internalAction({
+  args: {
+    hashedSecret: v.string(),
+    orgId: v.string(),
+    userId: v.string(),
+    collectorId: v.string(),
+    expiresAt: v.number(),
+    status: v.union(v.literal('active'), v.literal('revoked')),
+    createdAt: v.number(),
+    retryCount: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const value = JSON.stringify({
+      orgId: args.orgId,
+      userId: args.userId,
+      collectorId: args.collectorId,
+      expiresAt: args.expiresAt,
+      status: args.status,
+      createdAt: args.createdAt,
+    });
+
+    try {
+      await kvPut(getCollectorCredsConfig(), collectorKvKey(args.hashedSecret), value);
+    } catch (e) {
+      const attempt = args.retryCount ?? 0;
+      console.error('convex.cloudflare_sync_collector_cred_failed', { attempt, error: e });
+      if (attempt < 3) {
+        await ctx.scheduler.runAfter(
+          30_000,
+          internal.integrations.cloudflare.syncCollectorCredToKV,
+          {
+            ...args,
+            retryCount: attempt + 1,
+          },
+        );
+        return;
+      }
+      throw e;
+    }
+  },
+});
+
+export const deleteCollectorCredFromKV = internalAction({
+  args: { hashedSecret: v.string(), retryCount: v.optional(v.number()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    try {
+      await kvDelete(getCollectorCredsConfig(), collectorKvKey(args.hashedSecret));
+    } catch (e) {
+      const attempt = args.retryCount ?? 0;
+      console.error('convex.cloudflare_delete_collector_cred_failed', { attempt, error: e });
+      if (attempt < 3) {
+        await ctx.scheduler.runAfter(
+          30_000,
+          internal.integrations.cloudflare.deleteCollectorCredFromKV,
+          { ...args, retryCount: attempt + 1 },
+        );
+        return;
+      }
+      throw e;
+    }
   },
 });
 
@@ -218,12 +336,14 @@ export const getAllSyncData = internalQuery({
     apiKeys: v.array(apiKeyValidator),
     subscriptions: v.array(subscriptionValidator),
     users: v.array(userValidator),
+    collectorCredentials: v.array(collectorCredentialValidator),
   }),
   handler: async (ctx) => {
     const apiKeys = await ctx.db.query('apiKeys').collect();
     const subscriptions = await ctx.db.query('subscriptions').collect();
     const users = await ctx.db.query('users').collect();
-    return { apiKeys, subscriptions, users };
+    const collectorCredentials = await ctx.db.query('collectorCredentials').collect();
+    return { apiKeys, subscriptions, users, collectorCredentials };
   },
 });
 
@@ -239,12 +359,13 @@ export const syncAll = action({
     keySynced: v.number(),
     subSynced: v.number(),
     userOrgSynced: v.number(),
+    collectorCredSynced: v.number(),
   }),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
     const isAdmin = await ctx.runQuery(internal.integrations.cloudflare.isCallerAdmin);
     if (!isAdmin) throw new Error('Admin access required');
-    const { apiKeys, subscriptions, users } = await ctx.runQuery(
+    const { apiKeys, subscriptions, users, collectorCredentials } = await ctx.runQuery(
       internal.integrations.cloudflare.getAllSyncData,
     );
 
@@ -282,10 +403,26 @@ export const syncAll = action({
       });
     });
 
+    // Only active credentials belong in KV; revoked ones must stay un-synced so
+    // their secret hash can never re-authenticate.
+    const activeCreds = collectorCredentials.filter((c) => c.status === 'active');
+    await runBatched(activeCreds, 10, (cred) =>
+      ctx.runAction(internal.integrations.cloudflare.syncCollectorCredToKV, {
+        hashedSecret: cred.hashedSecret,
+        orgId: cred.orgId,
+        userId: cred.userId,
+        collectorId: cred.collectorId,
+        expiresAt: cred.expiresAt,
+        status: cred.status,
+        createdAt: cred._creationTime,
+      }),
+    );
+
     return {
       keySynced: apiKeys.length,
       subSynced: subscriptions.length,
       userOrgSynced: usersWithOrg.length,
+      collectorCredSynced: activeCreds.length,
     };
   },
 });

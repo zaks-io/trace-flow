@@ -1,0 +1,48 @@
+DESCRIPTION >
+    Period-over-period movement for (tool_name, command_family): the requested
+    window versus the immediately-preceding window of equal length. Query-time
+    over `agent_tool_events FINAL` — the query-time-first launch path; the
+    rebuilt `agent_tool_usage_1h` self-join is the 1c optimization, not this pipe.
+    Sorted by absolute change in event volume. `org_id` is enforced via the JWT
+    `fixed_params`.
+
+NODE delta
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        end_ms - start_ms AS span_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt
+    SELECT
+        tool_name,
+        command_family,
+        countIf(EventAt >= start_dt AND EventAt < end_dt) AS current_count,
+        countIf(EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_count,
+        toInt64(current_count) - toInt64(prior_count) AS count_delta,
+        countIf(EventAt >= start_dt AND EventAt < end_dt AND status = 'failure') AS current_failures,
+        countIf(EventAt >= prior_start_dt AND EventAt < start_dt AND status = 'failure') AS prior_failures,
+        toInt64(current_failures) - toInt64(prior_failures) AS failure_delta
+    FROM agent_tool_events FINAL
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND EventAt >= prior_start_dt
+        AND EventAt < end_dt
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 14) }})
+        {% if defined(source) %}
+        AND source = {{ String(source) }}
+        {% end %}
+        {% if defined(repo_fingerprint) %}
+        AND repo_fingerprint = {{ String(repo_fingerprint) }}
+        {% end %}
+    GROUP BY tool_name, command_family
+    HAVING current_count > 0 OR prior_count > 0
+    ORDER BY abs(count_delta) DESC, tool_name ASC, command_family ASC
+    LIMIT {{ Int32(limit, 100) }}
+
+TYPE ENDPOINT

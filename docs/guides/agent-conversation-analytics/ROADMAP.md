@@ -14,11 +14,11 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 0b  | Rust workspace scaffold                     | ✅ done | —              |
 | 0c  | `@trace-flow/pricing` package               | ✅ done | —              |
 | 0d  | CF resource provisioning + deploy-gate      | ✅ done | —              |
-| 1a  | 9 `agent_*` datasources                     | ☐ todo  | 0a             |
-| 1b  | Launch-query pipes                          | ☐ todo  | 1a             |
-| 1c  | COPY rollup pipes                           | ☐ todo  | 1a             |
-| 1d  | Deploy `agent_*` schema (Tinybird)          | ☐ todo  | 1a, 1b, 1c     |
-| 2a  | Convex control plane                        | ☐ todo  | 0a             |
+| 1a  | 9 `agent_*` datasources                     | ✅ done | 0a             |
+| 1b  | Launch-query pipes                          | ✅ done | 1a             |
+| 1c  | COPY rollup pipes                           | ✅ done | 1a             |
+| 1d  | Deploy `agent_*` schema (Tinybird)          | ✅ done | 1a, 1b, 1c     |
+| 2a  | Convex control plane                        | ✅ done | 0a             |
 | 2b  | `apps/agent-ingest` worker                  | ☐ todo  | 0a, 2a         |
 | 2c  | `apps/agent-consumer` worker                | ☐ todo  | 0c, 1a, 2b     |
 | 2d  | models.dev pricing import                   | ☐ todo  | 0c, 2a         |

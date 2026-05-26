@@ -61,6 +61,29 @@ export const apiKeyValidator = v.object({
   name: v.optional(v.string()),
 });
 
+const collectorCredentialStatusValidator = v.union(v.literal('active'), v.literal('revoked'));
+
+// Full record, including the secret hash — internal/admin paths only.
+export const collectorCredentialValidator = v.object({
+  _id: v.id('collectorCredentials'),
+  _creationTime: v.number(),
+  hashedSecret: v.string(),
+  orgId: v.id('organizations'),
+  userId: v.id('users'),
+  collectorId: v.string(),
+  name: v.optional(v.string()),
+  platform: v.optional(v.string()),
+  lastSeenAt: v.optional(v.number()),
+  status: collectorCredentialStatusValidator,
+  expiresAt: v.number(),
+  revokedAt: v.optional(v.number()),
+});
+
+// Connected-Desktops view — the full record minus `hashedSecret`. Derived from
+// the full validator so the public shape stays in sync and the secret hash can
+// never leak to the client. This is what the user-facing `list` returns.
+export const collectorCredentialPublicValidator = collectorCredentialValidator.omit('hashedSecret');
+
 export const costAlertChannelConfigValidator = v.union(
   v.object({
     type: v.literal('email'),

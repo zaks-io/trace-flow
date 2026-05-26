@@ -1,0 +1,45 @@
+DESCRIPTION >
+    One Agent Session aggregate, rebuilt from the base tables FINAL via the
+    canonical priced-usage view (Copy Pipe, COPY_MODE replace) so session cost stays
+    consistent with agent_usage_* and the PR cost path by construction. Powers the
+    session-outliers launch query (top sessions by cost, file count, duration).
+    Not partitioned: one row per session, and partitioning by the mutable LastEventAt
+    would scatter a re-synced session across daily partitions where FINAL dedupes
+    only within a partition. cost_usd is the only Nullable column.
+
+SCHEMA >
+    `OrgId` String,
+    `session_pk` String,
+    `source` LowCardinality(String),
+    `UserId` String,
+    `CollectorId` String,
+    `CollectorCredentialId` String,
+    `repo_fingerprint` String,
+    `repo_source` LowCardinality(String),
+    `model` LowCardinality(String),
+    `parser_version` LowCardinality(String),
+    `StartedAt` DateTime64(3),
+    `LastEventAt` DateTime64(3),
+    `VendorStartedAt` DateTime64(3),
+    `IngestedAt` DateTime64(3),
+    `git_branch` String,
+    `git_head_sha` String,
+    `primary_pull_request_url` String,
+    `message_count` UInt32,
+    `tool_event_count` UInt32,
+    `file_event_count` UInt32,
+    `failure_count` UInt32,
+    `input_tokens` UInt64,
+    `output_tokens` UInt64,
+    `cache_read_tokens` UInt64,
+    `cache_creation_tokens` UInt64,
+    `reasoning_tokens` UInt64,
+    `token_coverage` LowCardinality(String),
+    `cache_coverage` LowCardinality(String),
+    `duration_ms` UInt64,
+    `cost_usd` Nullable(Float64)
+
+ENGINE "ReplacingMergeTree"
+ENGINE_VER "IngestedAt"
+ENGINE_SORTING_KEY "OrgId, session_pk"
+ENGINE_TTL "toDateTime(LastEventAt) + toIntervalYear(1)"

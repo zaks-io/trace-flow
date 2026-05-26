@@ -1,0 +1,26 @@
+DESCRIPTION >
+    Daily rollup of Agent Message usage and cost, by org/source/model/repo.
+    Same shape as agent_usage_1h with a day-truncated BucketStart. Rebuilt from
+    agent_messages FINAL via the canonical priced-usage view (Copy Pipe,
+    COPY_MODE replace) — never appended per queue message or replay.
+
+SCHEMA >
+    `BucketStart` DateTime,
+    `OrgId` String,
+    `source` LowCardinality(String),
+    `model` LowCardinality(String),
+    `repo_fingerprint` String,
+    `MessageCount` AggregateFunction(count),
+    `SessionCount` AggregateFunction(uniq, String),
+    `InputTokens` AggregateFunction(sum, UInt64),
+    `OutputTokens` AggregateFunction(sum, UInt64),
+    `CacheReadTokens` AggregateFunction(sum, UInt64),
+    `CacheCreationTokens` AggregateFunction(sum, UInt64),
+    `ReasoningTokens` AggregateFunction(sum, UInt64),
+    `PricedMessageCount` AggregateFunction(sum, UInt64),
+    `CostUsd` AggregateFunction(sum, Float64)
+
+ENGINE "AggregatingMergeTree"
+ENGINE_SORTING_KEY "BucketStart, OrgId, source, model, repo_fingerprint"
+ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
+ENGINE_TTL "BucketStart + toIntervalYear(1)"

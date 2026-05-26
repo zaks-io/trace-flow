@@ -28,6 +28,33 @@ interface TinybirdScope {
   fixed_params?: Record<string, unknown>;
 }
 
+// Sentinels keep a token scoped to nothing rather than matching empty strings,
+// so a keyless/orgless caller can never read another tenant's rows.
+const NO_KEYS_SENTINEL = '__NO_KEYS__';
+const NO_ORG_SENTINEL = '__NO_ORG__';
+
+/**
+ * Stamp the row-security fixed_params onto every scope. `api_keys` +
+ * `retention_days` gate the `llm_requests` pipes; `org_id` gates the agent
+ * pipes (which deliberately do NOT use `api_keys`). Both token-minting paths
+ * (`generateToken` and the MCP `generateTokenInternal`) build their fixed_params
+ * here so neither can silently issue a token missing `org_id`.
+ */
+export function withRowSecurityParams(
+  scopes: TinybirdScope[],
+  params: { apiKeyString: string; retentionDays: number; orgId: string },
+): TinybirdScope[] {
+  return scopes.map((scope) => ({
+    ...scope,
+    fixed_params: {
+      ...scope.fixed_params,
+      api_keys: params.apiKeyString || NO_KEYS_SENTINEL,
+      retention_days: params.retentionDays,
+      org_id: params.orgId || NO_ORG_SENTINEL,
+    },
+  }));
+}
+
 export const generateToken = action({
   args: {
     scopes: v.array(
@@ -72,16 +99,11 @@ export const generateToken = action({
     const tier = subscription?.tier ?? 'hobby';
     const retentionDays = RETENTION_DAYS[tier];
 
-    // Add api_keys and retention_days to fixed_params for server-side enforcement
-    // Use sentinel value when user has no keys to prevent matching empty strings
-    const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
-      ...scope,
-      fixed_params: {
-        ...scope.fixed_params,
-        api_keys: apiKeyString || '__NO_KEYS__',
-        retention_days: retentionDays,
-      },
-    }));
+    const scopesWithApiKeys = withRowSecurityParams(args.scopes, {
+      apiKeyString,
+      retentionDays,
+      orgId: user?.orgId ?? '',
+    });
 
     const ttlSeconds = args.ttl ?? 600;
     const expirationTime = Math.floor(Date.now() / 1000) + ttlSeconds;
@@ -132,23 +154,22 @@ export const generateTokenInternal = internalAction({
     scopes: v.array(v.object({ type: v.string(), resource: v.string() })),
     apiKeys: v.array(v.string()),
     retentionDays: v.optional(v.number()),
+    orgId: v.optional(v.string()),
     ttl: v.optional(v.number()),
   },
   returns: v.string(),
   handler: async (_, args) => {
     // Validate API keys are UUIDs before inclusion in JWT (defense in depth)
     const validKeys = sanitizeApiKeys(args.apiKeys);
-    // Use sentinel value when no keys to prevent matching empty strings
-    const apiKeyString = validKeys.join(',') || '__NO_KEYS__';
 
-    // Add api_keys and retention_days to fixed_params for row-level security
-    const scopesWithApiKeys: TinybirdScope[] = args.scopes.map((scope) => ({
-      ...scope,
-      fixed_params: {
-        api_keys: apiKeyString,
-        retention_days: args.retentionDays ?? RETENTION_DAYS.hobby,
-      },
-    }));
+    // Same fixed_param builder as generateToken — always emits org_id (sentinel
+    // when the caller has no org), so the MCP path can never issue an agent JWT
+    // that is unscoped on org_id.
+    const scopesWithApiKeys = withRowSecurityParams(args.scopes, {
+      apiKeyString: validKeys.join(','),
+      retentionDays: args.retentionDays ?? RETENTION_DAYS.hobby,
+      orgId: args.orgId ?? '',
+    });
 
     const ttlSeconds = args.ttl ?? 600;
     const payload = {
