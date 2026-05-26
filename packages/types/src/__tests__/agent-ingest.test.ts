@@ -7,6 +7,15 @@ import type {
   AgentFileEventFact,
   AgentCapabilitySnapshotFact,
   AgentPullRequestLinkFact,
+  AgentSource,
+  AgentMessageRole,
+  TokenCoverage,
+  CacheCoverage,
+  AgentEventStatus,
+  AgentFileOperation,
+  AgentCapabilityKind,
+  PullRequestLinkConfidence,
+  PullRequestLinkEvidence,
 } from '../agent-ingest';
 
 /**
@@ -25,11 +34,64 @@ const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
 const isNullableString = (v: unknown): v is string | null => v === null || isString(v);
 const isNullableNumber = (v: unknown): v is number | null => v === null || isNumber(v);
 
+// Enum guards: `as const satisfies readonly T[]` makes the literal list a tsc error if it drifts
+// from the union in `agent-ingest.ts`, so the fixture is checked against the real wire enums (not
+// just "is a string") at both compile time and run time.
+const oneOf =
+  <T extends string>(allowed: readonly T[]) =>
+  (v: unknown): v is T =>
+    typeof v === 'string' && (allowed as readonly string[]).includes(v);
+
+const isSource = oneOf(['claude', 'codex', 'cursor'] as const satisfies readonly AgentSource[]);
+const isRole = oneOf([
+  'user',
+  'assistant',
+  'system',
+  'tool',
+  'other',
+] as const satisfies readonly AgentMessageRole[]);
+const isTokenCoverage = oneOf([
+  'full',
+  'partial',
+  'missing',
+] as const satisfies readonly TokenCoverage[]);
+const isCacheCoverage = oneOf(['full', 'missing'] as const satisfies readonly CacheCoverage[]);
+const isStatus = oneOf([
+  'success',
+  'failure',
+  'unknown',
+] as const satisfies readonly AgentEventStatus[]);
+const isOperation = oneOf([
+  'read',
+  'write',
+  'edit',
+  'create',
+  'delete',
+  'rename',
+  'other',
+] as const satisfies readonly AgentFileOperation[]);
+const isCapabilityKind = oneOf([
+  'base_instructions',
+  'dynamic_tools',
+  'mcp_servers',
+  'other',
+] as const satisfies readonly AgentCapabilityKind[]);
+const isConfidence = oneOf([
+  'high',
+  'medium',
+  'low',
+] as const satisfies readonly PullRequestLinkConfidence[]);
+const isEvidence = oneOf([
+  'assistant_text',
+  'tool_output',
+  'transcript_record',
+] as const satisfies readonly PullRequestLinkEvidence[]);
+
 function assertMessage(m: AgentMessageFact): void {
   expect(isString(m.vendor_session_id)).toBe(true);
   expect(isNullableString(m.vendor_message_id)).toBe(true);
   expect(isNumber(m.turn_index)).toBe(true);
-  expect(isString(m.role)).toBe(true);
+  expect(isRole(m.role)).toBe(true);
   expect(isNumber(m.event_at)).toBe(true);
   expect(isString(m.model)).toBe(true);
   expect(isNumber(m.input_tokens)).toBe(true);
@@ -39,8 +101,8 @@ function assertMessage(m: AgentMessageFact): void {
   expect(isNumber(m.cache_creation_5m_tokens)).toBe(true);
   expect(isNumber(m.cache_creation_1h_tokens)).toBe(true);
   expect(isNumber(m.reasoning_tokens)).toBe(true);
-  expect(isString(m.token_coverage)).toBe(true);
-  expect(isString(m.cache_coverage)).toBe(true);
+  expect(isTokenCoverage(m.token_coverage)).toBe(true);
+  expect(isCacheCoverage(m.cache_coverage)).toBe(true);
   expect(isNumber(m.agent_depth)).toBe(true);
   expect(isBool(m.is_subagent_spawn)).toBe(true);
   expect(isBool(m.is_sidechain)).toBe(true);
@@ -63,7 +125,7 @@ function assertToolEvent(t: AgentToolEventFact): void {
   expect(isString(t.command_family)).toBe(true);
   expect(isString(t.command_program)).toBe(true);
   expect(isString(t.command_subcommand)).toBe(true);
-  expect(isString(t.status)).toBe(true);
+  expect(isStatus(t.status)).toBe(true);
   expect(isNullableNumber(t.exit_code)).toBe(true);
   expect(isNullableNumber(t.duration_ms)).toBe(true);
   expect(Array.isArray(t.repo_relative_paths) && t.repo_relative_paths.every(isString)).toBe(true);
@@ -86,7 +148,7 @@ function assertFileEvent(f: AgentFileEventFact): void {
   expect(isNullableString(f.vendor_message_id)).toBe(true);
   expect(isNumber(f.source_block_index)).toBe(true);
   expect(isString(f.normalized_repo_path)).toBe(true);
-  expect(isString(f.operation)).toBe(true);
+  expect(isOperation(f.operation)).toBe(true);
   expect(isNumber(f.event_at)).toBe(true);
   expect(isNumber(f.dropped_sensitive)).toBe(true);
 }
@@ -96,7 +158,7 @@ function assertCapability(c: AgentCapabilitySnapshotFact): void {
   expect(isNullableString(c.source_snapshot_id)).toBe(true);
   expect(isNumber(c.stable_turn_index)).toBe(true);
   expect(isNumber(c.event_at)).toBe(true);
-  expect(isString(c.capability_kind)).toBe(true);
+  expect(isCapabilityKind(c.capability_kind)).toBe(true);
   expect(isNumber(c.item_count)).toBe(true);
   expect(isNumber(c.total_size_bytes)).toBe(true);
   expect(isNumber(c.total_tokens_estimate)).toBe(true);
@@ -115,8 +177,8 @@ function assertPrLink(p: AgentPullRequestLinkFact): void {
   expect(isString(p.repo)).toBe(true);
   expect(isNumber(p.number)).toBe(true);
   expect(isString(p.url)).toBe(true);
-  expect(isString(p.confidence)).toBe(true);
-  expect(isString(p.evidence)).toBe(true);
+  expect(isConfidence(p.confidence)).toBe(true);
+  expect(isEvidence(p.evidence)).toBe(true);
   expect(isNumber(p.dropped_sensitive)).toBe(true);
 }
 
@@ -125,7 +187,7 @@ describe('AgentIngestEnvelope contract fixture', () => {
 
   it('deserializes the batch with every field present and typed', () => {
     const { batch } = envelope;
-    expect(isString(batch.source)).toBe(true);
+    expect(isSource(batch.source)).toBe(true);
     expect(isString(batch.collector_batch_id)).toBe(true);
     expect(isString(batch.desktop_version)).toBe(true);
     expect(isString(batch.parser_version)).toBe(true);

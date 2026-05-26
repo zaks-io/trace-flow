@@ -9,10 +9,10 @@ end-to-end path lands and a `main` deploy is intentional.
 
 ## Account
 
-| Field      | Value                              |
-| ---------- | ---------------------------------- |
-| Account    | Isaac@zaks.io's Account            |
-| Account ID | `a461d640900eb3905d7b6619c8c0da91` |
+The dev account ID is **not** committed here — like the existing workers, it comes from the
+`CLOUDFLARE_ACCOUNT_ID` CI secret / your local `wrangler` login (`wrangler whoami`), never from
+source. The queue and KV IDs below are ordinary resource identifiers (useless without an auth token)
+and follow the same convention as the committed `id = …` values in `apps/*/wrangler.toml`.
 
 ## Queues
 

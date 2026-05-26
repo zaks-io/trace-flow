@@ -75,8 +75,8 @@
     {
       "name": "absolute-home-path-users",
       "category": "home_path",
-      "input": "/Users/isaacsuttell/.aws/credentials",
-      "secret": "/Users/isaacsuttell",
+      "input": "/Users/janedoe/.aws/credentials",
+      "secret": "/Users/janedoe",
       "expect": "mask"
     },
     {
