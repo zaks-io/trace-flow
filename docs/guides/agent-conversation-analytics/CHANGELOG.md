@@ -15,6 +15,37 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2f (Observability + ops runbook) — t3code/ab83918d
+
+**Status:** 🚧 in progress — in-repo code + runbook landed and verified; live-alert provisioning is the
+one outstanding item (needs dashboard access, not reachable headlessly).
+**Changed:** `apps/agent-consumer/src/consumer.ts` now calls `Sentry.captureException` on the two
+swallowed error paths (insert failure — tagged `operation:insert` + `datasource`; per-message
+accumulate throw — tagged `operation:accumulate`) and `Sentry.captureMessage` on the structural-guard
+contract-drift path (`agent_consumer.message_malformed`, the DLQ-bound signal). The batch loop catches
+these to retry rather than rethrow, so without manual capture they would never reach Sentry; the
+`withSentry` queue wrapper initializes the client per invocation so the manual calls report (documented
+in `index.ts`). `apps/agent-ingest/src/policy.ts` adds the missing `agent_ingest.policy_unavailable`
+error log on the cold-miss fail-closed return (no silent error). New
+`docs/guides/agent-conversation-analytics/runbook.md`: DLQ inspect (`wrangler queues info`) /
+re-drive (temporary HTTP pull consumer, idempotent under `ReplacingMergeTree FINAL`) / purge; the three
+alert definitions as a contract (DLQ-non-empty via Cloudflare; consumer-error-rate via Sentry tags;
+priced-coverage% via a Tinybird `countIf(cost_usd IS NOT NULL)/count(*)` drop-vs-baseline query); the
+`tb`/`wrangler` teardown including what `git revert` does **not** undo; and the manual 1d Tinybird
+schema-deploy (`tb --cloud deploy`, not in CI). `provisioned-resources.md` deploy-gate section corrected
+to past tense (2e lifted it) and its teardown stub pointed at the runbook.
+**Verified:** `turbo run lint type-check test build` on both workers — 8/8 pass; agent-consumer 41
+tests (insert-failure asserts `captureException` with the `operation:insert` tag, malformed asserts
+`captureMessage`), agent-ingest 65 tests (+1 asserting the `policy_unavailable` log fires before the
+fail-closed return). `coderabbit review --agent --type uncommitted`: 0 findings. prettier clean on the
+docs. **NOT verified (blocked, needs the user):** the three alerts firing live — there is no
+alert-as-code path in this repo, so DLQ-non-empty (Cloudflare), consumer-error-rate (Sentry), and
+priced-coverage% (Tinybird) must be provisioned in their dashboards from the runbook's definitions and
+fire-tested there. Forced-error→Sentry and coverage-drop→alert can only be exercised against the
+deployed dev workers + live Tinybird, not headlessly.
+**Next / blockers:** provision + fire-test the three dashboard alerts (human ops), then flip 2f to ✅.
+Continuing to 2g (independent of 2f). Phase 2 PR to `main` at the boundary — no self-merge.
+
 ## 2026-05-26 — 2e (Wrangler / dev wiring) — t3code/ab83918d
 
 **Status:** ✅ done

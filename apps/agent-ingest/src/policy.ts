@@ -82,6 +82,7 @@ function degradeOrFail(logger: Logger): PolicyResult {
     logger.warn('agent_ingest.policy_degraded', { fetchedAt: cached.fetchedAt });
     return { ok: true, policy: cached.policy, degraded: true };
   }
+  logger.error('agent_ingest.policy_unavailable');
   return { ok: false, reason: 'policy_unavailable' };
 }
 

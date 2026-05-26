@@ -7,7 +7,10 @@
  *
  * `processAgentBatch` is exported for in-process tests (drive it with stub messages + a fetch mock,
  * the only way to deterministically assert the ack / retry / DLQ paths). The default export wraps the
- * queue handler in Sentry for the deployed Worker.
+ * queue handler in Sentry for the deployed Worker; `withSentry` instruments the `queue` method and
+ * initializes the client per invocation, so the manual `Sentry.captureException` / `captureMessage`
+ * calls inside `processAgentBatch` report (the batch loop catches per-message and insert errors to
+ * retry them rather than letting them escape, so they would otherwise never reach Sentry).
  */
 import * as Sentry from '@sentry/cloudflare';
 import type { AgentConsumerEnv } from './context';

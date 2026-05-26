@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare';
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { insertRows } from '@trace-flow/tinybird-client';
@@ -103,6 +104,11 @@ async function flush(acc: Accumulator, env: AgentConsumerEnv, logger: Logger): P
         datasource: DATASOURCES[category],
         rows: acc[category].length,
       });
+      Sentry.captureException(result.reason, {
+        level: 'error',
+        tags: { operation: 'insert', datasource: DATASOURCES[category] },
+        extra: { rows: acc[category].length },
+      });
       return true;
     }
     return false;
@@ -135,6 +141,11 @@ export async function processAgentBatch(
       try {
         if (!isQueueMessage(message.body)) {
           logger.error('agent_consumer.message_malformed', undefined, { messageId: message.id });
+          Sentry.captureMessage('agent_consumer.message_malformed', {
+            level: 'error',
+            tags: { operation: 'guard' },
+            extra: { messageId: message.id },
+          });
           message.retry();
           continue;
         }
@@ -142,6 +153,11 @@ export async function processAgentBatch(
         wellFormed.push(message);
       } catch (error) {
         logger.error('agent_consumer.message_process_failed', error, { messageId: message.id });
+        Sentry.captureException(error, {
+          level: 'error',
+          tags: { operation: 'accumulate' },
+          extra: { messageId: message.id },
+        });
         message.retry();
       }
     }

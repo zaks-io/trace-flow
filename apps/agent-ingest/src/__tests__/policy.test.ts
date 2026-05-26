@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { fetchMock } from 'cloudflare:test';
 import { createWorkerLogger } from '@trace-flow/logging';
 import {
@@ -107,6 +107,14 @@ describe('getCompatibilityPolicy', () => {
     interceptPolicy(200, { minDesktopVersion: '1.0.0' }); // missing denylistedVersions/updatedAt
     const res = await getCompatibilityPolicy(env, logger);
     expect(res).toEqual({ ok: false, reason: 'policy_unavailable' });
+  });
+
+  it('logs policy_unavailable before the cold-miss fail-closed return (no silent error)', async () => {
+    const errorSpy = vi.spyOn(logger, 'error');
+    interceptPolicy(503, { error: 'down' });
+    await getCompatibilityPolicy(env, logger);
+    expect(errorSpy).toHaveBeenCalledWith('agent_ingest.policy_unavailable');
+    errorSpy.mockRestore();
   });
 
   it('serves the last-good policy (degraded) when a refresh fails after the TTL', async () => {

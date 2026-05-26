@@ -1,6 +1,14 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import * as Sentry from '@sentry/cloudflare';
 import { microdollarsToDollars, type ModelPricing } from '@trace-flow/pricing';
 import { processAgentBatch } from '../consumer';
+
+// withSentry initializes the client in the deployed Worker; here we mock the capture surface so the
+// error paths (insert failure, contract drift) can assert they report rather than fail silently.
+vi.mock('@sentry/cloudflare', () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
 import {
   batchOf,
   makeEnv,
@@ -38,6 +46,7 @@ let tb: ReturnType<typeof mockTinybird>;
 
 afterEach(() => {
   tb?.restore();
+  vi.clearAllMocks();
 });
 
 describe('processAgentBatch', () => {
@@ -153,6 +162,10 @@ describe('processAgentBatch', () => {
     expect(bad.retry).toHaveBeenCalledOnce();
     expect(bad.ack).not.toHaveBeenCalled();
     expect(tb.inserts).toHaveLength(0);
+    expect(Sentry.captureMessage).toHaveBeenCalledWith(
+      'agent_consumer.message_malformed',
+      expect.objectContaining({ level: 'error', extra: { messageId: 'm1' } }),
+    );
   });
 
   it('isolates a malformed message and still processes its well-formed siblings', async () => {
@@ -180,6 +193,12 @@ describe('processAgentBatch', () => {
     expect(b.retry).toHaveBeenCalledOnce();
     expect(a.ack).not.toHaveBeenCalled();
     expect(b.ack).not.toHaveBeenCalled();
+    expect(Sentry.captureException).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tags: expect.objectContaining({ operation: 'insert', datasource: 'agent_messages' }),
+      }),
+    );
   });
 
   it('issues one insert per non-empty base datasource', async () => {

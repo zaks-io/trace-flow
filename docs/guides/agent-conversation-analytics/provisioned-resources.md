@@ -42,26 +42,17 @@ control plane, not the sole minting mechanism.
   worker's `wrangler.jsonc` `[[unsafe.bindings]]`; Cloudflare allocates it at deploy time, so there
   is no `wrangler` create command and no ID to record here.
 
-## Deploy gate (until 2e)
+## Deploy gate (lifted in 2e)
 
-`deploy.yml` and `preview.yml` use explicit per-worker jobs (no matrix / auto-discovery), so the
-agent-ingest and agent-consumer workers are **gated by absence**: neither workflow references them,
-so a mid-phase self-merge to `main` leaves the agent path inert and deploy-safe. Task 2e adds the
-deploy + preview jobs (and the `deploy-status.needs` entries) only after wiring the full path.
+Until 2e, the agent-ingest and agent-consumer workers were **gated by absence**: neither `deploy.yml`
+nor `preview.yml` referenced them (explicit per-worker jobs, no matrix / auto-discovery), so a
+mid-phase self-merge to `main` left the agent path inert. Task 2e lifted the gate — `deploy.yml` now
+has `deploy-agent-ingest` and `deploy-agent-consumer` jobs (listed in `deploy-status.needs`), and
+`preview.yml` auto-discovers both via their `deploy:preview` scripts. Deploys are flat (dev-named
+workers, dev resources): both `main` and PR previews target the same `*-dev` workers, since slice B
+has no production agent pipeline yet.
 
-Verify the gate holds:
+## Teardown
 
-```sh
-grep -nE 'agent-ingest|agent-consumer' .github/workflows/deploy.yml .github/workflows/preview.yml
-# expect: no matches
-```
-
-## Teardown (extended into the 2f runbook)
-
-Dev resources are disposable. To remove everything 0d created:
-
-```sh
-wrangler queues delete agent-ingest-dev
-wrangler queues delete agent-ingest-dlq-dev
-wrangler kv namespace delete --namespace-id f945ee3d71954ffabd364e3db385d3ab
-```
+Moved to the [ops runbook](./runbook.md#teardown) (2f), which also covers what `git revert` does **not**
+undo and the Tinybird datasource teardown. The 0d Cloudflare resources are removed there.
