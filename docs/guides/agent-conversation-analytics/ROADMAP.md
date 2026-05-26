@@ -19,7 +19,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 1c  | COPY rollup pipes                           | ✅ done | 1a             |
 | 1d  | Deploy `agent_*` schema (Tinybird)          | ✅ done | 1a, 1b, 1c     |
 | 2a  | Convex control plane                        | ✅ done | 0a             |
-| 2b  | `apps/agent-ingest` worker                  | ☐ todo  | 0a, 2a         |
+| 2b  | `apps/agent-ingest` worker                  | ✅ done | 0a, 2a         |
 | 2c  | `apps/agent-consumer` worker                | ☐ todo  | 0c, 1a, 2b     |
 | 2d  | models.dev pricing import                   | ☐ todo  | 0c, 2a         |
 | 2e  | Wrangler / dev wiring                       | ☐ todo  | 2b, 2c, 1d     |

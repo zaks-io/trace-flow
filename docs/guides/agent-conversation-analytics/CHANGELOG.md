@@ -15,6 +15,40 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2b (`apps/agent-ingest` worker) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** New `apps/agent-ingest` CF Worker (mirrors `apps/proxy` layout, Sentry-wrapped Hono `app`).
+`POST /v1/ingest` gate order (cheap → control-plane → work): auth (`X-Trace-Flow-Collector-Secret` vs
+`COLLECTOR_CREDS` KV) → Content-Length pre-check + 10MB body cap (413) → JSON parse + structural envelope
+guard (400) → compatibility policy (503 `policy_unavailable` cold-miss fail-closed, stale-while-degraded
+otherwise) → version check (426 `upgrade_required`) → `AGENT_INGEST_LIMITER` ns **2006** (429) → empty-facts
+202 no-op → re-redact backstop → assemble `*_pk`s → Convex first-writer claim (503 `session_claim_unavailable`
+when unreachable, drop only conflicted sessions) → chunk to sub-128KB queue messages → `AGENT_QUEUE.send`
+(`Promise.allSettled`, any failure → 503 `enqueue_failed`, never a false 202). Bindings required (no defensive
+optionals); every failure logs before returning; logger flushed in `finally`. Files: `index.ts`, `context.ts`,
+`auth.ts`, `policy.ts`, `ids.ts`, `ownership.ts`, `chunker.ts`, `redaction.ts`, `handler.ts`, `wrangler.jsonc`,
+`package.json`, `tsconfig.json`, `vitest.config.ts`, plus `src/__tests__/` (factories + per-module specs).
+`redaction.ts` is the server re-redact backstop: pass order mask → drop → residual-PII (load-bearing, see
+file JSDoc), validated against the shared `fixtures/redaction-canary.json` (0a). Trust-boundary hardening:
+runtime guards on the cred KV value, the fetched policy, and each Convex claim item — all fail closed.
+Denylist check normalizes the same `v`-prefix as the min-version gate (closes a bypass). `bun.lock` gains the
+`@trace-flow/agent-ingest` workspace entry (vitest pinned `^3.2.4` to match the other pool-workers siblings;
+`api`'s vitest 4.x tree intact).
+**Verified:** `bunx turbo run lint type-check test build --filter=@trace-flow/agent-ingest` → all green, **64
+tests pass** (failure paths 401/413/400/426/429/503×N/202, re-redact wiring, canary corpus, chunker packing +
+CATEGORIES drift guard, id determinism/fallbacks, policy semver/denylist/degrade). CodeRabbit CLI: 4 passes
+(cap); applied all valid findings (allSettled enqueue, ownership/policy/cred/envelope runtime validation,
+denylist normalization, redaction count accuracy, capExcerpt surrogate-safety, control-plane fetch timeouts);
+skipped sibling-consistency / out-of-lane items (per-pkg `--persist-to` → 2e, `deploy:dev` matches siblings,
+Stripe matcher not in the canary contract, ids parallelization). `api` gates re-run green to confirm the lock
+hoist shift was benign.
+**Next / blockers:** Worker is built + unit-verified but **not yet wired** — no queue/KV binding IDs, not in
+`dev:all`, not in CI deploy (correct: 0d gate holds until 2e). Next claimable: **2c** (`apps/agent-consumer`,
+deps 0c/1a/2b ✅) or **2d** (models.dev import, deps 0c/2a ✅). **2e MUST** add agent-ingest/agent-consumer
+deploy+preview jobs (+ `deploy-status.needs`), wire `AGENT_QUEUE`/DLQ/`COLLECTOR_CREDS`/`AGENT_INGEST_SHARED_SECRET`,
+and add both to `dev:all -c` with shared `--persist-to` before any Phase-2 merge. Phase 2 incomplete → **no PR/merge**.
+
 ## 2026-05-26 — 2a (Convex control plane) — t3code/ab83918d
 
 **Status:** ✅ done
