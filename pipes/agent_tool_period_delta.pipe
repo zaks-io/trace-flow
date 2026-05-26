@@ -33,7 +33,7 @@ SQL >
     WHERE OrgId = {{ String(org_id, '') }}
         AND EventAt >= prior_start_dt
         AND EventAt < end_dt
-        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 14) }})
         {% if defined(source) %}
         AND source = {{ String(source) }}
         {% end %}
