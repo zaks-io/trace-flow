@@ -24,7 +24,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 2d  | models.dev pricing import                   | ✅ done                             | 0c, 2a         |
 | 2e  | Wrangler / dev wiring                       | ✅ done                             | 2b, 2c, 1d     |
 | 2f  | Observability + ops runbook                 | 🚧 code landed; live alerts pending | 2b, 2c         |
-| 2g  | PR CI for new TS packages                   | ☐ todo                              | 0c, 2b, 2c     |
+| 2g  | PR CI for new TS packages                   | ✅ done                             | 0c, 2b, 2c     |
 | 3a  | `collector-parser`                          | ☐ todo                              | 0a             |
 | 3b  | `collector-sync`                            | ☐ todo                              | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ☐ todo                              | 0a             |

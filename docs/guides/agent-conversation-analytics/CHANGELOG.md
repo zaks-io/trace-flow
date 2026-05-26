@@ -15,6 +15,29 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2g (PR CI for new TS packages) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** `.github/workflows/ci.yml` now gates the three packages the slice-B build added.
+`changes` gains `pricing`, `agent-ingest`, `agent-consumer` paths-filter outputs (each globs its own
+dir plus its in-repo deps — `pricing`: `packages/types`; `agent-ingest`: `packages/types`/`utils`/`logging`;
+`agent-consumer`: `packages/types`/`logging`/`pricing`/`tinybird-client`); `packages/pricing/**` is also
+added to the **existing** `proxy-consumer` filter since proxy-consumer now imports the extracted package.
+Three new jobs run on a matching change: `pricing` (Format check/Lint/Type check/Test, no build — it has
+no build script) and `agent-ingest` + `agent-consumer` (those four plus Build), each mirroring the
+existing per-package jobs. All three are added to `status.needs`, so a failure in any propagates through
+`contains(needs.*.result, 'failure')`. Before 2g a PR touching only these packages matched no filter, ran
+no typed job, and `status` went green regardless — the first compile happened post-merge in `deploy.yml`'s
+`ci` job, where a type error blocks all production deploys. That false green is closed.
+**Verified:** `actionlint .github/workflows/ci.yml` clean; `bunx turbo run lint type-check test build`
+across all three filters → 11/11 tasks pass. Negative check: appending a type error to
+`packages/pricing/src/index.ts` made `@trace-flow/pricing#type-check` exit 2 (`run failed: command exited
+(2)`), proving the job fails (not a false green) and that `status` would red-X; reverted clean.
+CodeRabbit CLI `--type uncommitted` at repo root → **0 findings** (an initial `--dir .github/workflows`-scoped
+run flagged the agent apps as "non-existent", a sandbox-scope artifact — the apps exist under `apps/`).
+**Next / blockers:** Phase 2 complete on this branch except 2f's live-alert provisioning (🚧, dashboard-only).
+Open a PR to `main` for the Phase 2 boundary (no self-merge). Then Phase 3 (`3a` collector-parser).
+
 ## 2026-05-26 — 2f (Observability + ops runbook) — t3code/ab83918d
 
 **Status:** 🚧 in progress — in-repo code + runbook landed and verified; live-alert provisioning is the
