@@ -168,6 +168,8 @@ the base fact tables, which already lead with `OrgId`.
 **Next / blockers:** 1b (launch-query pipes) and 1c (COPY rollup pipes) now unblocked. Schema is not
 deployed to the cloud dev workspace yet — that is 1d (gated until 2e per the deploy-gate).
 
+---
+
 ## 2026-05-25 — 0d (CF resource provisioning + deploy-gate) — t3code/ab83918d
 
 **Status:** ✅ done
