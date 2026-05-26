@@ -15,6 +15,28 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 1d (Deploy `agent_*` schema to Tinybird) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Deployed the full agent data layer (9 `datasources/agent_*` + the 1b launch pipes, the 1c
+canonical view, and the four COPY pipes) to the **cloud dev** workspace `trace_flow_dev`. Tinybird is
+not in CI, so this is the manual/scripted path 2c (consumer) and 2e (end-to-end) depend on. Added
+`scripts/deploy-agent-tinybird.sh`: it refuses to run unless the current cloud workspace is
+`trace_flow_dev` (prod stays gated until 2e), validates offline (`tb build`) and via
+`tb --cloud deploy --check`, then `tb --cloud deploy`. No new pipe/datasource files (this task only
+deploys 1a/1b/1c). Prod was not touched.
+**Verified:** pre-deploy, `tb --cloud sql "SELECT count() FROM agent_messages"` → `Forbidden: Resource
+'agent_messages' not found`. `tb build` clean; `tb --cloud deploy --check` → all `agent_*` resources
+`status: new`, no destructive ops, "Deployment is valid". Ran the wrapper → deployment #67 promoted and
+live. Post-deploy, `agent_messages`, `agent_priced_usage`, and `agent_sessions` all resolve (count 0,
+empty as expected — no rows inserted into shared dev); `tb --cloud datasource ls` shows all 9
+`agent_*` datasources. CodeRabbit clean (pass 2; pass 1 added the offline `tb build` step to the
+wrapper).
+**Next / blockers:** **Phase 1 complete** (1a–1d all ✅) → phase-boundary self-merge PR to `main`.
+Merging is inert for prod: Tinybird isn't in CI and `deploy.yml` has no jobs touching the agent layer
+yet (added in 2e). Next claimable work is Phase 2 — 2a (Convex control plane, dep 0a ✅) is the entry
+point.
+
 ## 2026-05-26 — 1c (COPY rollup pipes) — t3code/ab83918d
 
 **Status:** ✅ done
