@@ -35,7 +35,7 @@ export interface ModelPricing {
    */
   contextTier?: ContextTierPricing;
   updatedAt: number;
-  source: 'manual' | 'openrouter' | 'default';
+  source: 'manual' | 'openrouter' | 'default' | 'models.dev';
 }
 
 export interface CostBreakdown {

@@ -15,6 +15,30 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2d (models.dev pricing import) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** `packages/convex/billing/modelPricing.ts` gains `importFromModelsDevInternal` (daily-cron
+`internalAction`) plus an admin-gated public `importFromModelsDev` wrapper, mirroring `importFromOpenRouter`.
+It fetches `models.dev/api.json`, imports **first-party `anthropic`/`openai` only**, converts dollars/M →
+microdollars/M via the exported pure `convertModelsDevModel`, maps the `context`-type tier (e.g. `gpt-5.5`
+over 272k tokens) into a new optional `contextTier` shape, and `upsertInternal`s each model keyed verbatim
+by its models.dev key (dated + undated both published, so `getPricing`'s exact-then-date-stripped lookup
+resolves either), then schedules per-model `syncToKV`. Cost-less entries (the 4 OpenAI image models) skip
+and resolve null; `codex-auto-review`/Cursor house models are intentionally NOT aliased (resolve null per
+ADR). `schema.ts` + pricing types (`pricing.ts`) gain `contextTier` + the `'models.dev'` source literal;
+`pricingSync.ts` carries `contextTier` into the KV payload; `crons.ts` registers the daily 06:30 UTC import.
+**Verified:** `bunx convex dev --once` push (regenerated `_generated`); `bunx convex run
+billing/modelPricing:importFromModelsDevInternal` → `{imported: 71, skipped: 4}`; `getInternal` resolves
+`anthropic/claude-opus-4-7` ($5/$25/$0.5/$6.25 per M → microdollars) and `openai/gpt-5.5` (base rates +
+`contextTier` threshold 272000 with $10/$45/$1) non-null, unknown model → null. `turbo run lint type-check
+test` green (convex 479 + pricing); 5 new `convertModelsDevModel` unit tests. CodeRabbit `--type
+uncommitted`: 0 findings.
+**Next / blockers:** Phase 2 continues — 2e (Wrangler/dev wiring, incl. the missing agent-ingest/agent-consumer
+deploy + preview jobs), 2f, 2g. Open a PR to `main` at the Phase 2 boundary (no self-merge).
+
+---
+
 ## 2026-05-26 — 2c (`apps/agent-consumer` worker) — t3code/ab83918d
 
 **Status:** ✅ done

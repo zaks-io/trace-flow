@@ -1,5 +1,6 @@
 import {
   action,
+  internalAction,
   internalMutation,
   internalQuery,
   mutation,
@@ -18,6 +19,38 @@ async function requireAdminAction(ctx: ActionCtx) {
   if (!isAdmin) throw new Error('Admin access required');
 }
 
+/** Tier rates that replace the base rates once a message's input context reaches `thresholdTokens`. */
+const contextTierValidator = v.object({
+  thresholdTokens: v.number(),
+  promptCostPerMillion: v.number(),
+  completionCostPerMillion: v.number(),
+  cacheReadCostPerMillion: v.optional(v.number()),
+  cacheWriteCostPerMillion: v.optional(v.number()),
+  cacheWrite1hCostPerMillion: v.optional(v.number()),
+  reasoningCostPerMillion: v.optional(v.number()),
+});
+
+const pricingSourceValidator = v.union(
+  v.literal('manual'),
+  v.literal('openrouter'),
+  v.literal('default'),
+  v.literal('models.dev'),
+);
+
+/** Shared upsert input — the writable pricing fields, reused by `upsert` and `upsertInternal`. */
+const pricingUpsertArgs = {
+  provider: v.string(),
+  model: v.string(),
+  promptCostPerMillion: v.number(),
+  completionCostPerMillion: v.number(),
+  cacheReadCostPerMillion: v.optional(v.number()),
+  cacheWriteCostPerMillion: v.optional(v.number()),
+  cacheWrite1hCostPerMillion: v.optional(v.number()),
+  reasoningCostPerMillion: v.optional(v.number()),
+  contextTier: v.optional(contextTierValidator),
+  source: pricingSourceValidator,
+};
+
 const modelPricingDoc = v.object({
   _id: v.id('modelPricing'),
   _creationTime: v.number(),
@@ -29,7 +62,8 @@ const modelPricingDoc = v.object({
   cacheWriteCostPerMillion: v.optional(v.number()),
   cacheWrite1hCostPerMillion: v.optional(v.number()),
   reasoningCostPerMillion: v.optional(v.number()),
-  source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
+  contextTier: v.optional(contextTierValidator),
+  source: pricingSourceValidator,
   updatedAt: v.number(),
 });
 
@@ -87,17 +121,7 @@ export const getInternal = internalQuery({
 });
 
 export const upsert = mutation({
-  args: {
-    provider: v.string(),
-    model: v.string(),
-    promptCostPerMillion: v.number(),
-    completionCostPerMillion: v.number(),
-    cacheReadCostPerMillion: v.optional(v.number()),
-    cacheWriteCostPerMillion: v.optional(v.number()),
-    cacheWrite1hCostPerMillion: v.optional(v.number()),
-    reasoningCostPerMillion: v.optional(v.number()),
-    source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
-  },
+  args: pricingUpsertArgs,
   returns: v.id('modelPricing'),
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
@@ -118,6 +142,7 @@ export const upsert = mutation({
       cacheWriteCostPerMillion: args.cacheWriteCostPerMillion,
       cacheWrite1hCostPerMillion: args.cacheWrite1hCostPerMillion,
       reasoningCostPerMillion: args.reasoningCostPerMillion,
+      contextTier: args.contextTier,
       source: args.source,
       updatedAt: Date.now(),
     };
@@ -141,17 +166,7 @@ export const upsert = mutation({
 });
 
 export const upsertInternal = internalMutation({
-  args: {
-    provider: v.string(),
-    model: v.string(),
-    promptCostPerMillion: v.number(),
-    completionCostPerMillion: v.number(),
-    cacheReadCostPerMillion: v.optional(v.number()),
-    cacheWriteCostPerMillion: v.optional(v.number()),
-    cacheWrite1hCostPerMillion: v.optional(v.number()),
-    reasoningCostPerMillion: v.optional(v.number()),
-    source: v.union(v.literal('manual'), v.literal('openrouter'), v.literal('default')),
-  },
+  args: pricingUpsertArgs,
   returns: v.id('modelPricing'),
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -170,6 +185,7 @@ export const upsertInternal = internalMutation({
       cacheWriteCostPerMillion: args.cacheWriteCostPerMillion,
       cacheWrite1hCostPerMillion: args.cacheWrite1hCostPerMillion,
       reasoningCostPerMillion: args.reasoningCostPerMillion,
+      contextTier: args.contextTier,
       source: args.source,
       updatedAt: Date.now(),
     };
@@ -356,5 +372,162 @@ export const syncDefaults = action({
     }
 
     return { synced };
+  },
+});
+
+// --- models.dev import -------------------------------------------------------------------------
+//
+// models.dev is the upstream catalog (https://models.dev/api.json). Top-level keys are provider IDs;
+// most are gateways re-listing the same models, so we pin ONLY the first parties that carry true
+// economics. Prices are published as dollars per million tokens — our catalog stores microdollars.
+
+const MODELS_DEV_API_URL = 'https://models.dev/api.json';
+
+/** models.dev re-lists ~25 gateway providers; pin only the first parties (ADR + ROADMAP watch-item). */
+const MODELS_DEV_FIRST_PARTY_PROVIDERS = ['anthropic', 'openai'] as const;
+
+interface ModelsDevTierCost {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+  tier: { type: string; size: number };
+}
+
+interface ModelsDevCost {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+  tiers?: ModelsDevTierCost[];
+}
+
+interface ModelsDevModel {
+  cost?: ModelsDevCost;
+}
+
+interface ModelsDevProvider {
+  models?: Record<string, ModelsDevModel>;
+}
+
+type ModelsDevApi = Record<string, ModelsDevProvider>;
+
+interface ConvertedTier {
+  thresholdTokens: number;
+  promptCostPerMillion: number;
+  completionCostPerMillion: number;
+  cacheReadCostPerMillion?: number;
+  cacheWriteCostPerMillion?: number;
+}
+
+interface ConvertedPricing {
+  promptCostPerMillion: number;
+  completionCostPerMillion: number;
+  cacheReadCostPerMillion?: number;
+  cacheWriteCostPerMillion?: number;
+  contextTier?: ConvertedTier;
+}
+
+/** models.dev publishes dollars per million tokens; our catalog stores microdollars per million. */
+function dollarsToMicrodollars(dollarsPerMillion: number): number {
+  return Math.round(dollarsPerMillion * 1_000_000);
+}
+
+/**
+ * Converts one models.dev model entry to our microdollar pricing record, mapping a
+ * `tier.type === 'context'` rate set (e.g. `gpt-5.5` above 272k tokens) onto `contextTier`. Returns
+ * null for entries without a `cost` block (e.g. the openai image models) so the caller skips them
+ * rather than storing a misleading zero rate. Exported for the headless conversion unit test.
+ */
+export function convertModelsDevModel(model: ModelsDevModel): ConvertedPricing | null {
+  const cost = model.cost;
+  if (!cost) return null;
+
+  const contextTierCost = cost.tiers?.find((t) => t.tier.type === 'context');
+  const contextTier: ConvertedTier | undefined = contextTierCost
+    ? {
+        thresholdTokens: contextTierCost.tier.size,
+        promptCostPerMillion: dollarsToMicrodollars(contextTierCost.input),
+        completionCostPerMillion: dollarsToMicrodollars(contextTierCost.output),
+        cacheReadCostPerMillion:
+          contextTierCost.cache_read !== undefined
+            ? dollarsToMicrodollars(contextTierCost.cache_read)
+            : undefined,
+        cacheWriteCostPerMillion:
+          contextTierCost.cache_write !== undefined
+            ? dollarsToMicrodollars(contextTierCost.cache_write)
+            : undefined,
+      }
+    : undefined;
+
+  return {
+    promptCostPerMillion: dollarsToMicrodollars(cost.input),
+    completionCostPerMillion: dollarsToMicrodollars(cost.output),
+    cacheReadCostPerMillion:
+      cost.cache_read !== undefined ? dollarsToMicrodollars(cost.cache_read) : undefined,
+    cacheWriteCostPerMillion:
+      cost.cache_write !== undefined ? dollarsToMicrodollars(cost.cache_write) : undefined,
+    contextTier,
+  };
+}
+
+/**
+ * Daily-cron import: refresh first-party `anthropic`/`openai` pricing from models.dev. Each model is
+ * stored verbatim by its models.dev key (which publishes both dated and undated family keys, so
+ * `getPricing`'s exact-then-date-stripped lookup resolves either form), then pushed to the
+ * worker-facing KV catalog so the agent consumer prices against the fresh rate. A KV-sync failure
+ * surfaces as the 2f priced-coverage% alert, never silent staleness. `codex-auto-review` and the
+ * Cursor house models are intentionally NOT aliased here — they carry no first-party rate and resolve
+ * null (counted in the coverage denominator), per the ADR.
+ */
+export const importFromModelsDevInternal = internalAction({
+  args: {},
+  returns: v.object({ imported: v.number(), skipped: v.number() }),
+  handler: async (ctx) => {
+    const response = await fetch(MODELS_DEV_API_URL);
+    if (!response.ok) {
+      throw new Error(`models.dev API error: ${response.status}`);
+    }
+
+    const data: ModelsDevApi = await response.json();
+    let imported = 0;
+    let skipped = 0;
+
+    for (const provider of MODELS_DEV_FIRST_PARTY_PROVIDERS) {
+      const models = data[provider]?.models;
+      if (!models) continue;
+
+      for (const [model, entry] of Object.entries(models)) {
+        const converted = convertModelsDevModel(entry);
+        if (!converted) {
+          skipped++;
+          continue;
+        }
+
+        await ctx.runMutation(internal.billing.modelPricing.upsertInternal, {
+          provider,
+          model,
+          promptCostPerMillion: converted.promptCostPerMillion,
+          completionCostPerMillion: converted.completionCostPerMillion,
+          cacheReadCostPerMillion: converted.cacheReadCostPerMillion,
+          cacheWriteCostPerMillion: converted.cacheWriteCostPerMillion,
+          contextTier: converted.contextTier,
+          source: 'models.dev',
+        });
+        await ctx.scheduler.runAfter(0, internal.billing.pricingSync.syncToKV, { provider, model });
+        imported++;
+      }
+    }
+
+    return { imported, skipped };
+  },
+});
+
+export const importFromModelsDev = action({
+  args: {},
+  returns: v.object({ imported: v.number(), skipped: v.number() }),
+  handler: async (ctx) => {
+    await requireAdminAction(ctx);
+    return ctx.runAction(internal.billing.modelPricing.importFromModelsDevInternal, {});
   },
 });
