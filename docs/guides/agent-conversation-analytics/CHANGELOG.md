@@ -15,6 +15,44 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2a (Convex control plane) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the Convex control plane for collector ingestion. `schema.ts`: three new tables —
+`collectorCredentials` (hidden hashed-secret creds, never user-facing API keys; indexes
+`by_org_id`/`by_user_id`/`by_hashed_secret`), `agentSessionOwners` (OCC first-writer `OrgId+session_pk`
+claim, `by_org_session`), `collectorCompatibilityPolicy` (Convex-owned min-versions + denylist,
+`by_updated_at`). New files beyond the named lane (one component per file): `collectorCredentials.ts`
+(generate `tfc_`-prefixed secret + SHA-256 hash, `mint`/`revoke`/`list` returning the secret hash never
+to the client, KV sync on write), `agentSessionOwners.ts` (`claimSession` + pure `decideClaim`),
+`collectorCompatibilityPolicy.ts` (active = latest by `updatedAt`, fail-closed). `integrations/cloudflare.ts`:
+collector creds sync to a **separate** KV namespace (`CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID`, fails
+loudly if unset), `syncAll` syncs only `active` creds, both collector sync actions use the same
+retry/backoff as the existing sync\* actions. `integrations/tinybird.ts`: single `withRowSecurityParams`
+helper stamps `api_keys`+`retention_days`+`org_id` (sentinels when absent) so **both** `generateToken`
+and `generateTokenInternal` emit `org_id` — neither path can issue an agent JWT unscoped on org. `http.ts`:
+shared-secret-guarded `/agent-ingest/claim-sessions` (validates org + user-in-org, capped batch, sequential
+OCC claims) and `/agent-ingest/compatibility-policy` (404 `policy_unavailable` on empty = fail-closed).
+`rateLimits.ts`: `mintCollectorCredential` (10/hr). New `__tests__/collectorControlPlane.test.ts`.
+**Verified:** `bunx convex codegen` (run from repo root where `convex.json` lives — the functions dir is
+`packages/convex` with static codegen) regenerated `_generated` and ran `tsc` clean.
+`bunx turbo run lint type-check test --filter=@trace-flow/convex --force` → lint 0 errors, type-check
+clean, **474 tests pass**. Collector creds absent from `apiKeys.list` (separate tables, verified by
+inspection). Both token paths route through `withRowSecurityParams` (unit-tested for `org_id` emission +
+sentinels). First-writer logic unit-tested (`decideClaim`); "no torn state" is the Convex OCC platform
+guarantee. CodeRabbit `--agent --type uncommitted`: 9 → 3 → 2 findings across three passes, all addressed
+(dropped duplicate `createdAt` for `_creationTime`; retry/backoff on collector KV sync; validate `userId`
+
+- org membership; `.omit('hashedSecret')` public validator; `Infer`-derived `ActivePolicy`; bounded claim
+  batch). Skipped with reason: KV-sync `orgId`/`userId` as `v.string()` (matches sibling sync\* actions);
+  export status validator (YAGNI); `decideClaim` param `string` (keeps it a pure testable helper). The 4th
+  confirmation pass was blocked by a CodeRabbit credit/rate limit; the GitHub bot review on the phase PR is
+  the backstop.
+  **Next / blockers:** Live `mint`/`list` runtime checks are Convex-auth-gated and not headlessly drivable
+  (no `convex-test` harness here); covered by unit tests + structural inspection. Mint schedules a KV sync
+  needing `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` (provisioned in 0d) and `AGENT_INGEST_SHARED_SECRET` for
+  the claim route — wire these in 2e. Next: 2b (`apps/agent-ingest`).
+
 ## 2026-05-26 — 1d (Deploy `agent_*` schema to Tinybird) — t3code/ab83918d
 
 **Status:** ✅ done

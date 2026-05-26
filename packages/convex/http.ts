@@ -851,6 +851,108 @@ export function createApp(
     return c.json({ ok: true });
   });
 
+  // Agent ingest: Worker claims first-writer ownership of Agent Sessions before
+  // enqueueing facts. Shared-secret guarded like /usage/record (the Worker, not
+  // a browser, calls this). Partial-conflict batches skip only the conflicting
+  // sessions and continue, so one historical conflict never blocks current work.
+  app.post('/agent-ingest/claim-sessions', async (c) => {
+    const ctx = c.env;
+    const requestTraceContext = traceContextFromHeaders(c.req.raw.headers);
+
+    const authHeader = c.req.header('Authorization');
+    const secret = process.env.AGENT_INGEST_SHARED_SECRET;
+    if (!secret || authHeader !== `Bearer ${secret}`) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const body = await c.req.json<{
+      orgId: string;
+      userId: string;
+      collectorId: string;
+      sessionPks: string[];
+      traceContext?: TraceContext;
+    }>();
+    const logger = getRequestLogger(c.req.raw, {
+      operation: 'agent_claim_sessions',
+      ...(body.traceContext ?? requestTraceContext),
+      orgId: body.orgId,
+    });
+
+    // Cap the batch so a single request can't fan out into unbounded claim
+    // mutations. The ingest Worker chunks well under this.
+    const MAX_SESSION_PKS = 1000;
+    if (!Array.isArray(body.sessionPks) || body.sessionPks.length > MAX_SESSION_PKS) {
+      logger.warn('convex.agent_claim_batch_too_large', { count: body.sessionPks?.length });
+      await logger.flush();
+      return c.json({ error: `sessionPks must be an array of at most ${MAX_SESSION_PKS}` }, 400);
+    }
+
+    const orgId = body.orgId as Id<'organizations'>;
+    const org = await ctx.runQuery(internal.auth.organizations.getByIdInternal, { id: orgId });
+    if (!org) {
+      logger.warn('convex.agent_claim_org_not_found');
+      await logger.flush();
+      return c.json({ error: 'Organization not found' }, 404);
+    }
+
+    const userId = body.userId as Id<'users'>;
+    const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
+    if (user?.orgId !== orgId) {
+      logger.warn('convex.agent_claim_user_invalid', { userIdValid: Boolean(user) });
+      await logger.flush();
+      return c.json({ error: 'User not found in organization' }, 404);
+    }
+
+    // Claims run sequentially on purpose. Each is its own OCC first-writer
+    // transaction; firing them concurrently only adds write contention without
+    // changing correctness, and ingest batches are bounded.
+    const results: { sessionPk: string; status: string; ownerUserId: string }[] = [];
+    for (const sessionPk of body.sessionPks) {
+      const result = await ctx.runMutation(internal.agentSessionOwners.claimSession, {
+        orgId,
+        sessionPk,
+        userId,
+        collectorId: body.collectorId,
+      });
+      results.push({ sessionPk, status: result.status, ownerUserId: result.ownerUserId });
+    }
+
+    const conflicts = results.filter((r) => r.status === 'conflict').length;
+    logger.info('convex.agent_sessions_claimed', {
+      requested: body.sessionPks.length,
+      conflicts,
+    });
+
+    await logger.flush();
+    return c.json({ results });
+  });
+
+  // Agent ingest: Worker fetches the compatibility policy (it edge-caches the
+  // result). Empty policy → 404 so the Worker fails closed with
+  // `policy_unavailable` rather than accepting unknown client versions.
+  app.get('/agent-ingest/compatibility-policy', async (c) => {
+    const ctx = c.env;
+
+    const authHeader = c.req.header('Authorization');
+    const secret = process.env.AGENT_INGEST_SHARED_SECRET;
+    if (!secret || authHeader !== `Bearer ${secret}`) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const policy = await ctx.runQuery(
+      internal.collectorCompatibilityPolicy.getActivePolicyInternal,
+      {},
+    );
+    if (!policy) {
+      const logger = getRequestLogger(c.req.raw, { operation: 'agent_compatibility_policy' });
+      logger.warn('convex.agent_policy_unavailable');
+      await logger.flush();
+      return c.json({ error: 'policy_unavailable' }, 404);
+    }
+
+    return c.json(policy);
+  });
+
   // MCP: Terminate session
   app.delete('/mcp', async (c) => {
     const ctx = c.env;

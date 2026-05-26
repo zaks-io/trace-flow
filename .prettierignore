@@ -1,4 +1,5 @@
 _generated/
+.convex/
 apps/web/src/generated/
 package-lock.json
 yarn.lock

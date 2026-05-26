@@ -317,4 +317,49 @@ export default defineSchema({
     userId: v.id('users'),
     message: v.string(),
   }),
+
+  // Hidden desktop Collector Credentials. Separate from user-facing `apiKeys`:
+  // never shown on the API Keys page, never an `api_keys` JWT fixed_param, and
+  // cannot call the Proxy. Only the SHA-256 hash of the secret is stored; the
+  // plaintext is returned once at mint and lives in the desktop's Stronghold.
+  collectorCredentials: defineTable({
+    hashedSecret: v.string(),
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    collectorId: v.string(),
+    name: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    lastSeenAt: v.optional(v.number()),
+    status: v.union(v.literal('active'), v.literal('revoked')),
+    expiresAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_user_id', ['userId'])
+    .index('by_hashed_secret', ['hashedSecret']),
+
+  // First-writer ownership claim for an Agent Session. The first accepted upload
+  // of `OrgId + session_pk` claims it for that `UserId`; a later upload of the
+  // same transcript under a different user is a permanent `session_owner_conflict`,
+  // not an overwrite. Keeps `UserId` out of Tinybird row identity while pinning
+  // ingestion ownership. `by_org_session` is the OCC first-writer guard.
+  agentSessionOwners: defineTable({
+    orgId: v.id('organizations'),
+    sessionPk: v.string(),
+    userId: v.id('users'),
+    collectorId: v.string(),
+    claimedAt: v.number(),
+  }).index('by_org_session', ['orgId', 'sessionPk']),
+
+  // Worker-side compatibility policy, owned in Convex (not env vars) so minimum
+  // versions and the emergency denylist change without a Worker deploy. The
+  // ingest Worker edge-caches the active row; an empty table makes it fail closed
+  // with `policy_unavailable`. Latest row by `updatedAt` is active.
+  collectorCompatibilityPolicy: defineTable({
+    minDesktopVersion: v.string(),
+    minParserVersion: v.string(),
+    denylistedVersions: v.array(v.string()),
+    updatedByUserId: v.optional(v.id('users')),
+    updatedAt: v.number(),
+  }).index('by_updated_at', ['updatedAt']),
 });
