@@ -13,8 +13,8 @@ SQL >
     WITH
         {{ Int64(start_time_ms, 0) }} AS start_ms,
         {{ Int64(end_time_ms, 0) }} AS end_ms,
-        if(start_ms = 0, toDateTime64(now() - toIntervalDay(7), 3), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
     SELECT
         OrgId,
         session_pk,
@@ -42,8 +42,8 @@ SQL >
     WITH
         {{ Int64(start_time_ms, 0) }} AS start_ms,
         {{ Int64(end_time_ms, 0) }} AS end_ms,
-        if(start_ms = 0, toDateTime64(now() - toIntervalDay(7), 3), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
     SELECT
         session_pk,
         count() AS file_event_count,

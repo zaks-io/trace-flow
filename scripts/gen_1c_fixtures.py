@@ -2,9 +2,10 @@
 """Generate the org_1c 1c-rollup fixture rows and append them to the shared
 fixtures. Additive: 1b's org_test rows and expectations are untouched (every
 launch pipe filters by org_id). Every fixture is appended (never overwritten) so
-the org_test rows survive; run this once, since a re-run appends duplicate lines
-to each file."""
+the org_test rows survive; append is idempotent, so re-running adds no duplicate
+lines."""
 import json
+import os
 from typing import Any
 
 ORG = "org_1c"
@@ -144,8 +145,19 @@ prs = [
 
 
 def append(path: str, rows: list[dict[str, Any]]) -> None:
+    existing: set[str] = set()
+    if os.path.exists(path):
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    existing.add(json.dumps(json.loads(line), sort_keys=True))
     with open(path, "a") as fh:
         for r in rows:
+            key = json.dumps(r, sort_keys=True)
+            if key in existing:
+                continue
+            existing.add(key)
             fh.write(json.dumps(r) + "\n")
 
 

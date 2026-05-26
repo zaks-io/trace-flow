@@ -12,8 +12,8 @@ SQL >
     WITH
         {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
         {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
-        if(start_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now() - toIntervalDay(7), 3)), start_ms_raw) AS start_ms,
         if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms,
+        if(start_ms_raw = 0, end_ms - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms,
         end_ms - start_ms AS span_ms,
         fromUnixTimestamp64Milli(start_ms) AS start_dt,
         fromUnixTimestamp64Milli(end_ms) AS end_dt,

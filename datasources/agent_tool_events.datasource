@@ -34,7 +34,7 @@ SCHEMA >
     `exit_code` Int32 `json:$.exit_code`,
     `duration_ms` UInt32 `json:$.duration_ms`,
     `repo_relative_paths` Array(String) DEFAULT [] `json:$.repo_relative_paths[:]`,
-    `extracted_provider` String `json:$.extracted_provider`,
+    `extracted_provider` LowCardinality(String) `json:$.extracted_provider`,
     `extracted_repo` String `json:$.extracted_repo`,
     `extracted_pr_number` UInt32 `json:$.extracted_pr_number`,
     `command_excerpt` String `json:$.command_excerpt`,
