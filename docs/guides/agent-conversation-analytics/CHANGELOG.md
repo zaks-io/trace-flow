@@ -15,6 +15,29 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-25 — 0d (CF resource provisioning + deploy-gate) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Provisioned the three Cloudflare **dev** resources the agent-ingest path needs (they are
+not code, so they must exist before 2b/2c/2e can bind them): queues `agent-ingest-dev`
+(`0ff3e1668a604c30be4b4f80c0dde54c`) and `agent-ingest-dlq-dev`
+(`1c94dd85ae294c6abdecf8d0bc82b108`), mirroring the proxy `trace-flow-requests*` pair, plus KV
+namespace `COLLECTOR_CREDS` (`f945ee3d71954ffabd364e3db385d3ab`), separate from the `API_KEYS`
+store. `AGENT_INGEST_LIMITER` (rate-limit namespace 2006) is config-only — no provisioning call.
+Recorded all IDs + the account ID in new
+`docs/guides/agent-conversation-analytics/provisioned-resources.md`, which 2e reads for wiring and 2f
+extends into the teardown runbook. **Deploy-gate** confirmed by absence: `deploy.yml` / `preview.yml`
+use explicit per-worker jobs (no matrix), and neither references the agent workers, so a mid-phase
+self-merge to `main` leaves the agent path inert and deploy-safe until 2e adds the jobs.
+**Verified:** `wrangler queues list` shows both queues; `wrangler kv namespace list` shows
+`COLLECTOR_CREDS`; `grep -nE 'agent-ingest|agent-consumer' .github/workflows/{deploy,preview}.yml` →
+no matches (gate holds); `prettier --check` clean on the new doc; `coderabbit review --agent` → 0
+findings (one minor lifecycle-wording finding fixed first).
+**Next / blockers:** none. Phase 0 (0a–0d) is complete — next is the phase-boundary self-merge of
+`t3code/ab83918d` → `main`. Blast radius stayed `*-dev`.
+
+---
+
 ## 2026-05-25 — 0c (@trace-flow/pricing package) — t3code/ab83918d
 
 **Status:** ✅ done
