@@ -1,0 +1,20 @@
+# Fixtures: fixtures/agent_tool_events.ndjson (org_test).
+# Window [2026-05-20, 2026-05-21) is "current"; the equal-length window
+# [2026-05-19, 2026-05-20) is "prior".
+#   Bash/git : current 5 (1 failure), prior 2 (0 failure) -> count_delta +3, failure_delta +1
+#   Bash/npm : current 5 (3 failure), prior 2 (1 failure) -> count_delta +3, failure_delta +2
+#   Edit/""  : current 5 (0 failure), prior 0             -> count_delta +5, failure_delta 0
+#   Read/grep: current 1 (1 failure), prior 0             -> count_delta +1, failure_delta +1
+# Sorted by abs(count_delta) DESC, then tool_name, command_family.
+# retention_days=20000 neutralizes the pipe's now()-relative tier floor for these
+# fixed-date fixtures without underflowing DateTime's 1970 floor (production passes 7..365).
+
+- name: period_delta_movers
+  description: ranks tools by absolute event-volume movement against the prior equal window
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
+  expected_result: |
+    {"tool_name":"Edit","command_family":"","current_count":5,"prior_count":0,"count_delta":5,"current_failures":0,"prior_failures":0,"failure_delta":0}
+    {"tool_name":"Bash","command_family":"git","current_count":5,"prior_count":2,"count_delta":3,"current_failures":1,"prior_failures":0,"failure_delta":1}
+    {"tool_name":"Bash","command_family":"npm","current_count":5,"prior_count":2,"count_delta":3,"current_failures":3,"prior_failures":1,"failure_delta":2}
+    {"tool_name":"Read","command_family":"grep","current_count":1,"prior_count":0,"count_delta":1,"current_failures":1,"prior_failures":0,"failure_delta":1}

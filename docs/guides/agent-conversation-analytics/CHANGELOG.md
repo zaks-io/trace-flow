@@ -15,6 +15,37 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-25 — 1b (Launch-query pipes) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the three query-time-first launch pipes, each reading base `… FINAL` (not the 1c
+rollups). `pipes/agent_failure_leaderboard.pipe` ranks `(tool_name, command_family)` by `failure_rate`
+over a window, with a `min_events` display floor; `failure_rate = failure / (success + failure)` —
+`unknown` is counted in `event_count` but excluded from the denominator (ADR §357), and is null when
+the denominator is 0. `pipes/agent_tool_period_delta.pipe` compares the requested window against the
+immediately-preceding equal-length window, ranking by `abs(count_delta)`. `pipes/agent_session_outliers.pipe`
+(three nodes) aggregates per session from `agent_messages FINAL` (cost via `sum(cost_usd)`, which skips
+the lone nullable column) LEFT JOIN `agent_file_events FINAL` (event + unique-path counts), ranked by
+estimated cost. All three enforce `org_id` (JWT `fixed_params`), accept optional `source` /
+`repo_fingerprint` filters, and clamp to `retention_days`. **Bootstrapped the repo's first `tb` test
+harness:** `tests/{agent_failure_leaderboard,agent_tool_period_delta,agent_session_outliers}.yaml` plus
+full-column fixtures `fixtures/agent_{tool_events,messages,file_events}.ndjson`.
+**Verified:** `tb build` clean; `tb test run` 3/3 pipes (4 cases) green against committed NDJSON
+fixtures with hand-computed expected aggregates — exact rows/values, not "returns rows": leaderboard
+`failure_rate` excludes `unknown` (git 1/4 = 0.25 with the unknown still in `event_count` = 5), the
+`min_events` floor hides the single-failure Read at 5 and surfaces it (rate 1.0) at 1; period movers
+ranked by `abs(count_delta)`; null per-message cost skipped by `sum`. CodeRabbit `--type uncommitted`:
+no findings (clean first pass). Four gotchas resolved: (1) String params + `parseDateTime64BestEffort`
+fail `tb build` because the builder substitutes the `__no_value__` sentinel over declared defaults —
+switched to `Int64` epoch-ms params + `fromUnixTimestamp64Milli` with a `now()`-relative default; (2)
+`start_dt - (end_dt - start_dt)` errors (`subtractSeconds` needs a number) — compute `span_ms` in
+integer ms first; (3) strict JSONPath ingestion quarantines any row missing a non-Nullable column, so
+fixtures carry every column; (4) `now() - toIntervalDay(36500)` underflows DateTime's 1970 floor and
+wraps to 2062 — tests pass `retention_days=20000` to neutralize the tier floor for fixed-date fixtures
+(production passes 7..365).
+**Next / blockers:** 1c (COPY rollup pipes) is the next claimable task (deps 1a ✅). The pipes are not
+yet deployed to the cloud dev workspace — that is 1d, gated until 2e.
+
 ## 2026-05-25 — 1a (9 `agent_*` datasources) — t3code/ab83918d
 
 **Status:** ✅ done

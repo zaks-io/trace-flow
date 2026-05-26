@@ -1,0 +1,28 @@
+# Fixtures: fixtures/agent_tool_events.ndjson (org_test, window 2026-05-20).
+# Current window [2026-05-20, 2026-05-21) tool events:
+#   Bash/git : 3 success, 1 failure, 1 unknown -> count 5, denom 4, rate 1/4 = 0.25
+#   Bash/npm : 2 success, 3 failure           -> count 5, denom 5, rate 3/5 = 0.6
+#   Edit/""  : 5 success                       -> count 5, denom 5, rate 0
+#   Read/grep: 1 failure                       -> count 1 (below the floor)
+# unknown is counted in event_count but excluded from the failure_rate denominator.
+# retention_days=20000 neutralizes the pipe's now()-relative tier floor for these
+# fixed-date fixtures without underflowing DateTime's 1970 floor (production passes 7..365).
+
+- name: leaderboard_floor_hides_single_failure
+  description: min_events=5 hides Read (one failure, count 1); ranks by failure_rate
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&min_events=5
+  expected_result: |
+    {"tool_name":"Bash","command_family":"npm","event_count":5,"success_count":2,"failure_count":3,"unknown_count":0,"failure_rate":0.6}
+    {"tool_name":"Bash","command_family":"git","event_count":5,"success_count":3,"failure_count":1,"unknown_count":1,"failure_rate":0.25}
+    {"tool_name":"Edit","command_family":"","event_count":5,"success_count":5,"failure_count":0,"unknown_count":0,"failure_rate":0}
+
+- name: leaderboard_floor_one_surfaces_rare_tool
+  description: min_events=1 lets the single-failure Read top the chart at rate 1.0 (the pathology the floor prevents)
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&min_events=1
+  expected_result: |
+    {"tool_name":"Read","command_family":"grep","event_count":1,"success_count":0,"failure_count":1,"unknown_count":0,"failure_rate":1}
+    {"tool_name":"Bash","command_family":"npm","event_count":5,"success_count":2,"failure_count":3,"unknown_count":0,"failure_rate":0.6}
+    {"tool_name":"Bash","command_family":"git","event_count":5,"success_count":3,"failure_count":1,"unknown_count":1,"failure_rate":0.25}
+    {"tool_name":"Edit","command_family":"","event_count":5,"success_count":5,"failure_count":0,"unknown_count":0,"failure_rate":0}

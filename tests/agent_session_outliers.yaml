@@ -1,0 +1,17 @@
+# Fixtures: fixtures/agent_messages.ndjson + fixtures/agent_file_events.ndjson (org_test).
+# Per session in window [2026-05-20, 2026-05-21):
+#   s1: 3 messages (1.5 + 2.0 + 0.5 = 4.0), 5 file events (5 distinct paths)
+#   s2: 1 message (0.1),                     1 file event
+#   s3: 2 messages (0.8 + null -> sum skips null = 0.8), 2 file events
+# Ranked by cost_usd DESC, then file_event_count DESC, then session_pk.
+# retention_days=20000 neutralizes the pipe's now()-relative tier floor for these
+# fixed-date fixtures without underflowing DateTime's 1970 floor (production passes 7..365).
+
+- name: session_outliers_by_cost
+  description: top sessions by estimated cost and file count; null per-message cost is skipped by sum
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
+  expected_result: |
+    {"session_pk":"s1","source":"claude","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4}
+    {"session_pk":"s3","source":"claude","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8}
+    {"session_pk":"s2","source":"claude","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1}
