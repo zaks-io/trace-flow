@@ -15,6 +15,27 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-25 — 0b (Rust workspace scaffold) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the repo-root virtual `Cargo.toml` (`resolver = "2"`, `members =
+["packages/collector-*"]`) so the `collector-contracts` crate from 0a — and the future
+`collector-parser`/`-sync`/`-api-client`/`-common` crates plus `apps/desktop/src-tauri` (Phase 5) —
+resolve as one workspace. Glob member pattern means later collector crates join with no root edit. A
+header comment records the deliberate split: Turborepo does **not** manage Cargo (a dedicated CI job,
+6a, runs `cargo` directly). Added `/target/` to the root `.gitignore` and **committed the root
+`Cargo.lock`** (reproducible builds for the 6a CI job and the eventual signed desktop binary; the
+crate-level `.gitignore` Cargo.lock entry is now dead but harmless since the workspace lock lives at
+root).
+**Verified:** `cargo metadata --no-deps` resolves the workspace with `collector-contracts` as the
+member; `cargo fmt --check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean;
+`cargo test --workspace` green (round_trip 3/3); `coderabbit review --agent --type uncommitted` → 0
+findings.
+**Next / blockers:** None. 0b done. **0c** (`@trace-flow/pricing`) and **0d** (CF provisioning)
+remain open in the first wave. 6a will add the cargo CI job that runs against this workspace.
+
+---
+
 ## 2026-05-25 — 0a (wire contract + Rust mirror) — t3code/ab83918d
 
 **Status:** ✅ done

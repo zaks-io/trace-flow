@@ -12,6 +12,9 @@ dist/
 .astro/
 .playwright-mcp/
 
+# Rust (Cargo workspace at repo root; Cargo.lock is committed)
+/target/
+
 # Environment variables
 .env
 .env.local

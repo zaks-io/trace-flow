@@ -1,0 +1,9 @@
+# Rust workspace for the Trace Flow Collector crates.
+#
+# Turborepo deliberately does NOT manage Cargo — keep cargo builds out of the
+# Turbo graph. A dedicated CI job (ROADMAP task 6a) runs `cargo` directly on
+# this workspace. `apps/desktop/src-tauri` joins as a member once Phase 5
+# scaffolds it.
+[workspace]
+resolver = "2"
+members = ["packages/collector-*"]

@@ -11,7 +11,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | ID  | Task                                        | Status  | Depends on     |
 | --- | ------------------------------------------- | ------- | -------------- |
 | 0a  | Wire contract + Rust mirror                 | ✅ done | —              |
-| 0b  | Rust workspace scaffold                     | ☐ todo  | —              |
+| 0b  | Rust workspace scaffold                     | ✅ done | —              |
 | 0c  | `@trace-flow/pricing` package               | ☐ todo  | —              |
 | 0d  | CF resource provisioning + deploy-gate      | ☐ todo  | —              |
 | 1a  | 9 `agent_*` datasources                     | ☐ todo  | 0a             |
