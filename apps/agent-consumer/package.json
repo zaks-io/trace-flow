@@ -1,14 +1,11 @@
 {
-  "name": "@trace-flow/proxy-consumer",
+  "name": "@trace-flow/agent-consumer",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "build": "tsc",
-    "deploy": "wrangler deploy",
-    "deploy:dev": "wrangler deploy",
-    "deploy:preview": "wrangler deploy --env preview",
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
@@ -18,11 +15,9 @@
   "dependencies": {
     "@sentry/cloudflare": "^10.53.1",
     "@trace-flow/logging": "workspace:*",
-    "@trace-flow/otel-conventions": "workspace:*",
     "@trace-flow/pricing": "workspace:*",
     "@trace-flow/tinybird-client": "workspace:*",
-    "@trace-flow/types": "workspace:*",
-    "@trace-flow/utils": "workspace:*"
+    "@trace-flow/types": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.14",

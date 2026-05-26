@@ -21,6 +21,25 @@
         "typescript-eslint": "^8.59.3",
       },
     },
+    "apps/agent-consumer": {
+      "name": "@trace-flow/agent-consumer",
+      "version": "0.0.1",
+      "dependencies": {
+        "@sentry/cloudflare": "^10.53.1",
+        "@trace-flow/logging": "workspace:*",
+        "@trace-flow/pricing": "workspace:*",
+        "@trace-flow/tinybird-client": "workspace:*",
+        "@trace-flow/types": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "^0.12.14",
+        "@cloudflare/workers-types": "^4.20260511.1",
+        "@vitest/coverage-istanbul": "^3.2.4",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.4",
+        "wrangler": "^4.88.0",
+      },
+    },
     "apps/agent-ingest": {
       "name": "@trace-flow/agent-ingest",
       "version": "0.0.1",
@@ -92,6 +111,7 @@
         "@trace-flow/logging": "workspace:*",
         "@trace-flow/otel-conventions": "workspace:*",
         "@trace-flow/pricing": "workspace:*",
+        "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
       },
@@ -1319,6 +1339,8 @@
     "@tanstack/react-table": ["@tanstack/react-table@8.21.3", "", { "dependencies": { "@tanstack/table-core": "8.21.3" }, "peerDependencies": { "react": ">=16.8", "react-dom": ">=16.8" } }, "sha512-5nNMTSETP4ykGegmVkhjcS8tTLW6Vl4axfEGQN3v0zdHYbK4UfoqfPChclTrJ4EoK9QynqAu9oUf8VEmrpZ5Ww=="],
 
     "@tanstack/table-core": ["@tanstack/table-core@8.21.3", "", {}, "sha512-ldZXEhOBb8Is7xLs01fR3YEc3DERiz5silj8tnGkFZytt1abEvl/GhUmCE0PMLaMPTa3Jk4HbKmRlHmu+gCftg=="],
+
+    "@trace-flow/agent-consumer": ["@trace-flow/agent-consumer@workspace:apps/agent-consumer"],
 
     "@trace-flow/agent-ingest": ["@trace-flow/agent-ingest@workspace:apps/agent-ingest"],
 

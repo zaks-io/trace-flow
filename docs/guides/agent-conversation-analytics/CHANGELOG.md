@@ -15,6 +15,52 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2c (`apps/agent-consumer` worker) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** New `apps/agent-consumer` CF Worker that drains `AGENT_QUEUE`, prices each Agent Message,
+and writes one batched insert per base `agent_*` datasource. Stateless (no batching Durable Object,
+unlike `proxy-consumer`) — redelivery is idempotent under `ReplacingMergeTree(IngestedAt)` FINAL, so a
+re-POST collapses. `consumer.ts`: per-message try/catch — a malformed body (structural `isQueueMessage`
+guard fails) logs `agent_consumer.message_malformed` and `retry()`s (exhausts to the DLQ, never
+acked-and-dropped); a thrown mapper logs `message_process_failed` + retry; an all-malformed batch logs
+`batch_all_malformed`. `flush()` issues one `insertRows` per non-empty datasource via `Promise.allSettled`;
+**any** insert failure retries **every** contributing message (no ack, no silent drop — safe because
+re-POST dedupes). `pricing.ts`: `PriceCache` reads the `MODEL_PRICING` catalog **once per distinct
+`(provider, model)` per batch** (caches `null` too), so a backfill is O(distinct models), not O(messages);
+`priceMessage` returns `null` (the only Nullable column) iff `token_coverage === 'missing'` or the model
+has no rate — `claude→anthropic`, `codex→openai`, `cursor` unresolved until 2d. `rows.ts`: maps wire facts
+to the exact datasource columns (CamelCase tenancy/timestamps, snake_case rest), `DateTime64(3)` literals
+`"YYYY-MM-DD HH:MM:SS.mmm"`, bool→UInt8, wire `null`→non-null sentinels (`''`/`0`/epoch). The queue handler
+takes `MessageBatch<unknown>` (untrusted bytes; the consumer validates). Transport core extracted to the
+shared **`@trace-flow/tinybird-client`** (`insertRows` + `shouldRetryTinybirdInsert` + `TinybirdInsertError`);
+`proxy-consumer/src/tinybird.ts` rewritten to call it (its local fetch/retry/error removed), `proxy-consumer`
+gains the workspace dep. **No deploy/preview scripts** on `agent-consumer` (0d gate; 2e adds the deploy +
+preview jobs and must also reconcile `agent-ingest`'s existing deploy scripts). Files: `apps/agent-consumer/`
+(`index.ts`, `context.ts`, `consumer.ts`, `pricing.ts`, `rows.ts`, configs, `src/__tests__/`),
+`packages/tinybird-client/` (`insertRows.ts` + test, `errors.ts`, `index.ts`), `apps/proxy-consumer/`
+(`tinybird.ts`, `package.json`), `bun.lock`.
+**Verified:** `bunx turbo run lint type-check test build --filter=@trace-flow/agent-consumer
+--filter=@trace-flow/proxy-consumer --filter=@trace-flow/tinybird-client` → all green. **agent-consumer 41
+tests** (priced+ack happy path, constant-cost fixture sums to the exact per-message total, unpriced→null,
+missing-coverage→null, 50-msg backfill → 1 KV read, 2 models → 2 reads, malformed→retry/no-insert, sibling
+isolation, insert-fail→retry-all/no-ack, one insert per non-empty datasource, empty-facts→ack; rows emit
+exactly each schema's columns + sentinels; pricing context-tier boundary + null caching). **proxy-consumer
+112 tests** green (transport-extraction regression). **tinybird-client 18 tests** (NDJSON POST,
+URL-encoded datasource, `TinybirdInsertError` fields, retry classifier). CodeRabbit CLI: pass 1 → 4 trivial
+findings (applied `vi.stubGlobal` + all-malformed log; skipped per-datasource retry granularity — retry-all
+is correct under FINAL idempotency — and `toClickhouseDateTime64` range-guard — `toISOString()` already
+throws → retry/DLQ, and the suggested `<0` bound rejects valid pre-epoch). Pass 2 → **0 findings**.
+**Next / blockers:** Live `agent_messages FINAL` confirmation (priced rows, exact constant-cost sum,
+re-post unchanged) is **not** headless-reachable; it runs in **2e** (`dev:all` + deployed `agent-ingest`/
+`agent-consumer`) against the **1d** schema. Phase 2 still open: **2d** (models.dev pricing import, resolves
+Cursor null cost), **2e** (Wrangler/dev wiring — add `agent-ingest`+`agent-consumer` deploy+preview jobs to
+`deploy.yml`/`preview.yml` + `deploy-status.needs`, wire `AGENT_QUEUE`/DLQ/`COLLECTOR_CREDS`, add both to
+`dev:all` `-c` with shared `--persist-to`, lift the 0d gate, **before** any Phase-2 merge; reconcile
+`agent-ingest`'s deploy scripts), **2f** (observability+runbook), **2g** (PR CI: add `pricing`/`agent-ingest`/
+`agent-consumer`/`tinybird-client` to `ci.yml` + add `packages/pricing`/`packages/tinybird-client` to the
+`proxy-consumer` filter). **No PR / no merge** — Phase 2 incomplete.
+
 ## 2026-05-26 — 2b (`apps/agent-ingest` worker) — t3code/ab83918d
 
 **Status:** ✅ done

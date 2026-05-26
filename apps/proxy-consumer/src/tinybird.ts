@@ -1,47 +1,14 @@
 import type { TinybirdTrace } from '@trace-flow/types';
+import { insertRows, shouldRetryTinybirdInsert } from '@trace-flow/tinybird-client';
 
 const MAX_RETRIES = 1;
 const INITIAL_RETRY_DELAY_MS = 1000;
-const TINYBIRD_TIMEOUT_MS = 60000;
-
-class TinybirdInsertError extends Error {
-  readonly status: number;
-  readonly responseText: string;
-
-  constructor(status: number, responseText: string) {
-    super(`Tinybird insert failed: ${status} ${responseText}`);
-    this.status = status;
-    this.responseText = responseText;
-  }
-}
-
-function shouldRetryTinybirdError(error: unknown): boolean {
-  if (!(error instanceof TinybirdInsertError)) {
-    return true;
-  }
-
-  if (error.status === 422) {
-    return false;
-  }
-
-  if (error.status === 429 || error.status === 503) {
-    return true;
-  }
-
-  if ([400, 401, 403, 404, 413].includes(error.status)) {
-    return false;
-  }
-
-  return error.status >= 500;
-}
 
 /**
- * Inserts traces into Tinybird using their Events API.
- *
- * Formats traces as NDJSON (one JSON object per line) which is required by Tinybird's
- * bulk insert endpoint. Each trace becomes a row in the datasource.
- *
- * Uses 60-second timeout to prevent hanging on slow network conditions.
+ * Reshapes the flat `Events.*` / `Links.*` columns back into the nested `Events{}` / `Links{}`
+ * objects the OTel datasource expects, then delegates to the shared NDJSON insert transport
+ * (`@trace-flow/tinybird-client`). The reshape is proxy-specific and stays here; the transport core
+ * is shared with the agent consumer, which passes already-flat rows.
  */
 export async function insertIntoTinybird(
   traces: TinybirdTrace[],
@@ -49,60 +16,40 @@ export async function insertIntoTinybird(
   datasource: string,
   host: string,
 ): Promise<void> {
-  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
+  const rows = traces.map((trace) => {
+    const {
+      'Events.Timestamp': eventsTimestamp,
+      'Events.Name': eventsName,
+      'Events.Attributes': eventsAttributes,
+      'Links.TraceId': linksTraceId,
+      'Links.SpanId': linksSpanId,
+      'Links.TraceState': linksTraceState,
+      'Links.Attributes': linksAttributes,
+      ...rest
+    } = trace;
 
-  const body = traces
-    .map((trace) => {
-      const {
-        'Events.Timestamp': eventsTimestamp,
-        'Events.Name': eventsName,
-        'Events.Attributes': eventsAttributes,
-        'Links.TraceId': linksTraceId,
-        'Links.SpanId': linksSpanId,
-        'Links.TraceState': linksTraceState,
-        'Links.Attributes': linksAttributes,
-        ...rest
-      } = trace;
-
-      const transformed = {
-        ...rest,
-        Events: {
-          Timestamp: eventsTimestamp,
-          Name: eventsName,
-          Attributes: eventsAttributes,
-        },
-        Links: {
-          TraceId: linksTraceId,
-          SpanId: linksSpanId,
-          TraceState: linksTraceState,
-          Attributes: linksAttributes,
-        },
-      };
-
-      return JSON.stringify(transformed);
-    })
-    .join('\n');
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${tinybirdToken}`,
-    },
-    body,
-    signal: AbortSignal.timeout(TINYBIRD_TIMEOUT_MS),
+    return {
+      ...rest,
+      Events: {
+        Timestamp: eventsTimestamp,
+        Name: eventsName,
+        Attributes: eventsAttributes,
+      },
+      Links: {
+        TraceId: linksTraceId,
+        SpanId: linksSpanId,
+        TraceState: linksTraceState,
+        Attributes: linksAttributes,
+      },
+    };
   });
 
-  const responseText = await response.text();
-
-  if (!response.ok) {
-    throw new TinybirdInsertError(response.status, responseText);
-  }
+  await insertRows(rows, tinybirdToken, datasource, host);
 }
 
 /**
- * Wraps insertIntoTinybird — no retries by default since the Events API
- * is non-idempotent. The batcher's alarm cycle handles retry at a higher level.
+ * Wraps insertIntoTinybird — no retries by default since the Events API is non-idempotent.
+ * The batcher's alarm cycle handles retry at a higher level.
  */
 export async function insertIntoTinybirdWithRetry(
   traces: TinybirdTrace[],
@@ -120,7 +67,7 @@ export async function insertIntoTinybirdWithRetry(
       return;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      const retryable = shouldRetryTinybirdError(error);
+      const retryable = shouldRetryTinybirdInsert(error);
       console.warn(`Insert attempt ${attempt + 1}/${MAX_RETRIES} failed:`, lastError.message);
 
       if (!retryable) {
