@@ -15,6 +15,33 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 2e (Wrangler / dev wiring) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Bound the 0d-provisioned dev resources and lifted the deploy-gate on both agent workers.
+`apps/agent-ingest/wrangler.jsonc` now binds the real `COLLECTOR_CREDS` KV namespace
+(`f945ee3d71954ffabd364e3db385d3ab`) instead of the all-zero placeholder. Added both workers to
+`dev:all` in the root `package.json` under the shared `--persist-to .wrangler/state` so the
+producer/consumer share the `agent-ingest-dev` queue locally. Made `deploy:preview` valid: agent-ingest
+flipped from `wrangler deploy --env preview` (no such env) to plain `wrangler deploy`, and agent-consumer
+gained `deploy`/`deploy:dev`/`deploy:preview` (all flat `wrangler deploy`). Added `deploy-agent-ingest`
+and `deploy-agent-consumer` jobs to `.github/workflows/deploy.yml` (mirror the proxy-consumer job but
+`command: deploy` — no `--env production`, since the config is flat dev) and listed both in
+`deploy-status.needs`. `preview.yml` needs no edit: its `turbo run deploy:preview --filter=./apps/*`
+auto-discovers the now-valid scripts. Refreshed both wrangler.jsonc header comments to say they are wired
+into CI. Deploys are flat (dev-named workers, dev resources) because slice B has no production agent
+pipeline yet — both `deploy.yml` (on main) and `preview.yml` (on PR) target the same `*-dev` workers.
+**Verified:** `wrangler deploy --dry-run` builds clean for both workers with correct bindings (ingest
+shows the real `COLLECTOR_CREDS` id + `AGENT_QUEUE`→`agent-ingest-dev`; consumer shows `MODEL_PRICING`).
+`bun run dev:all` boots all five workers under one `--persist-to`; both agent workers register and the
+producer's `AGENT_QUEUE` and the consumer share the `agent-ingest-dev` queue name (enqueue→deliver wired
+locally). `turbo run lint type-check test build` on both workers: 8/8 tasks pass (agent-ingest 64 tests).
+`coderabbit review --agent --type uncommitted`: 0 findings. Did **not** drive a live authed envelope
+through to a Tinybird insert — that needs a seeded local Collector Credential + the dev Tinybird token
+and is covered by the 2b/2c handler suites plus the structural queue-name match.
+**Next / blockers:** 2f (observability + ops runbook). Phase 2 boundary after 2g → open PR to `main`
+(no self-merge).
+
 ## 2026-05-26 — 2d (models.dev pricing import) — t3code/ab83918d
 
 **Status:** ✅ done

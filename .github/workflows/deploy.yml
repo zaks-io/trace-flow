@@ -184,6 +184,64 @@ jobs:
           command: deploy --env production
           packageManager: bun
 
+  # Agent pipeline (slice B). Flat dev config (dev-named workers, 0d-provisioned dev resources), so
+  # these deploy with plain `deploy` — no `--env production` env block exists yet.
+  deploy-agent-ingest:
+    name: Deploy Agent Ingest Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [ci]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy Agent Ingest Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/agent-ingest
+          command: deploy
+          packageManager: bun
+
+  deploy-agent-consumer:
+    name: Deploy Agent Consumer Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [ci]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy Agent Consumer Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/agent-consumer
+          command: deploy
+          packageManager: bun
+
   deploy-status:
     name: Deployment Status
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -193,6 +251,8 @@ jobs:
       - deploy-proxy
       - deploy-proxy-consumer
       - deploy-api
+      - deploy-agent-ingest
+      - deploy-agent-consumer
     steps:
       - name: Check deployment statuses
         run: |

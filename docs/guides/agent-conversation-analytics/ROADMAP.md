@@ -22,7 +22,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 2b  | `apps/agent-ingest` worker                  | ✅ done | 0a, 2a         |
 | 2c  | `apps/agent-consumer` worker                | ✅ done | 0c, 1a, 2b     |
 | 2d  | models.dev pricing import                   | ✅ done | 0c, 2a         |
-| 2e  | Wrangler / dev wiring                       | ☐ todo  | 2b, 2c, 1d     |
+| 2e  | Wrangler / dev wiring                       | ✅ done | 2b, 2c, 1d     |
 | 2f  | Observability + ops runbook                 | ☐ todo  | 2b, 2c         |
 | 2g  | PR CI for new TS packages                   | ☐ todo  | 0c, 2b, 2c     |
 | 3a  | `collector-parser`                          | ☐ todo  | 0a             |

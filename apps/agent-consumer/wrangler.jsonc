@@ -4,10 +4,9 @@
   // transport. Stateless: no batching Durable Object. Redelivery is safe because every base fact is
   // a ReplacingMergeTree(IngestedAt) keyed on a stable *_pk, so a re-POST collapses under FINAL.
   //
-  // DELIBERATELY has no deploy / deploy:preview scripts: preview.yml deploys every app exposing a
-  // `deploy:preview` task (`turbo run deploy:preview --filter=./apps/*`), and deploy.yml has no agent
-  // job. Keeping the scripts off holds the 0d deploy-gate so this worker stays inert until 2e wires
-  // the end-to-end path, lifts the gate, and adds the deploy + preview jobs.
+  // Wired into the CI deploy matrix in 2e: deploy.yml runs an explicit deploy job and preview.yml
+  // auto-discovers the `deploy:preview` script (`turbo run deploy:preview --filter=./apps/*`).
+  // Deploys flat (dev-named, dev resources) — slice B has no production agent pipeline yet.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trace-flow-agent-consumer-dev",
   "main": "src/index.ts",
