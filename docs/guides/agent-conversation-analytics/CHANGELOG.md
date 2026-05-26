@@ -15,6 +15,42 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 1c (COPY rollup pipes) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the canonical priced-usage view + four COPY rollups so session cost, the usage
+rollups, and PR authoring cost agree by construction. `pipes/agent_priced_usage.pipe` is a generic
+pipe (no `TYPE` — Forward's include-file replacement, referenced by name) that lives the subagent
+dedup rule once: every direct Agent Message (top-level, nested, sidechain) counts; source-reported
+subagent usage (`agent_tool_events.extracted_subagent_*`) counts only when no matching
+nested/sidechain message exists for `(source, session_pk, agent_id)`, and the fallback row carries
+tokens with `cost_usd` NULL + `subagent_cost_coverage = 'fallback'` (lowers priced coverage instead of
+mis-counting). `pipes/agent_sessions_copy.pipe` (5 nodes) rebuilds one row per session over the view,
+joining tool/file/PR base tables; `COPY_MODE replace` + unpartitioned target means a session spanning
+multiple `EventAt` days collapses to one row; PR url is set only when exactly one distinct link
+exists. `pipes/agent_usage_1h_copy.pipe` / `_1d_copy.pipe` roll up `usage_kind = 'direct'` rows
+(MessageCount stays a true message count); `pipes/agent_tool_usage_1h_copy.pipe` reads base
+`agent_tool_events FINAL` (tool mix is not a cost surface) and keeps success/failure/unknown separate.
+Schedules staggered (1h `0 * * * *`, 1d `15 * * * *`, tool `30 * * * *`, sessions `45 * * * *`),
+matching the `llm_usage_*_copy` hourly-refresh-of-daily-bucket convention. Added
+`scripts/gen_1c_fixtures.py` and additive `org_1c` fixture rows (the 1b `org_test` endpoint tests are
+untouched — every launch pipe filters by org).
+**Verified:** `tb build` clean; `tb --local deploy` materialized schema; appended fixtures with zero
+quarantine rows; `tb copy run` populated all four targets and a second run left counts identical
+(idempotent `replace`). Asserted via `tb --local sql`: `agent_priced_usage` org*1c = 10 rows, exactly
+1 `subagent_fallback` (sub1 both-forms counts the overlap once with no fallback row; sub2 fallback-only
+adds one row, output 70, NULL cost, coverage `fallback`); `agent_sessions` cc1 constant-cost = 4 msgs
+× 0.25 → cost 1.0 (input 400, tools 2, failure 1, files 2, PR pull/1); span1 = ONE row across
+2026-05-20→05-21 (duration 86400000 ms, cost 1.0, ambiguous PR url ''); sub1 cost 0.8, sub2 cost 0.4 /
+output 90. `agent_usage_1h` 10:00 bucket = 7 msgs / 3 sessions / 2.2 cost; `agent_usage_1d` 05-20 = 8
+msgs / 4 sessions / 2.7; `agent_tool_usage_1h` git 3/3 success, npm 1/1 failure. `tb test run` 3/3
+(1b endpoint tests green with org_1c added). CodeRabbit: pass 1 fixed 3 script nits; pass 2's 6
+findings all verified false-positive (1d cron matches `llm_usage_1d_copy`; branch label correct;
+ruff/ANN401 not configured; `CacheCoverage = 'full' | 'missing'` has no 'partial'; duration
+non-negative by min/max; sentinel = over-engineering).
+**Next / blockers:** 1c done → Phase 1 has only 1d (Deploy `agent*\*`schema to Tinybird) left. Claim
+1d next; completing it closes Phase 1 and triggers the phase-boundary self-merge PR to`main`.
+
 ## 2026-05-25 — 1b (Launch-query pipes) — t3code/ab83918d
 
 **Status:** ✅ done
