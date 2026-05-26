@@ -3,10 +3,10 @@ import type { ModelPricing } from '@trace-flow/pricing';
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
 import type { AgentConsumerEnv } from '../context';
 
-export const TINYBIRD_HOST = 'https://tb.test';
+const TINYBIRD_HOST = 'https://tb.test';
 
 /** A stub Message exposing the ack/retry spies the consumer drives. */
-export interface StubMessage {
+interface StubMessage {
   id: string;
   body: unknown;
   ack: ReturnType<typeof vi.fn>;

@@ -38,7 +38,7 @@ export function __resetPolicyCache(): void {
   cached = null;
 }
 
-export type PolicyResult =
+type PolicyResult =
   | { ok: true; policy: CompatibilityPolicy; degraded: boolean }
   | { ok: false; reason: 'policy_unavailable' };
 
@@ -86,7 +86,7 @@ function degradeOrFail(logger: Logger): PolicyResult {
   return { ok: false, reason: 'policy_unavailable' };
 }
 
-export type CompatibilityCheck =
+type CompatibilityCheck =
   | { ok: true }
   | { ok: false; detail: 'denylisted_version' | 'desktop_below_min' | 'parser_below_min' };
 

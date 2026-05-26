@@ -10,7 +10,7 @@ import type { Logger } from '@trace-flow/logging';
 
 export type ClaimStatus = 'claimed' | 'owned' | 'conflict';
 
-export interface SessionClaim {
+interface SessionClaim {
   sessionPk: string;
   status: ClaimStatus;
   ownerUserId: string;

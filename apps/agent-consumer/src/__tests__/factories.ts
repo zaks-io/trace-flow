@@ -9,7 +9,7 @@ import type {
 } from '@trace-flow/types';
 
 export const EVENT_AT = Date.UTC(2026, 4, 20, 10, 0, 0); // 2026-05-20 10:00:00.000 UTC
-export const ENQUEUED_AT = Date.UTC(2026, 4, 20, 12, 0, 0); // 2026-05-20 12:00:00.000 UTC
+const ENQUEUED_AT = Date.UTC(2026, 4, 20, 12, 0, 0); // 2026-05-20 12:00:00.000 UTC
 
 export function messageFact(over: Partial<AgentMessageQueueFact> = {}): AgentMessageQueueFact {
   return {

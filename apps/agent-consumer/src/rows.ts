@@ -23,7 +23,7 @@ export function toClickhouseDateTime64(epochMs: number): string {
 }
 
 /** Per-message context shared by every row the message contributes. */
-export interface BatchContext {
+interface BatchContext {
   tenancy: AgentTenancy;
   source: AgentIngestQueueMessage['source'];
   parserVersion: string;

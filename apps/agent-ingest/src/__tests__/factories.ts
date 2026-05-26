@@ -72,7 +72,7 @@ export function toolEventFact(over: Partial<AgentToolEventFact> = {}): AgentTool
   };
 }
 
-export function fileEventFact(over: Partial<AgentFileEventFact> = {}): AgentFileEventFact {
+function fileEventFact(over: Partial<AgentFileEventFact> = {}): AgentFileEventFact {
   return {
     vendor_session_id: 'vsid-1',
     vendor_message_id: 'msg-1',
@@ -85,7 +85,7 @@ export function fileEventFact(over: Partial<AgentFileEventFact> = {}): AgentFile
   };
 }
 
-export function capabilitySnapshotFact(
+function capabilitySnapshotFact(
   over: Partial<AgentCapabilitySnapshotFact> = {},
 ): AgentCapabilitySnapshotFact {
   return {
@@ -104,7 +104,7 @@ export function capabilitySnapshotFact(
   };
 }
 
-export function pullRequestLinkFact(
+function pullRequestLinkFact(
   over: Partial<AgentPullRequestLinkFact> = {},
 ): AgentPullRequestLinkFact {
   return {

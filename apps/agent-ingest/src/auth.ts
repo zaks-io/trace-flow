@@ -2,7 +2,7 @@ import type { Logger } from '@trace-flow/logging';
 import { sha256Hex } from '@trace-flow/utils';
 
 /** Tenancy + audit identity resolved from a Collector Credential. */
-export interface CollectorCredential {
+interface CollectorCredential {
   orgId: string;
   userId: string;
   collectorId: string;
@@ -37,9 +37,9 @@ function isCollectorCredKvValue(value: unknown): value is CollectorCredKvValue {
   );
 }
 
-export type AuthFailure = 'missing' | 'invalid' | 'expired' | 'revoked';
+type AuthFailure = 'missing' | 'invalid' | 'expired' | 'revoked';
 
-export type AuthResult =
+type AuthResult =
   | { ok: true; credential: CollectorCredential }
   | { ok: false; reason: AuthFailure };
 

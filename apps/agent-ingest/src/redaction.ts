@@ -57,7 +57,7 @@ const DROP_MATCHERS: RegExp[] = [
   /\$HOME(?:\/\S+)?/g,
 ];
 
-export interface RedactionResult {
+interface RedactionResult {
   value: string;
   /** How many sensitive matches were dropped or masked; feeds the fact's `dropped_sensitive`. */
   dropped: number;
