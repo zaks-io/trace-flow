@@ -8,6 +8,21 @@ This note records the Otto files to consult when implementing the Collector work
 
 The Otto checkout used for this survey was `~/src/otto`.
 
+## Provenance and licensing
+
+Otto is the user's own code, so vendoring it into Trace Flow carries no third-party license obligation today. But the Collector parser is a stated **possible future OSS release**, and `~/src/otto` ships no license file, so record provenance at vendor time rather than reconstruct it from git history later. The ROADMAP tasks that create the `collector-*` packages (3a, 3b, 3c) and adapt the desktop shell (5a) point here for this rule:
+
+- **Every vendored or adapted file** carries a short header naming the Otto source it derives from plus an SPDX identifier, e.g.:
+
+  ```rust
+  // SPDX-License-Identifier: <chosen license>
+  // Vendored and refactored from otto-parser/src/parser/claude_code/mod.rs (~/src/otto, 2026-05-25).
+  // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
+  ```
+
+- Pick the SPDX license once — the repo's existing license unless the OSS plan dictates otherwise — and apply it uniformly. Do not leave vendored files unlicensed.
+- Low stakes (the user owns both sides) and cheap, but it keeps the maybe-OSS path open without an archaeology pass.
+
 ## Primary Rust References
 
 These files are the main implementation references for code extraction:

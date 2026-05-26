@@ -53,7 +53,7 @@ describe('pricing', () => {
       expect(result).toEqual(samplePricing);
     });
 
-    it('should return null when no match found', async () => {
+    it('should return null when no match found (unpriced model → null cost)', async () => {
       mockKV.get.mockResolvedValue(null);
 
       const result = await getPricing(mockKV, 'openai', 'unknown-model-20250929');
@@ -415,6 +415,71 @@ describe('pricing', () => {
       expect(cost.cacheReadCostMicrodollars).toBe(0);
       expect(cost.outputCostMicrodollars).toBe(7500);
       expect(cost.totalCostMicrodollars).toBe(10500);
+    });
+  });
+
+  describe('gpt-5.5 context-tier pricing', () => {
+    // gpt-5.5 prices ~2x above a 200k-token context; Codex runs near a 258k window, so a flat rate
+    // would undercount it. Base $1.25/M in, $10/M out; tier $2.50/M in, $20/M out at >= 200k.
+    const tieredPricing: ModelPricing = {
+      promptCostPerMillion: 1_250_000,
+      completionCostPerMillion: 10_000_000,
+      contextTier: {
+        thresholdTokens: 200_000,
+        promptCostPerMillion: 2_500_000,
+        completionCostPerMillion: 20_000_000,
+      },
+      updatedAt: Date.now(),
+      source: 'manual',
+    };
+
+    it('charges the base rate below the 200k-token context threshold', () => {
+      const tokens: LLMTokenUsage = { promptTokens: 199_999, completionTokens: 1000 };
+
+      const cost = calculateCost(tokens, tieredPricing);
+
+      // 199999 * 1.25M / 1M = 249998.75 → round 249999
+      expect(cost.inputCostMicrodollars).toBe(249_999);
+      // 1000 * 10M / 1M = 10000 (base completion rate)
+      expect(cost.outputCostMicrodollars).toBe(10_000);
+    });
+
+    it('charges the tier rate at exactly the threshold (inclusive boundary)', () => {
+      const tokens: LLMTokenUsage = { promptTokens: 200_000, completionTokens: 1000 };
+
+      const cost = calculateCost(tokens, tieredPricing);
+
+      // 200000 * 2.5M / 1M = 500000 (tier prompt rate)
+      expect(cost.inputCostMicrodollars).toBe(500_000);
+      // 1000 * 20M / 1M = 20000 (tier completion rate)
+      expect(cost.outputCostMicrodollars).toBe(20_000);
+    });
+
+    it('charges the tier rate well above the threshold (258k Codex-style window)', () => {
+      const tokens: LLMTokenUsage = { promptTokens: 258_000, completionTokens: 2000 };
+
+      const cost = calculateCost(tokens, tieredPricing);
+
+      // 258000 * 2.5M / 1M = 645000
+      expect(cost.inputCostMicrodollars).toBe(645_000);
+      // 2000 * 20M / 1M = 40000
+      expect(cost.outputCostMicrodollars).toBe(40_000);
+    });
+
+    it('leaves pricing without a contextTier on the flat base rate at any context size', () => {
+      const flat: ModelPricing = {
+        promptCostPerMillion: 1_250_000,
+        completionCostPerMillion: 10_000_000,
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+      const tokens: LLMTokenUsage = { promptTokens: 500_000, completionTokens: 1000 };
+
+      const cost = calculateCost(tokens, flat);
+
+      // 500000 * 1.25M / 1M = 625000 — no tier escalation
+      expect(cost.inputCostMicrodollars).toBe(625_000);
+      expect(cost.outputCostMicrodollars).toBe(10_000);
     });
   });
 

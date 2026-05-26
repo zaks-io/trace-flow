@@ -166,7 +166,7 @@ Collector (desktop tray)            Collector ingest Worker           Queue     
 
 The Collector parses locally, ships facts, and never computes price. When raw upload is enabled it also sends the gzip-compressed transcript over TLS; the ingest Worker reserves bytes against the org's shared R2 Storage Budget, encrypts accepted bytes with the org's Tenant Encryption Key (the mechanism Body Objects already use), and writes them to R2, where plaintext is never persisted. See Raw transcript storage and replay below and [R2 Storage Caps](./r2-storage-caps.md).
 
-The ingest Worker authenticates the Collector Credential, resolves `OrgId`, `UserId`, `CollectorId`, and credential audit identity from the control plane, applies a per-org rate limit (new `AGENT_INGEST_LIMITER`, namespace `2005`, mirroring `ORG_LIMITER`'s pattern) and a request-size cap, returns 202/429/413, and chunks oversized POSTs into sub-128KB queue messages.
+The ingest Worker authenticates the Collector Credential, resolves `OrgId`, `UserId`, `CollectorId`, and credential audit identity from the control plane, applies a per-org rate limit (new `AGENT_INGEST_LIMITER`, namespace `2006`, since `2005` is already `TOKEN_REFRESH_LIMITER`; mirroring `ORG_LIMITER`'s pattern) and a request-size cap, returns 202/429/413, and chunks oversized POSTs into sub-128KB queue messages.
 
 Every Collector payload includes Trace Flow Desktop version and parser version. The ingest Worker records both and enforces supported semantic version ranges plus an emergency denylist; it does not accept old clients indefinitely. The compatibility policy is owned in Convex, not environment variables, so minimum versions and denylisted releases can change without a Worker deploy. The Worker caches the policy using the existing edge-cache pattern (short-lived module-scope L1 plus Cache API where appropriate) and falls back gracefully on cache miss. If policy refresh fails but a recent cached policy exists, the Worker uses that stale policy briefly and logs degraded; if no cached policy exists, it fails closed with a retryable `policy_unavailable` response rather than accepting unknown desktop/parser versions. Trace Flow Desktop treats `policy_unavailable` as temporary service unavailability: it does not advance cursors, retries with backoff or the next scheduled sync, and only notifies if the condition persists. The normal path is minimum supported desktop/parser versions or ranges, while the denylist blocks specific bad releases known to produce unsafe identity, schema, or redaction output. If a desktop/parser version is too old, unsafe, or denied, the Worker returns a structured `upgrade_required` error with the minimum required version and reason category. Trace Flow Desktop surfaces that as an update-required state and stops syncing until updated.
 
@@ -286,19 +286,25 @@ agent_pull_request_links
   TTL EventAt + INTERVAL 1 YEAR
 
 agent_sessions
+  REBUILT FROM base tables FINAL via the canonical priced-usage view (Copy Pipe, COPY_MODE replace)
   ENGINE ReplacingMergeTree(IngestedAt)
   SORTING KEY OrgId, session_pk
-  PARTITION BY toYYYYMMDD(LastEventAt)
+  NO PARTITION KEY  -- one row per session; partitioning by the mutable LastEventAt would scatter a
+                    -- re-synced session across daily partitions, where ReplacingMergeTree/FINAL
+                    -- dedupe only within a partition (see note below)
   TTL LastEventAt + INTERVAL 1 YEAR
 
 agent_usage_1h / agent_usage_1d
-  DERIVED FROM base tables FINAL / canonical priced-usage view
-  REBUILD SCOPE complete affected bucket ranges, never append-only replay deltas
+  REBUILT FROM base tables FINAL via the canonical priced-usage view (Copy Pipe, COPY_MODE replace)
+  ENGINE AggregatingMergeTree, mirroring llm_usage_1h / _1d
+  REBUILD swaps the whole target from base FINAL on a schedule; never append aggregate states per
+    queue message or replay (ReplacingMergeTree replacement does not retract the prior aggregate state)
   TTL BucketStart + INTERVAL 1 YEAR
 
 agent_tool_usage_1h
-  DERIVED FROM agent_tool_events FINAL
-  REBUILD SCOPE complete affected bucket ranges, never append-only replay deltas
+  REBUILT FROM agent_tool_events FINAL (Copy Pipe, COPY_MODE replace)
+  ENGINE AggregatingMergeTree
+  REBUILD swaps the whole target from base FINAL on a schedule; never append aggregate states per replay
   TTL BucketStart + INTERVAL 1 YEAR
 
 session_pk  = hash(source, vendor_session_id)
@@ -315,11 +321,15 @@ The sorting key holds stable identity only, because ReplacingMergeTree dedupes o
 
 `StartedAt` remains session metadata: the earliest observed conversation-turn timestamp (`user`/`assistant` records only), computed in the ingest Worker so it stays a pure function of the session's turn bytes. `LastEventAt` is the newest event timestamp observed for the Agent Session and is the retention anchor for the `agent_sessions` summary. `VendorStartedAt` is the Source's declared session start when it exists (Codex emits it in `session_meta`; Claude's UUIDv4 id does not, so it stores a zero sentinel to preserve the single-Nullable-column rule). Excluding app-metadata record types (`ai-title`, `queue-operation`, `attachment`, `pr-link`, `last-prompt`) from `StartedAt` keeps Claude Code version drift from shifting session metadata; changing `EventAt` for a real fact is the partition-moving case that requires an affected-partition rebuild before replay.
 
+All fact-row event timestamps (`EventAt`, `IngestedAt`, `LastEventAt`, `StartedAt`, `VendorStartedAt`) are `DateTime64(3)`; rollup `BucketStart` is `DateTime`. This deliberately diverges from `llm_requests`, which stores `Int64` epoch-nanoseconds because its source is OTel spans; agent facts are parsed from transcripts with no nanosecond source, so the partition and TTL expressions above (`toYYYYMMDD(EventAt)`, `EventAt + INTERVAL 1 YEAR`) read the column directly with no `/1e9` conversion. `VendorStartedAt`'s zero sentinel is the epoch (`1970-01-01 00:00:00.000`).
+
+`agent_sessions` is not partitioned. It holds one row per session, and partitioning by the mutable `LastEventAt` would scatter a session's re-synced rows across daily partitions, where ReplacingMergeTree and `FINAL` dedupe only within a partition (the same constraint stated above for `EventAt`). It is rebuilt from base `FINAL` via the canonical priced-usage view, which also keeps it consistent with `agent_usage_*` and the Pull Request cost path by construction rather than by a separate consumer-side aggregation that could see only a partial sync batch.
+
 ### Dedupe
 
 ReplacingMergeTree keyed on the stable surrogate identity (`*_pk`), with `IngestedAt` as the version column. Reads use `FINAL`. Re-syncing the same session collapses to one row per ID, newest `IngestedAt` winning. A re-parse under a newer `parser_version` self-heals the row.
 
-Materialized rollups are read caches, not the source of truth. They must be rebuilt from base tables using `FINAL` over a complete affected bucket range; they must not be maintained by blindly appending aggregate states from every queue message or replay, because ReplacingMergeTree replacement does not retract the old aggregate state. The v1-safe path is query-time rollup over base `FINAL` rows for correctness, with materialized `agent_usage_1h` / `_1d` and `agent_tool_usage_1h` added only behind a bucket/partition replacement job that drops or otherwise excludes stale aggregate rows before inserting the rebuilt result. Any launch query can fall back to base `FINAL` if a rollup is missing or marked stale.
+Materialized rollups are read caches, not the source of truth. They are rebuilt by a Copy Pipe that reads base tables with `FINAL` and writes the target with `COPY_MODE replace`, exactly as `llm_usage_1h_copy` / `llm_usage_1d_copy` do today; because `replace` swaps the whole target, a re-parse or replay can never leave a stale aggregate behind. They must never be maintained by appending aggregate states from every queue message or replay, because ReplacingMergeTree replacement does not retract the old aggregate state. The v1-safe default is query-time rollup over base `FINAL` rows; the materialized `agent_usage_1h` / `_1d` and `agent_tool_usage_1h` Copy Pipes are an optimization on top, and any launch query can fall back to base `FINAL` if a rollup is missing or stale. One sizing caveat carries over from the proxy path: a full-target `replace` re-scans the entire base table under `FINAL`, and the agent fact tables carry a one-year TTL versus 90 days for `llm_usage`, so the Copy Pipe `COPY_SCHEDULE` must be tuned to that larger scan (less frequent than the proxy's 10-minute cadence, or windowed) rather than copied verbatim.
 
 ### Cost and pricing
 
@@ -360,7 +370,7 @@ All deterministic, zero tuning. The research note's "failing above baseline" det
 2. **Period-over-period delta.** This window versus the prior, sorted by movement, via a query-time rollup over `agent_tool_events FINAL` or a self-join on rebuilt `agent_tool_usage_1h` when that read cache is fresh.
 3. **Session outliers.** Top sessions by cost and file count (the "$400 and 200 files" case) from the `agent_sessions` aggregate.
 
-`agent_tool_usage_1h` is logically keyed on `BucketStart` (hour), `OrgId`, `source`, `repo_fingerprint`, `tool_name`, and `command_family`, with counts for success/failure/unknown and summed duration. Whether it is materialized or computed at query time is an implementation choice, but materialized rows must be rebuilt from base `FINAL` rows for complete affected buckets.
+`agent_tool_usage_1h` is logically keyed on `BucketStart` (hour), `OrgId`, `source`, `tool_name`, `command_family`, and `repo_fingerprint`, with counts for success/failure/unknown and summed duration. The sorting key orders dimensions from low to high cardinality, so the high-cardinality `repo_fingerprint` hash comes last. Whether it is materialized or computed at query time is an implementation choice, but materialized rows are rebuilt by a whole-target `COPY_MODE replace` from base `FINAL`, never appended per replay.
 
 ### Trust boundary
 
@@ -471,7 +481,7 @@ Verifiable outcomes for the v1 slice:
 - The Cursor parser snapshots `state.vscdb` before reading, joins `bubbleId:<composerId>:*` messages to their `composerData:<composerId>` session with `GLOB` prefix scans (never `LIKE`), normalizes the composer `modelConfig.modelName` label (reasoning suffixes stripped, house `composer-*`/`default` left unpriced), and emits nonzero tokens only where the bubble `tokenCount` is nonzero.
 - Agent Session Authoring Cost includes top-level, nested, and sidechain model usage exactly once; `agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and PR authoring-cost queries all agree because they use the same canonical priced-usage view.
 - A Claude fixture with both a subagent transcript file and a matching `toolUseResult.usage` row does not double-count the overlapping subagent usage; a fixture with only tool-result subagent usage counts that fallback usage and marks the session's subagent cost coverage as partial/fallback.
-- Re-syncing the same Agent Session twice does not change counts after `FINAL`; query-time rollups over base `FINAL` rows match deduped base counts, and any materialized rollup read cache is rebuilt from base `FINAL` over complete affected buckets rather than append-updated from replay messages.
+- Re-syncing the same Agent Session twice does not change counts after `FINAL`; query-time rollups over base `FINAL` rows match deduped base counts, and any materialized rollup read cache is rebuilt by a whole-target `COPY_MODE replace` from base `FINAL` rather than append-updated from replay messages. A session whose facts span two `EventAt` days rebuilds to exactly one `agent_sessions` row.
 - Direct `agent_messages.cost_usd` and any included fallback subagent usage cost are computed in the consumer from KV pricing; no pricing math runs in the Collector; priced-token coverage % is queryable.
 - The Collector source has no local cost calculation, and a fact reaches the consumer carrying tokens and model but no price.
 - The daily `importFromModelsDev` cron populates `modelPricing` with `source='models.dev'`; a known first-party model resolves to a non-zero price; an unknown model lands with null `cost_usd` and is backfilled on a later run once the catalog covers it.

@@ -1,4 +1,4 @@
-import type { ModelPricing } from './pricing';
+import type { ModelPricing } from '@trace-flow/pricing';
 
 interface OpenRouterModel {
   id: string;

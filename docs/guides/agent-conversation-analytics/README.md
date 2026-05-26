@@ -53,28 +53,52 @@ shared state between agents — keep them honest.
 Claim only tasks whose dependencies are all `✅`. Tasks on the same line can run concurrently.
 
 ```text
-First wave (no deps):   0a   0b   0c
+First wave (no deps):   0a   0b   0c   0d
 After 0a:               1a       2a       3a   3c
-After 0c:               2d
+After 0c + 2a:          2d
 After 1a:               1b   1c   (+ unblocks 2c's insert target)
-After 2a:               2b   4b   4c
+After 1a + 1b + 1c:     1d
+After 2a:               2b   4b
 After 2b:               2c (also needs 0c, 1a)
-After 2b + 2c:          2e
+After 2b + 2c:          2f   2g   (2g also needs 0c)
+After 2c + 1d:          2e
 After 2e + 3a/3b/3c:    3d        (3b needs 3a)
 After 1b + 2a:          4a        (meaningful once 3d lands real data)
-After 3d:               5a -> 5b -> 6b
-After 5a:               5c
-After 0b:               6a
+After 3d:               5a• -> 5b• -> 6b•
+After 5a:               5c•
+After 5b:               4c•
+After 0b:               6a•
+
+• = fast-follow, not slice B. The Cursor parser inside 3a is also deferred (3a ships Claude + Codex
+for slice B). Everything unmarked is the v1 autonomous milestone — see the ROADMAP "Milestones" legend.
 ```
 
 ## Scope decisions baked in
 
+- **Claude + Codex first (slice B); Cursor and the desktop app are fast-follow.** The first
+  autonomously-built milestone ships the economic-truth path for the two sources that carry full
+  token+model economics: headless collector → deduped, server-priced facts → the three launch
+  dashboards. The Cursor `state.vscdb` parser (largest net-new, most schema-fragile, ~0.9% token
+  coverage) and Phases 5–6 (Tauri desktop, signed release) land as a fast-follow. The pipeline is
+  **source-agnostic** (`source` is a dimension, not a branch), so Cursor returns as a parser-only
+  change. See the ROADMAP "Milestones" legend and "v1 slice complete when".
+- **Provisioning is deploy-gated (0d → 2e).** A Phase-0 task provisions the CF queue + DLQ and
+  `COLLECTOR_CREDS` KV and keeps both new workers **out of the CI deploy workflow until 2e** completes
+  the end-to-end path, so a mid-phase self-merge to `main` leaves an inert, deploy-safe state. The
+  `AGENT_INGEST_LIMITER` (2006) is config-only in `wrangler.jsonc`.
+- **Observability is a task, not an afterthought (2f).** Structured logs, Sentry, and DLQ /
+  error-rate / priced-coverage% alerts ship in Phase 2, so no ingest failure is silent once real data
+  flows. The driver self-merges Phases 0–4 to `main`, so every failure path is named, tested, logged.
 - **Raw transcript replay is deferred.** The `raw_upload_requested` flag and `RawSessionBundle` slot
   stay plumbed through the contract so it's additive later, not a rewrite (`r2-storage-caps.md`).
 - **macOS arm64 first.** The release workflow scaffolds the Windows x64 matrix entry (commented) so
   it activates without a rewrite.
 - **Rate-limit namespace:** `AGENT_INGEST_LIMITER` = **2006**. The ADR said `2005`, but that's
   already `TOKEN_REFRESH_LIMITER` in `apps/web/wrangler.jsonc`.
+- **New workers use `wrangler.jsonc`, not `.toml`.** `agent-ingest` and `agent-consumer` ship
+  `wrangler.jsonc`, matching `apps/web` (the newest worker) and Wrangler's current default, not the
+  `.toml` that `proxy` / `proxy-consumer` / `api` still use. Deliberate: don't normalize the new
+  workers down to `.toml`, and don't convert the existing `.toml` workers as part of this feature.
 - **Provider usage / codexbar is out of scope** — separate feature, separate ingest path.
 
 ## Status at a glance

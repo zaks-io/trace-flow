@@ -1,5 +1,5 @@
 {
-  "name": "@trace-flow/types",
+  "name": "@trace-flow/pricing",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -12,8 +12,10 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "@trace-flow/types": "workspace:*"
+  },
   "devDependencies": {
-    "@types/node": "^24.12.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6"
   }

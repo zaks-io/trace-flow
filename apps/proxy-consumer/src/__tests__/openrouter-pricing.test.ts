@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { ModelPricing } from '../pricing';
+import type { ModelPricing } from '@trace-flow/pricing';
 import type { fetchOpenRouterPricing as FetchOpenRouterPricingType } from '../openrouter-pricing';
 
 const createMockKV = () => ({

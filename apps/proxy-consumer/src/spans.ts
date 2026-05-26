@@ -25,7 +25,7 @@ import {
   type SpanBase,
   type SpanEventInput,
 } from '@trace-flow/otel-conventions';
-import { type ModelPricing, calculateCost } from './pricing';
+import { type ModelPricing, calculateCost } from '@trace-flow/pricing';
 
 const NANOSECONDS_PER_DAY = 24 * 60 * 60 * 1_000_000_000;
 const SERVICE_NAME = 'llm-observability';

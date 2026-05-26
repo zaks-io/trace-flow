@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "description": "Shared redaction canary corpus. The Rust Collector parser (task 3a) and the TS ingest-Worker re-redact (task 2b) both load this file and assert that every planted secret is dropped or masked and that `dropped_sensitive` increments once per case, so the two layers of the redaction trust boundary cannot drift. `input` is the raw field value as it might appear in a transcript; `secret` is the sensitive substring that must NOT survive in any uploaded fact; `expect` is `drop` (whole field withheld) or `mask` (secret replaced, surrounding structure kept).",
+  "cases": [
+    {
+      "name": "aws-access-key-id",
+      "category": "aws_key",
+      "input": "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+      "secret": "AKIAIOSFODNN7EXAMPLE",
+      "expect": "drop"
+    },
+    {
+      "name": "aws-secret-access-key",
+      "category": "aws_key",
+      "input": "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "secret": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "expect": "drop"
+    },
+    {
+      "name": "github-pat-classic",
+      "category": "github_token",
+      "input": "git remote set-url origin https://ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789@github.com/acme/repo",
+      "secret": "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789",
+      "expect": "drop"
+    },
+    {
+      "name": "github-pat-fine-grained",
+      "category": "github_token",
+      "input": "GH_TOKEN=github_pat_11ABCDE0Y0abcdefghij_klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPqr",
+      "secret": "github_pat_11ABCDE0Y0abcdefghij_klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPqr",
+      "expect": "drop"
+    },
+    {
+      "name": "bearer-authorization-header",
+      "category": "bearer_token",
+      "input": "Authorization: Bearer sk-proj-aBcD1234EfGh5678IjKl9012MnOp3456QrSt",
+      "secret": "sk-proj-aBcD1234EfGh5678IjKl9012MnOp3456QrSt",
+      "expect": "mask"
+    },
+    {
+      "name": "openai-api-key",
+      "category": "api_key",
+      "input": "OPENAI_API_KEY=sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345678901234567",
+      "secret": "sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345678901234567",
+      "expect": "drop"
+    },
+    {
+      "name": "slack-bot-token",
+      "category": "api_key",
+      "input": "SLACK_BOT_TOKEN=xoxb-1234567890-0987654321-AbCdEfGhIjKlMnOpQrStUvWx",
+      "secret": "xoxb-1234567890-0987654321-AbCdEfGhIjKlMnOpQrStUvWx",
+      "expect": "drop"
+    },
+    {
+      "name": "dotenv-database-url",
+      "category": "env_value",
+      "input": "DATABASE_URL=postgres://app_user:s3cr3tP4ssw0rd@db.internal:5432/app",
+      "secret": "s3cr3tP4ssw0rd",
+      "expect": "drop"
+    },
+    {
+      "name": "jwt-hs256",
+      "category": "jwt",
+      "input": "session=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkphbmUifQ.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+      "secret": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkphbmUifQ.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+      "expect": "drop"
+    },
+    {
+      "name": "rsa-private-key-header",
+      "category": "private_key",
+      "input": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAxN...\n-----END RSA PRIVATE KEY-----",
+      "secret": "-----BEGIN RSA PRIVATE KEY-----",
+      "expect": "drop"
+    },
+    {
+      "name": "absolute-home-path-users",
+      "category": "home_path",
+      "input": "/Users/janedoe/.aws/credentials",
+      "secret": "/Users/janedoe",
+      "expect": "mask"
+    },
+    {
+      "name": "absolute-home-path-env",
+      "category": "home_path",
+      "input": "$HOME/.ssh/id_ed25519",
+      "secret": "$HOME/.ssh/id_ed25519",
+      "expect": "drop"
+    }
+  ]
+}
