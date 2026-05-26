@@ -8,7 +8,7 @@ import {
 } from './batcher';
 import { buildSpans } from './spans';
 import { calculateShardId } from './sharding';
-import { getPricing, type ModelPricing } from './pricing';
+import { getPricing, type ModelPricing } from '@trace-flow/pricing';
 import { fetchOpenRouterPricing } from './openrouter-pricing';
 
 const DEFAULT_NUM_SHARDS = 10;

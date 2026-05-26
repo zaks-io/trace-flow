@@ -72,6 +72,7 @@
         "@sentry/cloudflare": "^10.53.1",
         "@trace-flow/logging": "workspace:*",
         "@trace-flow/otel-conventions": "workspace:*",
+        "@trace-flow/pricing": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",
       },
@@ -209,12 +210,23 @@
       "name": "@trace-flow/otel-conventions",
       "version": "0.0.1",
       "dependencies": {
-        "@trace-flow/types": "*",
-        "@trace-flow/utils": "*",
+        "@trace-flow/types": "workspace:*",
+        "@trace-flow/utils": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^24.12.3",
         "@vitest/coverage-v8": "^4.1.6",
+        "typescript": "^5.9.3",
+        "vitest": "^4.1.6",
+      },
+    },
+    "packages/pricing": {
+      "name": "@trace-flow/pricing",
+      "version": "0.0.1",
+      "dependencies": {
+        "@trace-flow/types": "workspace:*",
+      },
+      "devDependencies": {
         "typescript": "^5.9.3",
         "vitest": "^4.1.6",
       },
@@ -271,7 +283,9 @@
       "name": "@trace-flow/types",
       "version": "0.0.1",
       "devDependencies": {
+        "@types/node": "^24.12.3",
         "typescript": "^5.9.3",
+        "vitest": "^4.1.6",
       },
     },
     "packages/utils": {
@@ -1298,6 +1312,8 @@
     "@trace-flow/logging": ["@trace-flow/logging@workspace:packages/logging"],
 
     "@trace-flow/otel-conventions": ["@trace-flow/otel-conventions@workspace:packages/otel-conventions"],
+
+    "@trace-flow/pricing": ["@trace-flow/pricing@workspace:packages/pricing"],
 
     "@trace-flow/proxy": ["@trace-flow/proxy@workspace:apps/proxy"],
 

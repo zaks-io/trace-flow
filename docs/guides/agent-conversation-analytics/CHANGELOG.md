@@ -15,6 +15,36 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-25 — 0c (@trace-flow/pricing package) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Extracted the per-message server-side cost chain out of
+`apps/proxy-consumer/src/pricing.ts` into a new shared `@trace-flow/pricing` package
+(`getPricing` / `calculateCost` / `microdollarsToDollars` / `formatCostAsString`, plus the
+`ModelPricing` / `ContextTierPricing` / `CostBreakdown` types). Added **`gpt-5.5` context-tier
+awareness**: `ModelPricing.contextTier` carries a `thresholdTokens` + tier rates, and `calculateCost`
+swaps to the tier rates once a message's input context reaches the threshold (gpt-5.5 prices ~2x above
+a 200k-token context and Codex runs near a 258k window, so a flat rate undercounts). The package prices
+**one message and nothing else** — it does **not** own subagent dedup (that stays in SQL as
+`agent_priced_usage.pipe`, task 1c). Canonical extraction, not a barrel: deleted the old
+`pricing.ts` + its test, pointed proxy-consumer's three importers (`index.ts`, `spans.ts`,
+`openrouter-pricing.ts`) and one test at `@trace-flow/pricing`, added the workspace dep. Moved the full
+test suite into the package and added 4 context-tier tests (below-threshold base rate, inclusive
+boundary at 200k, 258k Codex-style window, no-tier flat passthrough) plus the explicit unpriced-model →
+null path. Matched the repo convention of inheriting `@cloudflare/workers-types` (the `KVNamespace`
+global) from the **root** devDependency rather than re-declaring it (keeps knip clean, mirrors
+`@trace-flow/utils`).
+**Verified:** `bun run --filter @trace-flow/pricing test` 33/33; `bunx turbo run lint type-check test
+--filter=@trace-flow/pricing --filter=@trace-flow/proxy-consumer` green (pricing 33, proxy-consumer 112
+— the workerd "invalidating Durable Object" lines are info-level hot-reload noise, all 7 files pass);
+`bun run knip` clean; `coderabbit review --agent --type uncommitted` → 0 findings.
+**Next / blockers:** None. 0c done. **0d** (CF provisioning + deploy-gate) is the last open first-wave
+task; its verify needs live `wrangler` access to a dev account (`wrangler queues list` / `kv namespace
+list`) — may be a stop point if the CLI is not authed. 1a/2a/3a/3c unblocked by 0a; 2c/2d depend on 0c
+(now ✅).
+
+---
+
 ## 2026-05-25 — 0b (Rust workspace scaffold) — t3code/ab83918d
 
 **Status:** ✅ done
