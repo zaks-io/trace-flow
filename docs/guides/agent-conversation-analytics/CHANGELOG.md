@@ -15,6 +15,32 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-25 — 1a (9 `agent_*` datasources) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added the 9 `agent_*` Tinybird datasources. Five base fact tables
+(`agent_messages`, `agent_tool_events`, `agent_file_events`, `agent_capability_snapshots`,
+`agent_pull_request_links`) are `ReplacingMergeTree(IngestedAt)` keyed `OrgId, session_pk, <row>_pk`,
+partitioned `toYYYYMMDD(EventAt)`, TTL `toDateTime(EventAt) + 1y`. `agent_sessions` is
+`ReplacingMergeTree(IngestedAt)` keyed `OrgId, session_pk` with no partition key, TTL on `LastEventAt`.
+Three rollups (`agent_usage_1h`, `agent_usage_1d`, `agent_tool_usage_1h`) are `AggregatingMergeTree`
+keyed low-to-high cardinality with `BucketStart` leading (mirroring `llm_usage_1h`). `cost_usd
+Nullable(Float64)` is the only nullable column. The 5 base fact tables carry `json:$.<col>` JSONPaths
+(keys == column names) because the consumer POSTs to them via `/v0/events`; `agent_sessions` + rollups
+omit JSONPaths since they are rebuilt from base `FINAL` by Copy Pipes (1c), like `llm_requests`.
+**Verified:** `tb build` clean across the full project (datasources + all existing pipes). Live insert
+against a local `tb` instance via `POST /v0/events?name=agent_messages` (2 rows, 0 quarantined):
+same `message_pk` twice with newer `IngestedAt` → `SELECT … FINAL` count = 1 keeping the newer row
+(output_tokens 999, cost_usd 0.99); a distinct `message_pk` → `FINAL` count = 2; `cost_usd: null`
+ingests as `None`. Root-caused a pre-existing `tb build` failure on `otel_traces` to a stale local CLI
+(4.2.1 → 4.5.8) — out of lane, fixed by updating the CLI, not the datasource. CodeRabbit: 2 trivial
+findings (move `OrgId` before `BucketStart` in the two rollup sorting keys) declined as false positives
+— the ADR (§Table physics, line 373) and ROADMAP (1a) explicitly specify low-to-high cardinality with
+`BucketStart` leading, matching the `llm_usage_1h` template; the high-cardinality-first rule applies to
+the base fact tables, which already lead with `OrgId`.
+**Next / blockers:** 1b (launch-query pipes) and 1c (COPY rollup pipes) now unblocked. Schema is not
+deployed to the cloud dev workspace yet — that is 1d (gated until 2e per the deploy-gate).
+
 ## 2026-05-25 — 0d (CF resource provisioning + deploy-gate) — t3code/ab83918d
 
 **Status:** ✅ done

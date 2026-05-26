@@ -1,0 +1,38 @@
+DESCRIPTION >
+    One canonical Pull Request Link observation (passive transcript evidence,
+    GitHub-only in v1). No GitHub/GitLab API calls. `confidence` and `evidence`
+    record how the link was extracted; PR authoring cost reads the canonical
+    session aggregate after dedupe, never these rows' cost directly.
+    JSONPaths are defined because the consumer POSTs rows here via /v0/events;
+    keys match column names exactly (the ingest contract for this fact table).
+
+SCHEMA >
+    `OrgId` String `json:$.OrgId`,
+    `UserId` String `json:$.UserId`,
+    `CollectorId` String `json:$.CollectorId`,
+    `CollectorCredentialId` String `json:$.CollectorCredentialId`,
+    `session_pk` String `json:$.session_pk`,
+    `pull_request_link_pk` String `json:$.pull_request_link_pk`,
+    `repo_fingerprint` String `json:$.repo_fingerprint`,
+    `repo_source` LowCardinality(String) `json:$.repo_source`,
+    `source` LowCardinality(String) `json:$.source`,
+    `parser_version` LowCardinality(String) `json:$.parser_version`,
+    `EventAt` DateTime64(3) `json:$.EventAt`,
+    `IngestedAt` DateTime64(3) `json:$.IngestedAt`,
+    `vendor_session_id` String `json:$.vendor_session_id`,
+    `source_event_id` String `json:$.source_event_id`,
+    `stable_turn_index` UInt32 `json:$.stable_turn_index`,
+    `host` LowCardinality(String) `json:$.host`,
+    `owner` String `json:$.owner`,
+    `repo` String `json:$.repo`,
+    `number` UInt32 `json:$.number`,
+    `url` String `json:$.url`,
+    `confidence` LowCardinality(String) `json:$.confidence`,
+    `evidence` LowCardinality(String) `json:$.evidence`,
+    `dropped_sensitive` UInt32 `json:$.dropped_sensitive`
+
+ENGINE "ReplacingMergeTree"
+ENGINE_VER "IngestedAt"
+ENGINE_SORTING_KEY "OrgId, session_pk, pull_request_link_pk"
+ENGINE_PARTITION_KEY "toYYYYMMDD(EventAt)"
+ENGINE_TTL "toDateTime(EventAt) + toIntervalYear(1)"
