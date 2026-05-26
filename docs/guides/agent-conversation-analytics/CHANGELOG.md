@@ -15,6 +15,34 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-25 — 0a (wire contract + Rust mirror) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** First feature code for slice B. Defined the full TS wire contract in
+`packages/types/src/agent-ingest.ts` (exported from `src/index.ts`): `AgentIngestEnvelope`
+(`batch{source, collector_batch_id, desktop_version, parser_version, raw_upload_requested}` +
+`facts{messages[], tool_events[], file_events[], capability_snapshots[], pull_request_links[]}`), every
+`Agent*Fact` shape (session-grain attribution — normalized git remote, branch, head sha,
+vendor*started_at — rides on `AgentMessageFact`; tool use+result folded into one `AgentToolEventFact`
+with `extracted_subagent*_`), the deferred `RawSessionBundle`slot, and`AgentIngestQueueMessage`(worker→consumer, adds tenancy + assembled`_\_pk`via explicit`extends`-based queue-fact types, no
+`Partial<>`). Mirrored it in a new Rust crate `packages/collector-contracts/`(serde`rename_all="snake_case"`, `enums.rs`/`facts.rs`/`envelope.rs`/`sample.rs`/`lib.rs`, a `dump_sample`example,`.gitignore`for`/target`+`Cargo.lock`). Committed two shared fixtures:
+`fixtures/agent-envelope.sample.json`(generated from the Rust`sample_envelope()`, the contract
+fixture both languages round-trip) and `fixtures/redaction-canary.json`(12 language-neutral cases —
+AWS/GitHub/Bearer/OpenAI/Slack keys, dotenv, JWT, RSA key, absolute home paths — each tagged
+drop|mask, consumed by 2b and 3a). Added a vitest setup to`@trace-flow/types` (`vitest.config.ts`,
+test scripts, `@types/node`+`vitest`devDeps,`tsconfig` `types:["node"]`) with
+`src/**tests**/agent-ingest.test.ts`deserializing the shared fixture into the typed envelope.
+**Verified:**`cargo test -p collector-contracts`3/3 green (fixture field-equal to`sample_envelope()`,
+deserialize+round-trip with no field loss, redaction-canary well-formed); `cargo fmt --check`+`cargo clippy --all-targets -- -D warnings`clean;`bunx turbo run lint type-check test
+--filter=@trace-flow/types`all green (4 tests pass);`coderabbit review --agent --type uncommitted`
+→ 0 findings. A serde or TS rename on either side now fails its own assertion, so the contract cannot
+silently drift.
+**Next / blockers:** None. 0a done. First wave continues — **0b** (Rust workspace root Cargo.toml),
+**0c** (`@trace-flow/pricing`), **0d** (CF provisioning) remain open with no dependencies; **1a, 2a,
+3a, 3c** unblock now that 0a is `✅`.
+
+---
+
 ## 2026-05-25 — review hardening II (autonomous-safety rails) — t3code/ab83918d
 
 **Status:** ✅ done

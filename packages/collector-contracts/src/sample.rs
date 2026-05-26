@@ -1,0 +1,132 @@
+//! The canonical fully-populated envelope. It is the single source of truth behind
+//! `fixtures/agent-envelope.sample.json`: the round-trip test asserts the fixture deep-equals
+//! `sample_envelope()` serialized, and the `dump_sample` example regenerates the fixture from it.
+//! Every field carries a real value so a serde or TS rename drops a field and fails the test.
+
+use crate::enums::{
+    AgentCapabilityKind, AgentEventStatus, AgentFileOperation, AgentMessageRole, AgentSource,
+    CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence, TokenCoverage,
+};
+use crate::envelope::{
+    AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts, RawSessionBundle,
+    RawSessionBundleManifest,
+};
+use crate::facts::{
+    AgentCapabilitySnapshotFact, AgentFileEventFact, AgentMessageFact, AgentPullRequestLinkFact,
+    AgentToolEventFact,
+};
+
+pub fn sample_envelope() -> AgentIngestEnvelope {
+    AgentIngestEnvelope {
+        batch: AgentIngestBatch {
+            source: AgentSource::Claude,
+            collector_batch_id: "batch_01HZX0000000000000000000".to_string(),
+            desktop_version: "0.1.0".to_string(),
+            parser_version: "0.1.0".to_string(),
+            raw_upload_requested: true,
+        },
+        facts: AgentIngestFacts {
+            messages: vec![AgentMessageFact {
+                vendor_session_id: "claude-sess-abc123".to_string(),
+                vendor_message_id: Some("msg_01ABCDEF".to_string()),
+                turn_index: 4,
+                role: AgentMessageRole::Assistant,
+                event_at: 1_748_180_000_000,
+                model: "claude-opus-4-7".to_string(),
+                input_tokens: 1200,
+                output_tokens: 340,
+                cache_read_tokens: 8000,
+                cache_creation_tokens: 512,
+                cache_creation_5m_tokens: 384,
+                cache_creation_1h_tokens: 128,
+                reasoning_tokens: 64,
+                token_coverage: TokenCoverage::Full,
+                cache_coverage: CacheCoverage::Full,
+                agent_depth: 1,
+                is_subagent_spawn: true,
+                is_sidechain: true,
+                agent_id: "agent-7f3c".to_string(),
+                normalized_git_remote: "github.com/acme/trace-flow".to_string(),
+                repo_path_fallback: "trace-flow".to_string(),
+                git_branch: "feat/agent-analytics".to_string(),
+                git_head_sha: "9fceb02d".to_string(),
+                vendor_started_at: Some(1_748_179_000_000),
+                dropped_sensitive: 2,
+            }],
+            tool_events: vec![AgentToolEventFact {
+                vendor_session_id: "claude-sess-abc123".to_string(),
+                vendor_message_id: Some("msg_01ABCDEF".to_string()),
+                tool_use_id: Some("toolu_01XYZ".to_string()),
+                source_block_index: 1,
+                event_at: 1_748_180_001_000,
+                tool_name: "Bash".to_string(),
+                command_family: "git".to_string(),
+                command_program: "git".to_string(),
+                command_subcommand: "push".to_string(),
+                status: AgentEventStatus::Success,
+                exit_code: Some(0),
+                duration_ms: Some(842),
+                repo_relative_paths: vec!["src/main.rs".to_string(), "outside_repo".to_string()],
+                extracted_provider: "github".to_string(),
+                extracted_repo: "acme/trace-flow".to_string(),
+                extracted_pr_number: Some(123),
+                command_excerpt: "git push origin HEAD".to_string(),
+                error_excerpt: "".to_string(),
+                extracted_subagent_agent_id: "agent-7f3c".to_string(),
+                extracted_subagent_model: "claude-opus-4-7".to_string(),
+                extracted_subagent_input_tokens: 1200,
+                extracted_subagent_output_tokens: 340,
+                extracted_subagent_cache_read_tokens: 8000,
+                extracted_subagent_cache_creation_tokens: 512,
+                dropped_sensitive: 1,
+            }],
+            file_events: vec![AgentFileEventFact {
+                vendor_session_id: "claude-sess-abc123".to_string(),
+                vendor_message_id: Some("msg_01ABCDEF".to_string()),
+                source_block_index: 2,
+                normalized_repo_path: "src/main.rs".to_string(),
+                operation: AgentFileOperation::Edit,
+                event_at: 1_748_180_002_000,
+                dropped_sensitive: 0,
+            }],
+            capability_snapshots: vec![AgentCapabilitySnapshotFact {
+                vendor_session_id: "claude-sess-abc123".to_string(),
+                source_snapshot_id: Some("snap-001".to_string()),
+                stable_turn_index: 0,
+                event_at: 1_748_179_500_000,
+                capability_kind: AgentCapabilityKind::DynamicTools,
+                item_count: 12,
+                total_size_bytes: 4096,
+                total_tokens_estimate: 1024,
+                content_hash: "sha256:deadbeef".to_string(),
+                redacted_label: "12 dynamic tools".to_string(),
+                dropped_sensitive: 0,
+            }],
+            pull_request_links: vec![AgentPullRequestLinkFact {
+                vendor_session_id: "claude-sess-abc123".to_string(),
+                source_event_id: Some("evt-009".to_string()),
+                stable_turn_index: 6,
+                event_at: 1_748_180_003_000,
+                host: "github.com".to_string(),
+                owner: "acme".to_string(),
+                repo: "trace-flow".to_string(),
+                number: 123,
+                url: "https://github.com/acme/trace-flow/pull/123".to_string(),
+                confidence: PullRequestLinkConfidence::High,
+                evidence: PullRequestLinkEvidence::AssistantText,
+                dropped_sensitive: 0,
+            }],
+        },
+        raw_session_bundles: Some(vec![RawSessionBundle {
+            manifest: RawSessionBundleManifest {
+                source: AgentSource::Claude,
+                vendor_session_id: "claude-sess-abc123".to_string(),
+                parser_version: "0.1.0".to_string(),
+                part_ids: vec!["main".to_string(), "subagents/agent-7f3c".to_string()],
+                content_hash: "sha256:cafebabe".to_string(),
+                byte_count: 20480,
+            },
+            gzip_base64: "H4sIAAAAAAAAAytJLS4BAAx+f9gEAAAA".to_string(),
+        }]),
+    }
+}

@@ -8,35 +8,35 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 
 ## Board
 
-| ID  | Task                                        | Status | Depends on     |
-| --- | ------------------------------------------- | ------ | -------------- |
-| 0a  | Wire contract + Rust mirror                 | ☐ todo | —              |
-| 0b  | Rust workspace scaffold                     | ☐ todo | —              |
-| 0c  | `@trace-flow/pricing` package               | ☐ todo | —              |
-| 0d  | CF resource provisioning + deploy-gate      | ☐ todo | —              |
-| 1a  | 9 `agent_*` datasources                     | ☐ todo | 0a             |
-| 1b  | Launch-query pipes                          | ☐ todo | 1a             |
-| 1c  | COPY rollup pipes                           | ☐ todo | 1a             |
-| 1d  | Deploy `agent_*` schema (Tinybird)          | ☐ todo | 1a, 1b, 1c     |
-| 2a  | Convex control plane                        | ☐ todo | 0a             |
-| 2b  | `apps/agent-ingest` worker                  | ☐ todo | 0a, 2a         |
-| 2c  | `apps/agent-consumer` worker                | ☐ todo | 0c, 1a, 2b     |
-| 2d  | models.dev pricing import                   | ☐ todo | 0c, 2a         |
-| 2e  | Wrangler / dev wiring                       | ☐ todo | 2b, 2c, 1d     |
-| 2f  | Observability + ops runbook                 | ☐ todo | 2b, 2c         |
-| 2g  | PR CI for new TS packages                   | ☐ todo | 0c, 2b, 2c     |
-| 3a  | `collector-parser`                          | ☐ todo | 0a             |
-| 3b  | `collector-sync`                            | ☐ todo | 0a, 3a         |
-| 3c  | `collector-api-client` + `collector-common` | ☐ todo | 0a             |
-| 3d  | Headless end-to-end run                     | ☐ todo | 2e, 3a, 3b, 3c |
-| 4a  | Dashboard pages                             | ☐ todo | 1b, 2a         |
-| 4b  | `org_id` agent JWT in web                   | ☐ todo | 2a             |
-| 4c  | Connected Desktops surface                  | ☐ todo | 2a, 5b         |
-| 5a  | Tauri desktop shell                         | ☐ todo | 3d             |
-| 5b  | Connect + Stronghold credential             | ☐ todo | 3d, 5a         |
-| 5c  | Notifications + diagnostics                 | ☐ todo | 5a             |
-| 6a  | Collector CI job                            | ☐ todo | 0b             |
-| 6b  | macOS arm64 signed release                  | ☐ todo | 5b             |
+| ID  | Task                                        | Status  | Depends on     |
+| --- | ------------------------------------------- | ------- | -------------- |
+| 0a  | Wire contract + Rust mirror                 | ✅ done | —              |
+| 0b  | Rust workspace scaffold                     | ☐ todo  | —              |
+| 0c  | `@trace-flow/pricing` package               | ☐ todo  | —              |
+| 0d  | CF resource provisioning + deploy-gate      | ☐ todo  | —              |
+| 1a  | 9 `agent_*` datasources                     | ☐ todo  | 0a             |
+| 1b  | Launch-query pipes                          | ☐ todo  | 1a             |
+| 1c  | COPY rollup pipes                           | ☐ todo  | 1a             |
+| 1d  | Deploy `agent_*` schema (Tinybird)          | ☐ todo  | 1a, 1b, 1c     |
+| 2a  | Convex control plane                        | ☐ todo  | 0a             |
+| 2b  | `apps/agent-ingest` worker                  | ☐ todo  | 0a, 2a         |
+| 2c  | `apps/agent-consumer` worker                | ☐ todo  | 0c, 1a, 2b     |
+| 2d  | models.dev pricing import                   | ☐ todo  | 0c, 2a         |
+| 2e  | Wrangler / dev wiring                       | ☐ todo  | 2b, 2c, 1d     |
+| 2f  | Observability + ops runbook                 | ☐ todo  | 2b, 2c         |
+| 2g  | PR CI for new TS packages                   | ☐ todo  | 0c, 2b, 2c     |
+| 3a  | `collector-parser`                          | ☐ todo  | 0a             |
+| 3b  | `collector-sync`                            | ☐ todo  | 0a, 3a         |
+| 3c  | `collector-api-client` + `collector-common` | ☐ todo  | 0a             |
+| 3d  | Headless end-to-end run                     | ☐ todo  | 2e, 3a, 3b, 3c |
+| 4a  | Dashboard pages                             | ☐ todo  | 1b, 2a         |
+| 4b  | `org_id` agent JWT in web                   | ☐ todo  | 2a             |
+| 4c  | Connected Desktops surface                  | ☐ todo  | 2a, 5b         |
+| 5a  | Tauri desktop shell                         | ☐ todo  | 3d             |
+| 5b  | Connect + Stronghold credential             | ☐ todo  | 3d, 5a         |
+| 5c  | Notifications + diagnostics                 | ☐ todo  | 5a             |
+| 6a  | Collector CI job                            | ☐ todo  | 0b             |
+| 6b  | macOS arm64 signed release                  | ☐ todo  | 5b             |
 
 ### Milestones
 

@@ -8,9 +8,13 @@
   },
   "scripts": {
     "type-check": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "@types/node": "^24.12.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6"
   }
 }

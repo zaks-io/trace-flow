@@ -1,0 +1,124 @@
+{
+  "batch": {
+    "source": "claude",
+    "collector_batch_id": "batch_01HZX0000000000000000000",
+    "desktop_version": "0.1.0",
+    "parser_version": "0.1.0",
+    "raw_upload_requested": true
+  },
+  "facts": {
+    "messages": [
+      {
+        "vendor_session_id": "claude-sess-abc123",
+        "vendor_message_id": "msg_01ABCDEF",
+        "turn_index": 4,
+        "role": "assistant",
+        "event_at": 1748180000000,
+        "model": "claude-opus-4-7",
+        "input_tokens": 1200,
+        "output_tokens": 340,
+        "cache_read_tokens": 8000,
+        "cache_creation_tokens": 512,
+        "cache_creation_5m_tokens": 384,
+        "cache_creation_1h_tokens": 128,
+        "reasoning_tokens": 64,
+        "token_coverage": "full",
+        "cache_coverage": "full",
+        "agent_depth": 1,
+        "is_subagent_spawn": true,
+        "is_sidechain": true,
+        "agent_id": "agent-7f3c",
+        "normalized_git_remote": "github.com/acme/trace-flow",
+        "repo_path_fallback": "trace-flow",
+        "git_branch": "feat/agent-analytics",
+        "git_head_sha": "9fceb02d",
+        "vendor_started_at": 1748179000000,
+        "dropped_sensitive": 2
+      }
+    ],
+    "tool_events": [
+      {
+        "vendor_session_id": "claude-sess-abc123",
+        "vendor_message_id": "msg_01ABCDEF",
+        "tool_use_id": "toolu_01XYZ",
+        "source_block_index": 1,
+        "event_at": 1748180001000,
+        "tool_name": "Bash",
+        "command_family": "git",
+        "command_program": "git",
+        "command_subcommand": "push",
+        "status": "success",
+        "exit_code": 0,
+        "duration_ms": 842,
+        "repo_relative_paths": ["src/main.rs", "outside_repo"],
+        "extracted_provider": "github",
+        "extracted_repo": "acme/trace-flow",
+        "extracted_pr_number": 123,
+        "command_excerpt": "git push origin HEAD",
+        "error_excerpt": "",
+        "extracted_subagent_agent_id": "agent-7f3c",
+        "extracted_subagent_model": "claude-opus-4-7",
+        "extracted_subagent_input_tokens": 1200,
+        "extracted_subagent_output_tokens": 340,
+        "extracted_subagent_cache_read_tokens": 8000,
+        "extracted_subagent_cache_creation_tokens": 512,
+        "dropped_sensitive": 1
+      }
+    ],
+    "file_events": [
+      {
+        "vendor_session_id": "claude-sess-abc123",
+        "vendor_message_id": "msg_01ABCDEF",
+        "source_block_index": 2,
+        "normalized_repo_path": "src/main.rs",
+        "operation": "edit",
+        "event_at": 1748180002000,
+        "dropped_sensitive": 0
+      }
+    ],
+    "capability_snapshots": [
+      {
+        "vendor_session_id": "claude-sess-abc123",
+        "source_snapshot_id": "snap-001",
+        "stable_turn_index": 0,
+        "event_at": 1748179500000,
+        "capability_kind": "dynamic_tools",
+        "item_count": 12,
+        "total_size_bytes": 4096,
+        "total_tokens_estimate": 1024,
+        "content_hash": "sha256:deadbeef",
+        "redacted_label": "12 dynamic tools",
+        "dropped_sensitive": 0
+      }
+    ],
+    "pull_request_links": [
+      {
+        "vendor_session_id": "claude-sess-abc123",
+        "source_event_id": "evt-009",
+        "stable_turn_index": 6,
+        "event_at": 1748180003000,
+        "host": "github.com",
+        "owner": "acme",
+        "repo": "trace-flow",
+        "number": 123,
+        "url": "https://github.com/acme/trace-flow/pull/123",
+        "confidence": "high",
+        "evidence": "assistant_text",
+        "dropped_sensitive": 0
+      }
+    ]
+  },
+  "raw_session_bundles": [
+    {
+      "manifest": {
+        "source": "claude",
+        "vendor_session_id": "claude-sess-abc123",
+        "parser_version": "0.1.0",
+        "part_ids": ["main", "subagents/agent-7f3c"],
+        "content_hash": "sha256:cafebabe",
+        "byte_count": 20480
+      },
+      "gzip_base64": "H4sIAAAAAAAAAytJLS4BAAx+f9gEAAAA"
+    }
+  ]
+}
