@@ -27,7 +27,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 2g  | PR CI for new TS packages                   | ✅ done                             | 0c, 2b, 2c     |
 | 3a  | `collector-parser`                          | ☐ todo                              | 0a             |
 | 3b  | `collector-sync`                            | ☐ todo                              | 0a, 3a         |
-| 3c  | `collector-api-client` + `collector-common` | ☐ todo                              | 0a             |
+| 3c  | `collector-api-client` + `collector-common` | ✅ done                             | 0a             |
 | 3d  | Headless end-to-end run                     | ☐ todo                              | 2e, 3a, 3b, 3c |
 | 4a  | Dashboard pages                             | ☐ todo                              | 1b, 2a         |
 | 4b  | `org_id` agent JWT in web                   | ☐ todo                              | 2a             |
@@ -390,8 +390,9 @@ Build and test headless against fixtures + the real local stores + the Phase 2 w
 
 - **Files:** `packages/collector-api-client/` (from `otto-api-client`), `packages/collector-common/`
   (from `otto-common`); both vendored, provenance/SPDX header per `otto-extraction-reference.md`.
-- **Do:** `Bearer` Collector Credential (not Otto Basic), gzip, retry only `policy_unavailable`.
-  `collector-common`: paths incl. macOS Cursor dirs.
+- **Do:** Collector Credential sent in the `X-Trace-Flow-Collector-Secret` header (matching the 2b
+  `agent-ingest` worker; not Otto Basic, not `Authorization: Bearer`), gzip the request body, retry
+  only `policy_unavailable`. `collector-common`: paths incl. macOS Cursor dirs.
 - **Verify (cargo):** auth header shape; gzip round-trip; retry only on `policy_unavailable`.
 
 ### 3d — Headless end-to-end run

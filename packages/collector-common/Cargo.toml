@@ -1,0 +1,10 @@
+[package]
+name = "collector-common"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Path discovery helpers for the Trace Flow agent Collector."
+
+[dependencies]
+anyhow = "1"
+dirs = "5"

@@ -15,6 +15,31 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3c (`collector-api-client` + `collector-common`) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Two new Rust crates, both vendored from Otto with SPDX/provenance headers.
+`collector-api-client` posts an `AgentIngestEnvelope` to `POST /v1/ingest`: gzips the request body
+(manual `flate2`, since reqwest's `.gzip(true)` only decompresses responses), classifies every
+`agent-ingest` status code into `IngestError`/`IngestOk`, and retries **only** `503 policy_unavailable`
+with capped exponential backoff (cancellation-aware). `collector-common` resolves the
+Claude/Codex/Cursor on-disk paths, including the macOS Cursor `workspaceStorage` root.
+**Auth-header reconciliation:** the ADR shorthand said "`Bearer` Collector Credential (not Otto
+Basic)," but the landed 2b worker reads the raw secret from `X-Trace-Flow-Collector-Secret`
+(`apps/agent-ingest/src/auth.ts` hashes it and looks it up in `COLLECTOR_CREDS` KV). The client now
+sends that header verbatim — "Bearer, not Basic" was shorthand for "a credential, not Basic," not a
+literal `Authorization: Bearer`. ROADMAP 3c wording corrected to match the as-built worker.
+**Verified:** `cargo test` 13 pass (7 api-client incl. auth-header shape, gzip round-trip, retry-only-
+on-`policy_unavailable`, terminal-on-`enqueue_failed`/`upgrade_required`/`rate_limited`, and an
+in-flight cancellation test; 6 collector-common path tests); `cargo clippy --all-targets -D warnings`
+clean; `cargo fmt --check` clean. CodeRabbit CLI run to the 4-pass cap; every valid finding fixed
+(cast simplification, unreachable retry-loop tail → `unreachable!()`, dropped unsafe `HOME` mutation
+in tests for env-free assertions, doc comments). One "major" — swap `dirs` for `dirs-next` — was
+**rejected**: `dirs` is maintained (v6 published) while `dirs-next` is frozen at 2.0.0 (2021); the
+swap would regress to an abandoned crate.
+**Next / blockers:** 3a (`collector-parser`) and 3b (`collector-sync`) still `☐`; 3d end-to-end needs
+2e + 3a + 3b + 3c. PR #270 (Phase 2 → main) auto-updates with this push.
+
 ## 2026-05-26 — 2g (PR CI for new TS packages) — t3code/ab83918d
 
 **Status:** ✅ done
