@@ -1,0 +1,12 @@
+[package]
+name = "collector-sync"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Headless filesystem + HTTP sync engine for the Trace Flow agent Collector."
+
+[dependencies]
+# Git remote resolution shells out to `git` via the async process API: `process` for the subprocess,
+# `macros` for the `join!` that runs the three rev-parse/config probes concurrently. The runtime is
+# the embedder's; this crate spawns none.
+tokio = { version = "1", features = ["process", "macros"] }

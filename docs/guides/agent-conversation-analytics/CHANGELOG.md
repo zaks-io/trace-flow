@@ -15,6 +15,41 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3b (`collector-sync`: scaffold + git-remote freeze cache, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** New crate `packages/collector-sync/` (auto-joins the workspace via the `collector-*`
+member glob): `Cargo.toml`, `src/lib.rs` (crate root + module wiring), `src/git.rs`. First leaf of
+3b — the git-remote resolve + **freeze cache** (one of 3b's three named cargo-verify items).
+
+- **`GitRemoteCache`** (original Trace Flow code; otto re-resolved per call): a process-lifetime
+  `cwd -> Option<GitMetadata>` cache. First sight of a `cwd` resolves and **freezes** it
+  (first-writer-wins via `entry().or_insert()`), so a mid-run `git remote set-url` cannot
+  re-attribute a session. `Some(None)` freezes a non-repo `cwd` so it is probed at most once;
+  `None` means never-probed. The `std::sync::Mutex` guard is dropped before the `.await`, leaving a
+  benign, documented TOCTOU (two first-time callers may both shell out; freeze is idempotent).
+- **`resolve_git_metadata`** vendored from `otto-sync/src/git.rs` (SPDX + provenance header per
+  `otto-extraction-reference.md`): concurrent `--show-toplevel` / `--abbrev-ref HEAD` /
+  `remote.origin.url` probes via `tokio::join!`. Every `git` failure mode collapses to `None` =
+  "field absent" / "not a repo"; per-failure diagnostics are deferred to 3d. Dropped the redundant
+  blocking `Path::exists()` guard otto carried (a sync `stat` in async).
+- **Scope discipline:** otto-sync's `pricing` and `provider_usage` modules are NOT vendored —
+  provider-usage cost tracking is a separate feature and pricing is server-side.
+
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-sync --all-targets -D warnings`,
+`cargo build`, `cargo test -p collector-sync` (4 freeze-cache unit tests: peek miss→hit,
+first-writer-wins ignores a later remote change, non-repo freezes as `Some(None)`, distinct cwds are
+independent). The git subprocess itself is left to the 3d end-to-end run (it shells out to real git).
+Local `code-review`: **CHANGES REQUESTED → fixes → READY TO LAND** (P1 redundant blocking
+`Path::exists`, P1 TOCTOU doc, P2 unused `rt` tokio feature, P3 failure-discard + provenance-header
+notes — all addressed; confirmation pass clean). CodeRabbit not escalated — local code, no escalation
+trigger (the credential/auth path lives in the already-landed 3c `collector-api-client`).
+**Next / blockers:** 3b remains 🚧. Remaining leaves: SQLite cursor store (read/write + advance), the
+one-job-at-a-time orchestrator state machine (`Watching/Syncing/Importing/Paused/Error`),
+`collector_started_at` + 24h grace, history-import presets (7d/30d/1y), and the POST loop that wraps
+`session_facts(...)` in an `AgentIngestEnvelope` and advances the cursor only on a 2xx (reusing the
+3c `CollectorApiClient`). FSEvents watcher + live POST are exercised at 3d.
+
 ## 2026-05-27 — 3a (`collector-parser`: session assembler — slice complete) — t3code/ab83918d
 
 **Status:** ✅ done
