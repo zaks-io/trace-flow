@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit is on-demand only. Automatic and incremental PR reviews are OFF so the team is not
+# throttled by hosted-review rate limits; local review runs through the `code-review` skill instead.
+# To request a review on a PR, comment `@coderabbitai review` (or `@coderabbitai full review`).
+
+reviews:
+  auto_review:
+    enabled: false
+    auto_incremental_review: false
+    drafts: false
+    ignore_usernames:
+      - 'dependabot[bot]'
+      - 'renovate[bot]'
+      - 'github-actions[bot]'
+  path_filters:
+    - '!**/node_modules/**'
+    - '!**/dist/**'
+    - '!**/.next/**'
+    - '!**/.open-next/**'
+    - '!**/.wrangler/**'
+    - '!**/target/**'
+    - '!**/*.tsbuildinfo'
+    - '!**/worker-configuration.d.ts'
+    - '!packages/convex/convex/_generated/**'
+    - '!**/bun.lock'

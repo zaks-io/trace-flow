@@ -90,6 +90,12 @@ Shared agent context lives in `AGENTS.md` and `.agents/skills/...`; update those
 
 Codex project settings live in `.codex/config.toml` for MCP endpoints and main config values, and `.codex/hooks.json` for hook wiring and shell commands. After changing agent config or hooks, restart the relevant agent session so it reloads the files. Issue tracker and triage behavior still come from the Linear and label docs below.
 
+### Code review
+
+Review happens **locally first**. Run the `code-review` skill (`.agents/skills/code-review`, with the read-only `code-reviewer` Claude subagent) before any commit or PR; it carries the bug taxonomy and the Trace Flow gotchas (streams, `waitUntil`, queue `ack`, Tinybird schema, redaction boundary). The `create-pr` skill wires this into the PR flow.
+
+CodeRabbit is **on-demand only** — automatic and incremental reviews are disabled in `.coderabbit.yaml`, so the team is never throttled by hosted-review rate limits. Escalate to CodeRabbit (CLI `coderabbit review --agent`, or a `@coderabbitai review` PR comment) only for genuinely high-risk changes per the skill's escalation rubric.
+
 ### Issue tracker
 
 Issues live in Linear (team `TRA`), accessed via the `claude.ai_Linear` MCP server. See `docs/agents/issue-tracker.md`.

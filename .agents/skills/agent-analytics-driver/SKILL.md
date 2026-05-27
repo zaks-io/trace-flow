@@ -1,6 +1,6 @@
 ---
 name: agent-analytics-driver
-description: Autonomously advances the Agent Conversation Analytics build defined in docs/guides/agent-conversation-analytics/ROADMAP.md. One invocation does exactly one safe unit of work (claim -> implement -> verify -> CodeRabbit-CLI review -> commit), and self-merges to main only at phase boundaries. Use when the user wants to "keep working the agent-analytics plan", "drive the roadmap", "build the next agent-analytics task", or run this under /goal or /loop. Scoped to Phases 0-4; hands off Phases 5-6 (Tauri GUI + signed release).
+description: Autonomously advances the Agent Conversation Analytics build defined in docs/guides/agent-conversation-analytics/ROADMAP.md. One invocation does exactly one safe unit of work (claim -> implement -> verify -> local code-review -> commit), and opens a PR to main (never self-merges) at phase boundaries. Use when the user wants to "keep working the agent-analytics plan", "drive the roadmap", "build the next agent-analytics task", or run this under /goal or /loop. Scoped to Phases 0-4; hands off Phases 5-6 (Tauri GUI + signed release).
 ---
 
 # Agent Analytics Driver
@@ -25,8 +25,13 @@ Vocabulary: `CONTEXT.md`. This skill never restates the design — the ADR wins.
    split is wrong — note it in the CHANGELOG and stop, don't reach across lanes.
 5. **Verify** (all output must land in the transcript — see matrix below). Run the task's own verify
    line first, then the repo gates.
-6. **Review.** `coderabbit review --agent --type uncommitted --dir <task-dir>` until **0 findings**.
-   Fix, re-run. Cap at 4 review passes; if still not clean, stop and report the remaining findings.
+6. **Review.** Run the local `code-review` skill (prefer the read-only `code-reviewer` subagent) over
+   the uncommitted diff in `<task-dir>`. Fix every P0/P1 and obvious mechanical P2 finding and
+   re-review until the verdict is **READY TO LAND**. Escalate to CodeRabbit
+   (`coderabbit review --agent --type uncommitted --dir <task-dir>`) only when the skill's rubric calls
+   for it (schema migration, redaction, concurrency, contract change, or unresolved uncertainty), and
+   treat a CodeRabbit rate-limit as a skip, not a blocker. If the review can't reach READY TO LAND,
+   stop and report the findings.
 7. **Land.** Commit onto `agent-analytics` (Conventional Commits, one commit per task). Set ROADMAP
    status `✅ done` and **prepend** a `CHANGELOG.md` entry (newest-first; absolute dates only).
 8. **Phase boundary?** If this task completes a phase (all of its tasks `✅`), run the merge step.
@@ -54,14 +59,15 @@ live insert.
 
 ## Gates, merge, and deploy
 
-- **Per task (local, synchronous):** repo gates green **and** `coderabbit review --agent` clean before
-  any commit. This is the real review gate.
+- **Per task (local, synchronous):** repo gates green **and** the local `code-review` skill returns
+  **READY TO LAND** before any commit. This is the real review gate; CodeRabbit is on-demand
+  escalation only (auto-review is disabled in `.coderabbit.yaml`).
 - **Merge unit = a whole phase, not a task.** Work accumulates as commits on `agent-analytics`.
-- **At a phase boundary (self-merge):** push `agent-analytics`, open a PR to `main`, then in a single
-  bounded bash poll (≤10 min) wait for CI (`gh pr checks --watch`) and the **CodeRabbit GitHub bot**
-  review (`gh pr view --json reviews`). Address any blocking bot finding, then **self-merge**
-  (`gh pr merge --squash`). If the bot hasn't posted within the window, merge on CLI-clean + CI-green
-  (it's a backstop, not a hard gate; this repo has no production users yet).
+- **At a phase boundary:** push `agent-analytics` and open a PR to `main`, then in a single bounded
+  bash poll (≤10 min) wait for CI (`gh pr checks --watch`). CodeRabbit auto-review is OFF; if the
+  phase touched a high-risk area on the escalation rubric, request one pass with a `@coderabbitai
+review` PR comment and address any blocking finding. **Do not self-merge** — merging to `main` is an
+  ungated production deploy, so hand the PR off for a human merge decision and stop.
 - **Merge to `main` = production deploy.** `deploy.yml` fires on push to `main`.
 - **Wiring gap — handle in Phase 2:** `deploy.yml` has **no** jobs for `apps/agent-ingest` /
   `apps/agent-consumer`, and `preview.yml` only auto-includes them if they expose a `deploy:preview`
@@ -76,7 +82,8 @@ live insert.
   GUI first-run + macOS signed release need a GUI + Apple secrets and can't be verified headlessly).
 - A task is `⛔ blocked`, or needs a design decision **not** answered by the ADR.
 - A verify step needs infra the agent can't reach (Tinybird dev workspace, etc.).
-- `coderabbit` is rate-limited, or 4 review passes didn't reach 0 findings.
+- The local `code-review` skill can't reach READY TO LAND after fixing its findings (a P0/P1 the lane
+  can't resolve).
 - CI is red on a phase PR for a reason the agent can't fix within the lane.
 
 ## Hard safety rules
@@ -95,7 +102,7 @@ live insert.
 
 ## How to drive this skill
 
-CodeRabbit-CLI review makes every turn **synchronous**, so `/goal` works cleanly here. The intended
+Local `code-review` makes every turn **synchronous**, so `/goal` works cleanly here. The intended
 driver is **one repeatable `/goal` that runs this skill on a loop**. Each turn the skill does one safe
 unit of work and reprints the board, and the evaluator reads that board from the transcript to decide
 whether to fire again. The exact goal text, pre-flight checklist, and stop clauses live in
