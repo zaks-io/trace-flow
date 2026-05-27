@@ -23,6 +23,8 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - **Queue consumers only work** when workers run together via `bun run dev:all` (or multi `-c` flags). Running separately won't connect the queue.
 - **Consumer requires `nodejs_compat`** compatibility flag for OpenTelemetry
 - **Web requires Convex** running in a separate terminal (`bunx convex dev`)
+- **Agent/local setup is scripted**: run `scripts/dev/start.sh` to create ignored local env files and
+  Tinybird Local state, then `scripts/dev/verify.sh` before handoff
 - For scripts, bindings, and env details — read `package.json` and `wrangler.toml` files directly
 
 ## Tinybird / ClickHouse
