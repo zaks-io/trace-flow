@@ -15,6 +15,41 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3a (`collector-parser`, partial: Claude per-message token collapse) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/claude_usage.rs`, the Claude-side companion to
+`codex_usage.rs`. `session_message_usages` collapses a session's JSONL records to one
+`ClaudeMessageUsage` per `message.id` — the input to the `AgentMessageFact` token fields. **Real-data
+finding (diligence against a captured `~/.claude/projects` transcript):** Claude Code writes one record
+per content block of an assistant turn (text + each `tool_use` + each `tool_result`), and **every**
+record repeats that turn's full `message.usage`. One turn's usage appeared 8× verbatim; grouping the
+session showed each `message.id` maps to exactly one usage tuple (no per-record variation). So summing
+usage per record multiplies a turn's tokens by its block count — the explicit 3a "collapse repeated
+`message.usage` by `message.id`" trap. First record carrying usage for an id wins; later repeats drop;
+first-appearance order preserved. Token mapping: `cache_creation_tokens` = authoritative
+`usage.cache_creation_input_tokens`; the 5m/1h split reads `usage.cache_creation.ephemeral_{5m,1h}_input_tokens`
+**only when present** — pre-breakdown transcripts leave the split `0/0` with a non-zero total rather
+than fabricating a tier; `reasoning_tokens` always 0 (Claude folds thinking into `output_tokens`, emits
+no reasoning field); `total_tokens` reconstructed from components (Claude usage has no session total).
+Adapted from otto `claude_code/mod.rs`, which fingerprints **per record** (key includes timestamp +
+content hash) and so emits one fact per record with no id-collapse — the multi-count this rework fixes.
+SPDX/provenance header; `pub mod claude_usage;` in `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 41 pass (39 unit + 2 canary). Claude canary asserts:
+8 repeated records collapse to one contribution; naive per-record sum = 8× the true output vs collapsed
+counts once; 5m/1h split when the breakdown is present (and sums to the total); split stays `0/0` when
+absent (total still authoritative); `total_tokens` reconstruction; `reasoning == 0`; first-appearance
+order across interleaved repeats; skips records without `message.id`/`usage`; a usage-bearing record
+wins over an earlier id-only one; multi-turn session sums each turn once. `cargo clippy -p
+collector-parser --all-targets -- -D warnings`, `cargo fmt --check`, `cargo build --workspace` all clean.
+**CodeRabbit CLI: 0 findings, clean first pass** (`--type uncommitted --dir packages/collector-parser`;
+the credit window that hit 13m+ last session recovered to a ~4m cooldown, then the run completed clean).
+**Next / blockers:** 3a stays 🚧. Remaining: tool-use+tool-result fold (same `tool_use_id` → one Tool
+Event), capability snapshots (counts/hashes/sizes only), Codex turn-index determinism, and the fact
+emitters onto `collector-contracts` (calling `relativize_repo_path` + `redact_field` +
+`session_turn_usages` + `session_message_usages`; emit program-as-family for `command_family` per the
+prior note). Then 3b / 3d.
+
 ## 2026-05-26 — 3a (`collector-parser`, partial: Codex token aggregation) — t3code/ab83918d
 
 **Status:** 🚧 in progress
