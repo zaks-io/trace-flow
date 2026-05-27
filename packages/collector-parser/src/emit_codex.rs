@@ -149,6 +149,7 @@ mod tests {
             git_head_sha: "deadbeef".to_string(),
             vendor_started_at: Some(1_778_964_000_000),
             agent_depth: 0,
+            repo_root: String::new(),
         }
     }
 

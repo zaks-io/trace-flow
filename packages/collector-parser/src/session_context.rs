@@ -20,6 +20,14 @@
 /// layer discovered in a nested file (Claude stores those as separate `subagents/<agent>.jsonl` files
 /// linked to the parent `session_pk`; Codex sub-agents share the parent transcript, so its sessions
 /// stay at `0`).
+///
+/// `repo_root` is the sole field that is *not* emitted onto a fact: it is the absolute repo directory
+/// the sync layer resolved for the session (the git root it walked up to from the session `cwd`, the
+/// same walk that froze `normalized_git_remote`), used only as the anchor that
+/// [`relativize_repo_path`](crate::paths::relativize_repo_path) strips off every touched file path so
+/// `agent_file_events` store a repo-relative path and never a home dir or username. An empty
+/// `repo_root` is "root unknown", which makes every absolute path collapse to the `outside_repo`
+/// sentinel rather than leak — the safe default.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionContext {
     pub vendor_session_id: String,
@@ -30,4 +38,5 @@ pub struct SessionContext {
     pub git_head_sha: String,
     pub vendor_started_at: Option<i64>,
     pub agent_depth: i64,
+    pub repo_root: String,
 }

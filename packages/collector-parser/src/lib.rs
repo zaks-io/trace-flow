@@ -18,6 +18,7 @@ pub mod codex_turns;
 pub mod codex_usage;
 pub mod command;
 pub mod emit_claude;
+pub mod emit_claude_files;
 pub mod emit_codex;
 pub mod paths;
 pub mod redaction;

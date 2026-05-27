@@ -25,7 +25,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 2e  | Wrangler / dev wiring                       | ✅ done                             | 2b, 2c, 1d     |
 | 2f  | Observability + ops runbook                 | 🚧 code landed; live alerts pending | 2b, 2c         |
 | 2g  | PR CI for new TS packages                   | ✅ done                             | 0c, 2b, 2c     |
-| 3a  | `collector-parser`                          | 🚧 leaves done; emitter next        | 0a             |
+| 3a  | `collector-parser`                          | 🚧 msg + Claude file emitters done  | 0a             |
 | 3b  | `collector-sync`                            | ☐ todo                              | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                             | 0a             |
 | 3d  | Headless end-to-end run                     | ☐ todo                              | 2e, 3a, 3b, 3c |

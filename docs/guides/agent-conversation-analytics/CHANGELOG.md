@@ -15,6 +15,40 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: Claude file-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_claude_files.rs` (+ `pub mod emit_claude_files;`).
+`claude_file_facts(records, &SessionContext) -> Vec<AgentFileEventFact>` emits one fact per
+file-touching `tool_use` block — `Read`→`Read`, `Write`→`Write`, `Edit`/`MultiEdit`→`Edit`; every
+other tool and every non-`tool_use` block is skipped. Each path runs through
+`paths::relativize_repo_path` against the new `SessionContext.repo_root` anchor, so a stored path is
+repo-relative or the `outside_repo` sentinel and never a home dir, username, or absolute path. Added
+`pub repo_root: String` to `SessionContext` (`session_context.rs`): the sole field never emitted onto a
+fact — the sync-resolved absolute git root used only as that relativization anchor; empty `repo_root`
+means "root unknown" and collapses every absolute path to `outside_repo` (safe default). `source_block_index`
+is the block's position in its message's **full block stream** in document order, not the within-record
+index: Claude writes one content block per JSONL record (verified against a real transcript — `n:1` per
+assistant record), all sharing the turn's `message.id`, so a within-record index is always `0` and could
+not separate two same-path same-operation edits in one turn, which the `file_event_pk` hash needs it to do.
+`record_event_at` is triplicated from `emit_claude`/`emit_codex` deliberately (hoisting it to a shared
+module would edit those committed files, outside this task's lane) — noted as future cleanup.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (102 passed; 11 new
+emit_claude_files tests: operation mapping for Read/Write/Edit/MultiEdit, non-file tools + thinking/text
+blocks + user tool-result records emit nothing, missing `file_path` skipped, two edits of the same path in
+one message stay distinct rows, block index resets across messages, non-file blocks still advance the
+cursor, outside-repo path collapses without leaking the username, empty `repo_root` collapses every
+absolute path, `event_at` from the record timestamp, timestamp fallback to session start), `cargo build
+--workspace` (clean). CodeRabbit `--type uncommitted --dir packages/collector-parser`: **0 findings**
+(after a recoverable rate-limit wait).
+**Next / blockers:** Tool-event emitter (Claude + Codex) is next in 3a — it needs a `fold_tool_events`
+extension (`FoldedToolEvent` carries no `vendor_message_id`, exit code, tool input paths, or subagent
+usage) and inherits the deferred `extracted_provider`/`extracted_repo`/`extracted_pr_number` enrichment
+(ADR names them but gives no algorithm; PR links are a separate GitHub-only fact table — leave
+empty/`None` on tool events). Then Codex file/tool paths and capability snapshots (capability snapshots
+need real Codex data). Cursor parser stays fast-follow (`3a*`).
+
 ## 2026-05-27 — 3a (`collector-parser`: Claude message-fact emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress
