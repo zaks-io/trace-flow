@@ -15,6 +15,49 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: Codex capability-snapshot emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex_caps.rs` (+ `pub mod emit_codex_caps;`,
+
+- `sha2 = "0.10"`). `codex_capability_facts(records, &SessionContext) -> Vec<AgentCapabilitySnapshotFact>`
+  reads each Codex `session_meta` record's capability surface and emits one snapshot per distinct
+  observation: `base_instructions` (the system prompt, `payload.base_instructions.text` — current build;
+  bare string tolerated for older builds — one item) and `dynamic_tools` (the `payload.dynamic_tools`
+  catalog, one item per tool). **Verified against 114 real local Codex transcripts** — this resolves the
+  prior "deferred → needs-data" note: `base_instructions` is a non-empty `{text}` object (not empty) and
+  `dynamic_tools` is a populated array in current captures. Each fact ships **counts, byte size, a coarse
+  ~4-chars/token estimate, and a SHA-256 of the surface only** — the raw instruction text and tool schemas
+  are hashed, never uploaded (ADR "Capability Snapshots"); `redacted_label` is a count label
+  (`"base instructions"` / `"N dynamic tools"`), never a tool name; `dropped_sensitive` is 0 (nothing is
+  included to drop). **Identity:** Codex `session_meta.payload.id` is just the session UUID (repeats
+  verbatim on every resume), so `source_snapshot_id` is `None`. The ingest Worker's
+  `capability_snapshot_pk` (`ids.ts:69`) keys on `turn:<stable_turn_index>` and **omits `capability_kind`**,
+  so two kinds from one `session_meta` would collide — `stable_turn_index` is therefore a per-session
+  ordinal over **distinct** observations (document order). Observations dedupe on
+  `(capability_kind, content_hash)`: a resumed session re-states the same surface many times (24x observed)
+  → one row per kind, while a genuine change (new prompt, a tool added) takes the next ordinal and lands as
+  its own row. The tool hash is over an order-independent canonical form (each tool compact-serialized,
+  then sorted), so a reordered-but-identical catalog still dedupes. `base_instructions` text is trimmed so
+  incidental padding can't inflate size/tokens or fork a row. `mcp_servers` kind is intentionally not
+  emitted: current Codex transcripts carry no MCP inventory in `session_meta` and the ADR forbids inferring
+  one from local config.
+  **Verified:** `cargo fmt -p collector-parser --check`; `cargo clippy -p collector-parser --all-targets
+-- -D warnings` (clean); `cargo test -p collector-parser` (152 unit +2 canary, +14 new); `cargo build
+--workspace` (sha2 compiles). Local `code-review` skill → **READY TO LAND** (privacy/pk-collision/
+  idempotence all PASS; one P3 — untrimmed base-instructions surface — fixed). CodeRabbit CLI flagged one
+  `major` (`repeat_n` MSRV floor, in tension with the clippy `manual_repeat_n` lint) → resolved with a
+  toolchain-agnostic `(0..24).map(|_| one.clone())`; confirmation re-run rate-limited (12m), treated as a
+  skip per the local-first review policy (the finding was already resolved and re-verified by clippy+tests).
+  **Next / blockers:** 3a stays 🚧 — **caps was NOT the last 3a unit** (the prior breadcrumb was optimistic).
+  Remaining 3a unit is the **PR-link emitter** (`AgentPullRequestLinkFact`): extract canonical GitHub
+  `github.com/{owner}/{repo}/pull/{number}` links from assistant text / tool output / transcript records
+  with `confidence`/`evidence` (ADR L150–152; GitHub-only in v1; `gh`/`git push`/bare-number strings are
+  diagnostic evidence, not attribution). Open question for that leaf or 3b/3d: there is still **no
+  top-level per-session assembler** tying the seven emitters into the envelope's five fact arrays — confirm
+  whether that lives in `collector-sync` (3b) or as a small `collector-parser` entrypoint. Future cleanup:
+  hoist duplicated `record_event_at` / block-cursor helpers across the Codex emitters into a shared module.
+
 ## 2026-05-27 — 3a (`collector-parser`: Codex file-event emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress

@@ -16,3 +16,8 @@ regex = "1.11"
 # The parser consumes already-parsed agent transcripts (Claude/Codex JSONL) as `serde_json::Value`,
 # so this is a runtime dependency, not just a test one.
 serde_json = "1"
+# Capability Snapshots hash the observed instruction/tool surface so the raw text never leaves the
+# machine (ADR "Capability Snapshots"). SHA-256 is a stable, well-audited content fingerprint for
+# idempotent dedup — not a security boundary, so any deterministic digest would do, but a real digest
+# matches the `sha256:` column convention and avoids a hand-rolled hash.
+sha2 = "0.10"
