@@ -1,9 +1,41 @@
 {
-  "name": "trace-flow",
+  "name": "Trace Flow local agent",
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."
   },
-  "install": "bun install",
-  "terminals": []
+  "install": "TRACE_FLOW_AUTO_INSTALL_TOOLS=1 scripts/dev/install.sh",
+  "start": "scripts/dev/start.sh",
+  "ports": [
+    {
+      "port": 3000,
+      "name": "Web"
+    },
+    {
+      "port": 8787,
+      "name": "Workers"
+    },
+    {
+      "port": 7181,
+      "name": "Tinybird Local"
+    },
+    {
+      "port": 3210,
+      "name": "Convex"
+    }
+  ],
+  "terminals": [
+    {
+      "name": "Convex",
+      "command": "scripts/dev/convex.sh"
+    },
+    {
+      "name": "Workers",
+      "command": "scripts/dev/workers.sh"
+    },
+    {
+      "name": "Web",
+      "command": "scripts/dev/web.sh"
+    }
+  ]
 }

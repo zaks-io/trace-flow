@@ -20,6 +20,8 @@ dist/
 .env.local
 .env.production
 .dev.vars
+.dev.vars*
+.trace-flow/
 
 # Logs
 *.log

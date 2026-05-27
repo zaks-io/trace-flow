@@ -1,0 +1,4 @@
+{
+  "dev_mode": "local",
+  "include": ["datasources", "pipes", "tests"]
+}
