@@ -93,7 +93,7 @@ function interceptClaim(opts: { httpStatus?: number; claim?: ClaimStatus }): voi
 
 async function post(
   env: AgentIngestEnv,
-  body: string,
+  body: BodyInit,
   headers: Record<string, string>,
 ): Promise<Response> {
   const req = new Request('https://ingest.test/v1/ingest', { method: 'POST', headers, body });
@@ -101,6 +101,12 @@ async function post(
   const res = await app.fetch(req, env, ctx);
   await waitOnExecutionContext(ctx);
   return res;
+}
+
+/** Gzip a string the same way the Collector's api-client does, so the body is `Content-Encoding: gzip`. */
+async function gzip(text: string): Promise<Uint8Array> {
+  const stream = new Response(text).body!.pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 const authHeaders = { 'X-Trace-Flow-Collector-Secret': SECRET, 'Content-Type': 'application/json' };
@@ -161,6 +167,28 @@ describe('POST /v1/ingest', () => {
     const { env } = makeEnv({ creds: await validCredEntries() });
     const res = await post(env, 'not json', authHeaders);
     expect(res.status).toBe(400);
+  });
+
+  it('202s a gzip-encoded body (the Collector gzips and sends Content-Encoding: gzip)', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const body = await gzip(JSON.stringify(envelope()));
+    const res = await post(env, body, { ...authHeaders, 'Content-Encoding': 'gzip' });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ sessions: 1 });
+    expect(queueSend).toHaveBeenCalledTimes(1);
+    // Prove the body was actually inflated and parsed, not just that a 202 came back: the enqueued
+    // message must carry the decompressed facts.
+    const enqueued = queueSend.mock.calls[0]![0] as AgentIngestQueueMessage;
+    expect(enqueued.facts.messages.length).toBeGreaterThan(0);
+  });
+
+  it('400s a body that declares Content-Encoding: gzip but is not gzip', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, '{"not":"gzip"}', { ...authHeaders, 'Content-Encoding': 'gzip' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
   });
 
   it('400s an envelope missing batch/facts', async () => {
