@@ -1,5 +1,9 @@
 {
   "name": "Trace Flow local agent",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
   "install": "TRACE_FLOW_AUTO_INSTALL_TOOLS=1 scripts/dev/install.sh",
   "start": "scripts/dev/start.sh",
   "ports": [

@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Trace Flow PR Review'
+  short_description: 'Review a TRA PR against Linear'
+  default_prompt: 'Use $trace-flow-review-pr to review this PR against its Linear issue and repo invariants.'

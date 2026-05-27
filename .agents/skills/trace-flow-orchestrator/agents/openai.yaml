@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Trace Flow Orchestrator'
+  short_description: 'Coordinate TRA agents and PRs'
+  default_prompt: 'Use $trace-flow-orchestrator to coordinate ready Linear issues, worker agents, and PR review.'

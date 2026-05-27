@@ -18,6 +18,7 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - **`CONTEXT.md`** at the repo root
+- **`docs/agents/repo-navigation.md`** for where code and docs live
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in
 
 If either is missing, **proceed silently**. Don't flag the absence; don't suggest creating them upfront. `/grill-with-docs` creates them lazily when terms or decisions actually crystallise.
