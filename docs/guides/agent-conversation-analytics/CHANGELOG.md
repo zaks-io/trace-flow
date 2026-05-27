@@ -15,6 +15,1077 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d live-run GREEN + agent_priced_usage coverage fix — t3code/ab83918d
+
+**Status:** ✅ done — 3d closed. Phase 3 (3a–3d) complete; this is the Phase 3 boundary → PR to main.
+
+**Changed:**
+
+- **3d live E2E ran green against the dev ingest worker.** Root cause of the prior block was the
+  consumer's `TINYBIRD_TOKEN`: a Tinybird **Local** token (host `local`) was being supplied where the
+  consumer talks to the **cloud** dev workspace, so every insert 403'd `Invalid token`. Swapping in a
+  **cloud** token (host `aws-us-west-2`, the `agent_consumer_e2e` ADMIN token) drained the queue 58/58
+  with zero `insert_failed`. Full path proven: parser → sync → gzip POST → ingest auth → Convex policy +
+  claim-sessions → queue → consumer → Tinybird insert.
+- **Verified real rows in Tinybird DEV:** `agent_messages` 2807, `agent_tool_events` 2805,
+  `agent_file_events` 1265, `agent_pull_request_links` 62. **0** `agent_file_events` paths contain
+  `/Users/` or a username; `cost_usd` is null on every fact (0/2807). `git_head_sha`/`agent_id` empty by
+  design (confirmed in `assemble_units.rs`, not a parse defect).
+- **`pipes/agent_priced_usage.pipe` (commit `5ca34af`):** field-parse audit found a degenerate
+  `agent_sessions.token_coverage='missing'` — the `direct_usage` node counted zero-token user/system/tool
+  turns as billable `'direct'` usage, so every session read as missing source data and `message_count`
+  overcounted. Scoped `direct_usage` to `role = 'assistant'`. Output columns unchanged (no `role` added
+  to the SELECT, preserving the `SELECT * … UNION ALL SELECT *` shape vs `subagent_fallback_usage`).
+
+**Verified:**
+
+- `cargo test -p collector-sync --test headless_e2e -- --ignored --nocapture` → green (cursors advance
+  only on 2xx).
+- `tb build` clean. Ad-hoc cloud SQL replicating the corrected per-session coverage rule (assistant-only
+  `direct`) → both live sessions compute `token_coverage='full'` (was `'missing'`).
+- Pre-commit lint + prettier passed on the pipe commit.
+
+**Next / blockers:** Phase 3 boundary. Open PR to `main` and STOP (no self-merge — merge = ungated prod
+deploy, human merges). Dev-only artifacts (`agentE2eSeed.ts`, `_generated/api.d.ts`,
+`.claude/scheduled_tasks.lock`) stay uncommitted. The `agent_priced_usage` fix reaches dev/prod via the
+normal CI deploy on merge; not deployed to dev cloud manually.
+
+## 2026-05-27 — 3d live-run attempt + 2b gzip fix — t3code/ab83918d
+
+**Status:** 🚧 in progress (gzip blocker found and fixed; the live run now needs Convex wiring, see
+blockers). 3d stays 🚧: it is done only once the live run is verifiably green with Tinybird DEV rows.
+
+**Changed:**
+
+- **2b gzip decompression (user-authorized cross-lane fix; commit `b39f6f0`).** The live E2E surfaced a
+  real bug no unit test could catch because neither side crossed the wire: `collector-api-client` gzips
+  the envelope and sends `Content-Encoding: gzip`, but Cloudflare Workers does not auto-decompress
+  request bodies, so `apps/agent-ingest/src/handler.ts` ran `JSON.parse` over the raw gzip stream and
+  400'd every upload as `invalid_envelope` (worker log: `Unexpected token ''`, the gzip magic).
+  Fix inflates a `Content-Encoding: gzip` body via `DecompressionStream('gzip')`, enforcing
+  `MAX_INGEST_BYTES` on the _inflated_ size (gzip-bomb guard); `too_large` -> 413, malformed -> 400,
+  both logged. Added vitest coverage for the happy gzip path and a malformed-gzip body (71 tests pass).
+- **E2E redaction gate tightened to ADR invariants (commit `5305bdb`).** The earlier scaffold's gate
+  used blanket substring bans (`no /Users/`, `no cost_usd`) that were both wrong: redaction MASKS the
+  username and keeps path shape (`/Users/[REDACTED]/...` survives by design), and a command excerpt may
+  legitimately quote the literal text `cost_usd`. The gate now asserts the real invariants: no real
+  `$HOME` un-masked anywhere in the envelope, every `agent_file_events.normalized_repo_path` is
+  repo-relative (no leading `/`, no `/Users/`, no `/home/`; a missing/non-string path now panics), and
+  no fact carries a `cost_usd` _field_ (recursive key check). This supersedes the gate description in
+  the scaffold entry below.
+
+**Verified:** gzip fix clears the parse gate end to end — the live POST failure moved from
+`invalid_envelope` (400) to `policy_unavailable` (503), proving the body now decodes and reaches the
+compatibility-policy gate. `cargo fmt --check`/`clippy -D warnings`/`test` on `collector-sync` green;
+`lint`/`type-check`/`test`/`build` on `@trace-flow/agent-ingest` green (71 vitest). Two-pass local
+code review (code-reviewer subagent) READY TO LAND.
+
+**Dev-run procedure (for the next attempt):**
+
+1. Run the workers from THIS worktree (`t3code-ab83918d`), not the main worktree — the main worktree
+   has no `collector-sync` but DOES have `agent-ingest`, and each worktree has its own
+   `.wrangler/state` local KV. Running from main reads a different KV store than where the cred is
+   seeded (this cost a debugging cycle: auth resolved as `invalid` because the seeded cred lived in the
+   wrong store).
+2. A dev Collector credential must exist in this worktree's `.wrangler/state` KV (`COLLECTOR_CREDS`,
+   key `collector:${sha256Hex(secret)}`, value `{orgId,userId,collectorId,expiresAt,status:'active',
+createdAt}`). Throwaway, dev-only, never committed.
+3. Start the ingest + consumer as the HTTP worker on `:8787`:
+   `bunx wrangler dev -c apps/agent-ingest/wrangler.jsonc -c apps/agent-consumer/wrangler.jsonc
+--persist-to .wrangler/state` (the first `-c` gets the port; the rest are binding-only).
+4. Run the test: `TRACE_FLOW_INGEST_URL=http://127.0.0.1:8787 TRACE_FLOW_COLLECTOR_SECRET=<dev secret>
+cargo test -p collector-sync --test headless_e2e -- --ignored --nocapture`.
+
+**Next / blockers:** The ingest worker needs Convex wiring before the live run can go green — it failed
+with `Invalid URL: undefined/agent-ingest/compatibility-policy` because `CONVEX_SITE_URL` and
+`AGENT_INGEST_SHARED_SECRET` are worker secrets and there is no `apps/agent-ingest/.dev.vars` in this
+worktree. To finish 3d's live verification: (a) create `apps/agent-ingest/.dev.vars` with
+`CONVEX_SITE_URL` + `AGENT_INGEST_SHARED_SECRET` matching a running `bunx convex dev` deployment;
+(b) seed the `2a` compatibility policy + ensure the `claim-sessions` route is deployed; (c) confirm the
+consumer drains `agent-ingest-dev` to the Tinybird **DEV** workspace; (d) re-run, expect 0 failures /
+all cursors advance; (e) verify in Tinybird DEV — rows in `agent_messages`/`agent_file_events`/
+`agent_tool_events`, no `agent_file_events` path containing `/Users/`, `cost_usd` null until the
+consumer prices it. Only then flip 3d ✅ and open the Phase 3 PR to `main` (human merges; no
+self-merge). This is a user-controlled infra bring-up (Convex dev + dev secrets + Tinybird dev login).
+
+## 2026-05-27 — 3d (`collector-sync`: headless E2E scaffold — leaf 3) — t3code/ab83918d
+
+**Status:** 🚧 in progress (E2E scaffold lands; the live run is the STOP point and is NOT yet verified)
+**Changed:** Added `packages/collector-sync/tests/headless_e2e.rs`, the `#[ignore]` integration test
+that wires the whole read path against a live worker. No `Cargo.toml` change — integration tests see
+the crate's normal deps (collector-api-client, collector-contracts, collector-parser, serde_json) and
+tokio's `macros`/`rt`.
+
+- **`headless_run_posts_real_claude_transcripts_and_advances_cursors`** walks real `~/.claude/projects`
+  via `walk_transcripts`, narrows via `select_changed` (LastYear window, capped to the most-recent
+  `MAX_FILES`), assembles each file with `assemble_sync_unit`, then drives the production
+  `run_sync_cycle` against a `CollectorApiClient`, asserting `report.failed == 0`, every unit advanced,
+  and each cursor is persisted with a matching `byte_offset` + `content_hash_head` (cursor moves only
+  on a `2xx`).
+- **Client-side redaction gate before any POST:** serializes the assembled envelope and asserts no
+  `/Users/` path, no `$HOME`, no `cost_usd`, and `repo_path_fallback` has no `/`. Inspects a
+  structurally identical envelope — `session_facts` and `build_envelope` are pure (verified: no
+  clock/random/uuid generation in the assembly path), so the only divergence from the POSTed envelope
+  is the `collector_batch_id` string, which carries no path or cost.
+- **`#[ignore]` by design:** compiles under `cargo test` but runs only on demand. Config comes from
+  `TRACE_FLOW_INGEST_URL` / `TRACE_FLOW_COLLECTOR_SECRET` (+ optional `TRACE_FLOW_ORG_ID`); a missing
+  required var panics with guidance. The credential is never printed (only `report.advanced` is).
+- Original Trace Flow code (otto-sync had no standalone E2E harness). SPDX MIT + provenance header.
+
+**Verified (offline only):** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync
+--all-targets -- -D warnings` (clean); `cargo test -p collector-sync` = **68 passed, 1 ignored** (the
+E2E compiles and is correctly skipped); `cargo build` (workspace, clean). Local code-review (sonnet)
+two-pass → READY TO LAND (three P2 wording findings fixed: HOME-empty short-circuit documented,
+"exact bytes" softened to "structurally identical" with the pure-assembly rationale, `split_off`
+semantics commented).
+
+**STOP — live infra unreachable headlessly.** Probed: no `TRACE_FLOW_*` env, no dev ingest worker on
+any port, no `bun run dev:all` running, `tb` shows no active workspace. The live E2E + the Tinybird-row
+verification cannot run here. **Next (human):** start `bun run dev:all` + the Tinybird dev workspace,
+mint a dev Collector credential, run `TRACE_FLOW_INGEST_URL=… TRACE_FLOW_COLLECTOR_SECRET=… cargo test
+-p collector-sync --test headless_e2e -- --ignored --nocapture`, then confirm in Tinybird **dev**
+(never prod): real rows in `agent_*`, no `agent_file_events` path with `/Users/`, `cost_usd` null until
+the consumer prices it. Only then flip 3d ✅. That completes the Phase 3 boundary → open a PR to `main`
+(human merges; never self-merge — merge = ungated prod deploy). Phase 4 (4a/4b dashboards) is a
+different lane (`apps/web`, needs preview + browser verification); 4c stays deferred.
+
+## 2026-05-27 — 3d (`collector-sync`: async read + assemble — leaf 2b-ii) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d leaf 2b-ii lands; leaf 3 — the live-infra E2E — is all that remains)
+**Changed:** Added `packages/collector-sync/src/assemble_units.rs` + `pub mod` / re-exports. This is
+the read half that turns one selected `DiscoveredFile` into the `SyncUnit` the drive loop POSTs.
+
+- **`assemble_sync_unit(file, cache) -> io::Result<SyncUnit>`** reads the whole transcript with sync
+  `std::fs::read_to_string` (whole-file model: `next_cursor.byte_offset = size_bytes`, not incremental;
+  server-side dedupe absorbs the re-send), resolves git attribution once via `cache.resolve(cwd).await`,
+  and pins `content_hash_head = head_hash(text)` from the **same in-memory read** so it matches what
+  `discovery::read_head_hash` recomputes next scan without racing a concurrent write. A file-level read
+  error propagates → the cursor stays unadvanced and the file retries next scan.
+- **`read_transcript(text) -> Vec<Value>`** parses JSONL one line at a time, skipping blank lines and a
+  malformed line rather than failing the whole file. Recoverable, not silent loss: the whole file is
+  re-parsed every scan and the cursor only advances on a `2xx`, so a line that becomes valid later is
+  picked up then.
+- **`build_session_context(fields, path, meta)`** (pure, takes already-resolved `GitMetadata` so it
+  unit-tests without a repo) maps onto `SessionContext`: `normalized_git_remote` via the 2b-i
+  normalizer; `repo_root` from the git root, **empty when not a repo** so the parser relativizes every
+  absolute path to the `outside_repo` sentinel — no home dir or username reaches a file event;
+  `git_branch` = live branch else the record hint; `repo_path_fallback` a **bare basename label** (of
+  repo root, else cwd), never a full path; `agent_id`/`git_head_sha` empty by design (no source carries
+  them); `agent_depth` from the transcript path.
+- **Sync read by design, not an oversight:** the crate carries no tokio `rt` feature and spawns nothing
+  (`[dependencies]` is `process` + `macros` only) — the whole discovery/cursor layer reads on the
+  embedder's thread; this fn is `async` solely for the `git` resolve. Documented at the read site.
+- Original Trace Flow code: the sync-layer equivalent of otto-sync `engine.rs`'s per-file → upload-unit
+  step, but targeting the local SQLite-cursor model (advance only on `2xx`) instead of otto's
+  server-returned cursors. SPDX MIT + provenance header. otto's `pricing`/`provider_usage` not carried
+  over; no `cost_usd` on any fact.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **68 passed** (8 assemble_units: blank-line skip,
+malformed-line skip, no-meta empty-remote/repo-root + cwd-basename fallback, resolved-meta sets
+remote/root + overrides branch hint, bare-basename never-a-home-path, degenerate `/` cwd → empty
+fallback, agent_depth from path, and a `#[tokio::test]` driving a real tempdir `git init` + remote
+through `cache.resolve` asserting `github.com/acme/demo` + a cursor whose `content_hash_head` matches
+`head_hash`); `cargo build` (workspace, clean). Local code-review (sonnet) two-pass → READY TO LAND
+(spawn_blocking push-back accepted on the documented no-`rt` contract; degenerate-cwd test added).
+
+**Next / blockers:** 3d leaf 3 — the `#[ignore]` E2E against real `~/.claude/projects` + a live worker +
+Tinybird dev rows. **Live-infra STOP point:** needs `bun run dev:all` + the Tinybird dev workspace; if
+unreachable headlessly, stop and report rather than marking 3d done on `cargo build` alone. Verify no
+`cost_usd`, no `/Users/` paths, real `agent_*` rows. After 3d is fully ✅, Phase 3 boundary → open a PR
+to `main` (human merges; never self-merge — merge = ungated prod deploy).
+
+## 2026-05-27 — 3d (`collector-sync`: git remote normalizer — leaf 2b-i) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d leaf 2b split; this is leaf 2b-i, the pure normalizer)
+**Changed:** Added `packages/collector-sync/src/git_remote.rs` + `pub mod` / re-export. Pure, no I/O.
+
+- **`normalize_git_remote(raw) -> String`** canonicalizes whatever `git config remote.origin.url`
+  reports — scp-like (`git@host:owner/repo.git`), `https://`, `ssh://` (incl. explicit port), `git://`,
+  with optional `user@`/`user:token@` — into one stable `host/owner/repo`. Two clones of the same repo
+  over different transports collapse to the **identical** string, so the ingest Worker's repo
+  fingerprint can't split them into phantom repos. Host is lowercased (DNS is case-insensitive); the
+  owner/repo path case is preserved; the `.git` suffix and surrounding slashes are stripped.
+- **Unparseable / pathless remote → `""`**, which downstream reads as "no remote" so the session falls
+  back to its path label rather than fingerprinting garbage. A flat single-segment server path
+  (`host/repo.git`) is kept — that's a real repo, not garbage.
+- **scp parsing strips `user@` before the host:path colon**, so an embedded `user:token@` can't be
+  mistaken for the host separator. No panics on arbitrary input (every split/strip returns `Option`).
+- Original Trace Flow code: otto-sync stored the raw remote and never normalized one (no otto
+  equivalent). SPDX MIT + provenance header.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **60 passed** (7 git_remote tests: transport
+equivalence incl. scp subgroup, host-lowercase/path-preserve, multi-segment subgroups, flat
+single-segment server, trailing-slash/whitespace trim, embedded-userinfo misfire guard, unparseable →
+`""`); `cargo build`. Local code-review (code-reviewer subagent, sonnet): CHANGES REQUESTED on pass 1
+(scp `user:token@host:path` misfire — fixed by stripping userinfo before the colon split; plus added
+tests), then READY TO LAND on a fresh confirmation pass.
+**Next / blockers:** 3d leaf 2b-ii — the async read + assemble: read each selected file (JSONL →
+`Vec<Value>`, skip blank/malformed lines so one bad record can't strand a session), resolve git via
+`GitRemoteCache::resolve(cwd).await` + `normalize_git_remote`, build a `SessionContext` (2a's fields +
+`repo_root` from the git root, `repo_path_fallback`, `git_branch` with 2a's hint as fallback,
+`agent_id`/`git_head_sha` = `""` since neither is available headlessly), and assemble `SyncUnit {
+records, ctx, next_cursor }` with `next_cursor.content_hash_head = head_hash(full_text)` so the cursor
+matches discovery's `read_head_hash` next scan. Then leaf 3 — the `#[ignore]` E2E against real
+`~/.claude/projects` + live worker + Tinybird rows (needs `bun run dev:all` + the Tinybird dev
+workspace; STOP point if unreachable headlessly). 3d stays 🚧 until all leaves land; only then is the
+Phase 3 boundary reached (PR to `main`, no self-merge).
+
+---
+
+## 2026-05-27 — 3d (`collector-sync`: Claude session-field extraction — leaf 2a) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d leaf 2 split again; this is leaf 2a, the pure record-reading half)
+**Changed:** Added `packages/collector-sync/src/claude_session.rs` + `pub mod` / re-exports. The
+record-reading half of building a session's `SessionContext` — it reads only the records, no git, no
+filesystem.
+
+- **`claude_session_fields(records) -> ClaudeSessionFields`** pulls the per-session identity a Claude
+  transcript repeats on every line: `vendor_session_id` (`sessionId`), `vendor_started_at` (the
+  **earliest** parseable `timestamp`, so an undated leading record or out-of-order file still yields the
+  true start), `cwd`, and a `git_branch` hint (`gitBranch`). Field names confirmed against otto-parser's
+  Claude parser; `vendor_started_at` reuses the parser's `rfc3339_to_epoch_ms` (no new `chrono` dep).
+- **First-non-empty wins** for the repeated string fields (trimmed; blank/whitespace skipped), matching
+  the git freeze cache's first-`cwd` key. Absent values degrade to `None`/`""` — the ingest Worker
+  resolves the final `*_pk`, never this layer.
+- **`agent_depth_from_transcript_path(path) -> i64`** gives whole-file nesting depth: `1` under a
+  `subagents/` path segment (exact-segment match, not substring), else `0`. Capped at 1 per the current
+  Claude layout; the E2E leaf confirms deeper nesting if it exists.
+- Pure and sync (no filesystem, no git); the async git resolve + remote normalization + `SyncUnit`
+  assembly that consume these fields are leaf 2b.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **53 passed** (6 new claude_session tests:
+all-fields extraction, earliest-timestamp-regardless-of-order, empty-slice defaults, blank-string skip,
+unparseable-timestamp skip, top-level-vs-subagents depth); `cargo build`. Local code-review
+(code-reviewer subagent, sonnet) → READY TO LAND over two passes (no P1/P2; added an
+intentional-depth-cap comment between passes).
+**Next / blockers:** 3d leaf 2b — read each selected file (JSONL → `Vec<Value>`), resolve git via
+`GitRemoteCache`/`resolve_git_metadata`, normalize the remote into `normalized_git_remote`, set
+`repo_root`/`repo_path_fallback`/`git_branch` (falling back to 2a's hint), assemble `SessionContext` +
+`SyncUnit { records, ctx, next_cursor }` with `next_cursor.content_hash_head = head_hash(full_text)`.
+(`GitMetadata` carries no head SHA and the Claude record has none either, so `git_head_sha` stays `""`
+unless 2b extends git resolution.) Then leaf 3 — the `#[ignore]` E2E against real `~/.claude/projects` +
+live worker + Tinybird rows, which needs `bun run dev:all` + the Tinybird dev workspace and is a STOP
+point if unreachable headlessly. 3d stays 🚧 until all leaves land; only then is the Phase 3 boundary
+reached (PR to `main`, no self-merge).
+
+---
+
+## 2026-05-27 — 3d (`collector-sync`: transcript discovery — scan/selection leaf) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d split into 3 leaves; this is leaf 1 of 3)
+**Changed:** Added `packages/collector-sync/src/discovery.rs` (the scan + selection half of 3d) +
+`pub mod` / re-exports. This is the production layer the landed drive loop assumes — it prepares the
+`SyncUnit` inputs (which files to read), without the read/parse yet.
+
+- **`walk_transcripts(root)`** recursively enumerates and stats every `.jsonl` under the transcript
+  root (`walkdir`, no symlink-follow), sorted oldest-mtime-then-path so a partial pass makes
+  deterministic progress. A missing root → empty (normal first-run). Unreadable/unstattable entries
+  are skipped, not fatal — they reappear next scan.
+- **`select_changed(files, store, source, window)`** drops files outside the `ImportWindow`, then keeps
+  only those new-or-changed vs their SQLite `FileCursor` using otto's unchanged test: skip iff cursor
+  exists **and** `size == byte_offset` **and** mtime not newer **and** head-hash non-empty and matches.
+  An in-place rewrite that preserved size+mtime is still caught by the head hash.
+- **Whole-file model (ADR / otto).** `byte_offset` = file size at last ingest, not an incremental
+  offset; a changed file is re-read in full and server-side `ReplacingMergeTree` dedupe absorbs the
+  repeat. `head_hash(text)` (`"sha256:"` + hex of SHA-256 of the first 4096 chars) is the public
+  fingerprint the next leaf writes into the cursor; `read_head_hash` reads only the worst-case byte
+  budget (4096×4) so the in-memory and on-disk hashes provably match for identical content.
+- **Error asymmetry.** Only a `CursorStoreError` (broken local DB) aborts selection; an unreadable head
+  degrades to "treat as changed" (re-read) — a wrong skip would drop data, a lost skip is harmless.
+- **Sync I/O** to match the synchronous `CursorStore`; adapted from otto-sync `files.rs`/`engine.rs`
+  (SPDX MIT + provenance header), pricing/provider_usage deliberately not carried over.
+- **Deps.** Added `walkdir = "2"` (recursive walk) and `sha2 = "0.10"` (head-hash, same convention as
+  `collector-parser`) to `[dependencies]`.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **47 passed** (9 new discovery tests: nested-walk
+filtering, missing-root, no-cursor/unchanged/grown/newer-mtime/in-place-rewrite selection, window
+drop-before-cursor-check, in-memory-vs-disk hash parity); `cargo build` (workspace). Local code-review
+(code-reviewer subagent, sonnet) → READY TO LAND over two passes (no P1/P2; added a `>`-not-`>=` mtime
+comment between passes).
+**Next / blockers:** 3d leaf 2 — read + `SessionContext` resolve (git normalization + Claude record
+parse for cwd/session-id/started-at/depth/head-sha + `repo_root` for redaction) + `SyncUnit` assembly.
+Then leaf 3 — the `#[ignore]` E2E against real `~/.claude/projects` + live worker + Tinybird rows; that
+needs `bun run dev:all` + the Tinybird dev workspace and is a STOP point if unreachable headlessly. 3d
+stays 🚧 until all three land; only then is the Phase 3 boundary reached (PR to `main`, no self-merge).
+
+---
+
+## 2026-05-27 — 3b (`collector-sync`: drive loop — 3b COMPLETE) — t3code/ab83918d
+
+**Status:** ✅ done (closes 3b)
+**Changed:** Added `packages/collector-sync/src/sync_cycle.rs` (the async drive loop) + `pub mod` /
+re-exports. Fifth and final leaf of 3b: it composes the four landed leaves into one sync cycle.
+
+- **`run_sync_cycle(client, store, orchestrator, meta, units, mint_batch_id, cancel)`** iterates a
+  batch of `SyncUnit`s; for each it calls `collector-parser::session_facts(meta.source, records, ctx)`,
+  wraps the facts with the landed `build_envelope(...)`, POSTs via the 3c client, and **advances the
+  SQLite cursor only on `Ok(IngestOk)`** — every error path leaves the cursor untouched so the file
+  re-sends next cycle (ADR cursor discipline). `CursorStoreError` propagates, never swallowed.
+- **Client trait seam.** `IngestClient` is the one-method (`ingest`) trait the loop needs; the real
+  `CollectorApiClient` implements it by delegating, and tests inject a scripted mock — no network.
+- **One terminal orchestrator trigger per cycle** (not per file): `JobSucceeded` only when nothing
+  failed and the cycle wasn't aborted, else `JobFailed`. A cancelled cycle is **not** a success.
+- **Error classification.** `is_cycle_fatal` (Unauthorized / UpgradeRequired / RateLimited) aborts the
+  cycle early — those reject every remaining POST; per-envelope failures strand only their own unit.
+- **Deps.** Promoted `serde_json` to a real dep (records are `Vec<Value>`); added `collector-parser`,
+  `collector-api-client`, `tokio-util` (CancellationToken); dev-dep `tokio` `rt` for `#[tokio::test]`
+  (production tokio stays watcher-only: `process` + `macros`, no `rt`).
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **38 passed** (6 new sync_cycle tests: advances on
+Ok, does not advance on Err, retried-then-Ok advances, mixed batch advances only accepted units,
+cycle-fatal aborts the rest, cancelled cycle fails the job); `cargo build` clean. Local code-review
+(code-reviewer subagent, sonnet) reached **READY TO LAND** after two passes — initial CHANGES
+REQUESTED on a P1 (a cancelled cycle dishonestly emitted `JobSucceeded`; fixed via the `aborted_early`
+gate) plus two P2 comment/test-consistency items, confirmation pass clean. CodeRabbit not escalated
+(no auth/secret/schema/redaction/proxy-streaming surface — pure local sync logic; rubric miss).
+
+**Next / blockers:** 3b ✅ — the `collector-sync` crate is feature-complete for headless use. Next is
+**3d** (headless end-to-end run): wire the real `CollectorApiClient` + a real filesystem watcher +
+on-disk `CursorStore`, drive `run_sync_cycle` against the dev ingest worker, and confirm a transcript
+round-trips to Tinybird. Once 3d lands, the Phase 3 boundary (3a✅, 3b✅, 3c✅, 3d✅) is reached →
+open a PR to `main` (never self-merge). Not a boundary yet, so no PR.
+
+## 2026-05-27 — 3b (`collector-sync`: import-window policy + envelope assembler, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-sync/src/import.rs` and `src/envelope.rs` (+ `pub mod` and
+re-exports; dev-dep `serde_json`). Fourth leaf of 3b — the two **pure** halves of the upload path.
+Split from the POST loop deliberately: these are deterministic and unit-testable with no async,
+client, or store; the drive loop that ties them together is the next (final) leaf.
+
+- **`import.rs` — sync-window policy.** `ImportWindow` carries one epoch-ms mtime cutoff and answers
+  `includes(mtime: f64)` as an inclusive lower bound. `first_incremental(collector_started_at)` =
+  start − 24h, the ADR active-session grace window that catches in-progress sessions at install
+  without making first run a historical import (ADR first-run setup). `history(preset, now)` =
+  now − preset. `HistoryPreset` is exactly `Last7Days` / `Last30Days` / `LastYear` — **no "all
+  history"** option (ADR: the 1-year preset is the fact-retention horizon). One `MS_PER_DAY` constant;
+  `GRACE_WINDOW_MS` is derived from it so they can't drift (review fix).
+- **`envelope.rs` — POST envelope assembler.** `BatchMeta` (source, desktop/parser version,
+  raw_upload_requested) + `build_envelope(meta, collector_batch_id, facts)` wraps a session's
+  `AgentIngestFacts` into the canonical `AgentIngestEnvelope`. The batch id is caller-supplied (the
+  drive loop mints one per POST), not generated here. `raw_session_bundles` is always `None` (raw
+  upload is opt-in/default-off and unbuilt). No contract field invented or omitted (checked field-by-
+  field against `collector-contracts`).
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -D
+warnings` (clean); `cargo test -p collector-sync` = **32 passed** (7 new: grace cutoff, in-progress
+vs older, inclusive bound, three preset distances, year-vs-grace ordering, envelope field-stamping,
+raw-bundle wire-omission). Files: import.rs 135, envelope.rs 82. Local `code-review`: initial
+**CHANGES REQUESTED** (1 P2: two identical `GRACE_WINDOW_MS`/`DAY_MS` constants — drift risk; 2 P3) →
+derived the grace window from a single `MS_PER_DAY`, reworded the `skip_serializing_if` comment,
+declined a speculative `Hash` derive → confirmation review **READY TO LAND**. CodeRabbit not escalated
+(pure value types, no auth/secret/schema/redaction/concurrency surface; rubric does not require it).
+
+**Next / blockers:** 3b stays 🚧 — **last leaf**: the async drive loop. Per session: `session_facts(…)`
+→ `build_envelope(…)` → `CollectorApiClient::ingest(envelope, cancel)` → on `Ok(IngestOk)` advance the
+`CursorStore`, else leave the cursor and re-send next cycle; emit the orchestrator `JobSucceeded` /
+`JobFailed` trigger. Scope which files are sent via `ImportWindow`. Unit-test with a mock client +
+in-memory `CursorStore`; live FSEvents + real POST are 3d. After it lands, flip 3b ✅. No PR (not a
+phase boundary until 3b + 3d both land).
+
+---
+
+## 2026-05-27 — 3b (`collector-sync`: SQLite cursor store, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-sync/src/cursor.rs` (+ `pub mod cursor;` and re-exports; deps
+`collector-contracts`, `rusqlite` bundled, `thiserror`, dev-dep `tempfile`). Third leaf of 3b: the
+durable local **per-source file cursor** store.
+
+- **`FileCursor`** = `{ file_path, mtime_ms: f64, byte_offset: u64, content_hash_head }` — the record
+  shape adapted from otto-sync's `CompletedFileCursor` (engine.rs). **The SQLite persistence is new
+  Trace Flow code, not vendored:** otto kept cursors server-side (POSTed and read back from the
+  sync-start response); Trace Flow Desktop keeps durable resumable cursor state locally (ADR "Local
+  state"). `CursorStore` is keyed by `(org_id, source, file_path)`; `source` is the canonical
+  `AgentSource` enum (never redefined).
+- **Advance-only-after-2xx:** `advance()` is the single write path and the post-success commit point;
+  the POST loop (next leaf) calls it only on `Ok`. On failure nothing advances, the file is re-read
+  next pass, and server-side dedupe absorbs the repeat — resumable state, not a durable upload queue
+  (ADR). API: `open`/`open_in_memory`, `get`, `list(source)`, `advance`.
+- **Org isolation:** a store binds one `org_id` and every row carries it, so cursors are never reused
+  across Organizations (ADR "one active Organization in v1"); a second org on the same DB file sees
+  none of the first's rows (tested on-disk).
+- **u64 offset safety:** rusqlite's native `u64` mapping rejects `> i64::MAX` on write and a negative
+  stored value on read (both surface as `CursorStoreError::Sqlite`) — no silent wrap in either
+  direction. `WAL` + `synchronous=NORMAL` for crash-durable desktop writes (a lost last-advance is
+  harmless: idempotent re-sync). `WITHOUT ROWID` (composite PK is the only access path).
+- **mtime kept `f64` (not integer ms):** deliberate — OS `mtimeMs` is fractional, so truncating
+  would make a re-stat always compare `>` the stored value and defeat the discovery mtime fast-path;
+  ms epochs are exact in `f64` until ~2255 and no `==` is used. (Raised P1 in review; pushed back
+  with rationale; confirmation review accepted it as sound.)
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -D
+warnings` (clean); `cargo test -p collector-sync` = **25 passed** (9 cursor tests: round-trip,
+overwrite, per-source `list`, large/overflow/negative offset, per-org isolation, reopen-persist);
+`cargo build`. Local `code-review` skill: initial **CHANGES REQUESTED** (2 P1: read-side wrap, mtime
+type) → fixed P1-A via native `u64`, pushed back on P1-B with rationale, took WAL/provenance/comment
+nits → confirmation review **READY TO LAND**. CodeRabbit not escalated (no auth/secret/schema/
+redaction/concurrency/proxy surface in a pure local store; rubric does not require it). File 313
+lines (184 implementation; the remainder is the 9-test module, consistent with the lane convention).
+
+**Next / blockers:** 3b stays 🚧. Next leaf: the POST loop wrapping `session_facts(...)` into an
+`AgentIngestEnvelope` (batch metadata + git-remote resolve/freeze + `collector_started_at` + 24h
+grace + history-import presets), reusing the 3c `CollectorApiClient` and driving the orchestrator's
+actions, advancing this cursor store only on `Ok(IngestOk)`. FSEvents watcher + live POST exercised
+at 3d. No PR (not a phase boundary).
+
+---
+
+## 2026-05-27 — 3b (`collector-sync`: orchestrator state machine, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-sync/src/orchestrator.rs` (+ `pub mod orchestrator;` and
+re-exports). Second leaf of 3b and its second named cargo-verify item ("orchestrator state
+transitions"): the **one-job-at-a-time** orchestrator as a pure, embedder-agnostic transition core.
+
+- **Adapted, not vendored, from `otto-sync/src/orchestrator.rs`.** otto's `Worker` is welded to its
+  engine/watcher/tokio channels and uses different states (Idle/Backfilling/Stopped). This leaf keeps
+  otto's command set + one-job + pause/resume shape but redesigns the states to the ADR's named set
+  and extracts the transition logic into a synchronous core, so it is testable with plain asserts —
+  no engine, runtime, or channels.
+- **States:** `Watching` (armed, idle), `Syncing`, `ImportingHistory`, `Paused` (initial), `Error`.
+  `Orchestrator::apply(Trigger) -> Vec<Action>` mutates state and returns the side effects
+  (`StartWatching`/`StopWatching`/`StartSync`/`StartImport`/`CancelJob`) the embedder replays.
+- **One job at a time:** while `Syncing`/`ImportingHistory`, any new job trigger (`SyncNow`,
+  `ImportHistory`, watcher `BatchDetected`) is rejected — no state change, no action. No batch is
+  lost: the watcher re-fires and the 5-min poll backstop re-discovers unprocessed files, so "dirty"
+  re-sync coalescing is a later refinement, not a gap.
+- **Watcher lifetime:** armed exactly in {Watching, Syncing, ImportingHistory}, stopped in {Paused,
+  Error}, so `StartWatching` fires only on entering the active cluster from rest and `StopWatching`
+  only on leaving it (`Watching -> Syncing` and `Syncing -> Watching` emit neither).
+
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-sync --all-targets -D warnings`,
+`cargo build`, `cargo test -p collector-sync` (16 tests: 4 git + 12 orchestrator, covering every
+transition incl. the one-job rejection and watcher-lifetime invariants for both job kinds). Local
+`code-review`: **CHANGES REQUESTED → fixes → READY TO LAND** — the reviewer walked the full 5x7
+(state x trigger) grid and confirmed all 35 cells correct (the catch-all absorbs exactly the
+no-op/rejection cells); blockers were test gaps for the `ImportingHistory` branch of the OR-arms plus
+a provenance-wording fix, all addressed; confirmation pass clean. CodeRabbit not escalated — pure
+in-crate logic, no escalation trigger.
+**Next / blockers:** 3b remains 🚧. Remaining leaves: SQLite cursor store (read/write + advance-on-2xx),
+`collector_started_at` + 24h grace, history-import presets (7d/30d/1y), and the POST loop that wraps
+`session_facts(...)` in an `AgentIngestEnvelope` (reusing the 3c `CollectorApiClient`) and drives this
+orchestrator's actions. FSEvents watcher + live POST are exercised at 3d.
+
+## 2026-05-27 — 3b (`collector-sync`: scaffold + git-remote freeze cache, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** New crate `packages/collector-sync/` (auto-joins the workspace via the `collector-*`
+member glob): `Cargo.toml`, `src/lib.rs` (crate root + module wiring), `src/git.rs`. First leaf of
+3b — the git-remote resolve + **freeze cache** (one of 3b's three named cargo-verify items).
+
+- **`GitRemoteCache`** (original Trace Flow code; otto re-resolved per call): a process-lifetime
+  `cwd -> Option<GitMetadata>` cache. First sight of a `cwd` resolves and **freezes** it
+  (first-writer-wins via `entry().or_insert()`), so a mid-run `git remote set-url` cannot
+  re-attribute a session. `Some(None)` freezes a non-repo `cwd` so it is probed at most once;
+  `None` means never-probed. The `std::sync::Mutex` guard is dropped before the `.await`, leaving a
+  benign, documented TOCTOU (two first-time callers may both shell out; freeze is idempotent).
+- **`resolve_git_metadata`** vendored from `otto-sync/src/git.rs` (SPDX + provenance header per
+  `otto-extraction-reference.md`): concurrent `--show-toplevel` / `--abbrev-ref HEAD` /
+  `remote.origin.url` probes via `tokio::join!`. Every `git` failure mode collapses to `None` =
+  "field absent" / "not a repo"; per-failure diagnostics are deferred to 3d. Dropped the redundant
+  blocking `Path::exists()` guard otto carried (a sync `stat` in async).
+- **Scope discipline:** otto-sync's `pricing` and `provider_usage` modules are NOT vendored —
+  provider-usage cost tracking is a separate feature and pricing is server-side.
+
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-sync --all-targets -D warnings`,
+`cargo build`, `cargo test -p collector-sync` (4 freeze-cache unit tests: peek miss→hit,
+first-writer-wins ignores a later remote change, non-repo freezes as `Some(None)`, distinct cwds are
+independent). The git subprocess itself is left to the 3d end-to-end run (it shells out to real git).
+Local `code-review`: **CHANGES REQUESTED → fixes → READY TO LAND** (P1 redundant blocking
+`Path::exists`, P1 TOCTOU doc, P2 unused `rt` tokio feature, P3 failure-discard + provenance-header
+notes — all addressed; confirmation pass clean). CodeRabbit not escalated — local code, no escalation
+trigger (the credential/auth path lives in the already-landed 3c `collector-api-client`).
+**Next / blockers:** 3b remains 🚧. Remaining leaves: SQLite cursor store (read/write + advance), the
+one-job-at-a-time orchestrator state machine (`Watching/Syncing/Importing/Paused/Error`),
+`collector_started_at` + 24h grace, history-import presets (7d/30d/1y), and the POST loop that wraps
+`session_facts(...)` in an `AgentIngestEnvelope` and advances the cursor only on a 2xx (reusing the
+3c `CollectorApiClient`). FSEvents watcher + live POST are exercised at 3d.
+
+## 2026-05-27 — 3a (`collector-parser`: session assembler — slice complete) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added `packages/collector-parser/src/assemble.rs` (+ `pub mod assemble;`). New public
+entrypoint `session_facts(source: AgentSource, records: &[Value], ctx: &SessionContext) ->
+AgentIngestFacts` — the crate's single fan-out: it dispatches on `source` and runs every emitter for
+that source, collecting the 5-field bundle (`messages`, `tool_events`, `file_events`,
+`capability_snapshots`, `pull_request_links`) the `collector-sync` uploader (3b) will wrap in an
+`AgentIngestEnvelope`.
+
+- **Pure router, no new logic.** Adds zero identity/redaction/token handling — each field is exactly
+  the matching emitter's output, so all `*_pk`/`cost_usd`/redaction rules stay in the emitters.
+- **Source coverage.** Claude → messages/tools/files/PR-links with `capability_snapshots` a hardcoded
+  empty vec (caps are Codex `session_meta`-only, not a missing emitter); Codex → all five incl.
+  `codex_capability_facts`; **Cursor → all-empty bundle** so the uploader treats sources uniformly
+  until the `3a*` Cursor parser lands. Match is exhaustive over `AgentSource` (no `_` catch-all).
+- **Dispatch keys on the `source` argument, never record-shape sniffing** — a test routes
+  Claude-shaped records through the Codex arm and gets the Codex emitters' output.
+
+**Verified:** `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo build`,
+`cargo test -p collector-parser` (173 tests incl. 4 new assembler fan-out-fidelity tests — each
+asserts a bundle field equals the direct emitter call on the same input). Local `code-review` skill:
+**READY TO LAND** (no P1/P2; P3s were a defensible one-call placeholder helper and an already-covered
+fixture comment). CodeRabbit not escalated — pure intra-crate router, none of the escalation triggers
+(auth/secrets/schema/redaction/concurrency/proxy-streaming/contract) apply.
+**Next / blockers:** 3a is complete — board flipped ✅. Next unit is **3b (`collector-sync`)**: wrap
+`session_facts(...)` output into the POST `AgentIngestEnvelope` (batch metadata + cursor advance on
+2xx). Cursor parser remains fast-follow `3a*`.
+
+## 2026-05-27 — 3a (`collector-parser`: PR-link emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_pr_links.rs` (+ `pub mod emit_pr_links;`).
+`claude_pr_link_facts` / `codex_pr_link_facts(records, &SessionContext) -> Vec<AgentPullRequestLinkFact>`
+scan a session for **canonical GitHub PR links** (`github.com/{owner}/{repo}/pull/{number}`, ADR v1
+GitHub-only) and emit one fact per distinct observed link.
+
+- **Evidence taxonomy:** assistant message text → `AssistantText`; tool _output_ (Claude `tool_result`
+  content, Codex `function_call_output`) → `ToolOutput`; user/other transcript text → `TranscriptRecord`.
+  Tool/command _input_ is never scanned — `gh pr create`/`gh pr view`/`git push`/branch names/bare PR
+  numbers are diagnostic-only in v1 (ADR "Repo and pull request attribution"), so they yield no link.
+  Every canonical link is `confidence = High`; the Medium/Low rungs and non-GitHub hosts are deferred
+  enrichment.
+- **Identity / dedup mirrors the Worker pk** (`pullRequestLinkPk`, `ids.ts:77` =
+  `[source, vendorSessionId, sourceEventId ?? turn:N, url]`): observations dedupe on
+  `(source_event_id, url)` in document order; `stable_turn_index` is a per-session ordinal over the
+  survivors (stable across re-parse). Claude carries a per-record `uuid` → `source_event_id` set, so the
+  same link in two records is two genuine observations; Codex carries none → `source_event_id` `None`, so
+  a link repeated across the session collapses to one row. That asymmetry is inherited from the pk
+  formula, not invented.
+- **URL hygiene:** owner/repo lowercased (GitHub is case-insensitive) so casing can't fragment
+  attribution; `/pull/` singular + numeric id required (issue links, `/pulls`, bare numbers rejected);
+  trailing path/query/fragment/punctuation stripped to the canonical `https://` form; PR numbers that
+  overflow `i64` skipped. The `regex` crate has no look-behind, so host look-alikes (`evilgithub.com`,
+  `my-github.com`) and subdomains (`api.github.com`) are rejected by a preceding-byte guard, not `\b`.
+  `dropped_sensitive` is 0 — only the public canonical URL is stored, never the surrounding text.
+
+**Verified:** `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` (clean),
+`cargo test -p collector-parser` (169 passed incl. 17 new PR-link tests), `cargo build --workspace`.
+Local `code-review` skill: **READY TO LAND** (resolved P1 owner/repo casing, P2 host-boundary
+tightening + Codex tool-input exclusion test, P3 repo-pattern + helper note; multi-byte UTF-8 boundary
+of the byte guard confirmed safe). CodeRabbit not escalated — parser-only, additive, no
+auth/secret/schema/contract/redaction-logic change (per the escalation rubric).
+**Next / blockers:** No top-level per-session **assembler** yet ties the now-7 emitters
+(msgs/tools/files/caps/PR-links, Claude+Codex) into the upload envelope's fact arrays. That parser
+entrypoint (`packages/collector-parser/`, the 3a lane) is the remaining 3a unit before 3a flips ✅; 3b
+(`collector-sync`) then wraps it into the POST envelope. Cursor `state.vscdb` parser stays fast-follow
+(`3a*`).
+
+## 2026-05-27 — 3a (`collector-parser`: Codex capability-snapshot emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex_caps.rs` (+ `pub mod emit_codex_caps;`,
+
+- `sha2 = "0.10"`). `codex_capability_facts(records, &SessionContext) -> Vec<AgentCapabilitySnapshotFact>`
+  reads each Codex `session_meta` record's capability surface and emits one snapshot per distinct
+  observation: `base_instructions` (the system prompt, `payload.base_instructions.text` — current build;
+  bare string tolerated for older builds — one item) and `dynamic_tools` (the `payload.dynamic_tools`
+  catalog, one item per tool). **Verified against 114 real local Codex transcripts** — this resolves the
+  prior "deferred → needs-data" note: `base_instructions` is a non-empty `{text}` object (not empty) and
+  `dynamic_tools` is a populated array in current captures. Each fact ships **counts, byte size, a coarse
+  ~4-chars/token estimate, and a SHA-256 of the surface only** — the raw instruction text and tool schemas
+  are hashed, never uploaded (ADR "Capability Snapshots"); `redacted_label` is a count label
+  (`"base instructions"` / `"N dynamic tools"`), never a tool name; `dropped_sensitive` is 0 (nothing is
+  included to drop). **Identity:** Codex `session_meta.payload.id` is just the session UUID (repeats
+  verbatim on every resume), so `source_snapshot_id` is `None`. The ingest Worker's
+  `capability_snapshot_pk` (`ids.ts:69`) keys on `turn:<stable_turn_index>` and **omits `capability_kind`**,
+  so two kinds from one `session_meta` would collide — `stable_turn_index` is therefore a per-session
+  ordinal over **distinct** observations (document order). Observations dedupe on
+  `(capability_kind, content_hash)`: a resumed session re-states the same surface many times (24x observed)
+  → one row per kind, while a genuine change (new prompt, a tool added) takes the next ordinal and lands as
+  its own row. The tool hash is over an order-independent canonical form (each tool compact-serialized,
+  then sorted), so a reordered-but-identical catalog still dedupes. `base_instructions` text is trimmed so
+  incidental padding can't inflate size/tokens or fork a row. `mcp_servers` kind is intentionally not
+  emitted: current Codex transcripts carry no MCP inventory in `session_meta` and the ADR forbids inferring
+  one from local config.
+  **Verified:** `cargo fmt -p collector-parser --check`; `cargo clippy -p collector-parser --all-targets
+-- -D warnings` (clean); `cargo test -p collector-parser` (152 unit +2 canary, +14 new); `cargo build
+--workspace` (sha2 compiles). Local `code-review` skill → **READY TO LAND** (privacy/pk-collision/
+  idempotence all PASS; one P3 — untrimmed base-instructions surface — fixed). CodeRabbit CLI flagged one
+  `major` (`repeat_n` MSRV floor, in tension with the clippy `manual_repeat_n` lint) → resolved with a
+  toolchain-agnostic `(0..24).map(|_| one.clone())`; confirmation re-run rate-limited (12m), treated as a
+  skip per the local-first review policy (the finding was already resolved and re-verified by clippy+tests).
+  **Next / blockers:** 3a stays 🚧 — **caps was NOT the last 3a unit** (the prior breadcrumb was optimistic).
+  Remaining 3a unit is the **PR-link emitter** (`AgentPullRequestLinkFact`): extract canonical GitHub
+  `github.com/{owner}/{repo}/pull/{number}` links from assistant text / tool output / transcript records
+  with `confidence`/`evidence` (ADR L150–152; GitHub-only in v1; `gh`/`git push`/bare-number strings are
+  diagnostic evidence, not attribution). Open question for that leaf or 3b/3d: there is still **no
+  top-level per-session assembler** tying the seven emitters into the envelope's five fact arrays — confirm
+  whether that lives in `collector-sync` (3b) or as a small `collector-parser` entrypoint. Future cleanup:
+  hoist duplicated `record_event_at` / block-cursor helpers across the Codex emitters into a shared module.
+
+## 2026-05-27 — 3a (`collector-parser`: Codex file-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex_files.rs` (+ `pub mod emit_codex_files;`).
+`codex_file_facts(records, &SessionContext) -> Vec<AgentFileEventFact>` emits one fact per file an
+`apply_patch` call touches, mapping the patch verb (`Add`/`Update`/`Delete File:`) to
+`Create`/`Edit`/`Delete`. Touched paths come from the `*** <verb> File: <path>` markers in the patch
+body (`arguments.input`, with bare-string and non-JSON-raw fallbacks); each is relativized via
+`relativize_repo_path` (repo-relative or the `outside_repo` sentinel, never a home dir/username).
+`vendor_message_id` is `None` (Codex emits no per-message ID), so `source_block_index` is a
+session-global document-order counter — the only field keeping two same-path/same-op events distinct
+under `file_event_pk`. `dropped_sensitive` is 0 (paths are normalized, not redacted). Raw
+`exec_command` shell file writes stay deferred to the tool emitter.
+**Verified:** `cargo fmt -p collector-parser --check`; `cargo clippy -p collector-parser --all-targets
+-- -D warnings`; `cargo test -p collector-parser` (138 passed, +11 new); `cargo build --workspace`;
+`coderabbit review --agent --type uncommitted --dir packages/collector-parser` → 0 findings.
+**Next / blockers:** Last 3a unit is Capability Snapshots (Codex `base_instructions`/`dynamic_tools`
+counts/hashes/sizes); keep 3a 🚧 until it lands. NOTE: review-process change in flight — a separate
+worktree disables automatic CodeRabbit in favor of a local `code-review` skill; the driver's CodeRabbit
+gate will be retargeted there.
+
+## 2026-05-27 — 3a (`collector-parser`: Codex tool-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex_tools.rs` (+ `pub mod emit_codex_tools;`).
+`codex_tool_facts(records, &SessionContext) -> Vec<AgentToolEventFact>` emits one fact per Codex
+`function_call` record, joined to its `function_call_output` by `call_id` (a `HashMap<call_id, &output>`
+built in one pass, then the records walked for the use side — the same use/result shape as the Claude
+emitter, but Codex's result is a separate top-level record, not a content block). Only `exec_command`
+carries a shell command (parsed from the JSON-string `arguments.cmd`) to classify via
+`command::classify_command`; MCP tools (`get_issue`, `save_issue`, …) and `write_stdin` carry none, so
+their classification columns ship empty. `command_excerpt`/`error_excerpt` are redacted then capped
+(1 KB / 4 KB, ADR L243), `dropped_sensitive` sums the redactor drops. `repo_relative_paths` ships empty
+— Codex represents file edits as `apply_patch` _shell_ text inside `exec_command`, so file extraction is
+the file emitter's unit, not this one. **Codex carries a real exit code** (unlike Claude's Bash sidecar):
+`status`/`exit_code` come from the `Process exited with code N` line, and `duration_ms` is the call→output
+wall-clock gap (clock-skew-bounded). **Real-data correction over the otto reference:** Codex writes that
+status line in the output _preamble_ (before `Output:`), so the **first** match is authoritative — otto
+took the last, which a command echoing the phrase in its own body would shadow. Exit `0` → success,
+non-zero → failure, absent (dangling call or an MCP tool with no process code) → unknown. Enrichment
+columns (`extracted_provider`/`extracted_repo`/`extracted_pr_number`/`extracted_subagent_*`) ship empty,
+same rationale as the Claude tool emitter.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (127 passed; 14 new
+emit_codex_tools tests: exec success classified + exit 0, non-zero → failure takes the output as the
+error, git exit 128 → failure, preamble status line wins over a body echo, dangling call → unknown/no
+duration, MCP tool with no process code → unknown/no command, write_stdin → no classification, command
+secret drop counted, error home-path masked, command/error excerpts capped at 1 KB/4 KB, duration is the
+call→output gap, block index tracks call position skipping non-calls, empty session → no facts),
+`cargo build --workspace` (clean). CodeRabbit `--type uncommitted --dir packages/collector-parser`:
+0 findings (after one recoverable rate-limit wait).
+**Next / blockers:** Remaining 3a — Codex **file** emitter (parse `apply_patch` `*** Add|Update|Delete
+File:` paths out of `exec_command` shell text, relativize like the Claude file emitter) and capability
+snapshots (Codex `base_instructions`/`dynamic_tools` — counts/hashes/sizes). Future cleanup: the Claude
+tool emitter and this Codex tool emitter now both hold private `cap_bytes`/`excerpt` copies on top of the
+three Claude emitters' `record_event_at`/block-cursor triplication; hoist all to one shared module in a
+dedicated refactor commit. Cursor parser stays fast-follow (`3a*`).
+
+## 2026-05-27 — 3a (`collector-parser`: Claude tool-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_claude_tools.rs` (+ `pub mod emit_claude_tools;`).
+`claude_tool_facts(records, &SessionContext) -> Vec<AgentToolEventFact>` emits one fact per `tool_use`
+block. The result side (outcome, duration, error text) comes from `tool_fold::fold_tool_events` looked up
+by `tool_use_id` (the cross-record use/result join already lived there — no fold change); the use side
+(message id, event time, command, touched path, block position) is read from the assistant record the
+walk visits, reusing the file emitter's per-message logical block-index scheme. `command` is classified
+via `command::classify_command` into `command_family`/`command_program`/`command_subcommand`; `status`
+maps from the folded `ToolOutcome`. `command_excerpt`/`error_excerpt` are redacted with
+`redaction::redact_field` **then** capped (1 KB / 4 KB per ADR L243, so the 5 KB per-event total holds
+without a separate check), summing the redactor's drop count into `dropped_sensitive`.
+`repo_relative_paths` carries the relativized `input.file_path` for file-bearing tools, else empty
+(shell-command path parsing is deferred). Resolved sub-decisions, no ADR conflict: **`exit_code` is
+always `None`** — Claude's Bash sidecar carries only `interrupted`/`stderr`/`stdout`, never a process
+exit code (verified across 40 real transcripts; the only `code` field is WebFetch's HTTP status);
+**enrichment columns ship empty** — `extracted_provider`/`extracted_repo`/`extracted_pr_number` have no
+ADR algorithm (PR links are a separate fact table) and `extracted_subagent_*` would double-count a
+spawned sub-agent whose tokens already live in its own separate transcript's facts.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (113 passed; 11 new
+emit_claude_tools tests: Bash success classification + no exit code, enrichment columns empty, failed
+call takes redacted stderr without leaking a username, Read records the relativized path + no command,
+outside-repo path → sentinel, command-excerpt secret drop counted, command/error excerpts capped at
+1 KB/4 KB, dangling tool_use → Unknown, block index tracks message position, non-tool blocks emit
+nothing), `cargo build --workspace` (clean). CodeRabbit `--type uncommitted --dir packages/collector-parser`: clean (after a recoverable rate-limit wait).
+**Next / blockers:** Remaining 3a — Codex tool + file emitters (Codex represents edits via `apply_patch`
+shell calls, a different shape from Claude's structured `Edit`/`Write`, so its file extraction is its own
+unit) and capability snapshots (Codex `base_instructions`/`dynamic_tools` — needs real Codex transcript
+data to fix the shape). Future cleanup: the three Claude emitters now each hold a private copy of
+`assistant_message_id`/`content_blocks`/`record_event_at` + the per-message block cursor; hoist them to
+one shared `claude_records` module in a dedicated refactor commit. Cursor parser stays fast-follow (`3a*`).
+
+## 2026-05-27 — 3a (`collector-parser`: Claude file-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_claude_files.rs` (+ `pub mod emit_claude_files;`).
+`claude_file_facts(records, &SessionContext) -> Vec<AgentFileEventFact>` emits one fact per
+file-touching `tool_use` block — `Read`→`Read`, `Write`→`Write`, `Edit`/`MultiEdit`→`Edit`; every
+other tool and every non-`tool_use` block is skipped. Each path runs through
+`paths::relativize_repo_path` against the new `SessionContext.repo_root` anchor, so a stored path is
+repo-relative or the `outside_repo` sentinel and never a home dir, username, or absolute path. Added
+`pub repo_root: String` to `SessionContext` (`session_context.rs`): the sole field never emitted onto a
+fact — the sync-resolved absolute git root used only as that relativization anchor; empty `repo_root`
+means "root unknown" and collapses every absolute path to `outside_repo` (safe default). `source_block_index`
+is the block's position in its message's **full block stream** in document order, not the within-record
+index: Claude writes one content block per JSONL record (verified against a real transcript — `n:1` per
+assistant record), all sharing the turn's `message.id`, so a within-record index is always `0` and could
+not separate two same-path same-operation edits in one turn, which the `file_event_pk` hash needs it to do.
+`record_event_at` is triplicated from `emit_claude`/`emit_codex` deliberately (hoisting it to a shared
+module would edit those committed files, outside this task's lane) — noted as future cleanup.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (102 passed; 11 new
+emit_claude_files tests: operation mapping for Read/Write/Edit/MultiEdit, non-file tools + thinking/text
+blocks + user tool-result records emit nothing, missing `file_path` skipped, two edits of the same path in
+one message stay distinct rows, block index resets across messages, non-file blocks still advance the
+cursor, outside-repo path collapses without leaking the username, empty `repo_root` collapses every
+absolute path, `event_at` from the record timestamp, timestamp fallback to session start), `cargo build
+--workspace` (clean). CodeRabbit `--type uncommitted --dir packages/collector-parser`: **0 findings**
+(after a recoverable rate-limit wait).
+**Next / blockers:** Tool-event emitter (Claude + Codex) is next in 3a — it needs a `fold_tool_events`
+extension (`FoldedToolEvent` carries no `vendor_message_id`, exit code, tool input paths, or subagent
+usage) and inherits the deferred `extracted_provider`/`extracted_repo`/`extracted_pr_number` enrichment
+(ADR names them but gives no algorithm; PR links are a separate GitHub-only fact table — leave
+empty/`None` on tool events). Then Codex file/tool paths and capability snapshots (capability snapshots
+need real Codex data). Cursor parser stays fast-follow (`3a*`).
+
+## 2026-05-27 — 3a (`collector-parser`: Claude message-fact emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_claude.rs` (+ `pub mod emit_claude;`).
+`claude_message_facts(records, &SessionContext) -> Vec<AgentMessageFact>` emits one fact per assistant
+`message.id` (usage collapsed by `claude_usage::session_message_usages`, so a turn Claude writes across N
+content-block records counts once) and one per text-bearing user record (string content or an array
+holding a `text` block; tool-result-only user records are skipped and burn no turn index). `model` comes
+from `message.model` (empty for user turns, which carry `Missing` coverage). `vendor_message_id` is the
+`message.id` for assistant turns and the record `uuid` for user turns so the Worker's `message_pk` stays
+stable across re-parse. `is_subagent_spawn` is set when a turn's content holds a `Task`/`Agent`
+`tool_use` — matched by exact name (scanned across all records sharing the id, since the spawning block
+can land in a later content-block record), so the unrelated `TaskCreate`/`TaskUpdate`/`TaskList` todo
+tools never false-trigger. `is_sidechain` rides from each record; `agent_depth` from `SessionContext`.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (91 passed + 2 canary; 13 new
+emit_claude tests cover id collapse, collapsed-token Full coverage, usage-less assistant → Missing,
+user uuid keying, tool-result-only skip, array-with-text user emit, Task/Agent spawn flag vs the Task\*
+todo family, spawn block in a later same-id record, sidechain + agent_depth carry, positional turn_index
+across skips, session-context carry, timestamp fallback, empty session), `cargo build --workspace`.
+CodeRabbit `--type uncommitted`: 1 "critical" finding (SessionContext missing `agent_depth`) — **verified
+false positive**: the field exists in the already-committed `session_context.rs:32` (`4437439`), outside
+the uncommitted review scope, and the crate compiles + all tests pass, which is impossible if it were
+missing. Skipped per the "fix only still-valid issues" rule; re-review would reproduce it identically.
+**Next / blockers:** 3a stays 🚧. Next leaf is the Claude tool-event emitter (`AgentToolEventFact`).
+**Heads-up — ADR gap:** the tool-event fact names `extracted_provider`/`extracted_repo`/
+`extracted_pr_number` (ADR L243) but gives no extraction algorithm, and otto's `tools.rs` does not
+populate them (PR links are a separate GitHub-only fact table, ADR L152). Resolve before that leaf.
+
+## 2026-05-27 — 3a (`collector-parser`: Codex message-fact emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex.rs` and `src/session_context.rs`
+(+ `pub mod` for both; `Cargo.toml`/`Cargo.lock` gain a path dep on `collector-contracts` — no new
+external crates). `codex_message_facts(records, &SessionContext) -> Vec<AgentMessageFact>` emits one
+fact per segmented Codex turn (from `codex_turns::session_turns`): assistant turns carry their tokens
+with `Full` coverage, user turns carry none with `Missing`, and the assistant turns' tokens sum to the
+session total by construction (dedup lives in `codex_turns`). Each turn is tagged with the model active
+when it ran — resolved by walking `turn_context.payload.model` and correlating to turns via pointer
+identity against the same `records` slice (`session_meta.model` is null in Codex). `vendor_message_id`
+is `None` (Worker's `message_pk` falls back to positional `turn_index`); `agent_depth`/`is_sidechain`/
+`is_subagent_spawn` are constant (Codex has no sub-agent transcript nesting). `SessionContext` is new,
+original Trace Flow code (no otto equivalent): the per-session git/identity metadata every emitter
+shares, including `agent_depth` (0 top-level, >0 for Claude sub-agent files; Codex stays 0).
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (78 passed + 2 canary; 7 new
+emit_codex tests cover one-fact-per-turn role+index, assistant tokens with input-minus-cached split,
+user Missing coverage, mid-session model switch gpt-5.5→gpt-5.5-codex, session-context carry, token
+totals summing to 60_899, and the empty session), `cargo build --workspace` (Cargo.lock unchanged
+except the intra-workspace contracts edge). CodeRabbit `--type uncommitted`: 1 trivial (document the
+`ptr::eq` coupling) → added the warning comment → **0 findings** on re-review.
+**Next / blockers:** 3a stays 🚧. Next leaf is the Claude `AgentMessageFact` emitter (one fact per
+`message.id` with collapsed usage; sub-agent depth + sidechain + Task/Agent spawn detection).
+
+## 2026-05-27 — 3a (`collector-parser`: RFC3339 timestamp parser) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/timestamp.rs` (+ `pub mod timestamp;`).
+`rfc3339_to_epoch_ms(&str) -> Option<i64>` turns a transcript record's `timestamp` string into the
+epoch-millisecond `event_at` every `Agent*Fact` carries — the last shared prerequisite before the fact
+emitters. **Dependency-free:** otto leaned on `chrono::DateTime::parse_from_rfc3339`, but `chrono` is not
+in the workspace lock and the parser crate keeps a deliberately tiny pinned dependency surface (it is the
+redaction trust boundary), so this is an original reimplementation, not vendored code. It parses the
+fixed `YYYY-MM-DDTHH:MM:SS.sssZ` shape both Claude Code and Codex CLI emit, and also tolerates numeric
+`±HH:MM` offsets, any fractional-second width (truncating to ms, never rounding), and a leap second.
+Days come from Howard Hinnant's `days_from_civil`; calendar-invalid dates (Feb 30, Apr 31, a non-leap
+Feb 29) are rejected before conversion so a malformed timestamp fails loudly instead of silently rolling
+forward.
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (71 passed + 2 canary; new timestamp suite covers the epoch,
+real Claude/Codex stamps vs `date -j -u` ground truth, leap day/year boundaries, offset normalization,
+fractional truncation, and a malformed-input table), `cargo build --workspace` (Cargo.lock unchanged —
+no new dependency). CodeRabbit `--type uncommitted`: 1 major + 1 minor (both: `1..=31` accepted
+calendar-invalid days) → added month-aware `is_valid_calendar_date` + invalid-date tests → **0 findings**
+on re-review.
+**Next / blockers:** 3a stays 🚧. Next is the fact emitters (see the entry below) — now unblocked on
+timestamp parsing.
+
+## 2026-05-27 — 3a (`collector-parser`: per-turn Codex segmentation) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Decision landed:** the Codex Agent Message grain is **per-turn**, not per message record (user choice;
+CONTEXT "the grain at which token counts are recorded"). A Codex turn — not a raw `response_item`
+`message` record — is the token-bearing unit, so a reasoning- or tool-only turn (real Codex sessions emit
+these: reasoning + function_call + `token_count`, no message record) carries tokens but has no message.
+Indexing per message record (the prior `codex_turns` leaf) left those tokens with nowhere to land.
+**Changed:** Reworked `codex_turns.rs` into a single `session_turns(records)` segmenter: walks the record
+stream in file order and emits one `CodexTurn { turn_index, role: CodexTurnRole, usage:
+Option<CodexTurnUsage>, record: &Value }` per user message and per `token_count`-bounded assistant turn,
+0-based, purely from structural file position (re-parse never renumbers — the `message_pk` stability the
+ADR flags). Assistant turns carry their usage; a tool-only turn now becomes a turn and keeps its tokens.
+`codex_usage.rs` drops to the usage **reader** leaf: `last_token_usage` + `cumulative_total` are now
+`pub(crate)` and `CodexTurnUsage` stays public; `session_turn_usages` is **removed** — its segmentation
+and the cumulative-advance dedup moved into `codex_turns`, which shares the one dedup rule so the kept
+assistant turns sum to the session's final `total_token_usage` by construction (the ~331x trap guard
+survives as a `codex_turns` test). No external consumers of the old API existed (grep-verified).
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (64 passed + 2 canary), `cargo build --workspace`. CodeRabbit
+`--type uncommitted`: **0 findings** (clean first pass). Commit `2654705`.
+**Next / blockers:** This was a grain correction on freshly-shipped code, not new surface. 3a stays 🚧.
+**Remaining 3a work is the fact emitters** onto `collector-contracts` — assemble `session_turns`
+(+usage) + `session_message_usages` (Claude) + `classify_command` + `fold_tool_events` +
+`relativize_repo_path` + `redact_field` into `Agent*Fact`, emit `command_family = command_program`, and
+build per-turn content/model from the records a Codex turn spans (turn_context model, message text). That
+is the per-source normalizer/emitter — a cohesive non-leaf that adds the `collector-contracts` dep and is
+the natural unit for a fresh session/budget. Capability snapshots stay deferred (needs-data).
+
+## 2026-05-26 — 3a (`collector-parser`, partial: Codex positional turn index) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/codex_turns.rs` (+ `pub mod codex_turns;`).
+`session_message_turns(records)` numbers each Codex `response_item` `message` record with a stable
+0-based `turn_index` in file order — the positional surrogate that stands in for the vendor message ID
+Codex never emits and that `message_pk` hashes (ADR identity rule: Codex `message_pk` falls back to
+`(vendor session ID, positional turn index)`). **Divergence from otto:** otto bumps its turn counter
+inside the event-emission state machine, only on flush and _after_ scaffold/role filtering, so a re-parse
+whose scaffold heuristic changes renumbers the turns — exactly the fragility the ADR flags as Codex's
+weakest dedupe key. Trace Flow assigns the index purely from structural file position over `message`
+records, **before** any role/scaffold filtering, so the emitter can drop developer/scaffold messages
+without renumbering the survivors and a re-parse is bit-stable. The `event_msg` render duplicates
+(`agent_message`/`user_message`, which mirror the canonical `response_item` content) are not counted —
+counting them would double-count, another renumbering source. Grain follows CONTEXT ("an Agent Message is
+a single assistant or user record"); token-to-message attribution for reasoning/tool-only token turns
+that carry no `message` record stays an **emitter** decision, not invented here. Returns
+`CodexMessageTurn { turn_index, role: CodexMessageRole, record: &Value }` so the emitter reads
+content/usage off the borrowed record. 8 tests (file-order numbering, non-message records skipped,
+event_msg duplicates excluded, re-parse identical, leading-message-drop does-not-renumber, index follows
+file order not timestamps, unknown role → Other, empty session).
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (65 passed + 2 canary), `cargo build --workspace`. CodeRabbit
+`--type uncommitted`: **0 findings** (clean first pass). Commit `8e64edb`.
+**Next / blockers:** This was the last cleanly-separable pure leaf. 3a stays 🚧. **Remaining 3a work is
+the fact emitters** onto `collector-contracts` (assemble `session_message_usages` +
+`session_turn_usages` + `session_message_turns` + `classify_command` + `fold_tool_events` +
+`relativize_repo_path` + `redact_field` into `Agent*Fact`, emit `command_family = command_program`). That
+unit is **not a pure leaf** — it is the per-source normalization that reconciles Codex's `token_count`
+turn boundaries with `message` records (incl. reasoning/tool-only turns that have tokens but no message)
+and Claude's per-message fold, and it adds the `collector-contracts` dependency. Capability snapshots stay
+deferred (real Codex `session_meta` has empty `base_instructions`, no dynamic-tools catalog → needs-data).
+
+## 2026-05-26 — 3a (`collector-parser`, partial: tool-use/tool-result fold) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/tool_fold.rs` (+ `pub mod tool_fold;`).
+`fold_tool_events(records)` pairs each Claude Code `tool_use` block with its matching `tool_result`
+(by `tool_use_id`) and that result record's co-located `toolUseResult` sidecar into one
+`FoldedToolEvent` per call — the pre-emitter shape of an `AgentToolEventFact`. **Divergence from otto:**
+otto emits the call and its result as two separate facts; the ADR requires a call and its outcome to be
+a single row, so this resolves all results first, then walks `tool_use` blocks in document order
+(`source_block_index` = position in the message `content[]`). Outcome mapping is honest about the
+unobserved case: no matching result (session ended mid-call) or `interrupted` → `Unknown`; `is_error` →
+`Failure`; else `Success`. `duration_ms` and `stderr` come from the sidecar; `error_text` falls back to
+the result body (string or `{type:text}` array) only when the call errored; `command` is `Some` only for
+shell tools carrying `input.command`. Text fields stay raw — the downstream emitter redacts, truncates,
+classifies, and stamps the epoch. 9 tests (success fold, is_error→Failure+stderr, interrupted→Unknown,
+dangling→Unknown, sidecar duration, error-body fallback, text-array join, document-order+block-index,
+empty session).
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (57 passed + 2 canary), `cargo build --workspace`.
+CodeRabbit `--type uncommitted`: 1 trivial finding (double-allocation in `result_content_text` via
+`Value::String` rewrap) fixed with its verbatim suggestion (`trim_non_empty(&str)` helper, both call
+sites converted), re-confirmed **0 findings**. Commit `03ebc21`.
+**Next / blockers:** 3a stays 🚧. Remaining leaves: Codex turn-index determinism; then the fact emitters
+onto `collector-contracts` (assemble `session_message_usages` + `session_turn_usages` + `classify_command`
+
+- `fold_tool_events` + `relativize_repo_path` + `redact_field` into `Agent*Fact`, emit `command_family =
+command_program`). Capability snapshots deferred — real Codex `session_meta` has empty `base_instructions`
+  and no clear dynamic-tools catalog, so the source mapping is a non-ADR decision (needs-data). CodeRabbit
+  windows still fluctuating (6m–16m) on credit depletion; cleared via background wait+retry.
+
+## 2026-05-26 — 3a (`collector-parser`, partial: command classification) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/command.rs`. `classify_command(raw)` splits a shell
+command into the `command_program` / `command_subcommand` / `command_family` triple on
+`AgentToolEventFact`. **Deliberate divergence from otto:** otto's `derive_facts.rs` emits a _two-part_
+family ("git push", "npm install") from a hardcoded program allowlist — exactly the invented
+`command_family` taxonomy the ADR never defines and the prior CHANGELOG flagged as a non-ADR decision.
+Trace Flow instead sets `family == program` (the documented program-as-family resolution): `program` is
+the basename of argv[0], `subcommand` is argv[1] only when it reads as a verb (no leading `-`, no path
+separator), and `family` mirrors `program`, so the failure leaderboard groups by program with no curated
+list to drift. Output pinned to the contract sample (`collector-contracts/src/sample.rs`):
+`git push origin HEAD` => `git` / `push` / `git`. Mechanical argv parsing only — shell wrappers and
+leading `KEY=value` env prefixes are **not** unwrapped (a documented scope boundary / future
+enrichment), kept out so this stays parsing rather than command-shape heuristics. SPDX/provenance
+header; `pub mod command;` in `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 50 pass (48 unit + 2 canary). Command tests assert: the
+contract-sample triple; `family == program` across a set; path-basename stripping; a flag second token
+and a path second token both yield no subcommand; single-token and empty/whitespace commands; whitespace
+collapse; and the documented env-prefix non-unwrapping. `cargo clippy -p collector-parser --all-targets
+-- -D warnings`, `cargo fmt --check`, `cargo build --workspace` all clean. **CodeRabbit CLI: 1 trivial
+finding** (a self-contradicting test comment — claimed `script.js` was "an argument, not a subcommand"
+while asserting it _is_ the subcommand); fixed verbatim per CodeRabbit's instruction to document the
+mechanical-parsing limitation. The confirming pass was rate-limited (org out of credits; the window grew
+to 15m), so this lands on the resolved-trivial-finding + green-local-gates basis — same precedent as the
+codex_usage slice — rather than burning the depleted pool on a comment-only re-confirm.
+**Next / blockers:** 3a stays 🚧. Remaining: tool-use+tool-result fold (same `tool_use_id` → one Tool
+Event; pairs the assistant `tool_use` block with the user `tool_result` block + the Claude-Code
+record-level `toolUseResult` sidecar carrying `durationMs`/`interrupted`/`stderr`; status maps
+`is_error`→failure, `interrupted`→unknown, else success), capability snapshots (counts/hashes/sizes
+only), Codex turn-index determinism, and the fact emitters onto `collector-contracts` (calling
+`relativize_repo_path` + `redact_field` + `session_turn_usages` + `session_message_usages` +
+`classify_command`). Then 3b / 3d. **CodeRabbit credit pool is depleting** (windows this session:
+13m → 4m → 11m → 9.5m → 15m); further slices may stall on review.
+
+## 2026-05-26 — 3a (`collector-parser`, partial: Claude per-message token collapse) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/claude_usage.rs`, the Claude-side companion to
+`codex_usage.rs`. `session_message_usages` collapses a session's JSONL records to one
+`ClaudeMessageUsage` per `message.id` — the input to the `AgentMessageFact` token fields. **Real-data
+finding (diligence against a captured `~/.claude/projects` transcript):** Claude Code writes one record
+per content block of an assistant turn (text + each `tool_use` + each `tool_result`), and **every**
+record repeats that turn's full `message.usage`. One turn's usage appeared 8× verbatim; grouping the
+session showed each `message.id` maps to exactly one usage tuple (no per-record variation). So summing
+usage per record multiplies a turn's tokens by its block count — the explicit 3a "collapse repeated
+`message.usage` by `message.id`" trap. First record carrying usage for an id wins; later repeats drop;
+first-appearance order preserved. Token mapping: `cache_creation_tokens` = authoritative
+`usage.cache_creation_input_tokens`; the 5m/1h split reads `usage.cache_creation.ephemeral_{5m,1h}_input_tokens`
+**only when present** — pre-breakdown transcripts leave the split `0/0` with a non-zero total rather
+than fabricating a tier; `reasoning_tokens` always 0 (Claude folds thinking into `output_tokens`, emits
+no reasoning field); `total_tokens` reconstructed from components (Claude usage has no session total).
+Adapted from otto `claude_code/mod.rs`, which fingerprints **per record** (key includes timestamp +
+content hash) and so emits one fact per record with no id-collapse — the multi-count this rework fixes.
+SPDX/provenance header; `pub mod claude_usage;` in `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 41 pass (39 unit + 2 canary). Claude canary asserts:
+8 repeated records collapse to one contribution; naive per-record sum = 8× the true output vs collapsed
+counts once; 5m/1h split when the breakdown is present (and sums to the total); split stays `0/0` when
+absent (total still authoritative); `total_tokens` reconstruction; `reasoning == 0`; first-appearance
+order across interleaved repeats; skips records without `message.id`/`usage`; a usage-bearing record
+wins over an earlier id-only one; multi-turn session sums each turn once. `cargo clippy -p
+collector-parser --all-targets -- -D warnings`, `cargo fmt --check`, `cargo build --workspace` all clean.
+**CodeRabbit CLI: 0 findings, clean first pass** (`--type uncommitted --dir packages/collector-parser`;
+the credit window that hit 13m+ last session recovered to a ~4m cooldown, then the run completed clean).
+**Next / blockers:** 3a stays 🚧. Remaining: tool-use+tool-result fold (same `tool_use_id` → one Tool
+Event), capability snapshots (counts/hashes/sizes only), Codex turn-index determinism, and the fact
+emitters onto `collector-contracts` (calling `relativize_repo_path` + `redact_field` +
+`session_turn_usages` + `session_message_usages`; emit program-as-family for `command_family` per the
+prior note). Then 3b / 3d.
+
+## 2026-05-26 — 3a (`collector-parser`, partial: Codex token aggregation) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/codex_usage.rs`. `session_turn_usages` folds a Codex
+session's `token_count` events into one `CodexTurnUsage` per real turn (the input to the
+`AgentMessageFact` token fields). **Real-data finding that changes the spec wording:** the 3a "Do" says
+"sum `last_token_usage` deltas," but a captured session shows Codex emits some `token_count` events
+**twice** (the duplicate repeats the prior `last_token_usage` while its cumulative `total_token_usage`
+does not advance). Naively summing every `last_token_usage` therefore overcounts (420443 vs the true
+299113). So an event is kept only when its cumulative `total_token_usage.total_tokens` strictly
+advances past the last kept turn; the kept turns' `total_tokens` then sum to the session's final
+cumulative **by construction** — which is exactly the verify invariant. `total_token_usage` is read
+**only** as a dedup key, never summed (summing it is the ~331x trap: 1306755 here). Per-turn split:
+`input_tokens` is the non-cached remainder (`input_tokens - cached_input_tokens`, clamped ≥ 0),
+`cache_read_tokens` the cached part, `reasoning_tokens` a subset of output; Codex has no
+cache-creation split so those fact fields stay 0. `serde_json` moved dev → runtime dep (the parser
+consumes `Value`); no `Cargo.lock` churn. Adapted from otto `codex_cli/usage.rs` (which reads one
+event in isolation and lacks the dedup). SPDX/provenance header; `pub mod codex_usage;` in `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 30 pass (28 unit + 2 canary). Codex canary asserts:
+6 real turns after dropping 1 null + 2 duplicates; `sum(turn.total_tokens) == 299113` (final
+cumulative); naive sum `== 420443 != 299113` (proves dedup is required); cumulative-sum trap
+`== 1306755 > 3×` the real total; cached/reasoning split + reconstruction-when-`total_tokens`-missing +
+`cached > input` clamp. `cargo clippy -p collector-parser --all-targets -- -D warnings`, `cargo fmt
+--check`, `cargo build --workspace` all clean. CodeRabbit CLI: pass 1 → 4 findings; fixed the **major**
+(fallback total was computed from raw, not clamped, input → inconsistent on the `cached > input` edge)
+and the trivial test-coverage finding; **declined** two trivial Cargo.toml pin nits — `serde_json = "1"`
+matches the workspace convention (`collector-contracts`, `collector-api-client`), and `regex = "1.11"`
+is the intentional minor floor with the exact patch pinned by `Cargo.lock`. Pass-2 re-confirm was
+rate-limited (credits; wait grew to 13m), but the only major finding is resolved and the remainder are
+deliberate declines.
+**Next / blockers:** 3a stays 🚧. Remaining: Claude parser (collapse `message.usage` by `message.id`),
+tool-use+tool-result fold (same `tool_use_id` → one Tool Event), capability snapshots, Codex
+turn-index determinism, and the fact emitters onto `collector-contracts`. **Note for the fact
+emitters:** `command_family` has no ADR-defined taxonomy and the contract sample shows
+`command_family == command_program` (`git`); emit program-as-family until a future enrichment, rather
+than inventing a taxonomy. Then 3b / 3d.
+
+## 2026-05-26 — 3a (`collector-parser`, partial: path relativization) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/paths.rs`, the second trust-boundary leaf utility
+after `redaction.rs`. `relativize_repo_path(repo_root, candidate)` is the single gate every touched
+path passes before it becomes an `agent_file_events` / Tool Event `repo_relative_paths` field. An
+absolute candidate is lexically (no filesystem access — the file may be gone by parse time) stripped
+against the session's repo root and returned forward-slash repo-relative; anything not provably inside
+the root collapses to the `outside_repo` sentinel. Adapted from otto `normalize.rs`
+`normalize_agent_file_path` but **reworked** because otto's `~/`-prefixed fallback and hardcoded
+`/apps//packages/` segment list leak structure and are otto-monorepo-specific — Trace Flow's rule is
+repo-relative-or-`outside_repo`, never absolute/home/username (ADR "File facts store repo-relative
+paths only"). A final `is_safe_relative` guard rejects any leftover absolute prefix, `~`/`$HOME`
+marker, Windows drive letter, or `..`/root component, so a relativization bug can't leak a local path
+at rest. SPDX(MIT)/provenance header. `pub mod paths;` added to `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 22 pass (13 paths + 7 redaction unit + 2 canary
+integration). Path tests cover: file inside repo → relative, nested, in-repo `..` resolved (not
+escaped), repo root → `.`, sibling/unrelated absolute → `outside_repo` (asserting no `janedoe` /
+`/Users/` leak), already-relative kept, escaping `..` → `outside_repo`, `~`/`$HOME` → `outside_repo`,
+empty/whitespace → `outside_repo`, Windows drive path → `outside_repo`, absolute candidate vs a
+relative root → `outside_repo`, and a corpus invariant that no result ever contains a username, home
+prefix, or absolute path. `cargo clippy -p collector-parser --all-targets -- -D warnings` clean;
+`cargo fmt --check` clean; `cargo build --workspace` clean. CodeRabbit CLI: pass 1 returned 1
+`trivial` finding (rename `clean_relative` params for clarity) — applied; the re-confirm pass 2 was
+**rate-limited (out of usage credits, wait grew 5m→13m)**, but the only finding was a logic-free
+rename with no open findings remaining.
+**Next / blockers:** 3a stays 🚧. **Blocker for further autonomous work this run: CodeRabbit credits
+exhausted** (recoverable; retry when credits reset). Remaining 3a sub-work: Claude parser (collapse
+`message.usage` by `message.id`), Codex parser (sum `last_token_usage` deltas, NEVER
+`total_token_usage`), tool-use+tool-result fold, capability snapshots, Codex turn-index determinism,
+and the fact emitters onto `collector-contracts` (which will call `relativize_repo_path`). Then 3b /
+3d.
+
+## 2026-05-26 — 3a (`collector-parser`, partial: redaction) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** New `packages/collector-parser` crate scaffolded into the Cargo workspace
+(`members = ["packages/collector-*"]`), redaction trust-boundary module landed first. `redaction.rs`
+ports the field-level secret/PII policy kept in lockstep with the merged server backstop
+`apps/agent-ingest/src/redaction.ts` (2b): structure-preserving masks (Bearer header, `/Users/`
+`/home/` username), then a credential **drop** pass (AWS access/secret keys, GitHub classic +
+fine-grained PATs, `sk-` API keys, Slack `xox*`, URL userinfo, JWT, PEM private-key header, `$HOME`
+paths), then a residual-PII **mask** (Luhn-gated cards, email, SSN, IPv4, US phone, sensitive-JSON
+values). `redact_field` returns `{ value, dropped }`; a credential match withholds the whole field,
+masks keep structure. The `regex` crate has no lookaround, so the TS phone lookbehind is re-expressed
+as a captured leading-boundary char. Provenance/SPDX(MIT) headers on every file. No pricing, no
+`cost_usd`, no `*_pk` — this crate ships tokens+model only.
+**Verified:** `cargo test -p collector-parser` 9 pass (7 unit + 2 integration); the integration test
+loads the **shared** `fixtures/redaction-canary.json` and asserts all 12 planted secrets are
+dropped/masked with `dropped >= 1` — the same corpus the 2b TS re-redact asserts against, so the two
+layers cannot drift. `cargo clippy -p collector-parser --all-targets -- -D warnings` clean;
+`cargo fmt --check` clean; `cargo build --workspace` clean. CodeRabbit CLI: 2 passes; fixed the
+`regex` version-floor pin (`"1" → "1.11"`). Declined pattern-expansion findings (IPv6, unformatted
+9-digit SSN, Stripe keys): the pattern set is intentionally lockstep with the 2b backstop + the shared
+canary; expanding it belongs in a cross-layer change that updates `fixtures/redaction-canary.json`
+**and** both redactors together (outside 3a's single-crate lane).
+**Next / blockers:** 3a stays 🚧. Remaining sub-work (next invocations): Claude parser (collapse
+repeated `message.usage` by `message.id`), Codex parser (sum `last_token_usage` deltas, NEVER
+`total_token_usage`), tool-use+tool-result fold (same `tool_use_id` → one Tool Event), repo-relative
+path relativization for `agent_file_events` (no `/Users/`/`$HOME`/username; outside-repo →
+`outside_repo`), capability snapshots (counts/hashes/sizes only), Codex turn-index determinism, and
+the fact emitters onto `collector-contracts`. Then 3b (`collector-sync`) and 3d (headless e2e). A
+future cross-layer change should add Stripe/IPv6 to the shared canary + both redactors.
+
 ## 2026-05-26 — 3c (`collector-api-client` + `collector-common`) — t3code/ab83918d
 
 **Status:** ✅ done

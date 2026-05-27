@@ -1,0 +1,36 @@
+[package]
+name = "collector-sync"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Headless filesystem + HTTP sync engine for the Trace Flow agent Collector."
+
+[dependencies]
+# The canonical `AgentSource` enum keys every cursor row and the ingest envelope; never redefined.
+collector-contracts = { path = "../collector-contracts" }
+# The drive loop assembles facts (`session_facts`) and POSTs envelopes (`CollectorApiClient`).
+collector-parser = { path = "../collector-parser" }
+collector-api-client = { path = "../collector-api-client" }
+# Git remote resolution shells out to `git` via the async process API: `process` for the subprocess,
+# `macros` for the `join!` that runs the three rev-parse/config probes concurrently, `time` for the
+# per-probe `timeout` that stops a wedged `git` stalling the sync cycle. The runtime is the embedder's;
+# this crate spawns none.
+tokio = { version = "1", features = ["process", "macros", "time"] }
+# `CancellationToken` is the cooperative-abort handle threaded through the drive loop into each POST.
+tokio-util = "0.7"
+# The durable local cursor store. `bundled` compiles SQLite from source so the build needs no system
+# library and tests run anywhere; the cursor DB is non-secret resumable state (ADR), never a queue.
+rusqlite = { version = "0.31", features = ["bundled"] }
+# Transcript records reach the drive loop as parsed JSON values for `session_facts`.
+serde_json = "1"
+thiserror = "1"
+# Discovery walks the transcript root recursively; `walkdir` handles symlink-loop guarding and ordering.
+walkdir = "2"
+# Head-hash change detection uses the same SHA-256 fingerprint convention as `collector-parser`.
+sha2 = "0.10"
+
+[dev-dependencies]
+# Reopen-across-process and per-org-isolation tests need a real on-disk DB, not `:memory:`.
+tempfile = "3"
+# `#[tokio::test]` needs a runtime; the production feature set above stays watcher-only (no `rt`).
+tokio = { version = "1", features = ["rt"] }

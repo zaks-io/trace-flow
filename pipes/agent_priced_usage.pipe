@@ -8,6 +8,10 @@ DESCRIPTION >
 
     Dedup rule:
       - Include every direct Agent Message usage (top-level, nested, sidechain).
+        Only assistant turns are billable model-usage; user/system/tool turns carry no
+        model call, so they are excluded here. Counting them as 'direct' forced every
+        session's token_coverage to 'missing' (a user turn has no tokens, so it reads as
+        missing source data) and inflated message_count past the billable-message total.
       - Include source-reported subagent/result usage (agent_tool_events
         extracted_subagent_*) ONLY when no matching nested/sidechain Agent Message
         exists for the same (source, session_pk, subagent agent id). The fallback row
@@ -44,6 +48,7 @@ SQL >
         'direct' AS usage_kind,
         if(is_sidechain = 1 OR agent_depth > 0, 'direct', 'none') AS subagent_cost_coverage
     FROM agent_messages FINAL
+    WHERE role = 'assistant'
 
 NODE subagent_fallback_usage
 SQL >

@@ -1,0 +1,23 @@
+[package]
+name = "collector-parser"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Parser for local coding-agent transcripts (Claude Code, Codex CLI) into Trace Flow agent ingest facts."
+
+# Pin a controlled baseline: this is the redaction trust boundary, so the regex engine is
+# security-relevant. The Rust `regex` crate guarantees linear-time matching (no ReDoS), but a floor
+# keeps the audited engine behavior reproducible. The workspace lock resolves the exact patch.
+[dependencies]
+# The typed `Agent*Fact` shapes the emitters assemble. Path dep on the sibling workspace member; it
+# pulls no new external crates (serde + serde_json are already resolved), so the lock is unchanged.
+collector-contracts = { path = "../collector-contracts" }
+regex = "1.11"
+# The parser consumes already-parsed agent transcripts (Claude/Codex JSONL) as `serde_json::Value`,
+# so this is a runtime dependency, not just a test one.
+serde_json = "1"
+# Capability Snapshots hash the observed instruction/tool surface so the raw text never leaves the
+# machine (ADR "Capability Snapshots"). SHA-256 is a stable, well-audited content fingerprint for
+# idempotent dedup — not a security boundary, so any deterministic digest would do, but a real digest
+# matches the `sha256:` column convention and avoids a hand-rolled hash.
+sha2 = "0.10"

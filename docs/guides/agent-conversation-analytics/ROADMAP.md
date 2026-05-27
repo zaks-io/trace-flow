@@ -8,35 +8,35 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 
 ## Board
 
-| ID  | Task                                        | Status                              | Depends on     |
-| --- | ------------------------------------------- | ----------------------------------- | -------------- |
-| 0a  | Wire contract + Rust mirror                 | ✅ done                             | —              |
-| 0b  | Rust workspace scaffold                     | ✅ done                             | —              |
-| 0c  | `@trace-flow/pricing` package               | ✅ done                             | —              |
-| 0d  | CF resource provisioning + deploy-gate      | ✅ done                             | —              |
-| 1a  | 9 `agent_*` datasources                     | ✅ done                             | 0a             |
-| 1b  | Launch-query pipes                          | ✅ done                             | 1a             |
-| 1c  | COPY rollup pipes                           | ✅ done                             | 1a             |
-| 1d  | Deploy `agent_*` schema (Tinybird)          | ✅ done                             | 1a, 1b, 1c     |
-| 2a  | Convex control plane                        | ✅ done                             | 0a             |
-| 2b  | `apps/agent-ingest` worker                  | ✅ done                             | 0a, 2a         |
-| 2c  | `apps/agent-consumer` worker                | ✅ done                             | 0c, 1a, 2b     |
-| 2d  | models.dev pricing import                   | ✅ done                             | 0c, 2a         |
-| 2e  | Wrangler / dev wiring                       | ✅ done                             | 2b, 2c, 1d     |
-| 2f  | Observability + ops runbook                 | 🚧 code landed; live alerts pending | 2b, 2c         |
-| 2g  | PR CI for new TS packages                   | ✅ done                             | 0c, 2b, 2c     |
-| 3a  | `collector-parser`                          | ☐ todo                              | 0a             |
-| 3b  | `collector-sync`                            | ☐ todo                              | 0a, 3a         |
-| 3c  | `collector-api-client` + `collector-common` | ✅ done                             | 0a             |
-| 3d  | Headless end-to-end run                     | ☐ todo                              | 2e, 3a, 3b, 3c |
-| 4a  | Dashboard pages                             | ☐ todo                              | 1b, 2a         |
-| 4b  | `org_id` agent JWT in web                   | ☐ todo                              | 2a             |
-| 4c  | Connected Desktops surface                  | ☐ todo                              | 2a, 5b         |
-| 5a  | Tauri desktop shell                         | ☐ todo                              | 3d             |
-| 5b  | Connect + Stronghold credential             | ☐ todo                              | 3d, 5a         |
-| 5c  | Notifications + diagnostics                 | ☐ todo                              | 5a             |
-| 6a  | Collector CI job                            | ☐ todo                              | 0b             |
-| 6b  | macOS arm64 signed release                  | ☐ todo                              | 5b             |
+| ID  | Task                                        | Status                                                                                         | Depends on     |
+| --- | ------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------- |
+| 0a  | Wire contract + Rust mirror                 | ✅ done                                                                                        | —              |
+| 0b  | Rust workspace scaffold                     | ✅ done                                                                                        | —              |
+| 0c  | `@trace-flow/pricing` package               | ✅ done                                                                                        | —              |
+| 0d  | CF resource provisioning + deploy-gate      | ✅ done                                                                                        | —              |
+| 1a  | 9 `agent_*` datasources                     | ✅ done                                                                                        | 0a             |
+| 1b  | Launch-query pipes                          | ✅ done                                                                                        | 1a             |
+| 1c  | COPY rollup pipes                           | ✅ done                                                                                        | 1a             |
+| 1d  | Deploy `agent_*` schema (Tinybird)          | ✅ done                                                                                        | 1a, 1b, 1c     |
+| 2a  | Convex control plane                        | ✅ done                                                                                        | 0a             |
+| 2b  | `apps/agent-ingest` worker                  | ✅ done                                                                                        | 0a, 2a         |
+| 2c  | `apps/agent-consumer` worker                | ✅ done                                                                                        | 0c, 1a, 2b     |
+| 2d  | models.dev pricing import                   | ✅ done                                                                                        | 0c, 2a         |
+| 2e  | Wrangler / dev wiring                       | ✅ done                                                                                        | 2b, 2c, 1d     |
+| 2f  | Observability + ops runbook                 | 🚧 code landed; live alerts pending                                                            | 2b, 2c         |
+| 2g  | PR CI for new TS packages                   | ✅ done                                                                                        | 0c, 2b, 2c     |
+| 3a  | `collector-parser`                          | ✅ Claude+Codex emitters + `session_facts` assembler (Cursor `3a*` fast-follow)                | 0a             |
+| 3b  | `collector-sync`                            | ✅ freeze cache + orchestrator + cursor store + import-window/envelope + drive loop            | 0a, 3a         |
+| 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                                        | 0a             |
+| 3d  | Headless end-to-end run                     | ✅ live run green against dev ingest: real `agent_*` rows, no `/Users/` paths, `cost_usd` null | 2e, 3a, 3b, 3c |
+| 4a  | Dashboard pages                             | ☐ todo                                                                                         | 1b, 2a         |
+| 4b  | `org_id` agent JWT in web                   | ☐ todo                                                                                         | 2a             |
+| 4c  | Connected Desktops surface                  | ☐ todo                                                                                         | 2a, 5b         |
+| 5a  | Tauri desktop shell                         | ☐ todo                                                                                         | 3d             |
+| 5b  | Connect + Stronghold credential             | ☐ todo                                                                                         | 3d, 5a         |
+| 5c  | Notifications + diagnostics                 | ☐ todo                                                                                         | 5a             |
+| 6a  | Collector CI job                            | ☐ todo                                                                                         | 0b             |
+| 6b  | macOS arm64 signed release                  | ☐ todo                                                                                         | 5b             |
 
 ### Milestones
 
@@ -397,9 +397,44 @@ Build and test headless against fixtures + the real local stores + the Phase 2 w
 
 ### 3d — Headless end-to-end run
 
-- **Files:** integration test crate / `#[ignore]` E2E.
-- **Do:** Run the headless binary against the live corpus. `#[ignore]` E2E parses real
-  `~/.claude/projects` → valid envelope → mock/real worker accepts → cursor advances.
+Split into three leaves; the discovery scan is the production half the drive loop needs to be fed:
+
+1. **Discovery — scan + selection (✅ landed):** `packages/collector-sync/src/discovery.rs` —
+   `walk_transcripts` enumerates `.jsonl` under the root; `select_changed` narrows to in-window,
+   new-or-changed files via the SQLite cursor (size + mtime + head-hash, otto's unchanged test). Pure,
+   tempfile-unit-tested. No file opened except to confirm a head hash.
+2. **Read + assemble** — split in two:
+   - **2a — Claude session-field extraction (✅ landed):** `packages/collector-sync/src/claude_session.rs`
+     — pure `claude_session_fields(records)` pulls `vendor_session_id`/`vendor_started_at`/`cwd`/branch
+     hint from a transcript's records; `agent_depth_from_transcript_path` gives whole-file depth.
+   - **2b-i — git remote normalizer (✅ landed):** `packages/collector-sync/src/git_remote.rs` — pure
+     `normalize_git_remote(raw)` collapses scp/https/ssh/git transports of one repo to a single
+     `host/owner/repo`; unparseable → `""`.
+   - **2b-ii — async read + assemble (✅ landed):** `packages/collector-sync/src/assemble_units.rs` —
+     `assemble_sync_unit(file, cache)` reads each selected file whole (JSONL → `Vec<Value>`, blank +
+     malformed lines skipped, file-level read error propagates so the cursor stays unadvanced), resolves
+     a `SessionContext` via the pure `build_session_context` (git through `GitRemoteCache`,
+     `normalize_git_remote` for the remote, 2a's fields, empty `repo_root` when not a repo so paths
+     relativize to `outside_repo`; `repo_path_fallback` a bare basename label), and assembles
+     `SyncUnit { records, ctx, next_cursor }` with `next_cursor = { mtime, byte_offset = size,
+content_hash_head = head_hash(text) }` from the same in-memory read.
+3. **E2E (`#[ignore]`, live-infra STOP point — ✅ ran green against dev):**
+   `packages/collector-sync/tests/headless_e2e.rs` walks real `~/.claude/projects` →
+   `assemble_sync_unit` → a client-side redaction gate (no `/Users/`, no home dir, no `cost_usd`,
+   `repo_path_fallback` a bare label) → drives the production `run_sync_cycle` against a live
+   `CollectorApiClient`, asserting cursors advance only on a `2xx`. The scaffold compiles + is `#[ignore]`
+   (gates green offline). The **live run is verified**: with `bun run dev:all` + a dev Collector
+   credential (seeded via `agentE2eSeed:seedDevCollector`) + the consumer's Tinybird **dev** cloud token,
+   `TRACE_FLOW_INGEST_URL=… TRACE_FLOW_COLLECTOR_SECRET=… cargo test -p collector-sync --test
+headless_e2e -- --ignored --nocapture` passed end-to-end (parser → sync → gzip POST → ingest auth →
+   Convex policy + claim-sessions → queue → consumer → Tinybird insert, queue drained with zero
+   `insert_failed`). Confirmed in Tinybird **dev**: real rows in `agent_*` (2807 messages, 2805 tool
+   events, 1265 file events, 62 PR links), **0** `agent_file_events` paths containing `/Users/` or a
+   username, `cost_usd` null on every fact (0/2807). Field-parse audit during the run surfaced and fixed
+   a degenerate `agent_sessions.token_coverage='missing'` (the `agent_priced_usage` view counted
+   zero-token user turns as `'direct'`); scoping `direct_usage` to `role='assistant'` yields
+   `token_coverage='full'` on both live sessions.
+
 - **Verify (cargo):** no `cost_usd` on any fact; **no `agent_file_events` path contains `/Users/`**;
   real rows appear in `agent_*` via the Phase 1 pipes.
 

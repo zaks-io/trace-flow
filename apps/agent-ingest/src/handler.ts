@@ -53,9 +53,31 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
       return c.json({ error: 'payload_too_large' }, 413);
     }
 
+    // The Collector gzips the envelope and sends `Content-Encoding: gzip`; Workers does not
+    // auto-decompress request bodies, so inflate it here. The byte ceiling applies to the *inflated*
+    // size too, so a small compressed payload can't expand past the cap (gzip-bomb guard).
+    let bodyText: string;
+    if (isGzipEncoded(c.req.header('content-encoding'))) {
+      const inflated = await inflateCapped(buf, MAX_INGEST_BYTES);
+      if (!inflated.ok && inflated.reason === 'too_large') {
+        logger.warn('agent_ingest.payload_too_large', {
+          bytes: inflated.inflatedBytes,
+          encoding: 'gzip',
+        });
+        return c.json({ error: 'payload_too_large' }, 413);
+      }
+      if (!inflated.ok) {
+        logger.warn('agent_ingest.invalid_gzip', { bytes: buf.byteLength });
+        return c.json({ error: 'invalid_envelope' }, 400);
+      }
+      bodyText = decoder.decode(inflated.bytes);
+    } else {
+      bodyText = decoder.decode(buf);
+    }
+
     let envelope: AgentIngestEnvelope;
     try {
-      envelope = JSON.parse(decoder.decode(buf)) as AgentIngestEnvelope;
+      envelope = JSON.parse(bodyText) as AgentIngestEnvelope;
     } catch (err) {
       logger.warn('agent_ingest.invalid_json', { message: String(err) });
       return c.json({ error: 'invalid_envelope' }, 400);
@@ -166,6 +188,55 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     );
   } finally {
     await logger.flush();
+  }
+}
+
+/** True when the request declares a gzip body (case-insensitive; the Collector sends exactly `gzip`). */
+function isGzipEncoded(contentEncoding: string | undefined): boolean {
+  return contentEncoding?.trim().toLowerCase() === 'gzip';
+}
+
+type InflateResult =
+  | { ok: true; bytes: Uint8Array }
+  | { ok: false; reason: 'too_large'; inflatedBytes: number }
+  | { ok: false; reason: 'invalid' };
+
+/**
+ * Inflate a gzip body, enforcing `maxBytes` on the *inflated* output so a small compressed payload
+ * can't exceed the cap. `too_large` carries the inflated byte count seen at the breach (so the
+ * log distinguishes a gzip bomb from an exact-limit hit) and maps to a 413; `invalid` (a malformed
+ * stream) maps to a 400.
+ */
+async function inflateCapped(buf: ArrayBuffer, maxBytes: number): Promise<InflateResult> {
+  try {
+    const stream = new Response(buf).body!.pipeThrough(new DecompressionStream('gzip'));
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        // The stream is already being abandoned; a cancel that throws must not downgrade this to a 400.
+        try {
+          await reader.cancel();
+        } catch {
+          /* already closing */
+        }
+        return { ok: false, reason: 'too_large', inflatedBytes: total };
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { ok: true, bytes: out };
+  } catch {
+    return { ok: false, reason: 'invalid' };
   }
 }
 
