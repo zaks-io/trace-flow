@@ -15,6 +15,43 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: Codex tool-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex_tools.rs` (+ `pub mod emit_codex_tools;`).
+`codex_tool_facts(records, &SessionContext) -> Vec<AgentToolEventFact>` emits one fact per Codex
+`function_call` record, joined to its `function_call_output` by `call_id` (a `HashMap<call_id, &output>`
+built in one pass, then the records walked for the use side — the same use/result shape as the Claude
+emitter, but Codex's result is a separate top-level record, not a content block). Only `exec_command`
+carries a shell command (parsed from the JSON-string `arguments.cmd`) to classify via
+`command::classify_command`; MCP tools (`get_issue`, `save_issue`, …) and `write_stdin` carry none, so
+their classification columns ship empty. `command_excerpt`/`error_excerpt` are redacted then capped
+(1 KB / 4 KB, ADR L243), `dropped_sensitive` sums the redactor drops. `repo_relative_paths` ships empty
+— Codex represents file edits as `apply_patch` _shell_ text inside `exec_command`, so file extraction is
+the file emitter's unit, not this one. **Codex carries a real exit code** (unlike Claude's Bash sidecar):
+`status`/`exit_code` come from the `Process exited with code N` line, and `duration_ms` is the call→output
+wall-clock gap (clock-skew-bounded). **Real-data correction over the otto reference:** Codex writes that
+status line in the output _preamble_ (before `Output:`), so the **first** match is authoritative — otto
+took the last, which a command echoing the phrase in its own body would shadow. Exit `0` → success,
+non-zero → failure, absent (dangling call or an MCP tool with no process code) → unknown. Enrichment
+columns (`extracted_provider`/`extracted_repo`/`extracted_pr_number`/`extracted_subagent_*`) ship empty,
+same rationale as the Claude tool emitter.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (127 passed; 14 new
+emit_codex_tools tests: exec success classified + exit 0, non-zero → failure takes the output as the
+error, git exit 128 → failure, preamble status line wins over a body echo, dangling call → unknown/no
+duration, MCP tool with no process code → unknown/no command, write_stdin → no classification, command
+secret drop counted, error home-path masked, command/error excerpts capped at 1 KB/4 KB, duration is the
+call→output gap, block index tracks call position skipping non-calls, empty session → no facts),
+`cargo build --workspace` (clean). CodeRabbit `--type uncommitted --dir packages/collector-parser`:
+0 findings (after one recoverable rate-limit wait).
+**Next / blockers:** Remaining 3a — Codex **file** emitter (parse `apply_patch` `*** Add|Update|Delete
+File:` paths out of `exec_command` shell text, relativize like the Claude file emitter) and capability
+snapshots (Codex `base_instructions`/`dynamic_tools` — counts/hashes/sizes). Future cleanup: the Claude
+tool emitter and this Codex tool emitter now both hold private `cap_bytes`/`excerpt` copies on top of the
+three Claude emitters' `record_event_at`/block-cursor triplication; hoist all to one shared module in a
+dedicated refactor commit. Cursor parser stays fast-follow (`3a*`).
+
 ## 2026-05-27 — 3a (`collector-parser`: Claude tool-event emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress
