@@ -15,6 +15,39 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3a (`collector-parser`, partial: Codex positional turn index) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/codex_turns.rs` (+ `pub mod codex_turns;`).
+`session_message_turns(records)` numbers each Codex `response_item` `message` record with a stable
+0-based `turn_index` in file order — the positional surrogate that stands in for the vendor message ID
+Codex never emits and that `message_pk` hashes (ADR identity rule: Codex `message_pk` falls back to
+`(vendor session ID, positional turn index)`). **Divergence from otto:** otto bumps its turn counter
+inside the event-emission state machine, only on flush and _after_ scaffold/role filtering, so a re-parse
+whose scaffold heuristic changes renumbers the turns — exactly the fragility the ADR flags as Codex's
+weakest dedupe key. Trace Flow assigns the index purely from structural file position over `message`
+records, **before** any role/scaffold filtering, so the emitter can drop developer/scaffold messages
+without renumbering the survivors and a re-parse is bit-stable. The `event_msg` render duplicates
+(`agent_message`/`user_message`, which mirror the canonical `response_item` content) are not counted —
+counting them would double-count, another renumbering source. Grain follows CONTEXT ("an Agent Message is
+a single assistant or user record"); token-to-message attribution for reasoning/tool-only token turns
+that carry no `message` record stays an **emitter** decision, not invented here. Returns
+`CodexMessageTurn { turn_index, role: CodexMessageRole, record: &Value }` so the emitter reads
+content/usage off the borrowed record. 8 tests (file-order numbering, non-message records skipped,
+event_msg duplicates excluded, re-parse identical, leading-message-drop does-not-renumber, index follows
+file order not timestamps, unknown role → Other, empty session).
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (65 passed + 2 canary), `cargo build --workspace`. CodeRabbit
+`--type uncommitted`: **0 findings** (clean first pass). Commit `8e64edb`.
+**Next / blockers:** This was the last cleanly-separable pure leaf. 3a stays 🚧. **Remaining 3a work is
+the fact emitters** onto `collector-contracts` (assemble `session_message_usages` +
+`session_turn_usages` + `session_message_turns` + `classify_command` + `fold_tool_events` +
+`relativize_repo_path` + `redact_field` into `Agent*Fact`, emit `command_family = command_program`). That
+unit is **not a pure leaf** — it is the per-source normalization that reconciles Codex's `token_count`
+turn boundaries with `message` records (incl. reasoning/tool-only turns that have tokens but no message)
+and Claude's per-message fold, and it adds the `collector-contracts` dependency. Capability snapshots stay
+deferred (real Codex `session_meta` has empty `base_instructions`, no dynamic-tools catalog → needs-data).
+
 ## 2026-05-26 — 3a (`collector-parser`, partial: tool-use/tool-result fold) — t3code/ab83918d
 
 **Status:** 🚧 in progress
