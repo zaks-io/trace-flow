@@ -15,6 +15,35 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: per-turn Codex segmentation) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Decision landed:** the Codex Agent Message grain is **per-turn**, not per message record (user choice;
+CONTEXT "the grain at which token counts are recorded"). A Codex turn — not a raw `response_item`
+`message` record — is the token-bearing unit, so a reasoning- or tool-only turn (real Codex sessions emit
+these: reasoning + function_call + `token_count`, no message record) carries tokens but has no message.
+Indexing per message record (the prior `codex_turns` leaf) left those tokens with nowhere to land.
+**Changed:** Reworked `codex_turns.rs` into a single `session_turns(records)` segmenter: walks the record
+stream in file order and emits one `CodexTurn { turn_index, role: CodexTurnRole, usage:
+Option<CodexTurnUsage>, record: &Value }` per user message and per `token_count`-bounded assistant turn,
+0-based, purely from structural file position (re-parse never renumbers — the `message_pk` stability the
+ADR flags). Assistant turns carry their usage; a tool-only turn now becomes a turn and keeps its tokens.
+`codex_usage.rs` drops to the usage **reader** leaf: `last_token_usage` + `cumulative_total` are now
+`pub(crate)` and `CodexTurnUsage` stays public; `session_turn_usages` is **removed** — its segmentation
+and the cumulative-advance dedup moved into `codex_turns`, which shares the one dedup rule so the kept
+assistant turns sum to the session's final `total_token_usage` by construction (the ~331x trap guard
+survives as a `codex_turns` test). No external consumers of the old API existed (grep-verified).
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (64 passed + 2 canary), `cargo build --workspace`. CodeRabbit
+`--type uncommitted`: **0 findings** (clean first pass). Commit `2654705`.
+**Next / blockers:** This was a grain correction on freshly-shipped code, not new surface. 3a stays 🚧.
+**Remaining 3a work is the fact emitters** onto `collector-contracts` — assemble `session_turns`
+(+usage) + `session_message_usages` (Claude) + `classify_command` + `fold_tool_events` +
+`relativize_repo_path` + `redact_field` into `Agent*Fact`, emit `command_family = command_program`, and
+build per-turn content/model from the records a Codex turn spans (turn_context model, message text). That
+is the per-source normalizer/emitter — a cohesive non-leaf that adds the `collector-contracts` dep and is
+the natural unit for a fresh session/budget. Capability snapshots stay deferred (needs-data).
+
 ## 2026-05-26 — 3a (`collector-parser`, partial: Codex positional turn index) — t3code/ab83918d
 
 **Status:** 🚧 in progress
