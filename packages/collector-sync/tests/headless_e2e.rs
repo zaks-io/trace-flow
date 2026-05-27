@@ -70,6 +70,19 @@ fn env_or_panic(key: &str) -> String {
     })
 }
 
+/// True if any object anywhere in `value` has a key named `key`. The redaction gate checks for a
+/// `cost_usd` *field* this way rather than a substring match, because a command excerpt may legitimately
+/// quote the literal text `cost_usd` (e.g. a `grep cost_usd` the agent ran) without any fact carrying it.
+fn json_has_key(value: &serde_json::Value, key: &str) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|v| json_has_key(v, key))
+        }
+        serde_json::Value::Array(items) => items.iter().any(|v| json_has_key(v, key)),
+        _ => false,
+    }
+}
+
 #[tokio::test]
 #[ignore = "live infra: needs `bun run dev:all` + a dev Collector credential; see module docs"]
 async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
@@ -123,37 +136,64 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
         );
     }
 
-    // Redaction gate, before any POST: the bytes that would leave the machine carry no home dir,
-    // username, or cost. We inspect a structurally identical envelope — `session_facts` and
-    // `build_envelope` are pure, so the only field that differs from the one `run_sync_cycle` POSTs is
-    // the `collector_batch_id` string we supply here, which carries no path or cost. `repo_root` may be
-    // a local `/Users/` path because it is never emitted, so the gate checks the facts, not the ctx.
-    // `home` empty (e.g. a hermetic env) intentionally skips only its own check; the `/Users/` literal
-    // below still runs.
+    // Redaction gate, before any POST. We inspect a structurally identical envelope: `session_facts`
+    // and `build_envelope` are pure, so the only field that differs from the one `run_sync_cycle`
+    // POSTs is the `collector_batch_id` string supplied here, which carries no path or cost. Two
+    // distinct ADR invariants, on the two fact shapes that carry paths:
+    //
+    //   1. `agent_file_events` paths are repo-relative or the `outside_repo` sentinel, never an
+    //      absolute / home / username path (ADR: "File facts store repo-relative paths only").
+    //   2. Free-text excerpts (`command_excerpt` / `error_excerpt`) keep bounded operational context
+    //      but with absolute home paths de-identified. `redact_field` masks only the username
+    //      component, so a home path survives as `/Users/[REDACTED]/...` by design (ADR: "redacts ...
+    //      absolute home paths"). So the gate asserts the machine's real home dir never leaves the
+    //      machine un-masked, NOT that the `/Users/` literal is gone (the masked shape is intended,
+    //      and a command excerpt may legitimately quote the literal "/Users/" or a bare name).
     let home = std::env::var("HOME").unwrap_or_default();
     for unit in &units {
         let facts = session_facts(meta.source, &unit.records, &unit.ctx);
         let envelope = build_envelope(&meta, "e2e-preflight", facts);
         let json = serde_json::to_string(&envelope).expect("serialize envelope");
-        assert!(
-            !json.contains("/Users/"),
-            "a fact carried a /Users/ path: redaction breach in {}",
-            unit.next_cursor.file_path
-        );
+
+        // (2) The machine's real home directory never leaves un-masked, in any fact. The masked
+        // `/Users/[REDACTED]/...` form is expected; this fires only if a mask failed. Skipped when
+        // `HOME` is unset (a hermetic env has no home to leak).
         assert!(
             home.is_empty() || !json.contains(&home),
-            "a fact carried the home dir in {}",
+            "a fact carried the real home path {home:?} un-masked: redaction breach in {}",
             unit.next_cursor.file_path
-        );
-        assert!(
-            !json.contains("cost_usd"),
-            "a fact carried cost_usd; pricing is server-side only"
         );
         assert!(
             !unit.ctx.repo_path_fallback.contains('/'),
             "repo_path_fallback must be a bare label, got {:?}",
             unit.ctx.repo_path_fallback
         );
+
+        let value: serde_json::Value = serde_json::from_str(&json).expect("reparse envelope");
+        // No fact carries a `cost_usd` field: the consumer prices server-side, the Collector never does.
+        assert!(
+            !json_has_key(&value, "cost_usd"),
+            "a fact carries a cost_usd field; pricing is server-side only"
+        );
+
+        // (1) Every `agent_file_events` path is repo-relative or the sentinel: no absolute prefix and
+        // no `/Users/` or `/home/` home marker, independent of what redaction does to free text.
+        for ev in value["facts"]["file_events"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            // unwrap, not unwrap_or_default: a missing/null key would make `""` pass every check
+            // below and give a false green, so a file event without a string path is a hard failure.
+            let path = ev["normalized_repo_path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("file event has no string normalized_repo_path: {ev:?}"));
+            assert!(
+                !path.starts_with('/') && !path.contains("/Users/") && !path.contains("/home/"),
+                "agent_file_events path is not repo-relative: {path:?} in {}",
+                unit.next_cursor.file_path
+            );
+        }
     }
 
     // Drive the production cycle against the live worker. Cursor discipline (cursor.rs): a unit's
