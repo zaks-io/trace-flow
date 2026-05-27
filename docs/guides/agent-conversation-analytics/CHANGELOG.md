@@ -15,6 +15,40 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: Claude tool-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_claude_tools.rs` (+ `pub mod emit_claude_tools;`).
+`claude_tool_facts(records, &SessionContext) -> Vec<AgentToolEventFact>` emits one fact per `tool_use`
+block. The result side (outcome, duration, error text) comes from `tool_fold::fold_tool_events` looked up
+by `tool_use_id` (the cross-record use/result join already lived there — no fold change); the use side
+(message id, event time, command, touched path, block position) is read from the assistant record the
+walk visits, reusing the file emitter's per-message logical block-index scheme. `command` is classified
+via `command::classify_command` into `command_family`/`command_program`/`command_subcommand`; `status`
+maps from the folded `ToolOutcome`. `command_excerpt`/`error_excerpt` are redacted with
+`redaction::redact_field` **then** capped (1 KB / 4 KB per ADR L243, so the 5 KB per-event total holds
+without a separate check), summing the redactor's drop count into `dropped_sensitive`.
+`repo_relative_paths` carries the relativized `input.file_path` for file-bearing tools, else empty
+(shell-command path parsing is deferred). Resolved sub-decisions, no ADR conflict: **`exit_code` is
+always `None`** — Claude's Bash sidecar carries only `interrupted`/`stderr`/`stdout`, never a process
+exit code (verified across 40 real transcripts; the only `code` field is WebFetch's HTTP status);
+**enrichment columns ship empty** — `extracted_provider`/`extracted_repo`/`extracted_pr_number` have no
+ADR algorithm (PR links are a separate fact table) and `extracted_subagent_*` would double-count a
+spawned sub-agent whose tokens already live in its own separate transcript's facts.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (113 passed; 11 new
+emit_claude_tools tests: Bash success classification + no exit code, enrichment columns empty, failed
+call takes redacted stderr without leaking a username, Read records the relativized path + no command,
+outside-repo path → sentinel, command-excerpt secret drop counted, command/error excerpts capped at
+1 KB/4 KB, dangling tool_use → Unknown, block index tracks message position, non-tool blocks emit
+nothing), `cargo build --workspace` (clean). CodeRabbit `--type uncommitted --dir packages/collector-parser`: clean (after a recoverable rate-limit wait).
+**Next / blockers:** Remaining 3a — Codex tool + file emitters (Codex represents edits via `apply_patch`
+shell calls, a different shape from Claude's structured `Edit`/`Write`, so its file extraction is its own
+unit) and capability snapshots (Codex `base_instructions`/`dynamic_tools` — needs real Codex transcript
+data to fix the shape). Future cleanup: the three Claude emitters now each hold a private copy of
+`assistant_message_id`/`content_blocks`/`record_event_at` + the per-message block cursor; hoist them to
+one shared `claude_records` module in a dedicated refactor commit. Cursor parser stays fast-follow (`3a*`).
+
 ## 2026-05-27 — 3a (`collector-parser`: Claude file-event emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress
