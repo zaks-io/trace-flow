@@ -21,6 +21,7 @@ pub mod emit_claude;
 pub mod emit_claude_files;
 pub mod emit_claude_tools;
 pub mod emit_codex;
+pub mod emit_codex_files;
 pub mod emit_codex_tools;
 pub mod paths;
 pub mod redaction;

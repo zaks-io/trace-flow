@@ -15,6 +15,27 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: Codex file-event emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex_files.rs` (+ `pub mod emit_codex_files;`).
+`codex_file_facts(records, &SessionContext) -> Vec<AgentFileEventFact>` emits one fact per file an
+`apply_patch` call touches, mapping the patch verb (`Add`/`Update`/`Delete File:`) to
+`Create`/`Edit`/`Delete`. Touched paths come from the `*** <verb> File: <path>` markers in the patch
+body (`arguments.input`, with bare-string and non-JSON-raw fallbacks); each is relativized via
+`relativize_repo_path` (repo-relative or the `outside_repo` sentinel, never a home dir/username).
+`vendor_message_id` is `None` (Codex emits no per-message ID), so `source_block_index` is a
+session-global document-order counter — the only field keeping two same-path/same-op events distinct
+under `file_event_pk`. `dropped_sensitive` is 0 (paths are normalized, not redacted). Raw
+`exec_command` shell file writes stay deferred to the tool emitter.
+**Verified:** `cargo fmt -p collector-parser --check`; `cargo clippy -p collector-parser --all-targets
+-- -D warnings`; `cargo test -p collector-parser` (138 passed, +11 new); `cargo build --workspace`;
+`coderabbit review --agent --type uncommitted --dir packages/collector-parser` → 0 findings.
+**Next / blockers:** Last 3a unit is Capability Snapshots (Codex `base_instructions`/`dynamic_tools`
+counts/hashes/sizes); keep 3a 🚧 until it lands. NOTE: review-process change in flight — a separate
+worktree disables automatic CodeRabbit in favor of a local `code-review` skill; the driver's CodeRabbit
+gate will be retargeted there.
+
 ## 2026-05-27 — 3a (`collector-parser`: Codex tool-event emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress
