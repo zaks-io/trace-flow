@@ -305,10 +305,10 @@ mod tests {
 
     #[test]
     fn command_excerpt_redaction_drops_a_secret_and_counts_it() {
-        let records = [bash_use(
-            "t1",
-            "deploy --token=ghp_0123456789012345678901234567890123456789",
-        )];
+        // Assembled at runtime so the fixture exercises the redaction path without committing a
+        // PAT-shaped literal that trips secret scanners. 36 chars matches the `ghp_` drop matcher.
+        let token = format!("ghp_{}", "0".repeat(36));
+        let records = [bash_use("t1", &format!("deploy --token={token}"))];
         let f = &claude_tool_facts(&records, &ctx())[0];
         assert!(f.dropped_sensitive >= 1);
         assert!(!f.command_excerpt.contains("ghp_"));

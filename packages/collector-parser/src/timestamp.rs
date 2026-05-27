@@ -77,10 +77,13 @@ fn split_zone(time_and_zone: &str) -> Option<(&str, i64)> {
     } else {
         1
     };
+    // RFC 3339 offsets are exactly `(+|-)HH:MM` — both parts required, no seconds. Rejecting a missing
+    // minutes field (`+02`) and an extra component (`+02:00:30`) stops malformed offsets parsing to a
+    // plausible-but-wrong epoch.
     let mut zone = time_and_zone[sign_pos + 1..].split(':');
     let hours: i64 = zone.next()?.parse().ok()?;
-    let minutes: i64 = zone.next().unwrap_or("0").parse().ok()?;
-    if !(0..=23).contains(&hours) || !(0..=59).contains(&minutes) {
+    let minutes: i64 = zone.next()?.parse().ok()?;
+    if zone.next().is_some() || !(0..=23).contains(&hours) || !(0..=59).contains(&minutes) {
         return None;
     }
     let offset_ms = sign * (hours * 3600 + minutes * 60) * 1000;
@@ -89,7 +92,8 @@ fn split_zone(time_and_zone: &str) -> Option<(&str, i64)> {
 
 /// Parses an RFC 3339 / ISO 8601 timestamp (e.g. `"2026-05-26T16:38:59.892Z"`) into epoch
 /// milliseconds, or `None` if it is malformed. The date and time are separated by `T`/`t`/space; the
-/// zone offset is normalized away so the result is always UTC. A leap second (`:60`) is accepted.
+/// zone offset is normalized away so the result is always UTC. A leap second (`:60`) is accepted only
+/// at 23:59.
 pub fn rfc3339_to_epoch_ms(timestamp: &str) -> Option<i64> {
     let separator = timestamp.find(['T', 't', ' '])?;
     let date = &timestamp[..separator];
@@ -114,6 +118,12 @@ pub fn rfc3339_to_epoch_ms(timestamp: &str) -> Option<i64> {
     let seconds: i64 = seconds.parse().ok()?;
     let millis = fraction_to_millis(fraction)?;
     if !(0..=23).contains(&hours) || !(0..=59).contains(&minutes) || !(0..=60).contains(&seconds) {
+        return None;
+    }
+    // A leap second (`:60`) is only legal at 23:59 UTC; `:60` anywhere else is a malformed time, not a
+    // second to silently roll into the next minute. (Offset zones shift the wall clock, but agent
+    // transcripts stamp UTC `Z`, so guarding on the parsed HH:MM is correct in practice.)
+    if seconds == 60 && (hours, minutes) != (23, 59) {
         return None;
     }
 
@@ -207,18 +217,21 @@ mod tests {
         for bad in [
             "",
             "not-a-timestamp",
-            "2026-05-26",               // date only, no time
-            "2026-05-26T16:38:59.892",  // no zone
-            "2026-13-01T00:00:00Z",     // month out of range
-            "2026-05-32T00:00:00Z",     // day out of range
-            "2026-02-30T00:00:00Z",     // February never has 30 days
-            "2026-04-31T00:00:00Z",     // April has only 30 days
-            "2026-02-29T00:00:00Z",     // 2026 is not a leap year
-            "1900-02-29T00:00:00Z",     // century non-leap year (÷100, not ÷400)
-            "2026-05-26T24:00:00Z",     // hour out of range
-            "2026-05-26T16:60:00Z",     // minute out of range
-            "2026-05-26T16:38:5xZ",     // non-numeric second
-            "2026-05-26T16:38:59.8x2Z", // non-numeric fraction
+            "2026-05-26",                   // date only, no time
+            "2026-05-26T16:38:59.892",      // no zone
+            "2026-13-01T00:00:00Z",         // month out of range
+            "2026-05-32T00:00:00Z",         // day out of range
+            "2026-02-30T00:00:00Z",         // February never has 30 days
+            "2026-04-31T00:00:00Z",         // April has only 30 days
+            "2026-02-29T00:00:00Z",         // 2026 is not a leap year
+            "1900-02-29T00:00:00Z",         // century non-leap year (÷100, not ÷400)
+            "2026-05-26T24:00:00Z",         // hour out of range
+            "2026-05-26T16:60:00Z",         // minute out of range
+            "2026-05-26T16:38:5xZ",         // non-numeric second
+            "2026-05-26T16:38:59.8x2Z",     // non-numeric fraction
+            "2026-05-26T16:38:59+02",       // offset missing minutes
+            "2026-05-26T16:38:59+02:00:30", // offset has a seconds component
+            "2026-05-26T12:30:60Z",         // `:60` only legal at 23:59
         ] {
             assert_eq!(rfc3339_to_epoch_ms(bad), None, "expected None for {bad:?}");
         }

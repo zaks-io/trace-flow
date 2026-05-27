@@ -169,9 +169,14 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
             continue;
         }
         let payload = record.get("payload");
-        let id = payload
+        // Identity rides on `call_id`; a `function_call` without one can't form a stable
+        // `tool_use_id`, and several such records would all collapse to `None` and collide. Skip it.
+        let Some(id) = payload
             .and_then(|p| p.get("call_id"))
-            .and_then(Value::as_str);
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
         let tool_name = payload
             .and_then(|p| p.get("name"))
             .and_then(Value::as_str)
@@ -185,7 +190,7 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
         let classification = command.map(classify_command).unwrap_or_default();
         let (command_excerpt, command_dropped) = excerpt(command, COMMAND_EXCERPT_CAP_BYTES);
 
-        let output_record = id.and_then(|id| outputs.get(id).copied());
+        let output_record = outputs.get(id).copied();
         let out_text = output_record.and_then(output_text);
         let exit_code = exit_code_from_output(out_text.as_deref());
         let status = status_from_exit_code(exit_code);
@@ -201,7 +206,7 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
             vendor_session_id: ctx.vendor_session_id.clone(),
             // Codex emits no per-message vendor ID; tool identity rides `tool_use_id` (the call_id).
             vendor_message_id: None,
-            tool_use_id: id.map(str::to_string),
+            tool_use_id: Some(id.to_string()),
             source_block_index: block_index,
             event_at,
             tool_name: tool_name.to_string(),
@@ -404,9 +409,12 @@ mod tests {
 
     #[test]
     fn command_excerpt_redaction_drops_a_secret_and_counts_it() {
+        // Assembled at runtime so the fixture exercises the redaction path without committing a
+        // PAT-shaped literal that trips secret scanners. 36 chars matches the `ghp_` drop matcher.
+        let token = format!("ghp_{}", "0".repeat(36));
         let records = [exec_call(
             "c1",
-            "deploy --token=ghp_0123456789012345678901234567890123456789",
+            &format!("deploy --token={token}"),
             "2026-05-16T20:53:00.000Z",
         )];
         let f = &codex_tool_facts(&records, &ctx())[0];
@@ -471,6 +479,24 @@ mod tests {
         assert_eq!(facts[0].source_block_index, 0);
         assert_eq!(facts[1].source_block_index, 1);
         assert_eq!(facts[0].event_at, 1_778_964_780_000);
+    }
+
+    #[test]
+    fn function_call_without_a_call_id_is_skipped() {
+        // No `call_id` means no stable identity; emitting a `tool_use_id: None` fact would collide with
+        // any other id-less call. The valid call keeps index 0 — the malformed one consumes no position.
+        let records = [
+            json!({
+                "type": "response_item",
+                "timestamp": "2026-05-16T20:53:00.000Z",
+                "payload": { "type": "function_call", "name": "exec_command", "arguments": "{}" }
+            }),
+            exec_call("c1", "ls", "2026-05-16T20:53:01.000Z"),
+        ];
+        let facts = codex_tool_facts(&records, &ctx());
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].tool_use_id.as_deref(), Some("c1"));
+        assert_eq!(facts[0].source_block_index, 0);
     }
 
     #[test]

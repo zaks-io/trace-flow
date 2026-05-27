@@ -15,8 +15,10 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use tokio::process::Command;
+use tokio::time::timeout;
 
 /// The frozen git facts for one working directory. Remote/branch are `None` when git reports none
 /// (no `origin`, or a detached `HEAD`); `git_root` is always present when the directory is a repo.
@@ -99,12 +101,16 @@ pub async fn resolve_git_metadata(cwd: &str) -> Option<GitMetadata> {
 /// as "this field is absent" (and an absent `--show-toplevel` as "not a repo"). That coarse signal is
 /// all repo attribution needs; per-failure diagnostics belong to the 3d end-to-end run, not here.
 async fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .await
-        .ok()?;
+    // These probes are local config/HEAD reads that finish in milliseconds. The deadline exists only so
+    // a wedged `git` (a credential prompt on a misconfigured remote, a stuck filesystem) can't stall the
+    // whole sync cycle; a timeout collapses to `None` like every other failure mode.
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new("git").current_dir(cwd).args(args).output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
     if !output.status.success() {
         return None;
     }

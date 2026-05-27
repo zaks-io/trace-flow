@@ -52,6 +52,13 @@ fn host_and_path(remote: &str) -> Option<(&str, &str)> {
 /// Drop `user@` and any `:port` from a scheme URL's authority, leaving the bare host.
 fn strip_userinfo_and_port(authority: &str) -> &str {
     let host = strip_userinfo(authority);
+    // A bracketed IPv6 host (`[2001:db8::1]`) is full of colons; keep everything through the closing
+    // bracket so the port split below doesn't truncate the address to `[2001`.
+    if host.starts_with('[') {
+        if let Some(end) = host.find(']') {
+            return &host[..=end];
+        }
+    }
     host.split_once(':').map_or(host, |(host, _port)| host)
 }
 
@@ -78,6 +85,15 @@ mod tests {
         ] {
             assert_eq!(normalize_git_remote(raw), canonical, "for {raw:?}");
         }
+    }
+
+    #[test]
+    fn ipv6_scheme_remote_preserves_the_full_bracketed_host() {
+        // The port split must not chop a bracketed IPv6 authority at its first inner colon.
+        assert_eq!(
+            normalize_git_remote("ssh://git@[2001:db8::1]:2222/acme/repo.git"),
+            "[2001:db8::1]/acme/repo"
+        );
     }
 
     #[test]

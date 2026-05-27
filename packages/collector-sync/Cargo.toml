@@ -12,9 +12,10 @@ collector-contracts = { path = "../collector-contracts" }
 collector-parser = { path = "../collector-parser" }
 collector-api-client = { path = "../collector-api-client" }
 # Git remote resolution shells out to `git` via the async process API: `process` for the subprocess,
-# `macros` for the `join!` that runs the three rev-parse/config probes concurrently. The runtime is
-# the embedder's; this crate spawns none.
-tokio = { version = "1", features = ["process", "macros"] }
+# `macros` for the `join!` that runs the three rev-parse/config probes concurrently, `time` for the
+# per-probe `timeout` that stops a wedged `git` stalling the sync cycle. The runtime is the embedder's;
+# this crate spawns none.
+tokio = { version = "1", features = ["process", "macros", "time"] }
 # `CancellationToken` is the cooperative-abort handle threaded through the drive loop into each POST.
 tokio-util = "0.7"
 # The durable local cursor store. `bundled` compiles SQLite from source so the build needs no system

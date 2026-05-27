@@ -67,12 +67,21 @@ fn parse_pr_links(text: &str) -> Vec<PrLink> {
     PR_URL_PATTERN
         .captures_iter(text)
         .filter_map(|caps| {
+            let matched = caps.get(0)?;
             // No look-behind in the `regex` crate, so guard the host boundary here: a host-continuation
             // char immediately before `github.com` means this is a different domain — a subdomain
             // (`api.github.com`) or a look-alike (`evilgithub.com`, `my-github.com`) — not GitHub. Those
             // delimiters are ASCII, so indexing the preceding byte stays on a char boundary.
-            if let Some(prev) = caps.get(0)?.start().checked_sub(1) {
+            if let Some(prev) = matched.start().checked_sub(1) {
                 if matches!(bytes[prev], b'.' | b'-' | b'_' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9') {
+                    return None;
+                }
+            }
+            // `\d+` stops at the first non-digit, so `pull/270abc` would otherwise canonicalize to PR
+            // 270. A word-continuation char right after the number means the digits were truncated from
+            // a larger token, not a real PR id; a real link ends in `/`, `#`, `?`, `)`, whitespace, or EOL.
+            if let Some(&next) = bytes.get(matched.end()) {
+                if matches!(next, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
                     return None;
                 }
             }
@@ -551,6 +560,8 @@ mod tests {
             "just merged PR #270",
             "ran gh pr create --fill",
             "github.com/zaks-io/trace-flow/pull/notanumber",
+            // `\d+` stops at the first letter, so a number glued to a suffix is a truncated token, not PR 270.
+            "github.com/zaks-io/trace-flow/pull/270abc",
             // Host look-alikes and subdomains are not github.com.
             "pushed to evilgithub.com/zaks-io/trace-flow/pull/270",
             "the mirror my-github.com/zaks-io/trace-flow/pull/270",

@@ -120,7 +120,13 @@ pub async fn run_sync_cycle<C: IngestClient>(
 
         match client.ingest(&envelope, cancel).await {
             Ok(_) => {
-                store.advance(meta.source, &unit.next_cursor)?;
+                // A cursor-store write failure is terminal for the cycle and propagates as `Err`. Drive
+                // the orchestrator to its failed state *first* so it can't stay stuck in `Syncing` when
+                // the caller tears down on the error; the un-advanced cursor re-sends this unit later.
+                if let Err(err) = store.advance(meta.source, &unit.next_cursor) {
+                    orchestrator.apply(Trigger::JobFailed);
+                    return Err(err);
+                }
                 report.advanced += 1;
             }
             Err(err) => {
