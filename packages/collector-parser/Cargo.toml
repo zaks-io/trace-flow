@@ -10,6 +10,6 @@ description = "Parser for local coding-agent transcripts (Claude Code, Codex CLI
 # keeps the audited engine behavior reproducible. The workspace lock resolves the exact patch.
 [dependencies]
 regex = "1.11"
-
-[dev-dependencies]
+# The parser consumes already-parsed agent transcripts (Claude/Codex JSONL) as `serde_json::Value`,
+# so this is a runtime dependency, not just a test one.
 serde_json = "1"

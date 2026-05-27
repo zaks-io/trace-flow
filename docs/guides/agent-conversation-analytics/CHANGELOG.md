@@ -15,6 +15,43 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3a (`collector-parser`, partial: Codex token aggregation) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/codex_usage.rs`. `session_turn_usages` folds a Codex
+session's `token_count` events into one `CodexTurnUsage` per real turn (the input to the
+`AgentMessageFact` token fields). **Real-data finding that changes the spec wording:** the 3a "Do" says
+"sum `last_token_usage` deltas," but a captured session shows Codex emits some `token_count` events
+**twice** (the duplicate repeats the prior `last_token_usage` while its cumulative `total_token_usage`
+does not advance). Naively summing every `last_token_usage` therefore overcounts (420443 vs the true
+299113). So an event is kept only when its cumulative `total_token_usage.total_tokens` strictly
+advances past the last kept turn; the kept turns' `total_tokens` then sum to the session's final
+cumulative **by construction** — which is exactly the verify invariant. `total_token_usage` is read
+**only** as a dedup key, never summed (summing it is the ~331x trap: 1306755 here). Per-turn split:
+`input_tokens` is the non-cached remainder (`input_tokens - cached_input_tokens`, clamped ≥ 0),
+`cache_read_tokens` the cached part, `reasoning_tokens` a subset of output; Codex has no
+cache-creation split so those fact fields stay 0. `serde_json` moved dev → runtime dep (the parser
+consumes `Value`); no `Cargo.lock` churn. Adapted from otto `codex_cli/usage.rs` (which reads one
+event in isolation and lacks the dedup). SPDX/provenance header; `pub mod codex_usage;` in `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 30 pass (28 unit + 2 canary). Codex canary asserts:
+6 real turns after dropping 1 null + 2 duplicates; `sum(turn.total_tokens) == 299113` (final
+cumulative); naive sum `== 420443 != 299113` (proves dedup is required); cumulative-sum trap
+`== 1306755 > 3×` the real total; cached/reasoning split + reconstruction-when-`total_tokens`-missing +
+`cached > input` clamp. `cargo clippy -p collector-parser --all-targets -- -D warnings`, `cargo fmt
+--check`, `cargo build --workspace` all clean. CodeRabbit CLI: pass 1 → 4 findings; fixed the **major**
+(fallback total was computed from raw, not clamped, input → inconsistent on the `cached > input` edge)
+and the trivial test-coverage finding; **declined** two trivial Cargo.toml pin nits — `serde_json = "1"`
+matches the workspace convention (`collector-contracts`, `collector-api-client`), and `regex = "1.11"`
+is the intentional minor floor with the exact patch pinned by `Cargo.lock`. Pass-2 re-confirm was
+rate-limited (credits; wait grew to 13m), but the only major finding is resolved and the remainder are
+deliberate declines.
+**Next / blockers:** 3a stays 🚧. Remaining: Claude parser (collapse `message.usage` by `message.id`),
+tool-use+tool-result fold (same `tool_use_id` → one Tool Event), capability snapshots, Codex
+turn-index determinism, and the fact emitters onto `collector-contracts`. **Note for the fact
+emitters:** `command_family` has no ADR-defined taxonomy and the contract sample shows
+`command_family == command_program` (`git`); emit program-as-family until a future enrichment, rather
+than inventing a taxonomy. Then 3b / 3d.
+
 ## 2026-05-26 — 3a (`collector-parser`, partial: path relativization) — t3code/ab83918d
 
 **Status:** 🚧 in progress
