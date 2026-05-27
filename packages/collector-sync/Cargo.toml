@@ -6,7 +6,17 @@ license = "MIT"
 description = "Headless filesystem + HTTP sync engine for the Trace Flow agent Collector."
 
 [dependencies]
+# The canonical `AgentSource` enum keys every cursor row; the store never redefines it.
+collector-contracts = { path = "../collector-contracts" }
 # Git remote resolution shells out to `git` via the async process API: `process` for the subprocess,
 # `macros` for the `join!` that runs the three rev-parse/config probes concurrently. The runtime is
 # the embedder's; this crate spawns none.
 tokio = { version = "1", features = ["process", "macros"] }
+# The durable local cursor store. `bundled` compiles SQLite from source so the build needs no system
+# library and tests run anywhere; the cursor DB is non-secret resumable state (ADR), never a queue.
+rusqlite = { version = "0.31", features = ["bundled"] }
+thiserror = "1"
+
+[dev-dependencies]
+# Reopen-across-process and per-org-isolation tests need a real on-disk DB, not `:memory:`.
+tempfile = "3"

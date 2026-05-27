@@ -14,10 +14,13 @@
 //! are exercised by the 3d headless end-to-end run, not by this crate's unit tests.
 //!
 //! Landed so far (3b): [`git`] — git remote resolution with a process-lifetime freeze cache;
-//! [`orchestrator`] — the one-job-at-a-time state machine (pure transition core).
+//! [`orchestrator`] — the one-job-at-a-time state machine (pure transition core); [`cursor`] — the
+//! durable per-source file cursor store (SQLite, advance-only-after-2xx).
 
+pub mod cursor;
 pub mod git;
 pub mod orchestrator;
 
+pub use cursor::{CursorStore, CursorStoreError, FileCursor};
 pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};

@@ -15,6 +15,52 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3b (`collector-sync`: SQLite cursor store, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-sync/src/cursor.rs` (+ `pub mod cursor;` and re-exports; deps
+`collector-contracts`, `rusqlite` bundled, `thiserror`, dev-dep `tempfile`). Third leaf of 3b: the
+durable local **per-source file cursor** store.
+
+- **`FileCursor`** = `{ file_path, mtime_ms: f64, byte_offset: u64, content_hash_head }` — the record
+  shape adapted from otto-sync's `CompletedFileCursor` (engine.rs). **The SQLite persistence is new
+  Trace Flow code, not vendored:** otto kept cursors server-side (POSTed and read back from the
+  sync-start response); Trace Flow Desktop keeps durable resumable cursor state locally (ADR "Local
+  state"). `CursorStore` is keyed by `(org_id, source, file_path)`; `source` is the canonical
+  `AgentSource` enum (never redefined).
+- **Advance-only-after-2xx:** `advance()` is the single write path and the post-success commit point;
+  the POST loop (next leaf) calls it only on `Ok`. On failure nothing advances, the file is re-read
+  next pass, and server-side dedupe absorbs the repeat — resumable state, not a durable upload queue
+  (ADR). API: `open`/`open_in_memory`, `get`, `list(source)`, `advance`.
+- **Org isolation:** a store binds one `org_id` and every row carries it, so cursors are never reused
+  across Organizations (ADR "one active Organization in v1"); a second org on the same DB file sees
+  none of the first's rows (tested on-disk).
+- **u64 offset safety:** rusqlite's native `u64` mapping rejects `> i64::MAX` on write and a negative
+  stored value on read (both surface as `CursorStoreError::Sqlite`) — no silent wrap in either
+  direction. `WAL` + `synchronous=NORMAL` for crash-durable desktop writes (a lost last-advance is
+  harmless: idempotent re-sync). `WITHOUT ROWID` (composite PK is the only access path).
+- **mtime kept `f64` (not integer ms):** deliberate — OS `mtimeMs` is fractional, so truncating
+  would make a re-stat always compare `>` the stored value and defeat the discovery mtime fast-path;
+  ms epochs are exact in `f64` until ~2255 and no `==` is used. (Raised P1 in review; pushed back
+  with rationale; confirmation review accepted it as sound.)
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -D
+warnings` (clean); `cargo test -p collector-sync` = **25 passed** (9 cursor tests: round-trip,
+overwrite, per-source `list`, large/overflow/negative offset, per-org isolation, reopen-persist);
+`cargo build`. Local `code-review` skill: initial **CHANGES REQUESTED** (2 P1: read-side wrap, mtime
+type) → fixed P1-A via native `u64`, pushed back on P1-B with rationale, took WAL/provenance/comment
+nits → confirmation review **READY TO LAND**. CodeRabbit not escalated (no auth/secret/schema/
+redaction/concurrency/proxy surface in a pure local store; rubric does not require it). File 313
+lines (184 implementation; the remainder is the 9-test module, consistent with the lane convention).
+
+**Next / blockers:** 3b stays 🚧. Next leaf: the POST loop wrapping `session_facts(...)` into an
+`AgentIngestEnvelope` (batch metadata + git-remote resolve/freeze + `collector_started_at` + 24h
+grace + history-import presets), reusing the 3c `CollectorApiClient` and driving the orchestrator's
+actions, advancing this cursor store only on `Ok(IngestOk)`. FSEvents watcher + live POST exercised
+at 3d. No PR (not a phase boundary).
+
+---
+
 ## 2026-05-27 — 3b (`collector-sync`: orchestrator state machine, partial) — t3code/ab83918d
 
 **Status:** 🚧 in progress
