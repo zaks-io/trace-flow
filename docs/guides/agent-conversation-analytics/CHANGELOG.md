@@ -15,6 +15,46 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: PR-link emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_pr_links.rs` (+ `pub mod emit_pr_links;`).
+`claude_pr_link_facts` / `codex_pr_link_facts(records, &SessionContext) -> Vec<AgentPullRequestLinkFact>`
+scan a session for **canonical GitHub PR links** (`github.com/{owner}/{repo}/pull/{number}`, ADR v1
+GitHub-only) and emit one fact per distinct observed link.
+
+- **Evidence taxonomy:** assistant message text → `AssistantText`; tool _output_ (Claude `tool_result`
+  content, Codex `function_call_output`) → `ToolOutput`; user/other transcript text → `TranscriptRecord`.
+  Tool/command _input_ is never scanned — `gh pr create`/`gh pr view`/`git push`/branch names/bare PR
+  numbers are diagnostic-only in v1 (ADR "Repo and pull request attribution"), so they yield no link.
+  Every canonical link is `confidence = High`; the Medium/Low rungs and non-GitHub hosts are deferred
+  enrichment.
+- **Identity / dedup mirrors the Worker pk** (`pullRequestLinkPk`, `ids.ts:77` =
+  `[source, vendorSessionId, sourceEventId ?? turn:N, url]`): observations dedupe on
+  `(source_event_id, url)` in document order; `stable_turn_index` is a per-session ordinal over the
+  survivors (stable across re-parse). Claude carries a per-record `uuid` → `source_event_id` set, so the
+  same link in two records is two genuine observations; Codex carries none → `source_event_id` `None`, so
+  a link repeated across the session collapses to one row. That asymmetry is inherited from the pk
+  formula, not invented.
+- **URL hygiene:** owner/repo lowercased (GitHub is case-insensitive) so casing can't fragment
+  attribution; `/pull/` singular + numeric id required (issue links, `/pulls`, bare numbers rejected);
+  trailing path/query/fragment/punctuation stripped to the canonical `https://` form; PR numbers that
+  overflow `i64` skipped. The `regex` crate has no look-behind, so host look-alikes (`evilgithub.com`,
+  `my-github.com`) and subdomains (`api.github.com`) are rejected by a preceding-byte guard, not `\b`.
+  `dropped_sensitive` is 0 — only the public canonical URL is stored, never the surrounding text.
+
+**Verified:** `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` (clean),
+`cargo test -p collector-parser` (169 passed incl. 17 new PR-link tests), `cargo build --workspace`.
+Local `code-review` skill: **READY TO LAND** (resolved P1 owner/repo casing, P2 host-boundary
+tightening + Codex tool-input exclusion test, P3 repo-pattern + helper note; multi-byte UTF-8 boundary
+of the byte guard confirmed safe). CodeRabbit not escalated — parser-only, additive, no
+auth/secret/schema/contract/redaction-logic change (per the escalation rubric).
+**Next / blockers:** No top-level per-session **assembler** yet ties the now-7 emitters
+(msgs/tools/files/caps/PR-links, Claude+Codex) into the upload envelope's fact arrays. That parser
+entrypoint (`packages/collector-parser/`, the 3a lane) is the remaining 3a unit before 3a flips ✅; 3b
+(`collector-sync`) then wraps it into the POST envelope. Cursor `state.vscdb` parser stays fast-follow
+(`3a*`).
+
 ## 2026-05-27 — 3a (`collector-parser`: Codex capability-snapshot emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress

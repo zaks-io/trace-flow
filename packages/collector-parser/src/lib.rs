@@ -24,6 +24,7 @@ pub mod emit_codex;
 pub mod emit_codex_caps;
 pub mod emit_codex_files;
 pub mod emit_codex_tools;
+pub mod emit_pr_links;
 pub mod paths;
 pub mod redaction;
 pub mod session_context;
