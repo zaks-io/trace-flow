@@ -1,0 +1,9 @@
+{
+  "name": "trace-flow",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "install": "bun install",
+  "terminals": []
+}

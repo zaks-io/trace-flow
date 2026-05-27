@@ -1,0 +1,43 @@
+---
+description: Trace Flow shared agent workflow
+alwaysApply: true
+---
+
+Follow the shared repo protocol. Do not create a Cursor-only workflow.
+
+Cursor Background Agents are for ready, well-scoped Linear issues in this repo.
+Use them for implementation work while the orchestrator owns review, quality
+gates, and escalation.
+
+Read these before implementation work:
+
+- `AGENTS.md`
+- `docs/agents/repo-navigation.md`
+- `docs/agents/workflow.md`
+- `docs/agents/skill-usage.md`
+- `docs/agents/remote-cursor-agent.md`
+- `CONTEXT.md`
+- `specs/README.md`
+- relevant ADRs in `docs/adr/`
+- the assigned Linear issue and linked docs
+
+Only implement issues that are:
+
+- in Linear team `TRA`
+- in project `Trace Flow Roadmap`
+- in `Todo`
+- labeled `ready-for-agent`
+- labeled `remote-cursor`
+- unblocked
+- scoped to one PR
+
+Use `trace-flow-implement-issue` for the implementation flow. Before opening a
+PR, run or request `trace-flow-local-code-review` on the branch when the
+environment supports it. Address blocking findings before PR handoff.
+
+When the orchestrator sends `Changes Requested` feedback, continue in the same
+thread, branch, and PR. Read the PR review comments, push fixes to the same PR,
+and move the issue back to `In Review` when ready.
+
+Stop and comment in Linear when product scope, security posture, credentials,
+hosted access, provider approval, or ADR decisions are missing.

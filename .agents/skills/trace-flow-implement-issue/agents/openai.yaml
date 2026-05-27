@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Trace Flow Implement Issue'
+  short_description: 'Implement one ready TRA issue'
+  default_prompt: 'Use $trace-flow-implement-issue to implement this Linear issue as one scoped PR.'

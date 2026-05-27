@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Trace Flow Next PR'
+  short_description: 'Drive next TRA work to PR'
+  default_prompt: 'Use $trace-flow-next-pr to pick the next ready Trace Flow issue and drive it to PR.'

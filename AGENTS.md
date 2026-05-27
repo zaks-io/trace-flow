@@ -86,23 +86,47 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 ### Agent configuration
 
-Shared agent context lives in `AGENTS.md` and `.agents/skills/...`; update those files first so Claude Code and Codex stay aligned. Claude-facing redirects under `.claude` point back to the shared `.agents`, `.codex`, and `AGENTS.md` paths, while `CLAUDE.md` points at `AGENTS.md`.
+Shared agent context lives in `AGENTS.md`, `docs/agents/...`, and
+`.agents/skills/...`; update those files first so Claude Code, Codex, and
+Cursor stay aligned. Claude-facing redirects under `.claude` point back to the
+shared `.agents`, `.codex`, and `AGENTS.md` paths, while `CLAUDE.md` points at
+`AGENTS.md`.
 
-Codex project settings live in `.codex/config.toml` for MCP endpoints and main config values, and `.codex/hooks.json` for hook wiring and shell commands. After changing agent config or hooks, restart the relevant agent session so it reloads the files. Issue tracker and triage behavior still come from the Linear and label docs below.
+Codex project settings live in `.codex/config.toml` for MCP endpoints and main
+config values, and `.codex/hooks.json` for hook wiring and shell commands.
+After changing agent config or hooks, restart the relevant agent session so it
+reloads the files.
+
+Shared workflow docs:
+
+- `docs/agents/workflow.md` — Linear-backed implementation, review, PR, and merge-readiness flow
+- `docs/agents/repo-navigation.md` — quick map of apps, packages, specs, ADRs, and workflow files
+- `docs/agents/autonomous-loop.md` — state machine for orchestrators and workers
+- `docs/agents/skill-usage.md` — which repo-local skill to use
+- `docs/agents/environment-adapters.md` — Codex, Claude, and Cursor runtime selection
+- `docs/agents/remote-cursor-agent.md` — Cursor Background Agent handoff
 
 ### Code review
 
-Review happens **locally first**. Run the `code-review` skill (`.agents/skills/code-review`, with the read-only `code-reviewer` Claude subagent) before any commit or PR; it carries the bug taxonomy and the Trace Flow gotchas (streams, `waitUntil`, queue `ack`, Tinybird schema, redaction boundary). The `create-pr` skill wires this into the PR flow.
+Review happens **locally first**. Run `trace-flow-local-code-review` for
+Linear issue work and `trace-flow-code-review` or `code-review` for generic
+diff review before any commit or PR. These carry the bug taxonomy and the Trace
+Flow gotchas (streams, `waitUntil`, queue `ack`, Tinybird schema, redaction
+boundary). The `trace-flow-create-pr` and compatibility `create-pr` skills wire
+this into the PR flow.
 
 CodeRabbit is **on-demand only** — automatic and incremental reviews are disabled in `.coderabbit.yaml`, so the team is never throttled by hosted-review rate limits. Escalate to CodeRabbit (CLI `coderabbit review --agent`, or a `@coderabbitai review` PR comment) only for genuinely high-risk changes per the skill's escalation rubric.
 
 ### Issue tracker
 
-Issues live in Linear (team `TRA`), accessed via the `claude.ai_Linear` MCP server. See `docs/agents/issue-tracker.md`.
+Issues live in Linear team `TRA`; the active agent backlog project is
+`Trace Flow Roadmap`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Default canonical label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+Default canonical label strings (`needs-triage`, `needs-info`,
+`ready-for-agent`, `ready-for-human`, `remote-cursor`, `wontfix`). See
+`docs/agents/triage-labels.md`.
 
 ### Domain docs
 

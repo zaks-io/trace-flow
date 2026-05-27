@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Trace Flow Observability'
+  short_description: 'Investigate Trace Flow systems'
+  default_prompt: 'Use $trace-flow-observability to investigate this Trace Flow observability question.'

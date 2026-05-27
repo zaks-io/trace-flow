@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Trace Flow Create PR'
+  short_description: 'Create Trace Flow pull requests'
+  default_prompt: 'Use $trace-flow-create-pr to open a PR for my current branch.'

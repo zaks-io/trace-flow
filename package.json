@@ -12,6 +12,7 @@
     "apps/*"
   ],
   "scripts": {
+    "agent-skills:check": "node scripts/check-agent-skills.mjs",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "dev:all": "wrangler dev -c apps/proxy/wrangler.toml -c apps/proxy-consumer/wrangler.toml -c apps/api/wrangler.toml -c apps/agent-ingest/wrangler.jsonc -c apps/agent-consumer/wrangler.jsonc --persist-to .wrangler/state",
