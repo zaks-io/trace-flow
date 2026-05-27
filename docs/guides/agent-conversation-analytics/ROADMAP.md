@@ -26,7 +26,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 2f  | Observability + ops runbook                 | 🚧 code landed; live alerts pending                                             | 2b, 2c         |
 | 2g  | PR CI for new TS packages                   | ✅ done                                                                         | 0c, 2b, 2c     |
 | 3a  | `collector-parser`                          | ✅ Claude+Codex emitters + `session_facts` assembler (Cursor `3a*` fast-follow) | 0a             |
-| 3b  | `collector-sync`                            | 🚧 crate scaffolded + git-remote freeze cache; orchestrator/cursor/POST next    | 0a, 3a         |
+| 3b  | `collector-sync`                            | 🚧 git-remote freeze cache + orchestrator state machine; cursor/POST next       | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                         | 0a             |
 | 3d  | Headless end-to-end run                     | ☐ todo                                                                          | 2e, 3a, 3b, 3c |
 | 4a  | Dashboard pages                             | ☐ todo                                                                          | 1b, 2a         |

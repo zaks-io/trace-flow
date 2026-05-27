@@ -15,6 +15,42 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3b (`collector-sync`: orchestrator state machine, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-sync/src/orchestrator.rs` (+ `pub mod orchestrator;` and
+re-exports). Second leaf of 3b and its second named cargo-verify item ("orchestrator state
+transitions"): the **one-job-at-a-time** orchestrator as a pure, embedder-agnostic transition core.
+
+- **Adapted, not vendored, from `otto-sync/src/orchestrator.rs`.** otto's `Worker` is welded to its
+  engine/watcher/tokio channels and uses different states (Idle/Backfilling/Stopped). This leaf keeps
+  otto's command set + one-job + pause/resume shape but redesigns the states to the ADR's named set
+  and extracts the transition logic into a synchronous core, so it is testable with plain asserts —
+  no engine, runtime, or channels.
+- **States:** `Watching` (armed, idle), `Syncing`, `ImportingHistory`, `Paused` (initial), `Error`.
+  `Orchestrator::apply(Trigger) -> Vec<Action>` mutates state and returns the side effects
+  (`StartWatching`/`StopWatching`/`StartSync`/`StartImport`/`CancelJob`) the embedder replays.
+- **One job at a time:** while `Syncing`/`ImportingHistory`, any new job trigger (`SyncNow`,
+  `ImportHistory`, watcher `BatchDetected`) is rejected — no state change, no action. No batch is
+  lost: the watcher re-fires and the 5-min poll backstop re-discovers unprocessed files, so "dirty"
+  re-sync coalescing is a later refinement, not a gap.
+- **Watcher lifetime:** armed exactly in {Watching, Syncing, ImportingHistory}, stopped in {Paused,
+  Error}, so `StartWatching` fires only on entering the active cluster from rest and `StopWatching`
+  only on leaving it (`Watching -> Syncing` and `Syncing -> Watching` emit neither).
+
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-sync --all-targets -D warnings`,
+`cargo build`, `cargo test -p collector-sync` (16 tests: 4 git + 12 orchestrator, covering every
+transition incl. the one-job rejection and watcher-lifetime invariants for both job kinds). Local
+`code-review`: **CHANGES REQUESTED → fixes → READY TO LAND** — the reviewer walked the full 5x7
+(state x trigger) grid and confirmed all 35 cells correct (the catch-all absorbs exactly the
+no-op/rejection cells); blockers were test gaps for the `ImportingHistory` branch of the OR-arms plus
+a provenance-wording fix, all addressed; confirmation pass clean. CodeRabbit not escalated — pure
+in-crate logic, no escalation trigger.
+**Next / blockers:** 3b remains 🚧. Remaining leaves: SQLite cursor store (read/write + advance-on-2xx),
+`collector_started_at` + 24h grace, history-import presets (7d/30d/1y), and the POST loop that wraps
+`session_facts(...)` in an `AgentIngestEnvelope` (reusing the 3c `CollectorApiClient`) and drives this
+orchestrator's actions. FSEvents watcher + live POST are exercised at 3d.
+
 ## 2026-05-27 — 3b (`collector-sync`: scaffold + git-remote freeze cache, partial) — t3code/ab83918d
 
 **Status:** 🚧 in progress
