@@ -15,6 +15,39 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3a (`collector-parser`, partial: path relativization) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/paths.rs`, the second trust-boundary leaf utility
+after `redaction.rs`. `relativize_repo_path(repo_root, candidate)` is the single gate every touched
+path passes before it becomes an `agent_file_events` / Tool Event `repo_relative_paths` field. An
+absolute candidate is lexically (no filesystem access — the file may be gone by parse time) stripped
+against the session's repo root and returned forward-slash repo-relative; anything not provably inside
+the root collapses to the `outside_repo` sentinel. Adapted from otto `normalize.rs`
+`normalize_agent_file_path` but **reworked** because otto's `~/`-prefixed fallback and hardcoded
+`/apps//packages/` segment list leak structure and are otto-monorepo-specific — Trace Flow's rule is
+repo-relative-or-`outside_repo`, never absolute/home/username (ADR "File facts store repo-relative
+paths only"). A final `is_safe_relative` guard rejects any leftover absolute prefix, `~`/`$HOME`
+marker, Windows drive letter, or `..`/root component, so a relativization bug can't leak a local path
+at rest. SPDX(MIT)/provenance header. `pub mod paths;` added to `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 22 pass (13 paths + 7 redaction unit + 2 canary
+integration). Path tests cover: file inside repo → relative, nested, in-repo `..` resolved (not
+escaped), repo root → `.`, sibling/unrelated absolute → `outside_repo` (asserting no `janedoe` /
+`/Users/` leak), already-relative kept, escaping `..` → `outside_repo`, `~`/`$HOME` → `outside_repo`,
+empty/whitespace → `outside_repo`, Windows drive path → `outside_repo`, absolute candidate vs a
+relative root → `outside_repo`, and a corpus invariant that no result ever contains a username, home
+prefix, or absolute path. `cargo clippy -p collector-parser --all-targets -- -D warnings` clean;
+`cargo fmt --check` clean; `cargo build --workspace` clean. CodeRabbit CLI: pass 1 returned 1
+`trivial` finding (rename `clean_relative` params for clarity) — applied; the re-confirm pass 2 was
+**rate-limited (out of usage credits, wait grew 5m→13m)**, but the only finding was a logic-free
+rename with no open findings remaining.
+**Next / blockers:** 3a stays 🚧. **Blocker for further autonomous work this run: CodeRabbit credits
+exhausted** (recoverable; retry when credits reset). Remaining 3a sub-work: Claude parser (collapse
+`message.usage` by `message.id`), Codex parser (sum `last_token_usage` deltas, NEVER
+`total_token_usage`), tool-use+tool-result fold, capability snapshots, Codex turn-index determinism,
+and the fact emitters onto `collector-contracts` (which will call `relativize_repo_path`). Then 3b /
+3d.
+
 ## 2026-05-26 — 3a (`collector-parser`, partial: redaction) — t3code/ab83918d
 
 **Status:** 🚧 in progress
