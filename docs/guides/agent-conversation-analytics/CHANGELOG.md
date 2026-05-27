@@ -15,6 +15,46 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3b (`collector-sync`: import-window policy + envelope assembler, partial) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-sync/src/import.rs` and `src/envelope.rs` (+ `pub mod` and
+re-exports; dev-dep `serde_json`). Fourth leaf of 3b — the two **pure** halves of the upload path.
+Split from the POST loop deliberately: these are deterministic and unit-testable with no async,
+client, or store; the drive loop that ties them together is the next (final) leaf.
+
+- **`import.rs` — sync-window policy.** `ImportWindow` carries one epoch-ms mtime cutoff and answers
+  `includes(mtime: f64)` as an inclusive lower bound. `first_incremental(collector_started_at)` =
+  start − 24h, the ADR active-session grace window that catches in-progress sessions at install
+  without making first run a historical import (ADR first-run setup). `history(preset, now)` =
+  now − preset. `HistoryPreset` is exactly `Last7Days` / `Last30Days` / `LastYear` — **no "all
+  history"** option (ADR: the 1-year preset is the fact-retention horizon). One `MS_PER_DAY` constant;
+  `GRACE_WINDOW_MS` is derived from it so they can't drift (review fix).
+- **`envelope.rs` — POST envelope assembler.** `BatchMeta` (source, desktop/parser version,
+  raw_upload_requested) + `build_envelope(meta, collector_batch_id, facts)` wraps a session's
+  `AgentIngestFacts` into the canonical `AgentIngestEnvelope`. The batch id is caller-supplied (the
+  drive loop mints one per POST), not generated here. `raw_session_bundles` is always `None` (raw
+  upload is opt-in/default-off and unbuilt). No contract field invented or omitted (checked field-by-
+  field against `collector-contracts`).
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -D
+warnings` (clean); `cargo test -p collector-sync` = **32 passed** (7 new: grace cutoff, in-progress
+vs older, inclusive bound, three preset distances, year-vs-grace ordering, envelope field-stamping,
+raw-bundle wire-omission). Files: import.rs 135, envelope.rs 82. Local `code-review`: initial
+**CHANGES REQUESTED** (1 P2: two identical `GRACE_WINDOW_MS`/`DAY_MS` constants — drift risk; 2 P3) →
+derived the grace window from a single `MS_PER_DAY`, reworded the `skip_serializing_if` comment,
+declined a speculative `Hash` derive → confirmation review **READY TO LAND**. CodeRabbit not escalated
+(pure value types, no auth/secret/schema/redaction/concurrency surface; rubric does not require it).
+
+**Next / blockers:** 3b stays 🚧 — **last leaf**: the async drive loop. Per session: `session_facts(…)`
+→ `build_envelope(…)` → `CollectorApiClient::ingest(envelope, cancel)` → on `Ok(IngestOk)` advance the
+`CursorStore`, else leave the cursor and re-send next cycle; emit the orchestrator `JobSucceeded` /
+`JobFailed` trigger. Scope which files are sent via `ImportWindow`. Unit-test with a mock client +
+in-memory `CursorStore`; live FSEvents + real POST are 3d. After it lands, flip 3b ✅. No PR (not a
+phase boundary until 3b + 3d both land).
+
+---
+
 ## 2026-05-27 — 3b (`collector-sync`: SQLite cursor store, partial) — t3code/ab83918d
 
 **Status:** 🚧 in progress

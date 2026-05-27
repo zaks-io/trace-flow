@@ -15,12 +15,17 @@
 //!
 //! Landed so far (3b): [`git`] — git remote resolution with a process-lifetime freeze cache;
 //! [`orchestrator`] — the one-job-at-a-time state machine (pure transition core); [`cursor`] — the
-//! durable per-source file cursor store (SQLite, advance-only-after-2xx).
+//! durable per-source file cursor store (SQLite, advance-only-after-2xx); [`import`] — the sync-window
+//! policy (24h first-run grace + history presets); [`envelope`] — the POST envelope assembler.
 
 pub mod cursor;
+pub mod envelope;
 pub mod git;
+pub mod import;
 pub mod orchestrator;
 
 pub use cursor::{CursorStore, CursorStoreError, FileCursor};
+pub use envelope::{build_envelope, BatchMeta};
 pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
+pub use import::{HistoryPreset, ImportWindow};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};

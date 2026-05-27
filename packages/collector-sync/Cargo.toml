@@ -20,3 +20,5 @@ thiserror = "1"
 [dev-dependencies]
 # Reopen-across-process and per-org-isolation tests need a real on-disk DB, not `:memory:`.
 tempfile = "3"
+# The envelope test asserts `raw_session_bundles` is omitted from the serialized wire form.
+serde_json = "1"

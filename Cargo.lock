@@ -149,6 +149,7 @@ version = "0.1.0"
 dependencies = [
  "collector-contracts",
  "rusqlite",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
