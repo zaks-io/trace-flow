@@ -20,8 +20,11 @@
 //! [`sync_cycle`] — the drive loop that POSTs a batch and advances each cursor only on a `2xx`.
 //!
 //! Started (3d): [`discovery`] — the scan + selection half that walks the transcript root and narrows
-//! to in-window, new-or-changed files; the read + `SyncUnit` assembly is the next 3d leaf.
+//! to in-window, new-or-changed files; [`claude_session`] — pulls a Claude session's identity fields
+//! (vendor id, start instant, cwd, branch hint) out of its records. The async git resolution + remote
+//! normalization + `SyncUnit` assembly that consume these is the next 3d leaf.
 
+pub mod claude_session;
 pub mod cursor;
 pub mod discovery;
 pub mod envelope;
@@ -30,6 +33,9 @@ pub mod import;
 pub mod orchestrator;
 pub mod sync_cycle;
 
+pub use claude_session::{
+    agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
+};
 pub use cursor::{CursorStore, CursorStoreError, FileCursor};
 pub use discovery::{head_hash, select_changed, walk_transcripts, DiscoveredFile};
 pub use envelope::{build_envelope, BatchMeta};

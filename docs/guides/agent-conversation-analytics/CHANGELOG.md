@@ -15,6 +15,45 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d (`collector-sync`: Claude session-field extraction — leaf 2a) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d leaf 2 split again; this is leaf 2a, the pure record-reading half)
+**Changed:** Added `packages/collector-sync/src/claude_session.rs` + `pub mod` / re-exports. The
+record-reading half of building a session's `SessionContext` — it reads only the records, no git, no
+filesystem.
+
+- **`claude_session_fields(records) -> ClaudeSessionFields`** pulls the per-session identity a Claude
+  transcript repeats on every line: `vendor_session_id` (`sessionId`), `vendor_started_at` (the
+  **earliest** parseable `timestamp`, so an undated leading record or out-of-order file still yields the
+  true start), `cwd`, and a `git_branch` hint (`gitBranch`). Field names confirmed against otto-parser's
+  Claude parser; `vendor_started_at` reuses the parser's `rfc3339_to_epoch_ms` (no new `chrono` dep).
+- **First-non-empty wins** for the repeated string fields (trimmed; blank/whitespace skipped), matching
+  the git freeze cache's first-`cwd` key. Absent values degrade to `None`/`""` — the ingest Worker
+  resolves the final `*_pk`, never this layer.
+- **`agent_depth_from_transcript_path(path) -> i64`** gives whole-file nesting depth: `1` under a
+  `subagents/` path segment (exact-segment match, not substring), else `0`. Capped at 1 per the current
+  Claude layout; the E2E leaf confirms deeper nesting if it exists.
+- Pure and sync (no filesystem, no git); the async git resolve + remote normalization + `SyncUnit`
+  assembly that consume these fields are leaf 2b.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **53 passed** (6 new claude_session tests:
+all-fields extraction, earliest-timestamp-regardless-of-order, empty-slice defaults, blank-string skip,
+unparseable-timestamp skip, top-level-vs-subagents depth); `cargo build`. Local code-review
+(code-reviewer subagent, sonnet) → READY TO LAND over two passes (no P1/P2; added an
+intentional-depth-cap comment between passes).
+**Next / blockers:** 3d leaf 2b — read each selected file (JSONL → `Vec<Value>`), resolve git via
+`GitRemoteCache`/`resolve_git_metadata`, normalize the remote into `normalized_git_remote`, set
+`repo_root`/`repo_path_fallback`/`git_branch` (falling back to 2a's hint), assemble `SessionContext` +
+`SyncUnit { records, ctx, next_cursor }` with `next_cursor.content_hash_head = head_hash(full_text)`.
+(`GitMetadata` carries no head SHA and the Claude record has none either, so `git_head_sha` stays `""`
+unless 2b extends git resolution.) Then leaf 3 — the `#[ignore]` E2E against real `~/.claude/projects` +
+live worker + Tinybird rows, which needs `bun run dev:all` + the Tinybird dev workspace and is a STOP
+point if unreachable headlessly. 3d stays 🚧 until all leaves land; only then is the Phase 3 boundary
+reached (PR to `main`, no self-merge).
+
+---
+
 ## 2026-05-27 — 3d (`collector-sync`: transcript discovery — scan/selection leaf) — t3code/ab83918d
 
 **Status:** 🚧 in progress (3d split into 3 leaves; this is leaf 1 of 3)
