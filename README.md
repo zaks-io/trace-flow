@@ -111,6 +111,31 @@ Related design notes:
 
 ## Development
 
+### Agent-Ready Local Environment
+
+The reusable local environment contract lives in `scripts/dev/` and is shared by humans, Cursor
+background agents, and other coding agents:
+
+```bash
+scripts/dev/install.sh
+scripts/dev/start.sh
+scripts/dev/smoke.sh
+scripts/dev/verify.sh
+```
+
+`scripts/dev/start.sh` starts Tinybird Local, builds the Tinybird project against it, and generates
+ignored local `.dev.vars` / `.env.local` files when they do not already exist. Cursor delegates to the
+same scripts through `.cursor/environment.json`.
+
+No cloud Tinybird token is required for local setup. Tinybird Local still requires a bearer token for
+its HTTP API, but `scripts/dev/start.sh` discovers or generates that local token automatically.
+
+`scripts/dev/smoke.sh` seeds a local API key, posts an OTLP trace through the local Worker stack, and
+queries Tinybird for the captured trace. It will start `scripts/dev/workers.sh` for the run when the
+Worker server is not already listening on port 8787.
+
+See [docs/agents/local-environment.md](./docs/agents/local-environment.md) for the full contract.
+
 ### Full Local Stack (Recommended)
 
 Run all workers together with shared R2 storage:
