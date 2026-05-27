@@ -28,7 +28,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 3a  | `collector-parser`                          | ✅ Claude+Codex emitters + `session_facts` assembler (Cursor `3a*` fast-follow)     | 0a             |
 | 3b  | `collector-sync`                            | ✅ freeze cache + orchestrator + cursor store + import-window/envelope + drive loop | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                             | 0a             |
-| 3d  | Headless end-to-end run                     | 🚧 discovery + session fields + remote normalizer + read/assemble landed; E2E left  | 2e, 3a, 3b, 3c |
+| 3d  | Headless end-to-end run                     | 🚧 read path + E2E scaffold landed; live run pending (needs dev:all + Tinybird dev) | 2e, 3a, 3b, 3c |
 | 4a  | Dashboard pages                             | ☐ todo                                                                              | 1b, 2a         |
 | 4b  | `org_id` agent JWT in web                   | ☐ todo                                                                              | 2a             |
 | 4c  | Connected Desktops surface                  | ☐ todo                                                                              | 2a, 5b         |
@@ -418,9 +418,17 @@ Split into three leaves; the discovery scan is the production half the drive loo
      relativize to `outside_repo`; `repo_path_fallback` a bare basename label), and assembles
      `SyncUnit { records, ctx, next_cursor }` with `next_cursor = { mtime, byte_offset = size,
 content_hash_head = head_hash(text) }` from the same in-memory read.
-3. **E2E (`#[ignore]`, live-infra STOP point):** integration test parses real `~/.claude/projects` →
-   valid envelope → mock/real worker accepts → cursor advances. Needs `bun run dev:all` + the Tinybird
-   dev workspace; stop and report if that infra is unreachable headlessly.
+3. **E2E (`#[ignore]`, live-infra STOP point — scaffold landed, live run pending):**
+   `packages/collector-sync/tests/headless_e2e.rs` walks real `~/.claude/projects` →
+   `assemble_sync_unit` → a client-side redaction gate (no `/Users/`, no home dir, no `cost_usd`,
+   `repo_path_fallback` a bare label) → drives the production `run_sync_cycle` against a live
+   `CollectorApiClient`, asserting cursors advance only on a `2xx`. The scaffold compiles + is `#[ignore]`
+   (gates green offline). The **live run is unverified**: it needs `bun run dev:all` + a dev Collector
+   credential + the Tinybird dev workspace, none reachable headlessly. A human runs
+   `TRACE_FLOW_INGEST_URL=… TRACE_FLOW_COLLECTOR_SECRET=… cargo test -p collector-sync --test
+headless_e2e -- --ignored --nocapture`, then confirms in Tinybird **dev**: real rows in `agent_*`,
+   no `agent_file_events` path with `/Users/`, `cost_usd` null until the consumer prices it. 3d flips to
+   ✅ only after that passes, not on the scaffold.
 
 - **Verify (cargo):** no `cost_usd` on any fact; **no `agent_file_events` path contains `/Users/`**;
   real rows appear in `agent_*` via the Phase 1 pipes.

@@ -15,6 +15,47 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d (`collector-sync`: headless E2E scaffold — leaf 3) — t3code/ab83918d
+
+**Status:** 🚧 in progress (E2E scaffold lands; the live run is the STOP point and is NOT yet verified)
+**Changed:** Added `packages/collector-sync/tests/headless_e2e.rs`, the `#[ignore]` integration test
+that wires the whole read path against a live worker. No `Cargo.toml` change — integration tests see
+the crate's normal deps (collector-api-client, collector-contracts, collector-parser, serde_json) and
+tokio's `macros`/`rt`.
+
+- **`headless_run_posts_real_claude_transcripts_and_advances_cursors`** walks real `~/.claude/projects`
+  via `walk_transcripts`, narrows via `select_changed` (LastYear window, capped to the most-recent
+  `MAX_FILES`), assembles each file with `assemble_sync_unit`, then drives the production
+  `run_sync_cycle` against a `CollectorApiClient`, asserting `report.failed == 0`, every unit advanced,
+  and each cursor is persisted with a matching `byte_offset` + `content_hash_head` (cursor moves only
+  on a `2xx`).
+- **Client-side redaction gate before any POST:** serializes the assembled envelope and asserts no
+  `/Users/` path, no `$HOME`, no `cost_usd`, and `repo_path_fallback` has no `/`. Inspects a
+  structurally identical envelope — `session_facts` and `build_envelope` are pure (verified: no
+  clock/random/uuid generation in the assembly path), so the only divergence from the POSTed envelope
+  is the `collector_batch_id` string, which carries no path or cost.
+- **`#[ignore]` by design:** compiles under `cargo test` but runs only on demand. Config comes from
+  `TRACE_FLOW_INGEST_URL` / `TRACE_FLOW_COLLECTOR_SECRET` (+ optional `TRACE_FLOW_ORG_ID`); a missing
+  required var panics with guidance. The credential is never printed (only `report.advanced` is).
+- Original Trace Flow code (otto-sync had no standalone E2E harness). SPDX MIT + provenance header.
+
+**Verified (offline only):** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync
+--all-targets -- -D warnings` (clean); `cargo test -p collector-sync` = **68 passed, 1 ignored** (the
+E2E compiles and is correctly skipped); `cargo build` (workspace, clean). Local code-review (sonnet)
+two-pass → READY TO LAND (three P2 wording findings fixed: HOME-empty short-circuit documented,
+"exact bytes" softened to "structurally identical" with the pure-assembly rationale, `split_off`
+semantics commented).
+
+**STOP — live infra unreachable headlessly.** Probed: no `TRACE_FLOW_*` env, no dev ingest worker on
+any port, no `bun run dev:all` running, `tb` shows no active workspace. The live E2E + the Tinybird-row
+verification cannot run here. **Next (human):** start `bun run dev:all` + the Tinybird dev workspace,
+mint a dev Collector credential, run `TRACE_FLOW_INGEST_URL=… TRACE_FLOW_COLLECTOR_SECRET=… cargo test
+-p collector-sync --test headless_e2e -- --ignored --nocapture`, then confirm in Tinybird **dev**
+(never prod): real rows in `agent_*`, no `agent_file_events` path with `/Users/`, `cost_usd` null until
+the consumer prices it. Only then flip 3d ✅. That completes the Phase 3 boundary → open a PR to `main`
+(human merges; never self-merge — merge = ungated prod deploy). Phase 4 (4a/4b dashboards) is a
+different lane (`apps/web`, needs preview + browser verification); 4c stays deferred.
+
 ## 2026-05-27 — 3d (`collector-sync`: async read + assemble — leaf 2b-ii) — t3code/ab83918d
 
 **Status:** 🚧 in progress (3d leaf 2b-ii lands; leaf 3 — the live-infra E2E — is all that remains)
