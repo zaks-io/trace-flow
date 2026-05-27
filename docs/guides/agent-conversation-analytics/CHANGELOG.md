@@ -15,6 +15,35 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: Claude message-fact emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_claude.rs` (+ `pub mod emit_claude;`).
+`claude_message_facts(records, &SessionContext) -> Vec<AgentMessageFact>` emits one fact per assistant
+`message.id` (usage collapsed by `claude_usage::session_message_usages`, so a turn Claude writes across N
+content-block records counts once) and one per text-bearing user record (string content or an array
+holding a `text` block; tool-result-only user records are skipped and burn no turn index). `model` comes
+from `message.model` (empty for user turns, which carry `Missing` coverage). `vendor_message_id` is the
+`message.id` for assistant turns and the record `uuid` for user turns so the Worker's `message_pk` stays
+stable across re-parse. `is_subagent_spawn` is set when a turn's content holds a `Task`/`Agent`
+`tool_use` — matched by exact name (scanned across all records sharing the id, since the spawning block
+can land in a later content-block record), so the unrelated `TaskCreate`/`TaskUpdate`/`TaskList` todo
+tools never false-trigger. `is_sidechain` rides from each record; `agent_depth` from `SessionContext`.
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (91 passed + 2 canary; 13 new
+emit_claude tests cover id collapse, collapsed-token Full coverage, usage-less assistant → Missing,
+user uuid keying, tool-result-only skip, array-with-text user emit, Task/Agent spawn flag vs the Task\*
+todo family, spawn block in a later same-id record, sidechain + agent_depth carry, positional turn_index
+across skips, session-context carry, timestamp fallback, empty session), `cargo build --workspace`.
+CodeRabbit `--type uncommitted`: 1 "critical" finding (SessionContext missing `agent_depth`) — **verified
+false positive**: the field exists in the already-committed `session_context.rs:32` (`4437439`), outside
+the uncommitted review scope, and the crate compiles + all tests pass, which is impossible if it were
+missing. Skipped per the "fix only still-valid issues" rule; re-review would reproduce it identically.
+**Next / blockers:** 3a stays 🚧. Next leaf is the Claude tool-event emitter (`AgentToolEventFact`).
+**Heads-up — ADR gap:** the tool-event fact names `extracted_provider`/`extracted_repo`/
+`extracted_pr_number` (ADR L243) but gives no extraction algorithm, and otto's `tools.rs` does not
+populate them (PR links are a separate GitHub-only fact table, ADR L152). Resolve before that leaf.
+
 ## 2026-05-27 — 3a (`collector-parser`: Codex message-fact emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress
