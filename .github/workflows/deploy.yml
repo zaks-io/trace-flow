@@ -191,10 +191,13 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
     environment: Production
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
 
@@ -219,10 +222,13 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
     environment: Production
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
 

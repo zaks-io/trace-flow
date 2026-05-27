@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{IngestError, IngestOk, IngestResult, UpgradeRequiredDetail};
 use crate::retry::{backoff_delay, RetryConfig, DEFAULT_TIMEOUT};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CollectorApiClientConfig {
     /// Base URL of the ingest worker, e.g. `https://ingest.trace.flow`.
     pub ingest_url: String,
@@ -26,6 +26,18 @@ pub struct CollectorApiClientConfig {
     pub credential: String,
     pub timeout: Duration,
     pub retry: RetryConfig,
+}
+
+// Manual Debug so the credential never lands in logs or panic output.
+impl std::fmt::Debug for CollectorApiClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CollectorApiClientConfig")
+            .field("ingest_url", &self.ingest_url)
+            .field("credential", &"<redacted>")
+            .field("timeout", &self.timeout)
+            .field("retry", &self.retry)
+            .finish()
+    }
 }
 
 impl CollectorApiClientConfig {

@@ -391,10 +391,13 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.pricing == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
 
@@ -430,10 +433,13 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.agent-ingest == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
 
@@ -472,10 +478,13 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [changes]
     if: needs.changes.outputs.agent-consumer == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
 

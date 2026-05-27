@@ -287,7 +287,8 @@ describe('POST /v1/ingest', () => {
     const res = await post(env, JSON.stringify(leaky), authHeaders);
     expect(res.status).toBe(202);
 
-    const enqueued = queueSend.mock.calls[0]?.[0] as AgentIngestQueueMessage;
+    expect(queueSend).toHaveBeenCalledTimes(1);
+    const enqueued = queueSend.mock.calls[0]![0] as AgentIngestQueueMessage;
     const tool = enqueued.facts.tool_events[0]!;
     expect(tool.command_excerpt).toBe('');
     expect(tool.dropped_sensitive).toBeGreaterThanOrEqual(1);

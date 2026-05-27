@@ -16,11 +16,13 @@ pub fn home_dir() -> Result<PathBuf> {
 /// canonicalization or traversal checks: `expand_home("~/../etc")` keeps the `..` components, so a
 /// caller that feeds this untrusted input must validate the result before touching the filesystem.
 pub fn expand_home(path: &str) -> Result<PathBuf> {
-    if path == "~" {
-        return home_dir();
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        return Ok(home_dir()?.join(rest));
+    if cfg!(unix) {
+        if path == "~" {
+            return home_dir();
+        }
+        if let Some(rest) = path.strip_prefix("~/") {
+            return Ok(home_dir()?.join(rest));
+        }
     }
     Ok(PathBuf::from(path))
 }

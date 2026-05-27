@@ -63,12 +63,23 @@ where
             let Ok((mut stream, _)) = listener.accept().await else {
                 break;
             };
-            let mut header_buf = vec![0u8; 8192];
-            let n = stream.read(&mut header_buf).await.unwrap_or(0);
-            header_buf.truncate(n);
+            // Accumulate reads until the whole request (headers + body) has arrived; a single `read`
+            // can return a partial buffer and truncate the body a test wants to decode.
+            let mut header_buf = Vec::with_capacity(8192);
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                header_buf.extend_from_slice(&chunk[..n]);
+                if request_complete(&header_buf) || header_buf.len() > (1 << 20) {
+                    break;
+                }
+            }
 
-            // reqwest sends the body Transfer-Encoding: chunked — `strip_chunked()` removes that
-            // framing in the tests that inspect the body.
+            // `strip_chunked()` is defensive: it strips chunk framing if present, and is a no-op for
+            // the Content-Length body reqwest actually sends here.
             let response = handler(header_buf);
             stream.write_all(response.as_bytes()).await.unwrap();
             stream.shutdown().await.unwrap();
@@ -376,7 +387,33 @@ fn find_body_start(raw: &[u8]) -> Option<usize> {
     raw.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
 }
 
-// reqwest uses chunked transfer encoding. Strip the chunk-size hex line if present.
+// A request is fully received once the end-of-headers marker is present and the body is complete.
+// reqwest sends our fixed `Vec<u8>` body with `Content-Length`, so completion means the received body
+// has reached that length; a chunked body (no Content-Length) ends with the zero-length chunk.
+fn request_complete(buf: &[u8]) -> bool {
+    let Some(start) = find_body_start(buf) else {
+        return false;
+    };
+    match content_length(buf) {
+        Some(len) => buf.len() - start >= len,
+        None => buf[start..].ends_with(b"0\r\n\r\n"),
+    }
+}
+
+// Parse the Content-Length header value from the request head, if present.
+fn content_length(buf: &[u8]) -> Option<usize> {
+    let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let head = std::str::from_utf8(&buf[..head_end]).ok()?;
+    head.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    })
+}
+
+// Strip the chunk-size hex line if a body happens to be chunk-framed; a no-op otherwise.
 fn strip_chunked(body: &[u8]) -> Vec<u8> {
     if body.is_empty() {
         return body.to_vec();

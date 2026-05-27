@@ -383,6 +383,9 @@ export const syncDefaults = action({
 
 const MODELS_DEV_API_URL = 'https://models.dev/api.json';
 
+// Bound the fetch so a hung models.dev never wedges the daily cron action.
+const MODELS_DEV_FETCH_TIMEOUT_MS = 15_000;
+
 /** models.dev re-lists ~25 gateway providers; pin only the first parties (ADR + ROADMAP watch-item). */
 const MODELS_DEV_FIRST_PARTY_PROVIDERS = ['anthropic', 'openai'] as const;
 
@@ -484,7 +487,9 @@ export const importFromModelsDevInternal = internalAction({
   args: {},
   returns: v.object({ imported: v.number(), skipped: v.number() }),
   handler: async (ctx) => {
-    const response = await fetch(MODELS_DEV_API_URL);
+    const response = await fetch(MODELS_DEV_API_URL, {
+      signal: AbortSignal.timeout(MODELS_DEV_FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new Error(`models.dev API error: ${response.status}`);
     }
