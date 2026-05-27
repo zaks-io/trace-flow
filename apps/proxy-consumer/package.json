@@ -20,6 +20,7 @@
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/otel-conventions": "workspace:*",
     "@trace-flow/pricing": "workspace:*",
+    "@trace-flow/tinybird-client": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*"
   },

@@ -34,6 +34,9 @@ export const syncToKV = internalAction({
       cacheWriteCostPerMillion: pricing.cacheWriteCostPerMillion,
       cacheWrite1hCostPerMillion: pricing.cacheWrite1hCostPerMillion,
       reasoningCostPerMillion: pricing.reasoningCostPerMillion,
+      // The consumer's `@trace-flow/pricing` reads `contextTier` to swap in tier rates above the
+      // threshold; dropping it here would silently undercount gpt-5.5 / large-context messages.
+      contextTier: pricing.contextTier,
       updatedAt: pricing.updatedAt,
       source: pricing.source,
     });

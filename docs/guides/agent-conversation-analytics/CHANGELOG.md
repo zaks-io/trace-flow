@@ -15,6 +15,216 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3c (`collector-api-client` + `collector-common`) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Two new Rust crates, both vendored from Otto with SPDX/provenance headers.
+`collector-api-client` posts an `AgentIngestEnvelope` to `POST /v1/ingest`: gzips the request body
+(manual `flate2`, since reqwest's `.gzip(true)` only decompresses responses), classifies every
+`agent-ingest` status code into `IngestError`/`IngestOk`, and retries **only** `503 policy_unavailable`
+with capped exponential backoff (cancellation-aware). `collector-common` resolves the
+Claude/Codex/Cursor on-disk paths, including the macOS Cursor `workspaceStorage` root.
+**Auth-header reconciliation:** the ADR shorthand said "`Bearer` Collector Credential (not Otto
+Basic)," but the landed 2b worker reads the raw secret from `X-Trace-Flow-Collector-Secret`
+(`apps/agent-ingest/src/auth.ts` hashes it and looks it up in `COLLECTOR_CREDS` KV). The client now
+sends that header verbatim — "Bearer, not Basic" was shorthand for "a credential, not Basic," not a
+literal `Authorization: Bearer`. ROADMAP 3c wording corrected to match the as-built worker.
+**Verified:** `cargo test` 13 pass (7 api-client incl. auth-header shape, gzip round-trip, retry-only-
+on-`policy_unavailable`, terminal-on-`enqueue_failed`/`upgrade_required`/`rate_limited`, and an
+in-flight cancellation test; 6 collector-common path tests); `cargo clippy --all-targets -D warnings`
+clean; `cargo fmt --check` clean. CodeRabbit CLI run to the 4-pass cap; every valid finding fixed
+(cast simplification, unreachable retry-loop tail → `unreachable!()`, dropped unsafe `HOME` mutation
+in tests for env-free assertions, doc comments). One "major" — swap `dirs` for `dirs-next` — was
+**rejected**: `dirs` is maintained (v6 published) while `dirs-next` is frozen at 2.0.0 (2021); the
+swap would regress to an abandoned crate.
+**Next / blockers:** 3a (`collector-parser`) and 3b (`collector-sync`) still `☐`; 3d end-to-end needs
+2e + 3a + 3b + 3c. PR #270 (Phase 2 → main) auto-updates with this push.
+
+## 2026-05-26 — 2g (PR CI for new TS packages) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** `.github/workflows/ci.yml` now gates the three packages the slice-B build added.
+`changes` gains `pricing`, `agent-ingest`, `agent-consumer` paths-filter outputs (each globs its own
+dir plus its in-repo deps — `pricing`: `packages/types`; `agent-ingest`: `packages/types`/`utils`/`logging`;
+`agent-consumer`: `packages/types`/`logging`/`pricing`/`tinybird-client`); `packages/pricing/**` is also
+added to the **existing** `proxy-consumer` filter since proxy-consumer now imports the extracted package.
+Three new jobs run on a matching change: `pricing` (Format check/Lint/Type check/Test, no build — it has
+no build script) and `agent-ingest` + `agent-consumer` (those four plus Build), each mirroring the
+existing per-package jobs. All three are added to `status.needs`, so a failure in any propagates through
+`contains(needs.*.result, 'failure')`. Before 2g a PR touching only these packages matched no filter, ran
+no typed job, and `status` went green regardless — the first compile happened post-merge in `deploy.yml`'s
+`ci` job, where a type error blocks all production deploys. That false green is closed.
+**Verified:** `actionlint .github/workflows/ci.yml` clean; `bunx turbo run lint type-check test build`
+across all three filters → 11/11 tasks pass. Negative check: appending a type error to
+`packages/pricing/src/index.ts` made `@trace-flow/pricing#type-check` exit 2 (`run failed: command exited
+(2)`), proving the job fails (not a false green) and that `status` would red-X; reverted clean.
+CodeRabbit CLI `--type uncommitted` at repo root → **0 findings** (an initial `--dir .github/workflows`-scoped
+run flagged the agent apps as "non-existent", a sandbox-scope artifact — the apps exist under `apps/`).
+**Next / blockers:** Phase 2 complete on this branch except 2f's live-alert provisioning (🚧, dashboard-only).
+Open a PR to `main` for the Phase 2 boundary (no self-merge). Then Phase 3 (`3a` collector-parser).
+
+## 2026-05-26 — 2f (Observability + ops runbook) — t3code/ab83918d
+
+**Status:** 🚧 in progress — in-repo code + runbook landed and verified; live-alert provisioning is the
+one outstanding item (needs dashboard access, not reachable headlessly).
+**Changed:** `apps/agent-consumer/src/consumer.ts` now calls `Sentry.captureException` on the two
+swallowed error paths (insert failure — tagged `operation:insert` + `datasource`; per-message
+accumulate throw — tagged `operation:accumulate`) and `Sentry.captureMessage` on the structural-guard
+contract-drift path (`agent_consumer.message_malformed`, the DLQ-bound signal). The batch loop catches
+these to retry rather than rethrow, so without manual capture they would never reach Sentry; the
+`withSentry` queue wrapper initializes the client per invocation so the manual calls report (documented
+in `index.ts`). `apps/agent-ingest/src/policy.ts` adds the missing `agent_ingest.policy_unavailable`
+error log on the cold-miss fail-closed return (no silent error). New
+`docs/guides/agent-conversation-analytics/runbook.md`: DLQ inspect (`wrangler queues info`) /
+re-drive (temporary HTTP pull consumer, idempotent under `ReplacingMergeTree FINAL`) / purge; the three
+alert definitions as a contract (DLQ-non-empty via Cloudflare; consumer-error-rate via Sentry tags;
+priced-coverage% via a Tinybird `countIf(cost_usd IS NOT NULL)/count(*)` drop-vs-baseline query); the
+`tb`/`wrangler` teardown including what `git revert` does **not** undo; and the manual 1d Tinybird
+schema-deploy (`tb --cloud deploy`, not in CI). `provisioned-resources.md` deploy-gate section corrected
+to past tense (2e lifted it) and its teardown stub pointed at the runbook.
+**Verified:** `turbo run lint type-check test build` on both workers — 8/8 pass; agent-consumer 41
+tests (insert-failure asserts `captureException` with the `operation:insert` tag, malformed asserts
+`captureMessage`), agent-ingest 65 tests (+1 asserting the `policy_unavailable` log fires before the
+fail-closed return). `coderabbit review --agent --type uncommitted`: 0 findings. prettier clean on the
+docs. **NOT verified (blocked, needs the user):** the three alerts firing live — there is no
+alert-as-code path in this repo, so DLQ-non-empty (Cloudflare), consumer-error-rate (Sentry), and
+priced-coverage% (Tinybird) must be provisioned in their dashboards from the runbook's definitions and
+fire-tested there. Forced-error→Sentry and coverage-drop→alert can only be exercised against the
+deployed dev workers + live Tinybird, not headlessly.
+**Next / blockers:** provision + fire-test the three dashboard alerts (human ops), then flip 2f to ✅.
+Continuing to 2g (independent of 2f). Phase 2 PR to `main` at the boundary — no self-merge.
+
+## 2026-05-26 — 2e (Wrangler / dev wiring) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Bound the 0d-provisioned dev resources and lifted the deploy-gate on both agent workers.
+`apps/agent-ingest/wrangler.jsonc` now binds the real `COLLECTOR_CREDS` KV namespace
+(`f945ee3d71954ffabd364e3db385d3ab`) instead of the all-zero placeholder. Added both workers to
+`dev:all` in the root `package.json` under the shared `--persist-to .wrangler/state` so the
+producer/consumer share the `agent-ingest-dev` queue locally. Made `deploy:preview` valid: agent-ingest
+flipped from `wrangler deploy --env preview` (no such env) to plain `wrangler deploy`, and agent-consumer
+gained `deploy`/`deploy:dev`/`deploy:preview` (all flat `wrangler deploy`). Added `deploy-agent-ingest`
+and `deploy-agent-consumer` jobs to `.github/workflows/deploy.yml` (mirror the proxy-consumer job but
+`command: deploy` — no `--env production`, since the config is flat dev) and listed both in
+`deploy-status.needs`. `preview.yml` needs no edit: its `turbo run deploy:preview --filter=./apps/*`
+auto-discovers the now-valid scripts. Refreshed both wrangler.jsonc header comments to say they are wired
+into CI. Deploys are flat (dev-named workers, dev resources) because slice B has no production agent
+pipeline yet — both `deploy.yml` (on main) and `preview.yml` (on PR) target the same `*-dev` workers.
+**Verified:** `wrangler deploy --dry-run` builds clean for both workers with correct bindings (ingest
+shows the real `COLLECTOR_CREDS` id + `AGENT_QUEUE`→`agent-ingest-dev`; consumer shows `MODEL_PRICING`).
+`bun run dev:all` boots all five workers under one `--persist-to`; both agent workers register and the
+producer's `AGENT_QUEUE` and the consumer share the `agent-ingest-dev` queue name (enqueue→deliver wired
+locally). `turbo run lint type-check test build` on both workers: 8/8 tasks pass (agent-ingest 64 tests).
+`coderabbit review --agent --type uncommitted`: 0 findings. Did **not** drive a live authed envelope
+through to a Tinybird insert — that needs a seeded local Collector Credential + the dev Tinybird token
+and is covered by the 2b/2c handler suites plus the structural queue-name match.
+**Next / blockers:** 2f (observability + ops runbook). Phase 2 boundary after 2g → open PR to `main`
+(no self-merge).
+
+## 2026-05-26 — 2d (models.dev pricing import) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** `packages/convex/billing/modelPricing.ts` gains `importFromModelsDevInternal` (daily-cron
+`internalAction`) plus an admin-gated public `importFromModelsDev` wrapper, mirroring `importFromOpenRouter`.
+It fetches `models.dev/api.json`, imports **first-party `anthropic`/`openai` only**, converts dollars/M →
+microdollars/M via the exported pure `convertModelsDevModel`, maps the `context`-type tier (e.g. `gpt-5.5`
+over 272k tokens) into a new optional `contextTier` shape, and `upsertInternal`s each model keyed verbatim
+by its models.dev key (dated + undated both published, so `getPricing`'s exact-then-date-stripped lookup
+resolves either), then schedules per-model `syncToKV`. Cost-less entries (the 4 OpenAI image models) skip
+and resolve null; `codex-auto-review`/Cursor house models are intentionally NOT aliased (resolve null per
+ADR). `schema.ts` + pricing types (`pricing.ts`) gain `contextTier` + the `'models.dev'` source literal;
+`pricingSync.ts` carries `contextTier` into the KV payload; `crons.ts` registers the daily 06:30 UTC import.
+**Verified:** `bunx convex dev --once` push (regenerated `_generated`); `bunx convex run
+billing/modelPricing:importFromModelsDevInternal` → `{imported: 71, skipped: 4}`; `getInternal` resolves
+`anthropic/claude-opus-4-7` ($5/$25/$0.5/$6.25 per M → microdollars) and `openai/gpt-5.5` (base rates +
+`contextTier` threshold 272000 with $10/$45/$1) non-null, unknown model → null. `turbo run lint type-check
+test` green (convex 479 + pricing); 5 new `convertModelsDevModel` unit tests. CodeRabbit `--type
+uncommitted`: 0 findings.
+**Next / blockers:** Phase 2 continues — 2e (Wrangler/dev wiring, incl. the missing agent-ingest/agent-consumer
+deploy + preview jobs), 2f, 2g. Open a PR to `main` at the Phase 2 boundary (no self-merge).
+
+---
+
+## 2026-05-26 — 2c (`apps/agent-consumer` worker) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** New `apps/agent-consumer` CF Worker that drains `AGENT_QUEUE`, prices each Agent Message,
+and writes one batched insert per base `agent_*` datasource. Stateless (no batching Durable Object,
+unlike `proxy-consumer`) — redelivery is idempotent under `ReplacingMergeTree(IngestedAt)` FINAL, so a
+re-POST collapses. `consumer.ts`: per-message try/catch — a malformed body (structural `isQueueMessage`
+guard fails) logs `agent_consumer.message_malformed` and `retry()`s (exhausts to the DLQ, never
+acked-and-dropped); a thrown mapper logs `message_process_failed` + retry; an all-malformed batch logs
+`batch_all_malformed`. `flush()` issues one `insertRows` per non-empty datasource via `Promise.allSettled`;
+**any** insert failure retries **every** contributing message (no ack, no silent drop — safe because
+re-POST dedupes). `pricing.ts`: `PriceCache` reads the `MODEL_PRICING` catalog **once per distinct
+`(provider, model)` per batch** (caches `null` too), so a backfill is O(distinct models), not O(messages);
+`priceMessage` returns `null` (the only Nullable column) iff `token_coverage === 'missing'` or the model
+has no rate — `claude→anthropic`, `codex→openai`, `cursor` unresolved until 2d. `rows.ts`: maps wire facts
+to the exact datasource columns (CamelCase tenancy/timestamps, snake_case rest), `DateTime64(3)` literals
+`"YYYY-MM-DD HH:MM:SS.mmm"`, bool→UInt8, wire `null`→non-null sentinels (`''`/`0`/epoch). The queue handler
+takes `MessageBatch<unknown>` (untrusted bytes; the consumer validates). Transport core extracted to the
+shared **`@trace-flow/tinybird-client`** (`insertRows` + `shouldRetryTinybirdInsert` + `TinybirdInsertError`);
+`proxy-consumer/src/tinybird.ts` rewritten to call it (its local fetch/retry/error removed), `proxy-consumer`
+gains the workspace dep. **No deploy/preview scripts** on `agent-consumer` (0d gate; 2e adds the deploy +
+preview jobs and must also reconcile `agent-ingest`'s existing deploy scripts). Files: `apps/agent-consumer/`
+(`index.ts`, `context.ts`, `consumer.ts`, `pricing.ts`, `rows.ts`, configs, `src/__tests__/`),
+`packages/tinybird-client/` (`insertRows.ts` + test, `errors.ts`, `index.ts`), `apps/proxy-consumer/`
+(`tinybird.ts`, `package.json`), `bun.lock`.
+**Verified:** `bunx turbo run lint type-check test build --filter=@trace-flow/agent-consumer
+--filter=@trace-flow/proxy-consumer --filter=@trace-flow/tinybird-client` → all green. **agent-consumer 41
+tests** (priced+ack happy path, constant-cost fixture sums to the exact per-message total, unpriced→null,
+missing-coverage→null, 50-msg backfill → 1 KV read, 2 models → 2 reads, malformed→retry/no-insert, sibling
+isolation, insert-fail→retry-all/no-ack, one insert per non-empty datasource, empty-facts→ack; rows emit
+exactly each schema's columns + sentinels; pricing context-tier boundary + null caching). **proxy-consumer
+112 tests** green (transport-extraction regression). **tinybird-client 18 tests** (NDJSON POST,
+URL-encoded datasource, `TinybirdInsertError` fields, retry classifier). CodeRabbit CLI: pass 1 → 4 trivial
+findings (applied `vi.stubGlobal` + all-malformed log; skipped per-datasource retry granularity — retry-all
+is correct under FINAL idempotency — and `toClickhouseDateTime64` range-guard — `toISOString()` already
+throws → retry/DLQ, and the suggested `<0` bound rejects valid pre-epoch). Pass 2 → **0 findings**.
+**Next / blockers:** Live `agent_messages FINAL` confirmation (priced rows, exact constant-cost sum,
+re-post unchanged) is **not** headless-reachable; it runs in **2e** (`dev:all` + deployed `agent-ingest`/
+`agent-consumer`) against the **1d** schema. Phase 2 still open: **2d** (models.dev pricing import, resolves
+Cursor null cost), **2e** (Wrangler/dev wiring — add `agent-ingest`+`agent-consumer` deploy+preview jobs to
+`deploy.yml`/`preview.yml` + `deploy-status.needs`, wire `AGENT_QUEUE`/DLQ/`COLLECTOR_CREDS`, add both to
+`dev:all` `-c` with shared `--persist-to`, lift the 0d gate, **before** any Phase-2 merge; reconcile
+`agent-ingest`'s deploy scripts), **2f** (observability+runbook), **2g** (PR CI: add `pricing`/`agent-ingest`/
+`agent-consumer`/`tinybird-client` to `ci.yml` + add `packages/pricing`/`packages/tinybird-client` to the
+`proxy-consumer` filter). **No PR / no merge** — Phase 2 incomplete.
+
+## 2026-05-26 — 2b (`apps/agent-ingest` worker) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** New `apps/agent-ingest` CF Worker (mirrors `apps/proxy` layout, Sentry-wrapped Hono `app`).
+`POST /v1/ingest` gate order (cheap → control-plane → work): auth (`X-Trace-Flow-Collector-Secret` vs
+`COLLECTOR_CREDS` KV) → Content-Length pre-check + 10MB body cap (413) → JSON parse + structural envelope
+guard (400) → compatibility policy (503 `policy_unavailable` cold-miss fail-closed, stale-while-degraded
+otherwise) → version check (426 `upgrade_required`) → `AGENT_INGEST_LIMITER` ns **2006** (429) → empty-facts
+202 no-op → re-redact backstop → assemble `*_pk`s → Convex first-writer claim (503 `session_claim_unavailable`
+when unreachable, drop only conflicted sessions) → chunk to sub-128KB queue messages → `AGENT_QUEUE.send`
+(`Promise.allSettled`, any failure → 503 `enqueue_failed`, never a false 202). Bindings required (no defensive
+optionals); every failure logs before returning; logger flushed in `finally`. Files: `index.ts`, `context.ts`,
+`auth.ts`, `policy.ts`, `ids.ts`, `ownership.ts`, `chunker.ts`, `redaction.ts`, `handler.ts`, `wrangler.jsonc`,
+`package.json`, `tsconfig.json`, `vitest.config.ts`, plus `src/__tests__/` (factories + per-module specs).
+`redaction.ts` is the server re-redact backstop: pass order mask → drop → residual-PII (load-bearing, see
+file JSDoc), validated against the shared `fixtures/redaction-canary.json` (0a). Trust-boundary hardening:
+runtime guards on the cred KV value, the fetched policy, and each Convex claim item — all fail closed.
+Denylist check normalizes the same `v`-prefix as the min-version gate (closes a bypass). `bun.lock` gains the
+`@trace-flow/agent-ingest` workspace entry (vitest pinned `^3.2.4` to match the other pool-workers siblings;
+`api`'s vitest 4.x tree intact).
+**Verified:** `bunx turbo run lint type-check test build --filter=@trace-flow/agent-ingest` → all green, **64
+tests pass** (failure paths 401/413/400/426/429/503×N/202, re-redact wiring, canary corpus, chunker packing +
+CATEGORIES drift guard, id determinism/fallbacks, policy semver/denylist/degrade). CodeRabbit CLI: 4 passes
+(cap); applied all valid findings (allSettled enqueue, ownership/policy/cred/envelope runtime validation,
+denylist normalization, redaction count accuracy, capExcerpt surrogate-safety, control-plane fetch timeouts);
+skipped sibling-consistency / out-of-lane items (per-pkg `--persist-to` → 2e, `deploy:dev` matches siblings,
+Stripe matcher not in the canary contract, ids parallelization). `api` gates re-run green to confirm the lock
+hoist shift was benign.
+**Next / blockers:** Worker is built + unit-verified but **not yet wired** — no queue/KV binding IDs, not in
+`dev:all`, not in CI deploy (correct: 0d gate holds until 2e). Next claimable: **2c** (`apps/agent-consumer`,
+deps 0c/1a/2b ✅) or **2d** (models.dev import, deps 0c/2a ✅). **2e MUST** add agent-ingest/agent-consumer
+deploy+preview jobs (+ `deploy-status.needs`), wire `AGENT_QUEUE`/DLQ/`COLLECTOR_CREDS`/`AGENT_INGEST_SHARED_SECRET`,
+and add both to `dev:all -c` with shared `--persist-to` before any Phase-2 merge. Phase 2 incomplete → **no PR/merge**.
+
 ## 2026-05-26 — 2a (Convex control plane) — t3code/ab83918d
 
 **Status:** ✅ done

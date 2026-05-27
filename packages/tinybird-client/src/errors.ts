@@ -14,3 +14,16 @@ export class TinybirdQueryError extends Error {
     this.status = status;
   }
 }
+
+/** A non-2xx response from the Events API insert endpoint. `status` drives retry classification. */
+export class TinybirdInsertError extends Error {
+  readonly status: number;
+  readonly responseText: string;
+
+  constructor(status: number, responseText: string) {
+    super(`Tinybird insert failed: ${status} ${responseText}`);
+    this.name = 'TinybirdInsertError';
+    this.status = status;
+    this.responseText = responseText;
+  }
+}

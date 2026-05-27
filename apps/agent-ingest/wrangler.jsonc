@@ -1,0 +1,36 @@
+{
+  // Agent Collector ingest Worker. Authenticates the Collector Credential, assembles canonical
+  // *_pk surrogates + repo_fingerprint, claims session ownership, and enqueues sub-128KB messages
+  // for the agent consumer (2c). Wired into the CI deploy matrix in 2e: deploy.yml runs an explicit
+  // deploy job and preview.yml auto-discovers the `deploy:preview` script. Deploys flat (dev-named,
+  // dev resources) — slice B has no production agent pipeline yet.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trace-flow-agent-ingest-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-11-27",
+  "compatibility_flags": ["nodejs_compat", "no_nodejs_compat_v2"],
+  "upload_source_maps": true,
+  "observability": { "enabled": true },
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "vars": {
+    "SENTRY_ENVIRONMENT": "development",
+  },
+  // Secrets (set via `wrangler secret` / CI, never committed):
+  //   CONVEX_SITE_URL, AGENT_INGEST_SHARED_SECRET, SENTRY_DSN
+  //
+  // COLLECTOR_CREDS holds the Convex-synced Collector Credential records (see 2a syncCollectorCredToKV).
+  // Bound to the 0d-provisioned dev namespace (see provisioned-resources.md).
+  "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "f945ee3d71954ffabd364e3db385d3ab" }],
+  "queues": {
+    "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }],
+  },
+  // Per-org ingest burst limit. namespace_id 2006 is reserved for AGENT_INGEST_LIMITER
+  // (2001-2005 are taken; see the rate-limit budget registry). Keyed by orgId, mirrors ORG_LIMITER.
+  "ratelimits": [
+    {
+      "name": "AGENT_INGEST_LIMITER",
+      "namespace_id": "2006",
+      "simple": { "limit": 120, "period": 60 },
+    },
+  ],
+}

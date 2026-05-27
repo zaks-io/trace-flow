@@ -1,0 +1,325 @@
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { createExecutionContext, fetchMock, waitOnExecutionContext } from 'cloudflare:test';
+import { sha256Hex } from '@trace-flow/utils';
+import type { AgentIngestQueueMessage, AgentToolEventFact } from '@trace-flow/types';
+import { app } from '../index';
+import { __resetPolicyCache, type CompatibilityPolicy } from '../policy';
+import type { AgentIngestEnv } from '../context';
+import type { ClaimStatus } from '../ownership';
+import { envelope, emptyFacts, facts, toolEventFact } from './factories';
+
+const CONVEX = 'https://convex.test';
+const SECRET = 'valid-collector-secret';
+
+const POLICY: CompatibilityPolicy = {
+  minDesktopVersion: '1.0.0',
+  minParserVersion: '1.0.0',
+  denylistedVersions: [],
+  updatedAt: 1_700_000_000_000,
+};
+
+function makeKv(entries: Record<string, string>): KVNamespace {
+  return {
+    get: async (key: string) => entries[key] ?? null,
+  } as unknown as KVNamespace;
+}
+
+interface EnvOverrides {
+  creds?: Record<string, string>;
+  limitSuccess?: boolean;
+  queueSend?: ReturnType<typeof vi.fn>;
+}
+
+async function validCredEntries(
+  over: Partial<Record<string, unknown>> = {},
+): Promise<Record<string, string>> {
+  const key = `collector:${await sha256Hex(SECRET)}`;
+  return {
+    [key]: JSON.stringify({
+      orgId: 'org-1',
+      userId: 'user-1',
+      collectorId: 'collector-1',
+      expiresAt: Date.now() + 3_600_000,
+      status: 'active',
+      createdAt: Date.now(),
+      ...over,
+    }),
+  };
+}
+
+function makeEnv(over: EnvOverrides = {}): {
+  env: AgentIngestEnv;
+  queueSend: ReturnType<typeof vi.fn>;
+} {
+  const queueSend = over.queueSend ?? vi.fn(async () => {});
+  const env = {
+    COLLECTOR_CREDS: makeKv(over.creds ?? {}),
+    AGENT_QUEUE: { send: queueSend } as unknown as Queue<AgentIngestQueueMessage>,
+    AGENT_INGEST_LIMITER: {
+      limit: async () => ({ success: over.limitSuccess ?? true }),
+    } as unknown as RateLimit,
+    CONVEX_SITE_URL: CONVEX,
+    AGENT_INGEST_SHARED_SECRET: 'shared-secret',
+  } satisfies AgentIngestEnv;
+  return { env, queueSend };
+}
+
+function interceptPolicy(status: number, body: unknown): void {
+  fetchMock
+    .get(CONVEX)
+    .intercept({ path: '/agent-ingest/compatibility-policy', method: 'GET' })
+    .reply(status, typeof body === 'string' ? body : JSON.stringify(body));
+}
+
+function interceptClaim(opts: { httpStatus?: number; claim?: ClaimStatus }): void {
+  const i = fetchMock
+    .get(CONVEX)
+    .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' });
+  if (opts.httpStatus && opts.httpStatus !== 200) {
+    i.reply(opts.httpStatus, JSON.stringify({ error: 'down' }));
+    return;
+  }
+  i.reply(200, (o) => {
+    const parsed = JSON.parse(o.body ?? '{}') as { sessionPks: string[] };
+    return JSON.stringify({
+      results: parsed.sessionPks.map((sessionPk) => ({
+        sessionPk,
+        status: opts.claim ?? 'claimed',
+        ownerUserId: 'user-1',
+      })),
+    });
+  });
+}
+
+async function post(
+  env: AgentIngestEnv,
+  body: string,
+  headers: Record<string, string>,
+): Promise<Response> {
+  const req = new Request('https://ingest.test/v1/ingest', { method: 'POST', headers, body });
+  const ctx = createExecutionContext();
+  const res = await app.fetch(req, env, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
+}
+
+const authHeaders = { 'X-Trace-Flow-Collector-Secret': SECRET, 'Content-Type': 'application/json' };
+
+describe('POST /v1/ingest', () => {
+  beforeAll(() => {
+    fetchMock.activate();
+    fetchMock.disableNetConnect();
+  });
+
+  beforeEach(() => {
+    __resetPolicyCache();
+  });
+
+  it('401s when the collector secret is missing', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, JSON.stringify(envelope()), { 'Content-Type': 'application/json' });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ reason: 'missing' });
+  });
+
+  it('401s when the secret does not resolve to a credential', async () => {
+    const { env } = makeEnv({ creds: {} });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ reason: 'invalid' });
+  });
+
+  it('401s a revoked credential', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries({ status: 'revoked' }) });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ reason: 'revoked' });
+  });
+
+  it('401s an expired credential', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries({ expiresAt: Date.now() - 1000 }) });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ reason: 'expired' });
+  });
+
+  it('401s a credential record whose shape is malformed (missing expiresAt)', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries({ expiresAt: undefined }) });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ reason: 'invalid' });
+  });
+
+  it('413s an oversized body', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const huge = `{"x":"${'a'.repeat(10 * 1024 * 1024 + 16)}"}`;
+    const res = await post(env, huge, authHeaders);
+    expect(res.status).toBe(413);
+  });
+
+  it('400s malformed JSON', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, 'not json', authHeaders);
+    expect(res.status).toBe(400);
+  });
+
+  it('400s an envelope missing batch/facts', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, '{}', authHeaders);
+    expect(res.status).toBe(400);
+  });
+
+  it('400s a structurally present but malformed envelope (empty batch + facts)', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    const res = await post(env, JSON.stringify({ batch: {}, facts: {} }), authHeaders);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+  });
+
+  it('400s a fact element missing its required fields (per-element shape, before the policy fetch)', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    const bad = envelope({ facts: facts({ tool_events: [{} as unknown as AgentToolEventFact] }) });
+    const res = await post(env, JSON.stringify(bad), authHeaders);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('503s when the compatibility policy is unavailable on a cold miss', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(503, { error: 'down' });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'policy_unavailable' });
+  });
+
+  it('426s a client below the minimum version', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, { ...POLICY, minDesktopVersion: '2.0.0' });
+    const env426 = envelope();
+    env426.batch.desktop_version = '0.1.0';
+    const res = await post(env, JSON.stringify(env426), authHeaders);
+    expect(res.status).toBe(426);
+    expect(await res.json()).toMatchObject({
+      error: 'upgrade_required',
+      detail: 'desktop_below_min',
+    });
+  });
+
+  it('429s when over the per-org rate limit', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries(), limitSuccess: false });
+    interceptPolicy(200, POLICY);
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(429);
+  });
+
+  it('202s an empty-facts batch without enqueuing', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    const res = await post(env, JSON.stringify(envelope({ facts: emptyFacts() })), authHeaders);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ sessions: 0 });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('drops every conflicted session and 202s a no-op', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'conflict' });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ sessions: 0, skipped_conflict: 1 });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('503s when session ownership claim is unreachable', async () => {
+    const { env } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ httpStatus: 500 });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'session_claim_unavailable' });
+  });
+
+  it('503s when the claim response is malformed (fails closed, never assumes ownership)', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    fetchMock
+      .get(CONVEX)
+      .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' })
+      .reply(200, JSON.stringify({ results: [{ status: 'claimed' }] })); // missing sessionPk
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'session_claim_unavailable' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('503s when the claim response covers a session that was never requested (fails closed)', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    fetchMock
+      .get(CONVEX)
+      .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' })
+      .reply(
+        200,
+        JSON.stringify({
+          results: [
+            { sessionPk: 'not-the-requested-pk', status: 'claimed', ownerUserId: 'user-1' },
+          ],
+        }),
+      );
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'session_claim_unavailable' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('503s when enqueue fails', async () => {
+    const queueSend = vi.fn(async () => {
+      throw new Error('queue down');
+    });
+    const { env } = makeEnv({ creds: await validCredEntries(), queueSend });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'enqueue_failed' });
+  });
+
+  it('202s the happy path and enqueues the claimed session', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ sessions: 1 });
+    expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-redacts free-text excerpts and increments dropped_sensitive before enqueue', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const leaky = envelope({
+      facts: facts({
+        tool_events: [
+          toolEventFact({
+            command_excerpt: 'export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+            dropped_sensitive: 0,
+          }),
+        ],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+    const res = await post(env, JSON.stringify(leaky), authHeaders);
+    expect(res.status).toBe(202);
+
+    expect(queueSend).toHaveBeenCalledTimes(1);
+    const enqueued = queueSend.mock.calls[0]![0] as AgentIngestQueueMessage;
+    const tool = enqueued.facts.tool_events[0]!;
+    expect(tool.command_excerpt).toBe('');
+    expect(tool.dropped_sensitive).toBeGreaterThanOrEqual(1);
+  });
+});

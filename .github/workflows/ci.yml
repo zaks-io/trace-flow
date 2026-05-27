@@ -25,6 +25,9 @@ jobs:
       utils: ${{ steps.filter.outputs.utils }}
       types: ${{ steps.filter.outputs.types }}
       convex: ${{ steps.filter.outputs.convex }}
+      pricing: ${{ steps.filter.outputs.pricing }}
+      agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
+      agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
       root: ${{ steps.filter.outputs.root }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
@@ -44,6 +47,7 @@ jobs:
               - 'apps/proxy-consumer/**'
               - 'packages/utils/**'
               - 'packages/types/**'
+              - 'packages/pricing/**'
             api:
               - 'apps/api/**'
               - 'packages/types/**'
@@ -59,6 +63,20 @@ jobs:
               - 'packages/types/**'
             convex:
               - 'packages/convex/**'
+            pricing:
+              - 'packages/pricing/**'
+              - 'packages/types/**'
+            agent-ingest:
+              - 'apps/agent-ingest/**'
+              - 'packages/types/**'
+              - 'packages/utils/**'
+              - 'packages/logging/**'
+            agent-consumer:
+              - 'apps/agent-consumer/**'
+              - 'packages/types/**'
+              - 'packages/logging/**'
+              - 'packages/pricing/**'
+              - 'packages/tinybird-client/**'
             root:
               - 'package.json'
               - 'bun.lock'
@@ -368,6 +386,138 @@ jobs:
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
         run: bunx turbo run build --filter=@trace-flow/web
 
+  pricing:
+    name: Pricing Package
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [changes]
+    if: needs.changes.outputs.pricing == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun prettier --check "packages/pricing/**/*.{ts,tsx,js,jsx,json}"
+
+      - name: Lint
+        run: bunx turbo run lint --filter=@trace-flow/pricing
+
+      - name: Type check
+        run: bunx turbo run type-check --filter=@trace-flow/pricing
+
+      - name: Test
+        run: bunx turbo run test --filter=@trace-flow/pricing
+
+  agent-ingest:
+    name: Agent Ingest Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [changes]
+    if: needs.changes.outputs.agent-ingest == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun prettier --check "apps/agent-ingest/**/*.{ts,tsx,js,jsx,json}"
+
+      - name: Lint
+        run: bunx turbo run lint --filter=@trace-flow/agent-ingest
+
+      - name: Type check
+        run: bunx turbo run type-check --filter=@trace-flow/agent-ingest
+
+      - name: Test
+        run: bunx turbo run test --filter=@trace-flow/agent-ingest
+
+      - name: Build
+        run: bunx turbo run build --filter=@trace-flow/agent-ingest
+
+  agent-consumer:
+    name: Agent Consumer Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [changes]
+    if: needs.changes.outputs.agent-consumer == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun prettier --check "apps/agent-consumer/**/*.{ts,tsx,js,jsx,json}"
+
+      - name: Lint
+        run: bunx turbo run lint --filter=@trace-flow/agent-consumer
+
+      - name: Type check
+        run: bunx turbo run type-check --filter=@trace-flow/agent-consumer
+
+      - name: Test
+        run: bunx turbo run test --filter=@trace-flow/agent-consumer
+
+      - name: Build
+        run: bunx turbo run build --filter=@trace-flow/agent-consumer
+
   status:
     name: CI Status
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -382,6 +532,9 @@ jobs:
       - proxy-consumer
       - api
       - web
+      - pricing
+      - agent-ingest
+      - agent-consumer
     steps:
       - name: Check job statuses
         run: |

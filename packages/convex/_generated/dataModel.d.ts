@@ -585,11 +585,20 @@ export type DataModel = {
       cacheWrite1hCostPerMillion?: number;
       cacheWriteCostPerMillion?: number;
       completionCostPerMillion: number;
+      contextTier?: {
+        cacheReadCostPerMillion?: number;
+        cacheWrite1hCostPerMillion?: number;
+        cacheWriteCostPerMillion?: number;
+        completionCostPerMillion: number;
+        promptCostPerMillion: number;
+        reasoningCostPerMillion?: number;
+        thresholdTokens: number;
+      };
       model: string;
       promptCostPerMillion: number;
       provider: string;
       reasoningCostPerMillion?: number;
-      source: "manual" | "openrouter" | "default";
+      source: "manual" | "openrouter" | "default" | "models.dev";
       updatedAt: number;
       _id: Id<"modelPricing">;
       _creationTime: number;
@@ -601,6 +610,14 @@ export type DataModel = {
       | "cacheWrite1hCostPerMillion"
       | "cacheWriteCostPerMillion"
       | "completionCostPerMillion"
+      | "contextTier"
+      | "contextTier.cacheReadCostPerMillion"
+      | "contextTier.cacheWrite1hCostPerMillion"
+      | "contextTier.cacheWriteCostPerMillion"
+      | "contextTier.completionCostPerMillion"
+      | "contextTier.promptCostPerMillion"
+      | "contextTier.reasoningCostPerMillion"
+      | "contextTier.thresholdTokens"
       | "model"
       | "promptCostPerMillion"
       | "provider"

@@ -15,4 +15,10 @@ crons.hourly(
   internal.costAlerts.recoverStaleMonitors,
 );
 
+crons.daily(
+  'import model pricing from models.dev',
+  { hourUTC: 6, minuteUTC: 30 },
+  internal.billing.modelPricing.importFromModelsDevInternal,
+);
+
 export default crons;

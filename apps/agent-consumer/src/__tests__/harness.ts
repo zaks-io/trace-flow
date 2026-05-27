@@ -1,0 +1,83 @@
+import { vi } from 'vitest';
+import type { ModelPricing } from '@trace-flow/pricing';
+import type { AgentIngestQueueMessage } from '@trace-flow/types';
+import type { AgentConsumerEnv } from '../context';
+
+const TINYBIRD_HOST = 'https://tb.test';
+
+/** A stub Message exposing the ack/retry spies the consumer drives. */
+interface StubMessage {
+  id: string;
+  body: unknown;
+  ack: ReturnType<typeof vi.fn>;
+  retry: ReturnType<typeof vi.fn>;
+}
+
+export function stubMessage(body: unknown, id = 'm1'): StubMessage {
+  return { id, body, ack: vi.fn(), retry: vi.fn() };
+}
+
+export function batchOf(messages: StubMessage[]): MessageBatch<AgentIngestQueueMessage> {
+  return {
+    queue: 'agent-ingest-dev',
+    messages,
+  } as unknown as MessageBatch<AgentIngestQueueMessage>;
+}
+
+/** KV stub whose `get` is a spy, so tests can assert read counts (one per distinct provider:model). */
+export function makeKv(entries: Record<string, ModelPricing>): {
+  kv: KVNamespace;
+  get: ReturnType<typeof vi.fn>;
+} {
+  const get = vi.fn(async (key: string) => entries[key] ?? null);
+  return { kv: { get } as unknown as KVNamespace, get };
+}
+
+export function makeEnv(kv: KVNamespace): AgentConsumerEnv {
+  return {
+    AGENT_QUEUE: {} as unknown as AgentConsumerEnv['AGENT_QUEUE'],
+    MODEL_PRICING: kv,
+    TINYBIRD_TOKEN: 'tb-token',
+    TINYBIRD_HOST,
+  };
+}
+
+export interface CapturedInsert {
+  datasource: string;
+  rows: Record<string, unknown>[];
+}
+
+/**
+ * Stubs `fetch` with a recorder for Tinybird inserts. Returns the captured POSTs and lets a test
+ * force specific datasources to fail (so the insert-failure retry path is deterministic). `restore`
+ * unstubs all globals — call it in `afterEach` so a throwing test never leaks the stub.
+ */
+export function mockTinybird(failDatasources: string[] = []): {
+  inserts: CapturedInsert[];
+  restore: () => void;
+} {
+  const inserts: CapturedInsert[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const datasource = new URL(String(url)).searchParams.get('name') ?? '';
+      const body = String(init?.body ?? '');
+      const rows = body
+        .split('\n')
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      inserts.push({ datasource, rows });
+      if (failDatasources.includes(datasource)) {
+        return new Response('boom', { status: 503 });
+      }
+      return new Response('', { status: 200 });
+    }),
+  );
+
+  return {
+    inserts,
+    restore: () => {
+      vi.unstubAllGlobals();
+    },
+  };
+}

@@ -1,0 +1,42 @@
+{
+  // Agent ingest queue consumer. Drains AGENT_QUEUE, prices each Agent Message via the shared KV
+  // catalog, and writes one batched insert per base agent_* datasource through the shared Tinybird
+  // transport. Stateless: no batching Durable Object. Redelivery is safe because every base fact is
+  // a ReplacingMergeTree(IngestedAt) keyed on a stable *_pk, so a re-POST collapses under FINAL.
+  //
+  // Wired into the CI deploy matrix in 2e: deploy.yml runs an explicit deploy job and preview.yml
+  // auto-discovers the `deploy:preview` script (`turbo run deploy:preview --filter=./apps/*`).
+  // Deploys flat (dev-named, dev resources) — slice B has no production agent pipeline yet.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trace-flow-agent-consumer-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-11-27",
+  "compatibility_flags": ["nodejs_compat", "no_nodejs_compat_v2"],
+  "upload_source_maps": true,
+  "observability": { "enabled": true },
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  "vars": {
+    "SENTRY_ENVIRONMENT": "development",
+    "TINYBIRD_HOST": "https://api.us-west-2.aws.tinybird.co",
+  },
+  // Secrets (set via `wrangler secret` / CI, never committed): TINYBIRD_TOKEN (DATASOURCE:APPEND
+  // scope), SENTRY_DSN.
+  //
+  // MODEL_PRICING is the shared dev pricing catalog (same namespace the proxy consumer reads); the
+  // models.dev import (2d) keeps it populated.
+  "kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "25a35f71a8d64884a8e8935056880dba" }],
+  // Consumes the 0d-provisioned agent-ingest-dev queue; poison + exhausted-retry messages dead-letter
+  // to agent-ingest-dlq-dev.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "agent-ingest-dev",
+        "max_batch_size": 100,
+        "max_batch_timeout": 5,
+        "max_concurrency": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "agent-ingest-dlq-dev",
+      },
+    ],
+  },
+}
