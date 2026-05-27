@@ -18,3 +18,4 @@ pub mod codex_usage;
 pub mod command;
 pub mod paths;
 pub mod redaction;
+pub mod tool_fold;
