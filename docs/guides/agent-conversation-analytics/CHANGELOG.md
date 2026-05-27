@@ -15,6 +15,41 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3a (`collector-parser`, partial: command classification) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/command.rs`. `classify_command(raw)` splits a shell
+command into the `command_program` / `command_subcommand` / `command_family` triple on
+`AgentToolEventFact`. **Deliberate divergence from otto:** otto's `derive_facts.rs` emits a _two-part_
+family ("git push", "npm install") from a hardcoded program allowlist — exactly the invented
+`command_family` taxonomy the ADR never defines and the prior CHANGELOG flagged as a non-ADR decision.
+Trace Flow instead sets `family == program` (the documented program-as-family resolution): `program` is
+the basename of argv[0], `subcommand` is argv[1] only when it reads as a verb (no leading `-`, no path
+separator), and `family` mirrors `program`, so the failure leaderboard groups by program with no curated
+list to drift. Output pinned to the contract sample (`collector-contracts/src/sample.rs`):
+`git push origin HEAD` => `git` / `push` / `git`. Mechanical argv parsing only — shell wrappers and
+leading `KEY=value` env prefixes are **not** unwrapped (a documented scope boundary / future
+enrichment), kept out so this stays parsing rather than command-shape heuristics. SPDX/provenance
+header; `pub mod command;` in `lib.rs`.
+**Verified:** `cargo test -p collector-parser` 50 pass (48 unit + 2 canary). Command tests assert: the
+contract-sample triple; `family == program` across a set; path-basename stripping; a flag second token
+and a path second token both yield no subcommand; single-token and empty/whitespace commands; whitespace
+collapse; and the documented env-prefix non-unwrapping. `cargo clippy -p collector-parser --all-targets
+-- -D warnings`, `cargo fmt --check`, `cargo build --workspace` all clean. **CodeRabbit CLI: 1 trivial
+finding** (a self-contradicting test comment — claimed `script.js` was "an argument, not a subcommand"
+while asserting it _is_ the subcommand); fixed verbatim per CodeRabbit's instruction to document the
+mechanical-parsing limitation. The confirming pass was rate-limited (org out of credits; the window grew
+to 15m), so this lands on the resolved-trivial-finding + green-local-gates basis — same precedent as the
+codex_usage slice — rather than burning the depleted pool on a comment-only re-confirm.
+**Next / blockers:** 3a stays 🚧. Remaining: tool-use+tool-result fold (same `tool_use_id` → one Tool
+Event; pairs the assistant `tool_use` block with the user `tool_result` block + the Claude-Code
+record-level `toolUseResult` sidecar carrying `durationMs`/`interrupted`/`stderr`; status maps
+`is_error`→failure, `interrupted`→unknown, else success), capability snapshots (counts/hashes/sizes
+only), Codex turn-index determinism, and the fact emitters onto `collector-contracts` (calling
+`relativize_repo_path` + `redact_field` + `session_turn_usages` + `session_message_usages` +
+`classify_command`). Then 3b / 3d. **CodeRabbit credit pool is depleting** (windows this session:
+13m → 4m → 11m → 9.5m → 15m); further slices may stall on review.
+
 ## 2026-05-26 — 3a (`collector-parser`, partial: Claude per-message token collapse) — t3code/ab83918d
 
 **Status:** 🚧 in progress
