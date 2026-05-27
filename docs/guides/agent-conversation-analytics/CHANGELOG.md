@@ -15,6 +15,47 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d (`collector-sync`: transcript discovery — scan/selection leaf) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d split into 3 leaves; this is leaf 1 of 3)
+**Changed:** Added `packages/collector-sync/src/discovery.rs` (the scan + selection half of 3d) +
+`pub mod` / re-exports. This is the production layer the landed drive loop assumes — it prepares the
+`SyncUnit` inputs (which files to read), without the read/parse yet.
+
+- **`walk_transcripts(root)`** recursively enumerates and stats every `.jsonl` under the transcript
+  root (`walkdir`, no symlink-follow), sorted oldest-mtime-then-path so a partial pass makes
+  deterministic progress. A missing root → empty (normal first-run). Unreadable/unstattable entries
+  are skipped, not fatal — they reappear next scan.
+- **`select_changed(files, store, source, window)`** drops files outside the `ImportWindow`, then keeps
+  only those new-or-changed vs their SQLite `FileCursor` using otto's unchanged test: skip iff cursor
+  exists **and** `size == byte_offset` **and** mtime not newer **and** head-hash non-empty and matches.
+  An in-place rewrite that preserved size+mtime is still caught by the head hash.
+- **Whole-file model (ADR / otto).** `byte_offset` = file size at last ingest, not an incremental
+  offset; a changed file is re-read in full and server-side `ReplacingMergeTree` dedupe absorbs the
+  repeat. `head_hash(text)` (`"sha256:"` + hex of SHA-256 of the first 4096 chars) is the public
+  fingerprint the next leaf writes into the cursor; `read_head_hash` reads only the worst-case byte
+  budget (4096×4) so the in-memory and on-disk hashes provably match for identical content.
+- **Error asymmetry.** Only a `CursorStoreError` (broken local DB) aborts selection; an unreadable head
+  degrades to "treat as changed" (re-read) — a wrong skip would drop data, a lost skip is harmless.
+- **Sync I/O** to match the synchronous `CursorStore`; adapted from otto-sync `files.rs`/`engine.rs`
+  (SPDX MIT + provenance header), pricing/provider_usage deliberately not carried over.
+- **Deps.** Added `walkdir = "2"` (recursive walk) and `sha2 = "0.10"` (head-hash, same convention as
+  `collector-parser`) to `[dependencies]`.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **47 passed** (9 new discovery tests: nested-walk
+filtering, missing-root, no-cursor/unchanged/grown/newer-mtime/in-place-rewrite selection, window
+drop-before-cursor-check, in-memory-vs-disk hash parity); `cargo build` (workspace). Local code-review
+(code-reviewer subagent, sonnet) → READY TO LAND over two passes (no P1/P2; added a `>`-not-`>=` mtime
+comment between passes).
+**Next / blockers:** 3d leaf 2 — read + `SessionContext` resolve (git normalization + Claude record
+parse for cwd/session-id/started-at/depth/head-sha + `repo_root` for redaction) + `SyncUnit` assembly.
+Then leaf 3 — the `#[ignore]` E2E against real `~/.claude/projects` + live worker + Tinybird rows; that
+needs `bun run dev:all` + the Tinybird dev workspace and is a STOP point if unreachable headlessly. 3d
+stays 🚧 until all three land; only then is the Phase 3 boundary reached (PR to `main`, no self-merge).
+
+---
+
 ## 2026-05-27 — 3b (`collector-sync`: drive loop — 3b COMPLETE) — t3code/ab83918d
 
 **Status:** ✅ done (closes 3b)

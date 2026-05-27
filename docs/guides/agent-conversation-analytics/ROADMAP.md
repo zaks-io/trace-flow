@@ -28,7 +28,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 3a  | `collector-parser`                          | ✅ Claude+Codex emitters + `session_facts` assembler (Cursor `3a*` fast-follow)     | 0a             |
 | 3b  | `collector-sync`                            | ✅ freeze cache + orchestrator + cursor store + import-window/envelope + drive loop | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                             | 0a             |
-| 3d  | Headless end-to-end run                     | ☐ todo                                                                              | 2e, 3a, 3b, 3c |
+| 3d  | Headless end-to-end run                     | 🚧 discovery scan/selection landed; read+assemble + E2E pending                     | 2e, 3a, 3b, 3c |
 | 4a  | Dashboard pages                             | ☐ todo                                                                              | 1b, 2a         |
 | 4b  | `org_id` agent JWT in web                   | ☐ todo                                                                              | 2a             |
 | 4c  | Connected Desktops surface                  | ☐ todo                                                                              | 2a, 5b         |
@@ -397,9 +397,20 @@ Build and test headless against fixtures + the real local stores + the Phase 2 w
 
 ### 3d — Headless end-to-end run
 
-- **Files:** integration test crate / `#[ignore]` E2E.
-- **Do:** Run the headless binary against the live corpus. `#[ignore]` E2E parses real
-  `~/.claude/projects` → valid envelope → mock/real worker accepts → cursor advances.
+Split into three leaves; the discovery scan is the production half the drive loop needs to be fed:
+
+1. **Discovery — scan + selection (✅ landed):** `packages/collector-sync/src/discovery.rs` —
+   `walk_transcripts` enumerates `.jsonl` under the root; `select_changed` narrows to in-window,
+   new-or-changed files via the SQLite cursor (size + mtime + head-hash, otto's unchanged test). Pure,
+   tempfile-unit-tested. No file opened except to confirm a head hash.
+2. **Read + assemble (next):** read each selected file, resolve a `SessionContext` (git normalization
+   via `resolve_git_metadata`/`GitRemoteCache`, parse Claude records for cwd/session-id/started-at/
+   depth/head-sha, set `repo_root` for path relativization), assemble `SyncUnit { records, ctx,
+next_cursor }` with `next_cursor = { mtime, byte_offset = size, content_hash_head = head_hash(text) }`.
+3. **E2E (`#[ignore]`, live-infra STOP point):** integration test parses real `~/.claude/projects` →
+   valid envelope → mock/real worker accepts → cursor advances. Needs `bun run dev:all` + the Tinybird
+   dev workspace; stop and report if that infra is unreachable headlessly.
+
 - **Verify (cargo):** no `cost_usd` on any fact; **no `agent_file_events` path contains `/Users/`**;
   real rows appear in `agent_*` via the Phase 1 pipes.
 

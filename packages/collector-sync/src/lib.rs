@@ -18,8 +18,12 @@
 //! durable per-source file cursor store (SQLite, advance-only-after-2xx); [`import`] — the sync-window
 //! policy (24h first-run grace + history presets); [`envelope`] — the POST envelope assembler;
 //! [`sync_cycle`] — the drive loop that POSTs a batch and advances each cursor only on a `2xx`.
+//!
+//! Started (3d): [`discovery`] — the scan + selection half that walks the transcript root and narrows
+//! to in-window, new-or-changed files; the read + `SyncUnit` assembly is the next 3d leaf.
 
 pub mod cursor;
+pub mod discovery;
 pub mod envelope;
 pub mod git;
 pub mod import;
@@ -27,6 +31,7 @@ pub mod orchestrator;
 pub mod sync_cycle;
 
 pub use cursor::{CursorStore, CursorStoreError, FileCursor};
+pub use discovery::{head_hash, select_changed, walk_transcripts, DiscoveredFile};
 pub use envelope::{build_envelope, BatchMeta};
 pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
 pub use import::{HistoryPreset, ImportWindow};

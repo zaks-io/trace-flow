@@ -23,6 +23,10 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # Transcript records reach the drive loop as parsed JSON values for `session_facts`.
 serde_json = "1"
 thiserror = "1"
+# Discovery walks the transcript root recursively; `walkdir` handles symlink-loop guarding and ordering.
+walkdir = "2"
+# Head-hash change detection uses the same SHA-256 fingerprint convention as `collector-parser`.
+sha2 = "0.10"
 
 [dev-dependencies]
 # Reopen-across-process and per-org-isolation tests need a real on-disk DB, not `:memory:`.
