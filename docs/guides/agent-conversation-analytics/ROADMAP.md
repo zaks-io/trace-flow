@@ -28,7 +28,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 3a  | `collector-parser`                          | ✅ Claude+Codex emitters + `session_facts` assembler (Cursor `3a*` fast-follow)     | 0a             |
 | 3b  | `collector-sync`                            | ✅ freeze cache + orchestrator + cursor store + import-window/envelope + drive loop | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                             | 0a             |
-| 3d  | Headless end-to-end run                     | 🚧 discovery + session fields + remote normalizer landed; read/assemble + E2E left  | 2e, 3a, 3b, 3c |
+| 3d  | Headless end-to-end run                     | 🚧 discovery + session fields + remote normalizer + read/assemble landed; E2E left  | 2e, 3a, 3b, 3c |
 | 4a  | Dashboard pages                             | ☐ todo                                                                              | 1b, 2a         |
 | 4b  | `org_id` agent JWT in web                   | ☐ todo                                                                              | 2a             |
 | 4c  | Connected Desktops surface                  | ☐ todo                                                                              | 2a, 5b         |
@@ -410,10 +410,14 @@ Split into three leaves; the discovery scan is the production half the drive loo
    - **2b-i — git remote normalizer (✅ landed):** `packages/collector-sync/src/git_remote.rs` — pure
      `normalize_git_remote(raw)` collapses scp/https/ssh/git transports of one repo to a single
      `host/owner/repo`; unparseable → `""`.
-   - **2b-ii — async read + assemble (next):** read each selected file (JSONL → `Vec<Value>`), resolve a
-     `SessionContext` (git via `GitRemoteCache`, `normalize_git_remote` for the remote, 2a's fields,
-     `repo_root` from the git root for path relativization), assemble `SyncUnit { records, ctx,
-next_cursor }` with `next_cursor = { mtime, byte_offset = size, content_hash_head = head_hash(text) }`.
+   - **2b-ii — async read + assemble (✅ landed):** `packages/collector-sync/src/assemble_units.rs` —
+     `assemble_sync_unit(file, cache)` reads each selected file whole (JSONL → `Vec<Value>`, blank +
+     malformed lines skipped, file-level read error propagates so the cursor stays unadvanced), resolves
+     a `SessionContext` via the pure `build_session_context` (git through `GitRemoteCache`,
+     `normalize_git_remote` for the remote, 2a's fields, empty `repo_root` when not a repo so paths
+     relativize to `outside_repo`; `repo_path_fallback` a bare basename label), and assembles
+     `SyncUnit { records, ctx, next_cursor }` with `next_cursor = { mtime, byte_offset = size,
+content_hash_head = head_hash(text) }` from the same in-memory read.
 3. **E2E (`#[ignore]`, live-infra STOP point):** integration test parses real `~/.claude/projects` →
    valid envelope → mock/real worker accepts → cursor advances. Needs `bun run dev:all` + the Tinybird
    dev workspace; stop and report if that infra is unreachable headlessly.

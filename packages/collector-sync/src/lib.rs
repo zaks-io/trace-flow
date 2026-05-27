@@ -22,9 +22,11 @@
 //! Started (3d): [`discovery`] — the scan + selection half that walks the transcript root and narrows
 //! to in-window, new-or-changed files; [`claude_session`] — pulls a Claude session's identity fields
 //! (vendor id, start instant, cwd, branch hint) out of its records; [`git_remote`] — canonicalizes a
-//! remote URL to one `host/owner/repo` form. The async read + git resolve + `SyncUnit` assembly that
-//! tie these together is the next 3d leaf.
+//! remote URL to one `host/owner/repo` form; [`assemble_units`] — the async read + git resolve that
+//! ties those together into the `SyncUnit` the drive loop POSTs. The headless end-to-end run is the
+//! last 3d leaf.
 
+pub mod assemble_units;
 pub mod claude_session;
 pub mod cursor;
 pub mod discovery;
@@ -35,6 +37,7 @@ pub mod import;
 pub mod orchestrator;
 pub mod sync_cycle;
 
+pub use assemble_units::{assemble_sync_unit, build_session_context, read_transcript};
 pub use claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
 };

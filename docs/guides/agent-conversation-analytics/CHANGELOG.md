@@ -15,6 +15,52 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d (`collector-sync`: async read + assemble — leaf 2b-ii) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d leaf 2b-ii lands; leaf 3 — the live-infra E2E — is all that remains)
+**Changed:** Added `packages/collector-sync/src/assemble_units.rs` + `pub mod` / re-exports. This is
+the read half that turns one selected `DiscoveredFile` into the `SyncUnit` the drive loop POSTs.
+
+- **`assemble_sync_unit(file, cache) -> io::Result<SyncUnit>`** reads the whole transcript with sync
+  `std::fs::read_to_string` (whole-file model: `next_cursor.byte_offset = size_bytes`, not incremental;
+  server-side dedupe absorbs the re-send), resolves git attribution once via `cache.resolve(cwd).await`,
+  and pins `content_hash_head = head_hash(text)` from the **same in-memory read** so it matches what
+  `discovery::read_head_hash` recomputes next scan without racing a concurrent write. A file-level read
+  error propagates → the cursor stays unadvanced and the file retries next scan.
+- **`read_transcript(text) -> Vec<Value>`** parses JSONL one line at a time, skipping blank lines and a
+  malformed line rather than failing the whole file. Recoverable, not silent loss: the whole file is
+  re-parsed every scan and the cursor only advances on a `2xx`, so a line that becomes valid later is
+  picked up then.
+- **`build_session_context(fields, path, meta)`** (pure, takes already-resolved `GitMetadata` so it
+  unit-tests without a repo) maps onto `SessionContext`: `normalized_git_remote` via the 2b-i
+  normalizer; `repo_root` from the git root, **empty when not a repo** so the parser relativizes every
+  absolute path to the `outside_repo` sentinel — no home dir or username reaches a file event;
+  `git_branch` = live branch else the record hint; `repo_path_fallback` a **bare basename label** (of
+  repo root, else cwd), never a full path; `agent_id`/`git_head_sha` empty by design (no source carries
+  them); `agent_depth` from the transcript path.
+- **Sync read by design, not an oversight:** the crate carries no tokio `rt` feature and spawns nothing
+  (`[dependencies]` is `process` + `macros` only) — the whole discovery/cursor layer reads on the
+  embedder's thread; this fn is `async` solely for the `git` resolve. Documented at the read site.
+- Original Trace Flow code: the sync-layer equivalent of otto-sync `engine.rs`'s per-file → upload-unit
+  step, but targeting the local SQLite-cursor model (advance only on `2xx`) instead of otto's
+  server-returned cursors. SPDX MIT + provenance header. otto's `pricing`/`provider_usage` not carried
+  over; no `cost_usd` on any fact.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **68 passed** (8 assemble_units: blank-line skip,
+malformed-line skip, no-meta empty-remote/repo-root + cwd-basename fallback, resolved-meta sets
+remote/root + overrides branch hint, bare-basename never-a-home-path, degenerate `/` cwd → empty
+fallback, agent_depth from path, and a `#[tokio::test]` driving a real tempdir `git init` + remote
+through `cache.resolve` asserting `github.com/acme/demo` + a cursor whose `content_hash_head` matches
+`head_hash`); `cargo build` (workspace, clean). Local code-review (sonnet) two-pass → READY TO LAND
+(spawn_blocking push-back accepted on the documented no-`rt` contract; degenerate-cwd test added).
+
+**Next / blockers:** 3d leaf 3 — the `#[ignore]` E2E against real `~/.claude/projects` + a live worker +
+Tinybird dev rows. **Live-infra STOP point:** needs `bun run dev:all` + the Tinybird dev workspace; if
+unreachable headlessly, stop and report rather than marking 3d done on `cargo build` alone. Verify no
+`cost_usd`, no `/Users/` paths, real `agent_*` rows. After 3d is fully ✅, Phase 3 boundary → open a PR
+to `main` (human merges; never self-merge — merge = ungated prod deploy).
+
 ## 2026-05-27 — 3d (`collector-sync`: git remote normalizer — leaf 2b-i) — t3code/ab83918d
 
 **Status:** 🚧 in progress (3d leaf 2b split; this is leaf 2b-i, the pure normalizer)
