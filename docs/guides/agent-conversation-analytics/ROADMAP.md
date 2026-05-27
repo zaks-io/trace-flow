@@ -28,7 +28,7 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 3a  | `collector-parser`                          | ✅ Claude+Codex emitters + `session_facts` assembler (Cursor `3a*` fast-follow)     | 0a             |
 | 3b  | `collector-sync`                            | ✅ freeze cache + orchestrator + cursor store + import-window/envelope + drive loop | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                             | 0a             |
-| 3d  | Headless end-to-end run                     | 🚧 discovery + Claude session-field extraction landed; git+assemble + E2E pending   | 2e, 3a, 3b, 3c |
+| 3d  | Headless end-to-end run                     | 🚧 discovery + session fields + remote normalizer landed; read/assemble + E2E left  | 2e, 3a, 3b, 3c |
 | 4a  | Dashboard pages                             | ☐ todo                                                                              | 1b, 2a         |
 | 4b  | `org_id` agent JWT in web                   | ☐ todo                                                                              | 2a             |
 | 4c  | Connected Desktops surface                  | ☐ todo                                                                              | 2a, 5b         |
@@ -407,9 +407,12 @@ Split into three leaves; the discovery scan is the production half the drive loo
    - **2a — Claude session-field extraction (✅ landed):** `packages/collector-sync/src/claude_session.rs`
      — pure `claude_session_fields(records)` pulls `vendor_session_id`/`vendor_started_at`/`cwd`/branch
      hint from a transcript's records; `agent_depth_from_transcript_path` gives whole-file depth.
-   - **2b — git resolve + assemble (next):** read each selected file (JSONL → `Vec<Value>`), resolve a
-     `SessionContext` (git via `resolve_git_metadata`/`GitRemoteCache`, normalize the remote, set
-     `repo_root` for path relativization, feed in 2a's fields), assemble `SyncUnit { records, ctx,
+   - **2b-i — git remote normalizer (✅ landed):** `packages/collector-sync/src/git_remote.rs` — pure
+     `normalize_git_remote(raw)` collapses scp/https/ssh/git transports of one repo to a single
+     `host/owner/repo`; unparseable → `""`.
+   - **2b-ii — async read + assemble (next):** read each selected file (JSONL → `Vec<Value>`), resolve a
+     `SessionContext` (git via `GitRemoteCache`, `normalize_git_remote` for the remote, 2a's fields,
+     `repo_root` from the git root for path relativization), assemble `SyncUnit { records, ctx,
 next_cursor }` with `next_cursor = { mtime, byte_offset = size, content_hash_head = head_hash(text) }`.
 3. **E2E (`#[ignore]`, live-infra STOP point):** integration test parses real `~/.claude/projects` →
    valid envelope → mock/real worker accepts → cursor advances. Needs `bun run dev:all` + the Tinybird

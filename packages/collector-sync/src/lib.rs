@@ -21,14 +21,16 @@
 //!
 //! Started (3d): [`discovery`] — the scan + selection half that walks the transcript root and narrows
 //! to in-window, new-or-changed files; [`claude_session`] — pulls a Claude session's identity fields
-//! (vendor id, start instant, cwd, branch hint) out of its records. The async git resolution + remote
-//! normalization + `SyncUnit` assembly that consume these is the next 3d leaf.
+//! (vendor id, start instant, cwd, branch hint) out of its records; [`git_remote`] — canonicalizes a
+//! remote URL to one `host/owner/repo` form. The async read + git resolve + `SyncUnit` assembly that
+//! tie these together is the next 3d leaf.
 
 pub mod claude_session;
 pub mod cursor;
 pub mod discovery;
 pub mod envelope;
 pub mod git;
+pub mod git_remote;
 pub mod import;
 pub mod orchestrator;
 pub mod sync_cycle;
@@ -40,6 +42,7 @@ pub use cursor::{CursorStore, CursorStoreError, FileCursor};
 pub use discovery::{head_hash, select_changed, walk_transcripts, DiscoveredFile};
 pub use envelope::{build_envelope, BatchMeta};
 pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
+pub use git_remote::normalize_git_remote;
 pub use import::{HistoryPreset, ImportWindow};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};
 pub use sync_cycle::{run_sync_cycle, CycleReport, IngestClient, SyncUnit};

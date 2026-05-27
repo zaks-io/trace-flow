@@ -15,6 +15,45 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d (`collector-sync`: git remote normalizer — leaf 2b-i) — t3code/ab83918d
+
+**Status:** 🚧 in progress (3d leaf 2b split; this is leaf 2b-i, the pure normalizer)
+**Changed:** Added `packages/collector-sync/src/git_remote.rs` + `pub mod` / re-export. Pure, no I/O.
+
+- **`normalize_git_remote(raw) -> String`** canonicalizes whatever `git config remote.origin.url`
+  reports — scp-like (`git@host:owner/repo.git`), `https://`, `ssh://` (incl. explicit port), `git://`,
+  with optional `user@`/`user:token@` — into one stable `host/owner/repo`. Two clones of the same repo
+  over different transports collapse to the **identical** string, so the ingest Worker's repo
+  fingerprint can't split them into phantom repos. Host is lowercased (DNS is case-insensitive); the
+  owner/repo path case is preserved; the `.git` suffix and surrounding slashes are stripped.
+- **Unparseable / pathless remote → `""`**, which downstream reads as "no remote" so the session falls
+  back to its path label rather than fingerprinting garbage. A flat single-segment server path
+  (`host/repo.git`) is kept — that's a real repo, not garbage.
+- **scp parsing strips `user@` before the host:path colon**, so an embedded `user:token@` can't be
+  mistaken for the host separator. No panics on arbitrary input (every split/strip returns `Option`).
+- Original Trace Flow code: otto-sync stored the raw remote and never normalized one (no otto
+  equivalent). SPDX MIT + provenance header.
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **60 passed** (7 git_remote tests: transport
+equivalence incl. scp subgroup, host-lowercase/path-preserve, multi-segment subgroups, flat
+single-segment server, trailing-slash/whitespace trim, embedded-userinfo misfire guard, unparseable →
+`""`); `cargo build`. Local code-review (code-reviewer subagent, sonnet): CHANGES REQUESTED on pass 1
+(scp `user:token@host:path` misfire — fixed by stripping userinfo before the colon split; plus added
+tests), then READY TO LAND on a fresh confirmation pass.
+**Next / blockers:** 3d leaf 2b-ii — the async read + assemble: read each selected file (JSONL →
+`Vec<Value>`, skip blank/malformed lines so one bad record can't strand a session), resolve git via
+`GitRemoteCache::resolve(cwd).await` + `normalize_git_remote`, build a `SessionContext` (2a's fields +
+`repo_root` from the git root, `repo_path_fallback`, `git_branch` with 2a's hint as fallback,
+`agent_id`/`git_head_sha` = `""` since neither is available headlessly), and assemble `SyncUnit {
+records, ctx, next_cursor }` with `next_cursor.content_hash_head = head_hash(full_text)` so the cursor
+matches discovery's `read_head_hash` next scan. Then leaf 3 — the `#[ignore]` E2E against real
+`~/.claude/projects` + live worker + Tinybird rows (needs `bun run dev:all` + the Tinybird dev
+workspace; STOP point if unreachable headlessly). 3d stays 🚧 until all leaves land; only then is the
+Phase 3 boundary reached (PR to `main`, no self-merge).
+
+---
+
 ## 2026-05-27 — 3d (`collector-sync`: Claude session-field extraction — leaf 2a) — t3code/ab83918d
 
 **Status:** 🚧 in progress (3d leaf 2 split again; this is leaf 2a, the pure record-reading half)
