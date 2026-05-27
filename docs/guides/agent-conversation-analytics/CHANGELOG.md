@@ -15,6 +15,31 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: Codex message-fact emitter) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/emit_codex.rs` and `src/session_context.rs`
+(+ `pub mod` for both; `Cargo.toml`/`Cargo.lock` gain a path dep on `collector-contracts` — no new
+external crates). `codex_message_facts(records, &SessionContext) -> Vec<AgentMessageFact>` emits one
+fact per segmented Codex turn (from `codex_turns::session_turns`): assistant turns carry their tokens
+with `Full` coverage, user turns carry none with `Missing`, and the assistant turns' tokens sum to the
+session total by construction (dedup lives in `codex_turns`). Each turn is tagged with the model active
+when it ran — resolved by walking `turn_context.payload.model` and correlating to turns via pointer
+identity against the same `records` slice (`session_meta.model` is null in Codex). `vendor_message_id`
+is `None` (Worker's `message_pk` falls back to positional `turn_index`); `agent_depth`/`is_sidechain`/
+`is_subagent_spawn` are constant (Codex has no sub-agent transcript nesting). `SessionContext` is new,
+original Trace Flow code (no otto equivalent): the per-session git/identity metadata every emitter
+shares, including `agent_depth` (0 top-level, >0 for Claude sub-agent files; Codex stays 0).
+**Verified:** `cargo fmt -p collector-parser --check` (clean), `cargo clippy -p collector-parser
+--all-targets -- -D warnings` (clean), `cargo test -p collector-parser` (78 passed + 2 canary; 7 new
+emit_codex tests cover one-fact-per-turn role+index, assistant tokens with input-minus-cached split,
+user Missing coverage, mid-session model switch gpt-5.5→gpt-5.5-codex, session-context carry, token
+totals summing to 60_899, and the empty session), `cargo build --workspace` (Cargo.lock unchanged
+except the intra-workspace contracts edge). CodeRabbit `--type uncommitted`: 1 trivial (document the
+`ptr::eq` coupling) → added the warning comment → **0 findings** on re-review.
+**Next / blockers:** 3a stays 🚧. Next leaf is the Claude `AgentMessageFact` emitter (one fact per
+`message.id` with collapsed usage; sub-agent depth + sidechain + Task/Agent spawn detection).
+
 ## 2026-05-27 — 3a (`collector-parser`: RFC3339 timestamp parser) — t3code/ab83918d
 
 **Status:** 🚧 in progress

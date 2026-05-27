@@ -9,6 +9,9 @@ description = "Parser for local coding-agent transcripts (Claude Code, Codex CLI
 # security-relevant. The Rust `regex` crate guarantees linear-time matching (no ReDoS), but a floor
 # keeps the audited engine behavior reproducible. The workspace lock resolves the exact patch.
 [dependencies]
+# The typed `Agent*Fact` shapes the emitters assemble. Path dep on the sibling workspace member; it
+# pulls no new external crates (serde + serde_json are already resolved), so the lock is unchanged.
+collector-contracts = { path = "../collector-contracts" }
 regex = "1.11"
 # The parser consumes already-parsed agent transcripts (Claude/Codex JSONL) as `serde_json::Value`,
 # so this is a runtime dependency, not just a test one.
