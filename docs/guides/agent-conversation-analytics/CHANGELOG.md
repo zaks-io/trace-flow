@@ -15,6 +15,64 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d live-run attempt + 2b gzip fix — t3code/ab83918d
+
+**Status:** 🚧 in progress (gzip blocker found and fixed; the live run now needs Convex wiring, see
+blockers). 3d stays 🚧: it is done only once the live run is verifiably green with Tinybird DEV rows.
+
+**Changed:**
+
+- **2b gzip decompression (user-authorized cross-lane fix; commit `b39f6f0`).** The live E2E surfaced a
+  real bug no unit test could catch because neither side crossed the wire: `collector-api-client` gzips
+  the envelope and sends `Content-Encoding: gzip`, but Cloudflare Workers does not auto-decompress
+  request bodies, so `apps/agent-ingest/src/handler.ts` ran `JSON.parse` over the raw gzip stream and
+  400'd every upload as `invalid_envelope` (worker log: `Unexpected token ''`, the gzip magic).
+  Fix inflates a `Content-Encoding: gzip` body via `DecompressionStream('gzip')`, enforcing
+  `MAX_INGEST_BYTES` on the _inflated_ size (gzip-bomb guard); `too_large` -> 413, malformed -> 400,
+  both logged. Added vitest coverage for the happy gzip path and a malformed-gzip body (71 tests pass).
+- **E2E redaction gate tightened to ADR invariants (commit `5305bdb`).** The earlier scaffold's gate
+  used blanket substring bans (`no /Users/`, `no cost_usd`) that were both wrong: redaction MASKS the
+  username and keeps path shape (`/Users/[REDACTED]/...` survives by design), and a command excerpt may
+  legitimately quote the literal text `cost_usd`. The gate now asserts the real invariants: no real
+  `$HOME` un-masked anywhere in the envelope, every `agent_file_events.normalized_repo_path` is
+  repo-relative (no leading `/`, no `/Users/`, no `/home/`; a missing/non-string path now panics), and
+  no fact carries a `cost_usd` _field_ (recursive key check). This supersedes the gate description in
+  the scaffold entry below.
+
+**Verified:** gzip fix clears the parse gate end to end — the live POST failure moved from
+`invalid_envelope` (400) to `policy_unavailable` (503), proving the body now decodes and reaches the
+compatibility-policy gate. `cargo fmt --check`/`clippy -D warnings`/`test` on `collector-sync` green;
+`lint`/`type-check`/`test`/`build` on `@trace-flow/agent-ingest` green (71 vitest). Two-pass local
+code review (code-reviewer subagent) READY TO LAND.
+
+**Dev-run procedure (for the next attempt):**
+
+1. Run the workers from THIS worktree (`t3code-ab83918d`), not the main worktree — the main worktree
+   has no `collector-sync` but DOES have `agent-ingest`, and each worktree has its own
+   `.wrangler/state` local KV. Running from main reads a different KV store than where the cred is
+   seeded (this cost a debugging cycle: auth resolved as `invalid` because the seeded cred lived in the
+   wrong store).
+2. A dev Collector credential must exist in this worktree's `.wrangler/state` KV (`COLLECTOR_CREDS`,
+   key `collector:${sha256Hex(secret)}`, value `{orgId,userId,collectorId,expiresAt,status:'active',
+createdAt}`). Throwaway, dev-only, never committed.
+3. Start the ingest + consumer as the HTTP worker on `:8787`:
+   `bunx wrangler dev -c apps/agent-ingest/wrangler.jsonc -c apps/agent-consumer/wrangler.jsonc
+--persist-to .wrangler/state` (the first `-c` gets the port; the rest are binding-only).
+4. Run the test: `TRACE_FLOW_INGEST_URL=http://127.0.0.1:8787 TRACE_FLOW_COLLECTOR_SECRET=<dev secret>
+cargo test -p collector-sync --test headless_e2e -- --ignored --nocapture`.
+
+**Next / blockers:** The ingest worker needs Convex wiring before the live run can go green — it failed
+with `Invalid URL: undefined/agent-ingest/compatibility-policy` because `CONVEX_SITE_URL` and
+`AGENT_INGEST_SHARED_SECRET` are worker secrets and there is no `apps/agent-ingest/.dev.vars` in this
+worktree. To finish 3d's live verification: (a) create `apps/agent-ingest/.dev.vars` with
+`CONVEX_SITE_URL` + `AGENT_INGEST_SHARED_SECRET` matching a running `bunx convex dev` deployment;
+(b) seed the `2a` compatibility policy + ensure the `claim-sessions` route is deployed; (c) confirm the
+consumer drains `agent-ingest-dev` to the Tinybird **DEV** workspace; (d) re-run, expect 0 failures /
+all cursors advance; (e) verify in Tinybird DEV — rows in `agent_messages`/`agent_file_events`/
+`agent_tool_events`, no `agent_file_events` path containing `/Users/`, `cost_usd` null until the
+consumer prices it. Only then flip 3d ✅ and open the Phase 3 PR to `main` (human merges; no
+self-merge). This is a user-controlled infra bring-up (Convex dev + dev secrets + Tinybird dev login).
+
 ## 2026-05-27 — 3d (`collector-sync`: headless E2E scaffold — leaf 3) — t3code/ab83918d
 
 **Status:** 🚧 in progress (E2E scaffold lands; the live run is the STOP point and is NOT yet verified)
