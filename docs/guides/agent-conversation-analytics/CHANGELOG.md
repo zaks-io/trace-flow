@@ -15,6 +15,41 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3d live-run GREEN + agent_priced_usage coverage fix — t3code/ab83918d
+
+**Status:** ✅ done — 3d closed. Phase 3 (3a–3d) complete; this is the Phase 3 boundary → PR to main.
+
+**Changed:**
+
+- **3d live E2E ran green against the dev ingest worker.** Root cause of the prior block was the
+  consumer's `TINYBIRD_TOKEN`: a Tinybird **Local** token (host `local`) was being supplied where the
+  consumer talks to the **cloud** dev workspace, so every insert 403'd `Invalid token`. Swapping in a
+  **cloud** token (host `aws-us-west-2`, the `agent_consumer_e2e` ADMIN token) drained the queue 58/58
+  with zero `insert_failed`. Full path proven: parser → sync → gzip POST → ingest auth → Convex policy +
+  claim-sessions → queue → consumer → Tinybird insert.
+- **Verified real rows in Tinybird DEV:** `agent_messages` 2807, `agent_tool_events` 2805,
+  `agent_file_events` 1265, `agent_pull_request_links` 62. **0** `agent_file_events` paths contain
+  `/Users/` or a username; `cost_usd` is null on every fact (0/2807). `git_head_sha`/`agent_id` empty by
+  design (confirmed in `assemble_units.rs`, not a parse defect).
+- **`pipes/agent_priced_usage.pipe` (commit `5ca34af`):** field-parse audit found a degenerate
+  `agent_sessions.token_coverage='missing'` — the `direct_usage` node counted zero-token user/system/tool
+  turns as billable `'direct'` usage, so every session read as missing source data and `message_count`
+  overcounted. Scoped `direct_usage` to `role = 'assistant'`. Output columns unchanged (no `role` added
+  to the SELECT, preserving the `SELECT * … UNION ALL SELECT *` shape vs `subagent_fallback_usage`).
+
+**Verified:**
+
+- `cargo test -p collector-sync --test headless_e2e -- --ignored --nocapture` → green (cursors advance
+  only on 2xx).
+- `tb build` clean. Ad-hoc cloud SQL replicating the corrected per-session coverage rule (assistant-only
+  `direct`) → both live sessions compute `token_coverage='full'` (was `'missing'`).
+- Pre-commit lint + prettier passed on the pipe commit.
+
+**Next / blockers:** Phase 3 boundary. Open PR to `main` and STOP (no self-merge — merge = ungated prod
+deploy, human merges). Dev-only artifacts (`agentE2eSeed.ts`, `_generated/api.d.ts`,
+`.claude/scheduled_tasks.lock`) stay uncommitted. The `agent_priced_usage` fix reaches dev/prod via the
+normal CI deploy on merge; not deployed to dev cloud manually.
+
 ## 2026-05-27 — 3d live-run attempt + 2b gzip fix — t3code/ab83918d
 
 **Status:** 🚧 in progress (gzip blocker found and fixed; the live run now needs Convex wiring, see
