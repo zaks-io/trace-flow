@@ -13,6 +13,7 @@
 //! canary corpus (`fixtures/redaction-canary.json`) as a backstop, so the two layers must agree —
 //! see `apps/agent-ingest/src/redaction.ts`.
 
+pub mod assemble;
 pub mod claude_usage;
 pub mod codex_turns;
 pub mod codex_usage;

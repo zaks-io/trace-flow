@@ -15,6 +15,35 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: session assembler — slice complete) — t3code/ab83918d
+
+**Status:** ✅ done
+**Changed:** Added `packages/collector-parser/src/assemble.rs` (+ `pub mod assemble;`). New public
+entrypoint `session_facts(source: AgentSource, records: &[Value], ctx: &SessionContext) ->
+AgentIngestFacts` — the crate's single fan-out: it dispatches on `source` and runs every emitter for
+that source, collecting the 5-field bundle (`messages`, `tool_events`, `file_events`,
+`capability_snapshots`, `pull_request_links`) the `collector-sync` uploader (3b) will wrap in an
+`AgentIngestEnvelope`.
+
+- **Pure router, no new logic.** Adds zero identity/redaction/token handling — each field is exactly
+  the matching emitter's output, so all `*_pk`/`cost_usd`/redaction rules stay in the emitters.
+- **Source coverage.** Claude → messages/tools/files/PR-links with `capability_snapshots` a hardcoded
+  empty vec (caps are Codex `session_meta`-only, not a missing emitter); Codex → all five incl.
+  `codex_capability_facts`; **Cursor → all-empty bundle** so the uploader treats sources uniformly
+  until the `3a*` Cursor parser lands. Match is exhaustive over `AgentSource` (no `_` catch-all).
+- **Dispatch keys on the `source` argument, never record-shape sniffing** — a test routes
+  Claude-shaped records through the Codex arm and gets the Codex emitters' output.
+
+**Verified:** `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo build`,
+`cargo test -p collector-parser` (173 tests incl. 4 new assembler fan-out-fidelity tests — each
+asserts a bundle field equals the direct emitter call on the same input). Local `code-review` skill:
+**READY TO LAND** (no P1/P2; P3s were a defensible one-call placeholder helper and an already-covered
+fixture comment). CodeRabbit not escalated — pure intra-crate router, none of the escalation triggers
+(auth/secrets/schema/redaction/concurrency/proxy-streaming/contract) apply.
+**Next / blockers:** 3a is complete — board flipped ✅. Next unit is **3b (`collector-sync`)**: wrap
+`session_facts(...)` output into the POST `AgentIngestEnvelope` (batch metadata + cursor advance on
+2xx). Cursor parser remains fast-follow `3a*`.
+
 ## 2026-05-27 — 3a (`collector-parser`: PR-link emitter) — t3code/ab83918d
 
 **Status:** 🚧 in progress
