@@ -147,12 +147,15 @@ dependencies = [
 name = "collector-sync"
 version = "0.1.0"
 dependencies = [
+ "collector-api-client",
  "collector-contracts",
+ "collector-parser",
  "rusqlite",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

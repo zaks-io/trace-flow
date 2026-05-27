@@ -15,6 +15,42 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3b (`collector-sync`: drive loop — 3b COMPLETE) — t3code/ab83918d
+
+**Status:** ✅ done (closes 3b)
+**Changed:** Added `packages/collector-sync/src/sync_cycle.rs` (the async drive loop) + `pub mod` /
+re-exports. Fifth and final leaf of 3b: it composes the four landed leaves into one sync cycle.
+
+- **`run_sync_cycle(client, store, orchestrator, meta, units, mint_batch_id, cancel)`** iterates a
+  batch of `SyncUnit`s; for each it calls `collector-parser::session_facts(meta.source, records, ctx)`,
+  wraps the facts with the landed `build_envelope(...)`, POSTs via the 3c client, and **advances the
+  SQLite cursor only on `Ok(IngestOk)`** — every error path leaves the cursor untouched so the file
+  re-sends next cycle (ADR cursor discipline). `CursorStoreError` propagates, never swallowed.
+- **Client trait seam.** `IngestClient` is the one-method (`ingest`) trait the loop needs; the real
+  `CollectorApiClient` implements it by delegating, and tests inject a scripted mock — no network.
+- **One terminal orchestrator trigger per cycle** (not per file): `JobSucceeded` only when nothing
+  failed and the cycle wasn't aborted, else `JobFailed`. A cancelled cycle is **not** a success.
+- **Error classification.** `is_cycle_fatal` (Unauthorized / UpgradeRequired / RateLimited) aborts the
+  cycle early — those reject every remaining POST; per-envelope failures strand only their own unit.
+- **Deps.** Promoted `serde_json` to a real dep (records are `Vec<Value>`); added `collector-parser`,
+  `collector-api-client`, `tokio-util` (CancellationToken); dev-dep `tokio` `rt` for `#[tokio::test]`
+  (production tokio stays watcher-only: `process` + `macros`, no `rt`).
+
+**Verified:** `cargo fmt --check -p collector-sync`; `cargo clippy -p collector-sync --all-targets -- -D
+warnings` (clean); `cargo test -p collector-sync` = **38 passed** (6 new sync_cycle tests: advances on
+Ok, does not advance on Err, retried-then-Ok advances, mixed batch advances only accepted units,
+cycle-fatal aborts the rest, cancelled cycle fails the job); `cargo build` clean. Local code-review
+(code-reviewer subagent, sonnet) reached **READY TO LAND** after two passes — initial CHANGES
+REQUESTED on a P1 (a cancelled cycle dishonestly emitted `JobSucceeded`; fixed via the `aborted_early`
+gate) plus two P2 comment/test-consistency items, confirmation pass clean. CodeRabbit not escalated
+(no auth/secret/schema/redaction/proxy-streaming surface — pure local sync logic; rubric miss).
+
+**Next / blockers:** 3b ✅ — the `collector-sync` crate is feature-complete for headless use. Next is
+**3d** (headless end-to-end run): wire the real `CollectorApiClient` + a real filesystem watcher +
+on-disk `CursorStore`, drive `run_sync_cycle` against the dev ingest worker, and confirm a transcript
+round-trips to Tinybird. Once 3d lands, the Phase 3 boundary (3a✅, 3b✅, 3c✅, 3d✅) is reached →
+open a PR to `main` (never self-merge). Not a boundary yet, so no PR.
+
 ## 2026-05-27 — 3b (`collector-sync`: import-window policy + envelope assembler, partial) — t3code/ab83918d
 
 **Status:** 🚧 in progress
