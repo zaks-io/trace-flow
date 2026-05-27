@@ -15,6 +15,30 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 3a (`collector-parser`: RFC3339 timestamp parser) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/timestamp.rs` (+ `pub mod timestamp;`).
+`rfc3339_to_epoch_ms(&str) -> Option<i64>` turns a transcript record's `timestamp` string into the
+epoch-millisecond `event_at` every `Agent*Fact` carries — the last shared prerequisite before the fact
+emitters. **Dependency-free:** otto leaned on `chrono::DateTime::parse_from_rfc3339`, but `chrono` is not
+in the workspace lock and the parser crate keeps a deliberately tiny pinned dependency surface (it is the
+redaction trust boundary), so this is an original reimplementation, not vendored code. It parses the
+fixed `YYYY-MM-DDTHH:MM:SS.sssZ` shape both Claude Code and Codex CLI emit, and also tolerates numeric
+`±HH:MM` offsets, any fractional-second width (truncating to ms, never rounding), and a leap second.
+Days come from Howard Hinnant's `days_from_civil`; calendar-invalid dates (Feb 30, Apr 31, a non-leap
+Feb 29) are rejected before conversion so a malformed timestamp fails loudly instead of silently rolling
+forward.
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (71 passed + 2 canary; new timestamp suite covers the epoch,
+real Claude/Codex stamps vs `date -j -u` ground truth, leap day/year boundaries, offset normalization,
+fractional truncation, and a malformed-input table), `cargo build --workspace` (Cargo.lock unchanged —
+no new dependency). CodeRabbit `--type uncommitted`: 1 major + 1 minor (both: `1..=31` accepted
+calendar-invalid days) → added month-aware `is_valid_calendar_date` + invalid-date tests → **0 findings**
+on re-review.
+**Next / blockers:** 3a stays 🚧. Next is the fact emitters (see the entry below) — now unblocked on
+timestamp parsing.
+
 ## 2026-05-27 — 3a (`collector-parser`: per-turn Codex segmentation) — t3code/ab83918d
 
 **Status:** 🚧 in progress
