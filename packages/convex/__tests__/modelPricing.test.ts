@@ -64,6 +64,36 @@ describe('convertModelsDevModel', () => {
     expect(convertModelsDevModel({})).toBeNull();
   });
 
+  it('returns null when a required rate is negative or non-finite (untrusted JSON cannot corrupt a row)', () => {
+    expect(convertModelsDevModel({ cost: { input: -1, output: 25 } })).toBeNull();
+    expect(
+      convertModelsDevModel({ cost: { input: 5, output: Number.POSITIVE_INFINITY } }),
+    ).toBeNull();
+  });
+
+  it('drops a present-but-invalid optional cache rate instead of storing NaN/negative', () => {
+    expect(
+      convertModelsDevModel({ cost: { input: 5, output: 25, cache_read: -0.5 } }),
+    ).toMatchObject({
+      promptCostPerMillion: 5_000_000,
+      completionCostPerMillion: 25_000_000,
+      cacheReadCostPerMillion: undefined,
+    });
+  });
+
+  it('drops a context tier with an invalid required rate but keeps the valid base rates', () => {
+    const converted = convertModelsDevModel({
+      cost: {
+        input: 5,
+        output: 25,
+        tiers: [{ input: -1, output: 45, tier: { type: 'context', size: 272000 } }],
+      },
+    });
+
+    expect(converted?.promptCostPerMillion).toBe(5_000_000);
+    expect(converted?.contextTier).toBeUndefined();
+  });
+
   it('rounds fractional sub-dollar rates to the nearest microdollar', () => {
     const converted = convertModelsDevModel({ cost: { input: 0.25, output: 1.5 } });
 

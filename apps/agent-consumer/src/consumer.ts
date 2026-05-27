@@ -40,8 +40,12 @@ function emptyAccumulator(): Accumulator {
   };
 }
 
-/** Structural guard — the named "malformed message → DLQ" trigger. The producer is our own worker, */
-/** so a failing guard means contract drift or a foreign message: dead-letter rather than drop. */
+/**
+ * Structural guard — the named "malformed message → DLQ" trigger. The producer is our own worker, so
+ * a failing guard means contract drift or a foreign message: dead-letter rather than drop. It checks
+ * the scalar fields `accumulateMessage` dereferences (source, parser_version, tenancy ids), not just
+ * the container shape, so contract drift surfaces here instead of as an opaque mapping error.
+ */
 function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
   if (typeof body !== 'object' || body === null) {
     return false;
@@ -50,7 +54,10 @@ function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
   if (m.type !== 'agent' || typeof m.enqueued_at !== 'number') {
     return false;
   }
-  if (typeof m.tenancy !== 'object' || m.tenancy === null) {
+  if (!isNonEmptyString(m.source) || !isNonEmptyString(m.parser_version)) {
+    return false;
+  }
+  if (!isTenancy(m.tenancy)) {
     return false;
   }
   const facts = m.facts;
@@ -59,6 +66,20 @@ function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
   }
   const f = facts as Record<string, unknown>;
   return CATEGORIES.every((category) => Array.isArray(f[category]));
+}
+
+const TENANCY_FIELDS = ['org_id', 'user_id', 'collector_id', 'collector_credential_id'] as const;
+
+function isTenancy(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const t = value as Record<string, unknown>;
+  return TENANCY_FIELDS.every((field) => isNonEmptyString(t[field]));
+}
+
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0;
 }
 
 /** Maps one well-formed message's facts into the row accumulator, pricing each Agent Message. */

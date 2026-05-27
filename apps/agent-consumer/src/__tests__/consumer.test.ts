@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as Sentry from '@sentry/cloudflare';
 import { microdollarsToDollars, type ModelPricing } from '@trace-flow/pricing';
+import type { AgentSource } from '@trace-flow/types';
 import { processAgentBatch } from '../consumer';
 
 // withSentry initializes the client in the deployed Worker; here we mock the capture surface so the
@@ -166,6 +167,39 @@ describe('processAgentBatch', () => {
       'agent_consumer.message_malformed',
       expect.objectContaining({ level: 'error', extra: { messageId: 'm1' } }),
     );
+  });
+
+  it('retries a message with an empty scalar source (contract drift, not just bad container)', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const bad = stubMessage(queueMessage({ source: '' as unknown as AgentSource }));
+
+    await processAgentBatch(batchOf([bad]), makeEnv(kv));
+
+    expect(bad.retry).toHaveBeenCalledOnce();
+    expect(bad.ack).not.toHaveBeenCalled();
+    expect(tb.inserts).toHaveLength(0);
+  });
+
+  it('retries a message whose tenancy ids are not strings (guards the fields rows.ts dereferences)', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const bad = stubMessage(
+      queueMessage({
+        tenancy: {
+          org_id: 'org-1',
+          user_id: 'user-1',
+          collector_id: 'collector-1',
+          collector_credential_id: 123 as unknown as string,
+        },
+      }),
+    );
+
+    await processAgentBatch(batchOf([bad]), makeEnv(kv));
+
+    expect(bad.retry).toHaveBeenCalledOnce();
+    expect(bad.ack).not.toHaveBeenCalled();
+    expect(tb.inserts).toHaveLength(0);
   });
 
   it('isolates a malformed message and still processes its well-formed siblings', async () => {

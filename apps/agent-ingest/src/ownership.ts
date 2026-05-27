@@ -24,7 +24,7 @@ export class ConvexUnreachableError extends Error {
   }
 }
 
-/** Convex caps the claim batch; we never send more session_pks than this in one call. */
+/** Convex caps the claim batch; larger claim sets are split into chunks of this size. */
 const MAX_CLAIM_BATCH = 1000;
 
 /** Bound the control-plane round trip so a hung Convex doesn't pin the request open. */
@@ -60,7 +60,8 @@ function isSessionClaim(value: unknown): value is SessionClaim {
  * Claims session ownership for `sessionPks`. Returns the per-session statuses; the caller keeps
  * `claimed`/`owned` sessions and discards `conflict` ones. Throws {@link ConvexUnreachableError} on
  * any transport or non-2xx response so the batch fails closed with a retryable 503 rather than
- * silently writing unowned sessions.
+ * silently writing unowned sessions. A claim set larger than {@link MAX_CLAIM_BATCH} (a legitimately
+ * large ingest can exceed it) is split into chunks rather than rejected.
  */
 export async function claimSessions(
   env: { CONVEX_SITE_URL: string; AGENT_INGEST_SHARED_SECRET: string },
@@ -68,10 +69,21 @@ export async function claimSessions(
   logger: Logger,
 ): Promise<SessionClaim[]> {
   if (request.sessionPks.length === 0) return [];
-  if (request.sessionPks.length > MAX_CLAIM_BATCH) {
-    throw new Error(`claim batch ${request.sessionPks.length} exceeds max ${MAX_CLAIM_BATCH}`);
-  }
 
+  const results: SessionClaim[] = [];
+  for (let i = 0; i < request.sessionPks.length; i += MAX_CLAIM_BATCH) {
+    const chunk = request.sessionPks.slice(i, i + MAX_CLAIM_BATCH);
+    results.push(...(await claimChunk(env, { ...request, sessionPks: chunk }, logger)));
+  }
+  return results;
+}
+
+/** Claims one ≤{@link MAX_CLAIM_BATCH} chunk and verifies the response covers it exactly. */
+async function claimChunk(
+  env: { CONVEX_SITE_URL: string; AGENT_INGEST_SHARED_SECRET: string },
+  request: ClaimRequest,
+  logger: Logger,
+): Promise<SessionClaim[]> {
   let res: Response;
   try {
     res = await fetch(`${env.CONVEX_SITE_URL}/agent-ingest/claim-sessions`, {
@@ -97,9 +109,25 @@ export async function claimSessions(
     const body: ClaimResponseBody = await res.json();
     if (!Array.isArray(body.results)) throw new Error('response missing results array');
     if (!body.results.every(isSessionClaim)) throw new Error('response has a malformed claim');
+    assertCoversExactly(request.sessionPks, body.results);
     return body.results;
   } catch (err) {
     logger.error('agent_ingest.claim_parse_error', err);
     throw new ConvexUnreachableError('claim-sessions response invalid', { cause: err });
+  }
+}
+
+/**
+ * Fail closed unless the response holds exactly one claim per requested session. A partial response
+ * (a missing `session_pk`) would otherwise be treated as non-conflict and silently enqueued unowned;
+ * a duplicate or unrequested `session_pk` signals a control-plane bug we must not trust.
+ */
+function assertCoversExactly(requested: string[], results: SessionClaim[]): void {
+  const returned = new Set(results.map((r) => r.sessionPk));
+  if (returned.size !== results.length) {
+    throw new Error('claim response has a duplicate session_pk');
+  }
+  if (returned.size !== requested.length || !requested.every((pk) => returned.has(pk))) {
+    throw new Error('claim response does not cover the requested sessions exactly');
   }
 }

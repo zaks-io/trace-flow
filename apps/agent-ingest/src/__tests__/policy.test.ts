@@ -64,8 +64,22 @@ describe('checkCompatibility', () => {
     });
   });
 
-  it('accepts versions at or above the minimum, ignoring a v-prefix and prerelease tag', () => {
+  it('accepts versions at or above the minimum, stripping a leading v-prefix', () => {
     expect(checkCompatibility(policy, 'v1.4.0', '2.0.0-beta.1')).toEqual({ ok: true });
+  });
+
+  it('blocks a prerelease below the same-core release minimum (semver §11 precedence)', () => {
+    const min: CompatibilityPolicy = { ...policy, minDesktopVersion: '1.0.0' };
+    expect(checkCompatibility(min, '1.0.0-beta', '1.0.0')).toEqual({
+      ok: false,
+      detail: 'desktop_below_min',
+    });
+  });
+
+  it('orders prerelease identifiers numerically, not lexically (1.0.0-beta.2 < beta.11)', () => {
+    const min: CompatibilityPolicy = { ...policy, minDesktopVersion: '1.0.0-beta.11' };
+    expect(checkCompatibility(min, '1.0.0-beta.2', '1.0.0').ok).toBe(false);
+    expect(checkCompatibility(min, '1.0.0-beta.11', '1.0.0')).toEqual({ ok: true });
   });
 });
 

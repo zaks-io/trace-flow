@@ -12,6 +12,7 @@ import { assembleQueueFacts } from './ids';
 import { ConvexUnreachableError, claimSessions } from './ownership';
 import { chunkFacts } from './chunker';
 import { MAX_COMMAND_EXCERPT, MAX_ERROR_EXCERPT, capExcerpt, redactField } from './redaction';
+import { validateEnvelopeShape } from './validation';
 
 /** Collector authenticates with this header; the value is the raw Collector Credential secret. */
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
@@ -166,40 +167,6 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
   } finally {
     await logger.flush();
   }
-}
-
-const FACT_CATEGORIES = [
-  'messages',
-  'tool_events',
-  'file_events',
-  'capability_snapshots',
-  'pull_request_links',
-] as const;
-const BATCH_STRING_FIELDS = [
-  'source',
-  'parser_version',
-  'desktop_version',
-  'collector_batch_id',
-] as const;
-
-/**
- * Structural guard at the trust boundary. The truthy `batch`/`facts` check is not enough — a
- * well-formed-but-empty `{batch:{},facts:{}}` would pass it and then throw downstream (semver parse
- * on an undefined version, `.length` on a missing fact array) into a 500. This rejects those with a
- * precise 400. It is not full schema validation (the consumer's Tinybird quarantine is the schema
- * gate); it only asserts the fields this handler dereferences. Returns the first offending field, or
- * `null` if the shape is usable.
- */
-function validateEnvelopeShape(envelope: AgentIngestEnvelope | undefined): string | null {
-  if (!envelope?.batch || typeof envelope.batch !== 'object') return 'batch';
-  if (!envelope.facts || typeof envelope.facts !== 'object') return 'facts';
-  for (const field of BATCH_STRING_FIELDS) {
-    if (typeof envelope.batch[field] !== 'string') return `batch.${field}`;
-  }
-  for (const category of FACT_CATEGORIES) {
-    if (!Array.isArray(envelope.facts[category])) return `facts.${category}`;
-  }
-  return null;
 }
 
 function isEmpty(facts: AgentIngestQueueFacts | AgentIngestEnvelope['facts']): boolean {

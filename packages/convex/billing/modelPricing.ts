@@ -431,45 +431,57 @@ interface ConvertedPricing {
   contextTier?: ConvertedTier;
 }
 
-/** models.dev publishes dollars per million tokens; our catalog stores microdollars per million. */
-function dollarsToMicrodollars(dollarsPerMillion: number): number {
+/**
+ * models.dev publishes dollars per million tokens; our catalog stores microdollars per million.
+ * Returns null for a non-finite or negative rate so untrusted JSON can't corrupt a pricing row (and
+ * every downstream cost) with NaN/Infinity/negative microdollars.
+ */
+function dollarsToMicrodollars(dollarsPerMillion: number): number | null {
+  if (!Number.isFinite(dollarsPerMillion) || dollarsPerMillion < 0) return null;
   return Math.round(dollarsPerMillion * 1_000_000);
+}
+
+/** Optional rate: a present-but-invalid value is dropped (undefined), an absent one stays absent. */
+function optionalMicrodollars(dollarsPerMillion: number | undefined): number | undefined {
+  if (dollarsPerMillion === undefined) return undefined;
+  return dollarsToMicrodollars(dollarsPerMillion) ?? undefined;
 }
 
 /**
  * Converts one models.dev model entry to our microdollar pricing record, mapping a
  * `tier.type === 'context'` rate set (e.g. `gpt-5.5` above 272k tokens) onto `contextTier`. Returns
- * null for entries without a `cost` block (e.g. the openai image models) so the caller skips them
- * rather than storing a misleading zero rate. Exported for the headless conversion unit test.
+ * null for entries without a `cost` block (e.g. the openai image models) or with an invalid required
+ * `input`/`output` rate, so the caller skips them rather than storing a misleading or corrupt rate.
+ * Exported for the headless conversion unit test.
  */
 export function convertModelsDevModel(model: ModelsDevModel): ConvertedPricing | null {
   const cost = model.cost;
   if (!cost) return null;
 
+  const promptCostPerMillion = dollarsToMicrodollars(cost.input);
+  const completionCostPerMillion = dollarsToMicrodollars(cost.output);
+  if (promptCostPerMillion === null || completionCostPerMillion === null) return null;
+
   const contextTierCost = cost.tiers?.find((t) => t.tier.type === 'context');
-  const contextTier: ConvertedTier | undefined = contextTierCost
-    ? {
-        thresholdTokens: contextTierCost.tier.size,
-        promptCostPerMillion: dollarsToMicrodollars(contextTierCost.input),
-        completionCostPerMillion: dollarsToMicrodollars(contextTierCost.output),
-        cacheReadCostPerMillion:
-          contextTierCost.cache_read !== undefined
-            ? dollarsToMicrodollars(contextTierCost.cache_read)
-            : undefined,
-        cacheWriteCostPerMillion:
-          contextTierCost.cache_write !== undefined
-            ? dollarsToMicrodollars(contextTierCost.cache_write)
-            : undefined,
-      }
-    : undefined;
+  const tierPrompt = contextTierCost ? dollarsToMicrodollars(contextTierCost.input) : null;
+  const tierCompletion = contextTierCost ? dollarsToMicrodollars(contextTierCost.output) : null;
+  // Drop a context tier whose required rates are invalid rather than store a corrupt threshold rate.
+  const contextTier: ConvertedTier | undefined =
+    contextTierCost && tierPrompt !== null && tierCompletion !== null
+      ? {
+          thresholdTokens: contextTierCost.tier.size,
+          promptCostPerMillion: tierPrompt,
+          completionCostPerMillion: tierCompletion,
+          cacheReadCostPerMillion: optionalMicrodollars(contextTierCost.cache_read),
+          cacheWriteCostPerMillion: optionalMicrodollars(contextTierCost.cache_write),
+        }
+      : undefined;
 
   return {
-    promptCostPerMillion: dollarsToMicrodollars(cost.input),
-    completionCostPerMillion: dollarsToMicrodollars(cost.output),
-    cacheReadCostPerMillion:
-      cost.cache_read !== undefined ? dollarsToMicrodollars(cost.cache_read) : undefined,
-    cacheWriteCostPerMillion:
-      cost.cache_write !== undefined ? dollarsToMicrodollars(cost.cache_write) : undefined,
+    promptCostPerMillion,
+    completionCostPerMillion,
+    cacheReadCostPerMillion: optionalMicrodollars(cost.cache_read),
+    cacheWriteCostPerMillion: optionalMicrodollars(cost.cache_write),
     contextTier,
   };
 }

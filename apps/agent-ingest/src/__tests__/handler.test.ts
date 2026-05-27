@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { createExecutionContext, fetchMock, waitOnExecutionContext } from 'cloudflare:test';
 import { sha256Hex } from '@trace-flow/utils';
-import type { AgentIngestQueueMessage } from '@trace-flow/types';
+import type { AgentIngestQueueMessage, AgentToolEventFact } from '@trace-flow/types';
 import { app } from '../index';
 import { __resetPolicyCache, type CompatibilityPolicy } from '../policy';
 import type { AgentIngestEnv } from '../context';
@@ -176,6 +176,15 @@ describe('POST /v1/ingest', () => {
     expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
   });
 
+  it('400s a fact element missing its required fields (per-element shape, before the policy fetch)', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    const bad = envelope({ facts: facts({ tool_events: [{} as unknown as AgentToolEventFact] }) });
+    const res = await post(env, JSON.stringify(bad), authHeaders);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
   it('503s when the compatibility policy is unavailable on a cold miss', async () => {
     const { env } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(503, { error: 'down' });
@@ -239,6 +248,26 @@ describe('POST /v1/ingest', () => {
       .get(CONVEX)
       .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' })
       .reply(200, JSON.stringify({ results: [{ status: 'claimed' }] })); // missing sessionPk
+    const res = await post(env, JSON.stringify(envelope()), authHeaders);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: 'session_claim_unavailable' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('503s when the claim response covers a session that was never requested (fails closed)', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    fetchMock
+      .get(CONVEX)
+      .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' })
+      .reply(
+        200,
+        JSON.stringify({
+          results: [
+            { sessionPk: 'not-the-requested-pk', status: 'claimed', ownerUserId: 'user-1' },
+          ],
+        }),
+      );
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: 'session_claim_unavailable' });

@@ -119,16 +119,50 @@ function normalizeVersion(v: string): string {
   return v.replace(/^v/, '');
 }
 
-function parseSemver(v: string): [number, number, number] {
-  const core = normalizeVersion(v).split('+')[0]?.split('-')[0] ?? '';
+function parseSemver(v: string): { core: [number, number, number]; prerelease: string } {
+  const noBuild = normalizeVersion(v).split('+')[0] ?? '';
+  const dash = noBuild.indexOf('-');
+  const core = dash === -1 ? noBuild : noBuild.slice(0, dash);
+  const prerelease = dash === -1 ? '' : noBuild.slice(dash + 1);
   const parts = core.split('.').map((n) => parseInt(n, 10) || 0);
-  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+  return { core: [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0], prerelease };
 }
 
 function semverLt(a: string, b: string): boolean {
-  const [a0, a1, a2] = parseSemver(a);
-  const [b0, b1, b2] = parseSemver(b);
-  if (a0 !== b0) return a0 < b0;
-  if (a1 !== b1) return a1 < b1;
-  return a2 < b2;
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  for (let i = 0; i < 3; i++) {
+    const ca = pa.core[i] ?? 0;
+    const cb = pb.core[i] ?? 0;
+    if (ca !== cb) return ca < cb;
+  }
+  // Equal cores: a prerelease (`1.2.3-beta`) has lower precedence than the release (`1.2.3`), so an
+  // unsupported prerelease can't sneak past a `1.2.3` minimum. semver §11.
+  if (pa.prerelease === pb.prerelease) return false;
+  if (pa.prerelease === '') return false; // release ≥ any prerelease of the same core
+  if (pb.prerelease === '') return true; // prerelease < release of the same core
+  return comparePrerelease(pa.prerelease, pb.prerelease) < 0;
+}
+
+/** Compares dot-separated prerelease identifiers per semver §11.4 (numeric < alphanumeric). */
+function comparePrerelease(a: string, b: string): number {
+  const as = a.split('.');
+  const bs = b.split('.');
+  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+    if (i >= as.length) return -1; // fewer identifiers → lower precedence
+    if (i >= bs.length) return 1;
+    const ai = as[i]!;
+    const bi = bs[i]!;
+    const aNum = /^\d+$/.test(ai);
+    const bNum = /^\d+$/.test(bi);
+    if (aNum && bNum) {
+      const d = parseInt(ai, 10) - parseInt(bi, 10);
+      if (d !== 0) return d < 0 ? -1 : 1;
+    } else if (aNum !== bNum) {
+      return aNum ? -1 : 1; // numeric identifiers rank below alphanumeric
+    } else if (ai !== bi) {
+      return ai < bi ? -1 : 1;
+    }
+  }
+  return 0;
 }
