@@ -15,6 +15,37 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3a (`collector-parser`, partial: redaction) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** New `packages/collector-parser` crate scaffolded into the Cargo workspace
+(`members = ["packages/collector-*"]`), redaction trust-boundary module landed first. `redaction.rs`
+ports the field-level secret/PII policy kept in lockstep with the merged server backstop
+`apps/agent-ingest/src/redaction.ts` (2b): structure-preserving masks (Bearer header, `/Users/`
+`/home/` username), then a credential **drop** pass (AWS access/secret keys, GitHub classic +
+fine-grained PATs, `sk-` API keys, Slack `xox*`, URL userinfo, JWT, PEM private-key header, `$HOME`
+paths), then a residual-PII **mask** (Luhn-gated cards, email, SSN, IPv4, US phone, sensitive-JSON
+values). `redact_field` returns `{ value, dropped }`; a credential match withholds the whole field,
+masks keep structure. The `regex` crate has no lookaround, so the TS phone lookbehind is re-expressed
+as a captured leading-boundary char. Provenance/SPDX(MIT) headers on every file. No pricing, no
+`cost_usd`, no `*_pk` — this crate ships tokens+model only.
+**Verified:** `cargo test -p collector-parser` 9 pass (7 unit + 2 integration); the integration test
+loads the **shared** `fixtures/redaction-canary.json` and asserts all 12 planted secrets are
+dropped/masked with `dropped >= 1` — the same corpus the 2b TS re-redact asserts against, so the two
+layers cannot drift. `cargo clippy -p collector-parser --all-targets -- -D warnings` clean;
+`cargo fmt --check` clean; `cargo build --workspace` clean. CodeRabbit CLI: 2 passes; fixed the
+`regex` version-floor pin (`"1" → "1.11"`). Declined pattern-expansion findings (IPv6, unformatted
+9-digit SSN, Stripe keys): the pattern set is intentionally lockstep with the 2b backstop + the shared
+canary; expanding it belongs in a cross-layer change that updates `fixtures/redaction-canary.json`
+**and** both redactors together (outside 3a's single-crate lane).
+**Next / blockers:** 3a stays 🚧. Remaining sub-work (next invocations): Claude parser (collapse
+repeated `message.usage` by `message.id`), Codex parser (sum `last_token_usage` deltas, NEVER
+`total_token_usage`), tool-use+tool-result fold (same `tool_use_id` → one Tool Event), repo-relative
+path relativization for `agent_file_events` (no `/Users/`/`$HOME`/username; outside-repo →
+`outside_repo`), capability snapshots (counts/hashes/sizes only), Codex turn-index determinism, and
+the fact emitters onto `collector-contracts`. Then 3b (`collector-sync`) and 3d (headless e2e). A
+future cross-layer change should add Stripe/IPv6 to the shared canary + both redactors.
+
 ## 2026-05-26 — 3c (`collector-api-client` + `collector-common`) — t3code/ab83918d
 
 **Status:** ✅ done

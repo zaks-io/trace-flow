@@ -1,0 +1,15 @@
+[package]
+name = "collector-parser"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Parser for local coding-agent transcripts (Claude Code, Codex CLI) into Trace Flow agent ingest facts."
+
+# Pin a controlled baseline: this is the redaction trust boundary, so the regex engine is
+# security-relevant. The Rust `regex` crate guarantees linear-time matching (no ReDoS), but a floor
+# keeps the audited engine behavior reproducible. The workspace lock resolves the exact patch.
+[dependencies]
+regex = "1.11"
+
+[dev-dependencies]
+serde_json = "1"
