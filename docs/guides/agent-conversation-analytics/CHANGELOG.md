@@ -15,6 +15,36 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-26 — 3a (`collector-parser`, partial: tool-use/tool-result fold) — t3code/ab83918d
+
+**Status:** 🚧 in progress
+**Changed:** Added `packages/collector-parser/src/tool_fold.rs` (+ `pub mod tool_fold;`).
+`fold_tool_events(records)` pairs each Claude Code `tool_use` block with its matching `tool_result`
+(by `tool_use_id`) and that result record's co-located `toolUseResult` sidecar into one
+`FoldedToolEvent` per call — the pre-emitter shape of an `AgentToolEventFact`. **Divergence from otto:**
+otto emits the call and its result as two separate facts; the ADR requires a call and its outcome to be
+a single row, so this resolves all results first, then walks `tool_use` blocks in document order
+(`source_block_index` = position in the message `content[]`). Outcome mapping is honest about the
+unobserved case: no matching result (session ended mid-call) or `interrupted` → `Unknown`; `is_error` →
+`Failure`; else `Success`. `duration_ms` and `stderr` come from the sidecar; `error_text` falls back to
+the result body (string or `{type:text}` array) only when the call errored; `command` is `Some` only for
+shell tools carrying `input.command`. Text fields stay raw — the downstream emitter redacts, truncates,
+classifies, and stamps the epoch. 9 tests (success fold, is_error→Failure+stderr, interrupted→Unknown,
+dangling→Unknown, sidecar duration, error-body fallback, text-array join, document-order+block-index,
+empty session).
+**Verified:** `cargo fmt --check`, `cargo clippy -p collector-parser --all-targets -- -D warnings`
+(clean), `cargo test -p collector-parser` (57 passed + 2 canary), `cargo build --workspace`.
+CodeRabbit `--type uncommitted`: 1 trivial finding (double-allocation in `result_content_text` via
+`Value::String` rewrap) fixed with its verbatim suggestion (`trim_non_empty(&str)` helper, both call
+sites converted), re-confirmed **0 findings**. Commit `03ebc21`.
+**Next / blockers:** 3a stays 🚧. Remaining leaves: Codex turn-index determinism; then the fact emitters
+onto `collector-contracts` (assemble `session_message_usages` + `session_turn_usages` + `classify_command`
+
+- `fold_tool_events` + `relativize_repo_path` + `redact_field` into `Agent*Fact`, emit `command_family =
+command_program`). Capability snapshots deferred — real Codex `session_meta` has empty `base_instructions`
+  and no clear dynamic-tools catalog, so the source mapping is a non-ADR decision (needs-data). CodeRabbit
+  windows still fluctuating (6m–16m) on credit depletion; cleared via background wait+retry.
+
 ## 2026-05-26 — 3a (`collector-parser`, partial: command classification) — t3code/ab83918d
 
 **Status:** 🚧 in progress
