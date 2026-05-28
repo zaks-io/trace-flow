@@ -18,7 +18,7 @@ pub struct AgentIngestBatch {
     pub raw_upload_requested: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AgentIngestFacts {
     pub messages: Vec<AgentMessageFact>,
     pub tool_events: Vec<AgentToolEventFact>,

@@ -28,6 +28,10 @@ thiserror = "1"
 walkdir = "2"
 # Head-hash change detection uses the same SHA-256 fingerprint convention as `collector-parser`.
 sha2 = "0.10"
+# Bounded-concurrency upload: `buffer_unordered` drives up to N envelope POSTs concurrently on the
+# embedder's single task (the work is network-wait, not CPU), so a history backfill is not one serial
+# round-trip per session. Only the `std`/`alloc` stream combinators are needed.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # Reopen-across-process and per-org-isolation tests need a real on-disk DB, not `:memory:`.

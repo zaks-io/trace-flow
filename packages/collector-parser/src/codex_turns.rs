@@ -20,7 +20,7 @@
 
 use serde_json::Value;
 
-use crate::codex_usage::{cumulative_total, last_token_usage, CodexTurnUsage};
+use crate::codex_usage::{cumulative_usage, last_token_usage, CodexTurnUsage, CumulativeUsage};
 
 /// Whether a turn is a user message or an assistant (model) turn. Codex's `developer` preamble is not a
 /// conversation turn and gets no index.
@@ -80,7 +80,11 @@ where
 {
     let mut turns = Vec::new();
     let mut next_index = 0i64;
-    let mut last_kept_cumulative = 0i64;
+    // The last *counted* cumulative snapshot. A turn's usage is the diff from this to the current
+    // snapshot (ccusage-correct), so the kept turns sum to the session's final cumulative by
+    // construction. Starts at zero (the implicit pre-session total), so the first real snapshot's delta
+    // is itself.
+    let mut prev_cumulative = CumulativeUsage::default();
     // The most recent assistant-activity record not yet closed into a turn. An assistant turn normally
     // closes on its `token_count`; this flushes one that a user message or end-of-session closes instead.
     let mut pending_activity: Option<&'a Value> = None;
@@ -108,20 +112,34 @@ where
             RecordKind::AssistantActivity => pending_activity = Some(record),
             RecordKind::TokenCount => {
                 let payload = record.get("payload");
-                let Some(cumulative) = payload.and_then(cumulative_total) else {
+                let Some(cumulative) = payload.and_then(cumulative_usage) else {
                     continue;
                 };
-                if cumulative > last_kept_cumulative {
-                    last_kept_cumulative = cumulative;
-                    turns.push(CodexTurn {
-                        turn_index: next_index,
-                        role: CodexTurnRole::Assistant,
-                        usage: payload.and_then(last_token_usage),
-                        record,
-                    });
-                    next_index += 1;
-                    pending_activity = None;
-                }
+                // Per-turn usage = diff of successive cumulative snapshots (ccusage#884). Three cases:
+                let usage = if cumulative.total_tokens > prev_cumulative.total_tokens {
+                    // Normal advance: the delta since the last counted snapshot.
+                    let u = cumulative.delta_since(prev_cumulative);
+                    prev_cumulative = cumulative;
+                    u
+                } else if cumulative.total_tokens == prev_cumulative.total_tokens {
+                    // Unchanged cumulative = duplicate snapshot Codex re-emits → contributes nothing.
+                    continue;
+                } else {
+                    // Cumulative went backwards: a session reset/rollback (e.g. resumed/compacted
+                    // context). The cumulative is no longer a continuation of `prev`, so fall back to
+                    // this row's own `last_token_usage` and re-baseline `prev` to the new snapshot.
+                    let u = payload.and_then(last_token_usage).unwrap_or_default();
+                    prev_cumulative = cumulative;
+                    u
+                };
+                turns.push(CodexTurn {
+                    turn_index: next_index,
+                    role: CodexTurnRole::Assistant,
+                    usage: Some(usage),
+                    record,
+                });
+                next_index += 1;
+                pending_activity = None;
             }
             RecordKind::Ignore => {}
         }
@@ -154,9 +172,16 @@ mod tests {
         json!({ "type": "event_msg", "payload": { "type": payload_type } })
     }
 
-    /// A `token_count` event. `last` is `(input, cached, output, reasoning, total)`; `cumulative` is the
-    /// running `total_token_usage.total_tokens`. `None` `last` is the null early-session emission.
-    fn token_count(last: Option<(i64, i64, i64, i64, i64)>, cumulative: i64) -> Value {
+    /// A `token_count` event whose CUMULATIVE `total_token_usage` is `cum` =
+    /// `(raw_input, cached, output, reasoning, total)`. Per-turn usage is derived by diffing these
+    /// snapshots (ccusage#884), so the cumulative carries the full breakdown. `last` sets
+    /// `last_token_usage` (only consulted on a reset/rollback); pass `None` for the null early emission
+    /// and when the row isn't a reset it's ignored.
+    fn token_count_cum(
+        cum: (i64, i64, i64, i64, i64),
+        last: Option<(i64, i64, i64, i64, i64)>,
+    ) -> Value {
+        let (ci, cc, co, cr, ct) = cum;
         let last_usage = match last {
             Some((input, cached, output, reasoning, total)) => json!({
                 "input_tokens": input,
@@ -173,25 +198,33 @@ mod tests {
                 "type": "token_count",
                 "info": {
                     "last_token_usage": last_usage,
-                    "total_token_usage": { "total_tokens": cumulative },
+                    "total_token_usage": {
+                        "input_tokens": ci,
+                        "cached_input_tokens": cc,
+                        "output_tokens": co,
+                        "reasoning_output_tokens": cr,
+                        "total_tokens": ct,
+                    },
                 },
             },
         })
     }
 
-    /// A token-count-only session (no message records): a leading null event, monotonic cumulatives, and
-    /// two duplicate emissions. Six real assistant turns summing to 299_113.
+    /// A token-count-only session (no message records): a leading null/zero event, monotonic
+    /// cumulative snapshots, and two duplicate emissions. Six real assistant turns; the diffed usages
+    /// sum to the final cumulative total of 299_113.
     fn token_only_session() -> Vec<Value> {
+        // cumulative (raw_input, cached, output, reasoning, total)
         vec![
-            token_count(None, 0),
-            token_count(Some((20_480, 0, 200, 0, 20_680)), 20_680),
-            token_count(Some((40_000, 10_000, 219, 40, 40_219)), 60_899),
-            token_count(Some((52_500, 30_000, 308, 60, 52_808)), 113_707),
-            token_count(Some((57_000, 45_000, 434, 80, 57_434)), 171_141),
-            token_count(Some((57_000, 45_000, 434, 80, 57_434)), 171_141), // duplicate
-            token_count(Some((63_394, 20_352, 502, 123, 63_896)), 235_037),
-            token_count(Some((63_394, 20_352, 502, 123, 63_896)), 235_037), // duplicate
-            token_count(Some((63_637, 56_704, 439, 0, 64_076)), 299_113),
+            token_count_cum((0, 0, 0, 0, 0), None),
+            token_count_cum((20_480, 0, 200, 0, 20_680), None),
+            token_count_cum((60_480, 10_000, 419, 40, 60_899), None),
+            token_count_cum((112_980, 40_000, 727, 100, 113_707), None),
+            token_count_cum((169_980, 85_000, 1_161, 180, 171_141), None),
+            token_count_cum((169_980, 85_000, 1_161, 180, 171_141), None), // duplicate
+            token_count_cum((233_374, 105_352, 1_663, 303, 235_037), None),
+            token_count_cum((233_374, 105_352, 1_663, 303, 235_037), None), // duplicate
+            token_count_cum((297_011, 162_056, 2_102, 303, 299_113), None),
         ]
     }
 
@@ -203,9 +236,9 @@ mod tests {
             activity("reasoning"),
             message("assistant"),
             activity("function_call"),
-            token_count(Some((1_000, 0, 50, 0, 1_050)), 1_050),
+            token_count_cum((1_000, 0, 50, 0, 1_050), None),
             activity("reasoning"), // a reasoning/tool-only turn: tokens but no message record
-            token_count(Some((500, 0, 20, 0, 520)), 1_570),
+            token_count_cum((1_500, 0, 70, 0, 1_570), None),
         ];
         let turns = session_turns(records.iter());
         let shape: Vec<_> = turns
@@ -228,7 +261,7 @@ mod tests {
         let records = [
             activity("reasoning"),
             activity("function_call"),
-            token_count(Some((900, 0, 30, 0, 930)), 930),
+            token_count_cum((900, 0, 30, 0, 930), None),
         ];
         let turns = session_turns(records.iter());
         assert_eq!(turns.len(), 1);
@@ -283,7 +316,7 @@ mod tests {
             event_dup("user_message"),
             message("assistant"),
             event_dup("agent_message"),
-            token_count(Some((10, 0, 5, 0, 15)), 15),
+            token_count_cum((10, 0, 5, 0, 15), None),
         ];
         // user turn + one assistant turn (closed by token_count); the two event_msg are ignored.
         assert_eq!(session_turns(records.iter()).len(), 2);
@@ -299,15 +332,55 @@ mod tests {
 
     #[test]
     fn summing_the_cumulative_field_would_be_the_token_trap() {
-        // Guard: `total_token_usage` is cumulative; adding it across events explodes far past the real
-        // total. session_turns reads it only as a dedup key, never sums it.
+        // Guard: `total_token_usage.total_tokens` is cumulative; adding it across events explodes far
+        // past the real total. session_turns DIFFS successive snapshots, never sums them.
         let records = token_only_session();
         let trap: i64 = records
             .iter()
-            .filter_map(|r| r.get("payload").and_then(cumulative_total))
+            .filter_map(|r| r.get("payload").and_then(crate::codex_usage::cumulative_total))
             .sum();
         assert_eq!(trap, 1_306_755);
         assert!(trap > 299_113 * 3);
+    }
+
+    #[test]
+    fn duplicate_snapshots_contribute_zero_and_diffs_match_the_final_total() {
+        // The ccusage#884 fix: a row whose cumulative did not advance is a duplicate and adds nothing;
+        // the kept turns' usages sum EXACTLY to the session's final cumulative, regardless of what the
+        // (possibly lagging) `last_token_usage` rows said.
+        let records = token_only_session();
+        let turns = session_turns(records.iter());
+        assert_eq!(turns.len(), 6, "two duplicate snapshots dropped");
+        let summed: i64 = turns.iter().filter_map(|t| t.usage.map(|u| u.total_tokens)).sum();
+        assert_eq!(summed, 299_113);
+        // The per-turn split also reconstructs: a turn's input+cache_read+output == its total.
+        for t in &turns {
+            let u = t.usage.expect("assistant usage");
+            assert_eq!(u.input_tokens + u.cache_read_tokens + u.output_tokens, u.total_tokens);
+        }
+    }
+
+    #[test]
+    fn a_cumulative_rollback_falls_back_to_last_token_usage() {
+        // A resumed/compacted session can reset its cumulative downward. The post-reset row is not a
+        // continuation of the prior cumulative, so its usage comes from `last_token_usage` and the
+        // baseline re-anchors to the new snapshot.
+        let records = [
+            token_count_cum((100_000, 50_000, 1_000, 0, 101_000), None),
+            // cumulative dropped (reset): fall back to last_token_usage (raw 800, cached 200, out 40).
+            token_count_cum((10_000, 5_000, 200, 0, 10_200), Some((800, 200, 40, 0, 840))),
+            // normal advance after reset: diff from the re-anchored 10_200 baseline.
+            token_count_cum((12_000, 6_000, 260, 0, 12_260), None),
+        ];
+        let turns = session_turns(records.iter());
+        assert_eq!(turns.len(), 3);
+        // turn 0: first snapshot, delta from zero → its own cumulative.
+        assert_eq!(turns[0].usage.unwrap().total_tokens, 101_000);
+        // turn 1: reset → last_token_usage. input = 800-200 = 600, cache_read 200, out 40.
+        let r = turns[1].usage.unwrap();
+        assert_eq!((r.input_tokens, r.cache_read_tokens, r.output_tokens), (600, 200, 40));
+        // turn 2: diff from re-anchored baseline 10_200 → total 2_060.
+        assert_eq!(turns[2].usage.unwrap().total_tokens, 2_060);
     }
 
     #[test]

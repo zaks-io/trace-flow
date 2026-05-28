@@ -20,7 +20,43 @@ const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 /** Hard cap on the request body (envelopes with deferred raw bundles are the large case). */
 const MAX_INGEST_BYTES = 10 * 1024 * 1024;
 
+// Cloudflare Queues `sendBatch` limits: ≤100 messages AND ≤256 KB total per call (each message also
+// ≤128 KB, already enforced upstream by MAX_QUEUE_MESSAGE_BYTES). Grouping by message COUNT alone blew
+// the 256 KB total — a few ~124 KB chunked messages exceed it — so we group by cumulative bytes with
+// headroom for the batch's own JSON framing.
+const QUEUE_SEND_BATCH_MAX_MESSAGES = 100;
+const QUEUE_SEND_BATCH_MAX_BYTES = 240 * 1024;
+
+const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+
+/**
+ * Group `messages` into `sendBatch`-sized batches that respect BOTH the 100-message and 256 KB-total
+ * caps. A single message already fits the per-message limit, so a message larger than the byte budget
+ * still ships alone in its own batch rather than being dropped.
+ */
+function groupForSendBatch(messages: AgentIngestQueueMessage[]): AgentIngestQueueMessage[][] {
+  const groups: AgentIngestQueueMessage[][] = [];
+  let current: AgentIngestQueueMessage[] = [];
+  let currentBytes = 0;
+
+  for (const message of messages) {
+    const size = encoder.encode(JSON.stringify(message)).length;
+    const wouldOverflow =
+      current.length > 0 &&
+      (current.length >= QUEUE_SEND_BATCH_MAX_MESSAGES ||
+        currentBytes + size > QUEUE_SEND_BATCH_MAX_BYTES);
+    if (wouldOverflow) {
+      groups.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(message);
+    currentBytes += size;
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
 
 /**
  * Ingest entrypoint for `POST /v1/ingest`. Gate order is deliberate: cheap rejections first, then
@@ -163,15 +199,22 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
     };
     const messages = chunkFacts(base, owned);
 
-    // allSettled so a partial enqueue is visible (succeeded vs failed). Any failure is a retryable
-    // 503; the client re-sends the whole batch and the consumer dedups on the deterministic *_pks,
-    // so re-enqueuing the messages that did land is idempotent.
-    const sends = await Promise.allSettled(messages.map((m) => c.env.AGENT_QUEUE.send(m)));
-    const failed = sends.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
-    if (failed.length > 0) {
-      logger.error('agent_ingest.enqueue_failed', failed[0]?.reason, {
-        failed: failed.length,
-        succeeded: messages.length - failed.length,
+    // Enqueue with sendBatch, not N parallel send()s. A multi-session envelope can chunk into hundreds
+    // of queue messages; firing that many individual send() subrequests bursts past Cloudflare's
+    // queue-write limits (and the Worker subrequest cap) and was the `enqueue_failed` 503 a batched
+    // backfill hit. sendBatch packs up to QUEUE_SEND_BATCH_MAX messages per call, so hundreds of sends
+    // collapse to a handful. Any failure is a retryable 503; the client re-sends the whole envelope and
+    // the consumer dedups on deterministic *_pks, so re-enqueuing messages that already landed is
+    // idempotent.
+    const groups = groupForSendBatch(messages);
+    const sends = await Promise.allSettled(
+      groups.map((g) => c.env.AGENT_QUEUE.sendBatch(g.map((body) => ({ body })))),
+    );
+    const failedGroups = sends.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
+    if (failedGroups.length > 0) {
+      logger.error('agent_ingest.enqueue_failed', failedGroups[0]?.reason, {
+        failed_groups: failedGroups.length,
+        groups: groups.length,
         messages: messages.length,
       });
       return c.json({ error: 'enqueue_failed' }, 503);

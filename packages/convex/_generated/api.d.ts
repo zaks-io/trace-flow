@@ -1279,6 +1279,21 @@ export declare const internal: {
       },
       { ownerUserId: Id<"users">; status: "claimed" | "owned" | "conflict" }
     >;
+    claimSessionsBatch: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        collectorId: string;
+        orgId: Id<"organizations">;
+        sessionPks: Array<string>;
+        userId: Id<"users">;
+      },
+      Array<{
+        ownerUserId: Id<"users">;
+        sessionPk: string;
+        status: "claimed" | "owned" | "conflict";
+      }>
+    >;
   };
   apiKeys: {
     getByIdInternal: FunctionReference<

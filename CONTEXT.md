@@ -143,6 +143,25 @@ _Avoid_: "TTL" as the user-facing name; conflating with **Visibility Window**.
 How far back a Subscription Tier may query, enforced at read-time. Can be shorter than what is retained, so upgrading a Tier reveals already-stored history without re-ingesting. For proxy Spans it equals the Retention Window; for agent facts a hobby org sees only the last week of a longer-retained store.
 _Avoid_: "retention" when you mean what a Tier can see.
 
+### Environments
+
+The word **"dev"** is overloaded and has caused real confusion: a Worker named `*-dev` is not a deployed cloud environment, and "run the dev env" can mean two different data planes. These terms fix that. The split that matters is **control plane** (which Worker code runs, and _where_) vs **data plane** (which Convex deployment + Tinybird workspace the running Workers read and write).
+
+**Local Workers**:
+The five Workers run as local `wrangler dev` processes via `bun run dev:all` (`scripts/dev/workers.sh`), under their default top-level config — the `*-dev` names (`trace-flow-agent-ingest-dev`, etc.). The `*-dev` name is the **default/top-level wrangler config**, the code that runs locally; it is _not_ a separately deployed cloud "dev" Worker. The only other real deployed environments are `[env.production]` and (for some Workers) `[env.preview]`. `apps/agent-ingest` and `apps/agent-consumer` currently have _only_ this default config — no production block yet (see the agent-analytics production roadmap, TRA-110).
+_Avoid_: saying "deploy to dev" or "the dev Workers" as if a cloud dev environment exists; it does not.
+
+**Cloud-Dev**:
+The everyday development data plane: **Local Workers** pointed at a real **Convex Cloud dev deployment** and a real **Tinybird Cloud dev workspace**. Data lands in the cloud dashboards and in a local **Web** reading from the cloud. This is what a developer usually means by "my dev environment" and "where my data ends up." The target is chosen by env vars (`TRACE_FLOW_CONVEX_URL` / `CONVEX_SITE_URL`, `TRACE_FLOW_TINYBIRD_HOST` + `TINYBIRD_TOKEN`), not by Worker name.
+_Avoid_: assuming the dev scripts default to Cloud-Dev — they default to **Self-Contained Local**.
+
+**Self-Contained Local**:
+A fully local, no-cloud-credentials data plane: **Local Workers** plus **Convex local** (`127.0.0.1:3210`) and **Tinybird Local** in Docker (`127.0.0.1:7181`). Built so isolated runtimes (Cursor Background Agents, CI) can run the whole stack without cloud access. This is what `scripts/dev/start.sh` provisions **by default** (`tb local start`, generated local tokens; see `docs/agents/local-environment.md`). Data is visible only locally, never in a cloud dashboard.
+_Avoid_: conflating with **Cloud-Dev**; assuming agents on this stack can see a developer's Cloud-Dev data, or vice versa.
+
+**Control Plane** / **Data Plane**:
+The **Control Plane** is Convex: it mints **Collector Credentials**, holds the compatibility policy, and answers Agent Session ownership claims. The **Data Plane** is Tinybird: the `otel_traces` and `agent_*` **Datasources** the **Consumer**/agent-consumer write and the **Web** reads. A given set of **Local Workers** can point each plane at cloud or local independently (e.g. Tinybird Cloud-Dev for rows while Convex stays local), which is why "dev" must always name _which plane_ points _where_.
+
 ### Tinybird
 
 **Pipe**:
@@ -310,3 +329,4 @@ _Avoid_: conflating with **StartedAt**.
 - **"project"** was used for both a Trace Flow **Project** (a declared cross-source grouping) and `~/.claude/projects` (Claude Code's local per-workspace storage). _Resolved_: capitalized **Project** is the Trace Flow grouping; the local directory is "the local projects directory" and maps closer to a single repository.
 - **"session"** means three different things: an **Agent Session** (a parsed agent conversation), an **MCP Session** (a Model Context Protocol session), and a vendor "session id" inside Source transcripts. _Resolved_: always qualify as **Agent Session** or **MCP Session**; "vendor session ID" is the raw Source identifier that seeds an Agent Session's identity.
 - **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn; **EventAt** is the fact retention and partition anchor; **LastEventAt** anchors session-summary retention and raw replay eligibility; **VendorStartedAt** is the Source's own declared start, captured as metadata where available.
+- **"dev"** meant three different things: (a) a Worker named `*-dev`, (b) the everyday "local Workers → cloud data" setup a developer runs, and (c) the fully local no-cloud stack the setup scripts provision by default. This directly caused a developer and an agent to expect data in different places. _Resolved_: a `*-dev` Worker is just the default **Local Workers** config, not a cloud environment; "where my data ends up" for daily development is **Cloud-Dev**; the scripted default is **Self-Contained Local** (for Cursor/CI). Always name which of **Control Plane** / **Data Plane** points at cloud vs local rather than saying "dev" unqualified.
