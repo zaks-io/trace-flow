@@ -23,7 +23,7 @@ import { AgentUsageChart } from './AgentUsageChart';
 import { AgentKpiCards } from './AgentKpiCards';
 import { FailureLeaderboardTable } from './FailureLeaderboardTable';
 import { ToolDeltaTable } from './ToolDeltaTable';
-import { SessionOutliersTable } from './SessionOutliersTable';
+import { AgentSessionsTable } from './AgentSessionsTable';
 
 const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string }>> = {
   cost: DollarSign,
@@ -49,17 +49,21 @@ export function AgentAnalytics() {
     clearFilters,
     filterParams,
   } = useAgentFilters();
-  const { timeseries, summary, failures, deltas, outliers, isLoading, hasError, isEmpty } =
-    useAgentData({ filterParams, groupBy, models });
+  const { timeseries, summary, failures, deltas, isLoading, hasError, isEmpty } = useAgentData({
+    filterParams,
+    groupBy,
+    models,
+  });
   const [metric, setMetric] = useState<AgentMetric>('cost');
   const [chartStyle, setChartStyle] = useState<AgentChartStyle>('stacked');
 
-  // Resolve repo_fingerprint -> display name only when repo grouping/filtering is active.
+  // Resolve repo_fingerprint -> display name. Loaded whenever there is data to show, since
+  // the session table renders repo names even when not grouping/filtering by repo.
   const windowParams = useMemo(
     () => ({ start_time_ms: filterParams.start_time_ms, end_time_ms: filterParams.end_time_ms }),
     [filterParams.start_time_ms, filterParams.end_time_ms],
   );
-  const repoLabelMap = useRepoDirectory(windowParams, groupBy === 'repo' || repos.length > 0);
+  const repoLabelMap = useRepoDirectory(windowParams, !isEmpty);
   const labelFor = useMemo(
     () => (value: string) => repoLabelMap.get(value) ?? value,
     [repoLabelMap],
@@ -293,9 +297,9 @@ export function AgentAnalytics() {
             />
           </div>
 
+          <AgentSessionsTable filterParams={filterParams} repoLabelMap={repoLabelMap} />
           <FailureLeaderboardTable data={failures} />
           <ToolDeltaTable data={deltas} />
-          <SessionOutliersTable data={outliers} />
         </div>
       )}
     </div>

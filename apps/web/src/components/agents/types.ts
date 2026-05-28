@@ -173,6 +173,26 @@ export const AGENT_GROUP_COLORS = [
   'var(--color-chart-8)',
 ] as const;
 
+/** Sort key for the browsable Agent Session table (all descending). */
+export type AgentSessionSort = 'cost' | 'files' | 'duration' | 'messages';
+
+export const AGENT_SESSION_PAGE_SIZE = 25;
+
+/** One row from `pipes/agent_sessions_browser.pipe`. */
+export interface AgentSessionRow {
+  session_pk: string;
+  source: string;
+  model: string;
+  repo_fingerprint: string;
+  message_count: number;
+  file_event_count: number;
+  unique_file_count: number;
+  /** Estimated cost; null when every message in the session is unpriced. */
+  cost_usd: number | null;
+  duration_ms: number;
+  last_event_ms: number;
+}
+
 /** Output of `pipes/agent_failure_leaderboard.pipe`. */
 export interface FailureLeaderboardRow {
   tool_name: string;
@@ -195,16 +215,4 @@ export interface ToolDeltaRow {
   current_failures: number;
   prior_failures: number;
   failure_delta: number;
-}
-
-/** Output of `pipes/agent_session_outliers.pipe`. */
-export interface SessionOutlierRow {
-  session_pk: string;
-  source: string;
-  repo_fingerprint: string;
-  message_count: number;
-  file_event_count: number;
-  unique_file_count: number;
-  /** Sum of priced messages; null when every message in the session is unpriced. */
-  cost_usd: number | null;
 }

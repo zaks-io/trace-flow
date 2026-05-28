@@ -6,7 +6,6 @@ import type {
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
-  SessionOutlierRow,
   ToolDeltaRow,
 } from './types';
 
@@ -51,30 +50,19 @@ export function useAgentData({ filterParams, groupBy, models }: UseAgentDataPara
     params: { ...filterParams, limit: 100 },
   });
 
-  const outliersQuery = useTinybirdQuery<TinybirdResponse<SessionOutlierRow>>({
-    pipe: 'agent_session_outliers',
-    params: { ...filterParams, limit: 100 },
-  });
-
   const summary = summaryQuery.data?.data?.[0] ?? null;
   const timeseries = useMemo(() => timeseriesQuery.data?.data ?? [], [timeseriesQuery.data]);
   const failures = useMemo(() => failuresQuery.data?.data ?? [], [failuresQuery.data]);
   const deltas = useMemo(() => deltaQuery.data?.data ?? [], [deltaQuery.data]);
-  const outliers = useMemo(() => outliersQuery.data?.data ?? [], [outliersQuery.data]);
 
   const isLoading =
     timeseriesQuery.isLoading ||
     summaryQuery.isLoading ||
     failuresQuery.isLoading ||
-    deltaQuery.isLoading ||
-    outliersQuery.isLoading;
+    deltaQuery.isLoading;
 
   const hasError =
-    timeseriesQuery.error ??
-    summaryQuery.error ??
-    failuresQuery.error ??
-    deltaQuery.error ??
-    outliersQuery.error;
+    timeseriesQuery.error ?? summaryQuery.error ?? failuresQuery.error ?? deltaQuery.error;
 
   // The summary aggregates billable (assistant) turns over the window, so no billable
   // turns and no sessions is the "no agent activity" signal. A loaded summary response
@@ -94,7 +82,6 @@ export function useAgentData({ filterParams, groupBy, models }: UseAgentDataPara
     summary,
     failures,
     deltas,
-    outliers,
     isLoading,
     hasError,
     isEmpty,

@@ -15,3 +15,12 @@
     {"session_pk":"s1","source":"claude","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4}
     {"session_pk":"s3","source":"claude","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8}
     {"session_pk":"s2","source":"claude","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1}
+
+- name: session_outliers_respects_sources_in_list
+  description: sources=claude (IN-list) keeps the claude sessions; the any(source) alias no longer shadows the WHERE
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sources=claude
+  expected_result: |
+    {"session_pk":"s1","source":"claude","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4}
+    {"session_pk":"s3","source":"claude","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8}
+    {"session_pk":"s2","source":"claude","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1}
