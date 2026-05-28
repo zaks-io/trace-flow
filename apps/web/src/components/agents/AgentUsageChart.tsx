@@ -63,11 +63,14 @@ export function AgentUsageChart({
   metric,
   groupBy,
   chartStyle,
+  onGroupClick,
 }: {
   data: AgentTimeseriesRow[];
   metric: AgentMetric;
   groupBy: AgentGroupBy;
   chartStyle: AgentChartStyle;
+  /** Toggle a group value into the active filter (click-to-filter); only when grouped. */
+  onGroupClick?: (value: string) => void;
 }) {
   const { chartData, series, config } = useMemo(() => {
     if (groupBy !== 'none') {
@@ -108,6 +111,10 @@ export function AgentUsageChart({
 
   const isCurrency = AGENT_METRIC_VALUE_KIND[metric] === 'currency';
   const formatValue = (v: number) => (isCurrency ? formatCurrency(v) : formatNumber(v));
+  const clickable = groupBy !== 'none' && Boolean(onGroupClick);
+  const handleSeriesClick = (name: string) => {
+    if (clickable) onGroupClick?.(name);
+  };
 
   const hourly =
     data.length > 1 &&
@@ -136,7 +143,12 @@ export function AgentUsageChart({
         }
       />
       {groupBy !== 'none' && (
-        <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+        <Legend
+          wrapperStyle={{ fontSize: 11, cursor: clickable ? 'pointer' : undefined }}
+          iconType="circle"
+          iconSize={8}
+          onClick={clickable ? (entry) => handleSeriesClick(String(entry.value)) : undefined}
+        />
       )}
     </>
   );
@@ -155,6 +167,8 @@ export function AgentUsageChart({
               stroke={s.color}
               dot={false}
               strokeWidth={2}
+              style={clickable ? { cursor: 'pointer' } : undefined}
+              onClick={clickable ? () => handleSeriesClick(s.name) : undefined}
             />
           ))}
         </LineChart>
@@ -171,6 +185,8 @@ export function AgentUsageChart({
               fill={s.color}
               stroke={s.color}
               fillOpacity={0.6}
+              style={clickable ? { cursor: 'pointer' } : undefined}
+              onClick={clickable ? () => handleSeriesClick(s.name) : undefined}
             />
           ))}
         </AreaChart>

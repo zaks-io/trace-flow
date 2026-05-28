@@ -1,9 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { Bot, DollarSign, Hash, MessageSquare, Wrench } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Bot, DollarSign, Hash, MessageSquare, Wrench, X } from 'lucide-react';
 import { PageToolbar } from '@/components/shared/PageToolbar';
-import { FilterDropdown } from '@/components/usage/FilterDropdown';
 import { TIME_RANGES } from '@/components/usage/types';
 import { useAgentFilters } from './useAgentFilters';
 import { useAgentData } from './useAgentData';
@@ -17,8 +16,8 @@ import {
   type AgentChartStyle,
   type AgentGroupBy,
   type AgentMetric,
-  type AgentSource,
 } from './types';
+import { MultiFilterDropdown } from './MultiFilterDropdown';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AgentKpiCards } from './AgentKpiCards';
 import { FailureLeaderboardTable } from './FailureLeaderboardTable';
@@ -34,12 +33,46 @@ const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string 
 };
 
 export function AgentAnalytics() {
-  const { timeRange, setTimeRange, source, setSource, groupBy, setGroupBy, filterParams } =
-    useAgentFilters();
+  const {
+    timeRange,
+    setTimeRange,
+    sources,
+    toggleSource,
+    models,
+    toggleModel,
+    groupBy,
+    setGroupBy,
+    hasFilters,
+    clearFilters,
+    filterParams,
+  } = useAgentFilters();
   const { timeseries, summary, failures, deltas, outliers, isLoading, hasError, isEmpty } =
-    useAgentData({ filterParams, groupBy });
+    useAgentData({ filterParams, groupBy, models });
   const [metric, setMetric] = useState<AgentMetric>('cost');
   const [chartStyle, setChartStyle] = useState<AgentChartStyle>('stacked');
+
+  // Model is high-cardinality and only appears in the data once grouped by model, so
+  // accumulate the values seen across group-by-model fetches to populate the filter.
+  const [seenModels, setSeenModels] = useState<string[]>([]);
+  useEffect(() => {
+    if (groupBy !== 'model') return;
+    setSeenModels((prev) => {
+      const set = new Set(prev);
+      let changed = false;
+      for (const row of timeseries) {
+        if (row.group_value && !set.has(row.group_value)) {
+          set.add(row.group_value);
+          changed = true;
+        }
+      }
+      return changed ? [...set] : prev;
+    });
+  }, [groupBy, timeseries]);
+  const modelOptions = useMemo(() => {
+    const set = new Set(seenModels);
+    for (const m of models) set.add(m);
+    return [...set];
+  }, [seenModels, models]);
 
   // Tool Events carry no model, so Model grouping is unavailable for that metric.
   const isGroupDisabled = (g: AgentGroupBy) => g === 'model' && metric === 'tool-events';
@@ -47,6 +80,12 @@ export function AgentAnalytics() {
   const selectMetric = (m: AgentMetric) => {
     setMetric(m);
     if (m === 'tool-events' && groupBy === 'model') setGroupBy('none');
+  };
+
+  // Click a series/legend entry to toggle that value into the active dimension's filter.
+  const onGroupClick = (value: string) => {
+    if (groupBy === 'source') toggleSource(value);
+    else if (groupBy === 'model') toggleModel(value);
   };
 
   const MetricIcon = METRIC_ICON[metric];
@@ -64,11 +103,29 @@ export function AgentAnalytics() {
           </p>
         </div>
         <div className="flex-1" />
-        <FilterDropdown
+        {hasFilters && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <X className="h-3 w-3" />
+            Clear filters
+          </button>
+        )}
+        <MultiFilterDropdown
           label="Source"
-          value={source}
+          values={sources}
           options={[...AGENT_SOURCES]}
-          onChange={(value) => setSource(value as AgentSource)}
+          onToggle={toggleSource}
+          onClear={() => sources.forEach(toggleSource)}
+        />
+        <MultiFilterDropdown
+          label="Model"
+          values={models}
+          options={modelOptions}
+          onToggle={toggleModel}
+          onClear={() => models.forEach(toggleModel)}
         />
         <div className="flex rounded-lg border border-border bg-card">
           {TIME_RANGES.map((range) => (
@@ -203,6 +260,7 @@ export function AgentAnalytics() {
               metric={metric}
               groupBy={groupBy}
               chartStyle={chartStyle}
+              onGroupClick={onGroupClick}
             />
           </div>
 

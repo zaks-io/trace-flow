@@ -46,10 +46,24 @@
     {"bucket_start":"2026-05-20 10:00:00","group_value":"gpt-5.5","message_count":1,"session_count":1,"input_tokens":10,"output_tokens":20,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":30,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
 
 - name: timeseries_respects_source_filter
-  description: source=codex isolates a source with no org_1c rows -> empty result
+  description: sources=codex (IN-list, one value) isolates a source with no org_1c rows -> empty
   expected_http_status: 200
-  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000&source=codex
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000&sources=codex
   expected_result: ''
+
+- name: timeseries_multi_source_in_list
+  description: sources=claude,codex (IN-list, two values) includes both org_cov sources in one bucket
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sources=claude,codex
+  expected_result: |
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"","message_count":4,"session_count":2,"input_tokens":30,"output_tokens":60,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":90,"cost_usd":1,"priced_message_count":3,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+
+- name: timeseries_models_in_list
+  description: models=claude-opus-4-7,gpt-5.5 excludes the composer-1 turn from org_cov
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&models=claude-opus-4-7,gpt-5.5
+  expected_result: |
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"","message_count":3,"session_count":2,"input_tokens":30,"output_tokens":60,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":90,"cost_usd":1,"priced_message_count":3,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
 
 - name: timeseries_empty_window
   description: a window with no activity returns no rows

@@ -1,23 +1,42 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { type TimeRange, TIME_RANGES } from '@/components/usage/types';
 import { snapToMinute } from '@/lib/tinybird';
-import type { AgentGroupBy, AgentSource } from './types';
+import { toggleInList } from './filters';
+import type { AgentGroupBy } from './types';
 
 type AgentFiltersState = {
   timeRange: TimeRange;
   setTimeRange: (v: TimeRange) => void;
-  source: AgentSource;
-  setSource: (v: AgentSource) => void;
+  /** Multi-select Source IN-list; empty = all sources. Scopes every agent pipe. */
+  sources: string[];
+  toggleSource: (v: string) => void;
+  /** Multi-select Model IN-list; empty = all models. Scopes the usage surfaces only. */
+  models: string[];
+  toggleModel: (v: string) => void;
   groupBy: AgentGroupBy;
   setGroupBy: (v: AgentGroupBy) => void;
-  /** Agent pipes take ms (not the ns the llm_* pipes use); org_id + retention_days are JWT-stamped. */
+  hasFilters: boolean;
+  clearFilters: () => void;
+  /**
+   * Shared params for every agent pipe: ms window (agent pipes take ms, not the ns the
+   * llm_* pipes use) + the sources IN-list. org_id + retention_days are JWT-stamped.
+   * models is applied per-query (usage surfaces only), not here.
+   */
   filterParams: Record<string, string | number>;
 };
 
 export function useAgentFilters(): AgentFiltersState {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
-  const [source, setSource] = useState<AgentSource>('');
+  const [sources, setSources] = useState<string[]>([]);
+  const [models, setModels] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState<AgentGroupBy>('none');
+
+  const toggleSource = useCallback((v: string) => setSources((prev) => toggleInList(prev, v)), []);
+  const toggleModel = useCallback((v: string) => setModels((prev) => toggleInList(prev, v)), []);
+  const clearFilters = useCallback(() => {
+    setSources([]);
+    setModels([]);
+  }, []);
 
   const { startTimeMs, endTimeMs } = useMemo(() => {
     const config = TIME_RANGES.find((range) => range.value === timeRange);
@@ -35,9 +54,21 @@ export function useAgentFilters(): AgentFiltersState {
       start_time_ms: startTimeMs,
       end_time_ms: endTimeMs,
     };
-    if (source) params.source = source;
+    if (sources.length > 0) params.sources = sources.join(',');
     return params;
-  }, [startTimeMs, endTimeMs, source]);
+  }, [startTimeMs, endTimeMs, sources]);
 
-  return { timeRange, setTimeRange, source, setSource, groupBy, setGroupBy, filterParams };
+  return {
+    timeRange,
+    setTimeRange,
+    sources,
+    toggleSource,
+    models,
+    toggleModel,
+    groupBy,
+    setGroupBy,
+    hasFilters: sources.length > 0 || models.length > 0,
+    clearFilters,
+    filterParams,
+  };
 }

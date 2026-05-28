@@ -1,9 +1,7 @@
 import type { ChartConfig } from '@/components/ui/chart';
 
-/** Source dimension filter; '' means all sources. */
-export type AgentSource = '' | 'claude' | 'codex' | 'cursor';
-
-export const AGENT_SOURCES: Exclude<AgentSource, ''>[] = ['claude', 'codex', 'cursor'];
+/** Canonical agent sources (the static Source filter options). */
+export const AGENT_SOURCES = ['claude', 'codex', 'cursor'] as const;
 
 /** Hero-chart metric switcher. Cost is the default and is always an estimate. */
 export type AgentMetric = 'cost' | 'tokens' | 'messages' | 'sessions' | 'tool-events';

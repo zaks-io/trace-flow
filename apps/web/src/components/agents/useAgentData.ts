@@ -14,12 +14,21 @@ type UseAgentDataParams = {
   filterParams: Record<string, string | number>;
   /** group_by applies only to the time-series; the other surfaces ignore it. */
   groupBy: AgentGroupBy;
+  /** Model IN-list; scopes the usage surfaces (time-series + summary) only — tool/session
+   * pipes have no model dimension. */
+  models: string[];
 };
 
-export function useAgentData({ filterParams, groupBy }: UseAgentDataParams) {
+export function useAgentData({ filterParams, groupBy, models }: UseAgentDataParams) {
+  // Tool events / sessions have no model, so models scopes only the usage surfaces.
+  const usageParams = useMemo(
+    () => (models.length > 0 ? { ...filterParams, models: models.join(',') } : filterParams),
+    [filterParams, models],
+  );
+
   const timeseriesParams = useMemo(
-    () => (groupBy === 'none' ? filterParams : { ...filterParams, group_by: groupBy }),
-    [filterParams, groupBy],
+    () => (groupBy === 'none' ? usageParams : { ...usageParams, group_by: groupBy }),
+    [usageParams, groupBy],
   );
 
   const timeseriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
@@ -29,7 +38,7 @@ export function useAgentData({ filterParams, groupBy }: UseAgentDataParams) {
 
   const summaryQuery = useTinybirdQuery<TinybirdResponse<AgentSummaryRow>>({
     pipe: 'agent_usage_summary',
-    params: filterParams,
+    params: usageParams,
   });
 
   const failuresQuery = useTinybirdQuery<TinybirdResponse<FailureLeaderboardRow>>({
