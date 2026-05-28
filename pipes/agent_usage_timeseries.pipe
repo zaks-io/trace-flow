@@ -56,7 +56,7 @@ SQL >
     FROM (
         SELECT
             BucketStart AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), '') AS group_value,
+            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             countMerge(MessageCount) AS message_count,
             uniqMerge(SessionCount) AS session_count,
             sumMerge(InputTokens) AS input_tokens,
@@ -76,6 +76,9 @@ SQL >
             {% if defined(sources) %}
             AND source IN splitByChar(',', {{ String(sources) }})
             {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
             {% if defined(models) %}
             AND model IN splitByChar(',', {{ String(models) }})
             {% end %}
@@ -85,7 +88,7 @@ SQL >
 
         SELECT
             BucketStart AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), '') AS group_value,
+            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             countMerge(MessageCount) AS message_count,
             uniqMerge(SessionCount) AS session_count,
             sumMerge(InputTokens) AS input_tokens,
@@ -105,6 +108,9 @@ SQL >
             {% if defined(sources) %}
             AND source IN splitByChar(',', {{ String(sources) }})
             {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
             {% if defined(models) %}
             AND model IN splitByChar(',', {{ String(models) }})
             {% end %}
@@ -114,7 +120,7 @@ SQL >
 
         SELECT
             if(range_days <= 30, toStartOfHour(toDateTime(EventAt)), toStartOfDay(toDateTime(EventAt))) AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), '') AS group_value,
+            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             count() AS message_count,
             uniqExact(session_pk) AS session_count,
             sum(input_tokens) AS input_tokens,
@@ -137,6 +143,9 @@ SQL >
             {% if defined(sources) %}
             AND source IN splitByChar(',', {{ String(sources) }})
             {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
             {% if defined(models) %}
             AND model IN splitByChar(',', {{ String(models) }})
             {% end %}
@@ -155,7 +164,7 @@ SQL >
     SELECT * FROM (
         SELECT
             if(range_days <= 30, BucketStart, toStartOfDay(BucketStart)) AS bucket_dt,
-            if({{ String(group_by, 'none') }} = 'source', toString(source), '') AS group_value,
+            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             countMerge(EventCount) AS tool_event_count,
             sumMerge(SuccessCount) AS tool_success_count,
             sumMerge(FailureCount) AS tool_failure_count,
@@ -169,13 +178,16 @@ SQL >
             {% if defined(sources) %}
             AND source IN splitByChar(',', {{ String(sources) }})
             {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
         GROUP BY bucket_dt, group_value
 
         UNION ALL
 
         SELECT
             if(range_days <= 30, toStartOfHour(toDateTime(EventAt)), toStartOfDay(toDateTime(EventAt))) AS bucket_dt,
-            if({{ String(group_by, 'none') }} = 'source', toString(source), '') AS group_value,
+            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             count() AS tool_event_count,
             countIf(status = 'success') AS tool_success_count,
             countIf(status = 'failure') AS tool_failure_count,
@@ -188,6 +200,9 @@ SQL >
             AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             {% if defined(sources) %}
             AND source IN splitByChar(',', {{ String(sources) }})
+            {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
             {% end %}
         GROUP BY bucket_dt, group_value
     )

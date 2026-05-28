@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pivotByGroup } from '../pivot';
+import { OTHER_GROUP, pivotByGroup } from '../pivot';
 import type { AgentTimeseriesRow } from '../types';
 
 function row(bucket: string, group: string, over: Partial<AgentTimeseriesRow>): AgentTimeseriesRow {
@@ -62,5 +62,24 @@ describe('pivotByGroup', () => {
   it('returns empty groups when every row is ungrouped', () => {
     const rows = [row('b1', '', { cost_usd: 5 })];
     expect(pivotByGroup(rows, 'cost_usd')).toEqual({ data: [], groups: [] });
+  });
+
+  it('caps at top-N by total and rolls the rest into an Other series', () => {
+    const rows = [
+      row('b1', 'a', { cost_usd: 100 }),
+      row('b1', 'b', { cost_usd: 50 }),
+      row('b1', 'c', { cost_usd: 5 }),
+      row('b1', 'd', { cost_usd: 3 }),
+    ];
+    const { data, groups } = pivotByGroup(rows, 'cost_usd', 2);
+    expect(groups).toEqual(['a', 'b', OTHER_GROUP]);
+    expect(data).toEqual([{ bucket_start: 'b1', a: 100, b: 50, [OTHER_GROUP]: 8 }]);
+  });
+
+  it('does not add an Other series when groups fit within top-N', () => {
+    const rows = [row('b1', 'a', { cost_usd: 1 }), row('b1', 'b', { cost_usd: 2 })];
+    const { groups } = pivotByGroup(rows, 'cost_usd', 5);
+    expect(groups).toEqual(['b', 'a']);
+    expect(groups).not.toContain(OTHER_GROUP);
   });
 });

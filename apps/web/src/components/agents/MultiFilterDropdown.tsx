@@ -22,14 +22,17 @@ export function MultiFilterDropdown({
   options,
   onToggle,
   onClear,
+  labelMap,
 }: {
   label: string;
   values: string[];
   options: string[];
   onToggle: (value: string) => void;
   onClear: () => void;
+  /** Optional value -> display name (e.g. repo fingerprint -> owner/repo). */
+  labelMap?: Map<string, string>;
 }) {
-  const sortedOptions = useMemo(() => sortFilterOptions(options), [options]);
+  const sortedOptions = useMemo(() => sortFilterOptions(options, labelMap), [options, labelMap]);
   const count = values.length;
   const hasValue = count > 0;
 
@@ -73,7 +76,7 @@ export function MultiFilterDropdown({
               className={cn('flex items-center gap-2 text-xs', selected && 'font-medium')}
             >
               <Check className={cn('h-3 w-3 shrink-0', selected ? 'opacity-100' : 'opacity-0')} />
-              <span className="truncate">{opt}</span>
+              <span className="truncate">{labelMap?.get(opt) ?? opt}</span>
             </DropdownMenuItem>
           );
         })}

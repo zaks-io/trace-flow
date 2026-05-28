@@ -13,6 +13,9 @@ type AgentFiltersState = {
   /** Multi-select Model IN-list; empty = all models. Scopes the usage surfaces only. */
   models: string[];
   toggleModel: (v: string) => void;
+  /** Multi-select Repo IN-list (repo_fingerprint values); empty = all repos. Scopes every pipe. */
+  repos: string[];
+  toggleRepo: (v: string) => void;
   groupBy: AgentGroupBy;
   setGroupBy: (v: AgentGroupBy) => void;
   hasFilters: boolean;
@@ -29,13 +32,16 @@ export function useAgentFilters(): AgentFiltersState {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
   const [sources, setSources] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [repos, setRepos] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState<AgentGroupBy>('none');
 
   const toggleSource = useCallback((v: string) => setSources((prev) => toggleInList(prev, v)), []);
   const toggleModel = useCallback((v: string) => setModels((prev) => toggleInList(prev, v)), []);
+  const toggleRepo = useCallback((v: string) => setRepos((prev) => toggleInList(prev, v)), []);
   const clearFilters = useCallback(() => {
     setSources([]);
     setModels([]);
+    setRepos([]);
   }, []);
 
   const { startTimeMs, endTimeMs } = useMemo(() => {
@@ -55,8 +61,9 @@ export function useAgentFilters(): AgentFiltersState {
       end_time_ms: endTimeMs,
     };
     if (sources.length > 0) params.sources = sources.join(',');
+    if (repos.length > 0) params.repos = repos.join(',');
     return params;
-  }, [startTimeMs, endTimeMs, sources]);
+  }, [startTimeMs, endTimeMs, sources, repos]);
 
   return {
     timeRange,
@@ -65,9 +72,11 @@ export function useAgentFilters(): AgentFiltersState {
     toggleSource,
     models,
     toggleModel,
+    repos,
+    toggleRepo,
     groupBy,
     setGroupBy,
-    hasFilters: sources.length > 0 || models.length > 0,
+    hasFilters: sources.length > 0 || models.length > 0 || repos.length > 0,
     clearFilters,
     filterParams,
   };

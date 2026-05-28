@@ -45,6 +45,22 @@
     {"bucket_start":"2026-05-20 10:00:00","group_value":"composer-1","message_count":1,"session_count":1,"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":0,"cost_usd":0,"priced_message_count":0,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
     {"bucket_start":"2026-05-20 10:00:00","group_value":"gpt-5.5","message_count":1,"session_count":1,"input_tokens":10,"output_tokens":20,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":30,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
 
+- name: timeseries_group_by_repo
+  description: group_by=repo splits per repo_fingerprint (resolved to names client-side)
+  expected_http_status: 200
+  parameters: org_id=org_repo&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&group_by=repo
+  expected_result: |
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"fp_bare","message_count":1,"session_count":1,"input_tokens":50,"output_tokens":10,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":60,"cost_usd":0.6,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"fp_gh","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":50,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":150,"cost_usd":3,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"fp_local","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":20,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":120,"cost_usd":1,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+
+- name: timeseries_repos_in_list
+  description: repos=fp_gh (IN-list) scopes the window to a single repo
+  expected_http_status: 200
+  parameters: org_id=org_repo&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&repos=fp_gh
+  expected_result: |
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":50,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":150,"cost_usd":3,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+
 - name: timeseries_respects_source_filter
   description: sources=codex (IN-list, one value) isolates a source with no org_1c rows -> empty
   expected_http_status: 200

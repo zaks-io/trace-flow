@@ -6,6 +6,7 @@ import { PageToolbar } from '@/components/shared/PageToolbar';
 import { TIME_RANGES } from '@/components/usage/types';
 import { useAgentFilters } from './useAgentFilters';
 import { useAgentData } from './useAgentData';
+import { useRepoDirectory } from '@/hooks/useRepoDirectory';
 import {
   AGENT_SOURCES,
   AGENT_METRICS,
@@ -40,6 +41,8 @@ export function AgentAnalytics() {
     toggleSource,
     models,
     toggleModel,
+    repos,
+    toggleRepo,
     groupBy,
     setGroupBy,
     hasFilters,
@@ -50,6 +53,22 @@ export function AgentAnalytics() {
     useAgentData({ filterParams, groupBy, models });
   const [metric, setMetric] = useState<AgentMetric>('cost');
   const [chartStyle, setChartStyle] = useState<AgentChartStyle>('stacked');
+
+  // Resolve repo_fingerprint -> display name only when repo grouping/filtering is active.
+  const windowParams = useMemo(
+    () => ({ start_time_ms: filterParams.start_time_ms, end_time_ms: filterParams.end_time_ms }),
+    [filterParams.start_time_ms, filterParams.end_time_ms],
+  );
+  const repoLabelMap = useRepoDirectory(windowParams, groupBy === 'repo' || repos.length > 0);
+  const labelFor = useMemo(
+    () => (value: string) => repoLabelMap.get(value) ?? value,
+    [repoLabelMap],
+  );
+  const repoOptions = useMemo(() => {
+    const set = new Set(repoLabelMap.keys());
+    for (const r of repos) set.add(r);
+    return [...set];
+  }, [repoLabelMap, repos]);
 
   // Model is high-cardinality and only appears in the data once grouped by model, so
   // accumulate the values seen across group-by-model fetches to populate the filter.
@@ -86,6 +105,7 @@ export function AgentAnalytics() {
   const onGroupClick = (value: string) => {
     if (groupBy === 'source') toggleSource(value);
     else if (groupBy === 'model') toggleModel(value);
+    else if (groupBy === 'repo') toggleRepo(value);
   };
 
   const MetricIcon = METRIC_ICON[metric];
@@ -126,6 +146,14 @@ export function AgentAnalytics() {
           options={modelOptions}
           onToggle={toggleModel}
           onClear={() => models.forEach(toggleModel)}
+        />
+        <MultiFilterDropdown
+          label="Repo"
+          values={repos}
+          options={repoOptions}
+          onToggle={toggleRepo}
+          onClear={() => repos.forEach(toggleRepo)}
+          labelMap={repoLabelMap}
         />
         <div className="flex rounded-lg border border-border bg-card">
           {TIME_RANGES.map((range) => (
@@ -261,6 +289,7 @@ export function AgentAnalytics() {
               groupBy={groupBy}
               chartStyle={chartStyle}
               onGroupClick={onGroupClick}
+              labelFor={labelFor}
             />
           </div>
 
