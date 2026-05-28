@@ -454,7 +454,11 @@ headless_e2e -- --ignored --nocapture` passed end-to-end (parser → sync → gz
   to the deferred desktop app.
 - **Verify:** **smoke assertion, not "renders"** — given a pipe response each surface shows the
   expected rows **and** the coverage% field; LOADING/EMPTY/ERROR/PARTIAL each render for their
-  condition; the EMPTY state has **no desktop-app CTA**; cost is labeled estimated.
+  condition; the EMPTY state has **no desktop-app CTA**; cost is labeled estimated. **Render against
+  the local dev env, not a preview deploy** (user directive 2026-05-27, for faster iteration):
+  `bun run dev:all` + `bunx convex dev` + the Next.js app on localhost against dev Convex / dev
+  Tinybird, driven by Playwright/Chrome. The preview deploy is no longer the gate for the Phase 4
+  boundary PR.
 
 ### 4b — `org_id` agent JWT in web
 
