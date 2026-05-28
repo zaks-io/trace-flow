@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
 import { formatNumber, formatCurrency } from '@/lib/format';
 import {
   ChartContainer,
@@ -50,14 +50,17 @@ function formatTooltipDate(value: string): string {
 }
 
 interface Series {
-  /** CSS-safe id used as the chart config key and React key. */
+  /**
+   * Safe string key used as the Recharts dataKey, chart config key, and React key. Grouped
+   * series use synthetic ids (g0, g1, …) so dotted group values (e.g. model "gpt-5.5") never
+   * hit Recharts' dot-path parsing; a string dataKey (vs a function) is also what lets
+   * Recharts compute the Y-axis domain.
+   */
   id: string;
   /** Display name shown in the legend/tooltip (repo names are resolved here). */
   name: string;
   /** Raw group value used for click-to-filter (repo fingerprint, source, or model). */
   value: string;
-  /** Reads this series' value from a chart row (function form avoids Recharts dot-path parsing). */
-  accessor: (row: Record<string, unknown>) => number;
   color: string;
 }
 
@@ -86,13 +89,19 @@ export function AgentUsageChart({
         id: `g${i}`,
         name: group === OTHER_GROUP ? OTHER_LABEL : (labelFor?.(group) ?? group),
         value: group,
-        accessor: (row) => Number(row[group] ?? 0),
         color: AGENT_GROUP_COLORS[i % AGENT_GROUP_COLORS.length],
       }));
+      // Re-key the wide rows from raw group value -> synthetic series id so every dataKey is
+      // a plain string (correct Y-axis domain + no dot-path issues).
+      const rekeyed = wide.map((row) => {
+        const out: Record<string, string | number> = { bucket_start: String(row.bucket_start) };
+        for (const entry of s) out[entry.id] = Number(row[entry.value] ?? 0);
+        return out;
+      });
       const cfg: ChartConfig = Object.fromEntries(
         s.map((entry) => [entry.id, { label: entry.name, color: entry.color }]),
       );
-      return { chartData: wide as Array<Record<string, unknown>>, series: s, config: cfg };
+      return { chartData: rekeyed, series: s, config: cfg };
     }
 
     const metricConfig = AGENT_METRIC_CONFIG[metric];
@@ -100,11 +109,10 @@ export function AgentUsageChart({
       id: key,
       name: String(metricConfig[key]?.label ?? key),
       value: key,
-      accessor: (row) => Number(row[key] ?? 0),
       color: metricConfig[key]?.color ?? 'var(--color-chart-1)',
     }));
     return {
-      chartData: data as unknown as Array<Record<string, unknown>>,
+      chartData: data as unknown as Array<Record<string, string | number>>,
       series: s,
       config: metricConfig,
     };
@@ -121,6 +129,8 @@ export function AgentUsageChart({
   const isCurrency = AGENT_METRIC_VALUE_KIND[metric] === 'currency';
   const formatValue = (v: number) => (isCurrency ? formatCurrency(v) : formatNumber(v));
   const clickable = groupBy !== 'none' && Boolean(onGroupClick);
+  const stacked = chartStyle === 'stacked';
+
   // Legend clicks expose the display name; map it back to the raw value for filtering.
   const nameToValue = new Map(series.map((s) => [s.name, s.value]));
   const handleFilterClick = (value: string) => {
@@ -132,31 +142,36 @@ export function AgentUsageChart({
     data.length > 1 &&
     Math.abs(new Date(data[1].bucket_start).getTime() - new Date(data[0].bucket_start).getTime()) <
       86_400_000;
-  const tickFormatter = (v: string) => formatTickDate(v, hourly);
-  const tooltipLabelFormatter = (label: string) =>
-    hourly ? formatTooltipDate(String(label)) : formatTickDate(String(label), false);
 
-  const axes = (
-    <>
-      <CartesianGrid strokeDasharray="3 3" />
-      <XAxis
-        dataKey="bucket_start"
-        tickFormatter={tickFormatter}
-        tick={{ fontSize: 11 }}
-        minTickGap={50}
-      />
-      <YAxis tickFormatter={(v: number) => formatValue(v)} tick={{ fontSize: 11 }} width={60} />
-      <ChartTooltip
-        content={
-          <ChartTooltipContent
-            labelFormatter={tooltipLabelFormatter}
-            valueFormatter={(v) => formatValue(v)}
-          />
-        }
-      />
-      {groupBy !== 'none' && (
+  return (
+    <ChartContainer config={config} className="!aspect-auto h-[320px] w-full">
+      <AreaChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
+        <XAxis
+          dataKey="bucket_start"
+          tickFormatter={(v: string) => formatTickDate(v, hourly)}
+          tick={{ fontSize: 11 }}
+          tickMargin={8}
+          minTickGap={40}
+        />
+        <YAxis
+          tickFormatter={(v: number) => formatValue(v)}
+          tick={{ fontSize: 11 }}
+          width={64}
+          tickMargin={4}
+        />
+        <ChartTooltip
+          content={
+            <ChartTooltipContent
+              labelFormatter={(label: string) =>
+                hourly ? formatTooltipDate(String(label)) : formatTickDate(String(label), false)
+              }
+              valueFormatter={(v) => formatValue(v)}
+            />
+          }
+        />
         <Legend
-          wrapperStyle={{ fontSize: 11, cursor: clickable ? 'pointer' : undefined }}
+          wrapperStyle={{ fontSize: 11, paddingTop: 8, cursor: clickable ? 'pointer' : undefined }}
           iconType="circle"
           iconSize={8}
           onClick={
@@ -168,48 +183,23 @@ export function AgentUsageChart({
               : undefined
           }
         />
-      )}
-    </>
-  );
-
-  return (
-    <ChartContainer config={config} className="!aspect-auto h-[300px] w-full">
-      {chartStyle === 'line' ? (
-        <LineChart data={chartData}>
-          {axes}
-          {series.map((s) => (
-            <Line
-              key={s.id}
-              type="monotone"
-              dataKey={s.accessor}
-              name={s.name}
-              stroke={s.color}
-              dot={false}
-              strokeWidth={2}
-              style={clickable ? { cursor: 'pointer' } : undefined}
-              onClick={clickable ? () => handleFilterClick(s.value) : undefined}
-            />
-          ))}
-        </LineChart>
-      ) : (
-        <AreaChart data={chartData}>
-          {axes}
-          {series.map((s) => (
-            <Area
-              key={s.id}
-              type="monotone"
-              dataKey={s.accessor}
-              name={s.name}
-              stackId="1"
-              fill={s.color}
-              stroke={s.color}
-              fillOpacity={0.6}
-              style={clickable ? { cursor: 'pointer' } : undefined}
-              onClick={clickable ? () => handleFilterClick(s.value) : undefined}
-            />
-          ))}
-        </AreaChart>
-      )}
+        {series.map((s) => (
+          <Area
+            key={s.id}
+            type="monotone"
+            dataKey={s.id}
+            name={s.name}
+            stackId={stacked ? 'stack' : undefined}
+            fill={s.color}
+            stroke={s.color}
+            fillOpacity={stacked ? 0.55 : 0}
+            strokeWidth={2}
+            isAnimationActive={false}
+            style={clickable ? { cursor: 'pointer' } : undefined}
+            onClick={clickable ? () => handleFilterClick(s.value) : undefined}
+          />
+        ))}
+      </AreaChart>
     </ChartContainer>
   );
 }

@@ -10,7 +10,6 @@ import { useRepoDirectory } from '@/hooks/useRepoDirectory';
 import {
   AGENT_SOURCES,
   AGENT_METRICS,
-  AGENT_METRIC_CONFIG,
   AGENT_METRIC_LABEL,
   AGENT_GROUP_BY,
   AGENT_GROUP_BY_LABEL,
@@ -124,9 +123,6 @@ export function AgentAnalytics() {
   };
 
   const MetricIcon = METRIC_ICON[metric];
-  // Component-level legend only applies to the ungrouped, multi-component metrics; when
-  // grouped, the chart renders its own legend over the dynamic group-value series.
-  const componentLegend = groupBy === 'none' ? Object.entries(AGENT_METRIC_CONFIG[metric]) : [];
 
   return (
     <div className="animate-fade-in">
@@ -288,16 +284,6 @@ export function AgentAnalytics() {
               </div>
             </div>
 
-            {componentLegend.length > 1 && (
-              <div className="mb-3 flex flex-wrap gap-3 text-xs">
-                {componentLegend.map(([key, cfg]) => (
-                  <span key={key} className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: cfg.color }} />
-                    <span className="text-muted-foreground">{String(cfg.label)}</span>
-                  </span>
-                ))}
-              </div>
-            )}
             <AgentUsageChart
               data={timeseries}
               metric={metric}
