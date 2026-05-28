@@ -54,7 +54,8 @@ function makeEnv(over: EnvOverrides = {}): {
   const queueSend = over.queueSend ?? vi.fn(async () => {});
   const env = {
     COLLECTOR_CREDS: makeKv(over.creds ?? {}),
-    AGENT_QUEUE: { send: queueSend } as unknown as Queue<AgentIngestQueueMessage>,
+    // The handler enqueues via sendBatch (one call per <=100-message group). Tests assert on it.
+    AGENT_QUEUE: { sendBatch: queueSend } as unknown as Queue<AgentIngestQueueMessage>,
     AGENT_INGEST_LIMITER: {
       limit: async () => ({ success: over.limitSuccess ?? true }),
     } as unknown as RateLimit,
@@ -179,8 +180,9 @@ describe('POST /v1/ingest', () => {
     expect(await res.json()).toMatchObject({ sessions: 1 });
     expect(queueSend).toHaveBeenCalledTimes(1);
     // Prove the body was actually inflated and parsed, not just that a 202 came back: the enqueued
-    // message must carry the decompressed facts.
-    const enqueued = queueSend.mock.calls[0]![0] as AgentIngestQueueMessage;
+    // message must carry the decompressed facts. sendBatch is called with an array of {body} entries.
+    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
+    const enqueued = sentGroup[0]!.body;
     expect(enqueued.facts.messages.length).toBeGreaterThan(0);
   });
 
@@ -345,7 +347,8 @@ describe('POST /v1/ingest', () => {
     expect(res.status).toBe(202);
 
     expect(queueSend).toHaveBeenCalledTimes(1);
-    const enqueued = queueSend.mock.calls[0]![0] as AgentIngestQueueMessage;
+    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
+    const enqueued = sentGroup[0]!.body;
     const tool = enqueued.facts.tool_events[0]!;
     expect(tool.command_excerpt).toBe('');
     expect(tool.dropped_sensitive).toBeGreaterThanOrEqual(1);

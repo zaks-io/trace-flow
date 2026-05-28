@@ -3,6 +3,13 @@
 The shared workflow lives in `docs/agents/workflow.md`. This file only explains
 which runtime to choose and what each runtime must read.
 
+> **Runtime vs environment.** This file is about which _agent runtime_ (Codex /
+> Claude / Cursor) handles a task. That is different from which _deployment
+> environment_ the code runs against. For the latter — **Local Workers**,
+> **Cloud-Dev**, **Self-Contained Local**, **Control Plane** / **Data Plane** —
+> see the **Environments** section of `CONTEXT.md` and
+> `docs/agents/local-environment.md`. Do not say "dev" without naming which.
+
 ## Codex
 
 Use Codex for local orchestration, repo-wide edits, verification, PR creation,

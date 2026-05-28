@@ -1,5 +1,11 @@
 # Local Agent Environment
 
+> **Vocabulary:** "dev" is overloaded. See the **Environments** section of `CONTEXT.md` for the
+> shared terms used here: **Local Workers**, **Cloud-Dev**, **Self-Contained Local**, and the
+> **Control Plane** / **Data Plane** split. This document describes the **Self-Contained Local**
+> stack. If you mean "local Workers pointed at a developer's Convex/Tinybird Cloud dev" — that is
+> **Cloud-Dev**, a different data plane, and these scripts do not provision it by default.
+
 This repo exposes one local-development contract for humans, Cursor background agents, and other
 coding agents:
 
@@ -11,6 +17,18 @@ scripts/dev/verify.sh
 
 Cursor uses the same commands through `.cursor/environment.json`. Keep Cursor-specific setup thin;
 the scripts are the source of truth.
+
+## Which environment these scripts build
+
+By default these scripts provision **Self-Contained Local**: **Local Workers** plus **Convex local**
+and **Tinybird Local** in Docker, with generated local-only tokens and no cloud credentials. This is
+the right target for Cursor Background Agents and CI, which cannot hold cloud access.
+
+It is **not** the same as **Cloud-Dev** — the "Local Workers → Convex Cloud dev + Tinybird Cloud
+dev" setup a developer typically runs day to day and where they expect their data to appear in the
+cloud dashboards. To run Cloud-Dev, point the **Data Plane** and **Control Plane** at cloud via env
+vars (`TRACE_FLOW_TINYBIRD_HOST` + `TINYBIRD_TOKEN`, `TRACE_FLOW_CONVEX_URL` / `CONVEX_SITE_URL`)
+instead of the local defaults. Each plane can be pointed independently.
 
 ## What Setup Does
 
@@ -56,6 +74,20 @@ scripts/dev/verify.sh full
 # Inspect missing prerequisites
 scripts/dev/doctor.sh
 ```
+
+## Convex Gotchas
+
+- **Run Convex commands from the repo root, never from `packages/convex/`.** The root `convex.json`
+  sets `"functions": "packages/convex"`, and `scripts/dev/convex.sh` `cd`s to the repo root before
+  `bunx convex dev`. Running `bunx convex dev --once` from inside `packages/convex/` resolves the
+  functions dir to the empty `packages/convex/convex/` directory and pushes **zero** functions while
+  still printing `Convex functions ready!`. New functions then 404 at runtime. Symptom: a freshly
+  added function returns `Could not find function ... Did you forget to run npx convex dev?`.
+- Use `bunx convex dev --once` to push to the dev **Control Plane**; never `convex deploy` (that is a
+  production action).
+- **Never pass `-v`/`--verbose` to `convex dev`, and never run `convex env list`/`env get`** — they
+  print Convex environment secret _values_, not just keys. To confirm a function deployed, run it with
+  invalid args and read the `ArgumentValidationError` instead.
 
 ## Agent Defaults
 

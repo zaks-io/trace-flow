@@ -258,6 +258,7 @@ dependencies = [
  "collector-api-client",
  "collector-contracts",
  "collector-parser",
+ "futures-util",
  "rusqlite",
  "serde_json",
  "sha2",

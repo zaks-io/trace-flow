@@ -24,13 +24,19 @@
   "queues": {
     "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }],
   },
-  // Per-org ingest burst limit. namespace_id 2006 is reserved for AGENT_INGEST_LIMITER
-  // (2001-2005 are taken; see the rate-limit budget registry). Keyed by orgId, mirrors ORG_LIMITER.
+  // Per-org ingest burst limit (abuse guard, NOT a throughput throttle). namespace_id 2006 is
+  // AGENT_INGEST_LIMITER (2001-2005 taken; see the rate-limit budget registry). Keyed by orgId.
+  //
+  // 600/60s, raised from 120: the client batches up to ~200 sessions per POST and the serverless
+  // queue absorbs the downstream consumer work, so one POST does far more than before. 120/60s
+  // throttled a single user's legitimate history backfill (1600+ sessions); at ~200 sessions/POST,
+  // 600/60s clears ~120k sessions/min/org while still hard-capping a runaway client. Each POST checks
+  // the limit once. Re-tune the budget here, never reuse the namespace_id.
   "ratelimits": [
     {
       "name": "AGENT_INGEST_LIMITER",
       "namespace_id": "2006",
-      "simple": { "limit": 120, "period": 60 },
+      "simple": { "limit": 600, "period": 60 },
     },
   ],
 }

@@ -24,9 +24,19 @@ SQL >
         OrgId,
         session_pk,
         any(source) AS session_source,
-        max(model) AS model,
+        -- Representative model = the one that drove the most cost in the session (argMax over the
+        -- per-message cost), not max(model). max(model) picked the lexicographically-last label, so a
+        -- session that was mostly claude-opus-4-7 with a few claude-sonnet-4-6 turns mislabeled as
+        -- sonnet ('s' > 'o') and showed the opus cost under the wrong model. Unpriced turns contribute
+        -- 0, so a fully unpriced session falls back to whichever turn argMax sees first — still a model
+        -- that ran in the session, never an absent one. The cost arg is table-qualified so it binds to
+        -- the per-row column, not the `sumOrNull(cost_usd) AS cost_usd` aggregate alias below (which
+        -- would otherwise read as an aggregate-inside-aggregate and fail the build).
+        argMax(model, ifNull(agent_messages.cost_usd, 0)) AS model,
         any(repo_fingerprint) AS session_repo,
-        count() AS message_count,
+        -- Billable turns only. count() included user/tool turns, so message_count (e.g. 3332) disagreed
+        -- with the assistant-turn total (e.g. 3121) the By-Model card and authoring-cost view show.
+        countIf(role = 'assistant') AS message_count,
         sumOrNull(cost_usd) AS cost_usd,
         toUnixTimestamp64Milli(max(EventAt)) - toUnixTimestamp64Milli(min(EventAt)) AS duration_ms,
         toUnixTimestamp64Milli(max(EventAt)) AS last_event_ms

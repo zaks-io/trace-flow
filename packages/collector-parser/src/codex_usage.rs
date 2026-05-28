@@ -61,14 +61,72 @@ pub(crate) fn last_token_usage(payload: &Value) -> Option<CodexTurnUsage> {
     })
 }
 
-/// The running cumulative `info.total_token_usage.total_tokens`. Used ONLY to drop Codex's duplicate
-/// token_count emissions; summing this field across events is the ~331x trap and is never done.
+/// The running cumulative `info.total_token_usage.total_tokens`. Retained for the trap-guard test that
+/// asserts summing this cumulative field across events explodes past the real total; production now
+/// diffs full [`CumulativeUsage`] snapshots via [`cumulative_usage`] instead.
+#[cfg(test)]
 pub(crate) fn cumulative_total(payload: &Value) -> Option<i64> {
     payload
         .get("info")?
         .get("total_token_usage")?
         .get("total_tokens")?
         .as_i64()
+}
+
+/// A `token_count` event's cumulative `info.total_token_usage` snapshot — the running session totals.
+/// `input_tokens` is the full prompt incl. cache (Codex convention), matching `last_token_usage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct CumulativeUsage {
+    /// Raw cumulative input incl. cache (Codex's `input_tokens`, NOT yet cache-subtracted).
+    pub raw_input_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub total_tokens: i64,
+}
+
+/// Reads `info.total_token_usage` into a [`CumulativeUsage`], or `None` when absent/non-object.
+///
+/// This is the basis of the ccusage-correct per-turn accounting: a turn's usage is the DIFF between
+/// successive cumulative snapshots (see [`CumulativeUsage::delta_since`]), not the row's
+/// `last_token_usage`. Codex re-emits `token_count` rows whose cumulative does not advance (duplicate
+/// snapshots) and a row's `last_token_usage` can lag/diverge from the true delta when rows are dropped;
+/// diffing the cumulative makes the kept turns sum to the final total by construction
+/// (ccusage `ryoppippi/ccusage#884`).
+pub(crate) fn cumulative_usage(payload: &Value) -> Option<CumulativeUsage> {
+    let tt = payload.get("info")?.get("total_token_usage")?;
+    if !tt.is_object() {
+        return None;
+    }
+    Some(CumulativeUsage {
+        raw_input_tokens: field_i64(tt, "input_tokens"),
+        cache_read_tokens: field_i64(tt, "cached_input_tokens"),
+        output_tokens: field_i64(tt, "output_tokens"),
+        reasoning_tokens: field_i64(tt, "reasoning_output_tokens"),
+        total_tokens: field_i64(tt, "total_tokens"),
+    })
+}
+
+impl CumulativeUsage {
+    /// The per-turn [`CodexTurnUsage`] for advancing from `prev` cumulative to `self`. Components are
+    /// clamped at 0 so a malformed non-monotonic field can't produce a negative token count; `input`
+    /// is the non-cached remainder (raw input delta minus cache-read delta), mirroring
+    /// [`last_token_usage`]'s split. Caller guarantees `self.total_tokens > prev.total_tokens`
+    /// (a non-advancing snapshot is a duplicate and is skipped, not diffed).
+    pub(crate) fn delta_since(self, prev: CumulativeUsage) -> CodexTurnUsage {
+        let raw_input = (self.raw_input_tokens - prev.raw_input_tokens).max(0);
+        let cache_read = (self.cache_read_tokens - prev.cache_read_tokens).max(0);
+        let output = (self.output_tokens - prev.output_tokens).max(0);
+        let reasoning = (self.reasoning_tokens - prev.reasoning_tokens).max(0);
+        let input_tokens = (raw_input - cache_read).max(0);
+        CodexTurnUsage {
+            input_tokens,
+            cache_read_tokens: cache_read,
+            output_tokens: output,
+            reasoning_tokens: reasoning,
+            total_tokens: input_tokens + cache_read + output,
+        }
+    }
 }
 
 #[cfg(test)]

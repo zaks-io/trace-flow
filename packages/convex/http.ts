@@ -958,19 +958,15 @@ export function createApp(
       return c.json({ error: 'User not found in organization' }, 404);
     }
 
-    // Claims run sequentially on purpose. Each is its own OCC first-writer
-    // transaction; firing them concurrently only adds write contention without
-    // changing correctness, and ingest batches are bounded.
-    const results: { sessionPk: string; status: string; ownerUserId: string }[] = [];
-    for (const sessionPk of body.sessionPks) {
-      const result = await ctx.runMutation(internal.agentSessionOwners.claimSession, {
-        orgId,
-        sessionPk,
-        userId,
-        collectorId: body.collectorId,
-      });
-      results.push({ sessionPk, status: result.status, ownerUserId: result.ownerUserId });
-    }
+    // One batched mutation for the whole envelope's sessions: a single OCC transaction instead of one
+    // round-trip per session. OCC still enforces first-writer per (orgId, session_pk) across
+    // concurrent batches. The batch is bounded by MAX_SESSION_PKS above.
+    const results = await ctx.runMutation(internal.agentSessionOwners.claimSessionsBatch, {
+      orgId,
+      sessionPks: body.sessionPks,
+      userId,
+      collectorId: body.collectorId,
+    });
 
     const conflicts = results.filter((r) => r.status === 'conflict').length;
     logger.info('convex.agent_sessions_claimed', {

@@ -24,3 +24,5 @@ reviews:
     - '!**/worker-configuration.d.ts'
     - '!packages/convex/convex/_generated/**'
     - '!**/bun.lock'
+    # Local verification/diagnostic scripts — not shipped product code; CodeRabbit doesn't review them.
+    - '!scripts/verify/**'

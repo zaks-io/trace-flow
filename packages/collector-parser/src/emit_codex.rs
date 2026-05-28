@@ -173,8 +173,12 @@ mod tests {
         })
     }
 
-    fn token_count(last: (i64, i64, i64, i64, i64), cumulative: i64, ts: &str) -> Value {
-        let (input, cached, output, reasoning, total) = last;
+    /// `cum` is the CUMULATIVE `total_token_usage` snapshot `(raw_input, cached, output, reasoning,
+    /// total)` — production diffs successive snapshots to get per-turn usage. `last_token_usage` is set
+    /// to the same shape (only consulted on a reset). For a session's first token_count, the cumulative
+    /// equals that turn's usage (delta from a zero baseline).
+    fn token_count(cum: (i64, i64, i64, i64, i64), _legacy_cumulative_total: i64, ts: &str) -> Value {
+        let (input, cached, output, reasoning, total) = cum;
         json!({
             "type": "event_msg",
             "timestamp": ts,
@@ -188,7 +192,13 @@ mod tests {
                         "reasoning_output_tokens": reasoning,
                         "total_tokens": total,
                     },
-                    "total_token_usage": { "total_tokens": cumulative },
+                    "total_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "output_tokens": output,
+                        "reasoning_output_tokens": reasoning,
+                        "total_tokens": total,
+                    },
                 },
             },
         })
@@ -253,7 +263,8 @@ mod tests {
             token_count((1_000, 0, 50, 0, 1_050), 1_050, "2026-05-16T20:53:10.000Z"),
             turn_context("gpt-5.5-codex", "2026-05-16T20:54:00.000Z"),
             assistant_message("2026-05-16T20:54:05.000Z"),
-            token_count((500, 0, 20, 0, 520), 1_570, "2026-05-16T20:54:10.000Z"),
+            // cumulative advances (the second turn adds 500 input / 20 output).
+            token_count((1_500, 0, 70, 0, 1_570), 1_570, "2026-05-16T20:54:10.000Z"),
         ];
         let models: Vec<_> = codex_message_facts(&records, &ctx())
             .into_iter()
@@ -288,6 +299,7 @@ mod tests {
         let records = [
             turn_context("gpt-5.5", "2026-05-16T20:53:00.000Z"),
             assistant_message("2026-05-16T20:53:05.000Z"),
+            // cumulative snapshots; per-turn usage is their diff.
             token_count(
                 (20_480, 0, 200, 0, 20_680),
                 20_680,
@@ -295,7 +307,7 @@ mod tests {
             ),
             assistant_message("2026-05-16T20:54:05.000Z"),
             token_count(
-                (40_000, 10_000, 219, 40, 40_219),
+                (60_480, 10_000, 419, 40, 60_899),
                 60_899,
                 "2026-05-16T20:54:10.000Z",
             ),
@@ -304,7 +316,7 @@ mod tests {
             .iter()
             .map(|f| f.input_tokens + f.cache_read_tokens + f.output_tokens)
             .sum();
-        // Equals the final cumulative `total_token_usage.total_tokens`.
+        // The diffed per-turn usages sum to the final cumulative `total_token_usage.total_tokens`.
         assert_eq!(summed, 60_899);
     }
 
