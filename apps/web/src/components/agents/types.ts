@@ -1,7 +1,3 @@
-import type { TinybirdResponse } from '@/components/usage/types';
-
-export type { TinybirdResponse };
-
 /** Source dimension filter; '' means all sources. */
 export type AgentSource = '' | 'claude' | 'codex' | 'cursor';
 
