@@ -50,6 +50,21 @@ async function enforceRateLimit(
   );
 }
 
+/**
+ * Whether `redirectUri` is a loopback HTTP address (the CLI's local listener). The Collector login
+ * flow delivers a freshly minted credential to this URL, so anything but `127.0.0.1` / `[::1]` /
+ * `localhost` is rejected to prevent redirecting the secret to a third party.
+ */
+function isLoopbackRedirect(redirectUri: string): boolean {
+  try {
+    const u = new URL(redirectUri);
+    if (u.protocol !== 'http:') return false;
+    return u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
 function getClientIp(request: Request): string {
   // Only trust `cf-connecting-ip` — Cloudflare injects it and clients can't set
   // it. `x-forwarded-for` is client-controlled and trivially spoofable, which
@@ -592,6 +607,43 @@ export function createApp(
         picture: userInfo.picture,
       });
 
+      // Collector CLI device flow reuses this registered callback (Auth0 only allows /mcp/callback),
+      // tagged by a `collector:` state prefix from /collector/authorize. Mint a Collector Credential
+      // and hand the one-time secret back to the CLI's loopback listener instead of running the MCP
+      // auth-code path. The redirect target is re-validated as loopback so the secret can only reach
+      // 127.0.0.1.
+      if (statePayload.clientState.startsWith('collector:')) {
+        if (!isLoopbackRedirect(statePayload.redirectUri)) {
+          logger.warn('convex.collector_login_bad_redirect');
+          await logger.flush();
+          return c.json({ error: 'Invalid redirect target' }, 400);
+        }
+
+        const expiresAt = Date.now() + 90 * 24 * 60 * 60 * 1000;
+        const collectorId = `cli-${crypto.randomUUID()}`;
+        const minted = await ctx.runMutation(internal.collectorLogin.mintForUser, {
+          userId,
+          collectorId,
+          expiresAt,
+          name: 'Trace Flow CLI',
+          platform: 'cli',
+        });
+
+        const redirectUrl = new URL(statePayload.redirectUri);
+        redirectUrl.searchParams.set('secret', minted.secret);
+        redirectUrl.searchParams.set('org_id', minted.orgId);
+        redirectUrl.searchParams.set('collector_id', collectorId);
+        redirectUrl.searchParams.set('expires_at', String(expiresAt));
+        redirectUrl.searchParams.set('convex_url', url.origin);
+
+        logger.info('convex.collector_login_minted', { org_id: minted.orgId });
+        await logger.flush();
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl.toString(), 'Cache-Control': 'no-store' },
+        });
+      }
+
       // Create authorization code (for code exchange at token endpoint)
       const authCode = await ctx.runMutation(internal.mcp.tokens.createAuthCode, {
         userId,
@@ -951,6 +1003,45 @@ export function createApp(
     }
 
     return c.json(policy);
+  });
+
+  // Collector CLI login: start the browser device flow. The CLI opens this URL with a loopback
+  // `redirect_uri`; we sign it into the OAuth state and bounce to Auth0, reusing the exact MCP
+  // authorize machinery. The minted secret is delivered to that loopback by /collector/callback.
+  app.get('/collector/authorize', async (c) => {
+    const logger = getRequestLogger(c.req.raw, { operation: 'collector_authorize' });
+
+    const limited = await enforceRateLimit(c.env, 'mcpAuthorize', getClientIp(c.req.raw), logger);
+    if (limited) {
+      await logger.flush();
+      return limited;
+    }
+
+    const url = new URL(c.req.url);
+    const redirectUri = url.searchParams.get('redirect_uri');
+    const clientState = url.searchParams.get('state') ?? '';
+    if (!redirectUri) {
+      return c.json({ error: 'redirect_uri is required' }, 400);
+    }
+    // Loopback only: the CLI listens on 127.0.0.1, so a non-loopback redirect is an attempt to
+    // exfiltrate a freshly minted credential to a third party. Reject it outright.
+    if (!isLoopbackRedirect(redirectUri)) {
+      logger.warn('convex.collector_authorize_bad_redirect');
+      await logger.flush();
+      return c.json({ error: 'redirect_uri must be a loopback (127.0.0.1) address' }, 400);
+    }
+
+    // Reuse the registered /mcp/callback (Auth0 only allows that path); the `collector:` state tag
+    // tells the shared callback to mint a Collector Credential rather than run the MCP auth-code path.
+    const callbackUrl = new URL('/mcp/callback', url.origin).toString();
+    const state = await oauth.signState({ clientState: `collector:${clientState}`, redirectUri });
+    const auth0Url = oauth.buildAuth0AuthorizeUrl(state, callbackUrl);
+
+    await logger.flush();
+    return new Response(null, {
+      status: 302,
+      headers: { Location: auth0Url, 'Cache-Control': 'no-store' },
+    });
   });
 
   // MCP: Terminate session

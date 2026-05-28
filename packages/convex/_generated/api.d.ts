@@ -1845,6 +1845,30 @@ export declare const internal: {
       }>
     >;
   };
+  collectorLogin: {
+    mintForUser: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        collectorId: string;
+        expiresAt: number;
+        name?: string;
+        platform?: string;
+        userId: Id<"users">;
+      },
+      {
+        id: Id<"collectorCredentials">;
+        orgId: Id<"organizations">;
+        secret: string;
+      }
+    >;
+    resolveLoginOrg: FunctionReference<
+      "query",
+      "internal",
+      { userId: Id<"users"> },
+      null | { orgId: Id<"organizations">; orgName: string }
+    >;
+  };
   costAlerts: {
     cleanupDeliveries: FunctionReference<
       "mutation",

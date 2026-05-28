@@ -18,12 +18,14 @@
 //! [`GitMetadata`], so it is testable without a real repo); the only impure steps are the file read and
 //! the one `git` resolve in the async wrapper.
 
+use collector_contracts::AgentSource;
 use collector_parser::session_context::SessionContext;
 use serde_json::Value;
 
 use crate::claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
 };
+use crate::codex_session::codex_session_fields;
 use crate::cursor::FileCursor;
 use crate::discovery::{head_hash, DiscoveredFile};
 use crate::git::{GitMetadata, GitRemoteCache};
@@ -35,6 +37,7 @@ use crate::sync_cycle::SyncUnit;
 /// next scan); a malformed *line* inside the file is skipped, not fatal — see [`read_transcript`].
 pub async fn assemble_sync_unit(
     file: &DiscoveredFile,
+    source: AgentSource,
     cache: &GitRemoteCache,
 ) -> std::io::Result<SyncUnit> {
     // Synchronous read by design: this crate spawns nothing and carries no tokio `rt` feature (the
@@ -42,14 +45,38 @@ pub async fn assemble_sync_unit(
     // `git` resolve below; the embedder budgets the read like every other scan I/O.
     let text = std::fs::read_to_string(&file.path)?;
     let records = read_transcript(&text);
-    let fields = claude_session_fields(&records);
 
-    // One git resolve per session, keyed on its cwd; a non-repo (or absent cwd) leaves attribution empty.
-    let meta = match fields.cwd.as_deref() {
-        Some(cwd) => cache.resolve(cwd).await,
-        None => None,
+    // Codex and Claude carry session identity + git differently: Claude repeats `sessionId`/`cwd`/
+    // `gitBranch` per line and the repo is resolved live from `cwd`; Codex records one `session_meta`
+    // whose payload embeds the id, cwd, and git remote/branch/sha directly. Using the Claude reader on
+    // a Codex transcript left every Codex session with no cwd → no remote → a path-hash that read like
+    // a commit. Branch on source so each gets the right extractor.
+    let (fields, meta, head_sha) = match source {
+        AgentSource::Codex => {
+            let codex = codex_session_fields(&records);
+            // Prefer the transcript's embedded git (stable even if the checkout moved); only fall back
+            // to a live resolve when Codex recorded no git block at all.
+            let meta = match codex.embedded_git {
+                Some(g) => Some(g),
+                None => match codex.fields.cwd.as_deref() {
+                    Some(cwd) => cache.resolve(cwd).await,
+                    None => None,
+                },
+            };
+            (codex.fields, meta, codex.git_head_sha.unwrap_or_default())
+        }
+        AgentSource::Claude | AgentSource::Cursor => {
+            let fields = claude_session_fields(&records);
+            // One git resolve per session, keyed on its cwd; a non-repo (or absent cwd) leaves
+            // attribution empty.
+            let meta = match fields.cwd.as_deref() {
+                Some(cwd) => cache.resolve(cwd).await,
+                None => None,
+            };
+            (fields, meta, String::new())
+        }
     };
-    let ctx = build_session_context(&fields, &file.path, meta.as_ref());
+    let ctx = build_session_context(&fields, &file.path, meta.as_ref(), &head_sha);
 
     let next_cursor = FileCursor {
         file_path: file.path.clone(),
@@ -85,6 +112,7 @@ pub fn build_session_context(
     fields: &ClaudeSessionFields,
     transcript_path: &str,
     meta: Option<&GitMetadata>,
+    git_head_sha: &str,
 ) -> SessionContext {
     let normalized_git_remote = meta
         .and_then(|m| m.git_remote_url.as_deref())
@@ -110,8 +138,8 @@ pub fn build_session_context(
         normalized_git_remote,
         repo_path_fallback: basename(label_source).to_string(),
         git_branch,
-        // Neither `GitMetadata` nor a Claude record carries the HEAD sha; left empty by design.
-        git_head_sha: String::new(),
+        // Claude records carry no HEAD sha (left empty); Codex embeds one in `session_meta.payload.git`.
+        git_head_sha: git_head_sha.to_string(),
         vendor_started_at: fields.vendor_started_at,
         agent_depth: agent_depth_from_transcript_path(transcript_path),
         repo_root,
@@ -171,6 +199,7 @@ mod tests {
             &fields(Some("/work/trace-flow"), Some("feature-x")),
             "/Users/x/.claude/projects/p/abc.jsonl",
             None,
+            "",
         );
         assert_eq!(ctx.normalized_git_remote, "");
         assert_eq!(ctx.repo_root, "");
@@ -194,6 +223,7 @@ mod tests {
                 "/work/trace-flow",
                 Some("main"),
             )),
+            "",
         );
         assert_eq!(ctx.normalized_git_remote, "github.com/acme/trace-flow");
         assert_eq!(ctx.repo_root, "/work/trace-flow");
@@ -208,6 +238,7 @@ mod tests {
             &fields(Some("/Users/someone/projects/myrepo"), None),
             "/p/abc.jsonl",
             None,
+            "",
         );
         assert_eq!(ctx.repo_path_fallback, "myrepo");
         assert!(!ctx.repo_path_fallback.contains("Users"));
@@ -218,13 +249,13 @@ mod tests {
     fn a_degenerate_root_cwd_yields_an_empty_fallback_not_a_separator() {
         // `basename("/")` has no last component; an empty label (no fingerprint) is the safe result,
         // never a bare separator that could read as a path.
-        let ctx = build_session_context(&fields(Some("/"), None), "/p/abc.jsonl", None);
+        let ctx = build_session_context(&fields(Some("/"), None), "/p/abc.jsonl", None, "");
         assert_eq!(ctx.repo_path_fallback, "");
     }
 
     #[test]
     fn agent_depth_is_read_from_the_transcript_path() {
-        let ctx = build_session_context(&fields(None, None), "/p/subagents/child.jsonl", None);
+        let ctx = build_session_context(&fields(None, None), "/p/subagents/child.jsonl", None, "");
         assert_eq!(ctx.agent_depth, 1);
     }
 
@@ -267,7 +298,9 @@ mod tests {
         };
 
         let cache = GitRemoteCache::new();
-        let unit = assemble_sync_unit(&file, &cache).await.unwrap();
+        let unit = assemble_sync_unit(&file, AgentSource::Claude, &cache)
+            .await
+            .unwrap();
 
         assert_eq!(unit.ctx.normalized_git_remote, "github.com/acme/demo");
         assert!(!unit.ctx.repo_root.is_empty());
@@ -277,5 +310,57 @@ mod tests {
         assert_eq!(unit.next_cursor.byte_offset, size);
         assert_eq!(unit.next_cursor.mtime_ms, 123.0);
         assert_eq!(unit.next_cursor.content_hash_head, head_hash(&body));
+    }
+
+    #[tokio::test]
+    async fn codex_uses_embedded_git_without_a_live_repo() {
+        // A Codex transcript in a dir that is NOT a git checkout must still resolve its repo from the
+        // `session_meta.payload.git` block — the bug was the Claude reader leaving Codex with no cwd,
+        // so it fell back to a path fingerprint that read like a commit SHA.
+        let dir = tempfile::TempDir::new().unwrap();
+        let cwd = dir.path().join("not-a-repo");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let body = format!(
+            "{}\n{}\n",
+            json!({
+                "type": "session_meta",
+                "timestamp": "2026-05-18T21:35:06.549Z",
+                "payload": {
+                    "id": "019e3d03-6b35-74c0-9dd1-c40bdbb6af72",
+                    "cwd": cwd.to_str().unwrap(),
+                    "timestamp": "2026-05-18T21:34:54.800Z",
+                    "git": {
+                        "commit_hash": "d1e85c4e8fdef82fbaded9539532b754080419e0",
+                        "branch": "main",
+                        "repository_url": "https://github.com/pingdotgg/t3code.git"
+                    }
+                }
+            }),
+            json!({ "type": "turn_context", "timestamp": "2026-05-18T21:35:07.000Z", "payload": { "model": "gpt-5.5" } })
+        );
+        let path = dir.path().join("rollout.jsonl");
+        std::fs::write(&path, &body).unwrap();
+        let file = DiscoveredFile {
+            path: path.to_str().unwrap().to_string(),
+            mtime_ms: 1.0,
+            size_bytes: std::fs::metadata(&path).unwrap().len(),
+        };
+
+        let cache = GitRemoteCache::new();
+        let unit = assemble_sync_unit(&file, AgentSource::Codex, &cache)
+            .await
+            .unwrap();
+
+        assert_eq!(unit.ctx.normalized_git_remote, "github.com/pingdotgg/t3code");
+        assert_eq!(
+            unit.ctx.vendor_session_id,
+            "019e3d03-6b35-74c0-9dd1-c40bdbb6af72"
+        );
+        assert_eq!(unit.ctx.git_branch, "main");
+        assert_eq!(
+            unit.ctx.git_head_sha,
+            "d1e85c4e8fdef82fbaded9539532b754080419e0"
+        );
+        assert_eq!(unit.ctx.repo_root, cwd.to_str().unwrap());
     }
 }
