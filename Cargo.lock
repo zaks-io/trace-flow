@@ -1884,6 +1884,7 @@ dependencies = [
  "collector-sync",
  "dirs",
  "futures-util",
+ "getrandom 0.4.2",
  "keyring",
  "reqwest",
  "serde",

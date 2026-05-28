@@ -635,6 +635,9 @@ export function createApp(
         redirectUrl.searchParams.set('collector_id', collectorId);
         redirectUrl.searchParams.set('expires_at', String(expiresAt));
         redirectUrl.searchParams.set('convex_url', url.origin);
+        // Echo the CLI's one-time state nonce (the part after the `collector:` tag) back to the
+        // loopback so the CLI can reject any local request that isn't the callback it initiated.
+        redirectUrl.searchParams.set('state', statePayload.clientState.slice('collector:'.length));
 
         logger.info('convex.collector_login_minted', { org_id: minted.orgId });
         await logger.flush();

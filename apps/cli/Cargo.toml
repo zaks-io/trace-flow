@@ -19,6 +19,9 @@ collector-api-client = { path = "../../packages/collector-api-client" }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "5"
+# CSPRNG for the one-time login state nonce that ties the loopback callback to the request the CLI
+# initiated (rejects stray/malicious local requests racing the listener).
+getrandom = "0.4"
 # keyring has NO default features: with none enabled it silently falls back to a per-process
 # in-memory mock store, so `set` succeeds and the next process's `get` returns NoEntry. Enable the
 # real OS-native backend per platform (macOS/Windows native; Linux Secret Service over sync DBus).

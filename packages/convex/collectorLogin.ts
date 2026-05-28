@@ -51,9 +51,18 @@ export const mintForUser = internalMutation({
 
     await rateLimiter.limit(ctx, 'mintCollectorCredential', { key: args.userId, throws: true });
 
+    const createdAt = Date.now();
+    // The credential lifetime is enforced here, at the mint boundary, not trusted from the caller.
+    // The HTTP callback computes `expiresAt = now + 90d`, but this internal mutation is the auth
+    // boundary for the credential, so it caps the lifetime itself: reject a past expiry and clamp to
+    // at most 90 days out. A future web/desktop minter can't widen the window past this.
+    const MAX_CREDENTIAL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+    if (args.expiresAt <= createdAt || args.expiresAt > createdAt + MAX_CREDENTIAL_TTL_MS) {
+      throw new Error('Collector Credential expiry must be in the future and within 90 days');
+    }
+
     const secret = generateCollectorSecret();
     const hashedSecret = await hashCollectorSecret(secret);
-    const createdAt = Date.now();
 
     const id = await ctx.db.insert('collectorCredentials', {
       hashedSecret,
