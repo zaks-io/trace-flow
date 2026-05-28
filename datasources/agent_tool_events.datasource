@@ -47,6 +47,9 @@ SCHEMA >
     `extracted_subagent_cache_creation_tokens` UInt32 `json:$.extracted_subagent_cache_creation_tokens`,
     `dropped_sensitive` UInt32 `json:$.dropped_sensitive`
 
+FORWARD_QUERY >
+  SELECT OrgId, UserId, CollectorId, CollectorCredentialId, session_pk, tool_use_pk, repo_fingerprint, repo_source, source, parser_version, EventAt, IngestedAt, vendor_session_id, vendor_message_id, tool_use_id, source_block_index, tool_name, command_family, command_program, command_subcommand, status, exit_code, duration_ms, repo_relative_paths, CAST(extracted_provider, 'LowCardinality(String)') AS extracted_provider, extracted_repo, extracted_pr_number, command_excerpt, error_excerpt, extracted_subagent_agent_id, extracted_subagent_model, extracted_subagent_input_tokens, extracted_subagent_output_tokens, extracted_subagent_cache_read_tokens, extracted_subagent_cache_creation_tokens, dropped_sensitive
+
 ENGINE "ReplacingMergeTree"
 ENGINE_VER "IngestedAt"
 ENGINE_SORTING_KEY "OrgId, session_pk, tool_use_pk"

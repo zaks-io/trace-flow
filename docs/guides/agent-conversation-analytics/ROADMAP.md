@@ -29,8 +29,9 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 3b  | `collector-sync`                            | ✅ freeze cache + orchestrator + cursor store + import-window/envelope + drive loop            | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                                        | 0a             |
 | 3d  | Headless end-to-end run                     | ✅ live run green against dev ingest: real `agent_*` rows, no `/Users/` paths, `cost_usd` null | 2e, 3a, 3b, 3c |
-| 4a  | Dashboard pages                             | ☐ todo                                                                                         | 1b, 2a         |
-| 4b  | `org_id` agent JWT in web                   | ☐ todo                                                                                         | 2a             |
+| 4z  | `agent_priced_coverage` pipe (4a backing)   | ✅ coverage% endpoint: priced/billable + estimated cost, tb test 3/3                           | 1a             |
+| 4a  | Dashboard pages                             | ✅ 4 surfaces live on local dev: coverage%/PARTIAL/leaderboard/delta/outliers, EMPTY no-CTA    | 1b, 2a, 4z     |
+| 4b  | `org_id` agent JWT in web                   | ✅ agent pipes authorize via org_id JWT; hobby 7d retention clamp live in fixed_params         | 2a             |
 | 4c  | Connected Desktops surface                  | ☐ todo                                                                                         | 2a, 5b         |
 | 5a  | Tauri desktop shell                         | ☐ todo                                                                                         | 3d             |
 | 5b  | Connect + Stronghold credential             | ☐ todo                                                                                         | 3d, 5a         |
@@ -453,7 +454,11 @@ headless_e2e -- --ignored --nocapture` passed end-to-end (parser → sync → gz
   to the deferred desktop app.
 - **Verify:** **smoke assertion, not "renders"** — given a pipe response each surface shows the
   expected rows **and** the coverage% field; LOADING/EMPTY/ERROR/PARTIAL each render for their
-  condition; the EMPTY state has **no desktop-app CTA**; cost is labeled estimated.
+  condition; the EMPTY state has **no desktop-app CTA**; cost is labeled estimated. **Render against
+  the local dev env, not a preview deploy** (user directive 2026-05-27, for faster iteration):
+  `bun run dev:all` + `bunx convex dev` + the Next.js app on localhost against dev Convex / dev
+  Tinybird, driven by Playwright/Chrome. The preview deploy is no longer the gate for the Phase 4
+  boundary PR.
 
 ### 4b — `org_id` agent JWT in web
 
