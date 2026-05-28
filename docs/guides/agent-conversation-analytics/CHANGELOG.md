@@ -15,6 +15,50 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 4a + 4b — Agent dashboards + org_id JWT (Phase 4 boundary) — agent-analytics-phase4
+
+**Status:** ✅ done — completes Phase 4 for the autonomous slice (4c stays deferred: needs the Phase 5
+desktop connect flow). Phase boundary reached → open PR to `main`, then STOP (human merges).
+
+**Changed:**
+
+- **New `apps/web/src/app/app/agents/` route + `components/agents/` surface** (committed `28feede`):
+  `AgentAnalytics` (toolbar + Source filter + time-range pills + the four interaction states),
+  `CoverageHeader` (3 StatCards + PARTIAL banner), `FailureLeaderboardTable`, `ToolDeltaTable`
+  (count_delta default-green, failure_delta inverted-red), `SessionOutliersTable`, plus
+  `useAgentFilters` / `useAgentData` hooks and row types. Nav entry added to `AppSidebar`. Mirrors
+  `OperationsAnalytics` state handling. EMPTY state has **no** desktop-app CTA (slice B is headless).
+- **`datasources/agent_tool_events.datasource`:** added a `FORWARD_QUERY` casting
+  `extracted_provider` `String → LowCardinality(String)`. The committed schema (#269) is correct per
+  the CLAUDE.md LowCardinality rule; dev cloud held the older `String`, so the `agent_priced_coverage`
+  deploy (and the rest of the Phase 4 boundary) needed a zero-downtime migration to land. Dev-only
+  migration, user-authorized 2026-05-27.
+
+**Verified (live, local dev — `bun run dev:all` + `bunx convex dev` + Next.js on localhost, driven by
+Chrome):**
+
+- Dev Tinybird deploy #68 promoted: `agent_priced_coverage` (new) + `agent_tool_events` (forward) +
+  3 dependent pipes; all 4 agent endpoints resolve against the evolved schema.
+- Authenticated `/app/agents` mints a Convex agent JWT carrying `org_id` + `retention_days: 7` +
+  `api_keys` in `fixed_params`; the client sends **no** `org_id` (server-stamped). That is the **4b**
+  org_id-JWT path proven end-to-end; the hobby 7d retention clamp is live in the token.
+- All 4 pipes return **200** through the dev API worker with millisecond params
+  (`start_time_ms`/`end_time_ms`, `limit=100`).
+- **Data-bearing render** (3d corpus, login switched to the corpus-owning org): coverage header shows
+  Estimated cost `—` (all `cost_usd` null → renders `-`, labeled "Estimated from token usage, not
+  billed spend"), Priced-token coverage `0.0%` ("0 of 2.6K billable turns priced"), Messages `2.8K`;
+  the amber **PARTIAL** banner fires (coverage_pct 0 < 1); failure leaderboard 23 tools with
+  color-coded rates; tool delta with green count / inverted-red failure deltas; session outliers
+  2 sessions with null-cost `—`. **EMPTY** state verified earlier under an org with no corpus.
+- Pipe output shapes cross-checked with read-only SELECTs against the corpus org before the render.
+- Offline gates green from `28feede` (lint, type-check, 58 tests, build with `/app/agents`
+  registered); local code-review clean after 3 fixes (ERROR fallthrough, two Nullable `cost_usd`
+  types, EMPTY guard); CodeRabbit SKIP.
+
+**Next / blockers:** Phase 4 complete for the slice (4a, 4b ✅; 4c deferred to fast-follow). Open the
+Phase 4 PR `agent-analytics-phase4 → main` and STOP — a human merges (merge = prod deploy). Phases 5–6
+are human-gated (GUI + Apple signing) and outside the autonomous driver.
+
 ## 2026-05-27 — 4z (new) — agent_priced_coverage pipe (4a backing) — agent-analytics-phase4
 
 **Status:** ✅ done — Phase 4 dashboard backing. 4a still ☐ (needs preview deploy + Playwright).
