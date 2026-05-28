@@ -1259,6 +1259,14 @@ export declare const internal: {
       >;
     };
   };
+  agentE2eSeed: {
+    seedDevCollector: FunctionReference<
+      "mutation",
+      "internal",
+      {},
+      { collectorId: string; orgId: Id<"organizations">; userId: Id<"users"> }
+    >;
+  };
   agentSessionOwners: {
     claimSession: FunctionReference<
       "mutation",
