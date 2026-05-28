@@ -68,7 +68,7 @@ export function useAgentData({ filterParams, groupBy, models }: UseAgentDataPara
   // turns and no sessions is the "no agent activity" signal. A loaded summary response
   // with a null aggregate row (or all-zero counts) means EMPTY regardless of the other
   // (also-empty) surfaces.
-  const summaryLoaded = !isLoading && !hasError && summaryQuery.data != null;
+  const summaryLoaded = !summaryQuery.isLoading && !summaryQuery.error && summaryQuery.data != null;
   const isEmpty =
     summaryLoaded &&
     (summary == null || (summary.message_count === 0 && summary.session_count === 0));

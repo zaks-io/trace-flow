@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Table2, ChevronDown } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { formatCurrency, formatNumber, formatDuration } from '@/lib/format';
@@ -45,6 +45,10 @@ export function AgentSessionsTable({
 }) {
   const [sort, setSort] = useState<AgentSessionSort>('cost');
   const [page, setPage] = useState(0);
+
+  // Reset to the first page when the filters or sort change, so a narrowed result set can't
+  // leave the offset past the end (which would show a false empty state with no pager).
+  useEffect(() => setPage(0), [filterParams, sort]);
 
   const params = useMemo(
     () => ({

@@ -27,7 +27,7 @@ SQL >
         max(model) AS model,
         any(repo_fingerprint) AS session_repo,
         count() AS message_count,
-        sum(cost_usd) AS cost_usd,
+        sumOrNull(cost_usd) AS cost_usd,
         toUnixTimestamp64Milli(max(EventAt)) - toUnixTimestamp64Milli(min(EventAt)) AS duration_ms,
         toUnixTimestamp64Milli(max(EventAt)) AS last_event_ms
     FROM agent_messages FINAL
@@ -92,7 +92,7 @@ SQL >
             ifNull(cost_usd, -1)
         ) DESC,
         session_pk ASC
-    LIMIT {{ Int32(limit, 50) }}
+    LIMIT {{ Int32(limit, 25) }}
     OFFSET {{ Int32(offset, 0) }}
 
 TYPE ENDPOINT
