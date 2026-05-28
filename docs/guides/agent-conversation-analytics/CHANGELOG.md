@@ -15,6 +15,31 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-28 — production-readiness rebaseline — Codex
+
+**Status:** 🚧 in progress — documentation and Linear rebaseline for production launch.
+
+**Changed:**
+
+- Replaced the previous slice-B roadmap with a production-readiness roadmap. The old milestone
+  treated a dev-only cloud pipeline plus ignored Rust E2E tests as a shipped ingestion product; the
+  new roadmap explicitly marks the feature **not production-ready** until a normal user can sync
+  through a Collector Credential, Cloudflare queue/consumer, Tinybird, and `/app/agents` without
+  admin-only tools.
+- Rewrote the implementation guide and runbook to state what exists, what is still dev-only, and what
+  production gates must hold.
+- Added ADR amendments clarifying that a minimal production CLI may ship before the desktop app, and
+  that no Tinybird token, Wrangler command, Convex dev seed, local KV seed, or ignored test can satisfy
+  product acceptance.
+
+**Verified:** `bun run ci:check` passed; local docs review found and fixed the stale teardown link.
+
+**Next / blockers:** Create the Linear production-readiness ticket set and implement the production
+gates in order: cloud ingest, CLI collector, dashboard truth, CI/release guardrails, observability,
+desktop, Cursor.
+
+---
+
 ## 2026-05-27 — 4a + 4b — Agent dashboards + org_id JWT (Phase 4 boundary) — agent-analytics-phase4
 
 **Status:** ✅ done — completes Phase 4 for the autonomous slice (4c stays deferred: needs the Phase 5

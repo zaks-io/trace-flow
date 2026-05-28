@@ -4,6 +4,16 @@ Status: accepted
 
 Captured: 2026-05-23
 
+Production-readiness amendment: 2026-05-28
+
+The original implementation roadmap used a "slice B" milestone that treated Rust collector libraries
+plus a dev-only E2E harness as enough to prove value before a user-facing collector existed. That is
+not a production acceptance bar. Agent Conversation Analytics is production-ready only when a normal
+Trace Flow user can authenticate a collector, sync local transcripts through the Cloudflare
+ingest/queue/consumer path, and read the result in `/app/agents` without Tinybird tokens, Wrangler,
+Convex dev, local KV seeding, or ignored tests. A minimal CLI may ship before the desktop app to prove
+the production ingestion path. Trace Flow Desktop remains the intended long-term product surface.
+
 Trace Flow becomes the analytics system of record for local AI-agent activity (Claude Code, Codex, Cursor), alongside proxied LLM Requests. A local Collector parses transcripts into typed facts and syncs them to a Collector Credential-authenticated ingest Worker. The Worker rate-limits, assembles canonical IDs, and enqueues. A stateless consumer prices the facts server-side and writes them into bespoke Tinybird datasources that mirror the `llm_requests` pattern without reusing API-key identity. Otto is the proof of concept this is extracted from: Trace Flow vendors and refactors Otto's working parser, source discovery, remote resolution, and desktop shell, and replaces the contracts around that code (wire format, local pricing, app/state model, IDs). Trace Flow owns the ingest contract, the storage design, and the Trace Flow types and tests the vendored code is refactored behind, but it does not rebuild what already works.
 
 ## Context
