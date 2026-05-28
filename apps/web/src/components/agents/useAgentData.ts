@@ -1,13 +1,24 @@
 import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
-import type { CoverageRow, FailureLeaderboardRow, SessionOutlierRow, ToolDeltaRow } from './types';
+import type {
+  AgentTimeseriesRow,
+  CoverageRow,
+  FailureLeaderboardRow,
+  SessionOutlierRow,
+  ToolDeltaRow,
+} from './types';
 
 type UseAgentDataParams = {
   filterParams: Record<string, string | number>;
 };
 
 export function useAgentData({ filterParams }: UseAgentDataParams) {
+  const timeseriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+    pipe: 'agent_usage_timeseries',
+    params: filterParams,
+  });
+
   const coverageQuery = useTinybirdQuery<TinybirdResponse<CoverageRow>>({
     pipe: 'agent_priced_coverage',
     params: filterParams,
@@ -29,18 +40,24 @@ export function useAgentData({ filterParams }: UseAgentDataParams) {
   });
 
   const coverage = coverageQuery.data?.data?.[0] ?? null;
+  const timeseries = useMemo(() => timeseriesQuery.data?.data ?? [], [timeseriesQuery.data]);
   const failures = useMemo(() => failuresQuery.data?.data ?? [], [failuresQuery.data]);
   const deltas = useMemo(() => deltaQuery.data?.data ?? [], [deltaQuery.data]);
   const outliers = useMemo(() => outliersQuery.data?.data ?? [], [outliersQuery.data]);
 
   const isLoading =
+    timeseriesQuery.isLoading ||
     coverageQuery.isLoading ||
     failuresQuery.isLoading ||
     deltaQuery.isLoading ||
     outliersQuery.isLoading;
 
   const hasError =
-    coverageQuery.error ?? failuresQuery.error ?? deltaQuery.error ?? outliersQuery.error;
+    timeseriesQuery.error ??
+    coverageQuery.error ??
+    failuresQuery.error ??
+    deltaQuery.error ??
+    outliersQuery.error;
 
   // Coverage counts every role in the window, so message_count === 0 is the
   // definitive "no agent activity" signal. A loaded coverage response with zero
@@ -53,5 +70,15 @@ export function useAgentData({ filterParams }: UseAgentDataParams) {
   // coverage), so the dollar figure is an estimate over a fraction of turns.
   const isPartial = coverage?.coverage_pct != null && coverage.coverage_pct < 1;
 
-  return { coverage, failures, deltas, outliers, isLoading, hasError, isEmpty, isPartial };
+  return {
+    timeseries,
+    coverage,
+    failures,
+    deltas,
+    outliers,
+    isLoading,
+    hasError,
+    isEmpty,
+    isPartial,
+  };
 }

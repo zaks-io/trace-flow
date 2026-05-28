@@ -1,0 +1,194 @@
+DESCRIPTION >
+    Hero time-series for the Agent usage explorer: one bucketed row per period with
+    the metrics the chart's switcher needs — estimated Agent Session Authoring Cost,
+    token components, message/session counts, and Tool Event outcomes. Granularity is
+    chosen automatically: hourly buckets for windows <= 30 days, daily beyond that.
+
+    Rollup-first, base-FINAL fallback. Reads the pre-aggregated rollups
+    (agent_usage_1h/_1d for usage, agent_tool_usage_1h for tool outcomes) when the org
+    has rollup rows; falls back to the canonical base tables (agent_messages FINAL
+    role='assistant', the same billable population as agent_priced_usage usage_kind
+    'direct'; agent_tool_events FINAL) when a rollup is unavailable — e.g. before the
+    hourly Copy Pipes have run, or in local dev. The fallback is automatic per source
+    so the pipe always returns data without a second request. The branches are mutually
+    exclusive (a rollup branch fires only when its rollup is populated, the base branch
+    only when it is empty), so the union is already one row per bucket.
+
+    Cost is a single estimated figure (the agent data model carries one cost_usd per
+    Agent Message, not provider-style per-component cost), so the chart stacks cost as
+    one series; tokens stack by the five token components and tool-events by outcome.
+    cost_usd sums only priced rows; priced_message_count / message_count give the
+    priced-token coverage the UI shows beside the estimate (ADR "Honesty about cost").
+    org_id and retention_days are enforced via the JWT fixed_params.
+
+NODE usage_series
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
+        dateDiff('day', start_dt, end_dt) AS range_days
+    SELECT
+        bucket_dt,
+        message_count,
+        session_count,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        reasoning_tokens,
+        input_tokens + output_tokens + cache_read_tokens
+            + cache_creation_tokens + reasoning_tokens AS total_tokens,
+        cost_usd,
+        priced_message_count
+    FROM (
+        SELECT
+            BucketStart AS bucket_dt,
+            countMerge(MessageCount) AS message_count,
+            uniqMerge(SessionCount) AS session_count,
+            sumMerge(InputTokens) AS input_tokens,
+            sumMerge(OutputTokens) AS output_tokens,
+            sumMerge(CacheReadTokens) AS cache_read_tokens,
+            sumMerge(CacheCreationTokens) AS cache_creation_tokens,
+            sumMerge(ReasoningTokens) AS reasoning_tokens,
+            round(sumMerge(CostUsd), 6) AS cost_usd,
+            sumMerge(PricedMessageCount) AS priced_message_count
+        FROM agent_usage_1h
+        WHERE range_days <= 30
+            AND (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND OrgId = {{ String(org_id, '') }}
+            AND BucketStart >= start_dt
+            AND BucketStart < end_dt
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(source) %}
+            AND source = {{ String(source) }}
+            {% end %}
+        GROUP BY bucket_dt
+
+        UNION ALL
+
+        SELECT
+            BucketStart AS bucket_dt,
+            countMerge(MessageCount) AS message_count,
+            uniqMerge(SessionCount) AS session_count,
+            sumMerge(InputTokens) AS input_tokens,
+            sumMerge(OutputTokens) AS output_tokens,
+            sumMerge(CacheReadTokens) AS cache_read_tokens,
+            sumMerge(CacheCreationTokens) AS cache_creation_tokens,
+            sumMerge(ReasoningTokens) AS reasoning_tokens,
+            round(sumMerge(CostUsd), 6) AS cost_usd,
+            sumMerge(PricedMessageCount) AS priced_message_count
+        FROM agent_usage_1d
+        WHERE range_days > 30
+            AND (SELECT count() FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND OrgId = {{ String(org_id, '') }}
+            AND BucketStart >= start_dt
+            AND BucketStart < end_dt
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(source) %}
+            AND source = {{ String(source) }}
+            {% end %}
+        GROUP BY bucket_dt
+
+        UNION ALL
+
+        SELECT
+            if(range_days <= 30, toStartOfHour(toDateTime(EventAt)), toStartOfDay(toDateTime(EventAt))) AS bucket_dt,
+            count() AS message_count,
+            uniqExact(session_pk) AS session_count,
+            sum(input_tokens) AS input_tokens,
+            sum(output_tokens) AS output_tokens,
+            sum(cache_read_tokens) AS cache_read_tokens,
+            sum(cache_creation_tokens) AS cache_creation_tokens,
+            sum(reasoning_tokens) AS reasoning_tokens,
+            round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd_total,
+            sum(toUInt64(cost_usd IS NOT NULL)) AS priced_message_count
+        FROM agent_messages FINAL
+        WHERE role = 'assistant'
+            AND (
+                (range_days <= 30 AND (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0)
+                OR (range_days > 30 AND (SELECT count() FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) = 0)
+            )
+            AND OrgId = {{ String(org_id, '') }}
+            AND EventAt >= start_dt
+            AND EventAt < end_dt
+            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(source) %}
+            AND source = {{ String(source) }}
+            {% end %}
+        GROUP BY bucket_dt
+    )
+
+NODE tool_series
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
+        dateDiff('day', start_dt, end_dt) AS range_days
+    SELECT * FROM (
+        SELECT
+            if(range_days <= 30, BucketStart, toStartOfDay(BucketStart)) AS bucket_dt,
+            countMerge(EventCount) AS tool_event_count,
+            sumMerge(SuccessCount) AS tool_success_count,
+            sumMerge(FailureCount) AS tool_failure_count,
+            sumMerge(UnknownCount) AS tool_unknown_count
+        FROM agent_tool_usage_1h
+        WHERE (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND OrgId = {{ String(org_id, '') }}
+            AND BucketStart >= start_dt
+            AND BucketStart < end_dt
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(source) %}
+            AND source = {{ String(source) }}
+            {% end %}
+        GROUP BY bucket_dt
+
+        UNION ALL
+
+        SELECT
+            if(range_days <= 30, toStartOfHour(toDateTime(EventAt)), toStartOfDay(toDateTime(EventAt))) AS bucket_dt,
+            count() AS tool_event_count,
+            countIf(status = 'success') AS tool_success_count,
+            countIf(status = 'failure') AS tool_failure_count,
+            countIf(status = 'unknown') AS tool_unknown_count
+        FROM agent_tool_events FINAL
+        WHERE (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0
+            AND OrgId = {{ String(org_id, '') }}
+            AND EventAt >= start_dt
+            AND EventAt < end_dt
+            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(source) %}
+            AND source = {{ String(source) }}
+            {% end %}
+        GROUP BY bucket_dt
+    )
+
+NODE endpoint
+SQL >
+    SELECT
+        coalesce(u.bucket_dt, t.bucket_dt) AS bucket_start,
+        ifNull(u.message_count, 0) AS message_count,
+        ifNull(u.session_count, 0) AS session_count,
+        ifNull(u.input_tokens, 0) AS input_tokens,
+        ifNull(u.output_tokens, 0) AS output_tokens,
+        ifNull(u.cache_read_tokens, 0) AS cache_read_tokens,
+        ifNull(u.cache_creation_tokens, 0) AS cache_creation_tokens,
+        ifNull(u.reasoning_tokens, 0) AS reasoning_tokens,
+        ifNull(u.total_tokens, 0) AS total_tokens,
+        ifNull(u.cost_usd, 0.) AS cost_usd,
+        ifNull(u.priced_message_count, 0) AS priced_message_count,
+        ifNull(t.tool_event_count, 0) AS tool_event_count,
+        ifNull(t.tool_success_count, 0) AS tool_success_count,
+        ifNull(t.tool_failure_count, 0) AS tool_failure_count,
+        ifNull(t.tool_unknown_count, 0) AS tool_unknown_count
+    FROM usage_series AS u
+    FULL OUTER JOIN tool_series AS t ON u.bucket_dt = t.bucket_dt
+    ORDER BY bucket_start ASC
+    SETTINGS join_use_nulls = 1
+
+TYPE ENDPOINT
