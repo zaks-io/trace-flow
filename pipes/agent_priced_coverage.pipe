@@ -1,0 +1,46 @@
+DESCRIPTION >
+    Priced-token coverage for the dashboard header: the share of billable
+    Agent Messages that carry a non-null `cost_usd`, plus the estimated-cost
+    total for the window. `cost_usd` is null when the model is unpriced or token
+    coverage is missing (ADR "Pricing and cost"), so this ratio is the
+    data-quality signal the UI shows next to "estimated cost" — never "$ spent"
+    (ADR "Honesty about cost"). Query-time over `agent_messages FINAL`, the same
+    query-time-first launch path as the leaderboard/outlier pipes. The
+    denominator is `role = 'assistant'` turns: user/system/tool turns never carry
+    usage, so they can never be priced, and counting them would deflate coverage
+    against a denominator that was never billable. This matches the billable
+    scoping in `agent_priced_usage`. `message_count` (all roles) is also returned
+    so the raw `count(cost_usd) / count(*)` form stays derivable. `org_id` is
+    enforced via the JWT `fixed_params`.
+
+NODE coverage
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT
+        count() AS message_count,
+        countIf(role = 'assistant') AS billable_message_count,
+        countIf(role = 'assistant' AND cost_usd IS NOT NULL) AS priced_message_count,
+        if(
+            billable_message_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(priced_message_count / billable_message_count, 4)
+        ) AS coverage_pct,
+        sum(cost_usd) AS estimated_cost_usd
+    FROM agent_messages FINAL
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND EventAt >= start_dt
+        AND EventAt < end_dt
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(source) %}
+        AND source = {{ String(source) }}
+        {% end %}
+        {% if defined(repo_fingerprint) %}
+        AND repo_fingerprint = {{ String(repo_fingerprint) }}
+        {% end %}
+
+TYPE ENDPOINT

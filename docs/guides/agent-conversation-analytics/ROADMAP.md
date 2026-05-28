@@ -29,7 +29,8 @@ Status legend: `☐ todo` · `🚧 <branch>` · `✅ done` · `⛔ blocked`
 | 3b  | `collector-sync`                            | ✅ freeze cache + orchestrator + cursor store + import-window/envelope + drive loop            | 0a, 3a         |
 | 3c  | `collector-api-client` + `collector-common` | ✅ done                                                                                        | 0a             |
 | 3d  | Headless end-to-end run                     | ✅ live run green against dev ingest: real `agent_*` rows, no `/Users/` paths, `cost_usd` null | 2e, 3a, 3b, 3c |
-| 4a  | Dashboard pages                             | ☐ todo                                                                                         | 1b, 2a         |
+| 4z  | `agent_priced_coverage` pipe (4a backing)   | ✅ coverage% endpoint: priced/billable + estimated cost, tb test 3/3                           | 1a             |
+| 4a  | Dashboard pages                             | ☐ todo                                                                                         | 1b, 2a, 4z     |
 | 4b  | `org_id` agent JWT in web                   | ☐ todo                                                                                         | 2a             |
 | 4c  | Connected Desktops surface                  | ☐ todo                                                                                         | 2a, 5b         |
 | 5a  | Tauri desktop shell                         | ☐ todo                                                                                         | 3d             |

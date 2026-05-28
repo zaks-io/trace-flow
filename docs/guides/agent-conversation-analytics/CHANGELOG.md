@@ -15,6 +15,57 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-05-27 — 4z (new) — agent_priced_coverage pipe (4a backing) — agent-analytics-phase4
+
+**Status:** ✅ done — Phase 4 dashboard backing. 4a still ☐ (needs preview deploy + Playwright).
+
+**Changed:**
+
+- **New `pipes/agent_priced_coverage.pipe`** — the priced-token coverage% read ENDPOINT that 4a's
+  header surface needs and that 1b never shipped. The three launch pipes
+  (`agent_failure_leaderboard`, `agent_session_outliers`, `agent_tool_period_delta`) expose no
+  coverage metric, and the `agent_usage_1h` rollup (`PricedMessageCount`/`MessageCount`) has no read
+  endpoint. The ADR mandates the metric (§ "Honesty about cost": "priced-token coverage % … is
+  queryable", `count(cost_usd)/count(*)`, dollars labeled "estimated cost", not "$ spent").
+- **Lane note (driver step 4):** 4a's declared lane is `apps/web` only; the coverage% it requires
+  needs a `pipes/` file (Phase 1-family). Rather than reach across lanes silently, this landed as its
+  own tracked row **4z** (human-approved). 4a now depends on 4z.
+- Query-time over `agent_messages FINAL`; `org_id` enforced via JWT `fixed_params` (agent pipes use
+  `org_id`, not `api_keys`); retention-gated; optional `source`/`repo_fingerprint` filters — matching
+  the sibling launch pipes. Returns `message_count` (all roles), `billable_message_count`,
+  `priced_message_count`, `coverage_pct = round(priced/billable, 4)` (NULL when no billable turns),
+  and `estimated_cost_usd = sum(cost_usd)`.
+- **Coverage denominator = `role='assistant'` (billable) turns**, matching the merged
+  `agent_priced_usage` role-scoping: user/system turns never carry usage, so a `count(*)` denominator
+  would deflate the ratio. `message_count` (all roles) is also returned so `count(cost_usd)/count(*)`
+  stays derivable. Verified against dev: 2807 messages but 2626 billable, so a `count(*)` denominator
+  would have deflated coverage ~6%.
+- **`fixtures/agent_messages.ndjson`:** appended 5 `org_cov` rows (new org, leaves `org_test`/`org_1c`
+  tests untouched): 3 priced + 1 null-cost assistant across claude/codex, plus 1 `user` turn —
+  exercising role-scoping, null skip-in-sum/skip-in-count, and the `source` filter.
+- **`tests/agent_priced_coverage.yaml`:** 3 cases with hand-computed aggregates (0.75 over billable;
+  0.6667 with `source=claude`; 1.0 with `source=codex`).
+
+**Verified:**
+
+- `tb build` clean (workspace confirmed `trace_flow_dev`).
+- `tb test run agent_priced_coverage` → 3/3 pass (exact aggregates).
+- `tb test run agent_session_outliers agent_failure_leaderboard agent_tool_period_delta` → 3/3 pass
+  (no regression from the new fixture rows).
+- Live SELECT against dev (the 3d corpus): `message_count=2807, billable=2626, priced=0,
+coverage_pct=0, estimated_cost_usd=None` — the all-null branch computes correctly (dev catalog had
+  not priced those models during 3d).
+- Local code-review (read-only `code-reviewer` subagent): READY TO LAND, 0 findings, CodeRabbit SKIP.
+
+**Next / blockers:** 4a (dashboard pages) consumes this pipe. 4a's verify needs a preview deploy +
+Playwright browser render, so it lands as the Phase 4 boundary PR (the preview is reachable only once
+the PR is open). 4b (`org_id` agent JWT in web) needs no separate web runtime — 2a's
+`withRowSecurityParams` already stamps `org_id`/`retention_days` onto every scope, so the generic
+`useTinybirdQuery` already mints org-scoped, tier-gated agent JWTs; it will be exercised + verified
+live by 4a's pages in the preview. 4c is ⛔ (never claim).
+
+---
+
 ## 2026-05-27 — 3d live-run GREEN + agent_priced_usage coverage fix — t3code/ab83918d
 
 **Status:** ✅ done — 3d closed. Phase 3 (3a–3d) complete; this is the Phase 3 boundary → PR to main.
