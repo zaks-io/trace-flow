@@ -156,10 +156,11 @@ pub async fn run_sync_cycle<C: IngestClient>(
 /// Run one sync cycle, batching sessions into multi-session envelopes and POSTing up to
 /// `tuning.max_concurrent_uploads` at once.
 ///
-/// Sessions are grouped into [`PreparedBatch`]es under the session/byte budget; each batch's cursors
-/// advance together, and only after its POST returns `2xx`. POSTs run concurrently via
-/// `buffer_unordered`, but the stream is driven on this one task, so cursor writes and report
-/// mutation stay single-threaded (the `CursorStore`'s SQLite connection is not shared across tasks).
+/// Sessions are grouped into [`PreparedBatch`]es under the session/byte budget (lazily, via
+/// [`BatchPreparer`]); each batch's cursors advance together, and only after its POST returns `2xx`.
+/// POSTs run concurrently in a `FuturesUnordered` capped at `max_concurrent_uploads`, but that set is
+/// polled on this one task, so cursor writes and report mutation stay single-threaded (the
+/// `CursorStore`'s SQLite connection is not shared across tasks).
 /// A cycle-fatal error (bad credential, too-old client, exhausted rate limit) stops draining the rest:
 /// every remaining batch would hit the same wall, and their cursors stay put for the next cycle. The
 /// terminal `JobSucceeded`/`JobFailed` trigger is applied exactly as before.
@@ -178,14 +179,12 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
 
     let mut report = CycleReport::default();
 
-    let batches = prepare_batches(meta, units, mint_batch_id, tuning);
-
-    // Drive up to `max_concurrent_uploads` POSTs at once. Each future yields its batch back alongside
-    // the result so a completed POST can advance exactly that batch's cursors. The stream is polled on
-    // this task, so we observe completions one at a time and never touch the cursor store concurrently.
+    // Lazy: batches are assembled on demand as the pipeline pulls them, so only ~`concurrency` merged
+    // envelopes are ever in memory at once (not the whole window), and a pre-cancelled run assembles
+    // nothing.
     let concurrency = tuning.max_concurrent_uploads.max(1);
     let mut inflight = FuturesUnordered::new();
-    let mut pending = batches.into_iter().peekable();
+    let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning).peekable();
 
     // A token already cancelled before we start must POST nothing, but still counts as an early abort
     // if there was work to do (so the cycle fails the job rather than reporting a clean drain).
@@ -271,56 +270,80 @@ async fn post_batch<C: IngestClient>(
     (batch, result)
 }
 
-/// Group `units` into multi-session [`PreparedBatch`]es under the tuning budget. Each unit's facts are
-/// assembled once and merged into the open batch; the batch closes when adding the next unit would
-/// exceed `max_sessions_per_batch` or `max_batch_bytes`. One `collector_batch_id` is minted per batch.
+/// A **lazy** producer of multi-session [`PreparedBatch`]es: it assembles + merges sessions only as
+/// each batch is pulled, so peak memory tracks `max_concurrent_uploads` (the in-flight batches), not
+/// the whole sync window, and a pre-cancelled run does no assembly. Each unit's facts are assembled
+/// once and merged into the open batch; the batch closes when adding the next unit would exceed
+/// `max_sessions_per_batch` or `max_batch_bytes` (a lone oversized session still rides its own batch).
+/// One `collector_batch_id` is minted per yielded batch.
 ///
 /// A unit that assembles to zero facts still carries a cursor that must advance (an empty session is
 /// "seen, nothing to send"), so it is folded into a batch and rides along; the Worker treats an
 /// all-empty envelope as an accepted no-op.
-fn prepare_batches(
-    meta: &BatchMeta,
-    units: &[SyncUnit],
-    mint_batch_id: &mut dyn FnMut() -> String,
-    tuning: SyncTuning,
-) -> Vec<PreparedBatch> {
-    let max_sessions = tuning.max_sessions_per_batch.max(1);
-    let max_bytes = tuning.max_batch_bytes.max(1);
+struct BatchPreparer<'a, M: FnMut() -> String> {
+    meta: &'a BatchMeta,
+    units: std::slice::Iter<'a, SyncUnit>,
+    mint_batch_id: M,
+    max_sessions: usize,
+    max_bytes: usize,
+}
 
-    let mut batches: Vec<PreparedBatch> = Vec::new();
-    let mut open_facts = AgentIngestFacts::default();
-    let mut open_cursors: Vec<FileCursor> = Vec::new();
-    let mut open_bytes: usize = 0;
+impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
+    fn new(
+        meta: &'a BatchMeta,
+        units: &'a [SyncUnit],
+        mint_batch_id: M,
+        tuning: SyncTuning,
+    ) -> Self {
+        Self {
+            meta,
+            units: units.iter(),
+            mint_batch_id,
+            max_sessions: tuning.max_sessions_per_batch.max(1),
+            max_bytes: tuning.max_batch_bytes.max(1),
+        }
+    }
+}
 
-    for unit in units {
-        let facts = session_facts(meta.source, &unit.records, &unit.ctx);
-        let facts_bytes = estimate_facts_bytes(&facts);
+impl<M: FnMut() -> String> Iterator for BatchPreparer<'_, M> {
+    type Item = PreparedBatch;
 
-        // Close the open batch first if this unit would overflow it (but never split a single session,
-        // and never close an empty batch — a lone oversized session rides its own batch).
-        let would_overflow = !open_cursors.is_empty()
-            && (open_cursors.len() >= max_sessions || open_bytes + facts_bytes > max_bytes);
-        if would_overflow {
-            batches.push(PreparedBatch {
-                envelope: build_envelope(meta, mint_batch_id(), std::mem::take(&mut open_facts)),
-                cursors: std::mem::take(&mut open_cursors),
-            });
-            open_bytes = 0;
+    fn next(&mut self) -> Option<PreparedBatch> {
+        let mut open_facts = AgentIngestFacts::default();
+        let mut open_cursors: Vec<FileCursor> = Vec::new();
+        let mut open_bytes: usize = 0;
+
+        while let Some(unit) = self.units.clone().next() {
+            let facts = session_facts(self.meta.source, &unit.records, &unit.ctx);
+            let facts_bytes = estimate_facts_bytes(&facts);
+
+            // If adding this unit would overflow the open (non-empty) batch, close and return it now —
+            // WITHOUT consuming `unit`, so it starts the next batch. Never split a single session.
+            let would_overflow = !open_cursors.is_empty()
+                && (open_cursors.len() >= self.max_sessions
+                    || open_bytes + facts_bytes > self.max_bytes);
+            if would_overflow {
+                return Some(PreparedBatch {
+                    envelope: build_envelope(self.meta, (self.mint_batch_id)(), open_facts),
+                    cursors: open_cursors,
+                });
+            }
+
+            // Commit the peeked unit into the open batch.
+            self.units.next();
+            merge_facts(&mut open_facts, facts);
+            open_cursors.push(unit.next_cursor.clone());
+            open_bytes += facts_bytes;
         }
 
-        merge_facts(&mut open_facts, facts);
-        open_cursors.push(unit.next_cursor.clone());
-        open_bytes += facts_bytes;
-    }
-
-    if !open_cursors.is_empty() {
-        batches.push(PreparedBatch {
-            envelope: build_envelope(meta, mint_batch_id(), open_facts),
+        if open_cursors.is_empty() {
+            return None;
+        }
+        Some(PreparedBatch {
+            envelope: build_envelope(self.meta, (self.mint_batch_id)(), open_facts),
             cursors: open_cursors,
-        });
+        })
     }
-
-    batches
 }
 
 /// Concatenate one session's facts onto the batch accumulator. Facts are independent at rest (the

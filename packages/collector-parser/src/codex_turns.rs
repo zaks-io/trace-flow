@@ -116,26 +116,30 @@ where
                     continue;
                 };
                 // Per-turn usage = diff of successive cumulative snapshots (ccusage#884). Three cases:
-                let usage = if cumulative.total_tokens > prev_cumulative.total_tokens {
+                let usage: Option<CodexTurnUsage> = if cumulative.total_tokens
+                    > prev_cumulative.total_tokens
+                {
                     // Normal advance: the delta since the last counted snapshot.
                     let u = cumulative.delta_since(prev_cumulative);
                     prev_cumulative = cumulative;
-                    u
+                    Some(u)
                 } else if cumulative.total_tokens == prev_cumulative.total_tokens {
                     // Unchanged cumulative = duplicate snapshot Codex re-emits → contributes nothing.
                     continue;
                 } else {
                     // Cumulative went backwards: a session reset/rollback (e.g. resumed/compacted
                     // context). The cumulative is no longer a continuation of `prev`, so fall back to
-                    // this row's own `last_token_usage` and re-baseline `prev` to the new snapshot.
-                    let u = payload.and_then(last_token_usage).unwrap_or_default();
+                    // this row's own `last_token_usage` and re-baseline `prev` to the new snapshot. If
+                    // that row has no usable `last_token_usage` either, leave it `None` — the turn ran
+                    // but its tokens are unknown, which the emitter maps to `Missing` coverage. Coercing
+                    // to zero would falsely claim known full coverage and undercount.
                     prev_cumulative = cumulative;
-                    u
+                    payload.and_then(last_token_usage)
                 };
                 turns.push(CodexTurn {
                     turn_index: next_index,
                     role: CodexTurnRole::Assistant,
-                    usage: Some(usage),
+                    usage,
                     record,
                 });
                 next_index += 1;
@@ -381,6 +385,21 @@ mod tests {
         assert_eq!((r.input_tokens, r.cache_read_tokens, r.output_tokens), (600, 200, 40));
         // turn 2: diff from re-anchored baseline 10_200 → total 2_060.
         assert_eq!(turns[2].usage.unwrap().total_tokens, 2_060);
+    }
+
+    #[test]
+    fn a_rollback_with_no_last_token_usage_yields_unknown_not_zero() {
+        // Reset row whose `last_token_usage` is null: the turn ran but its tokens are unknown. Usage
+        // must be `None` (→ Missing coverage downstream), NOT a zero-token turn that falsely claims
+        // full coverage and undercounts.
+        let records = [
+            token_count_cum((100_000, 50_000, 1_000, 0, 101_000), None),
+            token_count_cum((10_000, 5_000, 200, 0, 10_200), None), // rollback, no last_token_usage
+        ];
+        let turns = session_turns(records.iter());
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].usage.unwrap().total_tokens, 101_000);
+        assert_eq!(turns[1].usage, None, "unknown rollback usage stays unknown, not zero");
     }
 
     #[test]

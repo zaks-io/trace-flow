@@ -114,7 +114,11 @@ def claude_truth(cutoff):
     agg = defaultdict(lambda: {"in": 0, "out": 0, "cc": 0, "cr": 0, "msgs": 0})
     for v in seen.values():
         a = agg[v["model"]]
-        a["in"] += v["in"]; a["out"] += v["out"]; a["cc"] += v["cc"]; a["cr"] += v["cr"]; a["msgs"] += 1
+        a["in"] += v["in"]
+        a["out"] += v["out"]
+        a["cc"] += v["cc"]
+        a["cr"] += v["cr"]
+        a["msgs"] += 1
     return agg
 
 
@@ -156,12 +160,14 @@ def codex_truth(cutoff):
                 d_cached = lt.get("cached_input_tokens", 0) or 0
                 d_out = lt.get("output_tokens", 0) or 0
                 prev = (ci, cc, co, ct)
-                _add_codex(totals, d_raw, d_cached, d_out); counted = True
+                _add_codex(totals, d_raw, d_cached, d_out)
+                counted = True
                 continue
             else:
                 d_raw, d_cached, d_out = ci - prev[0], cc - prev[1], co - prev[2]
             prev = (ci, cc, co, ct)
-            _add_codex(totals, d_raw, d_cached, d_out); counted = True
+            _add_codex(totals, d_raw, d_cached, d_out)
+            counted = True
         if counted:
             totals["sessions"] += 1
     return totals
@@ -169,9 +175,12 @@ def codex_truth(cutoff):
 
 def _add_codex(totals, raw_in, cached, out):
     unc = max(0, raw_in - cached)
-    cached = max(0, cached); out = max(0, out)
+    cached = max(0, cached)
+    out = max(0, out)
     rates = GPT55_TIER if (unc + cached) >= GPT55_THRESHOLD else GPT55_BASE
-    totals["unc_in"] += unc; totals["cr"] += cached; totals["out"] += out
+    totals["unc_in"] += unc
+    totals["cr"] += cached
+    totals["out"] += out
     totals["cost"] += (unc * rates["in"] + cached * rates["cr"] + out * rates["out"]) / 1e6
     totals["turns"] += 1
 

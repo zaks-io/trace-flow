@@ -49,15 +49,20 @@ metric entirely. The remembered "$500/day" is not a value CodexBar stores.
 
 Codex records usage in `token_count` events with two views:
 
-- `info.total_token_usage` — cumulative running total for the session (summing these across events is
-  the ~331x double-count trap; never do it).
-- `info.last_token_usage` — the per-turn delta. **This is the source of truth.** Verified that the sum
-  of all `last_token_usage` deltas equals the final `total_token_usage` exactly (e.g. session
-  `019e66c3`: both give input 5,899,187 / cached 5,687,168 / output 13,324).
+- `info.total_token_usage` — the cumulative running total for the session. **This is the source of
+  truth.** Per-turn usage is the DIFF between successive cumulative snapshots; a row whose cumulative
+  did not advance is a duplicate emission and contributes nothing (ccusage#884). (Summing the
+  cumulative _as a value_ across events is the ~331x trap — diff it, never sum it.)
+- `info.last_token_usage` — the row's own per-turn delta. Used only as a **fallback** when the
+  cumulative is unusable (a reset/rollback where it goes backwards). It can lag/diverge from the true
+  delta when Codex re-emits rows, which is exactly why it is not the primary source.
+
+Verified the diffed-cumulative per-turn usages sum to the session's final cumulative exactly (e.g.
+session `019e66c3`: input 5,899,187 / cached 5,687,168 / output 13,324).
 
 Codex `input_tokens` is the FULL prompt (includes cache); `cached_input_tokens` is the cached subset.
-So **uncached input = input − cached**, cache_read = cached. The parser (`codex_usage.rs`) does exactly
-this clamp — verified correct.
+So **uncached input = input − cached**, cache_read = cached. The parser (`codex_usage.rs` +
+`codex_turns.rs`) does exactly this diff + clamp — verified correct.
 
 Cost uses models.dev `gpt-5.5`: base $5/$30/$0.5 per Mtok (in/out/cache-read), context tier at
 ≥272k prompt tokens → $10/$45/$1. Applied per turn (tier depends on that turn's prompt size).
