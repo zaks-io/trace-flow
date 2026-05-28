@@ -1,128 +1,127 @@
-# Agent pipeline ops runbook
+# Agent Pipeline Runbook
 
-Operating the agent-conversation-analytics ingest path: the dead-letter queue, the observability
-alerts, manual teardown, and the Tinybird schema deploy that CI does not perform.
+This runbook describes the required production operating model and the current limitation.
 
-**Scope / blast radius:** dev only. Slice B has no production agent pipeline — both `deploy.yml` (on
-`main`) and `preview.yml` (on PR) target the `*-dev` workers and the 0d-provisioned dev resources
-(see [`provisioned-resources.md`](./provisioned-resources.md)). Tinybird inserts go to `trace_flow_dev`
-only.
+## Current Limitation
 
-**Path:** Collector → `agent-ingest` (`POST /v1/ingest`) → `agent-ingest-dev` queue → `agent-consumer`
-→ Tinybird `agent_*` datasources. A batch the consumer cannot insert is retried; a message that
-exhausts retries (or fails the structural guard) dead-letters to `agent-ingest-dlq-dev`. Re-POST is
-idempotent — every base fact is a `ReplacingMergeTree(IngestedAt)` keyed on a stable `*_pk`, so
-re-driving the DLQ collapses duplicates under `FINAL`.
+The checked-in agent Workers currently use dev resource names and dev bindings. The previous runbook
+called the path "dev only"; that remains true until the production cloud ingest task lands.
 
-## Dead-letter queue
+Do not ask a user, agent, or collector to submit data with a Tinybird token, Tinybird admin token,
+Wrangler command, Convex dev seed, or local KV seed. Those are implementation/debug tools, not product
+ingestion.
 
-The DLQ (`agent-ingest-dlq-dev`) is inspect-only by default; nothing consumes it. A non-empty DLQ
-means messages were malformed (contract drift — see Sentry `agent_consumer.message_malformed`) or the
-Tinybird insert kept failing past `max_retries: 5`.
+## Intended Production Path
 
-### Inspect
-
-```sh
-wrangler queues info agent-ingest-dlq-dev   # backlog size + consumer state
+```text
+collector CLI / desktop
+  -> POST /v1/ingest with X-Trace-Flow-Collector-Secret
+  -> agent-ingest production Worker
+  -> production agent ingest queue
+  -> agent-consumer production Worker
+  -> Tinybird production agent_* datasources
+  -> /app/agents via org_id-scoped JWT
 ```
 
-Cross-reference Sentry: malformed messages emit `captureMessage('agent_consumer.message_malformed')`;
-insert failures emit `captureException(..., { tags: { operation: 'insert', datasource } })`. Use the
-`datasource` tag to find which `agent_*` table is rejecting rows, then check that datasource's
-`_quarantine` table in Tinybird for the schema mismatch.
+Only the Collector Credential is present on the client. Tinybird credentials exist only as Worker
+secrets.
 
-### Re-drive
+## Required Production Resources
 
-Once the root cause is fixed (schema mismatch corrected, pricing catalog repopulated), re-drive with a
-**temporary HTTP pull consumer** on the DLQ — pull the batch, re-POST it to `agent-ingest`'s
-`/v1/ingest`, ack on success. Idempotent re-POST makes this safe to repeat.
+Before production launch, provision and record:
+
+- production agent ingest queue
+- production agent ingest DLQ
+- production `COLLECTOR_CREDS` KV namespace
+- production ingest rate limiter namespace
+- production pricing KV binding or a safe shared pricing source
+- production Sentry projects or alert routing for ingest and consumer
+- production Tinybird agent datasources and pipes
+- scoped Tinybird append token for the consumer Worker
+
+The production deploy workflow must fail if an agent Worker is bound to a dev queue, dev KV namespace,
+or dev Worker name.
+
+## Release Gate
+
+A production release is valid only if all checks pass:
+
+1. `tb build`
+2. Tinybird deploy dry-run against the target workspace
+3. production Worker config assertion
+4. Worker deploy
+5. synthetic Collector Credential mint
+6. synthetic envelope POST to production ingest
+7. queue drain verification
+8. Tinybird row visibility
+9. `/app/agents` read through org-scoped JWT
+
+No manual admin-token insert can satisfy this gate.
+
+## DLQ
+
+The DLQ is inspect-only by default. A non-empty DLQ means malformed messages, contract drift, or
+repeated Tinybird insert failure.
+
+Inspect:
 
 ```sh
-wrangler queues consumer http add agent-ingest-dlq-dev   # attach a pull consumer
-# pull → re-POST to https://trace-flow-agent-ingest-dev.<account>.workers.dev/v1/ingest → ack
-wrangler queues consumer http remove agent-ingest-dlq-dev # detach when drained
+wrangler queues info <production-agent-dlq>
 ```
 
-If the messages are unrecoverable (genuine contract drift that will never validate), drop them:
-
-```sh
-wrangler queues pause-delivery agent-ingest-dlq-dev   # optional: stop new arrivals first
-wrangler queues purge agent-ingest-dlq-dev            # irreversible
-```
+Recover only after fixing the root cause. Re-drive through the ingest path or a controlled internal
+tool that preserves idempotency; do not write rows directly to Tinybird.
 
 ## Alerts
 
-These are **dashboard/API-provisioned** — this repo has no alert-as-code path (no Terraform, no
-Cloudflare notification config in `wrangler.jsonc`, no Tinybird `TYPE ALERT` pipe). Provision them
-once per environment in the Cloudflare and Sentry dashboards. The definitions below are the contract;
-keep them in sync if the signal names change.
+Production must alert on:
 
-| Alert                      | Source                           | Signal                                                                              | Fires when                         |
-| -------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------- |
-| **DLQ non-empty**          | Cloudflare Queues                | `agent-ingest-dlq-dev` backlog                                                      | backlog > 0 for 5 min              |
-| **Consumer error rate**    | Sentry (project: agent-consumer) | events tagged `operation:insert` or `operation:guard`, or `agent_consumer.*` errors | > 5 events / 10 min                |
-| **Priced-coverage health** | Tinybird (scheduled query)       | priced fraction of recent messages                                                  | drops sharply vs. baseline (below) |
+- ingest auth rejection spike
+- compatibility policy unavailable
+- queue backlog depth or age
+- DLQ non-empty
+- consumer insert failures
+- Tinybird quarantine rows
+- priced-token coverage regression
+- repeated collector sync failures
 
-### Priced-coverage health
+Each alert needs:
 
-`cost_usd` is the only nullable column. A message is legitimately unpriced when token coverage is
-missing, so coverage is naturally below 100% — alert on a **drop versus baseline**, not an absolute
-floor. A models.dev import that silently regresses to empty/gateway prices shows up as the recent
-priced fraction collapsing while the 24h baseline stays put.
+- threshold
+- owner
+- dashboard link
+- runbook action
+- test procedure
 
-```sql
-SELECT
-  countIf(cost_usd IS NOT NULL) / count(*) AS priced_coverage,
-  count(*)                                  AS total
-FROM agent_messages FINAL
-WHERE IngestedAt >= now() - INTERVAL 1 HOUR
-```
+## Smoke Envelope Rules
 
-Compare against the trailing 24h `priced_coverage`; fire if the recent ratio drops by more than ~50%
-relative (guard with `total > 100` so a quiet hour does not trip it). Run it as a Tinybird scheduled
-query/copy pipe feeding the dashboard alert, or poll it from an external monitor.
+Smoke tests must:
 
-When it fires, check the models.dev import: `bunx convex run billing/modelPricing:listAll` should show
-recent `updatedAt` timestamps for `source: 'models.dev'` rows; if stale, the daily import cron
-(`06:30 UTC`) failed — re-run `bunx convex run billing/modelPricing:importFromModelsDev` and confirm
-`{ imported, skipped }`.
+- use a real Collector Credential
+- submit through `POST /v1/ingest`
+- never receive Tinybird credentials
+- use a synthetic org/session that is safe to delete
+- assert read visibility through the same dashboard token path used by the app
 
 ## Teardown
 
-Dev resources are disposable, but **`git revert` does not remove them** — the queues, KV namespace,
-and Tinybird datasources are provisioned out-of-band (0d / 1d), not from code. Reverting the worker
-configs only stops deploys; the resources keep existing (and the DLQ keeps any messages). To fully
-remove the agent pipeline from the dev account:
+The resources in `provisioned-resources.md` are dev-only. Remove them only when the dev agent ingest
+path is intentionally retired or being rebuilt.
 
-```sh
-# Cloudflare (0d resources)
-wrangler queues delete agent-ingest-dev
-wrangler queues delete agent-ingest-dlq-dev
-wrangler kv namespace delete --namespace-id f945ee3d71954ffabd364e3db385d3ab
+Before deleting dev resources:
 
-# Tinybird (1d datasources) — destructive, dev workspace only
-tb workspace current                                    # MUST be trace_flow_dev
-tb --cloud datasource rm agent_messages --allow-destructive-operations
-# repeat for: agent_tool_events, agent_file_events, agent_capability_snapshots,
-#             agent_pull_request_links, and the 1b/1c materialized/rollup datasources
-```
+- stop dev deployments that reference the queue, DLQ, and KV namespace
+- confirm no active development issue depends on the current resource IDs
+- export or discard DLQ messages deliberately
+- remove matching dev secrets from Cloudflare after the workers no longer bind them
+- remove Tinybird dev datasources only through the Tinybird deploy workflow with destructive
+  operations explicitly enabled
 
-Worker scripts themselves are removed with `wrangler delete` from each app dir if you also want the
-`*-dev` Workers gone.
+Production resources created by TRA-110 require the production change process. Do not delete or
+recreate them as part of dev teardown.
 
-## Tinybird schema deploy (not in CI)
+## Done
 
-Tinybird is **not** wired into GitHub Actions — schema changes are deployed manually from
-`datasources/` + `pipes/`. CI never touches Tinybird, so a merged schema change is inert until someone
-runs the deploy. Always validate offline first, confirm the workspace, then deploy to dev:
-
-```sh
-tb build                          # offline validation of every .datasource / .pipe
-tb workspace current              # MUST print trace_flow_dev — never `tb workspace use trace_flow_prod`
-tb --cloud deploy --check         # dry-run against the live workspace
-tb --cloud deploy                 # apply
-tb --cloud datasource ls          # confirm agent_* datasources are present
-```
-
-Use `FORWARD_QUERY` for zero-downtime column changes; every datasource keeps a `_quarantine` table for
-rows that do not match the schema (check it first when an insert alert fires).
+The runbook is production-ready when an on-call engineer can identify whether data stopped at auth,
+ingest, queue, consumer, Tinybird, or dashboard read without accessing client secrets or bypassing the
+product pipeline.

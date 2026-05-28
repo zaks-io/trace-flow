@@ -4,6 +4,15 @@ Status: accepted
 
 Captured: 2026-05-24
 
+Production-readiness amendment: 2026-05-28
+
+Trace Flow Desktop is still the intended product surface, but it is no longer allowed to block the
+first production proof of ingestion. A minimal `trace-flow` CLI may ship first to prove the real
+Collector Credential -> cloud ingest -> queue -> consumer -> Tinybird -> dashboard path. The CLI is a
+production bridge, not a dev harness: it must mint/use Collector Credentials through Trace Flow,
+store secrets outside argv/config/logs, and never require Tinybird, Wrangler, Convex dev, or local KV
+access. Desktop work follows once that path is production-verifiable.
+
 Trace Flow Desktop is the v1 product surface for the local **Collector**. The Collector vendors and refactors Otto's working code (parser, source discovery, sync, and remote resolution) behind Trace Flow-owned contracts rather than rebuilding it; what it does not inherit is Otto's product identity or runtime state. Trace Flow Desktop gets new branding, app identity, local state, release channels, consent flow, and packaging. The goal is a legacy-free desktop app that users install, connect once, explicitly start, and then leave running in the menu bar/tray. See [Otto Extraction Reference](./otto-extraction-reference.md) for the implementation reference map.
 
 ## Decision

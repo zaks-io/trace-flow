@@ -139,3 +139,11 @@ Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agent
 When a Codex session encounters something confusing or spends significant debugging time, add a note here for future sessions.
 
 <!-- Add session notes below this line -->
+
+- 2026-05-28: Agent Conversation Analytics was rebaselined as **not production-ready**. Do not treat
+  the Rust collector crates, ignored `headless_e2e` tests, dev-only Cloudflare queue/consumer, manual
+  Tinybird deploys, or admin-token/dev-token harnesses as a shipped ingestion product. Production
+  readiness requires a normal user-facing collector using Collector Credentials, production
+  Cloudflare resources, production Tinybird schema deploy gates, queue/consumer smoke tests, Rust CI,
+  live alerts, and truthful `/app/agents` states. See
+  `docs/guides/agent-conversation-analytics/ROADMAP.md` and Linear parent `TRA-109`.

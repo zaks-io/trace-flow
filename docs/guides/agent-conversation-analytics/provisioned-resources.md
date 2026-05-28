@@ -42,17 +42,22 @@ control plane, not the sole minting mechanism.
   worker's `wrangler.jsonc` `[[unsafe.bindings]]`; Cloudflare allocates it at deploy time, so there
   is no `wrangler` create command and no ID to record here.
 
-## Deploy gate (lifted in 2e)
+## Production status
 
-Until 2e, the agent-ingest and agent-consumer workers were **gated by absence**: neither `deploy.yml`
-nor `preview.yml` referenced them (explicit per-worker jobs, no matrix / auto-discovery), so a
-mid-phase self-merge to `main` left the agent path inert. Task 2e lifted the gate — `deploy.yml` now
-has `deploy-agent-ingest` and `deploy-agent-consumer` jobs (listed in `deploy-status.needs`), and
-`preview.yml` auto-discovers both via their `deploy:preview` scripts. Deploys are flat (dev-named
-workers, dev resources): both `main` and PR previews target the same `*-dev` workers, since slice B
-has no production agent pipeline yet.
+These are **dev resources only**. They are not a production ingest path.
+
+The current `deploy.yml` has `deploy-agent-ingest` and `deploy-agent-consumer` jobs, but the worker
+configs are flat dev configs. That means a Production workflow can deploy dev-named agent workers and
+dev resources. This is not acceptable for launch and is tracked by:
+
+- TRA-110 — production cloud ingest path
+- TRA-111 — CI and production release guardrails
+
+Production readiness requires separate production queues, DLQ, KV namespace, rate limiter, Worker
+names, secrets, Tinybird deploy gate, and post-deploy smoke test. Do not treat these IDs as production
+credentials or production evidence.
 
 ## Teardown
 
-Moved to the [ops runbook](./runbook.md#teardown) (2f), which also covers what `git revert` does **not**
-undo and the Tinybird datasource teardown. The 0d Cloudflare resources are removed there.
+See the [ops runbook](./runbook.md#teardown) for dev teardown. These 0d resources are dev-only;
+production resources created by TRA-110 require the production change process.
