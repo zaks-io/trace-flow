@@ -1,0 +1,98 @@
+DESCRIPTION >
+    Browsable Agent Session table — the drill-down endpoint of the explorer. One row per
+    session over the window with Source, a representative model, repo_fingerprint (resolved
+    to a name client-side), estimated cost, message count, file-event counts, duration, and
+    last-event time. Paginated (limit/offset) and sortable by cost / files / duration /
+    messages; sort=cost reproduces the prior session-outliers view.
+
+    Query-time over agent_messages FINAL + agent_file_events FINAL (the query-time-first
+    launch path, same as agent_session_outliers). cost_usd sums priced rows only (null
+    per-message cost is skipped), so it stays an estimate consistent with the rest of the
+    page. Honors the session-level filters (sources, repos); model is a per-turn attribute
+    that does not cleanly scope a whole session, so the model filter is not applied here.
+    org_id and retention_days are enforced via the JWT fixed_params.
+
+NODE session_messages
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT
+        OrgId,
+        session_pk,
+        any(source) AS session_source,
+        max(model) AS model,
+        any(repo_fingerprint) AS session_repo,
+        count() AS message_count,
+        sumOrNull(cost_usd) AS cost_usd,
+        toUnixTimestamp64Milli(max(EventAt)) - toUnixTimestamp64Milli(min(EventAt)) AS duration_ms,
+        toUnixTimestamp64Milli(max(EventAt)) AS last_event_ms
+    FROM agent_messages FINAL
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND EventAt >= start_dt
+        AND EventAt < end_dt
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+    GROUP BY OrgId, session_pk
+
+NODE session_files
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT
+        session_pk,
+        count() AS file_event_count,
+        uniqExact(normalized_repo_path) AS unique_file_count
+    FROM agent_file_events FINAL
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND EventAt >= start_dt
+        AND EventAt < end_dt
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+    GROUP BY session_pk
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        m.session_pk AS session_pk,
+        m.session_source AS source,
+        m.model AS model,
+        m.session_repo AS repo_fingerprint,
+        m.message_count AS message_count,
+        ifNull(f.file_event_count, 0) AS file_event_count,
+        ifNull(f.unique_file_count, 0) AS unique_file_count,
+        m.cost_usd AS cost_usd,
+        m.duration_ms AS duration_ms,
+        m.last_event_ms AS last_event_ms
+    FROM session_messages AS m
+    LEFT JOIN session_files AS f USING (session_pk)
+    ORDER BY
+        multiIf(
+            {{ String(sort, 'cost') }} = 'files', toFloat64(file_event_count),
+            {{ String(sort, 'cost') }} = 'duration', toFloat64(duration_ms),
+            {{ String(sort, 'cost') }} = 'messages', toFloat64(message_count),
+            ifNull(cost_usd, -1)
+        ) DESC,
+        session_pk ASC
+    LIMIT {{ Int32(limit, 25) }}
+    OFFSET {{ Int32(offset, 0) }}
+
+TYPE ENDPOINT

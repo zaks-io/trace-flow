@@ -1,0 +1,66 @@
+DESCRIPTION >
+    Headline KPIs for the Agent usage explorer: estimated Agent Session Authoring Cost,
+    total tokens, billable message count, session count, and priced-token coverage % for
+    the requested window, each paired with the equivalent prior-period total so the UI can
+    show a delta. Prior period is the immediately-preceding window of equal length (same
+    convention as agent_tool_period_delta).
+
+    Query-time over agent_messages FINAL, role='assistant' — the billable population
+    (matches agent_priced_usage usage_kind 'direct' and agent_priced_coverage). cost_usd
+    sums priced rows only; coverage_pct = priced / billable is the data-quality signal the
+    UI shows beside the estimate (ADR "Honesty about cost"), never "$ spent". This
+    supersedes agent_priced_coverage for the explorer header. org_id and retention_days
+    are enforced via the JWT fixed_params.
+
+NODE summary
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        end_ms - start_ms AS span_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt
+    SELECT
+        round(sumIf(ifNull(cost_usd, 0.), EventAt >= start_dt AND EventAt < end_dt), 6) AS estimated_cost_usd,
+        sumIf(
+            input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens,
+            EventAt >= start_dt AND EventAt < end_dt
+        ) AS total_tokens,
+        countIf(EventAt >= start_dt AND EventAt < end_dt) AS message_count,
+        uniqExactIf(session_pk, EventAt >= start_dt AND EventAt < end_dt) AS session_count,
+        countIf(EventAt >= start_dt AND EventAt < end_dt AND cost_usd IS NOT NULL) AS priced_message_count,
+        if(
+            message_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(priced_message_count / message_count, 4)
+        ) AS coverage_pct,
+        round(sumIf(ifNull(cost_usd, 0.), EventAt >= prior_start_dt AND EventAt < start_dt), 6) AS prior_cost_usd,
+        sumIf(
+            input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens,
+            EventAt >= prior_start_dt AND EventAt < start_dt
+        ) AS prior_total_tokens,
+        countIf(EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_message_count,
+        uniqExactIf(session_pk, EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_session_count
+    FROM agent_messages FINAL
+    WHERE role = 'assistant'
+        AND OrgId = {{ String(org_id, '') }}
+        AND EventAt >= prior_start_dt
+        AND EventAt < end_dt
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 14) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+
+TYPE ENDPOINT

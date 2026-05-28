@@ -1,0 +1,34 @@
+DESCRIPTION >
+    Repo directory for the Agent usage explorer: maps each repo_fingerprint seen in the
+    window to the raw fields the UI needs to render a human-readable name —
+    normalized_git_remote (for an owner/repo label) and repo_path_fallback (for a
+    "local: <name>" label when there is no remote). Names are resolved client-side, the
+    same label-join pattern as the API-key map; this is a deliberate read-time directory
+    rather than a first-class Repo record (documented deviation, see TRA-105).
+
+    max() over each field prefers a non-empty value across the repo's rows (a repo's
+    fingerprint is derived from its identity, so the fields are stable per fingerprint).
+    org_id and retention_days are enforced via the JWT fixed_params.
+
+NODE directory
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT
+        repo_fingerprint,
+        max(normalized_git_remote) AS normalized_git_remote,
+        max(repo_path_fallback) AS repo_path_fallback,
+        max(toString(repo_source)) AS repo_source
+    FROM agent_messages FINAL
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND EventAt >= start_dt
+        AND EventAt < end_dt
+        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+    GROUP BY repo_fingerprint
+    ORDER BY repo_fingerprint ASC
+
+TYPE ENDPOINT
