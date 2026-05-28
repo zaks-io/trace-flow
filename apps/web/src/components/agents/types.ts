@@ -173,6 +173,31 @@ export const AGENT_GROUP_COLORS = [
   'var(--color-chart-8)',
 ] as const;
 
+/** One row from `pipes/agent_usage_breakdown.pipe` (ranked aggregates by a dimension). */
+export interface AgentBreakdownRow {
+  group_value: string;
+  message_count: number;
+  session_count: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
+/**
+ * The AgentBreakdownRow column each metric ranks/displays by. The breakdown has no tool
+ * grain, so the tool-events metric falls back to message_count.
+ */
+export const AGENT_BREAKDOWN_METRIC_KEY: Record<AgentMetric, keyof AgentBreakdownRow> = {
+  cost: 'cost_usd',
+  tokens: 'total_tokens',
+  messages: 'message_count',
+  sessions: 'session_count',
+  'tool-events': 'message_count',
+};
+
+/** The group-by dimensions that get a breakdown panel (None has no breakdown). */
+export const AGENT_BREAKDOWN_DIMENSIONS = ['source', 'model', 'repo'] as const;
+export type AgentBreakdownDimension = (typeof AGENT_BREAKDOWN_DIMENSIONS)[number];
+
 /** Sort key for the browsable Agent Session table (all descending). */
 export type AgentSessionSort = 'cost' | 'files' | 'duration' | 'messages';
 

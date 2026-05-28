@@ -1,0 +1,28 @@
+# Fixtures: fixtures/agent_messages.ndjson (org_cov).
+# org_cov assistant turns at 2026-05-20 10:00: claude/claude-opus-4-7 {0.2, 0.3},
+#   claude/composer-1 {null}, codex/gpt-5.5 {0.5}. Ranked by cost desc, then group_value.
+# retention_days=20000 neutralizes the now()-relative tier floor (production passes 7..365).
+
+- name: breakdown_by_source
+  description: ranked aggregates per source; cost sums priced rows only
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=source
+  expected_result: |
+    {"group_value":"claude","message_count":3,"session_count":1,"total_tokens":60,"cost_usd":0.5}
+    {"group_value":"codex","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}
+
+- name: breakdown_by_model
+  description: ranked aggregates per model; the unpriced composer-1 model sorts last at cost 0
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=model
+  expected_result: |
+    {"group_value":"claude-opus-4-7","message_count":2,"session_count":1,"total_tokens":60,"cost_usd":0.5}
+    {"group_value":"gpt-5.5","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}
+    {"group_value":"composer-1","message_count":1,"session_count":1,"total_tokens":0,"cost_usd":0}
+
+- name: breakdown_respects_source_filter
+  description: sources=codex narrows the source breakdown to the codex row
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=source&sources=codex
+  expected_result: |
+    {"group_value":"codex","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}

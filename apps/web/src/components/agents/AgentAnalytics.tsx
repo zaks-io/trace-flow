@@ -18,9 +18,11 @@ import {
   type AgentGroupBy,
   type AgentMetric,
 } from './types';
+import type { AgentBreakdownDimension } from './types';
 import { MultiFilterDropdown } from './MultiFilterDropdown';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AgentKpiCards } from './AgentKpiCards';
+import { AgentBreakdownPanels } from './AgentBreakdownPanels';
 import { FailureLeaderboardTable } from './FailureLeaderboardTable';
 import { ToolDeltaTable } from './ToolDeltaTable';
 import { AgentSessionsTable } from './AgentSessionsTable';
@@ -110,6 +112,15 @@ export function AgentAnalytics() {
     if (groupBy === 'source') toggleSource(value);
     else if (groupBy === 'model') toggleModel(value);
     else if (groupBy === 'repo') toggleRepo(value);
+  };
+
+  // Breakdown panels cross-filter the page: a row click toggles its dimension's filter.
+  const breakdownSelected = (dimension: AgentBreakdownDimension) =>
+    dimension === 'source' ? sources : dimension === 'model' ? models : repos;
+  const breakdownToggle = (dimension: AgentBreakdownDimension, value: string) => {
+    if (dimension === 'source') toggleSource(value);
+    else if (dimension === 'model') toggleModel(value);
+    else toggleRepo(value);
   };
 
   const MetricIcon = METRIC_ICON[metric];
@@ -297,9 +308,21 @@ export function AgentAnalytics() {
             />
           </div>
 
+          <AgentBreakdownPanels
+            filterParams={filterParams}
+            metric={metric}
+            labelFor={labelFor}
+            selectedFor={breakdownSelected}
+            onToggle={breakdownToggle}
+          />
+
           <AgentSessionsTable filterParams={filterParams} repoLabelMap={repoLabelMap} />
-          <FailureLeaderboardTable data={failures} />
-          <ToolDeltaTable data={deltas} />
+
+          <div className="space-y-4">
+            <h2 className="text-base font-medium text-foreground">Tool reliability</h2>
+            <FailureLeaderboardTable data={failures} />
+            <ToolDeltaTable data={deltas} />
+          </div>
         </div>
       )}
     </div>
