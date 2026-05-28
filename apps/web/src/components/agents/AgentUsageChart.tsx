@@ -9,7 +9,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '@/components/ui/chart';
-import { OTHER_GROUP, pivotByGroup } from './pivot';
+import { OTHER_GROUP, OTHER_LABEL, pivotByGroup } from './pivot';
 import {
   AGENT_GROUPED_METRIC_KEY,
   AGENT_GROUP_COLORS,
@@ -84,7 +84,7 @@ export function AgentUsageChart({
       const { data: wide, groups } = pivotByGroup(data, AGENT_GROUPED_METRIC_KEY[metric], topN);
       const s: Series[] = groups.map((group, i) => ({
         id: `g${i}`,
-        name: group === OTHER_GROUP ? OTHER_GROUP : (labelFor?.(group) ?? group),
+        name: group === OTHER_GROUP ? OTHER_LABEL : (labelFor?.(group) ?? group),
         value: group,
         accessor: (row) => Number(row[group] ?? 0),
         color: AGENT_GROUP_COLORS[i % AGENT_GROUP_COLORS.length],

@@ -5,7 +5,7 @@ import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { TinybirdResponse } from '@/components/usage/types';
-import { OTHER_GROUP } from './pivot';
+import { OTHER_GROUP, OTHER_LABEL } from './pivot';
 import { rankBreakdown } from './breakdown';
 import {
   AGENT_BREAKDOWN_DIMENSIONS,
@@ -46,12 +46,13 @@ function AgentBreakdownPanel({
   selected: string[];
   onToggle: (value: string) => void;
 }) {
+  const metricKey = AGENT_BREAKDOWN_METRIC_KEY[metric];
+
   const query = useTinybirdQuery<TinybirdResponse<AgentBreakdownRow>>({
     pipe: 'agent_usage_breakdown',
-    params: { ...filterParams, dimension, limit: 100 },
+    // order_by matches the client ranking so the pipe's LIMIT keeps the right rows.
+    params: { ...filterParams, dimension, order_by: metricKey, limit: 100 },
   });
-
-  const metricKey = AGENT_BREAKDOWN_METRIC_KEY[metric];
   const isCurrency = metric === 'cost';
 
   const entries = useMemo(() => {
@@ -75,7 +76,7 @@ function AgentBreakdownPanel({
           {entries.map((entry) => {
             const isOther = entry.value === OTHER_GROUP;
             const isSelected = selected.includes(entry.value);
-            const label = isOther ? OTHER_GROUP : labelFor(entry.value);
+            const label = isOther ? OTHER_LABEL : labelFor(entry.value);
             return (
               <button
                 key={entry.value}

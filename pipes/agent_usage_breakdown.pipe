@@ -43,7 +43,16 @@ SQL >
         AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
         {% end %}
     GROUP BY group_value
-    ORDER BY cost_usd DESC, group_value ASC
+    -- Order by the active metric so the LIMIT keeps the rows the UI will actually rank by
+    -- (a high-token/low-cost dimension value must not be truncated before a tokens ranking).
+    ORDER BY
+        multiIf(
+            {{ String(order_by, 'cost_usd') }} = 'total_tokens', toFloat64(total_tokens),
+            {{ String(order_by, 'cost_usd') }} = 'message_count', toFloat64(message_count),
+            {{ String(order_by, 'cost_usd') }} = 'session_count', toFloat64(session_count),
+            cost_usd
+        ) DESC,
+        group_value ASC
     LIMIT {{ Int32(limit, 100) }}
 
 TYPE ENDPOINT

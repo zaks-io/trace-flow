@@ -20,6 +20,15 @@
     {"group_value":"gpt-5.5","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}
     {"group_value":"composer-1","message_count":1,"session_count":1,"total_tokens":0,"cost_usd":0}
 
+- name: breakdown_order_by_messages
+  description: order_by=message_count ranks by messages (composer-1 above gpt-5.5 by pk tie-break), differing from the cost order
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=model&order_by=message_count
+  expected_result: |
+    {"group_value":"claude-opus-4-7","message_count":2,"session_count":1,"total_tokens":60,"cost_usd":0.5}
+    {"group_value":"composer-1","message_count":1,"session_count":1,"total_tokens":0,"cost_usd":0}
+    {"group_value":"gpt-5.5","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}
+
 - name: breakdown_respects_source_filter
   description: sources=codex narrows the source breakdown to the codex row
   expected_http_status: 200
