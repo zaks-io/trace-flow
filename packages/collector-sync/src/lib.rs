@@ -28,6 +28,7 @@
 
 pub mod assemble_units;
 pub mod claude_session;
+pub mod codex_session;
 pub mod cursor;
 pub mod discovery;
 pub mod envelope;
@@ -41,6 +42,7 @@ pub use assemble_units::{assemble_sync_unit, build_session_context, read_transcr
 pub use claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
 };
+pub use codex_session::{codex_session_fields, CodexSessionFields};
 pub use cursor::{CursorStore, CursorStoreError, FileCursor};
 pub use discovery::{head_hash, select_changed, walk_transcripts, DiscoveredFile};
 pub use envelope::{build_envelope, BatchMeta};

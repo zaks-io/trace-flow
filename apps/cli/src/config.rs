@@ -1,0 +1,174 @@
+// SPDX-License-Identifier: MIT
+// Trace Flow Collector CLI: non-secret local config + state directory.
+
+//! The CLI's on-disk, **non-secret** state.
+//!
+//! Two split concerns: the Collector Credential *secret* lives in the OS keychain (see [`crate::secret`])
+//! and never touches disk; everything else — which Organization is connected, the ingest URL, the
+//! Collector id, and the last-sync bookkeeping — lives in a plain JSON file under the platform config
+//! dir, alongside the SQLite cursor store. None of it is sensitive: an org id is not a credential, and
+//! the cursor DB holds local paths that never leave the machine.
+//!
+//! The ingest URL is resolved at sync time, not stored here, so pointing the CLI at a different
+//! environment (Cloud-Dev vs a local worker) is a runtime env var, never a rewrite of saved state.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+/// The directory env var (set in tests, or to relocate state). Falls back to the platform config dir.
+const STATE_DIR_ENV: &str = "TRACE_FLOW_STATE_DIR";
+
+/// Persisted connection state. Written by `login`, read by `sync`/`status`, removed by `disconnect`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Connection {
+    /// The Convex Organization id this collector is bound to. Not a secret; scopes the cursor store.
+    pub org_id: String,
+    /// The Collector id minted at login. Identifies this collector to the control plane.
+    pub collector_id: String,
+    /// The Convex deployment URL the credential was minted against (audit/UX only).
+    pub convex_url: String,
+    /// Epoch-ms expiry of the Collector Credential, surfaced by `status`.
+    pub expires_at: i64,
+}
+
+/// The CLI's resolved local layout. All paths derive from one state dir so tests can sandbox it.
+pub struct Paths {
+    root: PathBuf,
+}
+
+impl Paths {
+    /// Resolve the state dir: `$TRACE_FLOW_STATE_DIR` if set, else `<config_dir>/trace-flow`.
+    pub fn resolve() -> Result<Self> {
+        if let Some(dir) = std::env::var_os(STATE_DIR_ENV) {
+            return Ok(Self::at(PathBuf::from(dir)));
+        }
+        let base = dirs::config_dir().context(
+            "no OS config dir; set TRACE_FLOW_STATE_DIR to choose where the CLI keeps its state",
+        )?;
+        Ok(Self::at(base.join("trace-flow")))
+    }
+
+    /// Root the layout at an explicit dir (used by tests and by `resolve`).
+    pub fn at(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    /// The connection-state JSON file.
+    pub fn connection_file(&self) -> PathBuf {
+        self.root.join("connection.json")
+    }
+
+    /// The per-org SQLite cursor store. One DB per org keeps cursors isolated (the store itself also
+    /// scopes by org_id, but a per-org file makes `disconnect` a clean delete).
+    pub fn cursor_db(&self, org_id: &str) -> PathBuf {
+        self.root
+            .join(format!("cursors-{}.sqlite3", sanitize(org_id)))
+    }
+
+    /// Create the state dir if absent. Idempotent.
+    pub fn ensure(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.root)
+            .with_context(|| format!("create state dir {}", self.root.display()))
+    }
+
+    /// Read the saved connection, or `None` if the CLI is not logged in.
+    pub fn load_connection(&self) -> Result<Option<Connection>> {
+        let path = self.connection_file();
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let conn = serde_json::from_slice(&bytes)
+                    .with_context(|| format!("parse {}", path.display()))?;
+                Ok(Some(conn))
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
+        }
+    }
+
+    /// Persist the connection state (overwrites). Caller must have created the dir.
+    pub fn save_connection(&self, conn: &Connection) -> Result<()> {
+        let path = self.connection_file();
+        let json = serde_json::to_vec_pretty(conn).context("serialize connection")?;
+        std::fs::write(&path, json).with_context(|| format!("write {}", path.display()))
+    }
+
+    /// Remove the connection file and the org's cursor DB. Used by `disconnect`. Missing files are
+    /// not an error — disconnect is idempotent.
+    pub fn clear_connection(&self, org_id: &str) -> Result<()> {
+        remove_if_present(&self.connection_file())?;
+        remove_if_present(&self.cursor_db(org_id))?;
+        Ok(())
+    }
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
+/// Keep an org id safe as a filename component: only `[A-Za-z0-9_-]`, everything else to `_`.
+fn sanitize(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn conn() -> Connection {
+        Connection {
+            org_id: "org_123".to_string(),
+            collector_id: "col_abc".to_string(),
+            convex_url: "https://example.convex.cloud".to_string(),
+            expires_at: 1_900_000_000_000,
+        }
+    }
+
+    #[test]
+    fn connection_round_trips_through_disk() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().join("state"));
+        paths.ensure().unwrap();
+        assert_eq!(paths.load_connection().unwrap(), None);
+        paths.save_connection(&conn()).unwrap();
+        assert_eq!(paths.load_connection().unwrap(), Some(conn()));
+    }
+
+    #[test]
+    fn disconnect_removes_connection_and_cursor_db_idempotently() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().join("state"));
+        paths.ensure().unwrap();
+        paths.save_connection(&conn()).unwrap();
+        std::fs::write(paths.cursor_db("org_123"), b"db").unwrap();
+
+        paths.clear_connection("org_123").unwrap();
+        assert_eq!(paths.load_connection().unwrap(), None);
+        assert!(!paths.cursor_db("org_123").exists());
+        // Second call is a no-op, not an error.
+        paths.clear_connection("org_123").unwrap();
+    }
+
+    #[test]
+    fn cursor_db_name_is_filename_safe() {
+        let paths = Paths::at(PathBuf::from("/state"));
+        let name = paths.cursor_db("org/../etc");
+        let file = name.file_name().unwrap().to_str().unwrap();
+        assert!(!file.contains('/'));
+        assert!(file.starts_with("cursors-org_"));
+    }
+}
