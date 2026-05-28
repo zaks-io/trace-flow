@@ -16,7 +16,7 @@ import {
   type AgentSource,
 } from './types';
 import { AgentUsageChart } from './AgentUsageChart';
-import { CoverageHeader } from './CoverageHeader';
+import { AgentKpiCards } from './AgentKpiCards';
 import { FailureLeaderboardTable } from './FailureLeaderboardTable';
 import { ToolDeltaTable } from './ToolDeltaTable';
 import { SessionOutliersTable } from './SessionOutliersTable';
@@ -31,17 +31,8 @@ const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string 
 
 export function AgentAnalytics() {
   const { timeRange, setTimeRange, source, setSource, filterParams } = useAgentFilters();
-  const {
-    timeseries,
-    coverage,
-    failures,
-    deltas,
-    outliers,
-    isLoading,
-    hasError,
-    isEmpty,
-    isPartial,
-  } = useAgentData({ filterParams });
+  const { timeseries, summary, failures, deltas, outliers, isLoading, hasError, isEmpty } =
+    useAgentData({ filterParams });
   const [metric, setMetric] = useState<AgentMetric>('cost');
 
   const MetricIcon = METRIC_ICON[metric];
@@ -103,6 +94,8 @@ export function AgentAnalytics() {
         </div>
       ) : (
         <div className="space-y-8">
+          {summary && <AgentKpiCards summary={summary} />}
+
           <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -149,7 +142,6 @@ export function AgentAnalytics() {
             <AgentUsageChart data={timeseries} metric={metric} />
           </div>
 
-          {coverage && <CoverageHeader coverage={coverage} isPartial={isPartial} />}
           <FailureLeaderboardTable data={failures} />
           <ToolDeltaTable data={deltas} />
           <SessionOutliersTable data={outliers} />

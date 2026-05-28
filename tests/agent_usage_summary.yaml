@@ -1,0 +1,29 @@
+# Fixtures: fixtures/agent_messages.ndjson.
+# org_cov billable (assistant) turns in [2026-05-20, 2026-05-21): cov1 {0.2, 0.3, null},
+# cov2 {0.5}. 3 of 4 priced -> coverage 0.75; cost 1.0; tokens 90; 2 sessions. The user
+# turn is excluded (role != assistant). No org_cov rows in the prior window -> prior all 0.
+# org_1c spans two days: a 05-21 window has the 05-20 day as its prior period, exercising
+# the prior-period deltas.
+# retention_days=20000 neutralizes the now()-relative tier floor for these fixed-date
+# fixtures (production passes 7..365).
+
+- name: summary_current_with_coverage
+  description: current-period KPIs + coverage over billable turns; prior window is empty
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
+  expected_result: |
+    {"estimated_cost_usd":1,"total_tokens":90,"message_count":4,"session_count":2,"priced_message_count":3,"coverage_pct":0.75,"prior_cost_usd":0,"prior_total_tokens":0,"prior_message_count":0,"prior_session_count":0}
+
+- name: summary_respects_source_filter
+  description: source=claude narrows to cov1's 3 turns (2 priced) -> coverage 0.6667
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&source=claude
+  expected_result: |
+    {"estimated_cost_usd":0.5,"total_tokens":60,"message_count":3,"session_count":1,"priced_message_count":2,"coverage_pct":0.6667,"prior_cost_usd":0,"prior_total_tokens":0,"prior_message_count":0,"prior_session_count":0}
+
+- name: summary_prior_period_deltas
+  description: a 05-21 window sees the full 05-20 day as its prior period
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779321600000&end_time_ms=1779408000000&retention_days=20000
+  expected_result: |
+    {"estimated_cost_usd":0.5,"total_tokens":100,"message_count":1,"session_count":1,"priced_message_count":1,"coverage_pct":1,"prior_cost_usd":2.7,"prior_total_tokens":630,"prior_message_count":8,"prior_session_count":4}

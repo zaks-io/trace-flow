@@ -16,6 +16,23 @@ export const AGENT_METRICS: AgentMetric[] = [
   'tool-events',
 ];
 
+/** Single-row output of `pipes/agent_usage_summary.pipe` — current window + prior period. */
+export interface AgentSummaryRow {
+  /** Estimated Agent Session Authoring Cost for the window; sums priced rows only. */
+  estimated_cost_usd: number;
+  total_tokens: number;
+  /** Billable (assistant) message count. */
+  message_count: number;
+  session_count: number;
+  priced_message_count: number;
+  /** Priced share of billable turns 0.0–1.0; null when no billable turns exist. */
+  coverage_pct: number | null;
+  prior_cost_usd: number;
+  prior_total_tokens: number;
+  prior_message_count: number;
+  prior_session_count: number;
+}
+
 /** One bucketed row from `pipes/agent_usage_timeseries.pipe`. */
 export interface AgentTimeseriesRow {
   /** Bucket start as a ClickHouse DateTime string (hourly or daily granularity). */
@@ -40,11 +57,11 @@ export interface AgentTimeseriesRow {
 // Cost has no per-component breakdown in the agent data model (one estimated cost_usd
 // per Agent Message), so it renders as a single series. Tokens stack by component and
 // tool-events by outcome. Config keys are the AgentTimeseriesRow dataKeys the chart reads.
-export const agentCostChartConfig = {
+const agentCostChartConfig = {
   cost_usd: { label: 'Estimated Cost', color: 'var(--color-chart-1)' },
 } satisfies ChartConfig;
 
-export const agentTokensChartConfig = {
+const agentTokensChartConfig = {
   input_tokens: { label: 'Input', color: 'var(--color-chart-1)' },
   output_tokens: { label: 'Output', color: 'var(--color-chart-2)' },
   cache_read_tokens: { label: 'Cache Read', color: 'var(--color-chart-3)' },
@@ -52,15 +69,15 @@ export const agentTokensChartConfig = {
   reasoning_tokens: { label: 'Reasoning', color: 'var(--color-chart-5)' },
 } satisfies ChartConfig;
 
-export const agentMessagesChartConfig = {
+const agentMessagesChartConfig = {
   message_count: { label: 'Messages', color: 'var(--color-chart-4)' },
 } satisfies ChartConfig;
 
-export const agentSessionsChartConfig = {
+const agentSessionsChartConfig = {
   session_count: { label: 'Sessions', color: 'var(--color-chart-7)' },
 } satisfies ChartConfig;
 
-export const agentToolEventsChartConfig = {
+const agentToolEventsChartConfig = {
   tool_success_count: { label: 'Success', color: 'var(--color-chart-3)' },
   tool_failure_count: { label: 'Failure', color: 'var(--color-chart-6)' },
   tool_unknown_count: { label: 'Unknown', color: 'var(--color-chart-8)' },
@@ -140,15 +157,4 @@ export interface SessionOutlierRow {
   unique_file_count: number;
   /** Sum of priced messages; null when every message in the session is unpriced. */
   cost_usd: number | null;
-}
-
-/** Single-row output of `pipes/agent_priced_coverage.pipe`. */
-export interface CoverageRow {
-  message_count: number;
-  billable_message_count: number;
-  priced_message_count: number;
-  /** null when no billable (assistant) turns exist; else the priced share 0.0–1.0. */
-  coverage_pct: number | null;
-  /** sum(cost_usd); null when no priced turns exist in the window. */
-  estimated_cost_usd: number | null;
 }

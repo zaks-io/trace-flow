@@ -2,8 +2,8 @@ import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
 import type {
+  AgentSummaryRow,
   AgentTimeseriesRow,
-  CoverageRow,
   FailureLeaderboardRow,
   SessionOutlierRow,
   ToolDeltaRow,
@@ -19,8 +19,8 @@ export function useAgentData({ filterParams }: UseAgentDataParams) {
     params: filterParams,
   });
 
-  const coverageQuery = useTinybirdQuery<TinybirdResponse<CoverageRow>>({
-    pipe: 'agent_priced_coverage',
+  const summaryQuery = useTinybirdQuery<TinybirdResponse<AgentSummaryRow>>({
+    pipe: 'agent_usage_summary',
     params: filterParams,
   });
 
@@ -39,7 +39,7 @@ export function useAgentData({ filterParams }: UseAgentDataParams) {
     params: { ...filterParams, limit: 100 },
   });
 
-  const coverage = coverageQuery.data?.data?.[0] ?? null;
+  const summary = summaryQuery.data?.data?.[0] ?? null;
   const timeseries = useMemo(() => timeseriesQuery.data?.data ?? [], [timeseriesQuery.data]);
   const failures = useMemo(() => failuresQuery.data?.data ?? [], [failuresQuery.data]);
   const deltas = useMemo(() => deltaQuery.data?.data ?? [], [deltaQuery.data]);
@@ -47,32 +47,34 @@ export function useAgentData({ filterParams }: UseAgentDataParams) {
 
   const isLoading =
     timeseriesQuery.isLoading ||
-    coverageQuery.isLoading ||
+    summaryQuery.isLoading ||
     failuresQuery.isLoading ||
     deltaQuery.isLoading ||
     outliersQuery.isLoading;
 
   const hasError =
     timeseriesQuery.error ??
-    coverageQuery.error ??
+    summaryQuery.error ??
     failuresQuery.error ??
     deltaQuery.error ??
     outliersQuery.error;
 
-  // Coverage counts every role in the window, so message_count === 0 is the
-  // definitive "no agent activity" signal. A loaded coverage response with zero
-  // messages (or, defensively, no aggregate row at all) means EMPTY regardless
-  // of the other (also-empty) surfaces.
-  const coverageLoaded = !isLoading && !hasError && coverageQuery.data != null;
-  const isEmpty = coverageLoaded && (coverage == null || coverage.message_count === 0);
+  // The summary aggregates billable (assistant) turns over the window, so no billable
+  // turns and no sessions is the "no agent activity" signal. A loaded summary response
+  // with a null aggregate row (or all-zero counts) means EMPTY regardless of the other
+  // (also-empty) surfaces.
+  const summaryLoaded = !isLoading && !hasError && summaryQuery.data != null;
+  const isEmpty =
+    summaryLoaded &&
+    (summary == null || (summary.message_count === 0 && summary.session_count === 0));
 
   // PARTIAL: some billable turns are unpriced (unpriced model or missing token
   // coverage), so the dollar figure is an estimate over a fraction of turns.
-  const isPartial = coverage?.coverage_pct != null && coverage.coverage_pct < 1;
+  const isPartial = summary?.coverage_pct != null && summary.coverage_pct < 1;
 
   return {
     timeseries,
-    coverage,
+    summary,
     failures,
     deltas,
     outliers,
