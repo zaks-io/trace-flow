@@ -18,6 +18,7 @@ import {
   CreditCard,
   ChartColumn,
   Layers,
+  Bot,
   MessageSquare,
 } from 'lucide-react';
 import {
@@ -44,6 +45,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { title: 'Dashboard', href: '/app', icon: LayoutDashboard },
   { title: 'Operations', href: '/app/operations', icon: Layers },
+  { title: 'Agents', href: '/app/agents', icon: Bot },
   { title: 'Requests', href: '/app/requests', icon: Activity },
   { title: 'Traces', href: '/app/traces', icon: GitBranch },
   { title: 'Docs', href: '/docs', icon: BookOpen },
