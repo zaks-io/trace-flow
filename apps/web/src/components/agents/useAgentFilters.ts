@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
 import { type TimeRange, TIME_RANGES } from '@/components/usage/types';
 import { snapToMinute } from '@/lib/tinybird';
-import type { AgentSource } from './types';
+import type { AgentGroupBy, AgentSource } from './types';
 
 type AgentFiltersState = {
   timeRange: TimeRange;
   setTimeRange: (v: TimeRange) => void;
   source: AgentSource;
   setSource: (v: AgentSource) => void;
+  groupBy: AgentGroupBy;
+  setGroupBy: (v: AgentGroupBy) => void;
   /** Agent pipes take ms (not the ns the llm_* pipes use); org_id + retention_days are JWT-stamped. */
   filterParams: Record<string, string | number>;
 };
@@ -15,6 +17,7 @@ type AgentFiltersState = {
 export function useAgentFilters(): AgentFiltersState {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
   const [source, setSource] = useState<AgentSource>('');
+  const [groupBy, setGroupBy] = useState<AgentGroupBy>('none');
 
   const { startTimeMs, endTimeMs } = useMemo(() => {
     const config = TIME_RANGES.find((range) => range.value === timeRange);
@@ -36,5 +39,5 @@ export function useAgentFilters(): AgentFiltersState {
     return params;
   }, [startTimeMs, endTimeMs, source]);
 
-  return { timeRange, setTimeRange, source, setSource, filterParams };
+  return { timeRange, setTimeRange, source, setSource, groupBy, setGroupBy, filterParams };
 }

@@ -16,6 +16,20 @@ export const AGENT_METRICS: AgentMetric[] = [
   'tool-events',
 ];
 
+/** In-chart split dimension. Tool Events carry no model, so model is usage-only. */
+export type AgentGroupBy = 'none' | 'source' | 'model';
+
+export const AGENT_GROUP_BY: AgentGroupBy[] = ['none', 'source', 'model'];
+
+export const AGENT_GROUP_BY_LABEL: Record<AgentGroupBy, string> = {
+  none: 'None',
+  source: 'Source',
+  model: 'Model',
+};
+
+/** Stacked area shows composition + total; line un-stacks to compare trends across series. */
+export type AgentChartStyle = 'stacked' | 'line';
+
 /** Single-row output of `pipes/agent_usage_summary.pipe` — current window + prior period. */
 export interface AgentSummaryRow {
   /** Estimated Agent Session Authoring Cost for the window; sums priced rows only. */
@@ -37,6 +51,8 @@ export interface AgentSummaryRow {
 export interface AgentTimeseriesRow {
   /** Bucket start as a ClickHouse DateTime string (hourly or daily granularity). */
   bucket_start: string;
+  /** Group dimension value when group_by is set; '' when ungrouped. */
+  group_value: string;
   message_count: number;
   session_count: number;
   input_tokens: number;
@@ -122,6 +138,30 @@ export const AGENT_METRIC_LABEL: Record<AgentMetric, string> = {
   sessions: 'Sessions',
   'tool-events': 'Tool Events',
 };
+
+/**
+ * The single AgentTimeseriesRow scalar each metric collapses to when grouped by a
+ * dimension (the chart then stacks that scalar by group value instead of by component).
+ */
+export const AGENT_GROUPED_METRIC_KEY: Record<AgentMetric, keyof AgentTimeseriesRow> = {
+  cost: 'cost_usd',
+  tokens: 'total_tokens',
+  messages: 'message_count',
+  sessions: 'session_count',
+  'tool-events': 'tool_event_count',
+};
+
+/** Palette for dynamic group-value series; cycles when there are more groups than colors. */
+export const AGENT_GROUP_COLORS = [
+  'var(--color-chart-1)',
+  'var(--color-chart-2)',
+  'var(--color-chart-3)',
+  'var(--color-chart-4)',
+  'var(--color-chart-5)',
+  'var(--color-chart-6)',
+  'var(--color-chart-7)',
+  'var(--color-chart-8)',
+] as const;
 
 /** Output of `pipes/agent_failure_leaderboard.pipe`. */
 export interface FailureLeaderboardRow {

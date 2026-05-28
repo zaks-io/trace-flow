@@ -1,30 +1,49 @@
-# Fixtures: fixtures/agent_messages.ndjson + fixtures/agent_tool_events.ndjson (org_1c).
+# Fixtures: fixtures/agent_messages.ndjson + fixtures/agent_tool_events.ndjson.
 # Rollups (agent_usage_1h/_1d, agent_tool_usage_1h) are empty in tests, so the pipe takes
 # the base-FINAL fallback path (the local-dev / pre-Copy-Pipe case).
-# org_1c assistant Agent Messages, hourly buckets:
+# org_1c assistant Agent Messages (all claude / claude-opus-4-7), hourly buckets:
 #   2026-05-20 09:00  span1            -> 1 msg, in 100, out 0,   cost 0.5
 #   2026-05-20 10:00  cc1*4+sub1+sub2  -> 7 msg, in 400, out 130, cost 2.2, 3 sessions
 #   2026-05-21 09:00  span1            -> 1 msg, in 100, out 0,   cost 0.5
-# org_1c Tool Events (all 2026-05-20 10:00): 3 success + 1 failure = 4 events.
-# retention_days=20000 neutralizes the now()-relative tier floor for these fixed-date
-# fixtures without underflowing DateTime's 1970 floor (production passes 7..365).
+# org_1c Tool Events (all 2026-05-20 10:00, source claude): 3 success + 1 failure = 4.
+# org_cov assistant turns at 2026-05-20 10:00: claude/claude-opus-4-7 {0.2, 0.3},
+#   claude/composer-1 {null}, codex/gpt-5.5 {0.5}. No org_cov tool events.
+# group_value is '' when group_by=none. retention_days=20000 neutralizes the now()-relative
+# tier floor for these fixed-date fixtures (production passes 7..365).
 
 - name: timeseries_hourly_buckets_base_fallback
   description: hourly buckets over a 2-day window; usage + tool outcomes joined per bucket; cost sums priced rows only
   expected_http_status: 200
   parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000
   expected_result: |
-    {"bucket_start":"2026-05-20 09:00:00","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
-    {"bucket_start":"2026-05-20 10:00:00","message_count":7,"session_count":3,"input_tokens":400,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":530,"cost_usd":2.2,"priced_message_count":7,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
-    {"bucket_start":"2026-05-21 09:00:00","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 09:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"","message_count":7,"session_count":3,"input_tokens":400,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":530,"cost_usd":2.2,"priced_message_count":7,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-21 09:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
 
 - name: timeseries_daily_buckets_long_range
   description: a >30d window switches to daily granularity (toStartOfDay), collapsing both 05-20 hours into one day
   expected_http_status: 200
   parameters: org_id=org_1c&start_time_ms=1776211200000&end_time_ms=1779667200000&retention_days=20000
   expected_result: |
-    {"bucket_start":"2026-05-20 00:00:00","message_count":8,"session_count":4,"input_tokens":500,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":630,"cost_usd":2.7,"priced_message_count":8,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
-    {"bucket_start":"2026-05-21 00:00:00","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 00:00:00","group_value":"","message_count":8,"session_count":4,"input_tokens":500,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":630,"cost_usd":2.7,"priced_message_count":8,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-21 00:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+
+- name: timeseries_group_by_source
+  description: group_by=source splits each bucket per source; tool events join on (bucket, source)
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&group_by=source
+  expected_result: |
+    {"bucket_start":"2026-05-20 09:00:00","group_value":"claude","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"claude","message_count":7,"session_count":3,"input_tokens":400,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":530,"cost_usd":2.2,"priced_message_count":7,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
+
+- name: timeseries_group_by_model
+  description: group_by=model splits a bucket per model; the unpriced composer-1 model contributes cost 0
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&group_by=model
+  expected_result: |
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"claude-opus-4-7","message_count":2,"session_count":1,"input_tokens":20,"output_tokens":40,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":60,"cost_usd":0.5,"priced_message_count":2,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"composer-1","message_count":1,"session_count":1,"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":0,"cost_usd":0,"priced_message_count":0,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"gpt-5.5","message_count":1,"session_count":1,"input_tokens":10,"output_tokens":20,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":30,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
 
 - name: timeseries_respects_source_filter
   description: source=codex isolates a source with no org_1c rows -> empty result

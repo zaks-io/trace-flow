@@ -12,6 +12,10 @@ import {
   AGENT_METRICS,
   AGENT_METRIC_CONFIG,
   AGENT_METRIC_LABEL,
+  AGENT_GROUP_BY,
+  AGENT_GROUP_BY_LABEL,
+  type AgentChartStyle,
+  type AgentGroupBy,
   type AgentMetric,
   type AgentSource,
 } from './types';
@@ -30,13 +34,25 @@ const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string 
 };
 
 export function AgentAnalytics() {
-  const { timeRange, setTimeRange, source, setSource, filterParams } = useAgentFilters();
+  const { timeRange, setTimeRange, source, setSource, groupBy, setGroupBy, filterParams } =
+    useAgentFilters();
   const { timeseries, summary, failures, deltas, outliers, isLoading, hasError, isEmpty } =
-    useAgentData({ filterParams });
+    useAgentData({ filterParams, groupBy });
   const [metric, setMetric] = useState<AgentMetric>('cost');
+  const [chartStyle, setChartStyle] = useState<AgentChartStyle>('stacked');
+
+  // Tool Events carry no model, so Model grouping is unavailable for that metric.
+  const isGroupDisabled = (g: AgentGroupBy) => g === 'model' && metric === 'tool-events';
+
+  const selectMetric = (m: AgentMetric) => {
+    setMetric(m);
+    if (m === 'tool-events' && groupBy === 'model') setGroupBy('none');
+  };
 
   const MetricIcon = METRIC_ICON[metric];
-  const legend = Object.entries(AGENT_METRIC_CONFIG[metric]);
+  // Component-level legend only applies to the ungrouped, multi-component metrics; when
+  // grouped, the chart renders its own legend over the dynamic group-value series.
+  const componentLegend = groupBy === 'none' ? Object.entries(AGENT_METRIC_CONFIG[metric]) : [];
 
   return (
     <div className="animate-fade-in">
@@ -117,7 +133,7 @@ export function AgentAnalytics() {
                   <button
                     type="button"
                     key={m}
-                    onClick={() => setMetric(m)}
+                    onClick={() => selectMetric(m)}
                     className={`px-3 py-1 text-xs font-medium transition-colors ${
                       metric === m
                         ? 'bg-primary/10 text-primary'
@@ -129,9 +145,52 @@ export function AgentAnalytics() {
                 ))}
               </div>
             </div>
-            {legend.length > 1 && (
+
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Group by</span>
+                <div className="flex rounded-lg border border-border bg-background">
+                  {AGENT_GROUP_BY.map((g) => (
+                    <button
+                      type="button"
+                      key={g}
+                      disabled={isGroupDisabled(g)}
+                      onClick={() => setGroupBy(g)}
+                      title={
+                        isGroupDisabled(g) ? 'Tool events are not attributed to a model' : undefined
+                      }
+                      className={`px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        groupBy === g
+                          ? 'bg-primary/10 text-primary'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {AGENT_GROUP_BY_LABEL[g]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex rounded-lg border border-border bg-background">
+                {(['stacked', 'line'] as AgentChartStyle[]).map((s) => (
+                  <button
+                    type="button"
+                    key={s}
+                    onClick={() => setChartStyle(s)}
+                    className={`px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                      chartStyle === s
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {componentLegend.length > 1 && (
               <div className="mb-3 flex flex-wrap gap-3 text-xs">
-                {legend.map(([key, cfg]) => (
+                {componentLegend.map(([key, cfg]) => (
                   <span key={key} className="flex items-center gap-1.5">
                     <span className="h-2 w-2 rounded-full" style={{ backgroundColor: cfg.color }} />
                     <span className="text-muted-foreground">{String(cfg.label)}</span>
@@ -139,7 +198,12 @@ export function AgentAnalytics() {
                 ))}
               </div>
             )}
-            <AgentUsageChart data={timeseries} metric={metric} />
+            <AgentUsageChart
+              data={timeseries}
+              metric={metric}
+              groupBy={groupBy}
+              chartStyle={chartStyle}
+            />
           </div>
 
           <FailureLeaderboardTable data={failures} />

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
 import type {
+  AgentGroupBy,
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
@@ -11,12 +12,19 @@ import type {
 
 type UseAgentDataParams = {
   filterParams: Record<string, string | number>;
+  /** group_by applies only to the time-series; the other surfaces ignore it. */
+  groupBy: AgentGroupBy;
 };
 
-export function useAgentData({ filterParams }: UseAgentDataParams) {
+export function useAgentData({ filterParams, groupBy }: UseAgentDataParams) {
+  const timeseriesParams = useMemo(
+    () => (groupBy === 'none' ? filterParams : { ...filterParams, group_by: groupBy }),
+    [filterParams, groupBy],
+  );
+
   const timeseriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
     pipe: 'agent_usage_timeseries',
-    params: filterParams,
+    params: timeseriesParams,
   });
 
   const summaryQuery = useTinybirdQuery<TinybirdResponse<AgentSummaryRow>>({
