@@ -39,4 +39,33 @@
       "simple": { "limit": 600, "period": 60 },
     },
   ],
+  // Production agent pipeline (TRA-110). Prod-named worker reachable at collector.trace-flow.dev
+  // (same trace-flow.dev zone as gateway/api). Binds the prod COLLECTOR_CREDS namespace and the
+  // prod ingest queue; the rate limiter uses a fresh namespace_id 2007 (dev uses 2006 — never reuse
+  // a namespace_id, per the rate-limit budget registry). Secrets (CONVEX_SITE_URL,
+  // AGENT_INGEST_SHARED_SECRET, SENTRY_DSN) are set per-env via `wrangler secret put --env production`;
+  // AGENT_INGEST_SHARED_SECRET must match the value set in the prod Convex environment.
+  "env": {
+    "production": {
+      "name": "trace-flow-agent-ingest",
+      "workers_dev": false,
+      "observability": { "enabled": true },
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "vars": {
+        "SENTRY_ENVIRONMENT": "production",
+      },
+      "routes": [{ "pattern": "collector.trace-flow.dev/*", "zone_name": "trace-flow.dev" }],
+      "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "67241ef9190a4f9d9ac520a347bd44b9" }],
+      "queues": {
+        "producers": [{ "queue": "agent-ingest-prod", "binding": "AGENT_QUEUE" }],
+      },
+      "ratelimits": [
+        {
+          "name": "AGENT_INGEST_LIMITER",
+          "namespace_id": "2007",
+          "simple": { "limit": 600, "period": 60 },
+        },
+      ],
+    },
+  },
 }

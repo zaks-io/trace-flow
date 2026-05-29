@@ -39,4 +39,34 @@
       },
     ],
   },
+  // Production agent pipeline (TRA-110). Prod-named worker drains the prod queue and writes to the
+  // trace_flow_prod Tinybird workspace via the prod append-only TINYBIRD_TOKEN secret. Pricing reads
+  // the existing prod MODEL_PRICING catalog (45dd0d5e…), the same namespace the prod proxy consumer
+  // binds — never the dev catalog. Secrets (TINYBIRD_TOKEN, SENTRY_DSN) are set per-env via
+  // `wrangler secret put --env production`, never committed.
+  "env": {
+    "production": {
+      "name": "trace-flow-agent-consumer",
+      "workers_dev": false,
+      "observability": { "enabled": true },
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "vars": {
+        "SENTRY_ENVIRONMENT": "production",
+        "TINYBIRD_HOST": "https://api.us-west-2.aws.tinybird.co",
+      },
+      "kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "45dd0d5e619d44fc831ccab01ed428a4" }],
+      "queues": {
+        "consumers": [
+          {
+            "queue": "agent-ingest-prod",
+            "max_batch_size": 100,
+            "max_batch_timeout": 5,
+            "max_concurrency": 10,
+            "max_retries": 5,
+            "dead_letter_queue": "agent-ingest-dlq-prod",
+          },
+        ],
+      },
+    },
+  },
 }
