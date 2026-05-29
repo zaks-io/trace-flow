@@ -36,20 +36,22 @@ Canonical skill files live under `.agents/skills`, and `.claude/skills` links
 to those directories for Claude-compatible runtimes. Remote environments should
 preserve those links.
 
-- `.agents/skills/trace-flow-implement-issue`
-- `.agents/skills/trace-flow-local-code-review`
-- `.agents/skills/trace-flow-next-pr`
-- `.agents/skills/trace-flow-orchestrator`
-- `.agents/skills/trace-flow-review-pr`
-- `.agents/skills/trace-flow-create-pr`
-- `.agents/skills/trace-flow-code-review`
+- `.agents/skills/workflow-agent-implement`
+- `.agents/skills/workflow-agent-orchestrator`
+- `.agents/skills/workflow-agent-review`
+- `.agents/skills/workflow-code-review`
+- `.agents/skills/workflow-create-pr`
+- `.agents/skills/workflow-issue-triage`
+- `.agents/skills/workflow-secret-redaction`
 
-Use `trace-flow-implement-issue` for implementation. Before opening a PR, run
-or request `trace-flow-local-code-review` as a read-only review pass. Use
-CodeRabbit only when the local review recommends escalation or the change is
-high risk: auth, authorization, secrets, Tinybird or Convex schema, destructive
-data changes, background jobs, concurrency, proxy streaming, public contracts,
-or broad refactors.
+Read `docs/agents/workflow/config.md` first for repo-specific values. Use
+`workflow-agent-implement` for implementation. Before opening a PR, run or
+request `workflow-code-review` as a read-only review pass; it should load
+`docs/agents/review-invariants.md` for Trace Flow invariants. Use CodeRabbit
+only when the local review recommends escalation or the change is high risk:
+auth, authorization, secrets, Tinybird or Convex schema, destructive data
+changes, background jobs, concurrency, proxy streaming, public contracts, or
+broad refactors.
 
 ## Normal Commands
 
@@ -104,6 +106,10 @@ Issues live in Linear team `TRA` and the active agent backlog is
 `Trace Flow Roadmap`.
 
 Only pick up issues labeled both `ready-for-agent` and `remote-cursor`.
+
+Run at most 3 remote agents in parallel. When 3 are already in flight, leave
+additional startable issues queued (in `Todo`, unassigned) until a slot frees;
+do not assign a fourth.
 
 If a ticket is missing enough detail to implement safely, do not guess. Add a
 Linear comment with the blocker and move or ask for the ticket to be moved to

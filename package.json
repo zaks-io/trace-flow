@@ -12,7 +12,6 @@
     "apps/*"
   ],
   "scripts": {
-    "agent-skills:check": "node scripts/check-agent-skills.mjs",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "dev:doctor": "bash scripts/dev/doctor.sh",

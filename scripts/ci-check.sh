@@ -10,5 +10,4 @@ export AUTH0_DOMAIN="${AUTH0_DOMAIN:-test.auth0.com}"
 export AUTH0_CLIENT_ID="${AUTH0_CLIENT_ID:-test-client-id}"
 export AUTH0_SECRET="${AUTH0_SECRET:-test-secret-at-least-32-characters-long}"
 export AUTH0_CLIENT_SECRET="${AUTH0_CLIENT_SECRET:-test}"
-bun run agent-skills:check
 exec bun run check

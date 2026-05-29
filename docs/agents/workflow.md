@@ -32,32 +32,33 @@ Work moves through six stages.
 
 2. Implementation
 
-   Use `trace-flow-implement-issue` for one Linear issue and one branch. The
+   Use `workflow-agent-implement` for one Linear issue and one branch. The
    worker claims the issue, moves it to `In Progress`, implements only the
    stated scope, and runs ticket-specific checks.
 
 3. Pre-PR local review
 
-   Use `trace-flow-local-code-review` before opening a PR. This catches scope
-   drift, missing acceptance criteria, weak tests, Trace Flow invariant gaps,
-   debug output, and unrelated cleanup while the issue is still `In Progress`.
+   Use `workflow-code-review` before opening a PR. This catches scope drift,
+   missing acceptance criteria, weak tests, Trace Flow invariant gaps (see
+   `docs/agents/review-invariants.md`), debug output, and unrelated cleanup
+   while the issue is still `In Progress`.
 
 4. PR handoff
 
-   Use `trace-flow-create-pr` after local review is clean. PRs should be ready
+   Use `workflow-create-pr` after local review is clean. PRs should be ready
    for review, include the Linear issue, summarize checks, and move the issue
    to `In Review`.
 
 5. PR review and fix loop
 
-   Use `trace-flow-review-pr` to review the PR against the Linear issue,
+   Use `workflow-agent-review` to review the PR against the Linear issue,
    acceptance criteria, Trace Flow invariants, tests, and docs. If review finds
    actionable feedback, post it on the PR, move Linear to `Changes Requested`,
    and send the original worker thread back to the same branch and PR.
 
 6. Orchestration
 
-   Use `trace-flow-orchestrator` when coordinating multiple issues, worker
+   Use `workflow-agent-orchestrator` when coordinating multiple issues, worker
    runs, PR checks, and review loops. The orchestrator selects ready work,
    chooses the runtime, delegates with a complete prompt package, watches PRs,
    routes feedback, and escalates human decisions.
@@ -71,11 +72,11 @@ For delegated implementation work:
    run the needed checks.
 2. The worker implements on one branch and runs required checks.
 3. Before PR handoff, the branch gets a local review pass with
-   `trace-flow-local-code-review` where the environment supports it.
+   `workflow-code-review` where the environment supports it.
 4. The worker opens a ready-for-review PR, links Linear, and moves the issue to
    `In Review`.
 5. The orchestrator checks out the PR in a clean local worktree and reviews it
-   with `trace-flow-review-pr`.
+   with `workflow-agent-review`.
 6. Review findings are posted as normal GitHub PR review comments.
 7. If changes are needed, Linear moves to `Changes Requested`.
 8. The orchestrator replies in the original worker thread with the PR feedback,
