@@ -1,0 +1,32 @@
+DESCRIPTION >
+    Daily rollup of Tool Event mix and outcomes. Same shape as agent_tool_usage_1h_copy
+    with a day-truncated BucketStart, over agent_tool_events FINAL. COPY_MODE replace
+    rebuilds the whole target each run. Success/Failure/Unknown kept separate so
+    failure_rate can exclude unknown from the denominator while still counting it.
+    Tool-event mix is not a cost surface, so this copy reads base FINAL directly rather
+    than agent_priced_usage. Staggered to :50 — clear of every other agent copy that
+    scans agent_tool_events: the hourly tool copy (:30) and agent_sessions_copy (:45) —
+    and of the usage copies (:00 hourly, :15 daily) — to avoid concurrent full-table
+    scans of agent_tool_events.
+
+NODE rollup
+SQL >
+    SELECT
+        toStartOfDay(toDateTime(EventAt)) AS BucketStart,
+        OrgId,
+        source,
+        tool_name,
+        command_family,
+        repo_fingerprint,
+        countState() AS EventCount,
+        sumState(toUInt64(status = 'success')) AS SuccessCount,
+        sumState(toUInt64(status = 'failure')) AS FailureCount,
+        sumState(toUInt64(status = 'unknown')) AS UnknownCount,
+        sumState(toUInt64(duration_ms)) AS DurationMsSum
+    FROM agent_tool_events FINAL
+    GROUP BY BucketStart, OrgId, source, tool_name, command_family, repo_fingerprint
+
+TYPE COPY
+TARGET_DATASOURCE agent_tool_usage_1d
+COPY_SCHEDULE 50 * * * *
+COPY_MODE replace

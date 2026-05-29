@@ -5,9 +5,13 @@ DESCRIPTION >
     and applies top-N/Other for repo, consistent with the hero chart. Rows cross-filter the
     page on click.
 
-    Query-time over agent_messages FINAL, role='assistant' — the billable population. cost_usd
-    sums priced rows only (an estimate, never billed spend). Honors the active filters
-    (sources, models, repos). org_id and retention_days are enforced via the JWT fixed_params.
+    Rollup-first over agent_usage_1h (the canonical priced-usage hourly rollup), with a base
+    agent_messages FINAL fallback when the rollup is unpopulated (local dev / pre-first-copy).
+    A window total always reads the hourly rollup — daily buckets straddle sub-day window
+    boundaries, so hourly is the only grain that nests cleanly. cost_usd sums priced rows only
+    (an estimate, never billed spend). Honors the active filters (sources, models, repos).
+    org_id and retention_days are enforced via the JWT fixed_params. NOTE: session_count is
+    uniqMerge over an HLL state (~0.5-2% error) on the rollup path vs uniqExact on the fallback.
 
 NODE breakdown
 SQL >
@@ -16,33 +20,67 @@ SQL >
         {{ Int64(start_time_ms, 0) }} AS start_ms,
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
-        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
-    SELECT
-        multiIf(
-            {{ String(dimension, 'source') }} = 'model', toString(model),
-            {{ String(dimension, 'source') }} = 'repo', toString(repo_fingerprint),
-            toString(source)
-        ) AS group_value,
-        count() AS message_count,
-        uniqExact(session_pk) AS session_count,
-        sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens) AS total_tokens,
-        round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd
-    FROM agent_messages FINAL
-    WHERE role = 'assistant'
-        AND OrgId = {{ String(org_id, '') }}
-        AND EventAt >= start_dt
-        AND EventAt < end_dt
-        AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-        {% if defined(sources) %}
-        AND source IN splitByChar(',', {{ String(sources) }})
-        {% end %}
-        {% if defined(models) %}
-        AND model IN splitByChar(',', {{ String(models) }})
-        {% end %}
-        {% if defined(repos) %}
-        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-        {% end %}
-    GROUP BY group_value
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
+        (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_rows
+    SELECT * FROM (
+        SELECT
+            multiIf(
+                {{ String(dimension, 'source') }} = 'model', toString(model),
+                {{ String(dimension, 'source') }} = 'repo', toString(repo_fingerprint),
+                toString(source)
+            ) AS group_value,
+            countMerge(MessageCount) AS message_count,
+            uniqMerge(SessionCount) AS session_count,
+            sumMerge(InputTokens) + sumMerge(OutputTokens) + sumMerge(CacheReadTokens)
+                + sumMerge(CacheCreationTokens) + sumMerge(ReasoningTokens) AS total_tokens,
+            round(sumMerge(CostUsd), 6) AS cost_usd
+        FROM agent_usage_1h
+        WHERE rollup_rows > 0
+            AND OrgId = {{ String(org_id, '') }}
+            AND BucketStart >= start_dt
+            AND BucketStart < end_dt
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(sources) %}
+            AND source IN splitByChar(',', {{ String(sources) }})
+            {% end %}
+            {% if defined(models) %}
+            AND model IN splitByChar(',', {{ String(models) }})
+            {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
+        GROUP BY group_value
+
+        UNION ALL
+
+        SELECT
+            multiIf(
+                {{ String(dimension, 'source') }} = 'model', toString(model),
+                {{ String(dimension, 'source') }} = 'repo', toString(repo_fingerprint),
+                toString(source)
+            ) AS group_value,
+            count() AS message_count,
+            uniqExact(session_pk) AS session_count,
+            sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens) AS total_tokens,
+            round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd
+        FROM agent_messages FINAL
+        WHERE rollup_rows = 0
+            AND role = 'assistant'
+            AND OrgId = {{ String(org_id, '') }}
+            AND EventAt >= start_dt
+            AND EventAt < end_dt
+            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(sources) %}
+            AND source IN splitByChar(',', {{ String(sources) }})
+            {% end %}
+            {% if defined(models) %}
+            AND model IN splitByChar(',', {{ String(models) }})
+            {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
+        GROUP BY group_value
+    )
     -- Order by the active metric so the LIMIT keeps the rows the UI will actually rank by
     -- (a high-token/low-cost dimension value must not be truncated before a tokens ranking).
     ORDER BY

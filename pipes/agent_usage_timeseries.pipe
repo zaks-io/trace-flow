@@ -2,8 +2,12 @@ DESCRIPTION >
     Hero time-series for the Agent usage explorer: one bucketed row per period (and per
     group value when group_by is set) with the metrics the chart's switcher needs —
     estimated Agent Session Authoring Cost, token components, message/session counts, and
-    Tool Event outcomes. Granularity is chosen automatically: hourly buckets for windows
-    <= 30 days, daily beyond that.
+    Tool Event outcomes. The granularity param controls bucket size: 'auto' (default)
+    picks hourly buckets for windows <= 30 days and daily beyond that; 'hour' forces
+    hourly (reads agent_usage_1h / agent_tool_usage_1h even on > 30d windows); 'day'
+    forces daily (reads agent_usage_1d / agent_tool_usage_1d even on <= 30d windows).
+    Both the usage and tool series resolve the same use_daily from shared params, so
+    their buckets align in the endpoint join.
 
     group_by (none/source/model) splits the series by a rollup dimension. group_value is
     '' when group_by=none, else the source or model. Tool Events carry source but no model,
@@ -38,7 +42,9 @@ SQL >
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        dateDiff('day', start_dt, end_dt) AS range_days
+        dateDiff('day', start_dt, end_dt) AS range_days,
+        {{ String(granularity, 'auto') }} AS granularity,
+        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
     SELECT
         bucket_dt,
         group_value,
@@ -67,7 +73,7 @@ SQL >
             round(sumMerge(CostUsd), 6) AS cost_usd,
             sumMerge(PricedMessageCount) AS priced_message_count
         FROM agent_usage_1h
-        WHERE range_days <= 30
+        WHERE NOT use_daily
             AND (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) > 0
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
@@ -99,7 +105,7 @@ SQL >
             round(sumMerge(CostUsd), 6) AS cost_usd,
             sumMerge(PricedMessageCount) AS priced_message_count
         FROM agent_usage_1d
-        WHERE range_days > 30
+        WHERE use_daily
             AND (SELECT count() FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) > 0
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
@@ -119,7 +125,7 @@ SQL >
         UNION ALL
 
         SELECT
-            if(range_days <= 30, toStartOfHour(toDateTime(EventAt)), toStartOfDay(toDateTime(EventAt))) AS bucket_dt,
+            if(use_daily, toStartOfDay(toDateTime(EventAt)), toStartOfHour(toDateTime(EventAt))) AS bucket_dt,
             multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             count() AS message_count,
             uniqExact(session_pk) AS session_count,
@@ -133,8 +139,8 @@ SQL >
         FROM agent_messages FINAL
         WHERE role = 'assistant'
             AND (
-                (range_days <= 30 AND (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0)
-                OR (range_days > 30 AND (SELECT count() FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) = 0)
+                (NOT use_daily AND (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0)
+                OR (use_daily AND (SELECT count() FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) = 0)
             )
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= start_dt
@@ -160,17 +166,20 @@ SQL >
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        dateDiff('day', start_dt, end_dt) AS range_days
+        dateDiff('day', start_dt, end_dt) AS range_days,
+        {{ String(granularity, 'auto') }} AS granularity,
+        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
     SELECT * FROM (
         SELECT
-            if(range_days <= 30, BucketStart, toStartOfDay(BucketStart)) AS bucket_dt,
+            BucketStart AS bucket_dt,
             multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             countMerge(EventCount) AS tool_event_count,
             sumMerge(SuccessCount) AS tool_success_count,
             sumMerge(FailureCount) AS tool_failure_count,
             sumMerge(UnknownCount) AS tool_unknown_count
         FROM agent_tool_usage_1h
-        WHERE (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) > 0
+        WHERE NOT use_daily
+            AND (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) > 0
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -186,14 +195,41 @@ SQL >
         UNION ALL
 
         SELECT
-            if(range_days <= 30, toStartOfHour(toDateTime(EventAt)), toStartOfDay(toDateTime(EventAt))) AS bucket_dt,
+            BucketStart AS bucket_dt,
+            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
+            countMerge(EventCount) AS tool_event_count,
+            sumMerge(SuccessCount) AS tool_success_count,
+            sumMerge(FailureCount) AS tool_failure_count,
+            sumMerge(UnknownCount) AS tool_unknown_count
+        FROM agent_tool_usage_1d
+        WHERE use_daily
+            AND (SELECT count() FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND OrgId = {{ String(org_id, '') }}
+            AND BucketStart >= start_dt
+            AND BucketStart < end_dt
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+            {% if defined(sources) %}
+            AND source IN splitByChar(',', {{ String(sources) }})
+            {% end %}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
+        GROUP BY bucket_dt, group_value
+
+        UNION ALL
+
+        SELECT
+            if(use_daily, toStartOfDay(toDateTime(EventAt)), toStartOfHour(toDateTime(EventAt))) AS bucket_dt,
             multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
             count() AS tool_event_count,
             countIf(status = 'success') AS tool_success_count,
             countIf(status = 'failure') AS tool_failure_count,
             countIf(status = 'unknown') AS tool_unknown_count
         FROM agent_tool_events FINAL
-        WHERE (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0
+        WHERE (
+                (NOT use_daily AND (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0)
+                OR (use_daily AND (SELECT count() FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) = 0)
+            )
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= start_dt
             AND EventAt < end_dt

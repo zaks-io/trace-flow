@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
 import type {
+  AgentGranularity,
   AgentGroupBy,
   AgentSummaryRow,
   AgentTimeseriesRow,
@@ -13,22 +14,26 @@ type UseAgentDataParams = {
   filterParams: Record<string, string | number>;
   /** group_by applies only to the time-series; the other surfaces ignore it. */
   groupBy: AgentGroupBy;
+  /** Bucket size; passed only to the time-series (other surfaces are window totals). */
+  granularity: AgentGranularity;
   /** Model IN-list; scopes the usage surfaces (time-series + summary) only — tool/session
    * pipes have no model dimension. */
   models: string[];
 };
 
-export function useAgentData({ filterParams, groupBy, models }: UseAgentDataParams) {
+export function useAgentData({ filterParams, groupBy, granularity, models }: UseAgentDataParams) {
   // Tool events / sessions have no model, so models scopes only the usage surfaces.
   const usageParams = useMemo(
     () => (models.length > 0 ? { ...filterParams, models: models.join(',') } : filterParams),
     [filterParams, models],
   );
 
-  const timeseriesParams = useMemo(
-    () => (groupBy === 'none' ? usageParams : { ...usageParams, group_by: groupBy }),
-    [usageParams, groupBy],
-  );
+  const timeseriesParams = useMemo(() => {
+    const params: Record<string, string | number> = { ...usageParams };
+    if (groupBy !== 'none') params.group_by = groupBy;
+    if (granularity !== 'auto') params.granularity = granularity;
+    return params;
+  }, [usageParams, groupBy, granularity]);
 
   const timeseriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
     pipe: 'agent_usage_timeseries',

@@ -13,6 +13,8 @@ import {
   AGENT_METRIC_LABEL,
   AGENT_GROUP_BY,
   AGENT_GROUP_BY_LABEL,
+  AGENT_GRANULARITIES,
+  AGENT_GRANULARITY_LABEL,
   type AgentChartStyle,
   type AgentGroupBy,
   type AgentMetric,
@@ -46,6 +48,8 @@ export function AgentAnalytics() {
     toggleRepo,
     groupBy,
     setGroupBy,
+    granularity,
+    setGranularity,
     hasFilters,
     clearFilters,
     filterParams,
@@ -53,6 +57,7 @@ export function AgentAnalytics() {
   const { timeseries, summary, failures, deltas, isLoading, hasError, isEmpty } = useAgentData({
     filterParams,
     groupBy,
+    granularity,
     models,
   });
   const [metric, setMetric] = useState<AgentMetric>('cost');
@@ -266,21 +271,42 @@ export function AgentAnalytics() {
                   ))}
                 </div>
               </div>
-              <div className="flex rounded-lg border border-border bg-background">
-                {(['stacked', 'line'] as AgentChartStyle[]).map((s) => (
-                  <button
-                    type="button"
-                    key={s}
-                    onClick={() => setChartStyle(s)}
-                    className={`px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                      chartStyle === s
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Bucket</span>
+                  <div className="flex rounded-lg border border-border bg-background">
+                    {AGENT_GRANULARITIES.map((g) => (
+                      <button
+                        type="button"
+                        key={g}
+                        onClick={() => setGranularity(g)}
+                        className={`px-3 py-1 text-xs font-medium transition-colors ${
+                          granularity === g
+                            ? 'bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {AGENT_GRANULARITY_LABEL[g]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex rounded-lg border border-border bg-background">
+                  {(['stacked', 'line'] as AgentChartStyle[]).map((s) => (
+                    <button
+                      type="button"
+                      key={s}
+                      onClick={() => setChartStyle(s)}
+                      className={`px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                        chartStyle === s
+                          ? 'bg-primary/10 text-primary'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { type TimeRange, TIME_RANGES } from '@/components/usage/types';
 import { snapToMinute } from '@/lib/tinybird';
 import { toggleInList } from './filters';
-import type { AgentGroupBy } from './types';
+import type { AgentGranularity, AgentGroupBy } from './types';
 
 type AgentFiltersState = {
   timeRange: TimeRange;
@@ -18,6 +18,9 @@ type AgentFiltersState = {
   toggleRepo: (v: string) => void;
   groupBy: AgentGroupBy;
   setGroupBy: (v: AgentGroupBy) => void;
+  /** Hero-chart bucket size; only the time-series read honors it. */
+  granularity: AgentGranularity;
+  setGranularity: (v: AgentGranularity) => void;
   hasFilters: boolean;
   clearFilters: () => void;
   /**
@@ -34,6 +37,7 @@ export function useAgentFilters(): AgentFiltersState {
   const [models, setModels] = useState<string[]>([]);
   const [repos, setRepos] = useState<string[]>([]);
   const [groupBy, setGroupBy] = useState<AgentGroupBy>('none');
+  const [granularity, setGranularity] = useState<AgentGranularity>('auto');
 
   const toggleSource = useCallback((v: string) => setSources((prev) => toggleInList(prev, v)), []);
   const toggleModel = useCallback((v: string) => setModels((prev) => toggleInList(prev, v)), []);
@@ -76,6 +80,8 @@ export function useAgentFilters(): AgentFiltersState {
     toggleRepo,
     groupBy,
     setGroupBy,
+    granularity,
+    setGranularity,
     hasFilters: sources.length > 0 || models.length > 0 || repos.length > 0,
     clearFilters,
     filterParams,

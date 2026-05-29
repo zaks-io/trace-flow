@@ -17,6 +17,12 @@ describe('formatNumber', () => {
   it('handles negatives by reapplying the sign', () => {
     expect(formatNumber(-43_500_000)).toBe('-43.5M');
   });
+
+  it('promotes to the next unit instead of rounding to 1000.0', () => {
+    expect(formatNumber(999_950)).toBe('1.0M');
+    expect(formatNumber(999_950_000)).toBe('1.0B');
+    expect(formatNumber(999_950_000_000)).toBe('1.0T');
+  });
 });
 
 describe('formatCurrency', () => {
@@ -41,5 +47,10 @@ describe('formatCurrency', () => {
 
   it('handles negatives by reapplying the sign', () => {
     expect(formatCurrency(-6846.96)).toBe('-$6.8K');
+  });
+
+  it('promotes to the next unit instead of rounding to 1000.0', () => {
+    expect(formatCurrency(999_950)).toBe('$1.0M');
+    expect(formatCurrency(999_950_000)).toBe('$1.0B');
   });
 });

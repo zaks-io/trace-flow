@@ -1,10 +1,34 @@
+// Descending so the first tier a value clears is the largest applicable one.
+const ABBREVIATIONS = [
+  { value: 1_000_000_000_000, suffix: 'T' },
+  { value: 1_000_000_000, suffix: 'B' },
+  { value: 1_000_000, suffix: 'M' },
+  { value: 1_000, suffix: 'K' },
+] as const;
+
+/**
+ * Abbreviate a non-negative magnitude to one decimal, promoting at unit boundaries:
+ * rounding 999_950 to 1000.0K would mislabel a megacount, so it carries up to 1.0M.
+ * Returns null below 1_000 so each caller keeps its own small-value formatting.
+ */
+function abbreviate(n: number): { mantissa: string; suffix: string } | null {
+  for (let i = 0; i < ABBREVIATIONS.length; i++) {
+    const { value, suffix } = ABBREVIATIONS[i];
+    if (n < value) continue;
+    const rounded = Number((n / value).toFixed(1));
+    if (rounded >= 1000 && i > 0) {
+      const next = ABBREVIATIONS[i - 1];
+      return { mantissa: (n / next.value).toFixed(1), suffix: next.suffix };
+    }
+    return { mantissa: rounded.toFixed(1), suffix };
+  }
+  return null;
+}
+
 export function formatNumber(num: number): string {
   const sign = num < 0 ? '-' : '';
-  const n = Math.abs(num);
-  if (n >= 1_000_000_000_000) return `${sign}${(n / 1_000_000_000_000).toFixed(1)}T`;
-  if (n >= 1_000_000_000) return `${sign}${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `${sign}${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${sign}${(n / 1_000).toFixed(1)}K`;
+  const abbr = abbreviate(Math.abs(num));
+  if (abbr) return `${sign}${abbr.mantissa}${abbr.suffix}`;
   return new Intl.NumberFormat().format(num);
 }
 
@@ -16,10 +40,8 @@ export function formatCurrency(value: number | null): string {
   if (v < 1) return `${sign}$${v.toFixed(3)}`;
   if (v < 1_000) return `${sign}$${v.toFixed(2)}`;
   // Abbreviate at scale, matching token style.
-  if (v < 1_000_000) return `${sign}$${(v / 1_000).toFixed(1)}K`;
-  if (v < 1_000_000_000) return `${sign}$${(v / 1_000_000).toFixed(1)}M`;
-  if (v < 1_000_000_000_000) return `${sign}$${(v / 1_000_000_000).toFixed(1)}B`;
-  return `${sign}$${(v / 1_000_000_000_000).toFixed(1)}T`;
+  const abbr = abbreviate(v);
+  return `${sign}$${abbr!.mantissa}${abbr!.suffix}`;
 }
 
 export function formatPercent(value: number): string {

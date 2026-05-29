@@ -40,6 +40,20 @@ export interface AgentRepoDirectoryRow {
 /** Stacked area shows composition + total; line un-stacks to compare trends across series. */
 export type AgentChartStyle = 'stacked' | 'line';
 
+/**
+ * Hero-chart bucket size. 'auto' defers to the pipe (hourly <= 30d, daily beyond); 'hour'
+ * and 'day' force a grain regardless of window. Only the time-series honors it.
+ */
+export type AgentGranularity = 'auto' | 'hour' | 'day';
+
+export const AGENT_GRANULARITIES: AgentGranularity[] = ['auto', 'hour', 'day'];
+
+export const AGENT_GRANULARITY_LABEL: Record<AgentGranularity, string> = {
+  auto: 'Auto',
+  hour: 'Hourly',
+  day: 'Daily',
+};
+
 /** Single-row output of `pipes/agent_usage_summary.pipe` — current window + prior period. */
 export interface AgentSummaryRow {
   /** Estimated Agent Session Authoring Cost for the window; sums priced rows only. */
