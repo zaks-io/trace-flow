@@ -1,18 +1,25 @@
 export function formatNumber(num: number): string {
-  if (num >= 1_000_000) {
-    return `${(num / 1_000_000).toFixed(1)}M`;
-  }
-  if (num >= 1_000) {
-    return `${(num / 1_000).toFixed(1)}K`;
-  }
+  const sign = num < 0 ? '-' : '';
+  const n = Math.abs(num);
+  if (n >= 1_000_000_000_000) return `${sign}${(n / 1_000_000_000_000).toFixed(1)}T`;
+  if (n >= 1_000_000_000) return `${sign}${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `${sign}${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${sign}${(n / 1_000).toFixed(1)}K`;
   return new Intl.NumberFormat().format(num);
 }
 
 export function formatCurrency(value: number | null): string {
   if (value === null || isNaN(value)) return '-';
-  if (value < 0.01) return `$${value.toFixed(4)}`;
-  if (value < 1) return `$${value.toFixed(3)}`;
-  return `$${value.toFixed(2)}`;
+  const sign = value < 0 ? '-' : '';
+  const v = Math.abs(value);
+  if (v < 0.01) return `${sign}$${v.toFixed(4)}`;
+  if (v < 1) return `${sign}$${v.toFixed(3)}`;
+  if (v < 1_000) return `${sign}$${v.toFixed(2)}`;
+  // Abbreviate at scale, matching token style.
+  if (v < 1_000_000) return `${sign}$${(v / 1_000).toFixed(1)}K`;
+  if (v < 1_000_000_000) return `${sign}$${(v / 1_000_000).toFixed(1)}M`;
+  if (v < 1_000_000_000_000) return `${sign}$${(v / 1_000_000_000).toFixed(1)}B`;
+  return `${sign}$${(v / 1_000_000_000_000).toFixed(1)}T`;
 }
 
 export function formatPercent(value: number): string {
