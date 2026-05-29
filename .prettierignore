@@ -8,3 +8,7 @@ next-env.d.ts
 
 # Rust build output
 target/
+
+# Centrally-managed workflow skills (pinned in skills-lock.json; do not reformat locally)
+.agents/skills/workflow-*/
+.claude/skills/workflow-*/

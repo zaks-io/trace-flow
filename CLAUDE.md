@@ -99,23 +99,33 @@ config values, and `.codex/hooks.json` for hook wiring and shell commands.
 After changing agent config or hooks, restart the relevant agent session so it
 reloads the files.
 
+### Workflow skills
+
+Workflow logic lives in the centrally-managed `workflow-*` org skills (pinned in
+`skills-lock.json`). Repo-specific values live in
+`docs/agents/workflow/config.md` — read it before using any workflow skill.
+Core skills: `workflow-agent-orchestrator` (orchestration),
+`workflow-agent-implement` (one issue → PR), `workflow-agent-review`
+(independent PR + main-drift review), `workflow-issue-triage` (tracker cleanup),
+`workflow-code-review` (shared review gate), `workflow-create-pr` (PR creation),
+`workflow-secret-redaction` (redact before reading secret files).
+
 Shared workflow docs:
 
+- `docs/agents/workflow/config.md` — repo workflow lookup table (commands, tracker IDs, labels, gates)
 - `docs/agents/workflow.md` — Linear-backed implementation, review, PR, and merge-readiness flow
 - `docs/agents/repo-navigation.md` — quick map of apps, packages, specs, ADRs, and workflow files
 - `docs/agents/autonomous-loop.md` — state machine for orchestrators and workers
-- `docs/agents/skill-usage.md` — which repo-local skill to use
+- `docs/agents/skill-usage.md` — which skill to use
 - `docs/agents/environment-adapters.md` — Codex, Claude, and Cursor runtime selection
 - `docs/agents/remote-cursor-agent.md` — Cursor Background Agent handoff
 
 ### Code review
 
-Review happens **locally first**. Run `trace-flow-local-code-review` for
-Linear issue work and `trace-flow-code-review` or `code-review` for generic
-diff review before any commit or PR. These carry the bug taxonomy and the Trace
-Flow gotchas (streams, `waitUntil`, queue `ack`, Tinybird schema, redaction
-boundary). The `trace-flow-create-pr` and compatibility `create-pr` skills wire
-this into the PR flow.
+Review happens **locally first** with `workflow-code-review` before any commit
+or PR. It should load `docs/agents/review-invariants.md` for the Trace Flow
+gotchas (streams, `waitUntil`, queue `ack`, Tinybird/Convex schema, redaction
+boundary, required bindings, R2 keys) and the CodeRabbit escalation rubric.
 
 CodeRabbit is **on-demand only** — automatic and incremental reviews are disabled in `.coderabbit.yaml`, so the team is never throttled by hosted-review rate limits. Escalate to CodeRabbit (CLI `coderabbit review --agent`, or a `@coderabbitai review` PR comment) only for genuinely high-risk changes per the skill's escalation rubric.
 

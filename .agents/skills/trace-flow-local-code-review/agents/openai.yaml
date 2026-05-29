@@ -1,4 +1,0 @@
-interface:
-  display_name: 'Trace Flow Local Review'
-  short_description: 'Review local changes before PR'
-  default_prompt: 'Use $trace-flow-local-code-review to review this branch before opening a PR.'

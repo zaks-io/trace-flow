@@ -1,4 +1,0 @@
-interface:
-  display_name: 'Trace Flow Code Review'
-  short_description: 'Trace Flow pre-PR bug review'
-  default_prompt: 'Use $trace-flow-code-review to review my current diff before PR.'

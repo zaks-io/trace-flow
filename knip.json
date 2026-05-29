@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "ignore": ["scripts/**"],
+  "ignore": ["scripts/**", ".agents/skills/**", ".claude/skills/**", ".claude/.agents/skills/**"],
   "ignoreBinaries": ["wrangler"],
   "ignoreDependencies": ["cloudflare"],
   "workspaces": {
