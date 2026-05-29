@@ -30,17 +30,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|MultiEdit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "jq -r '.tool_input.file_path' | { read file_path; if echo \"$file_path\" | grep -qE '\\.(ts|tsx|js|jsx|md|json|css|html|yml|yaml)$'; then cd \"$(dirname \"$file_path\")\" && bunx prettier --write \"$(basename \"$file_path\")\"; fi; }"
-          }
-        ]
-      }
     ]
   }
 }
