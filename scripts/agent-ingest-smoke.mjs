@@ -45,11 +45,15 @@ try {
   // session_pk = hashToUuid([source, vendor_session_id]) — the same derivation the ingest Worker uses.
   const expectedSessionPk = await hashToUuid(['claude', vendorSessionId]);
 
+  // Baseline before we post so the drain check tolerates concurrent producers on a live prod queue
+  // (require the backlog to fall back to where it started, not to absolute zero).
+  const baselineDepth = await queueDepth(queueName);
+
   log(`posting valid envelope to ${ingestUrl}/v1/ingest (session ${vendorSessionId})`);
   await postValidEnvelope();
 
-  log(`waiting for queue ${queueName} to drain`);
-  await waitForQueueDrain(queueName);
+  log(`waiting for queue ${queueName} to drain to baseline (${baselineDepth})`);
+  await waitForQueueDrain(queueName, baselineDepth);
 
   log(`asserting rows visible through ${readPipe} under org JWT`);
   await assertDashboardRows(expectedSessionPk);
@@ -168,12 +172,12 @@ async function assertDashboardRows(expectedSessionPk) {
   );
 }
 
-async function waitForQueueDrain(name) {
+async function waitForQueueDrain(name, baselineDepth = 0) {
   await waitUntil(
-    async () => (await queueDepth(name)) === 0,
+    async () => (await queueDepth(name)) <= baselineDepth,
     timeoutMs,
     3000,
-    `queue ${name} did not drain to zero within ${timeoutMs}ms`,
+    `queue ${name} did not drain back to baseline (${baselineDepth}) within ${timeoutMs}ms`,
   );
 }
 

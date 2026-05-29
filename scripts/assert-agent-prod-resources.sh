@@ -13,9 +13,11 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Tokens that must never appear in a resolved production agent Worker config.
-#   *-dev resource names, and the dev rate-limit namespace 2006 (prod uses 2007).
-FORBIDDEN='agent-ingest-dev|agent-ingest-dlq-dev|trace-flow-agent-ingest-dev|trace-flow-agent-consumer-dev|"?2006"?|25a35f71a8d64884a8e8935056880dba'
+# Tokens that must never appear in a resolved production agent Worker config:
+#   *-dev resource names, the dev rate-limit namespace 2006 (prod uses 2007), and the dev KV
+#   namespace IDs (COLLECTOR_CREDS f945ee3d…, MODEL_PRICING 25a35f…) — catches a prod env block that
+#   accidentally inherited a top-level dev binding.
+FORBIDDEN='agent-ingest-dev|agent-ingest-dlq-dev|trace-flow-agent-ingest-dev|trace-flow-agent-consumer-dev|"?2006"?|25a35f71a8d64884a8e8935056880dba|f945ee3d71954ffabd364e3db385d3ab'
 
 fail=0
 
