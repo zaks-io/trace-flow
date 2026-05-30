@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT
+// Trace Flow Desktop: the broadcast app state. Adapted from otto-desktop's state.rs, trimmed of the
+// provider-usage surface (that is a separate Trace Flow feature, not part of agent analytics).
+
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use serde::{Deserialize, Serialize};
+use tokio::sync::watch;
+
+/// Whether the app holds a usable Collector Credential yet.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ConnectionState {
+    /// No connection on disk — first run, or after disconnect.
+    #[default]
+    Disconnected,
+    /// A connection + credential is present, bound to `org_id`.
+    Connected { org_id: String },
+}
+
+/// What the background sync engine is doing. Starts `Paused` so nothing leaves the machine until the
+/// user explicitly clicks "Start syncing" (the first-egress gate, TRA-115 AC #2).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SyncStatus {
+    /// Connected and watching, but the user has not authorized egress yet.
+    #[default]
+    Paused,
+    /// Idle between cycles (egress authorized).
+    Idle,
+    /// A sync cycle is running.
+    Syncing,
+    /// The last cycle failed; `message` is a stable error class, never a secret.
+    Error { message: String },
+}
+
+impl SyncStatus {
+    /// A short, stable label for the UI. (The serde representation is externally tagged, so unit
+    /// variants serialize to a bare string — do not derive the label from JSON; match here.)
+    pub fn label(&self) -> &'static str {
+        match self {
+            SyncStatus::Paused => "paused",
+            SyncStatus::Idle => "watching",
+            SyncStatus::Syncing => "syncing",
+            SyncStatus::Error { .. } => "error",
+        }
+    }
+}
+
+/// Per-source `.jsonl` file counts on this machine (Claude/Codex). Cursor is unsupported (TRA-108).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceCounts {
+    pub claude_files: u32,
+    pub codex_files: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecentError {
+    pub at: SystemTime,
+    pub level: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppState {
+    pub connection: ConnectionState,
+    pub sync: SyncStatus,
+    pub sources: SourceCounts,
+    /// `false` until the user opts in; wires `BatchMeta.raw_upload_requested`.
+    pub raw_upload: bool,
+    pub autostart: bool,
+    pub last_sync_at: Option<SystemTime>,
+    pub recent_errors: Vec<RecentError>,
+}
+
+#[derive(Clone)]
+pub struct AppStateBus {
+    tx: Arc<watch::Sender<AppState>>,
+}
+
+impl AppStateBus {
+    pub fn new() -> Self {
+        let (tx, _) = watch::channel(AppState::default());
+        Self { tx: Arc::new(tx) }
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<AppState> {
+        self.tx.subscribe()
+    }
+
+    pub fn snapshot(&self) -> AppState {
+        self.tx.borrow().clone()
+    }
+
+    pub fn update<F: FnOnce(&mut AppState)>(&self, f: F) {
+        self.tx.send_modify(f);
+    }
+}
+
+impl Default for AppStateBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}

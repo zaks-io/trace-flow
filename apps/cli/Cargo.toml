@@ -11,31 +11,16 @@ name = "trace-flow"
 path = "src/main.rs"
 
 [dependencies]
+# The shared embedder (login, keychain, connection state, source detection, sync drive loop, prod
+# endpoint defaults). The CLI is a thin clap + stdout shim over it; the desktop app links the same crate.
+collector-embedder = { path = "../../packages/collector-embedder" }
 collector-contracts = { path = "../../packages/collector-contracts" }
+# Used directly only by the hidden `cursor-dryrun` verification command (TRA-108): read the local
+# Cursor state.vscdb and print aggregate counts without uploading.
 collector-parser = { path = "../../packages/collector-parser" }
 collector-sync = { path = "../../packages/collector-sync" }
-collector-api-client = { path = "../../packages/collector-api-client" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "5"
-# CSPRNG for the one-time login state nonce that ties the loopback callback to the request the CLI
-# initiated (rejects stray/malicious local requests racing the listener).
-getrandom = "0.4"
-# keyring has NO default features: with none enabled it silently falls back to a per-process
-# in-memory mock store, so `set` succeeds and the next process's `get` returns NoEntry. Enable the
-# real OS-native backend per platform (macOS/Windows native; Linux Secret Service over sync DBus).
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-# `buffer_unordered` overlaps the per-session assembly (file read + parse + git resolve) so a history
-# import does not read transcripts one at a time. Stream combinators only.
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-reqwest = { version = "0.12", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-tiny_http = "0.12"
-webbrowser = "1"
-
-[dev-dependencies]
-tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
