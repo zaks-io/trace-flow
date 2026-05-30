@@ -49,6 +49,7 @@ app.use('*', async (c, next) => {
     origin: '*',
     allowMethods: ['POST', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Mcp-Protocol-Version'],
+    exposeHeaders: ['Mcp-Session-Id'],
     maxAge: 86400,
   });
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument

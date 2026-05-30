@@ -27,7 +27,7 @@ AXIOM_DATASET = "cloudflare"
 # Per-IP rate limit on the MCP endpoint (the public, user-facing surface)
 [[ratelimits]]
 name = "MCP_LIMITER"
-namespace_id = "2006"
+namespace_id = "2007"
 simple = { limit = 120, period = 60 }
 
 [env.production]
@@ -46,7 +46,7 @@ zone_name = "trace-flow.dev"
 
 [[env.production.ratelimits]]
 name = "MCP_LIMITER"
-namespace_id = "2006"
+namespace_id = "2007"
 simple = { limit = 120, period = 60 }
 
 [env.preview]
@@ -60,5 +60,5 @@ AXIOM_DATASET = "cloudflare"
 
 [[env.preview.ratelimits]]
 name = "MCP_LIMITER"
-namespace_id = "2006"
+namespace_id = "2008"
 simple = { limit = 120, period = 60 }
