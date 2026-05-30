@@ -78,6 +78,12 @@ pub struct RunConfig<'a> {
     pub window: Window,
     /// `now` in epoch ms, injected so the window math is testable and the cursor seam stays clock-free.
     pub now_ms: i64,
+    /// Whether the user opted into raw-transcript upload for this run. Wires
+    /// `BatchMeta.raw_upload_requested`; defaults off — the embedder never enables it implicitly.
+    pub raw_upload: bool,
+    /// A short embedder tag (e.g. `"cli"`, `"desktop"`) that prefixes the per-POST batch id, so a
+    /// batch id reads as `cli-<n>` / `desktop-<n>` for audit. Not security-relevant.
+    pub batch_id_prefix: &'a str,
 }
 
 /// Run a sync pass over every ingestable Source, returning one report per Source attempted.
@@ -97,9 +103,10 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
 
     let cache = GitRemoteCache::new();
     let mut batch_seq: u64 = cfg.now_ms.max(0) as u64;
+    let prefix = cfg.batch_id_prefix.to_string();
     let mut mint = move || {
         batch_seq = batch_seq.wrapping_add(1);
-        format!("cli-{batch_seq}")
+        format!("{prefix}-{batch_seq}")
     };
 
     let mut reports = Vec::new();
@@ -112,7 +119,7 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
 
 /// The cursor DB path. Split out so [`run`] stays focused; resolves through the CLI's [`Paths`].
 fn crate_cursor_db(org_id: &str) -> Result<std::path::PathBuf> {
-    let paths = crate::config::Paths::resolve()?;
+    let paths = crate::connection::Paths::resolve()?;
     paths.ensure()?;
     Ok(paths.cursor_db(org_id))
 }
@@ -145,7 +152,7 @@ async fn run_source(
         source,
         desktop_version: DESKTOP_VERSION.to_string(),
         parser_version: PARSER_VERSION.to_string(),
-        raw_upload_requested: false,
+        raw_upload_requested: cfg.raw_upload,
     };
 
     let mut orch = Orchestrator::new();
@@ -219,7 +226,7 @@ fn assemble_cursor_source_units(
     let Some(db) = cursor_db_path(cfg.home).filter(|p| p.exists()) else {
         return Ok(Vec::new());
     };
-    let paths = crate::config::Paths::resolve()?;
+    let paths = crate::connection::Paths::resolve()?;
     paths.ensure()?;
     let units = assemble_cursor_units(&db, &paths.scratch_dir(), store, window)
         .context("assemble cursor units")?;

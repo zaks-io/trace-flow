@@ -1,0 +1,35 @@
+[package]
+name = "collector-embedder"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Trace Flow Collector embedder: login, keychain, connection state, source detection, and the sync drive loop shared by the CLI and the desktop app"
+
+[dependencies]
+collector-contracts = { path = "../collector-contracts" }
+collector-parser = { path = "../collector-parser" }
+collector-sync = { path = "../collector-sync" }
+collector-api-client = { path = "../collector-api-client" }
+
+anyhow = "1"
+dirs = "5"
+# CSPRNG for the one-time login state nonce that ties the loopback callback to the request this
+# embedder initiated (rejects stray/malicious local requests racing the listener).
+getrandom = "0.4"
+# keyring has NO default features: with none enabled it silently falls back to a per-process
+# in-memory mock store, so `set` succeeds and the next process's `get` returns NoEntry. Enable the
+# real OS-native backend per platform (macOS/Windows native; Linux Secret Service over sync DBus).
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# `buffer_unordered` overlaps the per-session assembly (file read + parse + git resolve) so a history
+# import does not read transcripts one at a time. Stream combinators only.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tiny_http = "0.12"
+webbrowser = "1"
+
+[dev-dependencies]
+tempfile = "3"

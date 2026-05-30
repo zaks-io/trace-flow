@@ -162,6 +162,30 @@ _Avoid_: conflating with **Cloud-Dev**; assuming agents on this stack can see a 
 **Control Plane** / **Data Plane**:
 The **Control Plane** is Convex: it mints **Collector Credentials**, holds the compatibility policy, and answers Agent Session ownership claims. The **Data Plane** is Tinybird: the `otel_traces` and `agent_*` **Datasources** the **Consumer**/agent-consumer write and the **Web** reads. A given set of **Local Workers** can point each plane at cloud or local independently (e.g. Tinybird Cloud-Dev for rows while Convex stays local), which is why "dev" must always name _which plane_ points _where_.
 
+#### Concrete endpoints (canonical — stop rediscovering these)
+
+The Cloudflare **workers.dev subdomain** for this account is `isaac-a46` (account `Isaac@zaks.io`,
+id `a461d640900eb3905d7b6619c8c0da91`). Deployed `*-dev` Workers keep `workers_dev` enabled (no custom
+route), so each is live at `https://<worker-name>.isaac-a46.workers.dev`. Production Workers set
+`workers_dev:false` and serve on a `*.trace-flow.dev` custom route. Verify a Worker is live with an
+unauthenticated request: a deployed Worker returns 401/403/400 (auth/validation), a missing one returns
+Cloudflare's 404.
+
+| Purpose                                                                               | Dev (deployed cloud `-dev` Worker)                                                                               | Production                                                                                               |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Agent ingest (`POST /v1/ingest`) — collector egress target                            | `https://trace-flow-agent-ingest-dev.isaac-a46.workers.dev`                                                      | `https://collector.trace-flow.dev`                                                                       |
+| Agent consumer (queue → Tinybird)                                                     | `trace-flow-agent-consumer-dev` (queue consumer, no public route)                                                | `trace-flow-agent-consumer`                                                                              |
+| Web dashboard                                                                         | `https://trace-flow-web-dev.isaac-a46.workers.dev` (`/app/agents`)                                               | prod web has no custom route in `apps/web/wrangler.jsonc` — confirm the live prod host before citing one |
+| LLM proxy / gateway                                                                   | `https://trace-flow-proxy-dev.isaac-a46.workers.dev` (`/` → 401, live)                                           | `https://gateway.trace-flow.dev`                                                                         |
+| Body-retrieval API                                                                    | `https://trace-flow-api-dev.isaac-a46.workers.dev` (only `/bodies/*` is routed; `/` and `/health` 404 by design) | `https://api.trace-flow.dev`                                                                             |
+| Convex **site** origin (`/collector/authorize`, `/agent-ingest/compatibility-policy`) | `https://hardy-iguana-812.convex.site`                                                                           | `https://laudable-bison-427.convex.site`                                                                 |
+
+**Collector env overrides** (CLI + desktop; `packages/collector-embedder/src/defaults.rs` bakes **production**,
+so reaching the cloud `-dev` target REQUIRES setting these): `TRACE_FLOW_INGEST_URL` = the dev ingest Worker
+URL above, `TRACE_FLOW_CONVEX_SITE_URL` = the dev Convex site origin above, `TRACE_FLOW_WEB_URL` = the dev web
+dashboard URL. Do **not** point a collector at `http://127.0.0.1:8787` for verify/sync — that is a **Local
+Worker** process, not the deployed cloud `-dev` Worker, and is only used in **Self-Contained Local** mode.
+
 ### Tinybird
 
 **Pipe**:

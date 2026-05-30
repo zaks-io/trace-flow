@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Trace Flow Collector CLI (`trace-flow`). The user-facing collector embedder over the
-// collector-parser / collector-sync / collector-api-client crates (Linear TRA-112).
+// Trace Flow Collector CLI (`trace-flow`). A thin clap + stdout shim over `collector-embedder`, the
+// shared embedder the desktop app also links (Linear TRA-112, TRA-115).
 
 //! `trace-flow` — the Collector CLI.
 //!
@@ -10,32 +10,25 @@
 //! source counts, no secrets), and `disconnect` (revoke local material). Parsing and redaction are
 //! always local; only redacted facts leave the machine, authenticated by the Collector Credential.
 //!
-//! Runtime configuration defaults to production hosts; set env vars to override for local/cloud-dev:
-//! - `TRACE_FLOW_CONVEX_SITE_URL` — Convex *site* origin for `login` (device flow). Defaults to prod.
-//! - `TRACE_FLOW_INGEST_URL` — ingest Worker base URL for `sync`. Defaults to prod collector domain.
+//! All of that logic lives in [`collector_embedder`]; this binary is only argument parsing and the
+//! `println!` reporting. Endpoints resolve through [`collector_embedder::defaults`] — production by
+//! default, overridable per environment:
+//! - `TRACE_FLOW_CONVEX_SITE_URL` — the Convex *site* origin `login` drives the device flow against.
+//! - `TRACE_FLOW_INGEST_URL` — the ingest Worker base URL `sync` POSTs to.
 //! - `TRACE_FLOW_COLLECTOR_SECRET` — optional headless/CI override for the keychain credential.
 //!
-//! See `apps/cli/README.md` for the full env var list.
-
-mod config;
-mod keychain;
-mod login;
-mod sources;
-mod sync;
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//! With none set, the binary targets production out of the box; an env var points it at Cloud-Dev or
+//! a local Worker instead.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use collector_contracts::AgentSource;
 
-use config::Paths;
-use sources::Support;
+use collector_embedder::connection::Paths;
+use collector_embedder::sources::Support;
+use collector_embedder::{defaults, keychain, login, sources, sync};
 
-/// Production Convex site origin (device flow / compatibility policy). Override for local/cloud-dev.
-const DEFAULT_CONVEX_SITE_URL: &str = "https://laudable-bison-427.convex.site";
-/// Production ingest Worker base URL. Override for a local worker or cloud-dev ingest.
-const DEFAULT_INGEST_URL: &str = "https://collector.trace-flow.dev";
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const ENV_HELP: &str = "\
 Environment (optional — production URLs are the default):\n  \
@@ -45,13 +38,6 @@ TRACE_FLOW_COLLECTOR_SECRET Headless/CI credential override (normally stored in 
 \n\
 Local/cloud-dev: set TRACE_FLOW_CONVEX_SITE_URL and TRACE_FLOW_INGEST_URL to your dev endpoints.\n\
 See apps/cli/README.md for details.";
-
-fn env_or_default(var: &str, default: &str) -> String {
-    match std::env::var(var) {
-        Ok(value) if !value.is_empty() => value,
-        _ => default.to_string(),
-    }
-}
 
 #[derive(Parser)]
 #[command(
@@ -132,8 +118,7 @@ async fn run() -> Result<()> {
 }
 
 fn cmd_login() -> Result<()> {
-    let convex_site_url = env_or_default("TRACE_FLOW_CONVEX_SITE_URL", DEFAULT_CONVEX_SITE_URL);
-    let conn = login::run(&convex_site_url)?;
+    let conn = login::run(&defaults::convex_site_url())?;
     println!("\nConnected to organization {}.", conn.org_id);
     println!("Credential stored in the OS keychain. Next: `trace-flow sync --since 7d`.");
     Ok(())
@@ -176,7 +161,7 @@ async fn cmd_sync(since: &str) -> Result<()> {
         )
     })?;
 
-    let ingest_url = env_or_default("TRACE_FLOW_INGEST_URL", DEFAULT_INGEST_URL);
+    let ingest_url = defaults::ingest_url();
 
     let home = home_dir()?;
     println!("Syncing (since {since}) to {ingest_url} ...");
@@ -188,6 +173,8 @@ async fn cmd_sync(since: &str) -> Result<()> {
         home: &home,
         window,
         now_ms: now_ms(),
+        raw_upload: false,
+        batch_id_prefix: "cli",
     })
     .await?;
 

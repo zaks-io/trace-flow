@@ -3,7 +3,7 @@
 
 //! The CLI's on-disk, **non-secret** state.
 //!
-//! Two split concerns: the Collector Credential *secret* lives in the OS keychain (see [`crate::secret`])
+//! Two split concerns: the Collector Credential *secret* lives in the OS keychain (see [`crate::keychain`])
 //! and never touches disk; everything else — which Organization is connected, the ingest URL, the
 //! Collector id, and the last-sync bookkeeping — lives in a plain JSON file under the platform config
 //! dir, alongside the SQLite cursor store. None of it is sensitive: an org id is not a credential, and

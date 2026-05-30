@@ -7,7 +7,7 @@
 //! Convex `/collector/authorize` route with that loopback as the `redirect_uri`, and blocks until the
 //! `/collector/callback` redirect lands the minted secret + org metadata back on the listener. The
 //! secret then goes straight into the OS keychain ([`crate::keychain`]); only the non-secret
-//! connection metadata is written to disk ([`crate::config::Connection`]).
+//! connection metadata is written to disk ([`crate::connection::Connection`]).
 //!
 //! The secret travels exactly once, over a loopback redirect the Convex side restricts to
 //! `127.0.0.1`. It is never logged, never put on a process arg, never persisted in plaintext.
@@ -17,7 +17,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use tiny_http::{Header, Response, Server};
 
-use crate::config::{Connection, Paths};
+use crate::connection::{Connection, Paths};
 use crate::keychain;
 
 /// The minted material the callback hands back over the loopback redirect.
@@ -114,9 +114,9 @@ fn wait_for_callback(server: &Server, expected_state: &str) -> Result<LoginResul
             CallbackOutcome::Result(result) => {
                 let ok = result.is_ok();
                 let body = if ok {
-                    "<h2>Trace Flow CLI connected.</h2><p>You can close this tab and return to your terminal.</p>"
+                    "<h2>Trace Flow connected.</h2><p>You can close this tab and return to Trace Flow.</p>"
                 } else {
-                    "<h2>Login failed.</h2><p>Return to your terminal for details.</p>"
+                    "<h2>Login failed.</h2><p>Return to Trace Flow for details.</p>"
                 };
                 let header =
                     Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
