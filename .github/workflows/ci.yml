@@ -29,6 +29,7 @@ jobs:
       agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
       agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
       rust: ${{ steps.filter.outputs.rust }}
+      agent-docs: ${{ steps.filter.outputs.agent-docs }}
       root: ${{ steps.filter.outputs.root }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
@@ -84,6 +85,9 @@ jobs:
               - 'packages/collector-*/**'
               - 'apps/cli/**'
               - '.github/workflows/ci.yml'
+            agent-docs:
+              - 'docs/guides/agent-conversation-analytics/**'
+              - 'scripts/assert-agent-docs-status.sh'
             root:
               - 'package.json'
               - 'bun.lock'
@@ -584,6 +588,24 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  # Docs-status guard (TRA-111): the agent-analytics docs must not claim production-readiness while
+  # the P1-P5 gates (TRA-109) are still open. Source of truth is the sentinel in their ROADMAP.md.
+  agent-docs:
+    name: Agent Docs Status
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [changes]
+    if: needs.changes.outputs.agent-docs == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Assert docs make no premature production-ready claim
+        run: ./scripts/assert-agent-docs-status.sh
+
   status:
     name: CI Status
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -602,6 +624,7 @@ jobs:
       - agent-ingest
       - agent-consumer
       - rust
+      - agent-docs
     steps:
       - name: Check job statuses
         run: |

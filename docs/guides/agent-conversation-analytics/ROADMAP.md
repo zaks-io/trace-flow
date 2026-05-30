@@ -9,6 +9,10 @@ without touching Tinybird, Wrangler, Convex dev, admin tokens, or ignored tests.
 
 Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
 
+<!-- Single source of truth for `scripts/assert-agent-docs-status.sh`. While false, the docs must not
+assert the feature is production-ready. Flip to true only when the P1-P5 gates (TRA-109) are green. -->
+<!-- AGENT_ANALYTICS_PRODUCTION_READY: false -->
+
 ## Current Truth
 
 | Area                     | Current state                                                                                                                                                    | Production gap                                                                                                                                                |
@@ -41,7 +45,7 @@ Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
 | P1  | Production cloud ingest path                | 🚧 in progress | P0         | Prod ingest Worker, queue, DLQ, KV, rate limit, consumer, Tinybird schema, secrets, and smoke test are live.    |
 | P2  | Production collector CLI                    | ☐ todo         | P1         | A user runs `trace-flow login` then `trace-flow sync --since 7d` and data appears in `/app/agents`.             |
 | P3  | Dashboard truth and live walkthrough        | ☐ todo         | P1, P2     | `/app/agents` accurately shows empty/setup/data states and is verified with authenticated production-like data. |
-| P4  | CI and release guardrails                   | ☐ todo         | P0         | Rust workspace, CLI build, Worker deploy, Tinybird deploy check, and live smoke block PR/merge failures.        |
+| P4  | CI and release guardrails                   | 🚧 in progress | P0         | Rust workspace, CLI build, Worker deploy, Tinybird deploy check, and live smoke block PR/merge failures.        |
 | P5  | Production observability                    | ☐ todo         | P1         | DLQ, consumer errors, ingest auth failures, and priced-coverage regressions alert with tested runbook paths.    |
 | P6  | Desktop MVP                                 | ☐ todo         | P2, P4     | Installable macOS app connects, stores credential securely, gates first egress, syncs, pauses, and disconnects. |
 | P7  | Cursor source support                       | ☐ todo         | P2, P4     | Cursor `state.vscdb` facts land through the same collector/cloud path and are filterable by source.             |
@@ -169,15 +173,20 @@ Prevent this class of failure from merging again.
 
 ### Required work
 
-- Add required Rust CI:
-  - `cargo fmt --check`
-  - `cargo clippy --workspace --all-targets -- -D warnings`
-  - `cargo test --workspace`
-- Add CLI build/test job once `apps/cli` exists.
-- Add Tinybird deploy check to release workflows.
-- Add config assertions that production deploys cannot bind dev queues/KV/worker names.
-- Add live smoke as a required post-deploy job for production agent pipeline changes.
-- Add docs status lint that fails if a task says production-ready while its gate is still absent.
+- ✅ Add required Rust CI (`cargo fmt --check`, `clippy --all-targets -D warnings`, `test`) — the
+  `rust` job in `ci.yml`, linux + macOS matrix, wired into the CI Status gate (TRA-111 / PR #306).
+  `apps/cli` is a workspace member so `cargo check`/`test` already cover it; a release-build job is
+  still pending.
+- ✅ Add config assertions that production deploys cannot bind dev queues/KV/worker names —
+  `scripts/assert-agent-prod-resources.sh`, wired into both agent deploy jobs in `deploy.yml`
+  (TRA-110, audited under TRA-111: covers worker names, queue, DLQ, rate-limit ns, both KV IDs).
+- ✅ Add docs status lint that fails if a doc says production-ready while its gate is still absent —
+  `scripts/assert-agent-docs-status.sh`, gated on the `AGENT_ANALYTICS_PRODUCTION_READY` sentinel
+  above and wired into the CI Status gate (TRA-111).
+- ☐ Add Tinybird deploy check to release workflows — `scripts/deploy-agent-tinybird.sh --check`
+  exists but needs headless `tb` auth (a prod TB token secret) before it can run in CI.
+- ☐ Add live smoke as a required post-deploy job for production agent pipeline changes — deferred to
+  TRA-117 (blocked on credential-mint auth plumbing).
 
 ### Done
 
