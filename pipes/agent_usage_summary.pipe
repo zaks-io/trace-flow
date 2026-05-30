@@ -5,16 +5,23 @@ DESCRIPTION >
     show a delta. Prior period is the immediately-preceding window of equal length (same
     convention as agent_tool_period_delta).
 
-    Rollup-first over agent_usage_1h (the canonical priced-usage hourly rollup), with a
-    base agent_messages FINAL fallback when the rollup is unpopulated (local dev /
-    pre-first-copy). Window totals always read the hourly rollup — daily buckets straddle
-    sub-day window boundaries, so hourly is the only grain that nests cleanly into an
-    arbitrary window. cost_usd sums priced rows only; coverage_pct = priced / billable is
-    the data-quality signal the UI shows beside the estimate (ADR "Honesty about cost"),
-    never "$ spent". This supersedes agent_priced_coverage for the explorer header.
-    org_id and retention_days are enforced via the JWT fixed_params. NOTE: session_count
-    is uniqMerge over an HLL state (~0.5-2% error) on the rollup path vs uniqExact on the
-    base fallback — the same trade agent_usage_timeseries already makes.
+    Lambda over agent_usage_1h (the canonical priced-usage hourly rollup) + the live tail
+    of agent_messages FINAL. The watermark is the rollup's latest bucket start
+    (max(BucketStart)): the rollup serves hours strictly below it (fully-materialized only),
+    the real-time branch covers rows at/after it — including the latest still-partial hour,
+    served live. A stale, partial, or mid-rebuild rollup can never hide data — the two
+    branches split at the watermark with no overlap and always sum to the full window. When
+    the rollup is empty the watermark is epoch and the real-time branch serves everything.
+    Window totals read the
+    hourly rollup (daily buckets straddle sub-day window boundaries, so hourly is the only
+    grain that nests cleanly into an arbitrary window). cost_usd sums priced rows only;
+    coverage_pct = priced / billable is the data-quality signal the UI shows beside the
+    estimate (ADR "Honesty about cost"), never "$ spent". This supersedes
+    agent_priced_coverage for the explorer header. org_id and retention_days are enforced
+    via the JWT fixed_params. NOTE: session_count is uniqMerge over an HLL state (~0.5-2%
+    error) on the rollup branch vs uniqExact on the real-time branch — the same trade
+    agent_usage_timeseries makes. The branches cover disjoint hour ranges (rollup < watermark,
+    base >= watermark), so no session is counted in both.
 
 NODE summary
 SQL >
@@ -30,12 +37,20 @@ SQL >
         fromUnixTimestamp64Milli(start_ms) AS start_dt,
         fromUnixTimestamp64Milli(end_ms) AS end_dt,
         fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt,
-        (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_rows
-    -- Both branches are scalar aggregates (no GROUP BY), so each emits one row even when
-    -- its rollup_rows guard filters out every input. Collapse the mutually-exclusive pair
-    -- to a single row by re-aggregating the union; the all-zero row of the inactive branch
-    -- contributes nothing. coverage_pct is a ratio, so it is recomputed from the collapsed
-    -- numerator/denominator rather than aggregated.
+        -- Lambda watermark = the rollup's latest bucket start: the rollup serves hours strictly
+        -- below it (fully-materialized only), the real-time branch serves everything at/after it
+        -- (including the latest still-partial hour). max() over an empty rollup is the DateTime
+        -- epoch (1970), so an unpopulated rollup hands the entire window to the real-time branch.
+        -- Computed per-org so one org's stale copy can't shift another's boundary.
+        (
+            SELECT max(BucketStart)
+            FROM agent_usage_1h
+            WHERE OrgId = {{ String(org_id, '') }}
+        ) AS rollup_watermark
+    -- The branches are scalar aggregates (no GROUP BY): the rollup side sums buckets below the
+    -- watermark, the real-time side sums raw rows at/above it, so together they cover the window
+    -- exactly once with no overlap. Collapse the pair to one row by re-aggregating the union;
+    -- coverage_pct is a ratio, recomputed from the collapsed numerator/denominator.
     SELECT
         round(sum(estimated_cost_usd), 6) AS estimated_cost_usd,
         sum(total_tokens) AS total_tokens,
@@ -71,7 +86,7 @@ SQL >
             countMergeIf(MessageCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_message_count,
             uniqMergeIf(SessionCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_session_count
         FROM agent_usage_1h
-        WHERE rollup_rows > 0
+        WHERE BucketStart < rollup_watermark
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= prior_start_dt
             AND BucketStart < end_dt
@@ -105,7 +120,7 @@ SQL >
             countIf(EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_message_count,
             uniqExactIf(session_pk, EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_session_count
         FROM agent_messages FINAL
-        WHERE rollup_rows = 0
+        WHERE EventAt >= rollup_watermark
             AND role = 'assistant'
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= prior_start_dt

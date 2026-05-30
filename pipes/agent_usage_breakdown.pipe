@@ -5,13 +5,17 @@ DESCRIPTION >
     and applies top-N/Other for repo, consistent with the hero chart. Rows cross-filter the
     page on click.
 
-    Rollup-first over agent_usage_1h (the canonical priced-usage hourly rollup), with a base
-    agent_messages FINAL fallback when the rollup is unpopulated (local dev / pre-first-copy).
-    A window total always reads the hourly rollup — daily buckets straddle sub-day window
-    boundaries, so hourly is the only grain that nests cleanly. cost_usd sums priced rows only
-    (an estimate, never billed spend). Honors the active filters (sources, models, repos).
-    org_id and retention_days are enforced via the JWT fixed_params. NOTE: session_count is
-    uniqMerge over an HLL state (~0.5-2% error) on the rollup path vs uniqExact on the fallback.
+    Lambda over agent_usage_1h (the canonical priced-usage hourly rollup) + the live tail of
+    agent_messages FINAL: the watermark is the rollup's latest bucket start (max(BucketStart)).
+    The rollup serves hours strictly below it (fully-materialized only), the base branch serves
+    rows at/after it (including the latest still-partial hour, live), so a stale or partial
+    rollup can never hide a dimension value. Both branches can contribute to the same
+    group_value (its rollup part + its live part), so the union is re-aggregated by group_value.
+    cost_usd sums priced rows only (an estimate, never billed spend). Honors the active filters
+    (sources, models, repos). org_id and retention_days are enforced via the JWT fixed_params.
+    NOTE: session_count is uniqMerge over an HLL state (~0.5-2% error) on the rollup branch vs
+    uniqExact on the live branch; the branches cover disjoint hour ranges so no session is
+    counted in both.
 
 NODE breakdown
 SQL >
@@ -21,8 +25,17 @@ SQL >
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_rows
-    SELECT * FROM (
+        -- Lambda watermark = rollup's latest bucket start: rollup serves hours strictly below it,
+        -- the base branch serves at/after it (incl. the latest partial hour). Empty rollup ->
+        -- epoch -> base serves everything.
+        (SELECT max(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
+    SELECT
+        group_value,
+        sum(message_count) AS message_count,
+        sum(session_count) AS session_count,
+        sum(total_tokens) AS total_tokens,
+        round(sum(cost_usd), 6) AS cost_usd
+    FROM (
         SELECT
             multiIf(
                 {{ String(dimension, 'source') }} = 'model', toString(model),
@@ -35,7 +48,7 @@ SQL >
                 + sumMerge(CacheCreationTokens) + sumMerge(ReasoningTokens) AS total_tokens,
             round(sumMerge(CostUsd), 6) AS cost_usd
         FROM agent_usage_1h
-        WHERE rollup_rows > 0
+        WHERE BucketStart < rollup_watermark
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -64,7 +77,7 @@ SQL >
             sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens) AS total_tokens,
             round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd
         FROM agent_messages FINAL
-        WHERE rollup_rows = 0
+        WHERE EventAt >= rollup_watermark
             AND role = 'assistant'
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= start_dt
@@ -81,6 +94,7 @@ SQL >
             {% end %}
         GROUP BY group_value
     )
+    GROUP BY group_value
     -- Order by the active metric so the LIMIT keeps the rows the UI will actually rank by
     -- (a high-token/low-cost dimension value must not be truncated before a tokens ranking).
     ORDER BY
