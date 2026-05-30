@@ -7,6 +7,11 @@
 # unknown is counted in event_count but excluded from the failure_rate denominator.
 # retention_days=20000 neutralizes the pipe's now()-relative tier floor for these
 # fixed-date fixtures without underflowing DateTime's 1970 floor (production passes 7..365).
+#
+# Lambda / watermark contract: rollups are empty in tests, so the lambda watermark is the
+# DateTime epoch (1970). The rollup branch (BucketStart < epoch) contributes nothing; the
+# real-time branch (EventAt >= epoch) covers the entire window — exactly the same data as
+# the old "rollup_rows = 0" fallback. All tests below exercise that real-time path.
 
 - name: leaderboard_floor_hides_single_failure
   description: min_events=5 hides Read (one failure, count 1); ranks by failure_rate
@@ -26,3 +31,52 @@
     {"tool_name":"Bash","command_family":"npm","event_count":5,"success_count":2,"failure_count":3,"unknown_count":0,"failure_rate":0.6}
     {"tool_name":"Bash","command_family":"git","event_count":5,"success_count":3,"failure_count":1,"unknown_count":1,"failure_rate":0.25}
     {"tool_name":"Edit","command_family":"","event_count":5,"success_count":5,"failure_count":0,"unknown_count":0,"failure_rate":0}
+
+- name: leaderboard_empty_org_returns_empty
+  description: org with no tool events has epoch watermark; base branch matches no OrgId -> empty result
+  expected_http_status: 200
+  parameters: org_id=org_unknown&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&min_events=1
+  expected_result: ''
+
+- name: leaderboard_window_before_all_events_returns_empty
+  description: a window entirely before any fixture events (2026-01-01 to 2026-01-02) -> no rows
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1735689600000&end_time_ms=1735776000000&retention_days=20000&min_events=1
+  expected_result: ''
+
+- name: leaderboard_source_filter_matches_all
+  description: all org_test events are source=claude; sources=claude passes everything through unchanged
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&min_events=5&sources=claude
+  expected_result: |
+    {"tool_name":"Bash","command_family":"npm","event_count":5,"success_count":2,"failure_count":3,"unknown_count":0,"failure_rate":0.6}
+    {"tool_name":"Bash","command_family":"git","event_count":5,"success_count":3,"failure_count":1,"unknown_count":1,"failure_rate":0.25}
+    {"tool_name":"Edit","command_family":"","event_count":5,"success_count":5,"failure_count":0,"unknown_count":0,"failure_rate":0}
+
+- name: leaderboard_source_filter_excludes_all
+  description: sources=codex filters out all org_test events (all are source=claude) -> empty
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&min_events=1&sources=codex
+  expected_result: ''
+
+- name: leaderboard_limit_truncates_result
+  description: limit=1 returns only the highest-failure-rate tool above the default floor
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&limit=1
+  expected_result: |
+    {"tool_name":"Bash","command_family":"npm","event_count":5,"success_count":2,"failure_count":3,"unknown_count":0,"failure_rate":0.6}
+
+- name: leaderboard_repo_filter_matches_all
+  description: all org_test events are in repo_abc; repo_fingerprint=repo_abc produces same ranking as unfiltered
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&min_events=5&repo_fingerprint=repo_abc
+  expected_result: |
+    {"tool_name":"Bash","command_family":"npm","event_count":5,"success_count":2,"failure_count":3,"unknown_count":0,"failure_rate":0.6}
+    {"tool_name":"Bash","command_family":"git","event_count":5,"success_count":3,"failure_count":1,"unknown_count":1,"failure_rate":0.25}
+    {"tool_name":"Edit","command_family":"","event_count":5,"success_count":5,"failure_count":0,"unknown_count":0,"failure_rate":0}
+
+- name: leaderboard_repo_filter_excludes_all
+  description: repo_fingerprint=repo_other matches no org_test events -> empty
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&min_events=1&repo_fingerprint=repo_other
+  expected_result: ''

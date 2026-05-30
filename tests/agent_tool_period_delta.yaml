@@ -8,9 +8,13 @@
 # Sorted by abs(count_delta) DESC, then tool_name, command_family.
 # retention_days=20000 neutralizes the pipe's now()-relative tier floor for these
 # fixed-date fixtures without underflowing DateTime's 1970 floor (production passes 7..365).
+#
+# Lambda / watermark contract: rollups are empty in tests so the watermark is the epoch.
+# The rollup branch (BucketStart < epoch) contributes 0 rows; the real-time branch
+# (EventAt >= epoch) covers both the current and prior windows in full.
 
 - name: period_delta_movers
-  description: ranks tools by absolute event-volume movement against the prior equal window
+  description: ranks tools by absolute event-volume movement against the prior equal window; real-time branch covers both windows when rollup watermark is epoch
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
   expected_result: |
@@ -18,3 +22,46 @@
     {"tool_name":"Bash","command_family":"git","current_count":5,"prior_count":2,"count_delta":3,"current_failures":1,"prior_failures":0,"failure_delta":1}
     {"tool_name":"Bash","command_family":"npm","current_count":5,"prior_count":2,"count_delta":3,"current_failures":3,"prior_failures":1,"failure_delta":2}
     {"tool_name":"Read","command_family":"grep","current_count":1,"prior_count":0,"count_delta":1,"current_failures":1,"prior_failures":0,"failure_delta":1}
+
+- name: delta_empty_window_returns_empty
+  description: window entirely before any fixture events; HAVING (current_count > 0 OR prior_count > 0) eliminates all rows
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1735689600000&end_time_ms=1735776000000&retention_days=20000
+  expected_result: ''
+
+- name: delta_unknown_org_returns_empty
+  description: org with no events; epoch watermark -> real-time base branch returns no rows for the unknown OrgId
+  expected_http_status: 200
+  parameters: org_id=org_unknown&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
+  expected_result: ''
+
+- name: delta_source_filter_matches_all
+  description: sources=claude covers all org_test events -> identical ranking to unfiltered
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sources=claude
+  expected_result: |
+    {"tool_name":"Edit","command_family":"","current_count":5,"prior_count":0,"count_delta":5,"current_failures":0,"prior_failures":0,"failure_delta":0}
+    {"tool_name":"Bash","command_family":"git","current_count":5,"prior_count":2,"count_delta":3,"current_failures":1,"prior_failures":0,"failure_delta":1}
+    {"tool_name":"Bash","command_family":"npm","current_count":5,"prior_count":2,"count_delta":3,"current_failures":3,"prior_failures":1,"failure_delta":2}
+    {"tool_name":"Read","command_family":"grep","current_count":1,"prior_count":0,"count_delta":1,"current_failures":1,"prior_failures":0,"failure_delta":1}
+
+- name: delta_source_filter_excludes_all
+  description: sources=codex excludes all org_test events (all are source=claude) -> empty
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sources=codex
+  expected_result: ''
+
+- name: delta_prior_period_has_no_events
+  description: window starting 2026-05-19 whose prior window [2026-05-18,2026-05-19) has no fixture data -> all prior counts 0
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779148800000&end_time_ms=1779235200000&retention_days=20000
+  expected_result: |
+    {"tool_name":"Bash","command_family":"git","current_count":2,"prior_count":0,"count_delta":2,"current_failures":0,"prior_failures":0,"failure_delta":0}
+    {"tool_name":"Bash","command_family":"npm","current_count":2,"prior_count":0,"count_delta":2,"current_failures":1,"prior_failures":0,"failure_delta":1}
+
+- name: delta_limit_param_truncates
+  description: limit=1 returns only the tool with the largest absolute count delta (Edit with +5)
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&limit=1
+  expected_result: |
+    {"tool_name":"Edit","command_family":"","current_count":5,"prior_count":0,"count_delta":5,"current_failures":0,"prior_failures":0,"failure_delta":0}

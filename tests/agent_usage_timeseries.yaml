@@ -1,6 +1,9 @@
 # Fixtures: fixtures/agent_messages.ndjson + fixtures/agent_tool_events.ndjson.
-# Rollups (agent_usage_1h/_1d, agent_tool_usage_1h) are empty in tests, so the pipe takes
-# the base-FINAL fallback path (the local-dev / pre-Copy-Pipe case).
+# Rollups (agent_usage_1h/_1d, agent_tool_usage_1h/_1d) are empty in tests, so all four
+# lambda watermarks (wm_h, wm_d, wm_th, wm_td) resolve to the DateTime epoch (1970).
+# The rollup branches (BucketStart < epoch) contribute nothing; the real-time branches
+# (EventAt >= epoch for usage/tool) cover the entire window — equivalent to the old
+# "rollup_rows = 0" fallback but via the new watermark-based predicate.
 # org_1c assistant Agent Messages (all claude / claude-opus-4-7), hourly buckets:
 #   2026-05-20 09:00  span1            -> 1 msg, in 100, out 0,   cost 0.5
 #   2026-05-20 10:00  cc1*4+sub1+sub2  -> 7 msg, in 400, out 130, cost 2.2, 3 sessions
@@ -85,4 +88,40 @@
   description: a window with no activity returns no rows
   expected_http_status: 200
   parameters: org_id=org_1c&start_time_ms=1735689600000&end_time_ms=1735776000000&retention_days=20000
+  expected_result: ''
+
+- name: timeseries_unknown_org_returns_empty
+  description: org with no data; all four watermarks are epoch; real-time branches filter to no rows
+  expected_http_status: 200
+  parameters: org_id=org_unknown&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000
+  expected_result: ''
+
+- name: timeseries_forced_daily_granularity_short_window
+  description: granularity=day on a 1-day window overrides auto (which would pick hourly); collapses 09:00 and 10:00 into one daily bucket
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&granularity=day
+  expected_result: |
+    {"bucket_start":"2026-05-20 00:00:00","group_value":"","message_count":8,"session_count":4,"input_tokens":500,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":630,"cost_usd":2.7,"priced_message_count":8,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
+
+- name: timeseries_forced_hourly_granularity_long_window
+  description: granularity=hour on a >30d window overrides auto (which would pick daily); produces one row per active hour across the full range
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1776211200000&end_time_ms=1779667200000&retention_days=20000&granularity=hour
+  expected_result: |
+    {"bucket_start":"2026-05-20 09:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"","message_count":7,"session_count":3,"input_tokens":400,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":530,"cost_usd":2.2,"priced_message_count":7,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-21 09:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+
+- name: timeseries_model_filter_excludes_tool_series
+  description: models=claude-opus-4-7 filters usage rows but leaves tool series unfiltered; tool counts are preserved
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&models=claude-opus-4-7
+  expected_result: |
+    {"bucket_start":"2026-05-20 09:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 10:00:00","group_value":"","message_count":7,"session_count":3,"input_tokens":400,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":530,"cost_usd":2.2,"priced_message_count":7,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
+
+- name: timeseries_source_filter_excludes_tool_series
+  description: sources=codex has no org_1c messages and no org_1c codex tool events -> empty (FULL OUTER JOIN produces no rows)
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sources=codex
   expected_result: ''

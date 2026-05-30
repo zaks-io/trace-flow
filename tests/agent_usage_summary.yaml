@@ -6,6 +6,12 @@
 # the prior-period deltas.
 # retention_days=20000 neutralizes the now()-relative tier floor for these fixed-date
 # fixtures (production passes 7..365).
+#
+# Lambda / watermark contract: rollups are empty in tests so the watermark is the epoch.
+# The rollup branch (BucketStart < epoch) contributes nothing; the real-time branch
+# (EventAt >= epoch) covers the full window. Both branches emit one scalar row each
+# (no GROUP BY), which are re-aggregated by the outer SELECT. The all-zero row from the
+# inactive rollup branch adds nothing, so the final row equals the real-time totals.
 
 - name: summary_current_with_coverage
   description: current-period KPIs + coverage over billable turns; prior window is empty
@@ -34,3 +40,31 @@
   parameters: org_id=org_1c&start_time_ms=1779321600000&end_time_ms=1779408000000&retention_days=20000
   expected_result: |
     {"estimated_cost_usd":0.5,"total_tokens":100,"message_count":1,"session_count":1,"priced_message_count":1,"coverage_pct":1,"prior_cost_usd":2.7,"prior_total_tokens":630,"prior_message_count":8,"prior_session_count":4}
+
+- name: summary_empty_window_returns_zeros
+  description: window before any fixture events; scalar aggregate always returns one row; message_count=0 -> coverage_pct=null
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1735689600000&end_time_ms=1735776000000&retention_days=20000
+  expected_result: |
+    {"estimated_cost_usd":0,"total_tokens":0,"message_count":0,"session_count":0,"priced_message_count":0,"coverage_pct":null,"prior_cost_usd":0,"prior_total_tokens":0,"prior_message_count":0,"prior_session_count":0}
+
+- name: summary_unknown_org_returns_zeros
+  description: org with no messages; epoch watermark means real-time branch filters to 0 rows; scalar still emits one zero row
+  expected_http_status: 200
+  parameters: org_id=org_unknown&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
+  expected_result: |
+    {"estimated_cost_usd":0,"total_tokens":0,"message_count":0,"session_count":0,"priced_message_count":0,"coverage_pct":null,"prior_cost_usd":0,"prior_total_tokens":0,"prior_message_count":0,"prior_session_count":0}
+
+- name: summary_repo_filter
+  description: repos=repo_cov (all org_cov messages are in repo_cov) -> same KPIs as unfiltered
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&repos=repo_cov
+  expected_result: |
+    {"estimated_cost_usd":1,"total_tokens":90,"message_count":4,"session_count":2,"priced_message_count":3,"coverage_pct":0.75,"prior_cost_usd":0,"prior_total_tokens":0,"prior_message_count":0,"prior_session_count":0}
+
+- name: summary_repo_filter_excludes_all
+  description: repos=repo_other matches no org_cov messages -> all zeros, coverage_pct null
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&repos=repo_other
+  expected_result: |
+    {"estimated_cost_usd":0,"total_tokens":0,"message_count":0,"session_count":0,"priced_message_count":0,"coverage_pct":null,"prior_cost_usd":0,"prior_total_tokens":0,"prior_message_count":0,"prior_session_count":0}

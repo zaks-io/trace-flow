@@ -1,7 +1,14 @@
-# Fixtures: fixtures/agent_messages.ndjson (org_cov).
+# Fixtures: fixtures/agent_messages.ndjson (org_cov, org_repo).
 # org_cov assistant turns at 2026-05-20 10:00: claude/claude-opus-4-7 {0.2, 0.3},
 #   claude/composer-1 {null}, codex/gpt-5.5 {0.5}. Ranked by cost desc, then group_value.
 # retention_days=20000 neutralizes the now()-relative tier floor (production passes 7..365).
+#
+# Lambda / watermark contract: rollups are empty in tests so the watermark is the epoch.
+# The rollup branch (BucketStart < epoch) contributes nothing; the real-time branch
+# (EventAt >= epoch) feeds into the outer GROUP BY group_value re-aggregation that this
+# PR added. With a populated rollup, both branches can contribute to the same group_value
+# (rollup portion + live tail); the outer re-aggregation merges them correctly.
+# All tests below verify correctness through the empty-rollup / real-time-only path.
 
 - name: breakdown_by_source
   description: ranked aggregates per source; cost sums priced rows only
@@ -35,3 +42,46 @@
   parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=source&sources=codex
   expected_result: |
     {"group_value":"codex","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}
+
+- name: breakdown_by_repo
+  description: dimension=repo groups all org_cov messages by repo_fingerprint; all are in repo_cov -> one row
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=repo
+  expected_result: |
+    {"group_value":"repo_cov","message_count":4,"session_count":2,"total_tokens":90,"cost_usd":1}
+
+- name: breakdown_empty_window_returns_empty
+  description: window before all fixture events has no matching rows; outer GROUP BY produces no output
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1735689600000&end_time_ms=1735776000000&retention_days=20000&dimension=source
+  expected_result: ''
+
+- name: breakdown_unknown_org_returns_empty
+  description: org with no messages; epoch watermark -> real-time branch filters to no rows -> empty
+  expected_http_status: 200
+  parameters: org_id=org_unknown&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=source
+  expected_result: ''
+
+- name: breakdown_model_filter_excludes_all
+  description: models=nonexistent filters out every row -> empty
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=model&models=nonexistent-model
+  expected_result: ''
+
+- name: breakdown_order_by_tokens
+  description: order_by=total_tokens ranks by token volume; claude-opus-4-7 has most tokens (60)
+  expected_http_status: 200
+  parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=model&order_by=total_tokens
+  expected_result: |
+    {"group_value":"claude-opus-4-7","message_count":2,"session_count":1,"total_tokens":60,"cost_usd":0.5}
+    {"group_value":"gpt-5.5","message_count":1,"session_count":1,"total_tokens":30,"cost_usd":0.5}
+    {"group_value":"composer-1","message_count":1,"session_count":1,"total_tokens":0,"cost_usd":0}
+
+- name: breakdown_multi_repo_separate_rows
+  description: org_repo has three repos; dimension=repo splits them into three rows ordered by cost desc
+  expected_http_status: 200
+  parameters: org_id=org_repo&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&dimension=repo
+  expected_result: |
+    {"group_value":"fp_gh","message_count":1,"session_count":1,"total_tokens":150,"cost_usd":3}
+    {"group_value":"fp_local","message_count":1,"session_count":1,"total_tokens":120,"cost_usd":1}
+    {"group_value":"fp_bare","message_count":1,"session_count":1,"total_tokens":60,"cost_usd":0.6}
