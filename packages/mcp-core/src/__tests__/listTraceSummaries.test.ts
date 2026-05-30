@@ -1,23 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { listTraceSummaries } from '../tools/listTraceSummaries';
-import type { TinybirdAccessCtx } from '../tools/tinybirdAccess';
+import type { ToolCtx } from '../tinybird';
 
-const mockCtx = {
-  runAction: vi.fn().mockResolvedValue('mock-jwt-token'),
-} as unknown as TinybirdAccessCtx;
+const mockCtx: ToolCtx = {
+  mintToken: vi.fn().mockResolvedValue('mock-jwt-token'),
+  tinybirdBaseUrl: 'https://api.tinybird.co',
+};
 
 describe('listTraceSummaries', () => {
   const originalFetch = globalThis.fetch;
 
-  beforeEach(() => {
-    vi.stubEnv('TINYBIRD_ADMIN_TOKEN', 'admin-token-secret');
-    vi.stubEnv('TINYBIRD_WORKSPACE_ID', 'workspace-123');
-    vi.stubEnv('TINYBIRD_API_URL', 'https://api.tinybird.co');
-  });
-
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    vi.unstubAllEnvs();
   });
 
   it('returns aggregated trace summaries with pagination', async () => {

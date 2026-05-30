@@ -77,39 +77,39 @@ describe('list_traces tool definition', () => {
 
     it('has provider parameter', () => {
       expect(props.provider).toBeDefined();
-      expect(props.provider.type).toBe('string');
+      expect(props.provider!.type).toBe('string');
     });
 
     it('has model parameter', () => {
       expect(props.model).toBeDefined();
-      expect(props.model.type).toBe('string');
+      expect(props.model!.type).toBe('string');
     });
 
     it('has status parameter with enum', () => {
       expect(props.status).toBeDefined();
-      expect(props.status.type).toBe('string');
-      expect(props.status.enum).toContain('STATUS_CODE_OK');
-      expect(props.status.enum).toContain('STATUS_CODE_ERROR');
+      expect(props.status!.type).toBe('string');
+      expect(props.status!.enum).toContain('STATUS_CODE_OK');
+      expect(props.status!.enum).toContain('STATUS_CODE_ERROR');
     });
 
     it('has limit parameter', () => {
       expect(props.limit).toBeDefined();
-      expect(props.limit.type).toBe('number');
+      expect(props.limit!.type).toBe('number');
     });
 
     it('has hours parameter', () => {
       expect(props.hours).toBeDefined();
-      expect(props.hours.type).toBe('number');
+      expect(props.hours!.type).toBe('number');
     });
 
     it('has cursor parameter', () => {
       expect(props.cursor).toBeDefined();
-      expect(props.cursor.type).toBe('string');
+      expect(props.cursor!.type).toBe('string');
     });
 
     it('has api_key_ids parameter as array', () => {
       expect(props.api_key_ids).toBeDefined();
-      expect(props.api_key_ids.type).toBe('array');
+      expect(props.api_key_ids!.type).toBe('array');
     });
   });
 });
@@ -139,7 +139,7 @@ describe('get_trace tool definition', () => {
 
     it('has trace_id parameter', () => {
       expect(props.trace_id).toBeDefined();
-      expect(props.trace_id.type).toBe('string');
+      expect(props.trace_id!.type).toBe('string');
     });
 
     it('only has trace_id and api_key_ids parameters', () => {
@@ -148,7 +148,7 @@ describe('get_trace tool definition', () => {
 
     it('has api_key_ids parameter as array', () => {
       expect(props.api_key_ids).toBeDefined();
-      expect(props.api_key_ids.type).toBe('array');
+      expect(props.api_key_ids!.type).toBe('array');
     });
   });
 });
@@ -176,24 +176,24 @@ describe('list_trace_summaries tool definition', () => {
 
     it('has operation filter parameter', () => {
       expect(props.operation).toBeDefined();
-      expect(props.operation.type).toBe('string');
+      expect(props.operation!.type).toBe('string');
     });
 
     it('has trace_id parameter', () => {
       expect(props.trace_id).toBeDefined();
-      expect(props.trace_id.type).toBe('string');
+      expect(props.trace_id!.type).toBe('string');
     });
 
     it('has sort_by parameter', () => {
       expect(props.sort_by).toBeDefined();
-      expect(props.sort_by.enum).toContain('duration_ms');
-      expect(props.sort_by.enum).toContain('cost_usd');
-      expect(props.sort_by.enum).toContain('tokens');
+      expect(props.sort_by!.enum).toContain('duration_ms');
+      expect(props.sort_by!.enum).toContain('cost_usd');
+      expect(props.sort_by!.enum).toContain('tokens');
     });
 
     it('has api_key_ids parameter as array', () => {
       expect(props.api_key_ids).toBeDefined();
-      expect(props.api_key_ids.type).toBe('array');
+      expect(props.api_key_ids!.type).toBe('array');
     });
   });
 });
@@ -223,16 +223,16 @@ describe('get_trace_spans tool definition', () => {
 
     it('has trace_id parameter', () => {
       expect(props.trace_id).toBeDefined();
-      expect(props.trace_id.type).toBe('string');
+      expect(props.trace_id!.type).toBe('string');
     });
 
     it('has expand parameter as array', () => {
       expect(props.expand).toBeDefined();
-      expect(props.expand.type).toBe('array');
+      expect(props.expand!.type).toBe('array');
     });
 
     it('expand has valid enum items', () => {
-      const expandItems = props.expand.items as { enum: string[] };
+      const expandItems = props.expand!.items as { enum: string[] };
       expect(expandItems.enum).toContain('provider');
       expect(expandItems.enum).toContain('model');
       expect(expandItems.enum).toContain('tokens');
@@ -247,47 +247,47 @@ describe('get_trace_spans tool definition', () => {
 
     it('has limit parameter', () => {
       expect(props.limit).toBeDefined();
-      expect(props.limit.type).toBe('number');
-      expect(props.limit.description).toContain('default 20');
+      expect(props.limit!.type).toBe('number');
+      expect(props.limit!.description).toContain('default 20');
     });
 
     it('has cursor parameter', () => {
       expect(props.cursor).toBeDefined();
-      expect(props.cursor.type).toBe('string');
+      expect(props.cursor!.type).toBe('string');
     });
 
     it('has span_names parameter as array', () => {
       expect(props.span_names).toBeDefined();
-      expect(props.span_names.type).toBe('array');
-      expect(props.span_names.description).toContain('chat *');
+      expect(props.span_names!.type).toBe('array');
+      expect(props.span_names!.description).toContain('chat *');
     });
 
     it('has top_n parameter', () => {
       expect(props.top_n).toBeDefined();
-      expect(props.top_n.type).toBe('number');
+      expect(props.top_n!.type).toBe('number');
     });
 
     it('has sort_by parameter with enum', () => {
       expect(props.sort_by).toBeDefined();
-      expect(props.sort_by.type).toBe('string');
-      expect(props.sort_by.enum).toContain('duration_ms');
-      expect(props.sort_by.enum).toContain('cost_usd');
-      expect(props.sort_by.enum).toContain('tokens');
+      expect(props.sort_by!.type).toBe('string');
+      expect(props.sort_by!.enum).toContain('duration_ms');
+      expect(props.sort_by!.enum).toContain('cost_usd');
+      expect(props.sort_by!.enum).toContain('tokens');
     });
 
     it('has min_duration_ms parameter', () => {
       expect(props.min_duration_ms).toBeDefined();
-      expect(props.min_duration_ms.type).toBe('number');
+      expect(props.min_duration_ms!.type).toBe('number');
     });
 
     it('has exclude_span_names parameter as array', () => {
       expect(props.exclude_span_names).toBeDefined();
-      expect(props.exclude_span_names.type).toBe('array');
+      expect(props.exclude_span_names!.type).toBe('array');
     });
 
     it('has api_key_ids parameter as array', () => {
       expect(props.api_key_ids).toBeDefined();
-      expect(props.api_key_ids.type).toBe('array');
+      expect(props.api_key_ids!.type).toBe('array');
     });
   });
 });
@@ -318,45 +318,45 @@ describe('get_trace_events tool definition', () => {
 
     it('has trace_id parameter', () => {
       expect(props.trace_id).toBeDefined();
-      expect(props.trace_id.type).toBe('string');
+      expect(props.trace_id!.type).toBe('string');
     });
 
     it('has span_id parameter', () => {
       expect(props.span_id).toBeDefined();
-      expect(props.span_id.type).toBe('string');
+      expect(props.span_id!.type).toBe('string');
     });
 
     it('has span_names parameter as array', () => {
       expect(props.span_names).toBeDefined();
-      expect(props.span_names.type).toBe('array');
-      expect(props.span_names.description).toContain('chat *');
+      expect(props.span_names!.type).toBe('array');
+      expect(props.span_names!.description).toContain('chat *');
     });
 
     it('has event_names parameter as array', () => {
       expect(props.event_names).toBeDefined();
-      expect(props.event_names.type).toBe('array');
+      expect(props.event_names!.type).toBe('array');
     });
 
     it('has order parameter with enum', () => {
       expect(props.order).toBeDefined();
-      expect(props.order.type).toBe('string');
-      expect(props.order.enum).toContain('asc');
-      expect(props.order.enum).toContain('desc');
+      expect(props.order!.type).toBe('string');
+      expect(props.order!.enum).toContain('asc');
+      expect(props.order!.enum).toContain('desc');
     });
 
     it('has limit parameter', () => {
       expect(props.limit).toBeDefined();
-      expect(props.limit.type).toBe('number');
+      expect(props.limit!.type).toBe('number');
     });
 
     it('has cursor parameter', () => {
       expect(props.cursor).toBeDefined();
-      expect(props.cursor.type).toBe('string');
+      expect(props.cursor!.type).toBe('string');
     });
 
     it('has api_key_ids parameter as array', () => {
       expect(props.api_key_ids).toBeDefined();
-      expect(props.api_key_ids.type).toBe('array');
+      expect(props.api_key_ids!.type).toBe('array');
     });
   });
 });

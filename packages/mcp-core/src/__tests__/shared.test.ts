@@ -48,8 +48,8 @@ describe('noApiKeysError', () => {
   it('returns text content about no API keys', () => {
     const result = noApiKeysError();
     expect(result.content).toHaveLength(1);
-    expect(result.content[0].type).toBe('text');
-    expect(result.content[0].text).toContain('No API keys');
+    expect(result.content[0]!.type).toBe('text');
+    expect(result.content[0]!.text).toContain('No API keys');
   });
 });
 
@@ -62,9 +62,9 @@ describe('invalidTraceIdError', () => {
   it('returns text content about invalid trace ID', () => {
     const result = invalidTraceIdError();
     expect(result.content).toHaveLength(1);
-    expect(result.content[0].type).toBe('text');
-    expect(result.content[0].text).toContain('Invalid trace ID');
-    expect(result.content[0].text).toContain('32-character hex');
+    expect(result.content[0]!.type).toBe('text');
+    expect(result.content[0]!.text).toContain('Invalid trace ID');
+    expect(result.content[0]!.text).toContain('32-character hex');
   });
 });
 
@@ -77,14 +77,14 @@ describe('traceNotFoundError', () => {
   it('includes trace ID in error message', () => {
     const traceId = 'abcdef0123456789abcdef0123456789';
     const result = traceNotFoundError(traceId);
-    expect(result.content[0].text).toContain(traceId);
+    expect(result.content[0]!.text).toContain(traceId);
   });
 
   it('returns text content about trace not found', () => {
     const result = traceNotFoundError('test123');
     expect(result.content).toHaveLength(1);
-    expect(result.content[0].type).toBe('text');
-    expect(result.content[0].text).toContain('Trace not found');
+    expect(result.content[0]!.type).toBe('text');
+    expect(result.content[0]!.text).toContain('Trace not found');
   });
 });
 

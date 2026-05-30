@@ -10,7 +10,7 @@ import {
   MAX_SPAN_LIMIT,
   splitPatterns,
 } from './shared';
-import { generateMcpToken, queryPipe, type TinybirdAccessCtx } from './tinybirdAccess';
+import { queryPipe, type ToolCtx } from '../tinybird';
 import { parseSpanRow, buildOutputSpan, type SpanRow } from '../helpers/getTrace';
 
 interface SpanRowWithCount extends SpanRow {
@@ -31,12 +31,12 @@ interface GetTraceSpansParams {
 }
 
 export async function getTraceSpans(
-  ctx: TinybirdAccessCtx,
-  apiKeys: string[],
+  ctx: ToolCtx,
+  apiKeyIds: string[],
   params: GetTraceSpansParams,
   retentionDays: number,
 ): Promise<ToolCallResult> {
-  if (apiKeys.length === 0) {
+  if (apiKeyIds.length === 0) {
     return noApiKeysError();
   }
 
@@ -44,10 +44,9 @@ export async function getTraceSpans(
     return invalidTraceIdError();
   }
 
-  const token = await generateMcpToken(
-    ctx,
+  const token = await ctx.mintToken(
     [{ type: 'PIPES:READ', resource: 'mcp_trace_detail' }],
-    apiKeys,
+    apiKeyIds,
     retentionDays,
   );
 
@@ -93,7 +92,7 @@ export async function getTraceSpans(
     detailParams.order = 'desc';
   }
 
-  const data = await queryPipe(token, 'mcp_trace_detail', detailParams);
+  const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_detail', detailParams);
 
   if (data.length === 0) {
     return traceNotFoundError(params.trace_id);

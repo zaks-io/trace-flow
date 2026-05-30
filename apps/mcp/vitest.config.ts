@@ -6,8 +6,10 @@ export default defineConfig({
     cloudflareTest({
       miniflare: {
         bindings: {
-          BODY_ENCRYPTION_ROOT_KEY: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
-          BODY_ENCRYPTION_KEY_ID: 'v1',
+          CONNECT_BASE_URL: 'https://connect.test',
+          TINYBIRD_API_URL: 'https://api.tinybird.test',
+          MCP_BACKEND_SHARED_SECRET: 'test-backend-secret',
+          MCP_SESSION_SECRET: 'test-session-secret-at-least-32-bytes-long',
         },
       },
       wrangler: {

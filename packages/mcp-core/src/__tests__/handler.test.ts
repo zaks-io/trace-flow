@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-  isRequest,
-  isNotification,
-  createErrorResponse,
-  createSuccessResponse,
-  resolveApiKeys,
-} from '../handler';
+import { isRequest, isNotification, createErrorResponse, createSuccessResponse } from '../handler';
+import { resolveApiKeyIds } from '../backend';
 import { JsonRpcErrorCode } from '../protocol';
 import type { JsonRpcMessage } from '../protocol';
 
@@ -184,56 +179,57 @@ describe('createSuccessResponse', () => {
   });
 });
 
-describe('resolveApiKeys', () => {
+describe('resolveApiKeyIds', () => {
   const allKeys = [
-    { _id: 'key-1', key: 'raw-secret-1' },
-    { _id: 'key-2', key: 'raw-secret-2' },
-    { _id: 'key-3', key: 'raw-secret-3' },
+    { id: 'key-1', name: null, expiresAt: Number.MAX_SAFE_INTEGER },
+    { id: 'key-2', name: null, expiresAt: Number.MAX_SAFE_INTEGER },
+    { id: 'key-3', name: null, expiresAt: Number.MAX_SAFE_INTEGER },
   ];
 
-  it('returns all keys when requestedIds is undefined', () => {
-    const result = resolveApiKeys(allKeys, undefined);
-    expect(result).toEqual(['raw-secret-1', 'raw-secret-2', 'raw-secret-3']);
-  });
-
-  it('returns all keys when requestedIds is empty', () => {
-    const result = resolveApiKeys(allKeys, []);
-    expect(result).toEqual(['raw-secret-1', 'raw-secret-2', 'raw-secret-3']);
-  });
-
-  it('returns only matching keys when valid IDs provided', () => {
-    const result = resolveApiKeys(allKeys, ['key-1', 'key-3']);
-    expect(result).toEqual(['raw-secret-1', 'raw-secret-3']);
-  });
-
-  it('returns single matching key', () => {
-    const result = resolveApiKeys(allKeys, ['key-2']);
-    expect(result).toEqual(['raw-secret-2']);
-  });
-
-  it('returns error when an ID does not exist', () => {
-    const result = resolveApiKeys(allKeys, ['key-1', 'key-unknown']);
-    expect(result).toEqual({
-      error: 'Invalid or unauthorized API key IDs: key-unknown',
+  it('returns all ids when requestedIds is undefined', () => {
+    expect(resolveApiKeyIds(allKeys, undefined)).toEqual({
+      ok: true,
+      keyIds: ['key-1', 'key-2', 'key-3'],
     });
   });
 
-  it('returns error listing all invalid IDs', () => {
-    const result = resolveApiKeys(allKeys, ['bad-1', 'bad-2']);
-    expect(result).toEqual({
-      error: 'Invalid or unauthorized API key IDs: bad-1, bad-2',
+  it('returns all ids when requestedIds is empty', () => {
+    expect(resolveApiKeyIds(allKeys, [])).toEqual({
+      ok: true,
+      keyIds: ['key-1', 'key-2', 'key-3'],
     });
   });
 
-  it('returns empty array when allKeys is empty and no IDs requested', () => {
-    const result = resolveApiKeys([], undefined);
-    expect(result).toEqual([]);
+  it('returns only matching ids when valid IDs provided', () => {
+    expect(resolveApiKeyIds(allKeys, ['key-1', 'key-3'])).toEqual({
+      ok: true,
+      keyIds: ['key-1', 'key-3'],
+    });
   });
 
-  it('returns error when allKeys is empty but IDs are requested', () => {
-    const result = resolveApiKeys([], ['key-1']);
-    expect(result).toEqual({
-      error: 'Invalid or unauthorized API key IDs: key-1',
+  it('returns single matching id', () => {
+    expect(resolveApiKeyIds(allKeys, ['key-2'])).toEqual({ ok: true, keyIds: ['key-2'] });
+  });
+
+  it('flags an ID that does not exist', () => {
+    expect(resolveApiKeyIds(allKeys, ['key-1', 'key-unknown'])).toEqual({
+      ok: false,
+      invalidIds: ['key-unknown'],
     });
+  });
+
+  it('flags all invalid IDs', () => {
+    expect(resolveApiKeyIds(allKeys, ['bad-1', 'bad-2'])).toEqual({
+      ok: false,
+      invalidIds: ['bad-1', 'bad-2'],
+    });
+  });
+
+  it('returns empty id list when allKeys is empty and no IDs requested', () => {
+    expect(resolveApiKeyIds([], undefined)).toEqual({ ok: true, keyIds: [] });
+  });
+
+  it('flags requested IDs when allKeys is empty', () => {
+    expect(resolveApiKeyIds([], ['key-1'])).toEqual({ ok: false, invalidIds: ['key-1'] });
   });
 });

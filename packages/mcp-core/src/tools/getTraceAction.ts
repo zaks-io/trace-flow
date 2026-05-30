@@ -7,7 +7,7 @@ import {
   traceNotFoundError,
   TRACE_ID_PATTERN,
 } from './shared';
-import { generateMcpToken, queryPipe, type TinybirdAccessCtx } from './tinybirdAccess';
+import { queryPipe, type ToolCtx } from '../tinybird';
 
 interface SummaryRow {
   span_count: number;
@@ -40,12 +40,12 @@ interface GetTraceParams {
 }
 
 export async function getTrace(
-  ctx: TinybirdAccessCtx,
-  apiKeys: string[],
+  ctx: ToolCtx,
+  apiKeyIds: string[],
   params: GetTraceParams,
   retentionDays: number,
 ): Promise<ToolCallResult> {
-  if (apiKeys.length === 0) {
+  if (apiKeyIds.length === 0) {
     return noApiKeysError();
   }
 
@@ -54,19 +54,18 @@ export async function getTrace(
   }
 
   const pipes = ['mcp_trace_summary', 'mcp_trace_by_provider', 'mcp_trace_by_model'];
-  const token = await generateMcpToken(
-    ctx,
+  const token = await ctx.mintToken(
     pipes.map((p) => ({ type: 'PIPES:READ', resource: p })),
-    apiKeys,
+    apiKeyIds,
     retentionDays,
   );
 
   const baseParams = { trace_id: params.trace_id };
 
   const [summaryData, byProviderData, byModelData] = await Promise.all([
-    queryPipe(token, 'mcp_trace_summary', baseParams),
-    queryPipe(token, 'mcp_trace_by_provider', baseParams),
-    queryPipe(token, 'mcp_trace_by_model', baseParams),
+    queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_summary', baseParams),
+    queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_provider', baseParams),
+    queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_model', baseParams),
   ]);
 
   const summaryRow = summaryData[0] as unknown as SummaryRow | undefined;

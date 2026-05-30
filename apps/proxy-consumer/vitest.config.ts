@@ -1,6 +1,26 @@
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
+import { defineConfig } from 'vitest/config';
 
-export default defineWorkersConfig({
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: {
+        configPath: './wrangler.toml',
+      },
+      miniflare: {
+        queueConsumers: {
+          'trace-flow-requests-dev': {
+            maxBatchSize: 100,
+            maxBatchTimeout: 5,
+            maxRetries: 5,
+            deadLetterQueue: 'trace-flow-requests-dlq-dev',
+          },
+        },
+      },
+      isolatedStorage: false,
+      singleWorker: true,
+    }),
+  ],
   test: {
     globals: true,
     reporters: ['dot'],
@@ -9,25 +29,6 @@ export default defineWorkersConfig({
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json-summary', 'json', 'html'],
-    },
-    poolOptions: {
-      workers: {
-        wrangler: {
-          configPath: './wrangler.toml',
-        },
-        miniflare: {
-          queueConsumers: {
-            'trace-flow-requests-dev': {
-              maxBatchSize: 100,
-              maxBatchTimeout: 5,
-              maxRetries: 5,
-              deadLetterQueue: 'trace-flow-requests-dlq-dev',
-            },
-          },
-        },
-        isolatedStorage: false,
-        singleWorker: true,
-      },
     },
   },
 });

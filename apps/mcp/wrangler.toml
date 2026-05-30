@@ -1,0 +1,64 @@
+name = "trace-flow-mcp-dev"
+main = "src/index.ts"
+compatibility_date = "2024-11-27"
+compatibility_flags = ["nodejs_compat", "no_nodejs_compat_v2"]
+upload_source_maps = true
+
+logpush = true
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+# Secrets: MCP_BACKEND_SHARED_SECRET, MCP_SESSION_SECRET, AXIOM_TOKEN, SENTRY_DSN
+
+[vars]
+CONNECT_BASE_URL = "http://127.0.0.1:3211"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
+SENTRY_ENVIRONMENT = "development"
+AXIOM_DATASET = "cloudflare"
+
+# Per-IP rate limit on the MCP endpoint (the public, user-facing surface)
+[[ratelimits]]
+name = "MCP_LIMITER"
+namespace_id = "2006"
+simple = { limit = 120, period = 60 }
+
+[env.production]
+name = "trace-flow-mcp"
+workers_dev = false
+
+[env.production.vars]
+CONNECT_BASE_URL = "https://connect.trace-flow.dev"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
+SENTRY_ENVIRONMENT = "production"
+AXIOM_DATASET = "cloudflare"
+
+[[env.production.routes]]
+pattern = "mcp.trace-flow.dev/*"
+zone_name = "trace-flow.dev"
+
+[[env.production.ratelimits]]
+name = "MCP_LIMITER"
+namespace_id = "2006"
+simple = { limit = 120, period = 60 }
+
+[env.preview]
+name = "trace-flow-mcp-preview"
+
+[env.preview.vars]
+CONNECT_BASE_URL = "https://connect.trace-flow.dev"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
+SENTRY_ENVIRONMENT = "preview"
+AXIOM_DATASET = "cloudflare"
+
+[[env.preview.ratelimits]]
+name = "MCP_LIMITER"
+namespace_id = "2006"
+simple = { limit = 120, period = 60 }

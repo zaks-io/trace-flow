@@ -1,23 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getUsageSummary, listModelUsage, listOperationUsage } from '../tools/analytics';
-import type { TinybirdAccessCtx } from '../tools/tinybirdAccess';
+import type { ToolCtx } from '../tinybird';
 
-const mockCtx = {
-  runAction: vi.fn().mockResolvedValue('mock-jwt-token'),
-} as unknown as TinybirdAccessCtx;
+const mockCtx: ToolCtx = {
+  mintToken: vi.fn().mockResolvedValue('mock-jwt-token'),
+  tinybirdBaseUrl: 'https://api.tinybird.co',
+};
 
 describe('analytics MCP helpers', () => {
   const originalFetch = globalThis.fetch;
 
-  beforeEach(() => {
-    vi.stubEnv('TINYBIRD_ADMIN_TOKEN', 'admin-token-secret');
-    vi.stubEnv('TINYBIRD_WORKSPACE_ID', 'workspace-123');
-    vi.stubEnv('TINYBIRD_API_URL', 'https://api.tinybird.co');
-  });
-
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    vi.unstubAllEnvs();
   });
 
   it('formats usage summary totals and error rate', async () => {

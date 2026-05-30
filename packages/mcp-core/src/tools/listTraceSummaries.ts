@@ -1,6 +1,6 @@
 import type { ToolCallResult } from '../protocol';
 import { buildTimeRangeNs, jsonReplacer, noApiKeysError, stripNulls } from './shared';
-import { generateMcpToken, queryPipe, type TinybirdAccessCtx } from './tinybirdAccess';
+import { queryPipe, type ToolCtx } from '../tinybird';
 
 const DEFAULT_TRACE_SUMMARY_LIMIT = 20;
 const MAX_TRACE_SUMMARY_LIMIT = 100;
@@ -72,19 +72,18 @@ function formatTraceSummaryRow(row: TraceSummaryRow) {
 }
 
 export async function listTraceSummaries(
-  ctx: TinybirdAccessCtx,
-  apiKeys: string[],
+  ctx: ToolCtx,
+  apiKeyIds: string[],
   params: ListTraceSummariesParams,
   retentionDays: number,
 ): Promise<ToolCallResult> {
-  if (apiKeys.length === 0) {
+  if (apiKeyIds.length === 0) {
     return noApiKeysError();
   }
 
-  const token = await generateMcpToken(
-    ctx,
+  const token = await ctx.mintToken(
     [{ type: 'PIPES:READ', resource: 'mcp_trace_summaries' }],
-    apiKeys,
+    apiKeyIds,
     retentionDays,
   );
 
@@ -106,7 +105,7 @@ export async function listTraceSummaries(
   if (params.sort_by) pipeParams.sort_by = params.sort_by;
   if (params.order) pipeParams.order = params.order;
 
-  const data = await queryPipe(token, 'mcp_trace_summaries', pipeParams);
+  const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_summaries', pipeParams);
   const rows = data as unknown as TraceSummaryRow[];
   const totalCount = rows.length > 0 ? rows[0]!.total_count : 0;
   const hasMore = totalCount > offset + rows.length;
