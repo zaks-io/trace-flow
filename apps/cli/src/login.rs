@@ -160,7 +160,9 @@ fn parse_callback(raw_url: &str, expected_state: &str) -> Result<CallbackOutcome
     }
 
     if let Some(err) = params.get("error") {
-        return Ok(CallbackOutcome::Result(Err(format!("login rejected: {err}"))));
+        return Ok(CallbackOutcome::Result(Err(format!(
+            "login rejected: {err}"
+        ))));
     }
 
     let get = |k: &str| params.get(k).cloned();
@@ -172,7 +174,7 @@ fn parse_callback(raw_url: &str, expected_state: &str) -> Result<CallbackOutcome
         get("convex_url"),
     ) else {
         return Ok(CallbackOutcome::Result(Err(
-            "callback missing required fields".to_string()
+            "callback missing required fields".to_string(),
         )));
     };
 
@@ -257,7 +259,8 @@ mod tests {
 
     #[test]
     fn parse_callback_rejects_missing_fields() {
-        let result = result_of(parse_callback("/callback?state=nonce1&secret=only", "nonce1").unwrap());
+        let result =
+            result_of(parse_callback("/callback?state=nonce1&secret=only", "nonce1").unwrap());
         assert!(result.is_err());
     }
 

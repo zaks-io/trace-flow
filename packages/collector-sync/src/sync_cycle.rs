@@ -700,7 +700,10 @@ mod tests {
                 .unwrap();
 
         assert_eq!(client.calls.get(), 1, "all sessions rode one batched POST");
-        assert_eq!(report.advanced, 3, "every batched session's cursor advanced");
+        assert_eq!(
+            report.advanced, 3,
+            "every batched session's cursor advanced"
+        );
         assert_eq!(report.failed, 0);
         for p in ["/a.jsonl", "/b.jsonl", "/c.jsonl"] {
             assert!(store.get(AgentSource::Claude, p).unwrap().is_some());
@@ -724,7 +727,14 @@ mod tests {
             max_concurrent_uploads: 2,
         };
         let (report, _) = run_sync_cycle_tuned(
-            &client, &store, &mut orch, &meta(), &units, &mut mint, None, tuning,
+            &client,
+            &store,
+            &mut orch,
+            &meta(),
+            &units,
+            &mut mint,
+            None,
+            tuning,
         )
         .await
         .unwrap();

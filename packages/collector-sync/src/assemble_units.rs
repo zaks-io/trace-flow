@@ -351,7 +351,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(unit.ctx.normalized_git_remote, "github.com/pingdotgg/t3code");
+        assert_eq!(
+            unit.ctx.normalized_git_remote,
+            "github.com/pingdotgg/t3code"
+        );
         assert_eq!(
             unit.ctx.vendor_session_id,
             "019e3d03-6b35-74c0-9dd1-c40bdbb6af72"
