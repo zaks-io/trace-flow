@@ -18,15 +18,17 @@ DESCRIPTION >
     only applies to the usage branches (Tool Events have no model), so a model filter scopes
     cost/tokens/messages/sessions but leaves the tool-events series unfiltered.
 
-    Rollup-first, base-FINAL fallback. Reads the pre-aggregated rollups
-    (agent_usage_1h/_1d for usage, agent_tool_usage_1h for tool outcomes) when the org
-    has rollup rows; falls back to the canonical base tables (agent_messages FINAL
-    role='assistant', the same billable population as agent_priced_usage usage_kind
-    'direct'; agent_tool_events FINAL) when a rollup is unavailable — e.g. before the
-    hourly Copy Pipes have run, or in local dev. The fallback is automatic per source so
-    the pipe always returns data without a second request. The branches are mutually
-    exclusive (a rollup branch fires only when its rollup is populated, the base branch
-    only when it is empty), so the union is already one row per (bucket, group).
+    Lambda: rollup + live tail. The per-grain watermark is the rollup's latest bucket start
+    (max(BucketStart)). Reads the pre-aggregated rollups (agent_usage_1h/_1d for usage,
+    agent_tool_usage_1h/_1d for tool outcomes) for buckets strictly below the watermark (only
+    fully-materialized buckets), and the canonical base tables (agent_messages FINAL
+    role='assistant' — the same billable population as agent_priced_usage usage_kind 'direct';
+    agent_tool_events FINAL) for everything at/after it — including the latest, still-partial
+    bucket, served live. A stale, partial, or mid-rebuild rollup can never hide recent buckets:
+    whatever the rollup hasn't fully materialized, the base branch serves. When a rollup is
+    empty its watermark is epoch and the base branch serves the whole window. The branches
+    split at the watermark with no overlap, so the union is exactly one row per (bucket, group)
+    with no double-count.
 
     Cost is a single estimated figure (the agent data model carries one cost_usd per
     Agent Message, not provider-style per-component cost). cost_usd sums priced rows only;
@@ -44,7 +46,13 @@ SQL >
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
-        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
+        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily,
+        -- Lambda watermarks, per grain = the rollup's latest bucket start. The rollup serves
+        -- buckets strictly below it (fully-materialized only); the base branch serves at/after
+        -- it, covering the latest still-partial bucket live. max() over an empty rollup is the
+        -- epoch, handing the whole window to the base branch.
+        (SELECT max(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_h,
+        (SELECT max(BucketStart) FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_d
     SELECT
         bucket_dt,
         group_value,
@@ -74,7 +82,7 @@ SQL >
             sumMerge(PricedMessageCount) AS priced_message_count
         FROM agent_usage_1h
         WHERE NOT use_daily
-            AND (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND BucketStart < wm_h
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -106,7 +114,7 @@ SQL >
             sumMerge(PricedMessageCount) AS priced_message_count
         FROM agent_usage_1d
         WHERE use_daily
-            AND (SELECT count() FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND BucketStart < wm_d
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -138,10 +146,7 @@ SQL >
             sum(toUInt64(cost_usd IS NOT NULL)) AS priced_message_count
         FROM agent_messages FINAL
         WHERE role = 'assistant'
-            AND (
-                (NOT use_daily AND (SELECT count() FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0)
-                OR (use_daily AND (SELECT count() FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) = 0)
-            )
+            AND EventAt >= if(use_daily, wm_d, wm_h)
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= start_dt
             AND EventAt < end_dt
@@ -168,7 +173,10 @@ SQL >
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
-        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
+        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily,
+        -- Lambda watermarks for the tool rollups, same construction as usage_series.
+        (SELECT max(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_th,
+        (SELECT max(BucketStart) FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_td
     SELECT * FROM (
         SELECT
             BucketStart AS bucket_dt,
@@ -179,7 +187,7 @@ SQL >
             sumMerge(UnknownCount) AS tool_unknown_count
         FROM agent_tool_usage_1h
         WHERE NOT use_daily
-            AND (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND BucketStart < wm_th
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -203,7 +211,7 @@ SQL >
             sumMerge(UnknownCount) AS tool_unknown_count
         FROM agent_tool_usage_1d
         WHERE use_daily
-            AND (SELECT count() FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) > 0
+            AND BucketStart < wm_td
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -226,10 +234,7 @@ SQL >
             countIf(status = 'failure') AS tool_failure_count,
             countIf(status = 'unknown') AS tool_unknown_count
         FROM agent_tool_events FINAL
-        WHERE (
-                (NOT use_daily AND (SELECT count() FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) = 0)
-                OR (use_daily AND (SELECT count() FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) = 0)
-            )
+        WHERE EventAt >= if(use_daily, wm_td, wm_th)
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= start_dt
             AND EventAt < end_dt
