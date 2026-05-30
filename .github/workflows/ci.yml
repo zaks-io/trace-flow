@@ -552,6 +552,15 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
+      # The CLI's keyring crate uses the D-Bus Secret Service backend on Linux
+      # (sync-secret-service feature → dbus → libdbus-sys), and reqwest/openssl needs libssl.
+      # macOS/Windows use native keychains and don't need these.
+      - name: Install Linux system dependencies
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev libssl-dev pkg-config
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
