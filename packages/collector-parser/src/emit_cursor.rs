@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Original Trace Flow code (otto parsed Cursor's legacy `~/.cursor/projects` JSONL, not the current
-// `state.vscdb`; this targets the SQLite store). One unpriced `AgentMessageFact` per bubble, tokens +
-// session-grain model only — pricing and model normalization are server-side. Trace Flow owns the
-// contract, IDs, pricing, redaction, and storage around this code.
+// `state.vscdb`; this targets the SQLite store). One unpriced `AgentMessageFact` per conversational turn,
+// tokens + session-grain model only — pricing and model normalization are server-side. Trace Flow owns
+// the contract, IDs, pricing, redaction, and storage around this code.
 
 //! Cursor `AgentMessageFact` emission. [`cursor_message_facts`] turns one composer's bubbles (already
-//! grouped and ordered by the reader) into one [`AgentMessageFact`] per bubble.
+//! grouped and ordered by the reader) into one [`AgentMessageFact`] per genuine conversational turn —
+//! user bubbles and assistant bubbles that delivered text or thinking. Tool-call frames and empty
+//! streaming placeholders are skipped (see [`is_message_bubble`]); Cursor writes thousands of them and
+//! they already flow to `agent_tool_events` / `agent_file_events`, so emitting them as messages would
+//! double-count tool turns and inflate message volume ~7x off the Claude/Codex grain.
 //!
 //! **Token coverage is honest-Partial-or-Missing, never Full.** Cursor records `tokenCount` on only ~1%
 //! of bubbles, carries no cache-token breakdown, and never reconciles a session total the way Codex's
@@ -23,11 +27,30 @@ use collector_contracts::facts::AgentMessageFact;
 use serde_json::Value;
 
 use crate::cursor_records::{
-    bubble_id, bubble_model, bubble_tokens, bubble_type, composer_id, BUBBLE_TYPE_ASSISTANT,
-    BUBBLE_TYPE_USER,
+    bubble_id, bubble_model, bubble_text, bubble_thinking, bubble_tokens, bubble_type, composer_id,
+    BUBBLE_TYPE_ASSISTANT, BUBBLE_TYPE_USER,
 };
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
+
+/// Whether a bubble is a genuine conversational turn that belongs in `agent_messages`, as opposed to a
+/// tool-call frame, an empty streaming placeholder, or other non-message bubble Cursor writes by the
+/// thousands. This keeps Cursor's message grain aligned with the Claude/Codex emitters, which likewise
+/// skip tool-result-only records — otherwise `agent_messages` double-counts every tool turn (it already
+/// lands in `agent_tool_events`) and inflates message volume ~7x.
+///
+/// A **user** bubble is always a turn. An **assistant** bubble counts only when it delivered something:
+/// visible `text` or a `thinking` block. A tool-only / blank assistant bubble carries neither and is not
+/// a message (its tool invocation flows to `agent_tool_events` / `agent_file_events` instead).
+fn is_message_bubble(record: &Value) -> bool {
+    match bubble_type(record) {
+        Some(BUBBLE_TYPE_USER) => true,
+        Some(BUBBLE_TYPE_ASSISTANT) => {
+            bubble_text(record).is_some() || bubble_thinking(record).is_some()
+        }
+        _ => false,
+    }
+}
 
 /// The bubble's `event_at` in epoch ms from its ISO-8601 `createdAt`, falling back to the session start
 /// (the composer's `createdAt`) when a bubble omits or malforms it.
@@ -101,12 +124,16 @@ fn message_fact(record: &Value, turn_index: i64, ctx: &SessionContext) -> AgentM
     }
 }
 
-/// Emits one [`AgentMessageFact`] per bubble in the composer, in the reader's createdAt order. The model
-/// is the session-grain label on every fact; `turn_index` is the bubble's 0-based position (bubbles carry
-/// no turn number), and identity rides the bubble's own id via `vendor_message_id`.
+/// Emits one [`AgentMessageFact`] per genuine conversational turn in the composer, in the reader's
+/// createdAt order. Non-message bubbles (tool-call frames, empty streaming placeholders) are skipped via
+/// [`is_message_bubble`] so the table matches the Claude/Codex message grain and never double-counts the
+/// tool turns that already populate `agent_tool_events`. The model is the session-grain label on every
+/// fact; `turn_index` is the 0-based position **among emitted messages** (bubbles carry no turn number),
+/// and identity rides the bubble's own id via `vendor_message_id`.
 pub fn cursor_message_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentMessageFact> {
     records
         .iter()
+        .filter(|record| is_message_bubble(record))
         .enumerate()
         .map(|(i, record)| message_fact(record, i as i64, ctx))
         .collect()
@@ -133,10 +160,20 @@ mod tests {
     }
 
     #[test]
-    fn emits_one_fact_per_bubble_with_role_and_index() {
+    fn emits_one_fact_per_message_turn_with_role_and_index() {
         let records = [
-            bubble("comp-1", "gpt-5.2", BUBBLE_TYPE_USER, json!({})),
-            bubble("comp-1", "gpt-5.2", BUBBLE_TYPE_ASSISTANT, json!({})),
+            bubble(
+                "comp-1",
+                "gpt-5.2",
+                BUBBLE_TYPE_USER,
+                json!({ "text": "hi" }),
+            ),
+            bubble(
+                "comp-1",
+                "gpt-5.2",
+                BUBBLE_TYPE_ASSISTANT,
+                json!({ "text": "hello" }),
+            ),
         ];
         let facts = cursor_message_facts(&records, &ctx());
         assert_eq!(facts.len(), 2);
@@ -147,11 +184,48 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_bubble_type_is_other_not_dropped() {
-        let records = [bubble("comp-1", "gpt-5.2", 99, json!({}))];
+    fn a_tool_only_assistant_bubble_is_skipped_not_a_message() {
+        // Cursor writes thousands of textless assistant bubbles that are tool-call frames (their
+        // invocation already lands in agent_tool_events). They are not messages — emitting them would
+        // double-count every tool turn and inflate message volume ~7x. Only the user turn survives here.
+        let records = [
+            bubble(
+                "comp-1",
+                "gpt-5.2",
+                BUBBLE_TYPE_USER,
+                json!({ "text": "go" }),
+            ),
+            bubble(
+                "comp-1",
+                "gpt-5.2",
+                BUBBLE_TYPE_ASSISTANT,
+                json!({ "toolFormerData": { "name": "read_file_v2" } }),
+            ),
+        ];
         let facts = cursor_message_facts(&records, &ctx());
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].role, AgentMessageRole::Other);
+        assert_eq!(facts[0].role, AgentMessageRole::User);
+    }
+
+    #[test]
+    fn a_thinking_only_assistant_bubble_is_a_message() {
+        // A textless assistant bubble that carries a reasoning block is a delivered turn, so it counts.
+        let records = [bubble(
+            "comp-1",
+            "gpt-5.2",
+            BUBBLE_TYPE_ASSISTANT,
+            json!({ "thinking": { "text": "let me think", "signature": "sig" } }),
+        )];
+        let facts = cursor_message_facts(&records, &ctx());
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].role, AgentMessageRole::Assistant);
+    }
+
+    #[test]
+    fn an_unknown_bubble_type_is_not_a_message() {
+        let records = [bubble("comp-1", "gpt-5.2", 99, json!({ "text": "x" }))];
+        let facts = cursor_message_facts(&records, &ctx());
+        assert!(facts.is_empty());
     }
 
     #[test]
@@ -160,7 +234,7 @@ mod tests {
             "comp-1",
             "gpt-5.2",
             BUBBLE_TYPE_ASSISTANT,
-            json!({ "tokenCount": { "inputTokens": 26069, "outputTokens": 911 } }),
+            json!({ "text": "answer", "tokenCount": { "inputTokens": 26069, "outputTokens": 911 } }),
         )];
         let f = &cursor_message_facts(&records, &ctx())[0];
         assert_eq!(f.input_tokens, 26069);
@@ -178,7 +252,7 @@ mod tests {
             "comp-1",
             "gpt-5.2",
             BUBBLE_TYPE_ASSISTANT,
-            json!({}),
+            json!({ "text": "answer" }),
         )];
         let f = &cursor_message_facts(&records, &ctx())[0];
         assert_eq!(f.input_tokens, 0);
@@ -196,7 +270,7 @@ mod tests {
             "comp-1",
             "gpt-5.2",
             BUBBLE_TYPE_ASSISTANT,
-            json!({ "tokenCount": { "inputTokens": 0, "outputTokens": 0 } }),
+            json!({ "text": "answer", "tokenCount": { "inputTokens": 0, "outputTokens": 0 } }),
         )];
         let f = &cursor_message_facts(&records, &ctx())[0];
         assert_eq!(f.token_coverage, TokenCoverage::Missing);
@@ -209,16 +283,18 @@ mod tests {
                 "comp-1",
                 "claude-4.5-opus-high-thinking",
                 BUBBLE_TYPE_USER,
-                json!({}),
+                json!({ "text": "q" }),
             ),
             bubble(
                 "comp-1",
                 "claude-4.5-opus-high-thinking",
                 BUBBLE_TYPE_ASSISTANT,
-                json!({}),
+                json!({ "text": "a" }),
             ),
         ];
-        for f in cursor_message_facts(&records, &ctx()) {
+        let facts = cursor_message_facts(&records, &ctx());
+        assert_eq!(facts.len(), 2);
+        for f in facts {
             // Raw label passes through untouched; the server normalizes/prices it.
             assert_eq!(f.model, "claude-4.5-opus-high-thinking");
         }
@@ -230,7 +306,7 @@ mod tests {
             "comp-1",
             "gpt-5.2",
             BUBBLE_TYPE_ASSISTANT,
-            json!({}),
+            json!({ "text": "answer" }),
         )];
         let f = &cursor_message_facts(&records, &ctx())[0];
         assert_eq!(f.vendor_message_id.as_deref(), Some("bub-1"));
@@ -243,7 +319,7 @@ mod tests {
             "comp-1",
             "gpt-5.2",
             BUBBLE_TYPE_ASSISTANT,
-            json!({}),
+            json!({ "text": "answer" }),
         )];
         let f = &cursor_message_facts(&records, &ctx())[0];
         assert_eq!(f.event_at, 1_779_752_243_355); // 2026-05-25T23:37:23.355Z

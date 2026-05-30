@@ -50,6 +50,17 @@ pub fn bubble_text(record: &Value) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
+/// The bubble's reasoning text from `thinking.text`, or `None` when absent/empty. Cursor stores an
+/// assistant bubble's chain-of-thought as `{ text, signature }`; a thinking-only bubble (no visible
+/// `text`) is still a delivered reasoning turn, so the message emitter counts it as a message.
+pub fn bubble_thinking(record: &Value) -> Option<&str> {
+    record
+        .get("thinking")
+        .and_then(|t| t.get("text"))
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+}
+
 /// `(input_tokens, output_tokens)` from the bubble's `tokenCount`, or `None` when the bubble carries no
 /// token count at all. Cursor populates `tokenCount` on only ~1% of bubbles; the rest have none, which
 /// the message emitter classifies as `Missing` coverage.
@@ -160,6 +171,28 @@ pub(crate) mod tests {
         assert_eq!(bubble_model(&r), Some("gpt-5.2"));
         assert_eq!(bubble_type(&r), Some(BUBBLE_TYPE_ASSISTANT));
         assert_eq!(bubble_id(&r), Some("bub-1"));
+    }
+
+    #[test]
+    fn bubble_thinking_reads_text_and_ignores_empty() {
+        let with = bubble(
+            "c",
+            "m",
+            BUBBLE_TYPE_ASSISTANT,
+            json!({ "thinking": { "text": "reasoning", "signature": "sig" } }),
+        );
+        assert_eq!(bubble_thinking(&with), Some("reasoning"));
+
+        let empty = bubble(
+            "c",
+            "m",
+            BUBBLE_TYPE_ASSISTANT,
+            json!({ "thinking": { "text": "", "signature": "sig" } }),
+        );
+        assert_eq!(bubble_thinking(&empty), None);
+
+        let absent = bubble("c", "m", BUBBLE_TYPE_ASSISTANT, json!({}));
+        assert_eq!(bubble_thinking(&absent), None);
     }
 
     #[test]
