@@ -48,15 +48,26 @@ which renders each Worker's `--env production` config and refuses to deploy on a
 
 ### Worker secrets (set out of band, never committed, never in CI)
 
-```sh
-# ingest — AGENT_INGEST_SHARED_SECRET must match the value set in the prod Convex environment
-wrangler secret put CONVEX_SITE_URL          --env production --config apps/agent-ingest/wrangler.jsonc
-wrangler secret put AGENT_INGEST_SHARED_SECRET --env production --config apps/agent-ingest/wrangler.jsonc
-wrangler secret put SENTRY_DSN               --env production --config apps/agent-ingest/wrangler.jsonc
+Run each `secret put` from **inside the app directory** with no `--config` flag. Running from the repo
+root with `--config apps/<app>/wrangler.jsonc` mis-resolves the `--env production` worker name (it
+appends `-production` to the top-level `-dev` name) and silently creates a junk
+`trace-flow-agent-ingest-dev-production` worker instead of targeting the real `trace-flow-agent-ingest`.
 
-# consumer — Tinybird append-only (DATASOURCE:APPEND) token scoped to trace_flow_prod
-wrangler secret put TINYBIRD_TOKEN --env production --config apps/agent-consumer/wrangler.jsonc
-wrangler secret put SENTRY_DSN     --env production --config apps/agent-consumer/wrangler.jsonc
+```sh
+# ingest — run from apps/agent-ingest/
+#   CONVEX_SITE_URL MUST be the prod Convex *site* origin (https://laudable-bison-427.convex.site).
+#   If it points at any other deployment, the compatibility-policy fetch 404s and ingest fails closed
+#   with policy_unavailable even though auth is correct.
+#   AGENT_INGEST_SHARED_SECRET must match the value set in the prod Convex environment.
+( cd apps/agent-ingest && \
+  wrangler secret put CONVEX_SITE_URL            --env production && \
+  wrangler secret put AGENT_INGEST_SHARED_SECRET --env production && \
+  wrangler secret put SENTRY_DSN                 --env production )
+
+# consumer — run from apps/agent-consumer/. Tinybird append-only (DATASOURCE:APPEND) token, trace_flow_prod
+( cd apps/agent-consumer && \
+  wrangler secret put TINYBIRD_TOKEN --env production && \
+  wrangler secret put SENTRY_DSN     --env production )
 ```
 
 ### Prod Convex environment (control plane — set in the Convex dashboard, not via this repo)
@@ -69,6 +80,34 @@ The Collector Credential mint syncs to KV via Convex. The prod Convex deployment
 
 If `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` is unset or points at dev, minted credentials never land in
 the prod ingest Worker's KV and every ingest auths as `invalid`.
+
+### Compatibility policy (required — ingest fails closed without it)
+
+The ingest Worker fetches `/agent-ingest/compatibility-policy` from Convex on every request (edge-cached
+60s). An **empty `collectorCompatibilityPolicy` table** makes Convex return 404, so the Worker fails
+closed with `policy_unavailable` and rejects all ingest — even with correct auth and a correct
+`CONVEX_SITE_URL`. Prod Convex must have one active policy row.
+
+There is no automated prod seed (`setPolicy` requires an authenticated admin user, so `convex run` can't
+call it; `agentE2eSeed:seedDevCollector` is dev-only). Seed it once via the prod Convex **dashboard** →
+Data → `collectorCompatibilityPolicy` → Add document:
+
+```json
+{
+  "minDesktopVersion": "0.0.0",
+  "minParserVersion": "0.0.0",
+  "denylistedVersions": [],
+  "updatedAt": 1748563200000
+}
+```
+
+`0.0.0 / 0.0.0 / []` admits every client and denylists nothing (`updatedByUserId` is optional;
+`updatedAt` is any epoch-ms number — the active row is the latest by `updatedAt`). Raise the minimums or
+add denylisted versions later to gate or block specific releases without a Worker deploy.
+
+**Diagnosing `policy_unavailable`:** `wrangler tail --env production --format json` from `apps/agent-ingest`
+and grep `policy_fetch`. `status:404` = empty table or wrong `CONVEX_SITE_URL` deployment; `status:401` =
+`AGENT_INGEST_SHARED_SECRET` mismatch between Worker and Convex.
 
 ### Tinybird schema
 
@@ -166,8 +205,9 @@ scripts/agent-ingest-smoke.sh
 
 ## Teardown
 
-The resources in `provisioned-resources.md` are dev-only. Remove them only when the dev agent ingest
-path is intentionally retired or being rebuilt.
+This teardown covers the **dev** resources in `provisioned-resources.md` only. Remove them only when the
+dev agent ingest path is intentionally retired or being rebuilt. The production resources (the Required
+Production Resources table above) are live and out of scope here — see the carve-out below.
 
 Before deleting dev resources:
 
