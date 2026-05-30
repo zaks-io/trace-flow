@@ -16,8 +16,9 @@
 //!   snapshots — that signal is Codex `session_meta`-only — so `capability_snapshots` is empty by
 //!   design, not a missing emitter.
 //! - **Codex CLI** emits all five fact kinds.
-//! - **Cursor** has no parser yet (fast-follow `3a*`); its arm returns an empty bundle so the
-//!   uploader can treat every source uniformly. Swap in the real emitters when `3a*` lands.
+//! - **Cursor** emits messages, tool events, file events, and PR links from its `state.vscdb` bubbles.
+//!   It has no capability snapshots in v1 (the `cursorRules`/`mcpDescriptors` surface is deferred), so
+//!   `capability_snapshots` is empty by design, not a missing emitter.
 
 use collector_contracts::enums::AgentSource;
 use collector_contracts::envelope::AgentIngestFacts;
@@ -30,7 +31,10 @@ use crate::emit_codex::codex_message_facts;
 use crate::emit_codex_caps::codex_capability_facts;
 use crate::emit_codex_files::codex_file_facts;
 use crate::emit_codex_tools::codex_tool_facts;
-use crate::emit_pr_links::{claude_pr_link_facts, codex_pr_link_facts};
+use crate::emit_cursor::cursor_message_facts;
+use crate::emit_cursor_files::cursor_file_facts;
+use crate::emit_cursor_tools::cursor_tool_facts;
+use crate::emit_pr_links::{claude_pr_link_facts, codex_pr_link_facts, cursor_pr_link_facts};
 use crate::session_context::SessionContext;
 
 /// Run every emitter for `source` over one session's `records` and collect the typed
@@ -55,18 +59,14 @@ pub fn session_facts(
             capability_snapshots: codex_capability_facts(records, ctx),
             pull_request_links: codex_pr_link_facts(records, ctx),
         },
-        AgentSource::Cursor => empty_facts(),
-    }
-}
-
-/// The all-empty bundle. The Cursor arm returns this until the Cursor parser (`3a*`) exists.
-fn empty_facts() -> AgentIngestFacts {
-    AgentIngestFacts {
-        messages: Vec::new(),
-        tool_events: Vec::new(),
-        file_events: Vec::new(),
-        capability_snapshots: Vec::new(),
-        pull_request_links: Vec::new(),
+        AgentSource::Cursor => AgentIngestFacts {
+            messages: cursor_message_facts(records, ctx),
+            tool_events: cursor_tool_facts(records, ctx),
+            file_events: cursor_file_facts(records, ctx),
+            // Cursor capability snapshots (cursorRules/mcpDescriptors) are deferred enrichment.
+            capability_snapshots: Vec::new(),
+            pull_request_links: cursor_pr_link_facts(records, ctx),
+        },
     }
 }
 
@@ -213,13 +213,51 @@ mod tests {
         assert_eq!(facts.file_events, codex_file_facts(&records, &c));
     }
 
+    /// A Cursor session: the reader-normalized bubbles (composer id + session model stamped on each) for
+    /// one user turn, one assistant turn with a PR link, an edit_file tool, and a terminal command —
+    /// enough to populate messages, tool events, file events, and PR links.
+    fn cursor_session() -> Vec<Value> {
+        let edit_params = serde_json::to_string(&json!({
+            "targetFile": "/work/trace-flow/src/lib.rs"
+        }))
+        .unwrap();
+        json!([
+            {
+                "__composer_id": "comp-1", "__model": "gpt-5.2-codex-high",
+                "type": 1, "bubbleId": "b1", "text": "fix the auth bug",
+                "createdAt": "2026-05-25T23:37:23.355Z"
+            },
+            {
+                "__composer_id": "comp-1", "__model": "gpt-5.2-codex-high",
+                "type": 2, "bubbleId": "b2",
+                "text": "opened github.com/acme/trace-flow/pull/42",
+                "createdAt": "2026-05-25T23:37:25.000Z",
+                "tokenCount": { "inputTokens": 100, "outputTokens": 20 },
+                "toolFormerData": { "name": "edit_file_v2", "status": "completed", "params": edit_params }
+            }
+        ])
+        .as_array()
+        .unwrap()
+        .clone()
+    }
+
     #[test]
-    fn cursor_is_an_empty_bundle_until_its_parser_lands() {
-        let facts = session_facts(AgentSource::Cursor, &codex_session(), &ctx());
-        assert!(facts.messages.is_empty());
-        assert!(facts.tool_events.is_empty());
-        assert!(facts.file_events.is_empty());
+    fn cursor_fans_out_to_messages_tools_files_and_pr_links() {
+        let records = cursor_session();
+        let c = ctx();
+        let facts = session_facts(AgentSource::Cursor, &records, &c);
+
+        assert_eq!(facts.messages, cursor_message_facts(&records, &c));
+        assert_eq!(facts.tool_events, cursor_tool_facts(&records, &c));
+        assert_eq!(facts.file_events, cursor_file_facts(&records, &c));
+        assert_eq!(facts.pull_request_links, cursor_pr_link_facts(&records, &c));
+        // Capability snapshots are deferred for Cursor; the arm always assembles an empty vec.
         assert!(facts.capability_snapshots.is_empty());
-        assert!(facts.pull_request_links.is_empty());
+
+        // The fixture is wired so the fan-out is observably non-trivial, not just empty == empty.
+        assert_eq!(facts.messages.len(), 2);
+        assert!(!facts.tool_events.is_empty());
+        assert!(!facts.file_events.is_empty());
+        assert!(!facts.pull_request_links.is_empty());
     }
 }

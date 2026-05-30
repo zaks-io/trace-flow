@@ -41,8 +41,18 @@ use collector_contracts::AgentSource;
 use collector_parser::assemble::session_facts;
 use collector_sync::{
     assemble_sync_unit, build_envelope, run_sync_cycle, select_changed, walk_transcripts,
-    BatchMeta, CursorStore, GitRemoteCache, HistoryPreset, ImportWindow, Orchestrator, Trigger,
+    BatchMeta, CursorStore, FileCursor, GitRemoteCache, HistoryPreset, ImportWindow, Orchestrator,
+    Trigger, UnitCursor,
 };
+
+/// Every unit in this Claude-source E2E carries a file cursor; pull it out for the JSONL-only
+/// assertions (path / offset / head-hash) that don't apply to the SQLite-source composer cursor.
+fn file_cursor(unit: &collector_sync::SyncUnit) -> &FileCursor {
+    match &unit.next_cursor {
+        UnitCursor::File(c) => c,
+        UnitCursor::Composer(_) => panic!("the Claude E2E assembles only file cursors"),
+    }
+}
 
 /// Cap the live POST volume: the corpus can hold thousands of sessions, and the most recent handful
 /// is enough to prove the path end to end.
@@ -161,7 +171,7 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
         assert!(
             home.is_empty() || !json.contains(&home),
             "a fact carried the real home path {home:?} un-masked: redaction breach in {}",
-            unit.next_cursor.file_path
+            file_cursor(unit).file_path
         );
         assert!(
             !unit.ctx.repo_path_fallback.contains('/'),
@@ -191,7 +201,7 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
             assert!(
                 !path.starts_with('/') && !path.contains("/Users/") && !path.contains("/home/"),
                 "agent_file_events path is not repo-relative: {path:?} in {}",
-                unit.next_cursor.file_path
+                file_cursor(unit).file_path
             );
         }
     }
@@ -221,12 +231,13 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
         "not every accepted unit advanced its cursor"
     );
     for unit in &units {
+        let cursor = file_cursor(unit);
         let stored = store
-            .get(AgentSource::Claude, &unit.next_cursor.file_path)
+            .get(AgentSource::Claude, &cursor.file_path)
             .expect("cursor read")
             .expect("cursor advanced after a 2xx");
-        assert_eq!(stored.byte_offset, unit.next_cursor.byte_offset);
-        assert_eq!(stored.content_hash_head, unit.next_cursor.content_hash_head);
+        assert_eq!(stored.byte_offset, cursor.byte_offset);
+        assert_eq!(stored.content_hash_head, cursor.content_hash_head);
     }
 
     eprintln!(

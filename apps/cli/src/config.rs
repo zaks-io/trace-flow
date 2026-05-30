@@ -67,10 +67,19 @@ impl Paths {
             .join(format!("cursors-{}.sqlite3", sanitize(org_id)))
     }
 
-    /// Create the state dir if absent. Idempotent.
+    /// A scratch dir for the Cursor reader's read-only `state.vscdb` snapshot copy. Under the state root
+    /// so it shares the same volume (a cross-device copy of a multi-GB DB would be slow) and is swept by
+    /// the same cleanup; the reader makes a private per-pass subdir inside it and removes it on drop.
+    pub fn scratch_dir(&self) -> PathBuf {
+        self.root.join("scratch")
+    }
+
+    /// Create the state dir (and the scratch subdir) if absent. Idempotent.
     pub fn ensure(&self) -> Result<()> {
         std::fs::create_dir_all(&self.root)
-            .with_context(|| format!("create state dir {}", self.root.display()))
+            .with_context(|| format!("create state dir {}", self.root.display()))?;
+        std::fs::create_dir_all(self.scratch_dir())
+            .with_context(|| format!("create scratch dir {}", self.scratch_dir().display()))
     }
 
     /// Read the saved connection, or `None` if the CLI is not logged in.

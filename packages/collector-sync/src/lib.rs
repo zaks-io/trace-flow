@@ -30,6 +30,7 @@ pub mod assemble_units;
 pub mod claude_session;
 pub mod codex_session;
 pub mod cursor;
+pub mod cursor_reader;
 pub mod discovery;
 pub mod envelope;
 pub mod git;
@@ -43,11 +44,12 @@ pub use claude_session::{
     agent_depth_from_transcript_path, claude_session_fields, ClaudeSessionFields,
 };
 pub use codex_session::{codex_session_fields, CodexSessionFields};
-pub use cursor::{CursorStore, CursorStoreError, FileCursor};
+pub use cursor::{ComposerCursor, CursorStore, CursorStoreError, FileCursor};
+pub use cursor_reader::{assemble_cursor_units, CursorReadError};
 pub use discovery::{head_hash, select_changed, walk_transcripts, DiscoveredFile};
 pub use envelope::{build_envelope, BatchMeta};
 pub use git::{resolve_git_metadata, GitMetadata, GitRemoteCache};
 pub use git_remote::normalize_git_remote;
 pub use import::{HistoryPreset, ImportWindow};
 pub use orchestrator::{Action, Orchestrator, OrchestratorState, Trigger};
-pub use sync_cycle::{run_sync_cycle, CycleReport, IngestClient, SyncUnit};
+pub use sync_cycle::{run_sync_cycle, CycleReport, IngestClient, SyncUnit, UnitCursor};
