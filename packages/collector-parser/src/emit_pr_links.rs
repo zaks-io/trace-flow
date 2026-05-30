@@ -328,6 +328,57 @@ pub fn codex_pr_link_facts(
     acc.facts
 }
 
+/// Emits one [`AgentPullRequestLinkFact`] per distinct canonical GitHub PR link observed in a Cursor
+/// session: assistant bubble text ([`PullRequestLinkEvidence::AssistantText`]), tool result output
+/// ([`PullRequestLinkEvidence::ToolOutput`]), and user bubble text
+/// ([`PullRequestLinkEvidence::TranscriptRecord`]). Cursor bubbles carry a stable `bubbleId`, so
+/// `source_event_id` is set and the *same* link in two bubbles is two genuine observations — the
+/// Claude-like semantics, not the Codex collapse (see module docs). The reader's normalized records carry
+/// `__composer_id`/`__model`; this reads only the bubble's own `type`/`text`/`toolFormerData.result`.
+pub fn cursor_pr_link_facts(
+    records: &[Value],
+    ctx: &SessionContext,
+) -> Vec<AgentPullRequestLinkFact> {
+    use crate::cursor_records::{
+        bubble_id, bubble_text, bubble_type, tool_block, BUBBLE_TYPE_ASSISTANT, BUBBLE_TYPE_USER,
+    };
+
+    let mut acc = LinkAccumulator::new();
+    for record in records {
+        let event_at = record
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .and_then(rfc3339_to_epoch_ms)
+            .or(ctx.vendor_started_at)
+            .unwrap_or(0);
+        let source_event_id = bubble_id(record);
+
+        if let Some(text) = bubble_text(record) {
+            // A link the agent printed in its reply is assistant evidence; one in the user's prose is
+            // transcript evidence. An unknown bubble type is treated as transcript, the conservative rung.
+            let evidence = match bubble_type(record) {
+                Some(BUBBLE_TYPE_ASSISTANT) => PullRequestLinkEvidence::AssistantText,
+                Some(BUBBLE_TYPE_USER) => PullRequestLinkEvidence::TranscriptRecord,
+                _ => PullRequestLinkEvidence::TranscriptRecord,
+            };
+            acc.scan(text, source_event_id, event_at, evidence, ctx);
+        }
+
+        // A PR url the tool printed (e.g. `gh pr create`'s output) is tool-output evidence — never the
+        // tool's command/arguments, which are diagnostic-only and not scanned.
+        if let Some(result) = tool_block(record).and_then(|b| b.result) {
+            acc.scan(
+                result,
+                source_event_id,
+                event_at,
+                PullRequestLinkEvidence::ToolOutput,
+                ctx,
+            );
+        }
+    }
+    acc.facts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -650,5 +701,52 @@ mod tests {
     fn empty_sessions_emit_no_facts() {
         assert!(claude_pr_link_facts(&[], &ctx()).is_empty());
         assert!(codex_pr_link_facts(&[], &ctx()).is_empty());
+        assert!(cursor_pr_link_facts(&[], &ctx()).is_empty());
+    }
+
+    fn cursor_bubble(bubble_id: &str, bubble_type: i64, text: &str) -> Value {
+        json!({
+            "__composer_id": "comp-1", "__model": "gpt-5.2",
+            "type": bubble_type, "bubbleId": bubble_id, "text": text,
+            "createdAt": "2026-05-25T23:37:23.355Z",
+        })
+    }
+
+    #[test]
+    fn cursor_assistant_bubble_text_is_assistant_evidence_keyed_on_bubble_id() {
+        let records = [cursor_bubble("b1", 2, &format!("opened {PR}"))];
+        let facts = cursor_pr_link_facts(&records, &ctx());
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].evidence, PullRequestLinkEvidence::AssistantText);
+        assert_eq!(facts[0].number, 270);
+        assert_eq!(facts[0].source_event_id.as_deref(), Some("b1"));
+    }
+
+    #[test]
+    fn cursor_tool_result_output_is_tool_output_evidence() {
+        let params = serde_json::to_string(&json!({ "command": "gh pr create" })).unwrap();
+        let records = [json!({
+            "__composer_id": "comp-1", "__model": "gpt-5.2", "type": 2, "bubbleId": "b1",
+            "createdAt": "2026-05-25T23:37:23.355Z",
+            "toolFormerData": { "name": "run_terminal_command_v2", "status": "completed",
+                "params": params, "result": format!("created {PR}") },
+        })];
+        let facts = cursor_pr_link_facts(&records, &ctx());
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].evidence, PullRequestLinkEvidence::ToolOutput);
+        assert_eq!(facts[0].url, PR);
+    }
+
+    #[test]
+    fn cursor_same_link_in_two_bubbles_is_two_observations() {
+        // Cursor bubbles carry distinct ids, so (like Claude) the pk keeps repeated links apart.
+        let records = [
+            cursor_bubble("b1", 2, &format!("opened {PR}")),
+            cursor_bubble("b2", 2, &format!("merged {PR}")),
+        ];
+        let facts = cursor_pr_link_facts(&records, &ctx());
+        assert_eq!(facts.len(), 2);
+        assert_ne!(facts[0].source_event_id, facts[1].source_event_id);
+        assert_eq!(facts[1].stable_turn_index, 1);
     }
 }

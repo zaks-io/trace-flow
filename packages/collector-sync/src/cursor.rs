@@ -46,6 +46,20 @@ CREATE TABLE IF NOT EXISTS file_cursors (
     byte_offset       INTEGER NOT NULL,
     content_hash_head TEXT    NOT NULL,
     PRIMARY KEY (org_id, source, file_path)
+) WITHOUT ROWID;
+-- The SQLite-source (Cursor) watermark. A Cursor sync unit is one *composer* (session) inside the
+-- single `state.vscdb`, not a file, so its cursor can't be a `file_cursors` row: there is no
+-- byte_offset or head-hash, and the change signal is the composer's bubble count + newest bubble
+-- timestamp (the DB analog of size + mtime). Separate table so neither cursor shape carries the
+-- other's empty columns; same `(org_id, source, …)` org-isolation and advance-only-after-2xx
+-- discipline as `file_cursors`.
+CREATE TABLE IF NOT EXISTS composer_cursors (
+    org_id         TEXT    NOT NULL,
+    source         TEXT    NOT NULL,
+    composer_id    TEXT    NOT NULL,
+    bubble_count   INTEGER NOT NULL,
+    max_created_at INTEGER NOT NULL,
+    PRIMARY KEY (org_id, source, composer_id)
 ) WITHOUT ROWID;";
 
 /// How far one transcript file has been ingested. The four fields the discovery pass needs to decide
@@ -65,6 +79,22 @@ pub struct FileCursor {
     pub byte_offset: u64,
     /// Hash of the file's leading bytes, compared to detect in-place rewrites the size/mtime miss.
     pub content_hash_head: String,
+}
+
+/// How far one Cursor composer (session) has been ingested. The two fields the reader compares to
+/// decide whether a composer gained or changed bubbles since the last successful upload — the
+/// SQLite-source analog of [`FileCursor`]'s size + mtime + head-hash.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComposerCursor {
+    /// The `composerData:` id. Local-only join key; the upload uses it as the vendor session id.
+    pub composer_id: String,
+    /// Bubbles ingested so far. Catches an in-place bubble edit that keeps the newest timestamp
+    /// fixed. Signed `INTEGER` (rusqlite `i64`) — a composer never has a negative count, but the
+    /// column is shared with the timestamp's range discipline.
+    pub bubble_count: i64,
+    /// Newest bubble `createdAt` (epoch ms) ingested so far. Catches appended bubbles that leave
+    /// the count unchanged (a re-send that replaced one bubble with another).
+    pub max_created_at: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -164,6 +194,76 @@ impl CursorStore {
                 cursor.mtime_ms,
                 cursor.byte_offset,
                 cursor.content_hash_head,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The cursor for one composer, or `None` if it has never been ingested under this org + source.
+    pub fn get_composer(
+        &self,
+        source: AgentSource,
+        composer_id: &str,
+    ) -> Result<Option<ComposerCursor>, CursorStoreError> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT bubble_count, max_created_at FROM composer_cursors \
+             WHERE org_id = ?1 AND source = ?2 AND composer_id = ?3",
+        )?;
+        let cursor = stmt
+            .query_row(
+                params![self.org_id, source_key(source), composer_id],
+                |row| {
+                    Ok(ComposerCursor {
+                        composer_id: composer_id.to_string(),
+                        bubble_count: row.get(0)?,
+                        max_created_at: row.get(1)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(cursor)
+    }
+
+    /// Every composer cursor for one source under this org, ordered by composer id. Seeds the
+    /// reader's changed-check so it can decide per composer without a per-row DB round-trip.
+    pub fn list_composers(
+        &self,
+        source: AgentSource,
+    ) -> Result<Vec<ComposerCursor>, CursorStoreError> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT composer_id, bubble_count, max_created_at FROM composer_cursors \
+             WHERE org_id = ?1 AND source = ?2 ORDER BY composer_id",
+        )?;
+        let rows = stmt.query_map(params![self.org_id, source_key(source)], |row| {
+            Ok(ComposerCursor {
+                composer_id: row.get(0)?,
+                bubble_count: row.get(1)?,
+                max_created_at: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Commit a composer's progress. **Call only after a successful (2xx) ingest** of the envelope
+    /// carrying that composer's facts. Upserts on `(org_id, source, composer_id)`.
+    pub fn advance_composer(
+        &self,
+        source: AgentSource,
+        cursor: &ComposerCursor,
+    ) -> Result<(), CursorStoreError> {
+        self.conn.execute(
+            "INSERT INTO composer_cursors \
+                (org_id, source, composer_id, bubble_count, max_created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(org_id, source, composer_id) DO UPDATE SET \
+                bubble_count = excluded.bubble_count, \
+                max_created_at = excluded.max_created_at",
+            params![
+                self.org_id,
+                source_key(source),
+                cursor.composer_id,
+                cursor.bubble_count,
+                cursor.max_created_at,
             ],
         )?;
         Ok(())
@@ -293,6 +393,87 @@ mod tests {
         let org_b = CursorStore::open(&path, "org_b").unwrap();
         assert_eq!(org_b.get(AgentSource::Claude, "/a.jsonl").unwrap(), None);
         assert_eq!(org_b.list(AgentSource::Claude).unwrap(), vec![]);
+    }
+
+    fn composer(id: &str, count: i64, max_created_at: i64) -> ComposerCursor {
+        ComposerCursor {
+            composer_id: id.to_string(),
+            bubble_count: count,
+            max_created_at,
+        }
+    }
+
+    #[test]
+    fn get_composer_is_none_before_any_advance() {
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        assert_eq!(
+            store.get_composer(AgentSource::Cursor, "c-1").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn advance_composer_then_get_round_trips() {
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        let c = composer("c-1", 10, 1_700_000_000_000);
+        store.advance_composer(AgentSource::Cursor, &c).unwrap();
+        assert_eq!(
+            store.get_composer(AgentSource::Cursor, "c-1").unwrap(),
+            Some(c)
+        );
+    }
+
+    #[test]
+    fn advance_composer_overwrites_the_prior_cursor() {
+        // A composer that grew from 10 to 15 bubbles overwrites in place, never duplicates.
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        store
+            .advance_composer(AgentSource::Cursor, &composer("c-1", 10, 1_000))
+            .unwrap();
+        let grown = composer("c-1", 15, 1_500);
+        store.advance_composer(AgentSource::Cursor, &grown).unwrap();
+        assert_eq!(
+            store.get_composer(AgentSource::Cursor, "c-1").unwrap(),
+            Some(grown)
+        );
+        assert_eq!(store.list_composers(AgentSource::Cursor).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn list_composers_is_ordered_and_org_isolated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cursors.db");
+        {
+            let store = CursorStore::open(&path, "org_a").unwrap();
+            store
+                .advance_composer(AgentSource::Cursor, &composer("c-2", 1, 2))
+                .unwrap();
+            store
+                .advance_composer(AgentSource::Cursor, &composer("c-1", 1, 1))
+                .unwrap();
+            let ids: Vec<_> = store
+                .list_composers(AgentSource::Cursor)
+                .unwrap()
+                .into_iter()
+                .map(|c| c.composer_id)
+                .collect();
+            assert_eq!(ids, vec!["c-1", "c-2"]); // ordered by composer id
+        }
+        // A second org on the same DB sees none of org_a's composer cursors.
+        let org_b = CursorStore::open(&path, "org_b").unwrap();
+        assert_eq!(org_b.list_composers(AgentSource::Cursor).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn a_large_composer_watermark_round_trips() {
+        // 123k+ bubbles and ms-epoch timestamps both stay well inside i64.
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        let big = composer("c-big", 123_790, 1_716_000_000_000);
+        store.advance_composer(AgentSource::Cursor, &big).unwrap();
+        assert_eq!(
+            store.get_composer(AgentSource::Cursor, "c-big").unwrap(),
+            Some(big)
+        );
     }
 
     #[test]
