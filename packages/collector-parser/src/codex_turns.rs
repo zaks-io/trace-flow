@@ -116,26 +116,25 @@ where
                     continue;
                 };
                 // Per-turn usage = diff of successive cumulative snapshots (ccusage#884). Three cases:
-                let usage: Option<CodexTurnUsage> = if cumulative.total_tokens
-                    > prev_cumulative.total_tokens
-                {
-                    // Normal advance: the delta since the last counted snapshot.
-                    let u = cumulative.delta_since(prev_cumulative);
-                    prev_cumulative = cumulative;
-                    Some(u)
-                } else if cumulative.total_tokens == prev_cumulative.total_tokens {
-                    // Unchanged cumulative = duplicate snapshot Codex re-emits → contributes nothing.
-                    continue;
-                } else {
-                    // Cumulative went backwards: a session reset/rollback (e.g. resumed/compacted
-                    // context). The cumulative is no longer a continuation of `prev`, so fall back to
-                    // this row's own `last_token_usage` and re-baseline `prev` to the new snapshot. If
-                    // that row has no usable `last_token_usage` either, leave it `None` — the turn ran
-                    // but its tokens are unknown, which the emitter maps to `Missing` coverage. Coercing
-                    // to zero would falsely claim known full coverage and undercount.
-                    prev_cumulative = cumulative;
-                    payload.and_then(last_token_usage)
-                };
+                let usage: Option<CodexTurnUsage> =
+                    if cumulative.total_tokens > prev_cumulative.total_tokens {
+                        // Normal advance: the delta since the last counted snapshot.
+                        let u = cumulative.delta_since(prev_cumulative);
+                        prev_cumulative = cumulative;
+                        Some(u)
+                    } else if cumulative.total_tokens == prev_cumulative.total_tokens {
+                        // Unchanged cumulative = duplicate snapshot Codex re-emits → contributes nothing.
+                        continue;
+                    } else {
+                        // Cumulative went backwards: a session reset/rollback (e.g. resumed/compacted
+                        // context). The cumulative is no longer a continuation of `prev`, so fall back to
+                        // this row's own `last_token_usage` and re-baseline `prev` to the new snapshot. If
+                        // that row has no usable `last_token_usage` either, leave it `None` — the turn ran
+                        // but its tokens are unknown, which the emitter maps to `Missing` coverage. Coercing
+                        // to zero would falsely claim known full coverage and undercount.
+                        prev_cumulative = cumulative;
+                        payload.and_then(last_token_usage)
+                    };
                 turns.push(CodexTurn {
                     turn_index: next_index,
                     role: CodexTurnRole::Assistant,
@@ -341,7 +340,10 @@ mod tests {
         let records = token_only_session();
         let trap: i64 = records
             .iter()
-            .filter_map(|r| r.get("payload").and_then(crate::codex_usage::cumulative_total))
+            .filter_map(|r| {
+                r.get("payload")
+                    .and_then(crate::codex_usage::cumulative_total)
+            })
             .sum();
         assert_eq!(trap, 1_306_755);
         assert!(trap > 299_113 * 3);
@@ -355,12 +357,18 @@ mod tests {
         let records = token_only_session();
         let turns = session_turns(records.iter());
         assert_eq!(turns.len(), 6, "two duplicate snapshots dropped");
-        let summed: i64 = turns.iter().filter_map(|t| t.usage.map(|u| u.total_tokens)).sum();
+        let summed: i64 = turns
+            .iter()
+            .filter_map(|t| t.usage.map(|u| u.total_tokens))
+            .sum();
         assert_eq!(summed, 299_113);
         // The per-turn split also reconstructs: a turn's input+cache_read+output == its total.
         for t in &turns {
             let u = t.usage.expect("assistant usage");
-            assert_eq!(u.input_tokens + u.cache_read_tokens + u.output_tokens, u.total_tokens);
+            assert_eq!(
+                u.input_tokens + u.cache_read_tokens + u.output_tokens,
+                u.total_tokens
+            );
         }
     }
 
@@ -372,7 +380,10 @@ mod tests {
         let records = [
             token_count_cum((100_000, 50_000, 1_000, 0, 101_000), None),
             // cumulative dropped (reset): fall back to last_token_usage (raw 800, cached 200, out 40).
-            token_count_cum((10_000, 5_000, 200, 0, 10_200), Some((800, 200, 40, 0, 840))),
+            token_count_cum(
+                (10_000, 5_000, 200, 0, 10_200),
+                Some((800, 200, 40, 0, 840)),
+            ),
             // normal advance after reset: diff from the re-anchored 10_200 baseline.
             token_count_cum((12_000, 6_000, 260, 0, 12_260), None),
         ];
@@ -382,7 +393,10 @@ mod tests {
         assert_eq!(turns[0].usage.unwrap().total_tokens, 101_000);
         // turn 1: reset → last_token_usage. input = 800-200 = 600, cache_read 200, out 40.
         let r = turns[1].usage.unwrap();
-        assert_eq!((r.input_tokens, r.cache_read_tokens, r.output_tokens), (600, 200, 40));
+        assert_eq!(
+            (r.input_tokens, r.cache_read_tokens, r.output_tokens),
+            (600, 200, 40)
+        );
         // turn 2: diff from re-anchored baseline 10_200 → total 2_060.
         assert_eq!(turns[2].usage.unwrap().total_tokens, 2_060);
     }
@@ -399,7 +413,10 @@ mod tests {
         let turns = session_turns(records.iter());
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].usage.unwrap().total_tokens, 101_000);
-        assert_eq!(turns[1].usage, None, "unknown rollback usage stays unknown, not zero");
+        assert_eq!(
+            turns[1].usage, None,
+            "unknown rollback usage stays unknown, not zero"
+        );
     }
 
     #[test]
