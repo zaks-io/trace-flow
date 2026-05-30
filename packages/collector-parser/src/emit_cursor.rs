@@ -7,7 +7,7 @@
 //! Cursor `AgentMessageFact` emission. [`cursor_message_facts`] turns one composer's bubbles (already
 //! grouped and ordered by the reader) into one [`AgentMessageFact`] per genuine conversational turn —
 //! user bubbles and assistant bubbles that delivered text or thinking. Tool-call frames and empty
-//! streaming placeholders are skipped (see [`is_message_bubble`]); Cursor writes thousands of them and
+//! streaming placeholders are skipped (see `is_message_bubble`); Cursor writes thousands of them and
 //! they already flow to `agent_tool_events` / `agent_file_events`, so emitting them as messages would
 //! double-count tool turns and inflate message volume ~7x off the Claude/Codex grain.
 //!
@@ -126,10 +126,13 @@ fn message_fact(record: &Value, turn_index: i64, ctx: &SessionContext) -> AgentM
 
 /// Emits one [`AgentMessageFact`] per genuine conversational turn in the composer, in the reader's
 /// createdAt order. Non-message bubbles (tool-call frames, empty streaming placeholders) are skipped via
-/// [`is_message_bubble`] so the table matches the Claude/Codex message grain and never double-counts the
+/// `is_message_bubble` so the table matches the Claude/Codex message grain and never double-counts the
 /// tool turns that already populate `agent_tool_events`. The model is the session-grain label on every
 /// fact; `turn_index` is the 0-based position **among emitted messages** (bubbles carry no turn number),
 /// and identity rides the bubble's own id via `vendor_message_id`.
+///
+/// # Panics
+/// Never. A non-message or malformed bubble is skipped (best-effort), not a panic.
 pub fn cursor_message_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentMessageFact> {
     records
         .iter()

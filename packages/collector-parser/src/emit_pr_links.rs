@@ -335,6 +335,9 @@ pub fn codex_pr_link_facts(
 /// `source_event_id` is set and the *same* link in two bubbles is two genuine observations — the
 /// Claude-like semantics, not the Codex collapse (see module docs). The reader's normalized records carry
 /// `__composer_id`/`__model`; this reads only the bubble's own `type`/`text`/`toolFormerData.result`.
+///
+/// # Panics
+/// Never. A bubble with no parseable PR link yields no fact (best-effort), not a panic.
 pub fn cursor_pr_link_facts(
     records: &[Value],
     ctx: &SessionContext,

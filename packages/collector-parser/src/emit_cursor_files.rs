@@ -57,6 +57,9 @@ fn bubble_event_at(record: &Value, ctx: &SessionContext) -> i64 {
 /// Emits one [`AgentFileEventFact`] per file-touching tool call, in the reader's bubble order. The path is
 /// relativized against `ctx.repo_root`; `source_block_index` is a session-global counter so two ops of
 /// the same kind on one path (across two bubbles) stay distinct rows, mirroring the Codex file emitter.
+///
+/// # Panics
+/// Never. A malformed or unexpected record yields no fact (best-effort), not a panic.
 pub fn cursor_file_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentFileEventFact> {
     let repo_root = Path::new(&ctx.repo_root);
     let mut block_index = 0i64;

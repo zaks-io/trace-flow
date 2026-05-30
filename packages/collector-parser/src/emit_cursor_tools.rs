@@ -130,6 +130,9 @@ fn tool_fact(
 /// Emits one [`AgentToolEventFact`] per bubble carrying a `toolFormerData` block, in the reader's bubble
 /// order. `source_block_index` is the tool's 0-based position among the session's tool calls (stable on
 /// re-parse); identity rides `tool_use_id` (the call id) plus the bubble's `vendor_message_id`.
+///
+/// # Panics
+/// Never. A bubble without a well-formed tool block yields no fact (best-effort), not a panic.
 pub fn cursor_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToolEventFact> {
     let mut block_index = 0i64;
     let mut facts = Vec::new();

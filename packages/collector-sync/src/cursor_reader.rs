@@ -170,6 +170,10 @@ fn value_json(bytes: &[u8]) -> Value {
 }
 
 /// List every composer in the snapshot via an index-using `GLOB 'composerData:*'` prefix scan.
+///
+/// # Errors
+/// [`CursorReadError::Sqlite`] if the prepared statement or row read fails. A row with an unreadable
+/// value is skipped, not an error.
 pub fn list_composers(snap: &CursorSnapshot) -> Result<Vec<ComposerRow>, CursorReadError> {
     let mut stmt = snap
         .conn
@@ -338,6 +342,11 @@ fn in_window(window: ImportWindow, session_start: Option<i64>, max_bubble: Optio
 /// successful ingest. Sync (no async): the reader does no git shell-out — Cursor repo attribution comes
 /// from inside the bubbles. The session-grain model rides each record as `__model` (the emitters read it
 /// there), so `SessionContext` carries no model field.
+///
+/// # Errors
+/// [`CursorReadError`]: `Io` if the snapshot copy fails, `Sqlite` if a snapshot query fails, `Store` if
+/// loading a composer's stored watermark fails. A malformed bubble within a composer is skipped, not an
+/// error.
 pub fn assemble_cursor_units(
     live_db: &Path,
     scratch_dir: &Path,
