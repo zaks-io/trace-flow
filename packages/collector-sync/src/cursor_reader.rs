@@ -41,6 +41,9 @@ use crate::git_remote::normalize_git_remote;
 use crate::import::ImportWindow;
 use crate::sync_cycle::{SyncUnit, UnitCursor};
 
+/// A failure reading a Cursor `state.vscdb`: copying/opening the snapshot (`Io`), querying the SQLite
+/// store (`Sqlite`), or persisting/loading the per-composer watermark (`Store`). A malformed or skippable
+/// bubble is never an error — only an unusable DB or a broken cursor store is.
 #[derive(Debug, thiserror::Error)]
 pub enum CursorReadError {
     #[error("cursor snapshot io error")]
@@ -231,20 +234,16 @@ fn read_bubbles(
         }
     }
 
+    fn bubble_id(v: &Value) -> &str {
+        v.get("bubbleId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    }
     bubbles.sort_by(|a, b| {
-        let key = |v: &Value| {
-            (
-                v.get("createdAt")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_default(),
-                v.get("bubbleId")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_default(),
-            )
-        };
-        key(a).cmp(&key(b))
+        bubble_created_at_ms(a)
+            .unwrap_or(i64::MIN)
+            .cmp(&bubble_created_at_ms(b).unwrap_or(i64::MIN))
+            .then_with(|| bubble_id(a).cmp(bubble_id(b)))
     });
     Ok(bubbles)
 }
@@ -488,6 +487,36 @@ mod tests {
         assert_eq!(bubbles[0]["__composer_id"], json!("c1"));
         assert_eq!(bubbles[0]["__model"], json!("gpt-5.2"));
         assert_eq!(bubbles[0]["__started_at"], json!(1_000));
+    }
+
+    #[test]
+    fn read_bubbles_orders_numeric_epoch_created_at_chronologically() {
+        // Defends the numeric-epoch shape `bubble_created_at_ms` already supports: a string-only sort key
+        // would collapse every numeric `createdAt` to "" and fall back to bubbleId order, misordering turns.
+        let numeric = |bubble: &str, created_at: i64| {
+            (
+                format!("bubbleId:c1:{bubble}"),
+                json!({ "bubbleId": bubble, "type": 2, "createdAt": created_at }),
+            )
+        };
+        let snap = fixture(&[
+            composer_row("c1", "gpt-5.2", 1_000),
+            // Insert out of order, with bubbleIds whose lexical order is the REVERSE of chronological.
+            numeric("z-late", 1_700_000_002_000),
+            numeric("a-early", 1_700_000_000_000),
+            numeric("m-mid", 1_700_000_001_000),
+        ]);
+        let composer = ComposerRow {
+            composer_id: "c1".to_string(),
+            model_name: Some("gpt-5.2".to_string()),
+            created_at_ms: Some(1_000),
+        };
+        let bubbles = read_bubbles(&snap, &composer).unwrap();
+        let ids: Vec<&str> = bubbles
+            .iter()
+            .map(|b| b["bubbleId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["a-early", "m-mid", "z-late"]);
     }
 
     #[test]
