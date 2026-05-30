@@ -10,12 +10,12 @@
 //! source counts, no secrets), and `disconnect` (revoke local material). Parsing and redaction are
 //! always local; only redacted facts leave the machine, authenticated by the Collector Credential.
 //!
-//! Runtime configuration is env-resolved, never baked in:
-//! - `TRACE_FLOW_CONVEX_SITE_URL` — the Convex *site* origin `login` drives the device flow against.
-//! - `TRACE_FLOW_INGEST_URL` — the ingest Worker base URL `sync` POSTs to.
+//! Runtime configuration defaults to production hosts; set env vars to override for local/cloud-dev:
+//! - `TRACE_FLOW_CONVEX_SITE_URL` — Convex *site* origin for `login` (device flow). Defaults to prod.
+//! - `TRACE_FLOW_INGEST_URL` — ingest Worker base URL for `sync`. Defaults to prod collector domain.
 //! - `TRACE_FLOW_COLLECTOR_SECRET` — optional headless/CI override for the keychain credential.
 //!
-//! This is what lets the same binary target Cloud-Dev or a local Worker by environment alone.
+//! See `apps/cli/README.md` for the full env var list.
 
 mod config;
 mod keychain;
@@ -32,8 +32,34 @@ use collector_contracts::AgentSource;
 use config::Paths;
 use sources::Support;
 
+/// Production Convex site origin (device flow / compatibility policy). Override for local/cloud-dev.
+const DEFAULT_CONVEX_SITE_URL: &str = "https://laudable-bison-427.convex.site";
+/// Production ingest Worker base URL. Override for a local worker or cloud-dev ingest.
+const DEFAULT_INGEST_URL: &str = "https://collector.trace-flow.dev";
+
+const ENV_HELP: &str = "\
+Environment (optional — production URLs are the default):\n  \
+TRACE_FLOW_CONVEX_SITE_URL  Convex site origin for login (default: production deployment)\n  \
+TRACE_FLOW_INGEST_URL       Ingest Worker base URL for sync (default: https://collector.trace-flow.dev)\n  \
+TRACE_FLOW_COLLECTOR_SECRET Headless/CI credential override (normally stored in OS keychain)\n\
+\n\
+Local/cloud-dev: set TRACE_FLOW_CONVEX_SITE_URL and TRACE_FLOW_INGEST_URL to your dev endpoints.\n\
+See apps/cli/README.md for details.";
+
+fn env_or_default(var: &str, default: &str) -> String {
+    match std::env::var(var) {
+        Ok(value) if !value.is_empty() => value,
+        _ => default.to_string(),
+    }
+}
+
 #[derive(Parser)]
-#[command(name = "trace-flow", version, about = "Trace Flow Collector CLI")]
+#[command(
+    name = "trace-flow",
+    version,
+    about = "Trace Flow Collector CLI",
+    after_help = ENV_HELP
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -101,9 +127,7 @@ async fn run() -> Result<()> {
 }
 
 fn cmd_login() -> Result<()> {
-    let convex_site_url = std::env::var("TRACE_FLOW_CONVEX_SITE_URL").context(
-        "set TRACE_FLOW_CONVEX_SITE_URL to your Convex site origin (e.g. https://<deployment>.convex.site)",
-    )?;
+    let convex_site_url = env_or_default("TRACE_FLOW_CONVEX_SITE_URL", DEFAULT_CONVEX_SITE_URL);
     let conn = login::run(&convex_site_url)?;
     println!("\nConnected to organization {}.", conn.org_id);
     println!("Credential stored in the OS keychain. Next: `trace-flow sync --since 7d`.");
@@ -153,9 +177,7 @@ async fn cmd_sync(since: &str) -> Result<()> {
         )
     })?;
 
-    let ingest_url = std::env::var("TRACE_FLOW_INGEST_URL").context(
-        "set TRACE_FLOW_INGEST_URL to the ingest Worker base URL (e.g. http://127.0.0.1:8787)",
-    )?;
+    let ingest_url = env_or_default("TRACE_FLOW_INGEST_URL", DEFAULT_INGEST_URL);
 
     let home = home_dir()?;
     println!("Syncing (since {since}) to {ingest_url} ...");
