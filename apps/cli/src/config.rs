@@ -9,8 +9,8 @@
 //! dir, alongside the SQLite cursor store. None of it is sensitive: an org id is not a credential, and
 //! the cursor DB holds local paths that never leave the machine.
 //!
-//! The ingest URL is resolved at sync time, not stored here, so pointing the CLI at a different
-//! environment (Cloud-Dev vs a local worker) is a runtime env var, never a rewrite of saved state.
+//! The ingest URL is resolved at sync time (production by default, overridable via env), not stored
+//! here — pointing the CLI at a different environment never rewrites saved connection state.
 
 use std::path::{Path, PathBuf};
 

@@ -188,8 +188,9 @@ rejected (4xx) without enqueuing. It never holds a Tinybird admin token.
 Obtain the two real inputs from the authenticated control plane (not from KV or an admin token):
 
 ```sh
-# 1. Mint a Collector Credential as a normal user via the production CLI device flow:
-TRACE_FLOW_CONVEX_SITE_URL=https://<prod-deployment>.convex.site trace-flow login
+# 1. Mint a Collector Credential as a normal user via the production CLI device flow.
+#    The CLI defaults to production URLs — no env vars required:
+trace-flow login
 #    The CLI stores the secret in the OS keychain. For the headless smoke, export it (or read it back):
 export TRACE_FLOW_SMOKE_COLLECTOR_SECRET=<the minted secret>
 
@@ -201,6 +202,14 @@ export TRACE_FLOW_SMOKE_ORG_JWT=<org-scoped agent JWT>
 TRACE_FLOW_INGEST_URL=https://collector.trace-flow.dev \
 TRACE_FLOW_TINYBIRD_HOST=https://api.us-west-2.aws.tinybird.co \
 scripts/agent-ingest-smoke.sh
+```
+
+**Advanced / dev only:** override CLI endpoints when pointing at a local worker or cloud-dev (see
+`apps/cli/README.md`):
+
+```sh
+TRACE_FLOW_CONVEX_SITE_URL=https://<deployment>.convex.site trace-flow login
+TRACE_FLOW_INGEST_URL=http://127.0.0.1:8787 trace-flow sync --since 24h
 ```
 
 ## Teardown
