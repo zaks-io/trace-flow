@@ -129,6 +129,17 @@ async function postValidEnvelope() {
   const response = await postEnvelope(buildEnvelope());
   if (response.status !== 202) {
     const text = await response.text();
+    // 503 policy_unavailable is a known, separately-diagnosable misconfig: the Worker can't load the
+    // Convex compatibility policy and fails closed. Name it so the operator goes straight to the cause
+    // (empty collectorCompatibilityPolicy table, or a CONVEX_SITE_URL pointing at the wrong deployment)
+    // instead of chasing a generic non-202. See runbook "Compatibility policy".
+    if (response.status === 503 && text.includes('policy_unavailable')) {
+      throw new Error(
+        'ingest returned 503 policy_unavailable: the prod Worker cannot load the Convex compatibility ' +
+          'policy. Seed an active collectorCompatibilityPolicy row in prod Convex and confirm the ingest ' +
+          "Worker's CONVEX_SITE_URL points at the prod deployment. See runbook 'Compatibility policy'.",
+      );
+    }
     throw new Error(`expected 202 from /v1/ingest, got ${response.status}: ${text.slice(0, 300)}`);
   }
 }
