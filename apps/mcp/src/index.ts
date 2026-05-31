@@ -45,6 +45,9 @@ interface Variables {
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
+const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource';
+const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
+
 app.use(
   '*',
   cors({
@@ -81,24 +84,55 @@ app.use('*', async (c, next) => {
   c.executionCtx.waitUntil(logger.flush());
 });
 
+// Trust only cf-connecting-ip; x-forwarded-for is client-spoofable and would let
+// a caller cycle their rate-limit key. Matches the Convex side (http.ts).
 function getClientIp(req: Request): string | null {
-  const cfIp = req.headers.get('cf-connecting-ip');
-  if (cfIp) return cfIp;
-  const forwardedFor = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  if (!forwardedFor) return null;
-  return forwardedFor;
+  return req.headers.get('cf-connecting-ip');
+}
+
+function normalizeOrigin(origin: string): string {
+  return origin.replace(/\/+$/, '');
+}
+
+function mcpResourceUrl(req: Request): string {
+  return new URL('/mcp', req.url).toString();
+}
+
+function protectedResourceUrl(req: Request): string {
+  return new URL(PROTECTED_RESOURCE_PATH, req.url).toString();
+}
+
+function bearerChallenge(req: Request, error?: string): string {
+  const params = [`resource_metadata="${protectedResourceUrl(req)}"`];
+  if (error) params.push(`error="${error}"`);
+  return `Bearer ${params.join(', ')}`;
+}
+
+function unauthorizedResponse(req: Request, message: string, error?: string): Response {
+  return jsonResponse({ error: message }, 401, {
+    'WWW-Authenticate': bearerChallenge(req, error),
+  });
+}
+
+async function proxyConnect(
+  c: { req: { raw: Request }; env: Env },
+  path: string,
+): Promise<Response> {
+  const url = new URL(path, normalizeOrigin(c.env.CONNECT_BASE_URL));
+  const req = new Request(url, c.req.raw);
+  return fetch(req);
 }
 
 /** Bearer access-token auth shared by POST and DELETE. */
 async function authenticate(c: {
-  req: { header(name: string): string | undefined };
+  req: { raw: Request; header(name: string): string | undefined };
   env: Env;
   get(name: 'logger'): Logger;
 }): Promise<{ userId: string } | { error: Response }> {
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return {
-      error: jsonResponse({ error: 'Missing or invalid Authorization header' }, 401),
+      error: unauthorizedResponse(c.req.raw, 'Missing or invalid Authorization header'),
     };
   }
   let payload;
@@ -108,7 +142,9 @@ async function authenticate(c: {
     return { error: jsonResponse({ error: 'Token verification temporarily unavailable' }, 503) };
   }
   if (!payload) {
-    return { error: jsonResponse({ error: 'Invalid or expired access token' }, 401) };
+    return {
+      error: unauthorizedResponse(c.req.raw, 'Invalid or expired access token', 'invalid_token'),
+    };
   }
   return { userId: payload.userId };
 }
@@ -119,6 +155,25 @@ function jsonResponse(body: unknown, status = 200, headers?: Record<string, stri
     headers: { 'Content-Type': 'application/json', ...headers },
   });
 }
+
+app.get(PROTECTED_RESOURCE_PATH, (c) =>
+  c.json({
+    resource: mcpResourceUrl(c.req.raw),
+    authorization_servers: [normalizeOrigin(c.env.CONNECT_BASE_URL)],
+    bearer_methods_supported: ['header'],
+    resource_name: 'Trace Flow MCP',
+  }),
+);
+
+app.get(OAUTH_METADATA_PATH, (c) => proxyConnect(c, OAUTH_METADATA_PATH));
+app.post('/mcp/register', (c) => proxyConnect(c, '/mcp/register'));
+app.post('/mcp/token', (c) => proxyConnect(c, '/mcp/token'));
+app.get('/mcp/authorize', (c) => {
+  const source = new URL(c.req.url);
+  const target = new URL('/mcp/authorize', normalizeOrigin(c.env.CONNECT_BASE_URL));
+  target.search = source.search;
+  return c.redirect(target.toString(), 302);
+});
 
 app.post('/mcp', async (c) => {
   const logger = c.get('logger');

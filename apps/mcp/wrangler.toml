@@ -19,7 +19,7 @@ binding = "CF_VERSION_METADATA"
 # Secrets: MCP_BACKEND_SHARED_SECRET, MCP_SESSION_SECRET, AXIOM_TOKEN, SENTRY_DSN
 
 [vars]
-CONNECT_BASE_URL = "http://127.0.0.1:3211"
+CONNECT_BASE_URL = "https://hardy-iguana-812.convex.site"
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 SENTRY_ENVIRONMENT = "development"
 AXIOM_DATASET = "cloudflare"
