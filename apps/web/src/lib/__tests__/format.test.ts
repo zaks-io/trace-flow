@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatNumber, formatCurrency } from '../format';
+import { formatNumber, formatCurrency, parseTinybirdDate } from '../format';
 
 describe('formatNumber', () => {
   it('abbreviates with K/M/B/T suffixes', () => {
@@ -52,5 +52,31 @@ describe('formatCurrency', () => {
   it('promotes to the next unit instead of rounding to 1000.0', () => {
     expect(formatCurrency(999_950)).toBe('$1.0M');
     expect(formatCurrency(999_950_000)).toBe('$1.0B');
+  });
+});
+
+describe('parseTinybirdDate', () => {
+  // Assert on the absolute epoch, so the result is independent of the runner's local TZ.
+  const may30at1amUtc = Date.UTC(2025, 4, 30, 1, 0, 0);
+
+  it('reads a space-separated ClickHouse DateTime as UTC, not local', () => {
+    expect(parseTinybirdDate('2025-05-30 01:00:00').getTime()).toBe(may30at1amUtc);
+  });
+
+  it('handles the DateTime64 millisecond form', () => {
+    expect(parseTinybirdDate('2025-05-30 01:00:00.000').getTime()).toBe(may30at1amUtc);
+  });
+
+  it('passes through values that already carry a zone', () => {
+    expect(parseTinybirdDate('2025-05-30T01:00:00Z').getTime()).toBe(may30at1amUtc);
+    expect(parseTinybirdDate('2025-05-30T01:00:00+00:00').getTime()).toBe(may30at1amUtc);
+  });
+
+  it('passes through epoch-millisecond numbers', () => {
+    expect(parseTinybirdDate(may30at1amUtc).getTime()).toBe(may30at1amUtc);
+  });
+
+  it('returns an invalid Date for garbage, leaving callers to fall back', () => {
+    expect(Number.isNaN(parseTinybirdDate('not a date').getTime())).toBe(true);
   });
 });

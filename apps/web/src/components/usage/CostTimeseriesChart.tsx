@@ -1,7 +1,14 @@
 'use client';
 
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { formatNumber, formatCurrency, formatDuration } from '@/lib/format';
+import {
+  formatNumber,
+  formatCurrency,
+  formatDuration,
+  formatBucketTick,
+  formatBucketTooltip,
+  parseTinybirdDate,
+} from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import {
   costChartConfig,
@@ -10,32 +17,6 @@ import {
   requestsChartConfig,
 } from './types';
 import type { TimeseriesRow, TimeseriesMetric } from './types';
-
-function formatTickDate(value: string, includeTime: boolean): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  if (includeTime) {
-    return date.toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      hour12: true,
-    });
-  }
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function formatTooltipDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
-}
 
 export function CostTimeseriesChart({
   data,
@@ -50,11 +31,13 @@ export function CostTimeseriesChart({
 
   const hourly =
     data.length > 1 &&
-    Math.abs(new Date(data[1].bucket_start).getTime() - new Date(data[0].bucket_start).getTime()) <
-      86_400_000;
-  const tickFormatter = (v: string) => formatTickDate(v, hourly);
+    Math.abs(
+      parseTinybirdDate(data[1].bucket_start).getTime() -
+        parseTinybirdDate(data[0].bucket_start).getTime(),
+    ) < 86_400_000;
+  const tickFormatter = (v: string) => formatBucketTick(v, hourly);
   const tooltipLabelFormatter = (label: string) =>
-    hourly ? formatTooltipDate(String(label)) : formatTickDate(String(label), false);
+    hourly ? formatBucketTooltip(String(label)) : formatBucketTick(String(label), false);
 
   if (metric === 'cost') {
     return (
