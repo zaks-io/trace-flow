@@ -1,0 +1,292 @@
+# This file is based on cargo-dist output, with repo-specific hardening and
+# Blacksmith runner labels applied by hand. Re-run `dist generate` only when
+# bumping cargo-dist-version in dist-workspace.toml.
+name: CLI Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag. Use dry-run to build without publishing.
+        required: true
+        default: dry-run
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan CLI release
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    outputs:
+      val: ${{ steps.plan.outputs.manifest }}
+      tag: ${{ steps.plan.outputs.tag }}
+      publishing: ${{ steps.plan.outputs.publishing }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install dist
+        shell: bash
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.sh | sh
+
+      - name: Cache dist
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/dist
+
+      - id: plan
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAG_INPUT:-}" ] && [ "$TAG_INPUT" != "dry-run" ]; then
+            if ! printf '%s' "$TAG_INPUT" | grep -Eq '^[0-9A-Za-z._/-]+$'; then
+              echo "::error::Invalid release tag: $TAG_INPUT"
+              exit 1
+            fi
+            dist host --steps=create --tag="$TAG_INPUT" --output-format=json > plan-dist-manifest.json
+            echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
+            echo "publishing=true" >> "$GITHUB_OUTPUT"
+          else
+            dist plan --output-format=json > plan-dist-manifest.json
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "publishing=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat plan-dist-manifest.json
+          echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dist manifest
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: artifacts-plan-dist-manifest
+          path: plan-dist-manifest.json
+
+  build-local-artifacts:
+    name: Build CLI artifacts (${{ join(matrix.targets, ', ') }})
+    needs: plan
+    if: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix.include != null && (needs.plan.outputs.publishing == 'true' || inputs.tag == 'dry-run') }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container && matrix.container.image || null }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+      CODESIGN_CERTIFICATE: ${{ secrets.CODESIGN_CERTIFICATE }}
+      CODESIGN_CERTIFICATE_PASSWORD: ${{ secrets.CODESIGN_CERTIFICATE_PASSWORD }}
+      CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+    steps:
+      - name: Enable Windows long paths
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Rust non-interactively if not already installed
+        if: ${{ matrix.container }}
+        run: |
+          if ! command -v cargo > /dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Install dist
+        run: ${{ matrix.install_dist.run }}
+
+      - name: Fetch local artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: artifacts-*
+          path: target/distrib/
+          merge-multiple: true
+
+      - name: Install dependencies
+        run: |
+          ${{ matrix.packages_install }}
+
+      - name: Build artifacts
+        env:
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          if [ -n "${RELEASE_TAG:-}" ]; then
+            tag_args+=(--tag="$RELEASE_TAG")
+          fi
+          dist build "${tag_args[@]}" --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+
+      - id: cargo-dist
+        name: Post-build
+        shell: bash
+        run: |
+          {
+            echo "paths<<EOF"
+            dist print-upload-files-from-manifest --manifest dist-manifest.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: |
+            ${{ steps.cargo-dist.outputs.paths }}
+            ${{ env.BUILD_MANIFEST_NAME }}
+
+  build-global-artifacts:
+    name: Build global CLI artifacts
+    needs:
+      - plan
+      - build-local-artifacts
+    if: ${{ always() && needs.plan.result == 'success' && needs.build-local-artifacts.result == 'success' && (needs.plan.outputs.publishing == 'true' || inputs.tag == 'dry-run') }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install cached dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/
+
+      - run: chmod +x ~/.cargo/bin/dist
+
+      - name: Fetch local artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: artifacts-*
+          path: target/distrib/
+          merge-multiple: true
+
+      - id: cargo-dist
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          if [ -n "${RELEASE_TAG:-}" ]; then
+            tag_args+=(--tag="$RELEASE_TAG")
+          fi
+          dist build "${tag_args[@]}" --output-format=json "--artifacts=global" > dist-manifest.json
+          {
+            echo "paths<<EOF"
+            jq --raw-output ".upload_files[]" dist-manifest.json
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: artifacts-build-global
+          path: |
+            ${{ steps.cargo-dist.outputs.paths }}
+            ${{ env.BUILD_MANIFEST_NAME }}
+
+  host:
+    name: Publish CLI release
+    needs:
+      - plan
+      - build-local-artifacts
+      - build-global-artifacts
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install cached dist
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/
+
+      - run: chmod +x ~/.cargo/bin/dist
+
+      - name: Fetch artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: artifacts-*
+          path: target/distrib/
+          merge-multiple: true
+
+      - id: host
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          dist host --tag="$RELEASE_TAG" --steps=upload --steps=release --output-format=json > dist-manifest.json
+          cat dist-manifest.json
+          echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dist manifest
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: artifacts-dist-manifest
+          path: dist-manifest.json
+
+      - name: Download GitHub artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Cleanup granular manifests
+        run: rm -f artifacts/*-dist-manifest.json
+
+      - name: Create GitHub Release
+        env:
+          PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
+          ANNOUNCEMENT_TITLE: '${{ fromJson(steps.host.outputs.manifest).announcement_title }}'
+          ANNOUNCEMENT_BODY: '${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}'
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          echo "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
+          prerelease_args=()
+          if [ -n "$PRERELEASE_FLAG" ]; then
+            prerelease_args+=("$PRERELEASE_FLAG")
+          fi
+          gh release create "$RELEASE_TAG" --target "$RELEASE_COMMIT" --latest=false "${prerelease_args[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+
+      - name: Update CLI optional download channel
+        env:
+          CLI_CHANNEL_TAG: trace-flow-cli-latest
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          channel_title="Trace Flow CLI latest"
+          channel_notes="Optional Trace Flow CLI download. Desktop releases own the repository Latest channel."
+          printf '%s\n' "$channel_notes" > "$RUNNER_TEMP/cli-channel-notes.txt"
+          if gh release view "$CLI_CHANNEL_TAG" >/dev/null 2>&1; then
+            gh release edit "$CLI_CHANNEL_TAG" --target "$RELEASE_COMMIT" --title "$channel_title" --notes-file "$RUNNER_TEMP/cli-channel-notes.txt" --latest=false
+          else
+            gh release create "$CLI_CHANNEL_TAG" --target "$RELEASE_COMMIT" --title "$channel_title" --notes-file "$RUNNER_TEMP/cli-channel-notes.txt" --latest=false
+          fi
+          gh release upload "$CLI_CHANNEL_TAG" artifacts/* --clobber

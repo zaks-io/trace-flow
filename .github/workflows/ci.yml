@@ -29,6 +29,7 @@ jobs:
       agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
       agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
       rust: ${{ steps.filter.outputs.rust }}
+      desktop: ${{ steps.filter.outputs.desktop }}
       root: ${{ steps.filter.outputs.root }}
       workflows: ${{ steps.filter.outputs.workflows }}
       tinybird: ${{ steps.filter.outputs.tinybird }}
@@ -80,11 +81,27 @@ jobs:
               - 'packages/pricing/**'
               - 'packages/tinybird-client/**'
             rust:
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/cli-release.yml'
+              - '.github/workflows/desktop-release.yml'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'dist-workspace.toml'
+              - 'package.json'
+              - 'bun.lock'
+              - 'turbo.json'
               - 'packages/collector-*/**'
               - 'apps/cli/**'
-              - 'apps/desktop/src-tauri/**'
+              - 'apps/desktop/**'
+            desktop:
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/desktop-release.yml'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'package.json'
+              - 'bun.lock'
+              - 'packages/collector-*/**'
+              - 'apps/desktop/**'
             root:
               - 'package.json'
               - 'bun.lock'
@@ -577,9 +594,9 @@ jobs:
       - name: Build
         run: bunx turbo run build --filter=@trace-flow/agent-consumer
 
-  # Collector Rust workspace (packages/collector-*, apps/cli). Kept out of Turbo — a dedicated
-  # cargo job per TRA-111. fmt is OS-independent so it runs once on linux; check/test/clippy run on
-  # each OS because the CLI's keyring/path code is platform-specific.
+  # Collector Rust workspace (packages/collector-*, apps/cli, apps/desktop). Kept out of Turbo.
+  # fmt is OS-independent so it runs once on linux; check/test/clippy run per OS because the CLI
+  # and desktop shell touch platform-specific keychain, path, tray, and webview code.
   rust:
     name: Rust Collector (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
@@ -596,6 +613,8 @@ jobs:
             runner: blacksmith-4vcpu-ubuntu-2404
           - name: macos
             runner: blacksmith-6vcpu-macos-latest
+          - name: windows
+            runner: blacksmith-4vcpu-windows-2025
     env:
       RUST_BACKTRACE: 1
     steps:
@@ -641,6 +660,41 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  desktop-build:
+    name: Tauri Desktop Build (macOS)
+    runs-on: blacksmith-6vcpu-macos-latest
+    needs: [changes]
+    if: needs.changes.outputs.desktop == 'true'
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      APPLE_SIGNING_IDENTITY: '-'
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: . -> target
+
+      - name: Build Tauri desktop bundle
+        run: bun --cwd apps/desktop run desktop:build -- --target aarch64-apple-darwin
+
   status:
     name: CI Status
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -660,6 +714,7 @@ jobs:
       - agent-ingest
       - agent-consumer
       - rust
+      - desktop-build
     steps:
       - name: Check job statuses
         run: |

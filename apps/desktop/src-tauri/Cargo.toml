@@ -5,6 +5,9 @@ edition = "2021"
 license = "MIT"
 description = "Trace Flow Desktop: the menu-bar Collector that syncs local Claude/Codex transcripts (TRA-115)"
 
+[package.metadata.dist]
+dist = false
+
 [lib]
 name = "trace_flow_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

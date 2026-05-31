@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Trace Flow Collector CLI: login, sources, sync, status, disconnect"
+repository = "https://github.com/zaks-io/trace-flow"
+homepage = "https://trace-flow.dev"
+
+[package.metadata.dist]
+dist = true
 
 # The binary users invoke is `trace-flow`, not the crate name.
 [[bin]]

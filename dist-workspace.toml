@@ -1,0 +1,42 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.31.0"
+ci = "github"
+installers = ["shell"]
+# cli-release.yml carries hand-applied hardening beyond the generated dist workflow:
+# action SHA pinning, explicit permissions, and release tag validation. Re-run
+# `dist generate` locally when bumping cargo-dist-version, then re-apply those edits.
+allow-dirty = ["ci"]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+# Manual dispatch only. Production deploy gates build the CLI but never publish it.
+dispatch-releases = true
+# `tag=dry-run` still builds artifacts, but never creates a GitHub Release.
+pr-run-mode = "plan"
+
+# Dist signs macOS CLI binaries, but does not notarize raw binaries. Desktop
+# notarization lives in desktop-release.yml where Tauri builds notarizable bundles.
+macos-sign = true
+
+install-success-msg = """
+trace-flow installed.
+
+If macOS warns about an unverified developer the first time you run trace-flow,
+remove the quarantine flag with:
+
+    xattr -d com.apple.quarantine $(which trace-flow)
+"""
+
+[dist.github-custom-runners]
+global = "blacksmith-2vcpu-ubuntu-2404-arm"
+aarch64-apple-darwin = "blacksmith-6vcpu-macos-latest"
+x86_64-apple-darwin = "blacksmith-6vcpu-macos-latest"
+x86_64-unknown-linux-gnu = "blacksmith-4vcpu-ubuntu-2404"
+aarch64-unknown-linux-gnu = "blacksmith-4vcpu-ubuntu-2404-arm"

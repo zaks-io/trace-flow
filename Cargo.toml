@@ -9,3 +9,11 @@
 [workspace]
 resolver = "2"
 members = ["packages/collector-*", "apps/cli", "apps/desktop/src-tauri"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dist]
+inherits = "release"
