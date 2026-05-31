@@ -1129,27 +1129,6 @@ export declare const api: {
       >;
     };
   };
-  mcp: {
-    handler: {
-      handleMessage: FunctionReference<
-        "action",
-        "public",
-        { message: any; sessionId?: string },
-        {
-          error?: { code: number; data?: any; message: string };
-          id: string | number | null;
-          jsonrpc: "2.0";
-          result?: any;
-        } | null
-      >;
-      terminateSession: FunctionReference<
-        "action",
-        "public",
-        { sessionId: string },
-        null
-      >;
-    };
-  };
   waitlist: {
     bulkInviteFromWaitlist: FunctionReference<
       "mutation",
@@ -2242,87 +2221,6 @@ export declare const internal: {
         any
       >;
     };
-    handler: {
-      handleMessageWithUser: FunctionReference<
-        "action",
-        "internal",
-        { message: any; sessionId?: string; userId: Id<"users"> },
-        {
-          error?: { code: number; data?: any; message: string };
-          id: string | number | null;
-          jsonrpc: "2.0";
-          result?: any;
-        } | null
-      >;
-    };
-    session: {
-      cleanupSession: FunctionReference<
-        "mutation",
-        "internal",
-        { sessionId: string },
-        null
-      >;
-      createSession: FunctionReference<
-        "mutation",
-        "internal",
-        { protocolVersion: string; userId: Id<"users"> },
-        string
-      >;
-      deleteSession: FunctionReference<
-        "mutation",
-        "internal",
-        { sessionId: string },
-        null
-      >;
-      getSession: FunctionReference<
-        "query",
-        "internal",
-        { sessionId: string },
-        {
-          _creationTime: number;
-          _id: Id<"mcpSessions">;
-          expiresAt: number;
-          protocolVersion: string;
-          sessionId: string;
-          state: "initializing" | "ready" | "shutdown";
-          userId: Id<"users">;
-        } | null
-      >;
-      getSessionInternal: FunctionReference<
-        "query",
-        "internal",
-        { sessionId: string },
-        {
-          _creationTime: number;
-          _id: Id<"mcpSessions">;
-          expiresAt: number;
-          protocolVersion: string;
-          sessionId: string;
-          state: "initializing" | "ready" | "shutdown";
-          userId: Id<"users">;
-        } | null
-      >;
-      getUserSessions: FunctionReference<
-        "query",
-        "internal",
-        { userId: Id<"users"> },
-        Array<{
-          _creationTime: number;
-          _id: Id<"mcpSessions">;
-          expiresAt: number;
-          protocolVersion: string;
-          sessionId: string;
-          state: "initializing" | "ready" | "shutdown";
-          userId: Id<"users">;
-        }>
-      >;
-      updateSessionState: FunctionReference<
-        "mutation",
-        "internal",
-        { sessionId: string; state: "initializing" | "ready" | "shutdown" },
-        null
-      >;
-    };
     tokens: {
       cleanupAuthCode: FunctionReference<
         "mutation",
@@ -2341,10 +2239,11 @@ export declare const internal: {
         "internal",
         {
           auth0RefreshToken: string;
-          clientId?: string;
-          codeChallenge?: string;
-          codeChallengeMethod?: string;
+          clientId: string;
+          codeChallenge: string;
+          codeChallengeMethod: "S256";
           redirectUri: string;
+          resource: string;
           userId: Id<"users">;
         },
         string
@@ -2352,7 +2251,12 @@ export declare const internal: {
       createRefreshToken: FunctionReference<
         "mutation",
         "internal",
-        { auth0RefreshToken: string; userId: Id<"users"> },
+        {
+          auth0RefreshToken: string;
+          clientId: string;
+          resource: string;
+          userId: Id<"users">;
+        },
         string
       >;
       deleteRefreshToken: FunctionReference<
@@ -2370,9 +2274,15 @@ export declare const internal: {
       exchangeAuthCode: FunctionReference<
         "mutation",
         "internal",
-        { code: string; codeVerifier?: string; redirectUri: string },
+        {
+          clientId: string;
+          code: string;
+          codeVerifier: string;
+          redirectUri: string;
+          resource: string;
+        },
         | { error: string; error_description: string }
-        | { tokenId: string; userId: Id<"users"> }
+        | { resource: string; tokenId: string; userId: Id<"users"> }
       >;
       getRefreshToken: FunctionReference<
         "query",
@@ -2382,11 +2292,25 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"mcpRefreshTokens">;
           auth0RefreshToken: string;
+          clientId?: string;
           expiresAt: number;
           hashedTokenId: string;
+          resource?: string;
           tokenId?: string;
           userId: Id<"users">;
         } | null
+      >;
+      rotateRefreshToken: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          auth0RefreshToken: string;
+          clientId: string;
+          resource: string;
+          tokenId: string;
+        },
+        | { error: string; error_description: string }
+        | { resource: string; tokenId: string; userId: Id<"users"> }
       >;
       updateRefreshToken: FunctionReference<
         "mutation",

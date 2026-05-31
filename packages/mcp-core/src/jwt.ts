@@ -12,8 +12,6 @@ export const MCP_ACCESS_TOKEN_KID = 'mcp-rs256-v1';
 
 export const MCP_ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
 
-export const MCP_ACCESS_TOKEN_AUDIENCE = 'mcp';
-
 /** Path on `connect.` where the public verification key(s) are served. */
 export const JWKS_PATH = '/.well-known/jwks.json';
 

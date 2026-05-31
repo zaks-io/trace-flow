@@ -1,10 +1,5 @@
 import { jwtVerify, createRemoteJWKSet } from 'jose';
-import {
-  JWKS_PATH,
-  MCP_ACCESS_TOKEN_ALG,
-  MCP_ACCESS_TOKEN_AUDIENCE,
-  type AccessTokenPayload,
-} from '@trace-flow/mcp-core';
+import { JWKS_PATH, MCP_ACCESS_TOKEN_ALG, type AccessTokenPayload } from '@trace-flow/mcp-core';
 import type { Logger } from '@trace-flow/logging';
 
 export class TokenVerificationUnavailableError extends Error {
@@ -65,13 +60,14 @@ function isJwksFetchError(error: unknown): boolean {
 export async function verifyAccessToken(
   token: string,
   connectBaseUrl: string,
+  resourceUrl: string,
   logger?: Pick<Logger, 'error'>,
 ): Promise<AccessTokenPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getJwks(connectBaseUrl), {
       algorithms: [MCP_ACCESS_TOKEN_ALG],
       issuer: connectBaseUrl,
-      audience: MCP_ACCESS_TOKEN_AUDIENCE,
+      audience: resourceUrl,
     });
     if (typeof payload.userId !== 'string' || typeof payload.tokenId !== 'string') {
       return null;

@@ -61,11 +61,59 @@ async function enforceRateLimit(
 function isLoopbackRedirect(redirectUri: string): boolean {
   try {
     const u = new URL(redirectUri);
+    if (u.hash || u.username || u.password) return false;
     if (u.protocol !== 'http:') return false;
-    return u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname === 'localhost';
+    return u.hostname === '127.0.0.1' || u.hostname === '[::1]' || u.hostname === 'localhost';
   } catch {
     return false;
   }
+}
+
+function isSecureRedirectUri(redirectUri: string): boolean {
+  try {
+    const u = new URL(redirectUri);
+    if (u.hash || u.username || u.password) return false;
+    return u.protocol === 'https:' || isLoopbackRedirect(redirectUri);
+  } catch {
+    return false;
+  }
+}
+
+function canonicalizeMcpResource(resource: string): string | null {
+  try {
+    const u = new URL(resource);
+    if (u.hash || u.username || u.password) return null;
+    if (u.protocol !== 'https:' && !isLoopbackRedirect(resource)) return null;
+    const serialized = u.toString();
+    return u.pathname === '/' && !u.search ? serialized.replace(/\/$/, '') : serialized;
+  } catch {
+    return null;
+  }
+}
+
+function bodyString(
+  body: Record<string, string | File | (string | File)[]>,
+  key: string,
+): string | undefined {
+  const value = body[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(a);
+  const bBytes = encoder.encode(b);
+  const maxLength = Math.max(aBytes.length, bBytes.length);
+  let diff = aBytes.length ^ bBytes.length;
+  for (let i = 0; i < maxLength; i += 1) {
+    diff |= (aBytes[i] ?? 0) ^ (bBytes[i] ?? 0);
+  }
+  return diff === 0;
+}
+
+function hasValidBearerSecret(authHeader: string | undefined, secret: string | undefined): boolean {
+  if (!secret || !authHeader?.startsWith('Bearer ')) return false;
+  return timingSafeEqual(authHeader.slice(7), secret);
 }
 
 function getClientIp(request: Request): string {
@@ -480,17 +528,21 @@ export function createApp(
       return c.json({ error: 'invalid_client_metadata', error_description: 'Invalid JSON' }, 400);
     }
 
-    const redirectUris = body.redirect_uris ?? [];
-    if (redirectUris.length === 0) {
+    if (
+      !Array.isArray(body.redirect_uris) ||
+      body.redirect_uris.length === 0 ||
+      body.redirect_uris.some((uri) => typeof uri !== 'string' || !isSecureRedirectUri(uri))
+    ) {
       return c.json(
         {
           error: 'invalid_redirect_uri',
-          error_description: 'At least one redirect_uri is required',
+          error_description: 'At least one https or loopback http redirect_uri is required',
         },
         400,
       );
     }
 
+    const redirectUris = body.redirect_uris;
     const clientId = crypto.randomUUID();
 
     await ctx.runMutation(internal.mcp.clients.registerClient, {
@@ -522,20 +574,62 @@ export function createApp(
     }
 
     const url = new URL(c.req.url);
+    const responseType = url.searchParams.get('response_type');
+    const clientId = url.searchParams.get('client_id');
     const clientState = url.searchParams.get('state') ?? '';
     const redirectUri = url.searchParams.get('redirect_uri');
+    const resource = url.searchParams.get('resource');
     const codeChallenge = url.searchParams.get('code_challenge') ?? undefined;
     const codeChallengeMethod = url.searchParams.get('code_challenge_method') ?? undefined;
 
+    if (responseType && responseType !== 'code') {
+      return c.json(
+        { error: 'unsupported_response_type', error_description: 'response_type must be code' },
+        400,
+      );
+    }
+
+    if (!clientId) {
+      return c.json({ error: 'invalid_request', error_description: 'client_id is required' }, 400);
+    }
+
     if (!redirectUri) {
-      return c.json({ error: 'redirect_uri is required' }, 400);
+      return c.json(
+        { error: 'invalid_request', error_description: 'redirect_uri is required' },
+        400,
+      );
+    }
+
+    const client = await ctx.runQuery(internal.mcp.clients.getClient, { clientId });
+    if (!Array.isArray(client?.redirectUris) || !client.redirectUris.includes(redirectUri)) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'redirect_uri is not registered' },
+        400,
+      );
+    }
+
+    const canonicalResource = resource ? canonicalizeMcpResource(resource) : null;
+    if (!canonicalResource) {
+      return c.json({ error: 'invalid_request', error_description: 'resource is required' }, 400);
+    }
+
+    if (!codeChallenge || codeChallengeMethod !== 'S256') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'PKCE code_challenge_method must be S256',
+        },
+        400,
+      );
     }
 
     const callbackUrl = new URL('/mcp/callback', url.origin).toString();
 
     const state = await oauth.signState({
       clientState,
+      clientId,
       redirectUri,
+      resource: canonicalResource,
       codeChallenge,
       codeChallengeMethod,
     });
@@ -673,10 +767,21 @@ export function createApp(
         });
       }
 
+      if (
+        !statePayload.clientId ||
+        !statePayload.resource ||
+        !statePayload.codeChallenge ||
+        statePayload.codeChallengeMethod !== 'S256'
+      ) {
+        return c.json({ error: 'Invalid or expired state' }, 400);
+      }
+
       // Create authorization code (for code exchange at token endpoint)
       const authCode = await ctx.runMutation(internal.mcp.tokens.createAuthCode, {
         userId,
+        clientId: statePayload.clientId,
         redirectUri: statePayload.redirectUri,
+        resource: statePayload.resource,
         codeChallenge: statePayload.codeChallenge,
         codeChallengeMethod: statePayload.codeChallengeMethod,
         auth0RefreshToken: auth0Tokens.refresh_token ?? '',
@@ -719,164 +824,176 @@ export function createApp(
       return limited;
     }
 
-    const body = await c.req.parseBody();
-    const grantType = body.grant_type;
-
-    if (grantType === 'authorization_code') {
-      const code = body.code as string;
-      const redirectUri = body.redirect_uri as string;
-      const codeVerifier = body.code_verifier as string | undefined;
-
-      if (!code) {
-        return c.json({ error: 'invalid_request', error_description: 'code is required' }, 400);
-      }
-
-      if (!redirectUri) {
-        return c.json(
-          { error: 'invalid_request', error_description: 'redirect_uri is required' },
-          400,
-        );
-      }
-
-      const result = await ctx.runMutation(internal.mcp.tokens.exchangeAuthCode, {
-        code,
-        redirectUri,
-        codeVerifier,
-      });
-
-      if ('error' in result) {
-        return c.json(result, 400);
-      }
-
-      const issuer = new URL(c.req.url).origin;
-      const accessToken = await tokens.createAccessToken(result.userId, result.tokenId, issuer);
-
-      return c.json({
-        access_token: accessToken,
-        token_type: 'Bearer',
-        expires_in: tokens.ACCESS_TOKEN_TTL_SECONDS,
-        refresh_token: result.tokenId,
-      });
-    }
-
-    if (grantType === 'refresh_token') {
-      const refreshTokenId = body.refresh_token as string;
-
-      if (!refreshTokenId) {
-        return c.json(
-          { error: 'invalid_request', error_description: 'refresh_token is required' },
-          400,
-        );
-      }
-
-      const refreshToken = await ctx.runQuery(internal.mcp.tokens.getRefreshToken, {
-        tokenId: refreshTokenId,
-      });
-
-      if (!refreshToken) {
-        return c.json(
-          { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' },
-          401,
-        );
-      }
-
-      // Refresh Auth0 token if we have one
-      if (refreshToken.auth0RefreshToken) {
-        try {
-          const newAuth0Tokens = await oauth.refreshAuth0Token(refreshToken.auth0RefreshToken);
-
-          if (newAuth0Tokens.refresh_token) {
-            await ctx.runMutation(internal.mcp.tokens.updateRefreshToken, {
-              tokenId: refreshTokenId,
-              auth0RefreshToken: newAuth0Tokens.refresh_token,
-            });
-          }
-        } catch (err) {
-          logger.error('convex.auth0_token_refresh_failed', err);
-        }
-      }
-
-      const issuer = new URL(c.req.url).origin;
-      const accessToken = await tokens.createAccessToken(
-        refreshToken.userId,
-        refreshTokenId,
-        issuer,
-      );
-
-      await logger.flush();
-      return c.json({
-        access_token: accessToken,
-        token_type: 'Bearer',
-        expires_in: tokens.ACCESS_TOKEN_TTL_SECONDS,
-        refresh_token: refreshTokenId,
-      });
-    }
-
-    return c.json(
-      { error: 'unsupported_grant_type', error_description: 'Unsupported grant_type' },
-      400,
-    );
-  });
-
-  // MCP: Protocol endpoint
-  app.post('/mcp', async (c) => {
-    const ctx = c.env;
-
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return c.json({ error: 'Missing or invalid Authorization header' }, 401);
-    }
-
-    const token = authHeader.slice(7);
-    const payload = await tokens.validateAccessToken(token, new URL(c.req.url).origin);
-
-    if (!payload) {
-      return c.json({ error: 'Invalid or expired access token' }, 401);
-    }
-
-    // Verify user exists and is enabled
-    const user = await ctx.runQuery(internal.auth.users.getUserById, {
-      id: payload.userId as Id<'users'>,
-    });
-    if (!user) {
-      return c.json({ error: 'User not found' }, 401);
-    }
-
-    if (!user.enabled) {
-      return c.json({ error: 'User account is not enabled' }, 403);
-    }
-
-    const sessionId = c.req.header('Mcp-Session-Id') ?? undefined;
-
-    let body: unknown;
     try {
-      body = await c.req.json();
-    } catch {
+      const body = await c.req.parseBody();
+      const grantType = body.grant_type;
+
+      if (grantType === 'authorization_code') {
+        const code = bodyString(body, 'code');
+        const clientId = bodyString(body, 'client_id');
+        const redirectUri = bodyString(body, 'redirect_uri');
+        const resource = bodyString(body, 'resource');
+        const codeVerifier = bodyString(body, 'code_verifier');
+
+        if (!code) {
+          return c.json({ error: 'invalid_request', error_description: 'code is required' }, 400);
+        }
+
+        if (!clientId) {
+          return c.json(
+            { error: 'invalid_request', error_description: 'client_id is required' },
+            400,
+          );
+        }
+
+        if (!redirectUri) {
+          return c.json(
+            { error: 'invalid_request', error_description: 'redirect_uri is required' },
+            400,
+          );
+        }
+
+        const canonicalResource = resource ? canonicalizeMcpResource(resource) : null;
+        if (!canonicalResource) {
+          return c.json(
+            { error: 'invalid_request', error_description: 'resource is required' },
+            400,
+          );
+        }
+
+        if (!codeVerifier) {
+          return c.json(
+            { error: 'invalid_request', error_description: 'code_verifier is required' },
+            400,
+          );
+        }
+
+        const result = await ctx.runMutation(internal.mcp.tokens.exchangeAuthCode, {
+          code,
+          clientId,
+          redirectUri,
+          resource: canonicalResource,
+          codeVerifier,
+        });
+
+        if ('error' in result) {
+          return c.json(result, 400);
+        }
+
+        const issuer = new URL(c.req.url).origin;
+        const accessToken = await tokens.createAccessToken(
+          result.userId,
+          result.tokenId,
+          issuer,
+          result.resource,
+        );
+
+        return c.json({
+          access_token: accessToken,
+          token_type: 'Bearer',
+          expires_in: tokens.ACCESS_TOKEN_TTL_SECONDS,
+          refresh_token: result.tokenId,
+        });
+      }
+
+      if (grantType === 'refresh_token') {
+        const refreshTokenId = bodyString(body, 'refresh_token');
+        const clientId = bodyString(body, 'client_id');
+        const resource = bodyString(body, 'resource');
+
+        if (!refreshTokenId) {
+          return c.json(
+            { error: 'invalid_request', error_description: 'refresh_token is required' },
+            400,
+          );
+        }
+
+        if (!clientId) {
+          return c.json(
+            { error: 'invalid_request', error_description: 'client_id is required' },
+            400,
+          );
+        }
+
+        const canonicalResource = resource ? canonicalizeMcpResource(resource) : null;
+        if (!canonicalResource) {
+          return c.json(
+            { error: 'invalid_request', error_description: 'resource is required' },
+            400,
+          );
+        }
+
+        const refreshToken = await ctx.runQuery(internal.mcp.tokens.getRefreshToken, {
+          tokenId: refreshTokenId,
+        });
+
+        if (!refreshToken) {
+          return c.json(
+            { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' },
+            401,
+          );
+        }
+
+        if (refreshToken.clientId !== clientId || refreshToken.resource !== canonicalResource) {
+          return c.json(
+            { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' },
+            401,
+          );
+        }
+
+        const rotated = await ctx.runMutation(internal.mcp.tokens.rotateRefreshToken, {
+          tokenId: refreshTokenId,
+          clientId,
+          resource: canonicalResource,
+          auth0RefreshToken: refreshToken.auth0RefreshToken,
+        });
+
+        if ('error' in rotated) {
+          return c.json(rotated, 401);
+        }
+
+        // Refresh Auth0 token if we have one
+        if (refreshToken.auth0RefreshToken) {
+          try {
+            const newAuth0Tokens = await oauth.refreshAuth0Token(refreshToken.auth0RefreshToken);
+
+            if (newAuth0Tokens.refresh_token) {
+              await ctx.runMutation(internal.mcp.tokens.updateRefreshToken, {
+                tokenId: rotated.tokenId,
+                auth0RefreshToken: newAuth0Tokens.refresh_token,
+              });
+            }
+          } catch (err) {
+            logger.error('convex.auth0_token_refresh_failed', err);
+          }
+        }
+
+        const issuer = new URL(c.req.url).origin;
+        const accessToken = await tokens.createAccessToken(
+          rotated.userId,
+          rotated.tokenId,
+          issuer,
+          rotated.resource,
+        );
+
+        await logger.flush();
+        return c.json({
+          access_token: accessToken,
+          token_type: 'Bearer',
+          expires_in: tokens.ACCESS_TOKEN_TTL_SECONDS,
+          refresh_token: rotated.tokenId,
+        });
+      }
+
       return c.json(
-        {
-          jsonrpc: '2.0',
-          id: null,
-          error: { code: -32700, message: 'Parse error: Invalid JSON' },
-        },
+        { error: 'unsupported_grant_type', error_description: 'Unsupported grant_type' },
         400,
       );
+    } catch (err) {
+      logger.error('convex.mcp_token_failed', err);
+      await logger.flush();
+      return c.json({ error: 'server_error', error_description: 'Internal server error' }, 500);
     }
-
-    const result = await ctx.runAction(internal.mcp.handler.handleMessageWithUser, {
-      message: body,
-      sessionId,
-      userId: user._id,
-    });
-
-    if (result === null) {
-      return c.body(null, 204);
-    }
-
-    if (result.result && typeof result.result === 'object' && 'sessionId' in result.result) {
-      c.header('Mcp-Session-Id', (result.result as { sessionId: string }).sessionId);
-    }
-
-    return c.json(result);
   });
 
   // Usage: DO pushes usage totals
@@ -886,7 +1003,7 @@ export function createApp(
 
     const authHeader = c.req.header('Authorization');
     const secret = process.env.USAGE_SYNC_SECRET;
-    if (!secret || authHeader !== `Bearer ${secret}`) {
+    if (!hasValidBearerSecret(authHeader, secret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -948,7 +1065,7 @@ export function createApp(
 
     const authHeader = c.req.header('Authorization');
     const secret = process.env.AGENT_INGEST_SHARED_SECRET;
-    if (!secret || authHeader !== `Bearer ${secret}`) {
+    if (!hasValidBearerSecret(authHeader, secret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -1018,7 +1135,7 @@ export function createApp(
 
     const authHeader = c.req.header('Authorization');
     const secret = process.env.AGENT_INGEST_SHARED_SECRET;
-    if (!secret || authHeader !== `Bearer ${secret}`) {
+    if (!hasValidBearerSecret(authHeader, secret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -1044,7 +1161,7 @@ export function createApp(
     const ctx = c.env;
     const authHeader = c.req.header('Authorization');
     const secret = process.env.MCP_BACKEND_SHARED_SECRET;
-    if (!secret || authHeader !== `Bearer ${secret}`) {
+    if (!hasValidBearerSecret(authHeader, secret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     if (!isJsonContentType(c.req.header('Content-Type'))) {
@@ -1073,7 +1190,7 @@ export function createApp(
     const ctx = c.env;
     const authHeader = c.req.header('Authorization');
     const secret = process.env.MCP_BACKEND_SHARED_SECRET;
-    if (!secret || authHeader !== `Bearer ${secret}`) {
+    if (!hasValidBearerSecret(authHeader, secret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     if (!isJsonContentType(c.req.header('Content-Type'))) {
@@ -1169,44 +1286,6 @@ export function createApp(
       status: 302,
       headers: { Location: auth0Url, 'Cache-Control': 'no-store' },
     });
-  });
-
-  // MCP: Terminate session
-  app.delete('/mcp', async (c) => {
-    const ctx = c.env;
-
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return c.json({ error: 'Missing or invalid Authorization header' }, 401);
-    }
-
-    const token = authHeader.slice(7);
-    const payload = await tokens.validateAccessToken(token, new URL(c.req.url).origin);
-
-    if (!payload) {
-      return c.json({ error: 'Invalid or expired access token' }, 401);
-    }
-
-    const sessionId = c.req.header('Mcp-Session-Id');
-    if (!sessionId) {
-      return c.json({ error: 'Missing Mcp-Session-Id header' }, 400);
-    }
-
-    const session = await ctx.runQuery(internal.mcp.session.getSessionInternal, { sessionId });
-    if (!session) {
-      return c.json({ error: 'Session not found' }, 404);
-    }
-    if (session.userId !== payload.userId) {
-      return c.json({ error: 'Session does not belong to this user' }, 403);
-    }
-
-    await ctx.runMutation(internal.mcp.session.updateSessionState, {
-      sessionId,
-      state: 'shutdown' as const,
-    });
-    await ctx.runMutation(internal.mcp.session.deleteSession, { sessionId });
-
-    return c.body(null, 204);
   });
 
   return app;

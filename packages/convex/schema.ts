@@ -245,6 +245,8 @@ export default defineSchema({
     tokenId: v.optional(v.string()),
     hashedTokenId: v.string(),
     userId: v.id('users'),
+    clientId: v.optional(v.string()),
+    resource: v.optional(v.string()),
     auth0RefreshToken: v.string(),
     expiresAt: v.number(),
   })
@@ -262,6 +264,7 @@ export default defineSchema({
     userId: v.id('users'),
     clientId: v.optional(v.string()),
     redirectUri: v.string(),
+    resource: v.optional(v.string()),
     codeChallenge: v.optional(v.string()),
     codeChallengeMethod: v.optional(v.string()),
     auth0RefreshToken: v.string(),

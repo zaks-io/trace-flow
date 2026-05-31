@@ -1,15 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import {
-  MCP_ACCESS_TOKEN_ALG,
-  MCP_ACCESS_TOKEN_AUDIENCE,
-  MCP_ACCESS_TOKEN_KID,
-} from '@trace-flow/mcp-core';
+import { MCP_ACCESS_TOKEN_ALG, MCP_ACCESS_TOKEN_KID } from '@trace-flow/mcp-core';
 import { TokenVerificationUnavailableError, verifyAccessToken } from '../auth';
 
 // Unique connect URL per test so jose's per-URL JWKS cache never bleeds across
 // cases (the worker module-level cache is keyed by connectBaseUrl).
 let counter = 0;
+const RESOURCE_URL = 'https://mcp.test/mcp';
 function freshConnectUrl(): string {
   counter += 1;
   return `https://connect-${counter}.test`;
@@ -32,7 +29,7 @@ async function setup() {
     new SignJWT(claims)
       .setProtectedHeader({ alg: MCP_ACCESS_TOKEN_ALG, kid: MCP_ACCESS_TOKEN_KID })
       .setIssuer(opts.issuer)
-      .setAudience(opts.audience ?? MCP_ACCESS_TOKEN_AUDIENCE)
+      .setAudience(opts.audience ?? RESOURCE_URL)
       .setIssuedAt()
       .setExpirationTime(`${opts.expSeconds ?? 3600}s`)
       .sign(privateKey);
@@ -59,7 +56,7 @@ describe('verifyAccessToken (JWKS)', () => {
 
     const connectUrl = freshConnectUrl();
     const token = await sign({ userId: 'u-1', tokenId: 't-1' }, { issuer: connectUrl });
-    const payload = await verifyAccessToken(token, connectUrl);
+    const payload = await verifyAccessToken(token, connectUrl, RESOURCE_URL);
     expect(payload).toEqual({ userId: 'u-1', tokenId: 't-1' });
   });
 
@@ -71,7 +68,7 @@ describe('verifyAccessToken (JWKS)', () => {
     const { sign: foreignSign } = await setup();
     const connectUrl = freshConnectUrl();
     const token = await foreignSign({ userId: 'u-1', tokenId: 't-1' }, { issuer: connectUrl });
-    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
+    expect(await verifyAccessToken(token, connectUrl, RESOURCE_URL)).toBeNull();
   });
 
   it('rejects an expired token', async () => {
@@ -82,7 +79,7 @@ describe('verifyAccessToken (JWKS)', () => {
       { userId: 'u-1', tokenId: 't-1' },
       { issuer: connectUrl, expSeconds: -10 },
     );
-    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
+    expect(await verifyAccessToken(token, connectUrl, RESOURCE_URL)).toBeNull();
   });
 
   it('rejects a token from the wrong issuer', async () => {
@@ -91,7 +88,7 @@ describe('verifyAccessToken (JWKS)', () => {
     const connectUrl = freshConnectUrl();
     const token = await sign({ userId: 'u-1', tokenId: 't-1' }, { issuer: 'https://other.test' });
 
-    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
+    expect(await verifyAccessToken(token, connectUrl, RESOURCE_URL)).toBeNull();
   });
 
   it('rejects a token for the wrong audience', async () => {
@@ -100,14 +97,14 @@ describe('verifyAccessToken (JWKS)', () => {
     const connectUrl = freshConnectUrl();
     const token = await sign(
       { userId: 'u-1', tokenId: 't-1' },
-      { issuer: connectUrl, audience: 'not-mcp' },
+      { issuer: connectUrl, audience: 'https://other-mcp.test/mcp' },
     );
 
-    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
+    expect(await verifyAccessToken(token, connectUrl, RESOURCE_URL)).toBeNull();
   });
 
   it('rejects garbage', async () => {
-    expect(await verifyAccessToken('garbage', freshConnectUrl())).toBeNull();
+    expect(await verifyAccessToken('garbage', freshConnectUrl(), RESOURCE_URL)).toBeNull();
   });
 
   it('surfaces JWKS fetch failures as service-unavailable errors', async () => {
@@ -118,7 +115,7 @@ describe('verifyAccessToken (JWKS)', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(fetchError);
     const logger = { error: vi.fn() };
 
-    await expect(verifyAccessToken(token, connectUrl, logger)).rejects.toBeInstanceOf(
+    await expect(verifyAccessToken(token, connectUrl, RESOURCE_URL, logger)).rejects.toBeInstanceOf(
       TokenVerificationUnavailableError,
     );
     expect(logger.error).toHaveBeenCalledWith(
@@ -138,7 +135,7 @@ describe('verifyAccessToken (JWKS)', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('upstream down', { status: 500 }));
     const logger = { error: vi.fn() };
 
-    await expect(verifyAccessToken(token, connectUrl, logger)).rejects.toBeInstanceOf(
+    await expect(verifyAccessToken(token, connectUrl, RESOURCE_URL, logger)).rejects.toBeInstanceOf(
       TokenVerificationUnavailableError,
     );
     expect(logger.error).toHaveBeenCalledWith(

@@ -85,7 +85,7 @@ describe('MCP worker auth discovery', () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get('Location')).toBe(
-      `${CONNECT_ORIGIN}/mcp/authorize?client_id=client-1&state=state-1`,
+      `${CONNECT_ORIGIN}/mcp/authorize?client_id=client-1&state=state-1&resource=http%3A%2F%2Flocalhost%2Fmcp`,
     );
   });
 
@@ -97,6 +97,7 @@ describe('MCP worker auth discovery', () => {
       const body = await req.formData();
       expect(body.get('grant_type')).toBe('authorization_code');
       expect(body.get('code')).toBe('code-1');
+      expect(body.get('resource')).toBe('http://localhost/mcp');
       return jsonResponse({ access_token: 'access-1' });
     });
 
@@ -104,6 +105,54 @@ describe('MCP worker auth discovery', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: 'grant_type=authorization_code&code=code-1',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ access_token: 'access-1' });
+  });
+
+  it('preserves a client-supplied resource on form token exchange', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const req = new Request(input, init);
+      expect(req.method).toBe('POST');
+      expect(req.url).toBe(`${CONNECT_ORIGIN}/mcp/token`);
+      const body = await req.formData();
+      expect(body.get('grant_type')).toBe('authorization_code');
+      expect(body.get('code')).toBe('code-1');
+      expect(body.get('resource')).toBe('https://custom.example/mcp');
+      return jsonResponse({ access_token: 'access-1' });
+    });
+
+    const res = await SELF.fetch('http://localhost/mcp/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=authorization_code&code=code-1&resource=https%3A%2F%2Fcustom.example%2Fmcp',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ access_token: 'access-1' });
+  });
+
+  it('preserves a client-supplied resource on raw token exchange', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const req = new Request(input, init);
+      expect(req.method).toBe('POST');
+      expect(req.url).toBe(`${CONNECT_ORIGIN}/mcp/token`);
+      expect(req.headers.get('content-type')).toBe('application/x-www-form-urlencoded');
+      const body = await req.formData();
+      expect(body.get('grant_type')).toBe('authorization_code');
+      expect(body.get('code')).toBe('code-1');
+      expect(body.get('resource')).toBe('https://custom.example/mcp');
+      return jsonResponse({ access_token: 'access-1' });
+    });
+
+    const res = await SELF.fetch('http://localhost/mcp/token', {
+      method: 'POST',
+      body: new TextEncoder().encode(
+        'grant_type=authorization_code&code=code-1&resource=https%3A%2F%2Fcustom.example%2Fmcp',
+      ),
     });
 
     expect(fetchSpy).toHaveBeenCalledOnce();

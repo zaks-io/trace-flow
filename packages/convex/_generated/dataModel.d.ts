@@ -478,6 +478,7 @@ export type DataModel = {
       codeChallengeMethod?: string;
       expiresAt: number;
       redirectUri: string;
+      resource?: string;
       used: boolean;
       userId: Id<"users">;
       _id: Id<"mcpAuthCodes">;
@@ -493,6 +494,7 @@ export type DataModel = {
       | "codeChallengeMethod"
       | "expiresAt"
       | "redirectUri"
+      | "resource"
       | "used"
       | "userId";
     indexes: {
@@ -528,8 +530,10 @@ export type DataModel = {
   mcpRefreshTokens: {
     document: {
       auth0RefreshToken: string;
+      clientId?: string;
       expiresAt: number;
       hashedTokenId: string;
+      resource?: string;
       tokenId?: string;
       userId: Id<"users">;
       _id: Id<"mcpRefreshTokens">;
@@ -539,8 +543,10 @@ export type DataModel = {
       | "_creationTime"
       | "_id"
       | "auth0RefreshToken"
+      | "clientId"
       | "expiresAt"
       | "hashedTokenId"
+      | "resource"
       | "tokenId"
       | "userId";
     indexes: {

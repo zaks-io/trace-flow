@@ -23,13 +23,14 @@ jobs:
     name: CI Checks
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 2
+          persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
 
@@ -220,6 +221,35 @@ jobs:
           command: deploy --env production
           packageManager: bun
 
+  # MCP worker verifies access tokens via Convex JWKS, so Convex must deploy first.
+  deploy-mcp:
+    name: Deploy MCP Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [ci, deploy-convex-and-web]
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy MCP Worker
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/mcp
+          command: deploy --env production
+          packageManager: bun
+
   # Agent pipeline (TRA-110). Production-real: prod-named workers bound to prod queue/DLQ/KV via the
   # [env.production] blocks, deployed with `--env production`. A guard step asserts the resolved prod
   # config binds no dev resources before either Worker deploys.
@@ -307,6 +337,7 @@ jobs:
       - deploy-tinybird-schema
       - deploy-proxy-consumer
       - deploy-api
+      - deploy-mcp
       - deploy-agent-ingest
       - deploy-agent-consumer
     steps:

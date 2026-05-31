@@ -5,7 +5,6 @@ import { internal } from '../_generated/api';
 import { sha256Hex } from '@trace-flow/utils';
 import {
   MCP_ACCESS_TOKEN_ALG,
-  MCP_ACCESS_TOKEN_AUDIENCE,
   MCP_ACCESS_TOKEN_KID,
   MCP_ACCESS_TOKEN_TTL_SECONDS,
   type AccessTokenPayload,
@@ -33,13 +32,14 @@ export async function createAccessToken(
   userId: string,
   tokenId: string,
   issuer: string,
+  resource: string,
 ): Promise<string> {
   const signingKey = await getSigningKey();
 
   return new SignJWT({ userId, tokenId })
     .setProtectedHeader({ alg: MCP_ACCESS_TOKEN_ALG, kid: MCP_ACCESS_TOKEN_KID })
     .setIssuer(issuer)
-    .setAudience(MCP_ACCESS_TOKEN_AUDIENCE)
+    .setAudience(resource)
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
     .setIssuedAt()
     .sign(signingKey);
@@ -48,6 +48,7 @@ export async function createAccessToken(
 export async function validateAccessToken(
   token: string,
   issuer: string,
+  resource: string,
 ): Promise<AccessTokenPayload | null> {
   const publicKeyPem = process.env.MCP_JWT_PUBLIC_KEY;
   if (!publicKeyPem) {
@@ -59,7 +60,7 @@ export async function validateAccessToken(
     const { payload } = await jwtVerify(token, publicKey, {
       algorithms: [MCP_ACCESS_TOKEN_ALG],
       issuer,
-      audience: MCP_ACCESS_TOKEN_AUDIENCE,
+      audience: resource,
     });
     return payload as unknown as AccessTokenPayload;
   } catch {
@@ -70,6 +71,8 @@ export async function validateAccessToken(
 export const createRefreshToken = internalMutation({
   args: {
     userId: v.id('users'),
+    clientId: v.string(),
+    resource: v.string(),
     auth0RefreshToken: v.string(),
   },
   returns: v.string(),
@@ -81,6 +84,8 @@ export const createRefreshToken = internalMutation({
     await ctx.db.insert('mcpRefreshTokens', {
       hashedTokenId,
       userId: args.userId,
+      clientId: args.clientId,
+      resource: args.resource,
       auth0RefreshToken: args.auth0RefreshToken,
       expiresAt,
     });
@@ -102,6 +107,8 @@ export const getRefreshToken = internalQuery({
       tokenId: v.optional(v.string()),
       hashedTokenId: v.string(),
       userId: v.id('users'),
+      clientId: v.optional(v.string()),
+      resource: v.optional(v.string()),
       auth0RefreshToken: v.string(),
       expiresAt: v.number(),
     }),
@@ -168,6 +175,55 @@ export const updateRefreshToken = internalMutation({
   },
 });
 
+export const rotateRefreshToken = internalMutation({
+  args: {
+    tokenId: v.string(),
+    clientId: v.string(),
+    resource: v.string(),
+    auth0RefreshToken: v.string(),
+  },
+  returns: v.union(
+    v.object({ error: v.string(), error_description: v.string() }),
+    v.object({ userId: v.id('users'), tokenId: v.string(), resource: v.string() }),
+  ),
+  handler: async (ctx, args) => {
+    const hashed = await sha256Hex(args.tokenId);
+    const token = await ctx.db
+      .query('mcpRefreshTokens')
+      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
+      .first();
+
+    if (
+      !token ||
+      token.expiresAt < Date.now() ||
+      token.clientId !== args.clientId ||
+      token.resource !== args.resource
+    ) {
+      return { error: 'invalid_grant', error_description: 'Invalid or expired refresh token' };
+    }
+
+    const tokenId = crypto.randomUUID();
+    const hashedTokenId = await sha256Hex(tokenId);
+    const expiresAt = Date.now() + REFRESH_TOKEN_TTL_MS;
+
+    await ctx.db.delete(token._id);
+    await ctx.db.insert('mcpRefreshTokens', {
+      hashedTokenId,
+      userId: token.userId,
+      clientId: args.clientId,
+      resource: args.resource,
+      auth0RefreshToken: args.auth0RefreshToken,
+      expiresAt,
+    });
+
+    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
+      hashedTokenId,
+    });
+
+    return { userId: token.userId, tokenId, resource: args.resource };
+  },
+});
+
 export const deleteUserRefreshTokens = internalMutation({
   args: { userId: v.id('users') },
   returns: v.null(),
@@ -188,10 +244,11 @@ const AUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 export const createAuthCode = internalMutation({
   args: {
     userId: v.id('users'),
-    clientId: v.optional(v.string()),
+    clientId: v.string(),
     redirectUri: v.string(),
-    codeChallenge: v.optional(v.string()),
-    codeChallengeMethod: v.optional(v.string()),
+    resource: v.string(),
+    codeChallenge: v.string(),
+    codeChallengeMethod: v.literal('S256'),
     auth0RefreshToken: v.string(),
   },
   returns: v.string(),
@@ -204,6 +261,7 @@ export const createAuthCode = internalMutation({
       userId: args.userId,
       clientId: args.clientId,
       redirectUri: args.redirectUri,
+      resource: args.resource,
       codeChallenge: args.codeChallenge,
       codeChallengeMethod: args.codeChallengeMethod,
       auth0RefreshToken: args.auth0RefreshToken,
@@ -220,12 +278,14 @@ export const createAuthCode = internalMutation({
 export const exchangeAuthCode = internalMutation({
   args: {
     code: v.string(),
+    clientId: v.string(),
     redirectUri: v.string(),
-    codeVerifier: v.optional(v.string()),
+    resource: v.string(),
+    codeVerifier: v.string(),
   },
   returns: v.union(
     v.object({ error: v.string(), error_description: v.string() }),
-    v.object({ userId: v.id('users'), tokenId: v.string() }),
+    v.object({ userId: v.id('users'), tokenId: v.string(), resource: v.string() }),
   ),
   handler: async (ctx, args) => {
     const authCode = await ctx.db
@@ -249,25 +309,29 @@ export const exchangeAuthCode = internalMutation({
       return { error: 'invalid_grant', error_description: 'Redirect URI mismatch' };
     }
 
-    // Verify PKCE if code_challenge was provided
-    if (authCode.codeChallenge && authCode.codeChallengeMethod === 'S256') {
-      if (!args.codeVerifier) {
-        return { error: 'invalid_grant', error_description: 'Code verifier required' };
-      }
+    if (!authCode.clientId || authCode.clientId !== args.clientId) {
+      return { error: 'invalid_grant', error_description: 'Client ID mismatch' };
+    }
 
-      // Calculate S256 hash of verifier
-      const encoder = new TextEncoder();
-      const data = encoder.encode(args.codeVerifier);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = new Uint8Array(hashBuffer);
-      const base64Hash = btoa(String.fromCharCode(...hashArray))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
+    if (!authCode.resource || authCode.resource !== args.resource) {
+      return { error: 'invalid_grant', error_description: 'Resource mismatch' };
+    }
 
-      if (base64Hash !== authCode.codeChallenge) {
-        return { error: 'invalid_grant', error_description: 'Code verifier mismatch' };
-      }
+    if (!authCode.codeChallenge || authCode.codeChallengeMethod !== 'S256') {
+      return { error: 'invalid_grant', error_description: 'PKCE challenge missing' };
+    }
+
+    const encoder = new TextEncoder();
+    const data = encoder.encode(args.codeVerifier);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = new Uint8Array(hashBuffer);
+    const base64Hash = btoa(String.fromCharCode(...hashArray))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    if (base64Hash !== authCode.codeChallenge) {
+      return { error: 'invalid_grant', error_description: 'Code verifier mismatch' };
     }
 
     // Mark code as used
@@ -281,6 +345,8 @@ export const exchangeAuthCode = internalMutation({
     await ctx.db.insert('mcpRefreshTokens', {
       hashedTokenId,
       userId: authCode.userId,
+      clientId: authCode.clientId,
+      resource: authCode.resource,
       auth0RefreshToken: authCode.auth0RefreshToken,
       expiresAt,
     });
@@ -292,6 +358,7 @@ export const exchangeAuthCode = internalMutation({
     return {
       userId: authCode.userId,
       tokenId,
+      resource: authCode.resource,
     };
   },
 });
