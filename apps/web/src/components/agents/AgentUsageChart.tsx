@@ -2,7 +2,13 @@
 
 import { useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
-import { formatNumber, formatCurrency } from '@/lib/format';
+import {
+  formatNumber,
+  formatCurrency,
+  formatBucketTick,
+  formatBucketTooltip,
+  parseTinybirdDate,
+} from '@/lib/format';
 import {
   ChartContainer,
   ChartTooltip,
@@ -22,32 +28,6 @@ import {
   type AgentMetric,
   type AgentTimeseriesRow,
 } from './types';
-
-function formatTickDate(value: string, includeTime: boolean): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  if (includeTime) {
-    return date.toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      hour12: true,
-    });
-  }
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function formatTooltipDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
-}
 
 interface Series {
   /**
@@ -140,8 +120,10 @@ export function AgentUsageChart({
 
   const hourly =
     data.length > 1 &&
-    Math.abs(new Date(data[1].bucket_start).getTime() - new Date(data[0].bucket_start).getTime()) <
-      86_400_000;
+    Math.abs(
+      parseTinybirdDate(data[1].bucket_start).getTime() -
+        parseTinybirdDate(data[0].bucket_start).getTime(),
+    ) < 86_400_000;
 
   return (
     <ChartContainer config={config} className="!aspect-auto h-[320px] w-full">
@@ -149,7 +131,7 @@ export function AgentUsageChart({
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
         <XAxis
           dataKey="bucket_start"
-          tickFormatter={(v: string) => formatTickDate(v, hourly)}
+          tickFormatter={(v: string) => formatBucketTick(v, hourly)}
           tick={{ fontSize: 11 }}
           tickMargin={8}
           minTickGap={40}
@@ -164,7 +146,7 @@ export function AgentUsageChart({
           content={
             <ChartTooltipContent
               labelFormatter={(label: string) =>
-                hourly ? formatTooltipDate(String(label)) : formatTickDate(String(label), false)
+                hourly ? formatBucketTooltip(String(label)) : formatBucketTick(String(label), false)
               }
               valueFormatter={(v) => formatValue(v)}
             />

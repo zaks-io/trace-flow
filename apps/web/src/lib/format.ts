@@ -62,6 +62,48 @@ export function formatModelDisplay(model: string, provider?: string): string {
   return `${provider}/${name}`;
 }
 
+/**
+ * Parse a Tinybird/ClickHouse datetime as UTC. ClickHouse serializes DateTime over JSON as
+ * `"2025-05-30 01:00:00"` (space-separated, no zone) — `new Date()` reads that as *local*, so a
+ * UTC bucket renders shifted by the viewer's offset. We bucket in UTC and display in local, so
+ * normalize to ISO-UTC (`T` + `Z`) before parsing. Values already carrying a zone (`Z`/`±hh:mm`)
+ * or epoch numbers pass straight through.
+ */
+export function parseTinybirdDate(value: string | number): Date {
+  if (typeof value === 'number') return new Date(value);
+  const trimmed = value.trim();
+  if (/[zZ]$|[+-]\d\d:?\d\d$/.test(trimmed)) return new Date(trimmed);
+  return new Date(trimmed.replace(' ', 'T') + 'Z');
+}
+
+/** Bucket-axis tick label. `includeTime` adds the hour for sub-day (hourly) granularity. */
+export function formatBucketTick(value: string, includeTime: boolean): string {
+  const date = parseTinybirdDate(value);
+  if (Number.isNaN(date.getTime())) return value;
+  if (includeTime) {
+    return date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      hour12: true,
+    });
+  }
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/** Bucket tooltip label — like the tick but with minutes, for the hovered hourly point. */
+export function formatBucketTooltip(value: string): string {
+  const date = parseTinybirdDate(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
 export function formatRelativeTime(nanoseconds: number): string {
   const ms = nanoseconds / 1_000_000;
   const seconds = Math.floor((Date.now() - ms) / 1000);
