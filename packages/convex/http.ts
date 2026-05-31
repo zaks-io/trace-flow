@@ -75,6 +75,12 @@ function getClientIp(request: Request): string {
   return request.headers.get('cf-connecting-ip') ?? 'unknown';
 }
 
+function isJsonContentType(contentType: string | undefined): boolean {
+  const normalized = contentType?.toLowerCase().trim();
+  if (!normalized) return false;
+  return normalized === 'application/json' || normalized.startsWith('application/json;');
+}
+
 // Dependencies that can be injected for testing
 export interface HttpDeps {
   oauth: typeof oauthModule;
@@ -1041,6 +1047,9 @@ export function createApp(
     if (!secret || authHeader !== `Bearer ${secret}`) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    if (!isJsonContentType(c.req.header('Content-Type'))) {
+      return c.json({ error: 'Content-Type must be application/json' }, 415);
+    }
 
     const body = await c.req.json<{ userId: string }>();
     const backend = createMcpBackend(ctx, body.userId as Id<'users'>);
@@ -1066,6 +1075,9 @@ export function createApp(
     const secret = process.env.MCP_BACKEND_SHARED_SECRET;
     if (!secret || authHeader !== `Bearer ${secret}`) {
       return c.json({ error: 'Unauthorized' }, 401);
+    }
+    if (!isJsonContentType(c.req.header('Content-Type'))) {
+      return c.json({ error: 'Content-Type must be application/json' }, 415);
     }
 
     const body = await c.req.json<{
@@ -1103,12 +1115,19 @@ export function createApp(
 
     // retentionDays is derived server-side from the user's tier — the worker
     // never supplies it.
-    const token = await backend.mintToken(
-      body.scopes,
-      resolved.keyIds,
-      userContext.retentionDays,
-      body.ttlSeconds,
-    );
+    let token: string;
+    try {
+      token = await backend.mintToken(
+        body.scopes,
+        resolved.keyIds,
+        userContext.retentionDays,
+        body.ttlSeconds,
+      );
+    } catch (error) {
+      logger.error('convex.mcp_backend_mint_failed', error);
+      await logger.flush();
+      return c.json({ error: 'Failed to mint token' }, 500);
+    }
     await logger.flush();
     return c.json({ token });
   });

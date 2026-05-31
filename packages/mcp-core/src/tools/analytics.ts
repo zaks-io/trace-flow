@@ -1,11 +1,10 @@
 import type { ToolCallResult } from '../protocol';
 import {
   buildTimeRangeNs,
+  clampAnalyticsLimit,
   jsonReplacer,
   noApiKeysError,
   stripNulls,
-  DEFAULT_ANALYTICS_LIMIT,
-  MAX_ANALYTICS_LIMIT,
 } from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
 
@@ -161,7 +160,7 @@ export async function listOperationUsage(
     retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
-  pipeParams.limit = Math.min(params.limit ?? DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT);
+  pipeParams.limit = clampAnalyticsLimit(params.limit);
 
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'operations_leaderboard', pipeParams);
   const rows = data as unknown as OperationUsageRow[];
@@ -202,7 +201,7 @@ export async function listModelUsage(
     retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
-  pipeParams.limit = Math.min(params.limit ?? DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT);
+  pipeParams.limit = clampAnalyticsLimit(params.limit);
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'llm_usage_by_model', pipeParams);
   const rows = data as unknown as ModelUsageRow[];
 

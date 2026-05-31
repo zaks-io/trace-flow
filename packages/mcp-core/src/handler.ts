@@ -152,7 +152,7 @@ export async function dispatchToolCall(
     const result = await handler(ctx, keyIds, args, retentionDays);
     return createSuccessResponse(id, result);
   } catch (error) {
-    const message = error instanceof Error && error.message ? error.message : 'Internal tool error';
-    return createErrorResponse(id, JsonRpcErrorCode.InternalError, message);
+    console.error('mcp.dispatch_tool_call_failed', { tool: params.name, error });
+    return createErrorResponse(id, JsonRpcErrorCode.InternalError, 'Internal tool error');
   }
 }

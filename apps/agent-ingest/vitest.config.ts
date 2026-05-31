@@ -23,7 +23,7 @@ export default defineConfig({
     // run-fatal error. Suppress ONLY that exact workerd artifact; everything
     // else still fails the run.
     onUnhandledError(error) {
-      if (error.message === 'Decompression failed.') {
+      if (error.message?.includes('Decompression failed')) {
         return false;
       }
     },

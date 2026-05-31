@@ -8,6 +8,7 @@ import {
   jsonReplacer,
   stripNulls,
   splitPatterns,
+  clampAnalyticsLimit,
 } from '../tools/shared';
 
 describe('buildTimeRangeNs', () => {
@@ -24,6 +25,15 @@ describe('buildTimeRangeNs', () => {
 
   it('clamps non-positive hours to one hour', () => {
     const result = buildTimeRangeNs(0);
+    expect(result.hours).toBe(1);
+    const start = BigInt(result.startTimeNs);
+    const end = BigInt(result.endTimeNs);
+    expect(start).toBeLessThan(end);
+    expect(end - start).toBe(ONE_HOUR_NS);
+  });
+
+  it('clamps negative hours to one hour', () => {
+    const result = buildTimeRangeNs(-5);
     expect(result.hours).toBe(1);
     const start = BigInt(result.startTimeNs);
     const end = BigInt(result.endTimeNs);
@@ -59,6 +69,20 @@ describe('TRACE_ID_PATTERN', () => {
 
   it('rejects empty string', () => {
     expect(TRACE_ID_PATTERN.test('')).toBe(false);
+  });
+});
+
+describe('clampAnalyticsLimit', () => {
+  it('uses the default when no limit is supplied', () => {
+    expect(clampAnalyticsLimit()).toBe(20);
+  });
+
+  it('clamps below range to one', () => {
+    expect(clampAnalyticsLimit(-10)).toBe(1);
+  });
+
+  it('clamps above range to the maximum', () => {
+    expect(clampAnalyticsLimit(500)).toBe(100);
   });
 });
 
@@ -221,6 +245,11 @@ describe('stripNulls', () => {
   it('filters null values from arrays', () => {
     const result = stripNulls([1, null, 2, undefined, 3]);
     expect(result).toEqual([1, 2, 3]);
+  });
+
+  it('returns undefined for empty arrays', () => {
+    const result = stripNulls([]);
+    expect(result).toBeUndefined();
   });
 
   it('returns undefined for empty object after stripping', () => {

@@ -10,6 +10,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function badJsonResponse(status = 200): Response {
+  return new Response('{', {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 describe('createWorkerBackend', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -77,6 +84,57 @@ describe('createWorkerBackend', () => {
     await expect(
       backend.mintToken([{ type: 'PIPES:READ', resource: 'x' }], ['k1'], 90),
     ).rejects.toBeInstanceOf(McpBackendError);
+  });
+
+  it('rejects malformed context responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ enabled: 'yes' }));
+    const backend = createWorkerBackend('u-1', CONFIG);
+    await expect(backend.getUserContext()).rejects.toMatchObject({
+      name: 'McpBackendError',
+      status: 502,
+    });
+  });
+
+  it('rejects invalid JSON context responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(badJsonResponse());
+    const backend = createWorkerBackend('u-1', CONFIG);
+    await expect(backend.getUserContext()).rejects.toMatchObject({
+      name: 'McpBackendError',
+      message: 'context response malformed',
+      status: 502,
+    });
+  });
+
+  it('rejects malformed mint responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ token: 123 }));
+    const backend = createWorkerBackend('u-1', CONFIG);
+    await expect(
+      backend.mintToken([{ type: 'PIPES:READ', resource: 'x' }], ['k1'], 90),
+    ).rejects.toMatchObject({
+      name: 'McpBackendError',
+      status: 502,
+    });
+  });
+
+  it('rejects invalid JSON mint responses', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(badJsonResponse());
+    const backend = createWorkerBackend('u-1', CONFIG);
+    await expect(
+      backend.mintToken([{ type: 'PIPES:READ', resource: 'x' }], ['k1'], 90),
+    ).rejects.toMatchObject({
+      name: 'McpBackendError',
+      message: 'mint response malformed',
+      status: 502,
+    });
+  });
+
+  it('wraps network failures as McpBackendError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+    const backend = createWorkerBackend('u-1', CONFIG);
+    await expect(backend.getUserContext()).rejects.toMatchObject({
+      name: 'McpBackendError',
+      status: 502,
+    });
   });
 
   it('returns null context for a 404 user', async () => {

@@ -36,9 +36,21 @@ function errorCode(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+function errorMessage(error: unknown): string | undefined {
+  return error instanceof Error ? error.message : undefined;
+}
+
 function isJwksFetchError(error: unknown): boolean {
   const code = errorCode(error);
   if (code === 'ERR_JWKS_TIMEOUT' || code === 'ERR_JWKS_INVALID') {
+    return true;
+  }
+  const message = errorMessage(error);
+  if (
+    code === 'ERR_JOSE_GENERIC' &&
+    (message === 'Expected 200 OK from the JSON Web Key Set HTTP response' ||
+      message === 'Failed to parse the JSON Web Key Set HTTP response as JSON')
+  ) {
     return true;
   }
   return error instanceof TypeError;

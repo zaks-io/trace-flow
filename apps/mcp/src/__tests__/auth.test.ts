@@ -130,4 +130,24 @@ describe('verifyAccessToken (JWKS)', () => {
       }),
     );
   });
+
+  it('surfaces JWKS HTTP failures as service-unavailable errors', async () => {
+    const { sign } = await setup();
+    const connectUrl = freshConnectUrl();
+    const token = await sign({ userId: 'u-1', tokenId: 't-1' }, { issuer: connectUrl });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('upstream down', { status: 500 }));
+    const logger = { error: vi.fn() };
+
+    await expect(verifyAccessToken(token, connectUrl, logger)).rejects.toBeInstanceOf(
+      TokenVerificationUnavailableError,
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'mcp.auth_jwks_unavailable',
+      expect.any(Error),
+      expect.objectContaining({
+        connectBaseUrl: connectUrl,
+        phase: 'jwtVerify/getJwks',
+      }),
+    );
+  });
 });

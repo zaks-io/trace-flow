@@ -66,6 +66,12 @@ function parseDurationMs(durationNs: unknown): number {
   return Number.isFinite(duration) ? duration / 1_000_000 : 0;
 }
 
+function parseStatus(statusCode: unknown): string {
+  if (statusCode === STATUS_CODE.OK) return 'ok';
+  if (statusCode === STATUS_CODE.ERROR) return 'error';
+  return 'unset';
+}
+
 function optionalNumber(value: unknown): number | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
@@ -121,7 +127,7 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     name: row.SpanName as string,
     timestamp: parseTimestampIso(row.Timestamp),
     duration_ms: parseDurationMs(row.Duration),
-    status: row.StatusCode === STATUS_CODE.OK ? 'ok' : 'error',
+    status: parseStatus(row.StatusCode),
     status_message: row.StatusMessage as string | undefined,
     provider: attrs[GEN_AI.SYSTEM] as string | undefined,
     model: attrs[GEN_AI.REQUEST_MODEL] as string | undefined,

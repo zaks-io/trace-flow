@@ -29,6 +29,37 @@ interface WorkerBackendConfig {
 
 const BACKEND_REQUEST_TIMEOUT_MS = 10_000;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isApiKeyMeta(value: unknown): value is McpApiKeyMeta {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    (typeof value.name === 'string' || value.name === null) &&
+    typeof value.expiresAt === 'number'
+  );
+}
+
+function isContextResponse(value: unknown): value is ContextResponse {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.retentionDays === 'number' &&
+    Array.isArray(value.apiKeys) &&
+    value.apiKeys.every(isApiKeyMeta)
+  );
+}
+
+async function parseJsonResponse(res: Response, malformedMessage: string): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    throw new McpBackendError(malformedMessage, 502);
+  }
+}
+
 /**
  * Worker-side `McpBackend`: forwards to the shared-secret `/mcp-backend/*`
  * routes on `connect.` so raw API keys and the Tinybird admin token stay in
@@ -57,6 +88,13 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        const message = error instanceof Error ? error.message : 'backend request timed out';
+        throw new McpBackendError(message, 504);
+      }
+      const message = error instanceof Error ? error.message : 'backend request failed';
+      throw new McpBackendError(message, 502);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -67,7 +105,10 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
       const res = await post('/mcp-backend/context', { userId });
       if (res.status === 404) return null;
       if (!res.ok) throw new McpBackendError('context fetch failed', res.status);
-      const body: ContextResponse = await res.json();
+      const body = await parseJsonResponse(res, 'context response malformed');
+      if (!isContextResponse(body)) {
+        throw new McpBackendError('context response malformed', 502);
+      }
       return body;
     })();
     return contextPromise;
@@ -84,8 +125,11 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
       // is untrusted and doesn't supply it.
       const res = await post('/mcp-backend/mint', { userId, scopes, apiKeyIds, ttlSeconds });
       if (!res.ok) throw new McpBackendError('mint failed', res.status);
-      const { token }: { token: string } = await res.json();
-      return token;
+      const body = await parseJsonResponse(res, 'mint response malformed');
+      if (!isRecord(body) || typeof body.token !== 'string') {
+        throw new McpBackendError('mint response malformed', 502);
+      }
+      return body.token;
     },
     listApiKeys: async (): Promise<McpApiKeyMeta[]> => {
       const ctx = await getContext();

@@ -81,8 +81,12 @@ app.use('*', async (c, next) => {
   c.executionCtx.waitUntil(logger.flush());
 });
 
-function getClientIp(req: Request): string {
-  return req.headers.get('cf-connecting-ip') ?? 'unknown';
+function getClientIp(req: Request): string | null {
+  const cfIp = req.headers.get('cf-connecting-ip');
+  if (cfIp) return cfIp;
+  const forwardedFor = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  if (!forwardedFor) return null;
+  return forwardedFor;
 }
 
 /** Bearer access-token auth shared by POST and DELETE. */
@@ -119,7 +123,13 @@ function jsonResponse(body: unknown, status = 200, headers?: Record<string, stri
 app.post('/mcp', async (c) => {
   const logger = c.get('logger');
 
-  const limit = await c.env.MCP_LIMITER.limit({ key: getClientIp(c.req.raw) });
+  const clientIp = getClientIp(c.req.raw);
+  if (!clientIp) {
+    logger.warn('mcp.client_ip_missing');
+    return c.json({ error: 'Missing client IP' }, 400);
+  }
+
+  const limit = await c.env.MCP_LIMITER.limit({ key: clientIp });
   if (!limit.success) {
     logger.warn('mcp.rate_limited', { keyClass: 'ip' });
     return c.json({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
@@ -151,6 +161,7 @@ app.post('/mcp', async (c) => {
   if (!isRequest(message)) {
     return c.json(
       createErrorResponse(null, JsonRpcErrorCode.InvalidRequest, 'Invalid JSON-RPC message'),
+      400,
     );
   }
 

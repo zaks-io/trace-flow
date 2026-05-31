@@ -24,7 +24,12 @@ let privateKeyPromise: Promise<CryptoKey> | null = null;
 let publicJwkPromise: Promise<JWK> | null = null;
 
 export function getSigningKey(): Promise<CryptoKey> {
-  privateKeyPromise ??= importPKCS8(requireEnv('MCP_JWT_PRIVATE_KEY'), MCP_ACCESS_TOKEN_ALG);
+  privateKeyPromise ??= importPKCS8(requireEnv('MCP_JWT_PRIVATE_KEY'), MCP_ACCESS_TOKEN_ALG).catch(
+    (error) => {
+      privateKeyPromise = null;
+      throw error;
+    },
+  );
   return privateKeyPromise;
 }
 

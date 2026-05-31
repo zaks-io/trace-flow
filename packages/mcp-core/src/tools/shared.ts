@@ -56,6 +56,10 @@ export const MAX_ANALYTICS_LIMIT = 100;
 export const DEFAULT_ANALYTICS_HOURS = 168;
 export const MAX_ANALYTICS_HOURS = 24 * 180;
 
+export function clampAnalyticsLimit(limit?: number): number {
+  return Math.max(1, Math.min(limit ?? DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT));
+}
+
 export function splitPatterns(patterns: string[]): { exact: string[]; prefixes: string[] } {
   const exact: string[] = [];
   const prefixes: string[] = [];

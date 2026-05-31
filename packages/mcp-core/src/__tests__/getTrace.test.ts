@@ -78,16 +78,16 @@ describe('parseSpanRow', () => {
     expect(result.status).toBe('error');
   });
 
-  it('treats unset status code as error', () => {
+  it('preserves unset status code', () => {
     const row = { ...baseRow, StatusCode: 'STATUS_CODE_UNSET' };
     const result = parseSpanRow(row);
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('unset');
   });
 
-  it('treats missing status code as error', () => {
+  it('treats missing status code as unset', () => {
     const row = { ...baseRow, StatusCode: undefined };
     const result = parseSpanRow(row);
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('unset');
   });
 
   it('extracts baggage attributes', () => {

@@ -385,6 +385,7 @@ describe('dispatchToolCall', () => {
   });
 
   it('maps thrown tool errors to JSON-RPC internal errors', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Tinybird down'));
     const backend = createBackend({
       resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: ['key-1'] })),
@@ -396,11 +397,16 @@ describe('dispatchToolCall', () => {
     });
 
     expect(response.error?.code).toBe(JsonRpcErrorCode.InternalError);
-    expect(response.error?.message).toBe('Tinybird down');
+    expect(response.error?.message).toBe('Internal tool error');
     expect(response.result).toBeUndefined();
+    expect(consoleError).toHaveBeenCalledWith('mcp.dispatch_tool_call_failed', {
+      tool: 'list_traces',
+      error: expect.any(Error),
+    });
   });
 
   it('maps thrown backend errors to JSON-RPC internal errors', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const backend = createBackend({
       getUserContext: vi.fn(async () => {
         throw new Error('backend down');
@@ -413,7 +419,11 @@ describe('dispatchToolCall', () => {
     });
 
     expect(response.error?.code).toBe(JsonRpcErrorCode.InternalError);
-    expect(response.error?.message).toBe('backend down');
+    expect(response.error?.message).toBe('Internal tool error');
     expect(response.result).toBeUndefined();
+    expect(consoleError).toHaveBeenCalledWith('mcp.dispatch_tool_call_failed', {
+      tool: 'list_api_keys',
+      error: expect.any(Error),
+    });
   });
 });
