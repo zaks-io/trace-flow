@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { formatNumber, formatCurrency, parseTinybirdDate } from '../format';
+import {
+  formatNumber,
+  formatCurrency,
+  parseTinybirdDate,
+  formatBucketTick,
+  formatBucketTooltip,
+} from '../format';
 
 describe('formatNumber', () => {
   it('abbreviates with K/M/B/T suffixes', () => {
@@ -78,5 +84,29 @@ describe('parseTinybirdDate', () => {
 
   it('returns an invalid Date for garbage, leaving callers to fall back', () => {
     expect(Number.isNaN(parseTinybirdDate('not a date').getTime())).toBe(true);
+  });
+});
+
+describe('formatBucketTick / formatBucketTooltip', () => {
+  // A UTC bucket whose hour stays the same day in every timezone west of the line, so the
+  // includeTime assertions below don't depend on the runner's zone.
+  const bucket = '2025-05-30 12:00:00';
+
+  it('returns the raw value unchanged when the date is unparseable', () => {
+    expect(formatBucketTick('not a date', false)).toBe('not a date');
+    expect(formatBucketTick('not a date', true)).toBe('not a date');
+    expect(formatBucketTooltip('not a date')).toBe('not a date');
+  });
+
+  it('includes an hour only when includeTime is set', () => {
+    const withTime = formatBucketTick(bucket, true);
+    const dateOnly = formatBucketTick(bucket, false);
+    expect(withTime).not.toBe(dateOnly);
+    expect(withTime).toMatch(/\d\s?(AM|PM)/i);
+    expect(dateOnly).not.toMatch(/(AM|PM)/i);
+  });
+
+  it('renders a minute-resolution label for the tooltip', () => {
+    expect(formatBucketTooltip(bucket)).toMatch(/:\d{2}\s?(AM|PM)/i);
   });
 });
