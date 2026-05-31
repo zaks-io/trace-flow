@@ -246,7 +246,12 @@ mod tests {
         let found = walk_transcripts(dir.path());
         let names: Vec<_> = found
             .iter()
-            .map(|f| f.path.rsplit('/').next().unwrap())
+            .map(|f| {
+                Path::new(&f.path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap()
+            })
             .collect();
         assert_eq!(found.len(), 2);
         assert!(names.contains(&"a.jsonl"));
