@@ -7,11 +7,20 @@
 #
 # Auth: defaults to the ambient `tb` cloud login (.tinyb). For headless/CI use, set TB_TOKEN (and
 # TB_HOST if not api.tinybird.co) — `tb` reads those natively, no interactive login needed. The token
-# itself selects the workspace, so the guard below asserts the token resolves to TB_TARGET_WORKSPACE
-# and refuses to deploy anywhere else. A prod token in a dev-targeted run (or vice versa) fails fast.
+# itself selects the workspace, so there is nothing to "target": a prod token deploys to prod, a dev
+# token to dev. This mirrors Tinybird's own CI/CD templates (tinybirdco/ci), which pass the token via
+# env/flags and never call workspace-introspection commands.
 #
-# Dev is the default target and requires no opt-in. Production is opt-in only: it requires
-# TB_TARGET_WORKSPACE=trace_flow_prod.
+# TB_TARGET_WORKSPACE is a deliberate prod opt-in gate, not a live assertion. Dev is the default and
+# needs no opt-in. Production requires TB_TARGET_WORKSPACE=trace_flow_prod so a bare run can never
+# deploy to prod by accident; pairing it with a non-prod TB_TOKEN simply fails at deploy time.
+#
+# We intentionally do NOT call `tb workspace current` to verify the token, and we export CI=1 below.
+# Every `tb --cloud …` command (deploy, deploy --check, workspace current) prompts to confirm "running
+# from an untracked folder" unless tb detects CI via the GITHUB_ACTIONS/CI env vars. The Blacksmith
+# runner image doesn't reliably export those, so on empty stdin the prompt made the deploy exit 1 with
+# no output — silently killing the whole prod deploy (TRA-118). Forcing CI=1 ourselves makes tb skip
+# the prompt regardless of runner; the token then defines the workspace and a bad token fails loudly.
 #
 # Usage:
 #   scripts/deploy-agent-tinybird.sh                                   # validate + deploy to dev
@@ -20,6 +29,9 @@
 #   TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh           # deploy to prod (opt-in)
 #   # headless: export TB_TOKEN=<prod deploy token> first
 set -euo pipefail
+
+# Make `tb --cloud …` non-interactive on any runner (see header note). Harmless locally.
+export CI="${CI:-1}"
 
 TARGET_WORKSPACE="${TB_TARGET_WORKSPACE:-trace_flow_dev}"
 
@@ -32,15 +44,6 @@ case "$TARGET_WORKSPACE" in
     ;;
 esac
 
-# The active workspace is whatever the token (TB_TOKEN) or .tinyb login resolves to. Assert it matches
-# the intended target so a misconfigured token can never deploy to the wrong workspace.
-current="$(tb --no-version-warning --cloud workspace current | awk '/^name:/{print $2; exit}')"
-if [[ "$current" != "$TARGET_WORKSPACE" ]]; then
-  echo "Refusing to deploy: token resolves to workspace '$current', expected '$TARGET_WORKSPACE'." >&2
-  echo "Local: switch with 'tb --cloud workspace use $TARGET_WORKSPACE'. CI: check the TB_TOKEN secret." >&2
-  exit 1
-fi
-
 if [[ "$TARGET_WORKSPACE" == "trace_flow_prod" ]]; then
   echo "PRODUCTION Tinybird deploy target: $TARGET_WORKSPACE"
 fi
@@ -48,7 +51,7 @@ fi
 echo "Validating schema offline (tb build) ..."
 tb build
 
-echo "Validating deployment against $current ..."
+echo "Validating deployment against $TARGET_WORKSPACE ..."
 tb --cloud deploy --check
 
 if [[ "${1:-}" == "--check" ]]; then
@@ -56,5 +59,5 @@ if [[ "${1:-}" == "--check" ]]; then
   exit 0
 fi
 
-echo "Deploying schema to $current ..."
+echo "Deploying schema to $TARGET_WORKSPACE ..."
 tb --cloud deploy

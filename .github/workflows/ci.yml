@@ -85,7 +85,6 @@ jobs:
               - 'packages/collector-*/**'
               - 'apps/cli/**'
               - 'apps/desktop/src-tauri/**'
-              - '.github/workflows/ci.yml'
             root:
               - 'package.json'
               - 'bun.lock'
@@ -99,6 +98,9 @@ jobs:
             tinybird:
               - 'datasources/**'
               - 'pipes/**'
+              - 'tests/**'
+              - 'tinybird.config.json'
+              - 'scripts/deploy-agent-tinybird.sh'
 
   actionlint:
     name: Lint GitHub Actions
