@@ -26,7 +26,7 @@ workflow logic lives in the centrally-managed org skills pinned by `skills-lock.
 - Build: `bun run build`
 - Generated artifacts: none tracked for workflow
 - Preview checks: PR preview env via `.github/workflows/preview.yml`
-- Production deploy path: GitHub Actions on merge to `main` (Convex first → workers parallel → web)
+- Production deploy path: GitHub Actions on merge to `main` (Convex+web together in `deploy-convex-and-web` since the web build bakes in the Convex URL; workers in parallel; Tinybird schema before the proxy/agent consumers)
 - Production approval required: yes
 - Dev deploy: `bun run deploy:dev`
 
