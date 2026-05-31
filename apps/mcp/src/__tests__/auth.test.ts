@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import { MCP_ACCESS_TOKEN_ALG, MCP_ACCESS_TOKEN_KID } from '@trace-flow/mcp-core';
+import {
+  MCP_ACCESS_TOKEN_ALG,
+  MCP_ACCESS_TOKEN_AUDIENCE,
+  MCP_ACCESS_TOKEN_KID,
+} from '@trace-flow/mcp-core';
 import { verifyAccessToken } from '../auth';
 
 // Unique connect URL per test so jose's per-URL JWKS cache never bleeds across
@@ -21,13 +25,27 @@ async function setup() {
     alg: MCP_ACCESS_TOKEN_ALG,
     use: 'sig',
   };
-  const sign = (claims: Record<string, unknown>, opts?: { expSeconds?: number }) =>
+  const sign = (
+    claims: Record<string, unknown>,
+    opts: { expSeconds?: number; issuer: string; audience?: string },
+  ) =>
     new SignJWT(claims)
       .setProtectedHeader({ alg: MCP_ACCESS_TOKEN_ALG, kid: MCP_ACCESS_TOKEN_KID })
+      .setIssuer(opts.issuer)
+      .setAudience(opts.audience ?? MCP_ACCESS_TOKEN_AUDIENCE)
       .setIssuedAt()
       .setExpirationTime(`${opts?.expSeconds ?? 3600}s`)
       .sign(privateKey);
   return { jwk, sign };
+}
+
+function stubJwks(jwk: Record<string, unknown>) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ keys: [jwk] }), {
+        headers: { 'Content-Type': 'application/json' },
+      }),
+  );
 }
 
 describe('verifyAccessToken (JWKS)', () => {
@@ -37,40 +55,55 @@ describe('verifyAccessToken (JWKS)', () => {
 
   it('verifies a token signed by the published key', async () => {
     const { jwk, sign } = await setup();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ keys: [jwk] }), {
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
+    stubJwks(jwk);
 
-    const token = await sign({ userId: 'u-1', tokenId: 't-1' });
-    const payload = await verifyAccessToken(token, freshConnectUrl());
+    const connectUrl = freshConnectUrl();
+    const token = await sign({ userId: 'u-1', tokenId: 't-1' }, { issuer: connectUrl });
+    const payload = await verifyAccessToken(token, connectUrl);
     expect(payload).toEqual({ userId: 'u-1', tokenId: 't-1' });
   });
 
   it('rejects a token signed by a foreign key', async () => {
     const { jwk } = await setup();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ keys: [jwk] }), {
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
+    stubJwks(jwk);
 
     // Token signed by a DIFFERENT key than the JWKS publishes.
     const { sign: foreignSign } = await setup();
-    const token = await foreignSign({ userId: 'u-1', tokenId: 't-1' });
-    expect(await verifyAccessToken(token, freshConnectUrl())).toBeNull();
+    const connectUrl = freshConnectUrl();
+    const token = await foreignSign({ userId: 'u-1', tokenId: 't-1' }, { issuer: connectUrl });
+    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
   });
 
   it('rejects an expired token', async () => {
     const { jwk, sign } = await setup();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ keys: [jwk] }), {
-        headers: { 'Content-Type': 'application/json' },
-      }),
+    stubJwks(jwk);
+    const connectUrl = freshConnectUrl();
+    const token = await sign(
+      { userId: 'u-1', tokenId: 't-1' },
+      { issuer: connectUrl, expSeconds: -10 },
     );
-    const token = await sign({ userId: 'u-1', tokenId: 't-1' }, { expSeconds: -10 });
-    expect(await verifyAccessToken(token, freshConnectUrl())).toBeNull();
+    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
+  });
+
+  it('rejects a token from the wrong issuer', async () => {
+    const { jwk, sign } = await setup();
+    stubJwks(jwk);
+    const connectUrl = freshConnectUrl();
+    const token = await sign({ userId: 'u-1', tokenId: 't-1' }, { issuer: 'https://other.test' });
+
+    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
+  });
+
+  it('rejects a token for the wrong audience', async () => {
+    const { jwk, sign } = await setup();
+    stubJwks(jwk);
+    const connectUrl = freshConnectUrl();
+    const token = await sign(
+      { userId: 'u-1', tokenId: 't-1' },
+      { issuer: connectUrl, audience: 'not-mcp' },
+    );
+
+    expect(await verifyAccessToken(token, connectUrl)).toBeNull();
   });
 
   it('rejects garbage', async () => {

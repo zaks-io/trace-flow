@@ -742,7 +742,8 @@ export function createApp(
         return c.json(result, 400);
       }
 
-      const accessToken = await tokens.createAccessToken(result.userId, result.tokenId);
+      const issuer = new URL(c.req.url).origin;
+      const accessToken = await tokens.createAccessToken(result.userId, result.tokenId, issuer);
 
       return c.json({
         access_token: accessToken,
@@ -789,7 +790,12 @@ export function createApp(
         }
       }
 
-      const accessToken = await tokens.createAccessToken(refreshToken.userId, refreshTokenId);
+      const issuer = new URL(c.req.url).origin;
+      const accessToken = await tokens.createAccessToken(
+        refreshToken.userId,
+        refreshTokenId,
+        issuer,
+      );
 
       await logger.flush();
       return c.json({
@@ -816,7 +822,7 @@ export function createApp(
     }
 
     const token = authHeader.slice(7);
-    const payload = await tokens.validateAccessToken(token);
+    const payload = await tokens.validateAccessToken(token, new URL(c.req.url).origin);
 
     if (!payload) {
       return c.json({ error: 'Invalid or expired access token' }, 401);
@@ -1155,7 +1161,7 @@ export function createApp(
     }
 
     const token = authHeader.slice(7);
-    const payload = await tokens.validateAccessToken(token);
+    const payload = await tokens.validateAccessToken(token, new URL(c.req.url).origin);
 
     if (!payload) {
       return c.json({ error: 'Invalid or expired access token' }, 401);

@@ -1,6 +1,10 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { exportPKCS8, exportSPKI, generateKeyPair, jwtVerify, importJWK } from 'jose';
-import { MCP_ACCESS_TOKEN_ALG, MCP_ACCESS_TOKEN_KID } from '@trace-flow/mcp-core';
+import {
+  MCP_ACCESS_TOKEN_ALG,
+  MCP_ACCESS_TOKEN_AUDIENCE,
+  MCP_ACCESS_TOKEN_KID,
+} from '@trace-flow/mcp-core';
 
 // Real RS256 round trip: Convex signs (createAccessToken), publishes the public
 // key (getPublicJwk), and a JWKS consumer (the MCP worker) verifies the token
@@ -31,7 +35,8 @@ describe('MCP RS256 access tokens + JWKS', () => {
     const { createAccessToken } = await import('../tokens');
     const { getPublicJwk } = await import('../keys');
 
-    const token = await createAccessToken('user-123', 'token-abc');
+    const issuer = 'https://connect.test';
+    const token = await createAccessToken('user-123', 'token-abc', issuer);
     const jwk = await getPublicJwk();
 
     expect(jwk.kid).toBe(MCP_ACCESS_TOKEN_KID);
@@ -42,6 +47,8 @@ describe('MCP RS256 access tokens + JWKS', () => {
     const verifyKey = await importJWK(jwk, MCP_ACCESS_TOKEN_ALG);
     const { payload, protectedHeader } = await jwtVerify(token, verifyKey, {
       algorithms: [MCP_ACCESS_TOKEN_ALG],
+      issuer,
+      audience: MCP_ACCESS_TOKEN_AUDIENCE,
     });
 
     expect(protectedHeader.alg).toBe(MCP_ACCESS_TOKEN_ALG);
@@ -55,7 +62,7 @@ describe('MCP RS256 access tokens + JWKS', () => {
     vi.stubEnv('MCP_JWT_PUBLIC_KEY', publicPem);
 
     const { createAccessToken } = await import('../tokens');
-    const token = await createAccessToken('user-123', 'token-abc');
+    const token = await createAccessToken('user-123', 'token-abc', 'https://connect.test');
 
     const { publicKey: otherPublic } = await generateKeyPair(MCP_ACCESS_TOKEN_ALG, {
       extractable: true,
@@ -68,6 +75,8 @@ describe('MCP RS256 access tokens + JWKS', () => {
   it('throws loudly when the signing key is unset', async () => {
     vi.stubEnv('MCP_JWT_PRIVATE_KEY', '');
     const { createAccessToken } = await import('../tokens');
-    await expect(createAccessToken('u', 't')).rejects.toThrow('MCP_JWT_PRIVATE_KEY not configured');
+    await expect(createAccessToken('u', 't', 'https://connect.test')).rejects.toThrow(
+      'MCP_JWT_PRIVATE_KEY not configured',
+    );
   });
 });

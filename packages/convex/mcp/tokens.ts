@@ -5,6 +5,7 @@ import { internal } from '../_generated/api';
 import { sha256Hex } from '@trace-flow/utils';
 import {
   MCP_ACCESS_TOKEN_ALG,
+  MCP_ACCESS_TOKEN_AUDIENCE,
   MCP_ACCESS_TOKEN_KID,
   MCP_ACCESS_TOKEN_TTL_SECONDS,
   type AccessTokenPayload,
@@ -16,17 +17,26 @@ const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export type { AccessTokenPayload };
 
-export async function createAccessToken(userId: string, tokenId: string): Promise<string> {
+export async function createAccessToken(
+  userId: string,
+  tokenId: string,
+  issuer: string,
+): Promise<string> {
   const signingKey = await getSigningKey();
 
   return new SignJWT({ userId, tokenId })
     .setProtectedHeader({ alg: MCP_ACCESS_TOKEN_ALG, kid: MCP_ACCESS_TOKEN_KID })
+    .setIssuer(issuer)
+    .setAudience(MCP_ACCESS_TOKEN_AUDIENCE)
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
     .setIssuedAt()
     .sign(signingKey);
 }
 
-export async function validateAccessToken(token: string): Promise<AccessTokenPayload | null> {
+export async function validateAccessToken(
+  token: string,
+  issuer: string,
+): Promise<AccessTokenPayload | null> {
   const publicKeyPem = process.env.MCP_JWT_PUBLIC_KEY;
   if (!publicKeyPem) {
     throw new Error('MCP_JWT_PUBLIC_KEY not configured');
@@ -36,6 +46,8 @@ export async function validateAccessToken(token: string): Promise<AccessTokenPay
     const publicKey = await importSPKI(publicKeyPem, MCP_ACCESS_TOKEN_ALG);
     const { payload } = await jwtVerify(token, publicKey, {
       algorithms: [MCP_ACCESS_TOKEN_ALG],
+      issuer,
+      audience: MCP_ACCESS_TOKEN_AUDIENCE,
     });
     return payload as unknown as AccessTokenPayload;
   } catch {
