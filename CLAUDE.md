@@ -66,7 +66,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 ## Deployment
 
-**NEVER deploy production manually** — GitHub Actions deploys on merge to `main`. Order: Convex first → workers in parallel → web after Convex.
+**NEVER deploy production manually** — GitHub Actions deploys on merge to `main`. Convex and web deploy together in one job (`deploy-convex-and-web`): the web build bakes in `NEXT_PUBLIC_CONVEX_URL` from the Convex deploy, so they can't be split. Workers deploy in parallel; the Tinybird schema deploys before the proxy/agent consumers (schema → consumers) so a consumer never ships ahead of the live schema.
 
 - Dev deploy: `bun run deploy:dev`
 - PRs get automatic preview environments (see `.github/workflows/preview.yml`)
