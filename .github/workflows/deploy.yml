@@ -160,6 +160,9 @@ jobs:
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0
+          # No Tinybird Local container here; offline `tb build` (dev_mode=local) is the PR-gate's job.
+          # `tb --cloud deploy --check` validates against the live workspace before the apply.
+          TB_SKIP_BUILD: 1
 
   deploy-proxy-consumer:
     name: Deploy Proxy Consumer Worker
