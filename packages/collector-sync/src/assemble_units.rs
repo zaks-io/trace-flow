@@ -30,7 +30,7 @@ use crate::cursor::FileCursor;
 use crate::discovery::{head_hash, DiscoveredFile};
 use crate::git::{GitMetadata, GitRemoteCache};
 use crate::git_remote::normalize_git_remote;
-use crate::sync_cycle::SyncUnit;
+use crate::sync_cycle::{SyncUnit, UnitCursor};
 
 /// Read `file`, resolve its session's git attribution, and assemble the [`SyncUnit`] the drive loop
 /// POSTs. A file-level read error propagates (the loop leaves the cursor unadvanced and retries the file
@@ -78,14 +78,14 @@ pub async fn assemble_sync_unit(
     };
     let ctx = build_session_context(&fields, &file.path, meta.as_ref(), &head_sha);
 
-    let next_cursor = FileCursor {
+    let next_cursor = UnitCursor::File(FileCursor {
         file_path: file.path.clone(),
         mtime_ms: file.mtime_ms,
         byte_offset: file.size_bytes,
         // Hash the same text we just read so the cursor matches what `discovery::read_head_hash`
         // recomputes from disk next scan; re-reading could race a concurrent write.
         content_hash_head: head_hash(&text),
-    };
+    });
     Ok(SyncUnit {
         records,
         ctx,
@@ -307,9 +307,12 @@ mod tests {
         assert_eq!(unit.ctx.vendor_session_id, "s-1");
         assert_eq!(unit.records.len(), 1);
         // The cursor pins the whole-file size and a head hash that matches a fresh disk read next scan.
-        assert_eq!(unit.next_cursor.byte_offset, size);
-        assert_eq!(unit.next_cursor.mtime_ms, 123.0);
-        assert_eq!(unit.next_cursor.content_hash_head, head_hash(&body));
+        let UnitCursor::File(cursor) = &unit.next_cursor else {
+            panic!("a JSONL source assembles a file cursor");
+        };
+        assert_eq!(cursor.byte_offset, size);
+        assert_eq!(cursor.mtime_ms, 123.0);
+        assert_eq!(cursor.content_hash_head, head_hash(&body));
     }
 
     #[tokio::test]
@@ -351,7 +354,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(unit.ctx.normalized_git_remote, "github.com/pingdotgg/t3code");
+        assert_eq!(
+            unit.ctx.normalized_git_remote,
+            "github.com/pingdotgg/t3code"
+        );
         assert_eq!(
             unit.ctx.vendor_session_id,
             "019e3d03-6b35-74c0-9dd1-c40bdbb6af72"

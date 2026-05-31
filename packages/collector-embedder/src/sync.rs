@@ -20,11 +20,12 @@ use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_contracts::AgentSource;
 use collector_sync::{
-    assemble_sync_unit, run_sync_cycle, select_changed, walk_transcripts, BatchMeta, CursorStore,
-    GitRemoteCache, HistoryPreset, ImportWindow, Orchestrator, SyncUnit, Trigger,
+    assemble_cursor_units, assemble_sync_unit, run_sync_cycle, select_changed, walk_transcripts,
+    BatchMeta, CursorStore, GitRemoteCache, HistoryPreset, ImportWindow, Orchestrator, SyncUnit,
+    Trigger,
 };
 
-use crate::sources::{ingestable_sources, source_root};
+use crate::sources::{cursor_db_path, ingestable_sources, source_root};
 
 /// The version strings the ingest worker's compatibility policy gates on. The CLI is the collector
 /// "desktop" embedder; the parser version tracks the `collector-parser` crate.
@@ -77,6 +78,12 @@ pub struct RunConfig<'a> {
     pub window: Window,
     /// `now` in epoch ms, injected so the window math is testable and the cursor seam stays clock-free.
     pub now_ms: i64,
+    /// Whether the user opted into raw-transcript upload for this run. Wires
+    /// `BatchMeta.raw_upload_requested`; defaults off — the embedder never enables it implicitly.
+    pub raw_upload: bool,
+    /// A short embedder tag (e.g. `"cli"`, `"desktop"`) that prefixes the per-POST batch id, so a
+    /// batch id reads as `cli-<n>` / `desktop-<n>` for audit. Not security-relevant.
+    pub batch_id_prefix: &'a str,
 }
 
 /// Run a sync pass over every ingestable Source, returning one report per Source attempted.
@@ -96,9 +103,10 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
 
     let cache = GitRemoteCache::new();
     let mut batch_seq: u64 = cfg.now_ms.max(0) as u64;
+    let prefix = cfg.batch_id_prefix.to_string();
     let mut mint = move || {
         batch_seq = batch_seq.wrapping_add(1);
-        format!("cli-{batch_seq}")
+        format!("{prefix}-{batch_seq}")
     };
 
     let mut reports = Vec::new();
@@ -111,7 +119,7 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
 
 /// The cursor DB path. Split out so [`run`] stays focused; resolves through the CLI's [`Paths`].
 fn crate_cursor_db(org_id: &str) -> Result<std::path::PathBuf> {
-    let paths = crate::config::Paths::resolve()?;
+    let paths = crate::connection::Paths::resolve()?;
     paths.ensure()?;
     Ok(paths.cursor_db(org_id))
 }
@@ -125,42 +133,16 @@ async fn run_source(
     mint: &mut dyn FnMut() -> String,
 ) -> Result<SourceReport> {
     let mut report = SourceReport::default();
-
-    let Some(root) = source_root(cfg.home, source) else {
-        return Ok(report); // Source has no .jsonl root (Cursor) — nothing to scan.
-    };
-
-    let files = walk_transcripts(&root);
-    report.source_files_scanned = files.len();
-
     let window = cfg.window.import_window(cfg.now_ms);
-    let selected = select_changed(files, store, source, window).context("select changed files")?;
-    report.selected = selected.len();
-    if selected.is_empty() {
-        return Ok(report);
-    }
 
-    // Assemble sessions concurrently: each unit is a file read + parse + (cached) git resolve, so a
-    // history import overlaps that I/O instead of doing it one transcript at a time. Bounded so a
-    // 1000-file backfill doesn't open 1000 files at once. Order does not matter — the cursor for each
-    // file is independent and the cycle re-groups units into batches.
-    let units: Vec<SyncUnit> = {
-        use futures_util::stream::{self, StreamExt};
-        let assembled: Vec<_> = stream::iter(selected.iter())
-            .map(|file| assemble_sync_unit(file, source, cache))
-            .buffer_unordered(ASSEMBLY_CONCURRENCY)
-            .collect()
-            .await;
-        let mut units = Vec::with_capacity(assembled.len());
-        for result in assembled {
-            match result {
-                Ok(unit) => units.push(unit),
-                // A file that fails to read is skipped this pass; its cursor never advanced, so it is
-                // retried next pass. One unreadable transcript must not strand the whole Source.
-                Err(_) => report.failed += 1,
-            }
+    // Two source shapes: JSONL sources (Claude, Codex) walk a `.jsonl` root and assemble per file; the
+    // Cursor source reads its `state.vscdb` SQLite store and assembles per composer. Both produce the
+    // same `Vec<SyncUnit>` the shared cycle below POSTs.
+    let units: Vec<SyncUnit> = match source_root(cfg.home, source) {
+        Some(root) => {
+            assemble_jsonl_units(store, cache, source, &root, window, &mut report).await?
         }
-        units
+        None => assemble_cursor_source_units(store, cfg, window, &mut report)?,
     };
     if units.is_empty() {
         return Ok(report);
@@ -170,7 +152,7 @@ async fn run_source(
         source,
         desktop_version: DESKTOP_VERSION.to_string(),
         parser_version: PARSER_VERSION.to_string(),
-        raw_upload_requested: false,
+        raw_upload_requested: cfg.raw_upload,
     };
 
     let mut orch = Orchestrator::new();
@@ -190,6 +172,69 @@ async fn run_source(
         report.first_error = Some(err.to_string());
     }
     Ok(report)
+}
+
+/// Discover + assemble units for a JSONL source (Claude, Codex): walk the root, narrow to in-window
+/// changed files, then read + parse + (cached) git-resolve each into a `SyncUnit` concurrently.
+async fn assemble_jsonl_units(
+    store: &CursorStore,
+    cache: &GitRemoteCache,
+    source: AgentSource,
+    root: &Path,
+    window: ImportWindow,
+    report: &mut SourceReport,
+) -> Result<Vec<SyncUnit>> {
+    let files = walk_transcripts(root);
+    report.source_files_scanned = files.len();
+
+    let selected = select_changed(files, store, source, window).context("select changed files")?;
+    report.selected = selected.len();
+    if selected.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Assemble sessions concurrently: each unit is a file read + parse + (cached) git resolve, so a
+    // history import overlaps that I/O instead of doing it one transcript at a time. Bounded so a
+    // 1000-file backfill doesn't open 1000 files at once. Order does not matter — the cursor for each
+    // file is independent and the cycle re-groups units into batches.
+    use futures_util::stream::{self, StreamExt};
+    let assembled: Vec<_> = stream::iter(selected.iter())
+        .map(|file| assemble_sync_unit(file, source, cache))
+        .buffer_unordered(ASSEMBLY_CONCURRENCY)
+        .collect()
+        .await;
+    let mut units = Vec::with_capacity(assembled.len());
+    for result in assembled {
+        match result {
+            Ok(unit) => units.push(unit),
+            // A file that fails to read is skipped this pass; its cursor never advanced, so it is
+            // retried next pass. One unreadable transcript must not strand the whole Source.
+            Err(_) => report.failed += 1,
+        }
+    }
+    Ok(units)
+}
+
+/// Discover + assemble units for the Cursor source: snapshot `state.vscdb` read-only and assemble each
+/// changed composer. A missing DB (Cursor not installed, or a non-macOS host) is a clean no-op.
+fn assemble_cursor_source_units(
+    store: &CursorStore,
+    cfg: &RunConfig<'_>,
+    window: ImportWindow,
+    report: &mut SourceReport,
+) -> Result<Vec<SyncUnit>> {
+    let Some(db) = cursor_db_path(cfg.home).filter(|p| p.exists()) else {
+        return Ok(Vec::new());
+    };
+    let paths = crate::connection::Paths::resolve()?;
+    paths.ensure()?;
+    let units = assemble_cursor_units(&db, &paths.scratch_dir(), store, window)
+        .context("assemble cursor units")?;
+    // For the Cursor source, "files scanned" is the single state.vscdb; "selected" is the changed
+    // composers the snapshot assembled.
+    report.source_files_scanned = 1;
+    report.selected = units.len();
+    Ok(units)
 }
 
 /// Parse a `--since` value into a [`Window`]. Accepts the ADR presets only; an unknown value is a

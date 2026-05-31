@@ -3,14 +3,14 @@
 
 //! The CLI's on-disk, **non-secret** state.
 //!
-//! Two split concerns: the Collector Credential *secret* lives in the OS keychain (see [`crate::secret`])
+//! Two split concerns: the Collector Credential *secret* lives in the OS keychain (see [`crate::keychain`])
 //! and never touches disk; everything else — which Organization is connected, the ingest URL, the
 //! Collector id, and the last-sync bookkeeping — lives in a plain JSON file under the platform config
 //! dir, alongside the SQLite cursor store. None of it is sensitive: an org id is not a credential, and
 //! the cursor DB holds local paths that never leave the machine.
 //!
-//! The ingest URL is resolved at sync time, not stored here, so pointing the CLI at a different
-//! environment (Cloud-Dev vs a local worker) is a runtime env var, never a rewrite of saved state.
+//! The ingest URL is resolved at sync time (production by default, overridable via env), not stored
+//! here — pointing the CLI at a different environment never rewrites saved connection state.
 
 use std::path::{Path, PathBuf};
 
@@ -67,10 +67,19 @@ impl Paths {
             .join(format!("cursors-{}.sqlite3", sanitize(org_id)))
     }
 
-    /// Create the state dir if absent. Idempotent.
+    /// A scratch dir for the Cursor reader's read-only `state.vscdb` snapshot copy. Under the state root
+    /// so it shares the same volume (a cross-device copy of a multi-GB DB would be slow) and is swept by
+    /// the same cleanup; the reader makes a private per-pass subdir inside it and removes it on drop.
+    pub fn scratch_dir(&self) -> PathBuf {
+        self.root.join("scratch")
+    }
+
+    /// Create the state dir (and the scratch subdir) if absent. Idempotent.
     pub fn ensure(&self) -> Result<()> {
         std::fs::create_dir_all(&self.root)
-            .with_context(|| format!("create state dir {}", self.root.display()))
+            .with_context(|| format!("create state dir {}", self.root.display()))?;
+        std::fs::create_dir_all(self.scratch_dir())
+            .with_context(|| format!("create scratch dir {}", self.scratch_dir().display()))
     }
 
     /// Read the saved connection, or `None` if the CLI is not logged in.

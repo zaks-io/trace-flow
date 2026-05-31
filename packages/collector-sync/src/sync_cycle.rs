@@ -20,15 +20,36 @@
 //! cycle continues with the rest.
 
 use collector_api_client::{CollectorApiClient, IngestError, IngestResult};
-use collector_contracts::{AgentIngestEnvelope, AgentIngestFacts};
+use collector_contracts::{AgentIngestEnvelope, AgentIngestFacts, AgentSource};
 use collector_parser::assemble::session_facts;
 use collector_parser::session_context::SessionContext;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::cursor::{CursorStore, CursorStoreError, FileCursor};
+use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError, FileCursor};
 use crate::envelope::{build_envelope, BatchMeta};
 use crate::orchestrator::{Action, Orchestrator, Trigger};
+
+/// The watermark a [`SyncUnit`] commits on a `2xx`, by source shape. JSONL sources (Claude, Codex)
+/// commit a whole-file [`FileCursor`]; the Cursor SQLite source commits a per-composer
+/// [`ComposerCursor`]. The cycle never inspects the inner value — it only routes the variant to the
+/// matching `advance`, so a new source shape must add a variant here (and the match stays exhaustive).
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnitCursor {
+    File(FileCursor),
+    Composer(ComposerCursor),
+}
+
+impl UnitCursor {
+    /// Commit this unit's progress to the store. Dispatched per variant; **called only after a
+    /// `2xx`**, exactly like the inherent `advance` it wraps.
+    fn advance(&self, store: &CursorStore, source: AgentSource) -> Result<(), CursorStoreError> {
+        match self {
+            UnitCursor::File(c) => store.advance(source, c),
+            UnitCursor::Composer(c) => store.advance_composer(source, c),
+        }
+    }
+}
 
 /// The single API-client capability the cycle needs: POST one envelope. Behind a trait so the cycle
 /// tests against scripted responses with no network; the real [`CollectorApiClient`] implements it by
@@ -62,8 +83,9 @@ impl IngestClient for CollectorApiClient {
 pub struct SyncUnit {
     pub records: Vec<Value>,
     pub ctx: SessionContext,
-    /// The file's mtime / offset / head-hash *after* this batch — committed only on `Ok`.
-    pub next_cursor: FileCursor,
+    /// The source-shaped watermark *after* this batch — committed only on `Ok`. A file's
+    /// mtime/offset/head-hash for JSONL sources, a composer's bubble-count/newest-timestamp for Cursor.
+    pub next_cursor: UnitCursor,
 }
 
 /// The outcome of one [`run_sync_cycle`].
@@ -126,7 +148,7 @@ impl Default for SyncTuning {
 /// POST is accepted. `units` is how many sessions it carries (for the report's advanced count).
 struct PreparedBatch {
     envelope: AgentIngestEnvelope,
-    cursors: Vec<FileCursor>,
+    cursors: Vec<UnitCursor>,
 }
 
 /// Run one sync cycle against `units` with default tuning. Advances a unit's cursor only after the
@@ -208,7 +230,7 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
                 // the orchestrator to its failed state first so it can't stay stuck in `Syncing` when the
                 // caller tears down; un-advanced cursors re-send this batch's sessions next cycle.
                 for cursor in &batch.cursors {
-                    if let Err(err) = store.advance(meta.source, cursor) {
+                    if let Err(err) = cursor.advance(store, meta.source) {
                         orchestrator.apply(Trigger::JobFailed);
                         return Err(err);
                     }
@@ -310,7 +332,7 @@ impl<M: FnMut() -> String> Iterator for BatchPreparer<'_, M> {
 
     fn next(&mut self) -> Option<PreparedBatch> {
         let mut open_facts = AgentIngestFacts::default();
-        let mut open_cursors: Vec<FileCursor> = Vec::new();
+        let mut open_cursors: Vec<UnitCursor> = Vec::new();
         let mut open_bytes: usize = 0;
 
         while let Some(unit) = self.units.clone().next() {
@@ -433,12 +455,26 @@ mod tests {
         SyncUnit {
             records: Vec::new(),
             ctx: SessionContext::default(),
-            next_cursor: FileCursor {
+            next_cursor: UnitCursor::File(FileCursor {
                 file_path: path.to_string(),
                 mtime_ms: 1.0,
                 byte_offset: 10,
                 content_hash_head: "h".to_string(),
-            },
+            }),
+        }
+    }
+
+    /// A Cursor-source unit committing a per-composer watermark, to exercise the [`UnitCursor::Composer`]
+    /// advance path through the same cycle.
+    fn composer_unit(composer_id: &str) -> SyncUnit {
+        SyncUnit {
+            records: Vec::new(),
+            ctx: SessionContext::default(),
+            next_cursor: UnitCursor::Composer(ComposerCursor {
+                composer_id: composer_id.to_string(),
+                bubble_count: 3,
+                max_created_at: 1_700_000_000_000,
+            }),
         }
     }
 
@@ -488,6 +524,42 @@ mod tests {
         // JobSucceeded returns Syncing -> Watching with no follow-up actions.
         assert_eq!(orch.state(), OrchestratorState::Watching);
         assert!(actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_accepted_cursor_composer_unit_advances_its_composer_watermark() {
+        // The same cycle drives the Cursor SQLite source: an accepted composer unit commits a
+        // ComposerCursor via the UnitCursor::Composer arm, not a FileCursor.
+        let client = MockClient::new([ok()]);
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut orch = syncing_orchestrator();
+        let mut mint = counter();
+        let meta = BatchMeta {
+            source: AgentSource::Cursor,
+            desktop_version: "1.0.0".to_string(),
+            parser_version: "0.1.0".to_string(),
+            raw_upload_requested: false,
+        };
+
+        let (report, _) = run_sync_cycle(
+            &client,
+            &store,
+            &mut orch,
+            &meta,
+            &[composer_unit("comp-1")],
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.advanced, 1);
+        let stored = store
+            .get_composer(AgentSource::Cursor, "comp-1")
+            .unwrap()
+            .expect("composer cursor advanced on 2xx");
+        assert_eq!(stored.bubble_count, 3);
+        assert_eq!(stored.max_created_at, 1_700_000_000_000);
     }
 
     #[tokio::test]
@@ -700,7 +772,10 @@ mod tests {
                 .unwrap();
 
         assert_eq!(client.calls.get(), 1, "all sessions rode one batched POST");
-        assert_eq!(report.advanced, 3, "every batched session's cursor advanced");
+        assert_eq!(
+            report.advanced, 3,
+            "every batched session's cursor advanced"
+        );
         assert_eq!(report.failed, 0);
         for p in ["/a.jsonl", "/b.jsonl", "/c.jsonl"] {
             assert!(store.get(AgentSource::Claude, p).unwrap().is_some());
@@ -724,7 +799,14 @@ mod tests {
             max_concurrent_uploads: 2,
         };
         let (report, _) = run_sync_cycle_tuned(
-            &client, &store, &mut orch, &meta(), &units, &mut mint, None, tuning,
+            &client,
+            &store,
+            &mut orch,
+            &meta(),
+            &units,
+            &mut mint,
+            None,
+            tuning,
         )
         .await
         .unwrap();

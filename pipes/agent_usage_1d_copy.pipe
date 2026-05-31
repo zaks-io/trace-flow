@@ -27,5 +27,5 @@ SQL >
 
 TYPE COPY
 TARGET_DATASOURCE agent_usage_1d
-COPY_SCHEDULE 15 * * * *
+COPY_SCHEDULE 2-59/10 * * * *
 COPY_MODE replace

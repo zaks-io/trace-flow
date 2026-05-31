@@ -177,7 +177,11 @@ mod tests {
     /// total)` — production diffs successive snapshots to get per-turn usage. `last_token_usage` is set
     /// to the same shape (only consulted on a reset). For a session's first token_count, the cumulative
     /// equals that turn's usage (delta from a zero baseline).
-    fn token_count(cum: (i64, i64, i64, i64, i64), _legacy_cumulative_total: i64, ts: &str) -> Value {
+    fn token_count(
+        cum: (i64, i64, i64, i64, i64),
+        _legacy_cumulative_total: i64,
+        ts: &str,
+    ) -> Value {
         let (input, cached, output, reasoning, total) = cum;
         json!({
             "type": "event_msg",

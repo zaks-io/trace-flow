@@ -2,14 +2,15 @@
 
 This runbook describes the required production operating model and the current limitation.
 
-## Current Limitation
+## Current Status
 
-The checked-in agent Workers currently use dev resource names and dev bindings. The previous runbook
-called the path "dev only"; that remains true until the production cloud ingest task lands.
+The agent Workers have a production environment (TRA-110): `[env.production]` blocks bind prod-named
+workers to prod queue/DLQ/KV, and the Production workflow deploys them with `--env production` behind a
+config guard. The default (flat) config is still the dev path used by `bun run dev:all`.
 
 Do not ask a user, agent, or collector to submit data with a Tinybird token, Tinybird admin token,
 Wrangler command, Convex dev seed, or local KV seed. Those are implementation/debug tools, not product
-ingestion.
+ingestion. The client only ever holds a Collector Credential.
 
 ## Intended Production Path
 
@@ -28,35 +29,111 @@ secrets.
 
 ## Required Production Resources
 
-Before production launch, provision and record:
+Provisioned for TRA-110 (recorded in `provisioned-resources.md`):
 
-- production agent ingest queue
-- production agent ingest DLQ
-- production `COLLECTOR_CREDS` KV namespace
-- production ingest rate limiter namespace
-- production pricing KV binding or a safe shared pricing source
-- production Sentry projects or alert routing for ingest and consumer
-- production Tinybird agent datasources and pipes
-- scoped Tinybird append token for the consumer Worker
+| Resource              | Name                    | ID / namespace                     |
+| --------------------- | ----------------------- | ---------------------------------- |
+| Ingest queue          | `agent-ingest-prod`     | `91d2320430454be6a12ac4f45f0b15b9` |
+| Ingest DLQ            | `agent-ingest-dlq-prod` | `7ccf6f317c9b4c6fb0e14494b0a47724` |
+| Collector Creds KV    | `COLLECTOR_CREDS_PROD`  | `67241ef9190a4f9d9ac520a347bd44b9` |
+| Ingest rate limiter   | `AGENT_INGEST_LIMITER`  | namespace `2007` (dev is `2006`)   |
+| Pricing KV (existing) | `MODEL_PRICING`         | `45dd0d5e619d44fc831ccab01ed428a4` |
 
-The production deploy workflow must fail if an agent Worker is bound to a dev queue, dev KV namespace,
-or dev Worker name.
+Pricing reuses the existing prod `MODEL_PRICING` namespace the prod proxy consumer already binds — not
+a new namespace, and never the dev catalog (`25a35f…`).
+
+The production deploy workflow fails if an agent Worker is bound to a dev queue, dev KV namespace, dev
+Worker name, or the dev limiter namespace `2006` — enforced by `scripts/assert-agent-prod-resources.sh`,
+which renders each Worker's `--env production` config and refuses to deploy on any dev token.
+
+### Worker secrets (set out of band, never committed, never in CI)
+
+Run each `secret put` from **inside the app directory** with no `--config` flag. Running from the repo
+root with `--config apps/<app>/wrangler.jsonc` mis-resolves the `--env production` worker name (it
+appends `-production` to the top-level `-dev` name) and silently creates a junk
+`trace-flow-agent-ingest-dev-production` worker instead of targeting the real `trace-flow-agent-ingest`.
+
+```sh
+# ingest — run from apps/agent-ingest/
+#   CONVEX_SITE_URL MUST be the prod Convex *site* origin (https://laudable-bison-427.convex.site).
+#   If it points at any other deployment, the compatibility-policy fetch 404s and ingest fails closed
+#   with policy_unavailable even though auth is correct.
+#   AGENT_INGEST_SHARED_SECRET must match the value set in the prod Convex environment.
+( cd apps/agent-ingest && \
+  wrangler secret put CONVEX_SITE_URL            --env production && \
+  wrangler secret put AGENT_INGEST_SHARED_SECRET --env production && \
+  wrangler secret put SENTRY_DSN                 --env production )
+
+# consumer — run from apps/agent-consumer/. Tinybird append-only (DATASOURCE:APPEND) token, trace_flow_prod
+( cd apps/agent-consumer && \
+  wrangler secret put TINYBIRD_TOKEN --env production && \
+  wrangler secret put SENTRY_DSN     --env production )
+```
+
+### Prod Convex environment (control plane — set in the Convex dashboard, not via this repo)
+
+The Collector Credential mint syncs to KV via Convex. The prod Convex deployment must have:
+
+- `AGENT_INGEST_SHARED_SECRET` — identical to the ingest Worker secret above
+- `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (KV write)
+- `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` = `67241ef9190a4f9d9ac520a347bd44b9` (the prod KV)
+
+If `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` is unset or points at dev, minted credentials never land in
+the prod ingest Worker's KV and every ingest auths as `invalid`.
+
+### Compatibility policy (required — ingest fails closed without it)
+
+The ingest Worker fetches `/agent-ingest/compatibility-policy` from Convex on every request (edge-cached
+60s). An **empty `collectorCompatibilityPolicy` table** makes Convex return 404, so the Worker fails
+closed with `policy_unavailable` and rejects all ingest — even with correct auth and a correct
+`CONVEX_SITE_URL`. Prod Convex must have one active policy row.
+
+There is no automated prod seed (`setPolicy` requires an authenticated admin user, so `convex run` can't
+call it; `agentE2eSeed:seedDevCollector` is dev-only). Seed it once via the prod Convex **dashboard** →
+Data → `collectorCompatibilityPolicy` → Add document:
+
+```json
+{
+  "minDesktopVersion": "0.0.0",
+  "minParserVersion": "0.0.0",
+  "denylistedVersions": [],
+  "updatedAt": 1748563200000
+}
+```
+
+`0.0.0 / 0.0.0 / []` admits every client and denylists nothing (`updatedByUserId` is optional;
+`updatedAt` is any epoch-ms number — the active row is the latest by `updatedAt`). Raise the minimums or
+add denylisted versions later to gate or block specific releases without a Worker deploy.
+
+**Diagnosing `policy_unavailable`:** `wrangler tail --env production --format json` from `apps/agent-ingest`
+and grep `policy_fetch`. `status:404` = empty table or wrong `CONVEX_SITE_URL` deployment; `status:401` =
+`AGENT_INGEST_SHARED_SECRET` mismatch between Worker and Convex.
+
+### Tinybird schema
+
+Deploy agent datasources + pipes to `trace_flow_prod` through the scripted gate (opt-in only):
+
+```sh
+TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh --check   # validate only
+TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh           # deploy
+```
 
 ## Release Gate
 
 A production release is valid only if all checks pass:
 
-1. `tb build`
-2. Tinybird deploy dry-run against the target workspace
-3. production Worker config assertion
-4. Worker deploy
-5. synthetic Collector Credential mint
+1. `tb build` (via `TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh --check`)
+2. Tinybird deploy `--check` against `trace_flow_prod` (same script)
+3. production Worker config assertion (`scripts/assert-agent-prod-resources.sh`)
+4. Worker deploy (`deploy --env production`, both agent jobs in `.github/workflows/deploy.yml`)
+5. synthetic Collector Credential mint through the real authenticated control plane
 6. synthetic envelope POST to production ingest
 7. queue drain verification
 8. Tinybird row visibility
 9. `/app/agents` read through org-scoped JWT
 
-No manual admin-token insert can satisfy this gate.
+Steps 5-9 are `scripts/agent-ingest-smoke.sh` (see Smoke Envelope Rules). No manual admin-token insert
+can satisfy this gate.
 
 ## DLQ
 
@@ -66,7 +143,7 @@ repeated Tinybird insert failure.
 Inspect:
 
 ```sh
-wrangler queues info <production-agent-dlq>
+wrangler queues info agent-ingest-dlq-prod
 ```
 
 Recover only after fixing the root cause. Re-drive through the ingest path or a controlled internal
@@ -103,10 +180,43 @@ Smoke tests must:
 - use a synthetic org/session that is safe to delete
 - assert read visibility through the same dashboard token path used by the app
 
+`scripts/agent-ingest-smoke.mjs` (run via `scripts/agent-ingest-smoke.sh`) is the harness. It posts a
+valid gzip envelope and asserts `202`, polls the prod queue to zero, asserts the run's `session_pk`
+appears through an agent read pipe under an `org_id`-scoped JWT, and asserts a malformed envelope is
+rejected (4xx) without enqueuing. It never holds a Tinybird admin token.
+
+Obtain the two real inputs from the authenticated control plane (not from KV or an admin token):
+
+```sh
+# 1. Mint a Collector Credential as a normal user via the production CLI device flow.
+#    The CLI defaults to production URLs — no env vars required:
+trace-flow login
+#    The CLI stores the secret in the OS keychain. For the headless smoke, export it (or read it back):
+export TRACE_FLOW_SMOKE_COLLECTOR_SECRET=<the minted secret>
+
+# 2. Mint an agent-scoped Tinybird JWT for the smoke org the same way the app does
+#    (Convex api.tinybird.generateToken) and export it:
+export TRACE_FLOW_SMOKE_ORG_JWT=<org-scoped agent JWT>
+
+# 3. Run the smoke (CLOUDFLARE_API_TOKEN/ACCOUNT_ID in env for queue-depth checks):
+TRACE_FLOW_INGEST_URL=https://collector.trace-flow.dev \
+TRACE_FLOW_TINYBIRD_HOST=https://api.us-west-2.aws.tinybird.co \
+scripts/agent-ingest-smoke.sh
+```
+
+**Advanced / dev only:** override CLI endpoints when pointing at a local worker or cloud-dev (see
+`apps/cli/README.md`):
+
+```sh
+TRACE_FLOW_CONVEX_SITE_URL=https://<deployment>.convex.site trace-flow login
+TRACE_FLOW_INGEST_URL=http://127.0.0.1:8787 trace-flow sync --since 24h
+```
+
 ## Teardown
 
-The resources in `provisioned-resources.md` are dev-only. Remove them only when the dev agent ingest
-path is intentionally retired or being rebuilt.
+This teardown covers the **dev** resources in `provisioned-resources.md` only. Remove them only when the
+dev agent ingest path is intentionally retired or being rebuilt. The production resources (the Required
+Production Resources table above) are live and out of scope here — see the carve-out below.
 
 Before deleting dev resources:
 

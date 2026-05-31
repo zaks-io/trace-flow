@@ -1,0 +1,30 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for the Trace Flow Desktop menu-bar collector.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:tray:default",
+    "core:menu:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://trace-flow.dev/*" },
+        { "url": "https://*.trace-flow.dev/*" },
+        { "url": "http://localhost:*/*" },
+        { "url": "http://127.0.0.1:*/*" }
+      ]
+    },
+    "opener:allow-open-path",
+    "notification:default",
+    "autostart:default"
+  ]
+}

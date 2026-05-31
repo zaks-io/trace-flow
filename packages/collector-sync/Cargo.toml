@@ -32,9 +32,10 @@ sha2 = "0.10"
 # embedder's single task (the work is network-wait, not CPU), so a history backfill is not one serial
 # round-trip per session. Only the `std`/`alloc` stream combinators are needed.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# The Cursor reader snapshots the live `state.vscdb` into a private temp dir (deleted on drop) before
+# opening it `immutable`, so the live DB is never read mutably or checkpointed. Also used by tests.
+tempfile = "3"
 
 [dev-dependencies]
-# Reopen-across-process and per-org-isolation tests need a real on-disk DB, not `:memory:`.
-tempfile = "3"
 # `#[tokio::test]` needs a runtime; the production feature set above stays watcher-only (no `rt`).
 tokio = { version = "1", features = ["rt"] }

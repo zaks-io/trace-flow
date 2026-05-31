@@ -184,8 +184,9 @@ jobs:
           command: deploy --env production
           packageManager: bun
 
-  # Agent pipeline (slice B). Flat dev config (dev-named workers, 0d-provisioned dev resources), so
-  # these deploy with plain `deploy` — no `--env production` env block exists yet.
+  # Agent pipeline (TRA-110). Production-real: prod-named workers bound to prod queue/DLQ/KV via the
+  # [env.production] blocks, deployed with `--env production`. A guard step asserts the resolved prod
+  # config binds no dev resources before either Worker deploys.
   deploy-agent-ingest:
     name: Deploy Agent Ingest Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -208,13 +209,19 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Assert production config binds no dev resources
+        run: ./scripts/assert-agent-prod-resources.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy Agent Ingest Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/agent-ingest
-          command: deploy
+          command: deploy --env production
           packageManager: bun
 
   deploy-agent-consumer:
@@ -239,13 +246,19 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Assert production config binds no dev resources
+        run: ./scripts/assert-agent-prod-resources.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy Agent Consumer Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/agent-consumer
-          command: deploy
+          command: deploy --env production
           packageManager: bun
 
   deploy-status:

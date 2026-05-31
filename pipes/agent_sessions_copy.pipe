@@ -114,5 +114,5 @@ SQL >
 
 TYPE COPY
 TARGET_DATASOURCE agent_sessions
-COPY_SCHEDULE 45 * * * *
+COPY_SCHEDULE 8-59/10 * * * *
 COPY_MODE replace

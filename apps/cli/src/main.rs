@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Trace Flow Collector CLI (`trace-flow`). The user-facing collector embedder over the
-// collector-parser / collector-sync / collector-api-client crates (Linear TRA-112).
+// Trace Flow Collector CLI (`trace-flow`). A thin clap + stdout shim over `collector-embedder`, the
+// shared embedder the desktop app also links (Linear TRA-112, TRA-115).
 
 //! `trace-flow` — the Collector CLI.
 //!
@@ -10,30 +10,42 @@
 //! source counts, no secrets), and `disconnect` (revoke local material). Parsing and redaction are
 //! always local; only redacted facts leave the machine, authenticated by the Collector Credential.
 //!
-//! Runtime configuration is env-resolved, never baked in:
+//! All of that logic lives in [`collector_embedder`]; this binary is only argument parsing and the
+//! `println!` reporting. Endpoints resolve through [`collector_embedder::defaults`] — production by
+//! default, overridable per environment:
 //! - `TRACE_FLOW_CONVEX_SITE_URL` — the Convex *site* origin `login` drives the device flow against.
 //! - `TRACE_FLOW_INGEST_URL` — the ingest Worker base URL `sync` POSTs to.
 //! - `TRACE_FLOW_COLLECTOR_SECRET` — optional headless/CI override for the keychain credential.
 //!
-//! This is what lets the same binary target Cloud-Dev or a local Worker by environment alone.
-
-mod config;
-mod keychain;
-mod login;
-mod sources;
-mod sync;
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//! With none set, the binary targets production out of the box; an env var points it at Cloud-Dev or
+//! a local Worker instead.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use collector_contracts::AgentSource;
 
-use config::Paths;
-use sources::Support;
+use collector_embedder::connection::Paths;
+use collector_embedder::sources::Support;
+use collector_embedder::{defaults, keychain, login, sources, sync};
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const ENV_HELP: &str = "\
+Environment (optional — production URLs are the default):\n  \
+TRACE_FLOW_CONVEX_SITE_URL  Convex site origin for login (default: production deployment)\n  \
+TRACE_FLOW_INGEST_URL       Ingest Worker base URL for sync (default: https://collector.trace-flow.dev)\n  \
+TRACE_FLOW_COLLECTOR_SECRET Headless/CI credential override (normally stored in OS keychain)\n\
+\n\
+Local/cloud-dev: set TRACE_FLOW_CONVEX_SITE_URL and TRACE_FLOW_INGEST_URL to your dev endpoints.\n\
+See apps/cli/README.md for details.";
 
 #[derive(Parser)]
-#[command(name = "trace-flow", version, about = "Trace Flow Collector CLI")]
+#[command(
+    name = "trace-flow",
+    version,
+    about = "Trace Flow Collector CLI",
+    after_help = ENV_HELP
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -58,6 +70,10 @@ enum Command {
     Status,
     /// Revoke the local Collector Credential and remove local state.
     Disconnect,
+    /// Read the local Cursor `state.vscdb` read-only and print aggregate counts only (no upload, no
+    /// transcript text, paths, model names, or ids). A local verification aid for the Cursor reader.
+    #[command(hide = true)]
+    CursorDryrun,
 }
 
 #[derive(Subcommand)]
@@ -97,14 +113,12 @@ async fn run() -> Result<()> {
         Command::Sync { since } => cmd_sync(&since).await,
         Command::Status => cmd_status(),
         Command::Disconnect => cmd_disconnect().await,
+        Command::CursorDryrun => cmd_cursor_dryrun(),
     }
 }
 
 fn cmd_login() -> Result<()> {
-    let convex_site_url = std::env::var("TRACE_FLOW_CONVEX_SITE_URL").context(
-        "set TRACE_FLOW_CONVEX_SITE_URL to your Convex site origin (e.g. https://<deployment>.convex.site)",
-    )?;
-    let conn = login::run(&convex_site_url)?;
+    let conn = login::run(&defaults::convex_site_url())?;
     println!("\nConnected to organization {}.", conn.org_id);
     println!("Credential stored in the OS keychain. Next: `trace-flow sync --since 7d`.");
     Ok(())
@@ -120,21 +134,15 @@ fn cmd_sources_list() -> Result<()> {
     for d in &detected {
         let support = match d.support {
             Support::Ready => "ready",
-            Support::Unsupported => "unsupported",
-        };
-        let files = match d.support {
-            Support::Ready => d.file_count.to_string(),
-            Support::Unsupported => "-".to_string(),
         };
         println!(
             "{:<10} {:<14} {:<26} {}",
             source_label(d.source),
             support,
             d.display_root(),
-            files,
+            d.file_count,
         );
     }
-    println!("\nCursor is not supported yet (tracked in TRA-108).");
     Ok(())
 }
 
@@ -153,9 +161,7 @@ async fn cmd_sync(since: &str) -> Result<()> {
         )
     })?;
 
-    let ingest_url = std::env::var("TRACE_FLOW_INGEST_URL").context(
-        "set TRACE_FLOW_INGEST_URL to the ingest Worker base URL (e.g. http://127.0.0.1:8787)",
-    )?;
+    let ingest_url = defaults::ingest_url();
 
     let home = home_dir()?;
     println!("Syncing (since {since}) to {ingest_url} ...");
@@ -167,6 +173,8 @@ async fn cmd_sync(since: &str) -> Result<()> {
         home: &home,
         window,
         now_ms: now_ms(),
+        raw_upload: false,
+        batch_id_prefix: "cli",
     })
     .await?;
 
@@ -226,10 +234,7 @@ fn cmd_status() -> Result<()> {
     println!("\nSources:");
     for d in sources::detect(&home) {
         match d.support {
-            Support::Ready => println!("  {:<8} {} files", source_label(d.source), d.file_count),
-            Support::Unsupported => {
-                println!("  {:<8} unsupported (TRA-108)", source_label(d.source))
-            }
+            Support::Ready => println!("  {:<8} {} items", source_label(d.source), d.file_count),
         }
     }
     Ok(())
@@ -260,4 +265,69 @@ fn source_label(source: AgentSource) -> &'static str {
         AgentSource::Codex => "codex",
         AgentSource::Cursor => "cursor",
     }
+}
+
+/// Read the local Cursor `state.vscdb` read-only and print aggregate counts only. A verification aid for
+/// the Cursor reader: it never uploads, and prints no transcript text, file paths, model names, or ids —
+/// only totals and a token-coverage histogram, so it is safe to run and paste.
+fn cmd_cursor_dryrun() -> Result<()> {
+    use collector_contracts::enums::TokenCoverage;
+    use collector_parser::assemble::session_facts;
+    use collector_sync::{assemble_cursor_units, CursorStore, ImportWindow};
+
+    let home = home_dir()?;
+    let Some(db) = sources::cursor_db_path(&home).filter(|p| p.exists()) else {
+        println!("No Cursor state.vscdb found (Cursor not installed, or unsupported platform).");
+        return Ok(());
+    };
+
+    let paths = Paths::resolve()?;
+    paths.ensure()?;
+    // An ephemeral in-memory store means every composer reads as "changed", so the dry-run sees the
+    // whole DB without touching or advancing the real per-org cursor state.
+    let store = CursorStore::open_in_memory("dryrun").context("open scratch cursor store")?;
+    // Admit every composer regardless of age: cutoff 0 via a first-incremental window at +24h.
+    let window = ImportWindow::first_incremental(24 * 60 * 60 * 1000);
+
+    let units = assemble_cursor_units(&db, &paths.scratch_dir(), &store, window)
+        .context("assemble cursor units")?;
+
+    let (mut messages, mut tools, mut files, mut prs) = (0usize, 0usize, 0usize, 0usize);
+    let (mut partial, mut missing, mut full) = (0usize, 0usize, 0usize);
+    for unit in &units {
+        let facts = session_facts(AgentSource::Cursor, &unit.records, &unit.ctx);
+        messages += facts.messages.len();
+        tools += facts.tool_events.len();
+        files += facts.file_events.len();
+        prs += facts.pull_request_links.len();
+        for m in &facts.messages {
+            match m.token_coverage {
+                TokenCoverage::Partial => partial += 1,
+                TokenCoverage::Missing => missing += 1,
+                TokenCoverage::Full => full += 1,
+            }
+        }
+    }
+
+    let pct = |n: usize| {
+        if messages == 0 {
+            0.0
+        } else {
+            100.0 * n as f64 / messages as f64
+        }
+    };
+    println!("Cursor state.vscdb dry-run (read-only, counts only):");
+    println!("  composers (sessions): {}", units.len());
+    println!("  messages:             {messages}");
+    println!("  tool events:          {tools}");
+    println!("  file events:          {files}");
+    println!("  pr links:             {prs}");
+    println!("  token coverage:");
+    println!("    partial: {partial:>7}  ({:.1}%)", pct(partial));
+    println!("    missing: {missing:>7}  ({:.1}%)", pct(missing));
+    println!(
+        "    full:    {full:>7}  ({:.1}%)   (expected 0 — Cursor never reports full coverage)",
+        pct(full)
+    );
+    Ok(())
 }

@@ -1,11 +1,9 @@
-# Provisioned Cloudflare resources (task 0d)
+# Provisioned Cloudflare resources
 
 The agent-ingest path needs Cloudflare resources that are **not code** and must exist before the
-workers can bind them. Task 0d provisions them in the **dev** account only; 2b/2c/2e wire the IDs
-below into the worker `wrangler.jsonc` files, and 2f turns the teardown section into the runbook.
-
-Blast radius is confined to `*-dev`. No production resources are created by this feature until the
-end-to-end path lands and a `main` deploy is intentional.
+workers can bind them. The original dev set is recorded below; the production set (TRA-110) follows in
+its own section. The worker `wrangler.jsonc` files wire these IDs into the default (dev) config and the
+`[env.production]` blocks respectively.
 
 ## Account
 
@@ -42,22 +40,44 @@ control plane, not the sole minting mechanism.
   worker's `wrangler.jsonc` `[[unsafe.bindings]]`; Cloudflare allocates it at deploy time, so there
   is no `wrangler` create command and no ID to record here.
 
-## Production status
+## Production resources (TRA-110)
 
-These are **dev resources only**. They are not a production ingest path.
+The `[env.production]` blocks in `apps/agent-ingest/wrangler.jsonc` and
+`apps/agent-consumer/wrangler.jsonc` bind these. `deploy.yml` deploys both with `--env production`
+behind `scripts/assert-agent-prod-resources.sh`, which fails the deploy if any dev resource leaks in.
 
-The current `deploy.yml` has `deploy-agent-ingest` and `deploy-agent-consumer` jobs, but the worker
-configs are flat dev configs. That means a Production workflow can deploy dev-named agent workers and
-dev resources. This is not acceptable for launch and is tracked by:
+### Queues
 
-- TRA-110 — production cloud ingest path
-- TRA-111 — CI and production release guardrails
+| Binding       | Queue name              | Queue ID                           |
+| ------------- | ----------------------- | ---------------------------------- |
+| `AGENT_QUEUE` | `agent-ingest-prod`     | `91d2320430454be6a12ac4f45f0b15b9` |
+| (DLQ)         | `agent-ingest-dlq-prod` | `7ccf6f317c9b4c6fb0e14494b0a47724` |
 
-Production readiness requires separate production queues, DLQ, KV namespace, rate limiter, Worker
-names, secrets, Tinybird deploy gate, and post-deploy smoke test. Do not treat these IDs as production
-credentials or production evidence.
+### KV
+
+| Binding           | Namespace name          | Namespace ID                       |
+| ----------------- | ----------------------- | ---------------------------------- |
+| `COLLECTOR_CREDS` | `COLLECTOR_CREDS_PROD`  | `67241ef9190a4f9d9ac520a347bd44b9` |
+| `MODEL_PRICING`   | (existing prod catalog) | `45dd0d5e619d44fc831ccab01ed428a4` |
+
+`MODEL_PRICING` reuses the prod namespace the prod proxy consumer already binds — never the dev catalog
+(`25a35f…`). The prod Convex deployment must set `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` to the
+`COLLECTOR_CREDS_PROD` id so minted credentials sync to the right namespace.
+
+### Config-only (no provisioning call)
+
+- `AGENT_INGEST_LIMITER` — prod rate-limit namespace **2007** (dev uses 2006; never reuse a
+  namespace_id, per the rate-limit budget registry).
+
+### Tinybird
+
+Agent datasources + pipes deploy to `trace_flow_prod` (`a0263248-b28b-49de-804f-1ec97c244b96`) through
+`TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh` — opt-in only; the script refuses
+prod without that variable. The consumer holds a `DATASOURCE:APPEND` token for that workspace as a
+Worker secret. No client or smoke test ever receives a Tinybird token.
 
 ## Teardown
 
-See the [ops runbook](./runbook.md#teardown) for dev teardown. These 0d resources are dev-only;
-production resources created by TRA-110 require the production change process.
+See the [ops runbook](./runbook.md#teardown) for dev teardown. The dev resources at the top of this
+doc are dev-only; production resources created by TRA-110 require the production change process and must
+never be deleted as part of dev teardown.

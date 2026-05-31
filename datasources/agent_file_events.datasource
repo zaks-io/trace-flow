@@ -31,3 +31,5 @@ ENGINE_VER "IngestedAt"
 ENGINE_SORTING_KEY "OrgId, session_pk, file_event_pk"
 ENGINE_PARTITION_KEY "toYYYYMMDD(EventAt)"
 ENGINE_TTL "toDateTime(EventAt) + toIntervalYear(1)"
+
+TOKEN "agent_consumer_append" APPEND

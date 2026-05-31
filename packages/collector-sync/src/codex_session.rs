@@ -148,7 +148,10 @@ mod tests {
     #[test]
     fn reads_id_cwd_and_embedded_git_remote() {
         let f = codex_session_fields(&recs(json!([session_meta()])));
-        assert_eq!(f.fields.vendor_session_id, "019e3d03-6b35-74c0-9dd1-c40bdbb6af72");
+        assert_eq!(
+            f.fields.vendor_session_id,
+            "019e3d03-6b35-74c0-9dd1-c40bdbb6af72"
+        );
         assert_eq!(f.fields.cwd.as_deref(), Some("/Users/x/src/t3code"));
         assert_eq!(f.fields.git_branch.as_deref(), Some("main"));
         let g = f.embedded_git.expect("embedded git present");

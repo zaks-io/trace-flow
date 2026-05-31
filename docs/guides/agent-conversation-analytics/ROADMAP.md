@@ -11,17 +11,17 @@ Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
 
 ## Current Truth
 
-| Area                     | Current state                                                                 | Production gap                                                                                      |
-| ------------------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Types / parser libraries | Claude and Codex parser/sync crates exist. Cursor returns no facts.           | No user-facing collector binary or desktop app invokes them.                                        |
-| Cloud ingest             | `agent-ingest` and `agent-consumer` exist and deploy with dev resource names. | No production resource set, environment config, schema deploy gate, or product smoke test.          |
-| Credentials              | Convex can mint hidden Collector Credentials and sync them to KV.             | No CLI or desktop flow lets a user mint/store/use one.                                              |
-| Queue / consumer         | Dev queue and consumer can process E2E harness data.                          | No production queue/DLQ/consumer verification from a real collector.                                |
-| Tinybird                 | Agent datasources and pipes exist; deploy is manual.                          | Schema deploy is not a production release gate.                                                     |
-| Dashboard                | `/app/agents` exists and has chart/table surfaces.                            | It is only useful for orgs with preloaded rows; live authenticated walkthrough is not a merge gate. |
-| Observability            | Logging/Sentry hooks and a runbook exist.                                     | Live alerts are not provisioned as a verified production gate.                                      |
-| CI                       | TS packages have CI coverage.                                                 | Rust collector workspace has no required CI job.                                                    |
-| Product distribution     | None.                                                                         | No CLI, no desktop, no signed release, no connected desktops UX.                                    |
+| Area                     | Current state                                                                                                                                                    | Production gap                                                                                                                                                |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Types / parser libraries | Claude and Codex parser/sync crates exist. Cursor returns no facts.                                                                                              | No user-facing collector binary or desktop app invokes them.                                                                                                  |
+| Cloud ingest             | Prod env blocks bind prod queue/DLQ/KV; `deploy.yml` deploys `--env production` behind a dev-resource guard; Tinybird prod gate + smoke harness exist (TRA-110). | Pending: deploy from `main`, Worker secrets, prod Convex env (`CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID`), prod Tinybird schema deploy, and a green smoke run. |
+| Credentials              | Convex can mint hidden Collector Credentials and sync them to KV.                                                                                                | No CLI or desktop flow lets a user mint/store/use one.                                                                                                        |
+| Queue / consumer         | Dev queue and consumer can process E2E harness data.                                                                                                             | No production queue/DLQ/consumer verification from a real collector.                                                                                          |
+| Tinybird                 | Agent datasources and pipes exist; deploy is manual.                                                                                                             | Schema deploy is not a production release gate.                                                                                                               |
+| Dashboard                | `/app/agents` exists and has chart/table surfaces.                                                                                                               | It is only useful for orgs with preloaded rows; live authenticated walkthrough is not a merge gate.                                                           |
+| Observability            | Logging/Sentry hooks and a runbook exist.                                                                                                                        | Live alerts are not provisioned as a verified production gate.                                                                                                |
+| CI                       | TS packages have CI coverage.                                                                                                                                    | Rust collector workspace has no required CI job.                                                                                                              |
+| Product distribution     | CLI (`trace-flow`, TRA-112) and a macOS menu-bar desktop app (`apps/desktop`, TRA-115) ship the production collector path.                                       | No signed desktop release and no Connected Desktops web UX yet (P6 follow-ups).                                                                               |
 
 ## Non-Negotiable Rules
 
@@ -38,12 +38,12 @@ Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
 | ID  | Task                                        | Status         | Depends on | Done                                                                                                            |
 | --- | ------------------------------------------- | -------------- | ---------- | --------------------------------------------------------------------------------------------------------------- |
 | P0  | Rebaseline docs, Linear, and project status | 🚧 in progress | none       | Roadmap, runbook, ADR amendments, and Linear tickets stop claiming production readiness.                        |
-| P1  | Production cloud ingest path                | ☐ todo         | P0         | Prod ingest Worker, queue, DLQ, KV, rate limit, consumer, Tinybird schema, secrets, and smoke test are live.    |
+| P1  | Production cloud ingest path                | 🚧 in progress | P0         | Prod ingest Worker, queue, DLQ, KV, rate limit, consumer, Tinybird schema, secrets, and smoke test are live.    |
 | P2  | Production collector CLI                    | ☐ todo         | P1         | A user runs `trace-flow login` then `trace-flow sync --since 7d` and data appears in `/app/agents`.             |
 | P3  | Dashboard truth and live walkthrough        | ☐ todo         | P1, P2     | `/app/agents` accurately shows empty/setup/data states and is verified with authenticated production-like data. |
 | P4  | CI and release guardrails                   | ☐ todo         | P0         | Rust workspace, CLI build, Worker deploy, Tinybird deploy check, and live smoke block PR/merge failures.        |
 | P5  | Production observability                    | ☐ todo         | P1         | DLQ, consumer errors, ingest auth failures, and priced-coverage regressions alert with tested runbook paths.    |
-| P6  | Desktop MVP                                 | ☐ todo         | P2, P4     | Installable macOS app connects, stores credential securely, gates first egress, syncs, pauses, and disconnects. |
+| P6  | Desktop MVP                                 | 🚧 in progress | P2, P4     | Installable macOS app connects, stores credential securely, gates first egress, syncs, pauses, and disconnects. |
 | P7  | Cursor source support                       | ☐ todo         | P2, P4     | Cursor `state.vscdb` facts land through the same collector/cloud path and are filterable by source.             |
 
 ## Linear Tracking
@@ -218,18 +218,25 @@ Build the production desktop app after the CLI proves the ingestion path.
 
 ### Required work
 
-- Tauri macOS app under `apps/desktop`.
-- Stronghold or OS-keychain-backed Collector Credential storage.
-- First-run source detection and explicit `Start syncing`.
-- Pause/resume, run sync, history import, disconnect, delete local data.
-- Connected Desktops web surface for list/revoke/status.
-- Signed macOS arm64 release workflow.
+- ✅ Tauri macOS app under `apps/desktop` (menu-bar tray + a small first-run window).
+- ✅ OS-keychain-backed Collector Credential storage (via the shared `collector-embedder` crate; the
+  CLI and desktop link one code path).
+- ✅ First-run source detection, raw-upload opt-in (default off), and an explicit `Start syncing`
+  first-egress gate (the engine starts paused; nothing leaves the machine before the click).
+- ✅ Pause/resume, run sync, disconnect.
+- ☐ Connected Desktops web surface for list/revoke/status (follow-up PR; backend
+  `api.collectorCredentials.list`/`revoke` already exists).
+- ☐ Signed macOS arm64 release workflow (follow-up PR; needs Apple signing + Tauri updater secrets).
 
 ### Done
 
 - A user installs the app, connects, starts sync, sees data in `/app/agents`, quits/relaunches, and
   sync continues if autostart is enabled.
 - Revoking a desktop stops future ingest without changing existing Agent Session identity.
+
+> The app, keychain storage, egress gate, and sync engine landed in the TRA-115 desktop PR. The
+> Connected Desktops web surface and the signed release workflow are tracked as the remaining P6
+> follow-ups; this row stays `in progress` (not production-ready) until they land.
 
 ## P7 - Cursor Source Support
 
