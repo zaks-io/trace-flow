@@ -209,7 +209,7 @@ async function handleRequest(
       connectBaseUrl: env.CONNECT_BASE_URL,
       sharedSecret: env.MCP_BACKEND_SHARED_SECRET,
     });
-    return dispatchToolCall(backend, env.TINYBIRD_API_URL, id, params as ToolCallParams, userId);
+    return dispatchToolCall(backend, env.TINYBIRD_API_URL, id, params as ToolCallParams);
   }
 
   return createErrorResponse(id, JsonRpcErrorCode.MethodNotFound, `Method not found: ${method}`);

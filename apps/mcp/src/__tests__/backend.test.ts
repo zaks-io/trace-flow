@@ -24,9 +24,9 @@ describe('createWorkerBackend', () => {
 
     const backend = createWorkerBackend('u-1', CONFIG);
     const [keys, resolved, ctx] = await Promise.all([
-      backend.listApiKeys('u-1'),
-      backend.resolveKeyIds('u-1', ['k1']),
-      backend.getUserContext('u-1'),
+      backend.listApiKeys(),
+      backend.resolveKeyIds(['k1']),
+      backend.getUserContext(),
     ]);
 
     expect(keys).toEqual([{ id: 'k1', name: 'prod', expiresAt: Number.MAX_SAFE_INTEGER }]);
@@ -46,7 +46,7 @@ describe('createWorkerBackend', () => {
       }),
     );
     const backend = createWorkerBackend('u-1', CONFIG);
-    expect(await backend.resolveKeyIds('u-1', ['k1', 'nope'])).toEqual({
+    expect(await backend.resolveKeyIds(['k1', 'nope'])).toEqual({
       ok: false,
       invalidIds: ['nope'],
     });
@@ -81,6 +81,6 @@ describe('createWorkerBackend', () => {
   it('returns null context for a 404 user', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ error: 'nope' }, 404));
     const backend = createWorkerBackend('u-1', CONFIG);
-    expect(await backend.getUserContext('u-1')).toBeNull();
+    expect(await backend.getUserContext()).toBeNull();
   });
 });

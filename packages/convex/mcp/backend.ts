@@ -47,8 +47,7 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
       });
     },
     listApiKeys: () => unexpiredMeta(),
-    resolveKeyIds: async (_userId, requestedIds) =>
-      resolveApiKeyIds(await unexpiredMeta(), requestedIds),
+    resolveKeyIds: async (requestedIds) => resolveApiKeyIds(await unexpiredMeta(), requestedIds),
     getUserContext: async (): Promise<McpUserContext | null> => {
       const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
       if (!user) return null;

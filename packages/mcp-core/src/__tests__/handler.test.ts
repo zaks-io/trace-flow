@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
-import { isRequest, isNotification, createErrorResponse, createSuccessResponse } from '../handler';
-import { resolveApiKeyIds } from '../backend';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  isRequest,
+  isNotification,
+  createErrorResponse,
+  createSuccessResponse,
+  dispatchToolCall,
+} from '../handler';
+import { resolveApiKeyIds, type McpBackend } from '../backend';
 import { JsonRpcErrorCode } from '../protocol';
 import type { JsonRpcMessage } from '../protocol';
 
@@ -231,5 +237,50 @@ describe('resolveApiKeyIds', () => {
 
   it('flags requested IDs when allKeys is empty', () => {
     expect(resolveApiKeyIds([], ['key-1'])).toEqual({ ok: false, invalidIds: ['key-1'] });
+  });
+});
+
+describe('dispatchToolCall', () => {
+  function createBackend(overrides: Partial<McpBackend> = {}): McpBackend {
+    return {
+      mintToken: vi.fn(async () => 'tb-token'),
+      listApiKeys: vi.fn(async () => []),
+      resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: [] })),
+      getUserContext: vi.fn(async () => ({ enabled: true, retentionDays: 30 })),
+      ...overrides,
+    };
+  }
+
+  it('rejects disabled users before listing API keys', async () => {
+    const listApiKeys = vi.fn(async () => [
+      { id: 'key-1', name: 'prod', expiresAt: Number.MAX_SAFE_INTEGER },
+    ]);
+    const backend = createBackend({
+      listApiKeys,
+      getUserContext: vi.fn(async () => ({ enabled: false, retentionDays: 30 })),
+    });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'list_api_keys',
+      arguments: {},
+    });
+
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InternalError);
+    expect(response.error?.message).toBe('User not found or not enabled');
+    expect(listApiKeys).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown tools before hitting the backend', async () => {
+    const backend = createBackend();
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'not_a_tool',
+      arguments: {},
+    });
+
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(response.error?.message).toBe('Unknown tool: not_a_tool');
+    expect(backend.getUserContext).not.toHaveBeenCalled();
+    expect(backend.resolveKeyIds).not.toHaveBeenCalled();
   });
 });

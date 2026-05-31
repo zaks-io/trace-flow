@@ -41,16 +41,16 @@ export interface McpBackend {
   mintToken: TokenMinter;
 
   /** Public metadata for the user's keys — drives list_api_keys and filtering. */
-  listApiKeys(userId: string): Promise<McpApiKeyMeta[]>;
+  listApiKeys(): Promise<McpApiKeyMeta[]>;
 
   /**
-   * Validate that `requestedIds` are owned by the user and unexpired, or expand
+   * Validate that `requestedIds` are owned by the bound user and unexpired, or expand
    * to all owned unexpired ids when `requestedIds` is undefined. Enforced on
    * both hosts; the worker's backend re-validates server-side regardless.
    */
-  resolveKeyIds(userId: string, requestedIds?: string[]): Promise<ResolveKeyIdsResult>;
+  resolveKeyIds(requestedIds?: string[]): Promise<ResolveKeyIdsResult>;
 
-  getUserContext(userId: string): Promise<McpUserContext | null>;
+  getUserContext(): Promise<McpUserContext | null>;
 }
 
 /**

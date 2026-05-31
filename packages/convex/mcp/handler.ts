@@ -171,7 +171,6 @@ async function handleRequest(
       tinybirdBaseUrl,
       id,
       params as ToolCallParams,
-      session.userId,
     );
   }
 

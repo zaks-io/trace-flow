@@ -46,7 +46,7 @@ zone_name = "trace-flow.dev"
 
 [[env.production.ratelimits]]
 name = "MCP_LIMITER"
-namespace_id = "2007"
+namespace_id = "2009"
 simple = { limit = 120, period = 60 }
 
 [env.preview]

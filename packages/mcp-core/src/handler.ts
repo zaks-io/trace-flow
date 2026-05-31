@@ -77,24 +77,37 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
 
 /**
  * Host-agnostic `tools/call` dispatch. The host (Convex action or MCP worker)
- * supplies the backend + Tinybird base URL and has already authenticated the
- * user into `userId`. All Tinybird access flows through `backend.mintToken`, so
- * the row-security boundary is enforced identically everywhere.
+ * supplies a user-bound backend + Tinybird base URL. All Tinybird access flows
+ * through `backend.mintToken`, so the row-security boundary is enforced
+ * identically everywhere.
  */
 export async function dispatchToolCall(
   backend: McpBackend,
   tinybirdBaseUrl: string,
   id: string | number,
   params: ToolCallParams,
-  userId: string,
 ): Promise<JsonRpcResponse> {
   if (!params.name) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Missing tool name');
   }
 
-  if (params.name === 'list_api_keys') {
-    const meta = await backend.listApiKeys(userId);
+  const isListApiKeys = params.name === 'list_api_keys';
+  const handler = TOOL_HANDLERS[params.name];
+  if (!isListApiKeys && !handler) {
+    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
+  }
+
+  const userContext = await backend.getUserContext();
+  if (!userContext?.enabled) {
+    return createErrorResponse(id, JsonRpcErrorCode.InternalError, 'User not found or not enabled');
+  }
+
+  if (isListApiKeys) {
+    const meta = await backend.listApiKeys();
     return createSuccessResponse(id, listApiKeys(meta));
+  }
+  if (!handler) {
+    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }
 
   const rawIds = params.arguments?.api_key_ids;
@@ -110,7 +123,7 @@ export async function dispatchToolCall(
   }
   const requestedIds = rawIds;
 
-  const resolved = await backend.resolveKeyIds(userId, requestedIds);
+  const resolved = await backend.resolveKeyIds(requestedIds);
   if (!resolved.ok) {
     return createErrorResponse(
       id,
@@ -120,16 +133,7 @@ export async function dispatchToolCall(
   }
   const keyIds = resolved.keyIds;
 
-  const userContext = await backend.getUserContext(userId);
-  if (!userContext) {
-    return createErrorResponse(id, JsonRpcErrorCode.InternalError, 'User not found');
-  }
   const { retentionDays } = userContext;
-
-  const handler = TOOL_HANDLERS[params.name];
-  if (!handler) {
-    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
-  }
 
   const ctx: ToolCtx = { mintToken: backend.mintToken, tinybirdBaseUrl };
   const args = params.arguments ?? {};

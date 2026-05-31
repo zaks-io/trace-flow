@@ -1038,7 +1038,7 @@ export function createApp(
 
     const body = await c.req.json<{ userId: string }>();
     const backend = createMcpBackend(ctx, body.userId as Id<'users'>);
-    const userContext = await backend.getUserContext(body.userId);
+    const userContext = await backend.getUserContext();
     if (!userContext) {
       const logger = getRequestLogger(c.req.raw, { operation: 'mcp_backend_context' });
       logger.warn('convex.mcp_backend_user_not_found');
@@ -1046,7 +1046,7 @@ export function createApp(
       return c.json({ error: 'User not found' }, 404);
     }
 
-    const apiKeys = await backend.listApiKeys(body.userId);
+    const apiKeys = await backend.listApiKeys();
     return c.json({
       enabled: userContext.enabled,
       retentionDays: userContext.retentionDays,
@@ -1073,7 +1073,7 @@ export function createApp(
     const userId = body.userId as Id<'users'>;
     const backend = createMcpBackend(ctx, userId);
 
-    const userContext = await backend.getUserContext(body.userId);
+    const userContext = await backend.getUserContext();
     if (!userContext) {
       logger.warn('convex.mcp_backend_user_not_found');
       await logger.flush();
@@ -1088,7 +1088,7 @@ export function createApp(
     // Re-validate ownership server-side — never trust the worker's id list. The
     // worker already surfaced a clean InvalidParams to the client, so a bad id
     // here is a contract violation, hence 400.
-    const resolved = await backend.resolveKeyIds(body.userId, body.apiKeyIds);
+    const resolved = await backend.resolveKeyIds(body.apiKeyIds);
     if (!resolved.ok) {
       logger.warn('convex.mcp_backend_unowned_key_ids', { invalidIds: resolved.invalidIds });
       await logger.flush();

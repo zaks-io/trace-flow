@@ -77,7 +77,7 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
       const ctx = await getContext();
       return ctx?.apiKeys ?? [];
     },
-    resolveKeyIds: async (_userId, requestedIds) => {
+    resolveKeyIds: async (requestedIds) => {
       const ctx = await getContext();
       return resolveApiKeyIds(ctx?.apiKeys ?? [], requestedIds);
     },
