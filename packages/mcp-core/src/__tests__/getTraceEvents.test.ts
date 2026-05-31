@@ -24,6 +24,11 @@ describe('formatEventRow', () => {
     expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 
+  it('falls back safely for invalid timestamps', () => {
+    const result = formatEventRow({ ...baseRow, event_timestamp: Number.NaN });
+    expect(result.timestamp).toBe('');
+  });
+
   it('parses JSON attributes', () => {
     const result = formatEventRow(baseRow);
     expect(result.attributes).toEqual({

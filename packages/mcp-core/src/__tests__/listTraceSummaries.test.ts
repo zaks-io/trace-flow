@@ -1,44 +1,49 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listTraceSummaries } from '../tools/listTraceSummaries';
 import type { ToolCtx } from '../tinybird';
 
-const mockCtx: ToolCtx = {
-  mintToken: vi.fn().mockResolvedValue('mock-jwt-token'),
-  tinybirdBaseUrl: 'https://api.tinybird.co',
-};
+let mockCtx: ToolCtx;
+
+function mockFetchJson(responseData: unknown) {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+    ok: true,
+    json: () => Promise.resolve(responseData),
+  } as Response);
+}
 
 describe('listTraceSummaries', () => {
-  const originalFetch = globalThis.fetch;
+  beforeEach(() => {
+    mockCtx = {
+      mintToken: vi.fn().mockResolvedValue('mock-jwt-token'),
+      tinybirdBaseUrl: 'https://api.tinybird.co',
+    };
+  });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   it('returns aggregated trace summaries with pagination', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          data: [
-            {
-              trace_id: 'abcdef0123456789abcdef0123456789',
-              timestamp: '2026-03-29T12:00:00.000Z',
-              latest_received_at: '2026-03-29T12:00:01.250Z',
-              capture_lag_ms: 1250,
-              duration_ms: 850,
-              status: 'error',
-              span_count: 6,
-              models: ['openai/gpt-4.1', ''],
-              operations: ['heartbeat', ''],
-              prompt_tokens: 100,
-              completion_tokens: 25,
-              total_tokens: 125,
-              max_ttft_ms: 210,
-              total_cost_usd: 0.0315,
-              total_count: 2,
-            },
-          ],
-        }),
+    mockFetchJson({
+      data: [
+        {
+          trace_id: 'abcdef0123456789abcdef0123456789',
+          timestamp: '2026-03-29T12:00:00.000Z',
+          latest_received_at: '2026-03-29T12:00:01.250Z',
+          capture_lag_ms: 1250,
+          duration_ms: 850,
+          status: 'error',
+          span_count: 6,
+          models: ['openai/gpt-4.1', ''],
+          operations: ['heartbeat', ''],
+          prompt_tokens: 100,
+          completion_tokens: 25,
+          total_tokens: 125,
+          max_ttft_ms: 210,
+          total_cost_usd: 0.0315,
+          total_count: 2,
+        },
+      ],
     });
 
     const result = await listTraceSummaries(
@@ -81,10 +86,7 @@ describe('listTraceSummaries', () => {
   });
 
   it('queries the dedicated MCP trace summaries pipe', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ data: [] }),
-    });
+    mockFetchJson({ data: [] });
 
     await listTraceSummaries(
       mockCtx,
@@ -96,7 +98,7 @@ describe('listTraceSummaries', () => {
       7,
     );
 
-    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+    const call = vi.mocked(globalThis.fetch).mock.calls[0]![0] as string;
     expect(call).toContain('/v0/pipes/mcp_trace_summaries.json');
     expect(call).toContain('operation=key-art');
     expect(call).toContain('trace_id=abcdef0123456789abcdef0123456789');

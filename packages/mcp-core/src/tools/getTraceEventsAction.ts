@@ -30,6 +30,14 @@ interface FormattedEvent {
   attributes: Record<string, string>;
 }
 
+function toIsoTimestamp(timestampNs: unknown): string | undefined {
+  const timestamp = Number(timestampNs);
+  if (!Number.isFinite(timestamp)) return undefined;
+
+  const date = new Date(timestamp / 1_000_000);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
 const SAFE_EVENT_ATTRIBUTE_KEYS = new Set<string>([
   GEN_AI.CONTENT_TYPE,
   GEN_AI.MESSAGE_INDEX,
@@ -71,7 +79,7 @@ export function formatEventRow(row: EventRow): FormattedEvent {
     span_id: row.SpanId,
     span_name: row.SpanName,
     event_name: row.event_name,
-    timestamp: new Date(row.event_timestamp / 1_000_000).toISOString(),
+    timestamp: toIsoTimestamp(row.event_timestamp) ?? '',
     attributes: sanitizeEventAttributes(attributes),
   };
 }

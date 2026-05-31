@@ -70,7 +70,8 @@ export async function getTraceSpans(
   }
 
   const limit = Math.min(params.limit ?? DEFAULT_SPAN_LIMIT, MAX_SPAN_LIMIT);
-  const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
+  const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   const cappedTopN =
     params.top_n && params.top_n > 0 ? Math.min(params.top_n, MAX_SPAN_LIMIT) : undefined;
 

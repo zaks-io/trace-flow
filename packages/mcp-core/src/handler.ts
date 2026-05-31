@@ -100,13 +100,19 @@ export async function dispatchToolCall(
 
   const userContext = await backend.getUserContext();
   if (!userContext?.enabled) {
-    return createErrorResponse(id, JsonRpcErrorCode.InternalError, 'User not found or not enabled');
+    return createErrorResponse(
+      id,
+      JsonRpcErrorCode.InvalidRequest,
+      'User not found or not enabled',
+    );
   }
 
   if (isListApiKeys) {
     const meta = await backend.listApiKeys();
     return createSuccessResponse(id, listApiKeys(meta));
   }
+  // The earlier unknown-tool guard covers runtime; this keeps TypeScript narrowed
+  // under noUncheckedIndexedAccess after the list_api_keys branch.
   if (!handler) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }

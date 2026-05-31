@@ -80,8 +80,9 @@ export async function listTraces(
     retentionDays,
   );
 
-  const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-  const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
+  const limit = Math.max(1, Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
+  const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   const { startTimeNs } = buildTimeRangeNs(params.hours, DEFAULT_HOURS, retentionDays * 24);
 
   const pipeParams: Record<string, string | number | undefined> = {
@@ -101,7 +102,7 @@ export async function listTraces(
   const totalCount = data.length > 0 ? (data[0] as unknown as TraceRow).total_count : 0;
   const hasMore = totalCount > offset + data.length;
   const formattedTraces = data.map((row) => formatTraceRow(row as unknown as TraceRow));
-  const nextCursor = hasMore ? String(offset + limit) : undefined;
+  const nextCursor = hasMore ? String(offset + data.length) : undefined;
 
   const result = {
     traces: formattedTraces,

@@ -1,7 +1,4 @@
-/**
- * Helper functions for parsing and formatting trace spans.
- * SQL building has been moved to Tinybird Pipes for security.
- */
+/** SQL building has been moved to Tinybird Pipes for security. */
 import {
   BAGGAGE_PREFIX,
   GEN_AI,

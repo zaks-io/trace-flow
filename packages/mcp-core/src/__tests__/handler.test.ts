@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   isRequest,
   isNotification,
@@ -248,6 +248,10 @@ describe('resolveApiKeyIds', () => {
 });
 
 describe('dispatchToolCall', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   function createBackend(overrides: Partial<McpBackend> = {}): McpBackend {
     return {
       mintToken: vi.fn(async () => 'tb-token'),
@@ -272,7 +276,7 @@ describe('dispatchToolCall', () => {
       arguments: {},
     });
 
-    expect(response.error?.code).toBe(JsonRpcErrorCode.InternalError);
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InvalidRequest);
     expect(response.error?.message).toBe('User not found or not enabled');
     expect(listApiKeys).not.toHaveBeenCalled();
   });
@@ -289,5 +293,94 @@ describe('dispatchToolCall', () => {
     expect(response.error?.message).toBe('Unknown tool: not_a_tool');
     expect(backend.getUserContext).not.toHaveBeenCalled();
     expect(backend.resolveKeyIds).not.toHaveBeenCalled();
+  });
+
+  it('lists API keys through the backend formatter', async () => {
+    const listApiKeys = vi.fn(async () => [
+      { id: 'key-1', name: 'prod', expiresAt: Date.now() + 60_000 },
+    ]);
+    const backend = createBackend({ listApiKeys });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'list_api_keys',
+      arguments: {},
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(listApiKeys).toHaveBeenCalledOnce();
+    const result = response.result as { content: [{ text: string }] };
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      api_keys: [{ id: 'key-1', name: 'prod' }],
+      total: 1,
+    });
+  });
+
+  it('rejects api_key_ids that are not string arrays', async () => {
+    const backend = createBackend();
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'list_traces',
+      arguments: { api_key_ids: 'key-1' },
+    });
+
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(response.error?.message).toBe('api_key_ids must be an array of strings');
+    expect(backend.resolveKeyIds).not.toHaveBeenCalled();
+  });
+
+  it('rejects unowned api key ids', async () => {
+    const backend = createBackend({
+      resolveKeyIds: vi.fn(async () => ({ ok: false as const, invalidIds: ['bad-1', 'bad-2'] })),
+    });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'list_traces',
+      arguments: { api_key_ids: ['bad-1', 'bad-2'] },
+    });
+
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(response.error?.message).toContain('bad-1, bad-2');
+  });
+
+  it('dispatches tool calls with resolved keys and a minted Tinybird token', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: [
+            {
+              trace_id: 'abcdef0123456789abcdef0123456789',
+              timestamp: '2026-03-29T12:00:00.000Z',
+              duration_ms: 10,
+              status: 'STATUS_CODE_OK',
+              provider: 'openai',
+              model: 'gpt-5',
+              prompt_tokens: 1,
+              completion_tokens: 2,
+              total_tokens: 3,
+              cost_usd: 0.01,
+              total_count: 1,
+            },
+          ],
+        }),
+    } as Response);
+
+    const mintToken = vi.fn(async () => 'tb-token');
+    const backend = createBackend({
+      mintToken,
+      resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: ['key-1'] })),
+    });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'list_traces',
+      arguments: { api_key_ids: ['key-1'] },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(mintToken).toHaveBeenCalledWith(
+      [{ type: 'PIPES:READ', resource: 'mcp_traces_list' }],
+      ['key-1'],
+      30,
+    );
   });
 });

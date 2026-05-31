@@ -85,9 +85,8 @@ describe('TraceBatcher logic', () => {
     expect(stats.oldestQueuedTraceTime).toBe(firstInsertTime);
   });
 
-  // The trace insert batches its SQL by MAX_SQL_PARAMS, so the interesting cases
-  // are around the per-statement row limit: just over, exactly on it, and a
-  // multi-chunk batch that doesn't land on a boundary.
+  // insertMessageTraces chunks by TRACE_BATCHER_MAX_INSERT_ROWS
+  // (MAX_SQL_PARAMS / 2), so cover the per-statement row limit boundary.
   it.each([
     ['just over the limit', TRACE_BATCHER_MAX_INSERT_ROWS + 1],
     ['exactly on the limit', TRACE_BATCHER_MAX_INSERT_ROWS],

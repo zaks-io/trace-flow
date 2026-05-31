@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TOOL_DEFINITIONS } from '../tools/definitions';
+import { DEFAULT_SPAN_LIMIT } from '../tools/shared';
 
 interface JsonSchemaProperty {
   type?: string;
@@ -248,7 +249,7 @@ describe('get_trace_spans tool definition', () => {
     it('has limit parameter', () => {
       expect(props.limit).toBeDefined();
       expect(props.limit!.type).toBe('number');
-      expect(props.limit!.description).toContain('default 20');
+      expect(props.limit!.description).toContain(`default ${DEFAULT_SPAN_LIMIT}`);
     });
 
     it('has cursor parameter', () => {
