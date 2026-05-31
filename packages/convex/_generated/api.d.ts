@@ -2395,30 +2395,6 @@ export declare const internal: {
         null
       >;
     };
-    tools: {
-      index: {
-        listApiKeys: FunctionReference<
-          "action",
-          "internal",
-          { userId: Id<"users"> },
-          any
-        >;
-      };
-      listApiKeys: FunctionReference<
-        "action",
-        "internal",
-        { userId: Id<"users"> },
-        any
-      >;
-      listApiKeysAction: {
-        listApiKeys: FunctionReference<
-          "action",
-          "internal",
-          { userId: Id<"users"> },
-          any
-        >;
-      };
-    };
   };
   migrations: {
     advanceBillingPeriod: FunctionReference<

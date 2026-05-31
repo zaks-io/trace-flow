@@ -1,19 +1,20 @@
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
+import { defineConfig } from 'vitest/config';
 
-export default defineWorkersConfig({
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: {
+        configPath: './wrangler.jsonc',
+      },
+    }),
+  ],
   test: {
     reporters: ['dot'],
     passWithNoTests: true,
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json-summary', 'json', 'html'],
-    },
-    poolOptions: {
-      workers: {
-        wrangler: {
-          configPath: './wrangler.jsonc',
-        },
-      },
     },
   },
 });

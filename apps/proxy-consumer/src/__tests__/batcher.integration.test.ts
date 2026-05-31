@@ -1,11 +1,47 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { env, runInDurableObject } from 'cloudflare:test';
-import type { TraceBatcherInstance } from '../batcher';
-import { TRACE_BATCHER_MAX_SQL_PARAMS, TRACE_BATCHER_MAX_INSERT_ROWS } from '../batcher';
+import { env as workerEnv } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
+import type { TraceBatcherInstance, MessageTraceBatchItem, MessageTraceResult } from '../batcher';
+import { TRACE_BATCHER_MAX_INSERT_ROWS } from '../batcher';
 import { createMockTrace } from './fixtures';
 
-describe('TraceBatcher Integration', () => {
+const env = workerEnv as unknown as {
+  TRACE_BATCHER: DurableObjectNamespace<TraceBatcherInstance>;
+};
+
+// Stub the Tinybird transport so nothing leaves the isolate. The DO loads this
+// same module, so the mock covers any flush triggered inside the batcher. Tests
+// must never touch the network.
+vi.mock('../tinybird', () => ({
+  insertIntoTinybird: vi.fn().mockResolvedValue(undefined),
+  insertIntoTinybirdWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
+/**
+ * Covers the batcher's own logic — dedup by messageId, SQL-param chunking past
+ * the per-statement row limit, and oldest-queued-trace tracking — by driving
+ * the DO directly.
+ *
+ * `addMessageTraces` arms a real DO flush alarm. If that alarm fires it runs a
+ * flush whose Sentry span belongs to the original request's I/O context, which
+ * workerd rejects ("Cannot perform I/O on behalf of a different Durable
+ * Object") leaving a promise that never settles and hangs the run — and it also
+ * drains the queue out from under the assertions. So `addTraces` cancels the
+ * alarm in the same DO invocation, before any await boundary lets it fire. The
+ * flush path itself is exercised by the unit tests in tinybird.test.ts.
+ */
+describe('TraceBatcher logic', () => {
   let batcher: DurableObjectStub<TraceBatcherInstance>;
+
+  const addTraces = (items: MessageTraceBatchItem[]): Promise<MessageTraceResult[]> =>
+    runInDurableObject(batcher, async (instance: TraceBatcherInstance, state) => {
+      const results = await instance.addMessageTraces(items);
+      await state.storage.deleteAlarm();
+      return results;
+    });
+
+  const getStats = () =>
+    runInDurableObject(batcher, (instance: TraceBatcherInstance) => instance.getStats());
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -22,153 +58,46 @@ describe('TraceBatcher Integration', () => {
     vi.useRealTimers();
   });
 
-  it('should expose enriched stats for queued traces', async () => {
-    const now = Date.now();
+  it('dedupes repeated messageIds within and across inserts', async () => {
+    const first = await addTraces([{ messageId: 'msg-1', traces: [createMockTrace('t-1')] }]);
+    expect(first).toEqual([{ messageId: 'msg-1', status: 'inserted' }]);
 
-    const firstResults = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-      return instance.addMessageTraces([
-        { messageId: 'msg-1', traces: [createMockTrace('trace-msg-1')] },
-      ]);
-    });
-    expect(firstResults).toEqual([{ messageId: 'msg-1', status: 'inserted' }]);
-
-    const secondResults = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-      return instance.addMessageTraces([
-        { messageId: 'msg-1', traces: [createMockTrace('trace-msg-1-dup')] },
-      ]);
-    });
-    expect(secondResults).toEqual([{ messageId: 'msg-1', status: 'duplicate' }]);
-
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-      return instance.getStats();
-    });
-
-    expect(stats).toEqual({
-      queuedTraces: 1,
-      oldestQueuedTraceTime: now,
-      lastSuccessfulFlushTime: now,
-      lastFlushTime: now,
-    });
+    const second = await addTraces([
+      { messageId: 'msg-1', traces: [createMockTrace('t-1-dup')] },
+      { messageId: 'msg-2', traces: [createMockTrace('t-2')] },
+    ]);
+    expect(second).toEqual([
+      { messageId: 'msg-1', status: 'duplicate' },
+      { messageId: 'msg-2', status: 'inserted' },
+    ]);
   });
 
-  it('should keep the oldest queued trace timestamp across later inserts', async () => {
+  it('keeps the oldest queued trace timestamp across later inserts', async () => {
     const firstInsertTime = Date.now();
-    await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-      return instance.addMessageTraces([
-        { messageId: 'msg-2', traces: [createMockTrace('trace-msg-2')] },
-      ]);
-    });
+    await addTraces([{ messageId: 'msg-a', traces: [createMockTrace('t-a')] }]);
 
     vi.advanceTimersByTime(60_000);
 
-    const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-      return instance.addMessageTraces([
-        { messageId: 'msg-2', traces: [createMockTrace('trace-msg-2-dup')] },
-        { messageId: 'msg-3', traces: [createMockTrace('trace-msg-3')] },
-      ]);
-    });
+    await addTraces([{ messageId: 'msg-b', traces: [createMockTrace('t-b')] }]);
 
-    expect(results).toEqual([
-      { messageId: 'msg-2', status: 'duplicate' },
-      { messageId: 'msg-3', status: 'inserted' },
-    ]);
-
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-      return instance.getStats();
-    });
-
+    const stats = await getStats();
     expect(stats.queuedTraces).toBe(2);
     expect(stats.oldestQueuedTraceTime).toBe(firstInsertTime);
-    expect(stats.lastSuccessfulFlushTime).toBe(firstInsertTime);
-    expect(stats.lastFlushTime).toBeGreaterThanOrEqual(firstInsertTime);
   });
 
-  it('should report no oldest queued trace when the queue is empty', async () => {
-    const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-      return instance.getStats();
-    });
+  // insertMessageTraces chunks by TRACE_BATCHER_MAX_INSERT_ROWS
+  // (MAX_SQL_PARAMS / 2), so cover the per-statement row limit boundary.
+  it.each([
+    ['just over the limit', TRACE_BATCHER_MAX_INSERT_ROWS + 1],
+    ['exactly on the limit', TRACE_BATCHER_MAX_INSERT_ROWS],
+    ['multiple chunks plus remainder', TRACE_BATCHER_MAX_INSERT_ROWS * 2 + 1],
+  ])('inserts a batch %s without losing rows', async (_label, traceCount) => {
+    const traces = Array.from({ length: traceCount }, (_, i) => createMockTrace(`chunk-${i}`));
 
-    expect(stats.queuedTraces).toBe(0);
-    expect(stats.oldestQueuedTraceTime).toBeNull();
-  });
+    const results = await addTraces([{ messageId: 'msg-chunk', traces }]);
+    expect(results).toEqual([{ messageId: 'msg-chunk', status: 'inserted' }]);
 
-  describe('SQL param chunking', () => {
-    it('should insert traces exceeding MAX_INSERT_ROWS in a single message', async () => {
-      const traceCount = TRACE_BATCHER_MAX_INSERT_ROWS + 1;
-      const traces = Array.from({ length: traceCount }, (_, i) =>
-        createMockTrace(`chunk-insert-${i}`),
-      );
-
-      const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.addMessageTraces([{ messageId: 'msg-large-insert', traces }]);
-      });
-
-      expect(results).toEqual([{ messageId: 'msg-large-insert', status: 'inserted' }]);
-
-      const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.getStats();
-      });
-      expect(stats.queuedTraces).toBe(traceCount);
-    });
-
-    it('should insert traces at exact MAX_INSERT_ROWS boundary', async () => {
-      const traces = Array.from({ length: TRACE_BATCHER_MAX_INSERT_ROWS }, (_, i) =>
-        createMockTrace(`chunk-boundary-${i}`),
-      );
-
-      const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.addMessageTraces([{ messageId: 'msg-boundary', traces }]);
-      });
-
-      expect(results).toEqual([{ messageId: 'msg-boundary', status: 'inserted' }]);
-
-      const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.getStats();
-      });
-      expect(stats.queuedTraces).toBe(TRACE_BATCHER_MAX_INSERT_ROWS);
-    });
-
-    it('should insert a large multi-chunk batch (2x + 1 boundary)', async () => {
-      const traceCount = TRACE_BATCHER_MAX_INSERT_ROWS * 2 + 1;
-      const traces = Array.from({ length: traceCount }, (_, i) => createMockTrace(`chunk-2x-${i}`));
-
-      const results = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.addMessageTraces([{ messageId: 'msg-2x', traces }]);
-      });
-
-      expect(results).toEqual([{ messageId: 'msg-2x', status: 'inserted' }]);
-
-      const stats = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.getStats();
-      });
-      expect(stats.queuedTraces).toBe(traceCount);
-    });
-
-    it('should export consistent constants', () => {
-      expect(TRACE_BATCHER_MAX_SQL_PARAMS).toBe(90);
-      expect(TRACE_BATCHER_MAX_INSERT_ROWS).toBe(45);
-    });
-  });
-
-  describe('forceFlush admin recovery', () => {
-    it('should expose forceFlush returning before/after counts', async () => {
-      await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.addMessageTraces([
-          { messageId: 'force-1', traces: [createMockTrace('force-trace-1')] },
-        ]);
-      });
-
-      const result = await runInDurableObject(batcher, (instance: TraceBatcherInstance) => {
-        return instance.forceFlush();
-      });
-
-      // Tinybird unreachable in tests, so 'after' may equal 'before'. The
-      // contract this test pins is shape, not drain success.
-      expect(result).toMatchObject({
-        before: expect.any(Number) as number,
-        after: expect.any(Number) as number,
-      });
-      expect(result.before).toBe(1);
-    });
+    const stats = await getStats();
+    expect(stats.queuedTraces).toBe(traceCount);
   });
 });

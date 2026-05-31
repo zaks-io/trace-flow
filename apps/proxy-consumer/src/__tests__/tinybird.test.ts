@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { insertIntoTinybird, insertIntoTinybirdWithRetry } from '../tinybird';
 import type { TinybirdTrace } from '@trace-flow/types';
 
@@ -34,13 +34,18 @@ describe('insertIntoTinybird', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it('should successfully insert traces', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       text: () => Promise.resolve(''),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co');
 
@@ -63,7 +68,7 @@ describe('insertIntoTinybird', () => {
       status: 200,
       text: () => Promise.resolve(''),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     const trace1 = { ...mockTrace, TraceId: 'trace-1' };
     const trace2 = { ...mockTrace, TraceId: 'trace-2' };
@@ -89,7 +94,7 @@ describe('insertIntoTinybird', () => {
       status: 200,
       text: () => Promise.resolve(''),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybird(
       [mockTrace],
@@ -110,7 +115,7 @@ describe('insertIntoTinybird', () => {
       status: 400,
       text: () => Promise.resolve('Bad request error'),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await expect(
       insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co'),
@@ -123,7 +128,7 @@ describe('insertIntoTinybird', () => {
       status: 401,
       text: () => Promise.resolve('Unauthorized'),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await expect(
       insertIntoTinybird([mockTrace], 'invalid-token', 'otel_traces', 'https://api.tinybird.co'),
@@ -136,7 +141,7 @@ describe('insertIntoTinybird', () => {
       status: 500,
       text: () => Promise.resolve('Internal server error'),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await expect(
       insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co'),
@@ -149,7 +154,7 @@ describe('insertIntoTinybird', () => {
       status: 200,
       text: () => Promise.resolve(''),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'http://localhost:7181');
 
@@ -165,7 +170,7 @@ describe('insertIntoTinybird', () => {
       status: 200,
       text: () => Promise.resolve(''),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     const traces = Array.from({ length: 10 }, (_, i) => ({
       ...mockTrace,
@@ -181,7 +186,7 @@ describe('insertIntoTinybird', () => {
 
   it('should handle network errors', async () => {
     const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await expect(
       insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co'),
@@ -223,13 +228,18 @@ describe('insertIntoTinybirdWithRetry', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it('should succeed on first attempt', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       text: () => Promise.resolve(''),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybirdWithRetry(
       [mockTrace],
@@ -247,7 +257,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       status: 500,
       text: () => Promise.resolve('Server error'),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     const mockDelay = vi.fn().mockResolvedValue(undefined);
 
@@ -271,7 +281,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       status: 422,
       text: () => Promise.resolve('Partial ingestion error'),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     const mockDelay = vi.fn().mockResolvedValue(undefined);
 
@@ -295,7 +305,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       status: 400,
       text: () => Promise.resolve('Bad request error'),
     });
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     const mockDelay = vi.fn().mockResolvedValue(undefined);
 
@@ -315,7 +325,7 @@ describe('insertIntoTinybirdWithRetry', () => {
 
   it('should handle non-Error exceptions', async () => {
     const mockFetch = vi.fn().mockRejectedValue('String error');
-    global.fetch = mockFetch;
+    vi.stubGlobal('fetch', mockFetch);
 
     const mockDelay = vi.fn().mockResolvedValue(undefined);
 

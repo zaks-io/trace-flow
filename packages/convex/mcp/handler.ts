@@ -1,63 +1,31 @@
-import { action, internalAction } from '../_generated/server';
+import { action, internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
-import { internal } from '../_generated/api';
+import { internal, api } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
-import type {
-  JsonRpcRequest,
-  JsonRpcResponse,
-  JsonRpcNotification,
-  JsonRpcMessage,
-  InitializeParams,
-  InitializeResult,
-  ListToolsResult,
-  ToolCallParams,
-  ToolCallResult,
-} from './protocol';
 import {
   JsonRpcErrorCode,
   SUPPORTED_PROTOCOL_VERSIONS,
   MCP_SERVER_INFO,
   MCP_SERVER_CAPABILITIES,
-} from './protocol';
-import { TOOL_DEFINITIONS } from './tools';
+  isRequest,
+  isNotification,
+  isInitializeParams,
+  createErrorResponse,
+  createSuccessResponse,
+  handleToolsList,
+  dispatchToolCall,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type JsonRpcNotification,
+  type JsonRpcMessage,
+  type InitializeParams,
+  type InitializeResult,
+  type ToolCallParams,
+} from '@trace-flow/mcp-core';
 import { requireAuthenticated } from '../auth/auth';
-import { api } from '../_generated/api';
-import { listTraces } from './tools/listTracesAction';
-import { getTrace } from './tools/getTraceAction';
-import { getTraceSpans } from './tools/getTraceSpansAction';
-import { getTraceEvents } from './tools/getTraceEventsAction';
-import { listTraceSummaries } from './tools/listTraceSummaries';
-import { getUsageSummary, listModelUsage, listOperationUsage } from './tools/analytics';
-import { RETENTION_DAYS } from '@trace-flow/types';
+import { createMcpBackend } from './backend';
 
-export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
-  return 'id' in message && message.id !== undefined;
-}
-
-export function isNotification(message: JsonRpcMessage): message is JsonRpcNotification {
-  return !('id' in message) || message.id === undefined;
-}
-
-export function createErrorResponse(
-  id: string | number | null,
-  code: number,
-  message: string,
-  data?: unknown,
-): JsonRpcResponse {
-  return {
-    jsonrpc: '2.0',
-    id,
-    error: { code, message, data },
-  };
-}
-
-export function createSuccessResponse(id: string | number, result: unknown): JsonRpcResponse {
-  return {
-    jsonrpc: '2.0',
-    id,
-    result,
-  };
-}
+const tinybirdBaseUrl = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
 
 const jsonRpcResponseValidator = v.object({
   jsonrpc: v.literal('2.0'),
@@ -128,7 +96,7 @@ export const handleMessageWithUser = internalAction({
 });
 
 async function handleNotification(
-  ctx: { runMutation: typeof action.prototype.runMutation },
+  ctx: ActionCtx,
   notification: JsonRpcNotification,
   sessionId: string | undefined,
 ): Promise<void> {
@@ -141,11 +109,7 @@ async function handleNotification(
 }
 
 async function handleRequest(
-  ctx: {
-    runQuery: typeof action.prototype.runQuery;
-    runMutation: typeof action.prototype.runMutation;
-    runAction: typeof action.prototype.runAction;
-  },
+  ctx: ActionCtx,
   request: JsonRpcRequest,
   sessionId: string | undefined,
   userId: Id<'users'>,
@@ -153,7 +117,10 @@ async function handleRequest(
   const { method, params, id } = request;
 
   if (method === 'initialize') {
-    return handleInitialize(ctx, id, params as InitializeParams, userId);
+    if (!isInitializeParams(params)) {
+      return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Invalid initialize params');
+    }
+    return handleInitialize(ctx, id, params, userId);
   }
 
   if (method === 'ping') {
@@ -203,14 +170,20 @@ async function handleRequest(
   }
 
   if (method === 'tools/call') {
-    return handleToolsCall(ctx, id, params as ToolCallParams, session.userId);
+    return dispatchToolCall(
+      createMcpBackend(ctx, session.userId),
+      tinybirdBaseUrl,
+      id,
+      params as ToolCallParams,
+      session.protocolVersion,
+    );
   }
 
   return createErrorResponse(id, JsonRpcErrorCode.MethodNotFound, `Method not found: ${method}`);
 }
 
 async function handleInitialize(
-  ctx: { runMutation: typeof action.prototype.runMutation },
+  ctx: ActionCtx,
   id: string | number,
   params: InitializeParams,
   userId: Id<'users'>,
@@ -245,125 +218,6 @@ async function handleInitialize(
     sessionId,
   };
 
-  return createSuccessResponse(id, result);
-}
-
-function handleToolsList(id: string | number): JsonRpcResponse {
-  const result: ListToolsResult = {
-    tools: TOOL_DEFINITIONS,
-  };
-
-  return createSuccessResponse(id, result);
-}
-
-export function resolveApiKeys(
-  allApiKeys: { _id: string; key: string }[],
-  requestedIds?: string[],
-): string[] | { error: string } {
-  if (!requestedIds || requestedIds.length === 0) {
-    return allApiKeys.map((k) => k.key);
-  }
-
-  const keyMap = new Map(allApiKeys.map((k) => [k._id, k.key]));
-  const resolved: string[] = [];
-  const invalid: string[] = [];
-
-  for (const id of requestedIds) {
-    const raw = keyMap.get(id);
-    if (raw) {
-      resolved.push(raw);
-    } else {
-      invalid.push(id);
-    }
-  }
-
-  if (invalid.length > 0) {
-    return { error: `Invalid or unauthorized API key IDs: ${invalid.join(', ')}` };
-  }
-
-  return resolved;
-}
-
-async function handleToolsCall(
-  ctx: {
-    runQuery: typeof action.prototype.runQuery;
-    runAction: typeof action.prototype.runAction;
-  },
-  id: string | number,
-  params: ToolCallParams,
-  userId: Id<'users'>,
-): Promise<JsonRpcResponse> {
-  if (!params.name) {
-    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Missing tool name');
-  }
-
-  if (params.name === 'list_api_keys') {
-    const result = await ctx.runAction(internal.mcp.tools.listApiKeysAction.listApiKeys, {
-      userId,
-    });
-    return createSuccessResponse(id, result);
-  }
-
-  const now = Date.now();
-  const allApiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
-  const apiKeys = allApiKeys.filter((k: { expiresAt: number }) => k.expiresAt > now);
-
-  const rawIds = params.arguments?.api_key_ids;
-  if (
-    rawIds !== undefined &&
-    (!Array.isArray(rawIds) || !rawIds.every((v) => typeof v === 'string'))
-  ) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidParams,
-      'api_key_ids must be an array of strings',
-    );
-  }
-  const requestedIds = rawIds;
-
-  const resolved = resolveApiKeys(apiKeys, requestedIds);
-
-  if (typeof resolved === 'object' && 'error' in resolved) {
-    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, resolved.error);
-  }
-
-  const apiKeyStrings = resolved;
-
-  // Resolve retention days from subscription tier
-  const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
-  const subscription = user?.orgId
-    ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
-    : null;
-  const tier = (subscription?.tier ?? 'hobby') as keyof typeof RETENTION_DAYS;
-  const retentionDays = RETENTION_DAYS[tier] ?? RETENTION_DAYS.hobby;
-
-  const toolHandlers: Record<
-    string,
-    (
-      ctx: { runAction: typeof action.prototype.runAction },
-      keys: string[],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      args: any,
-      retentionDays: number,
-    ) => Promise<ToolCallResult>
-  > = {
-    list_traces: listTraces,
-    list_trace_summaries: listTraceSummaries,
-    get_trace: getTrace,
-    get_trace_spans: getTraceSpans,
-    get_trace_events: getTraceEvents,
-    get_usage_summary: getUsageSummary,
-    list_operation_usage: listOperationUsage,
-    list_model_usage: listModelUsage,
-  };
-
-  const handler = toolHandlers[params.name];
-  if (!handler) {
-    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
-  }
-
-  const args = params.arguments ?? {};
-  const result = await handler(ctx, apiKeyStrings, args, retentionDays);
   return createSuccessResponse(id, result);
 }
 

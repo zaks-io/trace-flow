@@ -1,11 +1,48 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import { env, fetchMock, SELF } from 'cloudflare:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { env, SELF } from 'cloudflare:test';
 import { isEncryptedStoredBodiesPayload, type StoredBodiesPayload } from '@trace-flow/types';
 import { decryptStoredBodyPayload } from '@trace-flow/utils';
 
 const WAIT_UNTIL_DELAY = 100;
 const TEST_BODY_ENCRYPTION_ROOT_KEY = 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=';
 const waitForAsyncOps = () => new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_DELAY));
+
+interface UpstreamMatcher {
+  method: string;
+  origin: string;
+  pathname: string;
+}
+
+/**
+ * Replaces the removed `fetchMock` from `cloudflare:test`. Spies on
+ * `globalThis.fetch` and replies only to the matched upstream; any other
+ * request throws, preserving `fetchMock.disableNetConnect()` semantics.
+ *
+ * The proxy `tee()`s the request body and forwards one half here. A real
+ * upstream drains that stream — so must this mock, otherwise the tee
+ * back-pressures and the capture side fails with "Can't read from request
+ * stream after response has been sent."
+ */
+function mockUpstream(
+  matcher: UpstreamMatcher,
+  status: number,
+  body: BodyInit,
+  responseInit?: ResponseInit,
+): ReturnType<typeof vi.spyOn> {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const req = new Request(input, init);
+    const url = new URL(req.url);
+    if (
+      req.method === matcher.method &&
+      url.origin === matcher.origin &&
+      url.pathname === matcher.pathname
+    ) {
+      await req.arrayBuffer();
+      return new Response(body, { status, ...responseInit });
+    }
+    throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
+  });
+}
 
 async function decryptStoredBodiesObject(
   objectKey: string,
@@ -49,9 +86,18 @@ async function setupValidApiKey(key: string, orgId = 'org-test-123'): Promise<vo
 }
 
 describe('Proxy Worker Integration', () => {
-  beforeAll(() => {
-    fetchMock.activate();
-    fetchMock.disableNetConnect();
+  beforeEach(() => {
+    // Default to throwing on any network access (replaces
+    // fetchMock.disableNetConnect()); tests install matched mocks via
+    // mockUpstream() which overrides this implementation.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const req = new Request(input, init);
+      throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('Authentication', () => {
@@ -165,12 +211,16 @@ describe('Proxy Worker Integration', () => {
         },
       };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -206,12 +256,16 @@ describe('Proxy Worker Integration', () => {
         },
       };
 
-      fetchMock
-        .get('https://api.anthropic.com')
-        .intercept({ path: '/v1/messages', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.anthropic.com',
+          pathname: '/v1/messages',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/anthropic/v1/messages', {
         method: 'POST',
@@ -238,12 +292,16 @@ describe('Proxy Worker Integration', () => {
         choices: [{ message: { content: 'Hello!' } }],
       };
 
-      fetchMock
-        .get('https://openrouter.ai')
-        .intercept({ path: '/api/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://openrouter.ai',
+          pathname: '/api/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openrouter/v1/chat/completions', {
         method: 'POST',
@@ -270,12 +328,16 @@ describe('Proxy Worker Integration', () => {
         choices: [{ message: { content: 'Hello!' } }],
       };
 
-      fetchMock
-        .get('https://api.groq.com')
-        .intercept({ path: '/openai/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.groq.com',
+          pathname: '/openai/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/groq/v1/chat/completions', {
         method: 'POST',
@@ -304,12 +366,16 @@ describe('Proxy Worker Integration', () => {
         },
       };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(400, JSON.stringify(errorBody), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        400,
+        JSON.stringify(errorBody),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -335,12 +401,16 @@ describe('Proxy Worker Integration', () => {
         },
       };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(500, JSON.stringify(errorBody), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        500,
+        JSON.stringify(errorBody),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -362,12 +432,16 @@ describe('Proxy Worker Integration', () => {
       const sseData =
         'event: message_start\ndata: {"type":"message_start"}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n';
 
-      fetchMock
-        .get('https://api.anthropic.com')
-        .intercept({ path: '/v1/messages', method: 'POST' })
-        .reply(200, sseData, {
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.anthropic.com',
+          pathname: '/v1/messages',
+        },
+        200,
+        sseData,
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
 
       const res = await SELF.fetch('http://localhost/anthropic/v1/messages', {
         method: 'POST',
@@ -393,22 +467,23 @@ describe('Proxy Worker Integration', () => {
 
       let capturedHeaders: Headers | null = null;
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({
-          path: '/v1/chat/completions',
-          method: 'POST',
-        })
-        .reply(
-          200,
-          (opts: { headers?: Record<string, string> }) => {
-            capturedHeaders = new Headers(opts.headers as HeadersInit);
-            return JSON.stringify({ ok: true });
-          },
-          {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const req = new Request(input, init);
+        const url = new URL(req.url);
+        if (
+          req.method === 'POST' &&
+          url.origin === 'https://api.openai.com' &&
+          url.pathname === '/v1/chat/completions'
+        ) {
+          capturedHeaders = new Headers(req.headers);
+          await req.arrayBuffer();
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
             headers: { 'Content-Type': 'application/json' },
-          },
-        );
+          });
+        }
+        throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
+      });
 
       await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -439,12 +514,16 @@ describe('Proxy Worker Integration', () => {
 
       const largeBody = { test: 'data', large: 'x'.repeat(1000) };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify({ result: 'ok' }), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify({ result: 'ok' }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -488,12 +567,16 @@ describe('Proxy Worker Integration', () => {
         (await env.STORAGE.list({ prefix: 'bodies/' })).objects.map((o) => o.key),
       );
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -542,12 +625,16 @@ describe('Proxy Worker Integration', () => {
         (await env.STORAGE.list({ prefix: 'bodies/' })).objects.map((o) => o.key),
       );
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, sseBody, {
-          headers: { 'Content-Type': 'text/event-stream' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        sseBody,
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -666,14 +753,24 @@ describe('Proxy Worker Integration', () => {
       };
       await env.API_KEYS.put(`sub:${orgId}`, JSON.stringify(subConfig));
 
+      // Clear any existing storage so the no-storage assertion is exact.
+      const existingObjects = await env.STORAGE.list();
+      for (const obj of existingObjects.objects) {
+        await env.STORAGE.delete(obj.key);
+      }
+
       const mockResponse = { id: 'chatcmpl-123', choices: [{ message: { content: 'Hello!' } }] };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -719,12 +816,16 @@ describe('Proxy Worker Integration', () => {
 
       const mockResponse = { id: 'chatcmpl-456', choices: [{ message: { content: 'Hi!' } }] };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -763,12 +864,16 @@ describe('Proxy Worker Integration', () => {
 
       const mockResponse = { id: 'chatcmpl-789', choices: [{ message: { content: 'Hey!' } }] };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -800,12 +905,16 @@ describe('Proxy Worker Integration', () => {
 
       const mockResponse = { id: 'chatcmpl-corrupt', choices: [{ message: { content: 'Hi!' } }] };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -834,12 +943,16 @@ describe('Proxy Worker Integration', () => {
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
       };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -874,12 +987,16 @@ describe('Proxy Worker Integration', () => {
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
       };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -916,12 +1033,16 @@ describe('Proxy Worker Integration', () => {
         usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
       };
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({ path: '/v1/chat/completions', method: 'POST' })
-        .reply(200, JSON.stringify(mockResponse), {
-          headers: { 'Content-Type': 'application/json' },
-        });
+      mockUpstream(
+        {
+          method: 'POST',
+          origin: 'https://api.openai.com',
+          pathname: '/v1/chat/completions',
+        },
+        200,
+        JSON.stringify(mockResponse),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
 
       const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',
@@ -955,22 +1076,23 @@ describe('Proxy Worker Integration', () => {
 
       let capturedHeaders: Headers | null = null;
 
-      fetchMock
-        .get('https://api.openai.com')
-        .intercept({
-          path: '/v1/chat/completions',
-          method: 'POST',
-        })
-        .reply(
-          200,
-          (opts: { headers?: Record<string, string> }) => {
-            capturedHeaders = new Headers(opts.headers as HeadersInit);
-            return JSON.stringify({ ok: true });
-          },
-          {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const req = new Request(input, init);
+        const url = new URL(req.url);
+        if (
+          req.method === 'POST' &&
+          url.origin === 'https://api.openai.com' &&
+          url.pathname === '/v1/chat/completions'
+        ) {
+          capturedHeaders = new Headers(req.headers);
+          await req.arrayBuffer();
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
             headers: { 'Content-Type': 'application/json' },
-          },
-        );
+          });
+        }
+        throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
+      });
 
       await SELF.fetch('http://localhost/openai/v1/chat/completions', {
         method: 'POST',

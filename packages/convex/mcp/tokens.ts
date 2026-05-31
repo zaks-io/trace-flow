@@ -1,44 +1,66 @@
-import { SignJWT, jwtVerify } from 'jose';
+import { SignJWT, jwtVerify, importSPKI } from 'jose';
 import { internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
 import { sha256Hex } from '@trace-flow/utils';
+import {
+  MCP_ACCESS_TOKEN_ALG,
+  MCP_ACCESS_TOKEN_AUDIENCE,
+  MCP_ACCESS_TOKEN_KID,
+  MCP_ACCESS_TOKEN_TTL_SECONDS,
+  type AccessTokenPayload,
+} from '@trace-flow/mcp-core';
+import { getSigningKey } from './keys';
 
-const ACCESS_TOKEN_TTL_SECONDS = 3600; // 1 hour
+const ACCESS_TOKEN_TTL_SECONDS = MCP_ACCESS_TOKEN_TTL_SECONDS;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-export interface AccessTokenPayload {
-  userId: string;
-  tokenId: string;
+export type { AccessTokenPayload };
+
+let verificationKeyCache: { pem: string; key: Promise<CryptoKey> } | null = null;
+
+function getVerificationKey(publicKeyPem: string): Promise<CryptoKey> {
+  if (verificationKeyCache?.pem !== publicKeyPem) {
+    verificationKeyCache = {
+      pem: publicKeyPem,
+      key: importSPKI(publicKeyPem, MCP_ACCESS_TOKEN_ALG),
+    };
+  }
+  return verificationKeyCache.key;
 }
 
-export async function createAccessToken(userId: string, tokenId: string): Promise<string> {
-  const secret = process.env.MCP_JWT_SECRET;
-
-  if (!secret) {
-    throw new Error('MCP_JWT_SECRET not configured');
-  }
-
-  const secretKey = new TextEncoder().encode(secret);
+export async function createAccessToken(
+  userId: string,
+  tokenId: string,
+  issuer: string,
+): Promise<string> {
+  const signingKey = await getSigningKey();
 
   return new SignJWT({ userId, tokenId })
-    .setProtectedHeader({ alg: 'HS256' })
+    .setProtectedHeader({ alg: MCP_ACCESS_TOKEN_ALG, kid: MCP_ACCESS_TOKEN_KID })
+    .setIssuer(issuer)
+    .setAudience(MCP_ACCESS_TOKEN_AUDIENCE)
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
     .setIssuedAt()
-    .sign(secretKey);
+    .sign(signingKey);
 }
 
-export async function validateAccessToken(token: string): Promise<AccessTokenPayload | null> {
-  const secret = process.env.MCP_JWT_SECRET;
-
-  if (!secret) {
-    throw new Error('MCP_JWT_SECRET not configured');
+export async function validateAccessToken(
+  token: string,
+  issuer: string,
+): Promise<AccessTokenPayload | null> {
+  const publicKeyPem = process.env.MCP_JWT_PUBLIC_KEY;
+  if (!publicKeyPem) {
+    throw new Error('MCP_JWT_PUBLIC_KEY not configured');
   }
 
-  const secretKey = new TextEncoder().encode(secret);
-
   try {
-    const { payload } = await jwtVerify(token, secretKey);
+    const publicKey = await getVerificationKey(publicKeyPem);
+    const { payload } = await jwtVerify(token, publicKey, {
+      algorithms: [MCP_ACCESS_TOKEN_ALG],
+      issuer,
+      audience: MCP_ACCESS_TOKEN_AUDIENCE,
+    });
     return payload as unknown as AccessTokenPayload;
   } catch {
     return null;

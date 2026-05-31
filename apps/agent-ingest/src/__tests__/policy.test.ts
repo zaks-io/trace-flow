@@ -1,5 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { fetchMock } from 'cloudflare:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWorkerLogger } from '@trace-flow/logging';
 import {
   __resetPolicyCache,
@@ -23,11 +22,32 @@ const policy: CompatibilityPolicy = {
   updatedAt: 1_700_000_000_000,
 };
 
+/**
+ * Queued policy responses, consumed in order. Each `getCompatibilityPolicy` GET to
+ * `/agent-ingest/compatibility-policy` pops the next queued reply; any other request, or an
+ * exhausted queue, throws so unexpected/un-stubbed fetches fail loudly (net-connect disabled).
+ */
+let policyResponses: { status: number; body: string }[] = [];
+
 function interceptPolicy(status: number, body: unknown): void {
-  fetchMock
-    .get(CONVEX)
-    .intercept({ path: '/agent-ingest/compatibility-policy', method: 'GET' })
-    .reply(status, typeof body === 'string' ? body : JSON.stringify(body));
+  policyResponses.push({ status, body: typeof body === 'string' ? body : JSON.stringify(body) });
+}
+
+function installFetchMock(): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const req = new Request(input, init);
+    const url = new URL(req.url);
+    if (
+      req.method === 'GET' &&
+      url.origin === CONVEX &&
+      url.pathname === '/agent-ingest/compatibility-policy'
+    ) {
+      const next = policyResponses.shift();
+      if (!next) throw new Error(`unexpected fetch (no queued policy reply): ${req.url}`);
+      return new Response(next.body, { status: next.status });
+    }
+    throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
+  });
 }
 
 describe('checkCompatibility', () => {
@@ -84,17 +104,15 @@ describe('checkCompatibility', () => {
 });
 
 describe('getCompatibilityPolicy', () => {
-  beforeAll(() => {
-    fetchMock.activate();
-    fetchMock.disableNetConnect();
-  });
-
   beforeEach(() => {
     __resetPolicyCache();
+    policyResponses = [];
+    installFetchMock();
   });
 
   afterEach(() => {
     __resetPolicyCache();
+    vi.restoreAllMocks();
   });
 
   it('fetches and returns a fresh policy', async () => {

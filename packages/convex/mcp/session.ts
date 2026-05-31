@@ -1,6 +1,6 @@
 import { internalMutation, internalQuery } from '../_generated/server';
 import { v } from 'convex/values';
-import { SESSION_TTL_MS } from './protocol';
+import { SESSION_TTL_MS } from '@trace-flow/mcp-core';
 import { type Doc } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 

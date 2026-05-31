@@ -1,0 +1,25 @@
+{
+  "name": "@trace-flow/mcp-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@trace-flow/otel-conventions": "workspace:*",
+    "@trace-flow/tinybird-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6"
+  }
+}

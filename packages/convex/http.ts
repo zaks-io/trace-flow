@@ -16,6 +16,9 @@ import type { Id } from './_generated/dataModel';
 import { components, internal } from './_generated/api';
 import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
+import { getPublicJwk } from './mcp/keys';
+import { createMcpBackend } from './mcp/backend';
+import { JWKS_PATH } from '@trace-flow/mcp-core';
 import type Stripe from 'stripe';
 import { UNITS_PER_ADDON } from '@trace-flow/types';
 import { mapStripeStatusToInternal } from './billing/subscriptions';
@@ -70,6 +73,12 @@ function getClientIp(request: Request): string {
   // it. `x-forwarded-for` is client-controlled and trivially spoofable, which
   // would let a caller cycle their rate-limit key at will.
   return request.headers.get('cf-connecting-ip') ?? 'unknown';
+}
+
+function isJsonContentType(contentType: string | undefined): boolean {
+  const normalized = contentType?.toLowerCase().trim();
+  if (!normalized) return false;
+  return normalized === 'application/json' || normalized.startsWith('application/json;');
 }
 
 // Dependencies that can be injected for testing
@@ -429,6 +438,23 @@ export function createApp(
     });
   });
 
+  // JWKS: public verification key for MCP access tokens. The MCP worker
+  // (mcp.trace-flow.dev) fetches and caches this to verify RS256 tokens with no
+  // Convex round trip. Rotate by publishing a second key here before retiring
+  // the old kid. Cacheable — the key changes only on rotation.
+  app.get(JWKS_PATH, async (c) => {
+    const logger = getRequestLogger(c.req.raw, { operation: 'jwks' });
+    try {
+      const jwk = await getPublicJwk();
+      c.header('Cache-Control', 'public, max-age=3600');
+      return c.json({ keys: [jwk] });
+    } catch (error) {
+      logger.error('convex.jwks_unavailable', error);
+      await logger.flush();
+      return c.json({ error: 'jwks_unavailable' }, 500);
+    }
+  });
+
   // OAuth: Dynamic Client Registration (RFC 7591)
   app.post('/mcp/register', async (c) => {
     const ctx = c.env;
@@ -722,7 +748,8 @@ export function createApp(
         return c.json(result, 400);
       }
 
-      const accessToken = await tokens.createAccessToken(result.userId, result.tokenId);
+      const issuer = new URL(c.req.url).origin;
+      const accessToken = await tokens.createAccessToken(result.userId, result.tokenId, issuer);
 
       return c.json({
         access_token: accessToken,
@@ -769,7 +796,12 @@ export function createApp(
         }
       }
 
-      const accessToken = await tokens.createAccessToken(refreshToken.userId, refreshTokenId);
+      const issuer = new URL(c.req.url).origin;
+      const accessToken = await tokens.createAccessToken(
+        refreshToken.userId,
+        refreshTokenId,
+        issuer,
+      );
 
       await logger.flush();
       return c.json({
@@ -796,7 +828,7 @@ export function createApp(
     }
 
     const token = authHeader.slice(7);
-    const payload = await tokens.validateAccessToken(token);
+    const payload = await tokens.validateAccessToken(token, new URL(c.req.url).origin);
 
     if (!payload) {
       return c.json({ error: 'Invalid or expired access token' }, 401);
@@ -1004,6 +1036,102 @@ export function createApp(
     return c.json(policy);
   });
 
+  // MCP backend: the dedicated MCP worker (mcp.trace-flow.dev) calls these
+  // shared-secret routes so raw API keys and the Tinybird admin token never
+  // leave Convex. The worker holds neither — it forwards a userId + key ids and
+  // receives only public metadata + a scoped, short-lived Tinybird JWT.
+  app.post('/mcp-backend/context', async (c) => {
+    const ctx = c.env;
+    const authHeader = c.req.header('Authorization');
+    const secret = process.env.MCP_BACKEND_SHARED_SECRET;
+    if (!secret || authHeader !== `Bearer ${secret}`) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    if (!isJsonContentType(c.req.header('Content-Type'))) {
+      return c.json({ error: 'Content-Type must be application/json' }, 415);
+    }
+
+    const body = await c.req.json<{ userId: string }>();
+    const backend = createMcpBackend(ctx, body.userId as Id<'users'>);
+    const userContext = await backend.getUserContext();
+    if (!userContext) {
+      const logger = getRequestLogger(c.req.raw, { operation: 'mcp_backend_context' });
+      logger.warn('convex.mcp_backend_user_not_found');
+      await logger.flush();
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const apiKeys = await backend.listApiKeys();
+    return c.json({
+      enabled: userContext.enabled,
+      retentionDays: userContext.retentionDays,
+      apiKeys,
+    });
+  });
+
+  app.post('/mcp-backend/mint', async (c) => {
+    const ctx = c.env;
+    const authHeader = c.req.header('Authorization');
+    const secret = process.env.MCP_BACKEND_SHARED_SECRET;
+    if (!secret || authHeader !== `Bearer ${secret}`) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    if (!isJsonContentType(c.req.header('Content-Type'))) {
+      return c.json({ error: 'Content-Type must be application/json' }, 415);
+    }
+
+    const body = await c.req.json<{
+      userId: string;
+      scopes: { type: string; resource: string }[];
+      apiKeyIds: string[];
+      ttlSeconds?: number;
+    }>();
+    const logger = getRequestLogger(c.req.raw, { operation: 'mcp_backend_mint' });
+
+    const userId = body.userId as Id<'users'>;
+    const backend = createMcpBackend(ctx, userId);
+
+    const userContext = await backend.getUserContext();
+    if (!userContext) {
+      logger.warn('convex.mcp_backend_user_not_found');
+      await logger.flush();
+      return c.json({ error: 'User not found' }, 404);
+    }
+    if (!userContext.enabled) {
+      logger.warn('convex.mcp_backend_user_disabled');
+      await logger.flush();
+      return c.json({ error: 'User account is not enabled' }, 403);
+    }
+
+    // Re-validate ownership server-side — never trust the worker's id list. The
+    // worker already surfaced a clean InvalidParams to the client, so a bad id
+    // here is a contract violation, hence 400.
+    const resolved = await backend.resolveKeyIds(body.apiKeyIds);
+    if (!resolved.ok) {
+      logger.warn('convex.mcp_backend_unowned_key_ids', { invalidIds: resolved.invalidIds });
+      await logger.flush();
+      return c.json({ error: 'Unknown or unauthorized API key IDs' }, 400);
+    }
+
+    // retentionDays is derived server-side from the user's tier — the worker
+    // never supplies it.
+    let token: string;
+    try {
+      token = await backend.mintToken(
+        body.scopes,
+        resolved.keyIds,
+        userContext.retentionDays,
+        body.ttlSeconds,
+      );
+    } catch (error) {
+      logger.error('convex.mcp_backend_mint_failed', error);
+      await logger.flush();
+      return c.json({ error: 'Failed to mint token' }, 500);
+    }
+    await logger.flush();
+    return c.json({ token });
+  });
+
   // Collector CLI login: start the browser device flow. The CLI opens this URL with a loopback
   // `redirect_uri`; we sign it into the OAuth state and bounce to Auth0, reusing the exact MCP
   // authorize machinery. The minted secret is delivered to that loopback by /collector/callback.
@@ -1053,7 +1181,7 @@ export function createApp(
     }
 
     const token = authHeader.slice(7);
-    const payload = await tokens.validateAccessToken(token);
+    const payload = await tokens.validateAccessToken(token, new URL(c.req.url).origin);
 
     if (!payload) {
       return c.json({ error: 'Invalid or expired access token' }, 401);

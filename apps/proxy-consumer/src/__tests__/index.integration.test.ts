@@ -5,6 +5,16 @@ import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
 import { createMockTrace } from './fixtures';
 
+// The batcher's flush calls insertIntoTinybirdWithRetry, which does a real
+// fetch to TINYBIRD_HOST. Tests must never touch the network, and the batcher
+// arms a self-rescheduling flush alarm on enqueue, so an un-mocked flush 404s
+// and re-arms forever — hanging the run. Stub the transport so flushes succeed
+// in-isolate (the DO loads this same module), draining the queue with no fetch.
+vi.mock('../tinybird', () => ({
+  insertIntoTinybird: vi.fn().mockResolvedValue(undefined),
+  insertIntoTinybirdWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe('Queue Handler Integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();

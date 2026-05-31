@@ -20,17 +20,16 @@ const PROCESSED_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 export const TRACE_BATCHER_BATCH_SIZE = BATCH_SIZE;
-export const TRACE_BATCHER_MAX_SQL_PARAMS = MAX_SQL_PARAMS;
 export const TRACE_BATCHER_MAX_INSERT_ROWS = MAX_INSERT_ROWS;
 
 type MessageTraceStatus = 'inserted' | 'duplicate' | 'failed';
 
-interface MessageTraceBatchItem {
+export interface MessageTraceBatchItem {
   messageId: string;
   traces: TinybirdTrace[];
 }
 
-interface MessageTraceResult {
+export interface MessageTraceResult {
   messageId: string;
   status: MessageTraceStatus;
 }

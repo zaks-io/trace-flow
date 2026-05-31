@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { createExecutionContext, fetchMock, waitOnExecutionContext } from 'cloudflare:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { sha256Hex } from '@trace-flow/utils';
 import type { AgentIngestQueueMessage, AgentToolEventFact } from '@trace-flow/types';
 import { app } from '../index';
@@ -65,30 +65,61 @@ function makeEnv(over: EnvOverrides = {}): {
   return { env, queueSend };
 }
 
+/**
+ * Per-test routing for the mocked `globalThis.fetch`. `policyResponse` answers the
+ * compatibility-policy GET; `claimResponder` answers the claim-sessions POST and receives the parsed
+ * request body so a test can echo back the requested `sessionPks`. Anything un-stubbed throws so
+ * unexpected fetches fail loudly (net-connect disabled).
+ */
+let policyResponse: { status: number; body: string } | null = null;
+let claimResponder: ((req: Request, body: string) => Response | Promise<Response>) | null = null;
+
 function interceptPolicy(status: number, body: unknown): void {
-  fetchMock
-    .get(CONVEX)
-    .intercept({ path: '/agent-ingest/compatibility-policy', method: 'GET' })
-    .reply(status, typeof body === 'string' ? body : JSON.stringify(body));
+  policyResponse = { status, body: typeof body === 'string' ? body : JSON.stringify(body) };
 }
 
 function interceptClaim(opts: { httpStatus?: number; claim?: ClaimStatus }): void {
-  const i = fetchMock
-    .get(CONVEX)
-    .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' });
   if (opts.httpStatus && opts.httpStatus !== 200) {
-    i.reply(opts.httpStatus, JSON.stringify({ error: 'down' }));
+    claimResponder = () =>
+      new Response(JSON.stringify({ error: 'down' }), { status: opts.httpStatus });
     return;
   }
-  i.reply(200, (o) => {
-    const parsed = JSON.parse(o.body ?? '{}') as { sessionPks: string[] };
-    return JSON.stringify({
-      results: parsed.sessionPks.map((sessionPk) => ({
-        sessionPk,
-        status: opts.claim ?? 'claimed',
-        ownerUserId: 'user-1',
-      })),
-    });
+  claimResponder = (_req, body) => {
+    const parsed = JSON.parse(body || '{}') as { sessionPks: string[] };
+    return new Response(
+      JSON.stringify({
+        results: parsed.sessionPks.map((sessionPk) => ({
+          sessionPk,
+          status: opts.claim ?? 'claimed',
+          ownerUserId: 'user-1',
+        })),
+      }),
+      { status: 200 },
+    );
+  };
+}
+
+function installFetchMock(): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const req = new Request(input, init);
+    const url = new URL(req.url);
+    if (
+      req.method === 'GET' &&
+      url.origin === CONVEX &&
+      url.pathname === '/agent-ingest/compatibility-policy'
+    ) {
+      if (!policyResponse) throw new Error(`unexpected fetch (no policy stub): ${req.url}`);
+      return new Response(policyResponse.body, { status: policyResponse.status });
+    }
+    if (
+      req.method === 'POST' &&
+      url.origin === CONVEX &&
+      url.pathname === '/agent-ingest/claim-sessions'
+    ) {
+      if (!claimResponder) throw new Error(`unexpected fetch (no claim stub): ${req.url}`);
+      return claimResponder(req, await req.text());
+    }
+    throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
   });
 }
 
@@ -113,13 +144,15 @@ async function gzip(text: string): Promise<Uint8Array> {
 const authHeaders = { 'X-Trace-Flow-Collector-Secret': SECRET, 'Content-Type': 'application/json' };
 
 describe('POST /v1/ingest', () => {
-  beforeAll(() => {
-    fetchMock.activate();
-    fetchMock.disableNetConnect();
-  });
-
   beforeEach(() => {
     __resetPolicyCache();
+    policyResponse = null;
+    claimResponder = null;
+    installFetchMock();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('401s when the collector secret is missing', async () => {
@@ -274,10 +307,8 @@ describe('POST /v1/ingest', () => {
   it('503s when the claim response is malformed (fails closed, never assumes ownership)', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
-    fetchMock
-      .get(CONVEX)
-      .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' })
-      .reply(200, JSON.stringify({ results: [{ status: 'claimed' }] })); // missing sessionPk
+    claimResponder = () =>
+      new Response(JSON.stringify({ results: [{ status: 'claimed' }] }), { status: 200 }); // missing sessionPk
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: 'session_claim_unavailable' });
@@ -287,16 +318,14 @@ describe('POST /v1/ingest', () => {
   it('503s when the claim response covers a session that was never requested (fails closed)', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
-    fetchMock
-      .get(CONVEX)
-      .intercept({ path: '/agent-ingest/claim-sessions', method: 'POST' })
-      .reply(
-        200,
+    claimResponder = () =>
+      new Response(
         JSON.stringify({
           results: [
             { sessionPk: 'not-the-requested-pk', status: 'claimed', ownerUserId: 'user-1' },
           ],
         }),
+        { status: 200 },
       );
     const res = await post(env, JSON.stringify(envelope()), authHeaders);
     expect(res.status).toBe(503);
