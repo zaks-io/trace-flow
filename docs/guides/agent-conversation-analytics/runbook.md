@@ -114,17 +114,21 @@ and grep `policy_fetch`. `status:404` = empty table or wrong `CONVEX_SITE_URL` d
 **CI is the deploy path (TRA-118).** Schema (`datasources/*`, `pipes/*`) deploys to `trace_flow_prod`
 automatically:
 
-- **PR time:** `.github/workflows/ci.yml` `tinybird-schema-check` runs `tb build` + dry-run diff
-  (`tb --cloud deploy --check`) against `trace_flow_prod` whenever a PR touches `datasources/**` or
-  `pipes/**`. An incompatible/destructive migration fails the PR before merge.
+- **PR time:** `.github/workflows/ci.yml` `tinybird-schema-check` runs Tinybird's recommended CI
+  sequence whenever a PR touches `datasources/**` or `pipes/**`: `tb --local build` + `tb --local test
+run` (the `tests/*.yaml` fixture/output tests, offline against a `tinybirdco/tinybird-local` service
+  container — catches pipe SQL that compiles but returns wrong rows), then `tb --cloud deploy --check`
+  (dry-run diff against `trace_flow_prod` — catches incompatible/destructive migrations). Either failing
+  blocks the PR.
 - **Merge to `main`:** `.github/workflows/deploy.yml` `deploy-tinybird-schema` runs the apply, and the
   consumer deploys (`deploy-proxy-consumer`, `deploy-agent-consumer`) `needs:` it — so the schema always
   lands before any consumer ships the new shape.
 
-CI authenticates headless via the `TINYBIRD_DEPLOY_TOKEN` secret (Production environment), a
-workspace-level deploy token — never the append-only `TINYBIRD_TOKEN` the consumer uses, and never on
-the client/collector path. The token resolves to `trace_flow_prod`; the script refuses to deploy
-anywhere else.
+The cloud steps authenticate headless via the `TINYBIRD_DEPLOY_TOKEN` repo secret (also exposed to the
+Production environment), a `WORKSPACE:DEPLOY`-scoped token — never the append-only `TINYBIRD_TOKEN` the
+consumer uses, and never on the client/collector path. The token resolves to `trace_flow_prod`; the
+script refuses to deploy anywhere else. The local build/test steps need no token. When adding or
+changing a pipe, add a matching `tests/<pipe>.yaml` so the PR gate verifies its output.
 
 **Break-glass (manual fallback only):** if CI is unavailable, deploy from a local `tb` cloud login.
 This is the opt-in escape hatch, not the normal path:
@@ -138,8 +142,8 @@ TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh           #
 
 A production release is valid only if all checks pass:
 
-1. `tb build` + Tinybird deploy `--check` against `trace_flow_prod` — PR-time gate, `ci.yml`
-   `tinybird-schema-check`
+1. `tb --local build` + `tb --local test run` + Tinybird deploy `--check` against `trace_flow_prod` —
+   PR-time gate, `ci.yml` `tinybird-schema-check`
 2. Tinybird schema apply to `trace_flow_prod` — `deploy.yml` `deploy-tinybird-schema`, before consumers
 3. production Worker config assertion (`scripts/assert-agent-prod-resources.sh`)
 4. Worker deploy (`deploy --env production`, both agent jobs in `.github/workflows/deploy.yml`)

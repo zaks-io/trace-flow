@@ -114,6 +114,10 @@ jobs:
           fetch-depth: 2
       - uses: devops-actions/actionlint@v0.1.3
 
+  # Tinybird's recommended CI pattern (docs: forward/test-and-deploy/deployments/cicd): build + fixture
+  # tests against a Tinybird Local service container (offline, no token), then a cloud deploy --check
+  # dry-run against trace_flow_prod. The local steps catch pipe SQL that compiles and deploys clean but
+  # returns wrong rows (tests/*.yaml); the cloud check catches incompatible/destructive migrations.
   tinybird-schema-check:
     name: Tinybird Schema Check
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -121,6 +125,11 @@ jobs:
     if: needs.changes.outputs.tinybird == 'true' || needs.changes.outputs.root == 'true'
     permissions:
       contents: read
+    services:
+      tinybird-local:
+        image: tinybirdco/tinybird-local:latest
+        ports:
+          - 7181:7181
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,9 +140,16 @@ jobs:
           curl -fsSL https://tinybird.co | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Dry-run diff against trace_flow_prod: `tb build` + `tb --cloud deploy --check`. Fails the PR on
-      # an incompatible/destructive migration before it can merge. Token resolves to the prod workspace;
-      # the script's guard refuses to run if it doesn't.
+      # Offline against the Local service container: schema build + fixture/output tests. No token.
+      - name: Build and test against Tinybird Local
+        run: |
+          tb --local build
+          tb --local test run
+        env:
+          TB_VERSION_WARNING: 0
+
+      # Cloud dry-run diff against trace_flow_prod. Fails the PR on an incompatible/destructive migration
+      # before it can merge. Token resolves to the prod workspace; the script's guard refuses otherwise.
       - name: Tinybird deploy --check (trace_flow_prod)
         run: ./scripts/deploy-agent-tinybird.sh --check
         env:
