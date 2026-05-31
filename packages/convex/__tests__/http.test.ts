@@ -446,6 +446,33 @@ describe('convex/http.ts', () => {
       );
     });
 
+    it('returns a JSON OAuth error when access-token signing fails', async () => {
+      const app = createApp(deps);
+      ctx.runMutation.mockResolvedValue({
+        userId: 'user123',
+        tokenId: 'token456',
+        resource: 'https://mcp.example.com/mcp',
+      });
+      (deps.tokens.createAccessToken as Mock).mockRejectedValue(new Error('missing key'));
+
+      const res = await app.request(
+        'http://localhost/mcp/token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'grant_type=authorization_code&code=auth-code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&code_verifier=verifier',
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get('Content-Type')).toContain('application/json');
+      await expect(res.json()).resolves.toEqual({
+        error: 'server_error',
+        error_description: 'Internal server error',
+      });
+    });
+
     it('returns 400 for missing code', async () => {
       const app = createApp(deps);
 
@@ -633,6 +660,39 @@ describe('convex/http.ts', () => {
 
       // Should still succeed - Auth0 refresh failure is non-fatal
       expect(res.status).toBe(200);
+    });
+
+    it('returns a JSON OAuth error when refreshed access-token signing fails', async () => {
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        userId: 'user123',
+        clientId: 'client-1',
+        resource: 'https://mcp.example.com/mcp',
+        auth0RefreshToken: '',
+      });
+      ctx.runMutation.mockResolvedValue({
+        userId: 'user123',
+        tokenId: 'rotated-token-id',
+        resource: 'https://mcp.example.com/mcp',
+      });
+      (deps.tokens.createAccessToken as Mock).mockRejectedValue(new Error('missing key'));
+
+      const res = await app.request(
+        'http://localhost/mcp/token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'grant_type=refresh_token&refresh_token=token-id&client_id=client-1&resource=https://mcp.example.com/mcp',
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get('Content-Type')).toContain('application/json');
+      await expect(res.json()).resolves.toEqual({
+        error: 'server_error',
+        error_description: 'Internal server error',
+      });
     });
   });
 
