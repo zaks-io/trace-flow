@@ -85,7 +85,7 @@ describe('MCP worker auth discovery', () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get('Location')).toBe(
-      `${CONNECT_ORIGIN}/mcp/authorize?client_id=client-1&state=state-1`,
+      `${CONNECT_ORIGIN}/mcp/authorize?client_id=client-1&state=state-1&resource=http%3A%2F%2Flocalhost%2Fmcp`,
     );
   });
 
@@ -97,6 +97,7 @@ describe('MCP worker auth discovery', () => {
       const body = await req.formData();
       expect(body.get('grant_type')).toBe('authorization_code');
       expect(body.get('code')).toBe('code-1');
+      expect(body.get('resource')).toBe('http://localhost/mcp');
       return jsonResponse({ access_token: 'access-1' });
     });
 

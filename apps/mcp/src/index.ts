@@ -123,6 +123,30 @@ async function proxyConnect(
   return fetch(req);
 }
 
+async function proxyToken(c: { req: { raw: Request }; env: Env }): Promise<Response> {
+  const url = new URL('/mcp/token', normalizeOrigin(c.env.CONNECT_BASE_URL));
+  const headers = new Headers(c.req.raw.headers);
+  headers.delete('content-length');
+
+  const contentType = headers.get('content-type')?.toLowerCase() ?? '';
+  if (!contentType || contentType.startsWith('application/x-www-form-urlencoded')) {
+    let body: URLSearchParams;
+    if (contentType) {
+      body = new URLSearchParams();
+      for (const [key, value] of await c.req.raw.formData()) {
+        if (typeof value === 'string') body.append(key, value);
+      }
+    } else {
+      body = new URLSearchParams(await c.req.raw.text());
+    }
+    if (!body.has('resource')) body.set('resource', mcpResourceUrl(c.req.raw));
+    headers.set('content-type', 'application/x-www-form-urlencoded');
+    return fetch(url, { method: 'POST', headers, body: body.toString() });
+  }
+
+  return fetch(new Request(url, c.req.raw));
+}
+
 /** Bearer access-token auth shared by POST and DELETE. */
 async function authenticate(c: {
   req: { raw: Request; header(name: string): string | undefined };
@@ -137,7 +161,12 @@ async function authenticate(c: {
   }
   let payload;
   try {
-    payload = await verifyAccessToken(authHeader.slice(7), c.env.CONNECT_BASE_URL, c.get('logger'));
+    payload = await verifyAccessToken(
+      authHeader.slice(7),
+      c.env.CONNECT_BASE_URL,
+      mcpResourceUrl(c.req.raw),
+      c.get('logger'),
+    );
   } catch {
     return { error: jsonResponse({ error: 'Token verification temporarily unavailable' }, 503) };
   }
@@ -167,11 +196,14 @@ app.get(PROTECTED_RESOURCE_PATH, (c) =>
 
 app.get(OAUTH_METADATA_PATH, (c) => proxyConnect(c, OAUTH_METADATA_PATH));
 app.post('/mcp/register', (c) => proxyConnect(c, '/mcp/register'));
-app.post('/mcp/token', (c) => proxyConnect(c, '/mcp/token'));
+app.post('/mcp/token', (c) => proxyToken(c));
 app.get('/mcp/authorize', (c) => {
   const source = new URL(c.req.url);
   const target = new URL('/mcp/authorize', normalizeOrigin(c.env.CONNECT_BASE_URL));
   target.search = source.search;
+  if (!target.searchParams.has('resource')) {
+    target.searchParams.set('resource', mcpResourceUrl(c.req.raw));
+  }
   return c.redirect(target.toString(), 302);
 });
 

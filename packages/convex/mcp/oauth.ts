@@ -21,7 +21,9 @@ export interface Auth0UserInfo {
 
 export interface StatePayload {
   clientState: string;
+  clientId?: string;
   redirectUri: string;
+  resource?: string;
   codeChallenge?: string;
   codeChallengeMethod?: string;
 }

@@ -160,6 +160,23 @@ describe('convex/http.ts', () => {
       expect(json.error).toBe('invalid_redirect_uri');
     });
 
+    it('returns 400 for non-loopback http redirect_uris', async () => {
+      const app = createApp(deps);
+
+      const res = await app.request(
+        'http://localhost/mcp/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ redirect_uris: ['http://example.com/callback'] }),
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe('invalid_redirect_uri');
+    });
+
     it('returns 400 for invalid JSON', async () => {
       const app = createApp(deps);
 
@@ -182,13 +199,17 @@ describe('convex/http.ts', () => {
   describe('GET /mcp/authorize', () => {
     it('redirects to Auth0 with signed state', async () => {
       const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        clientId: 'client-1',
+        redirectUris: ['https://example.com/callback'],
+      });
       (deps.oauth.signState as Mock).mockResolvedValue('signed-state-token');
       (deps.oauth.buildAuth0AuthorizeUrl as Mock).mockReturnValue(
         'https://test.auth0.com/authorize?state=signed-state-token',
       );
 
       const res = await app.request(
-        'http://localhost/mcp/authorize?redirect_uri=https://example.com/callback&state=client-state',
+        'http://localhost/mcp/authorize?response_type=code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&state=client-state&code_challenge=challenge123&code_challenge_method=S256',
         {},
         ctx,
       );
@@ -199,39 +220,82 @@ describe('convex/http.ts', () => {
       );
       expect(deps.oauth.signState).toHaveBeenCalledWith({
         clientState: 'client-state',
+        clientId: 'client-1',
         redirectUri: 'https://example.com/callback',
-        codeChallenge: undefined,
-        codeChallengeMethod: undefined,
+        resource: 'https://mcp.example.com/mcp',
+        codeChallenge: 'challenge123',
+        codeChallengeMethod: 'S256',
       });
     });
 
     it('passes PKCE parameters through state', async () => {
       const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        clientId: 'client-1',
+        redirectUris: ['https://example.com/callback'],
+      });
       (deps.oauth.signState as Mock).mockResolvedValue('signed-state');
       (deps.oauth.buildAuth0AuthorizeUrl as Mock).mockReturnValue('https://auth0.com/auth');
 
       await app.request(
-        'http://localhost/mcp/authorize?redirect_uri=https://example.com/callback&code_challenge=challenge123&code_challenge_method=S256',
+        'http://localhost/mcp/authorize?client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&code_challenge=challenge123&code_challenge_method=S256',
         {},
         ctx,
       );
 
       expect(deps.oauth.signState).toHaveBeenCalledWith({
         clientState: '',
+        clientId: 'client-1',
         redirectUri: 'https://example.com/callback',
+        resource: 'https://mcp.example.com/mcp',
         codeChallenge: 'challenge123',
         codeChallengeMethod: 'S256',
       });
     });
 
+    it('rejects unregistered redirect_uri', async () => {
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        clientId: 'client-1',
+        redirectUris: ['https://example.com/callback'],
+      });
+
+      const res = await app.request(
+        'http://localhost/mcp/authorize?client_id=client-1&redirect_uri=https://evil.example/callback&resource=https://mcp.example.com/mcp&code_challenge=challenge123&code_challenge_method=S256',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error_description).toBe('redirect_uri is not registered');
+    });
+
+    it('requires S256 PKCE', async () => {
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        clientId: 'client-1',
+        redirectUris: ['https://example.com/callback'],
+      });
+
+      const res = await app.request(
+        'http://localhost/mcp/authorize?client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error_description).toBe('PKCE code_challenge_method must be S256');
+    });
+
     it('returns 400 for missing redirect_uri', async () => {
       const app = createApp(deps);
 
-      const res = await app.request('http://localhost/mcp/authorize', {}, ctx);
+      const res = await app.request('http://localhost/mcp/authorize?client_id=client-1', {}, ctx);
 
       expect(res.status).toBe(400);
       const json = await res.json();
-      expect(json.error).toBe('redirect_uri is required');
+      expect(json.error).toBe('invalid_request');
+      expect(json.error_description).toBe('redirect_uri is required');
     });
   });
 
@@ -240,7 +304,11 @@ describe('convex/http.ts', () => {
       const app = createApp(deps);
       (deps.oauth.verifyState as Mock).mockResolvedValue({
         clientState: 'original-state',
+        clientId: 'client-1',
         redirectUri: 'https://example.com/callback',
+        resource: 'https://mcp.example.com/mcp',
+        codeChallenge: 'challenge123',
+        codeChallengeMethod: 'S256',
       });
       (deps.oauth.exchangeAuth0Code as Mock).mockResolvedValue({
         access_token: 'auth0-access-token',
@@ -347,7 +415,11 @@ describe('convex/http.ts', () => {
   describe('POST /mcp/token - authorization_code grant', () => {
     it('returns tokens on successful code exchange', async () => {
       const app = createApp(deps);
-      ctx.runMutation.mockResolvedValue({ userId: 'user123', tokenId: 'token456' });
+      ctx.runMutation.mockResolvedValue({
+        userId: 'user123',
+        tokenId: 'token456',
+        resource: 'https://mcp.example.com/mcp',
+      });
       (deps.tokens.createAccessToken as Mock).mockResolvedValue('jwt-access-token');
 
       const res = await app.request(
@@ -355,7 +427,7 @@ describe('convex/http.ts', () => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=authorization_code&code=auth-code&redirect_uri=https://example.com/callback',
+          body: 'grant_type=authorization_code&code=auth-code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&code_verifier=verifier',
         },
         ctx,
       );
@@ -366,6 +438,12 @@ describe('convex/http.ts', () => {
       expect(json.token_type).toBe('Bearer');
       expect(json.expires_in).toBe(3600);
       expect(json.refresh_token).toBe('token456');
+      expect(deps.tokens.createAccessToken).toHaveBeenCalledWith(
+        'user123',
+        'token456',
+        'http://localhost',
+        'https://mcp.example.com/mcp',
+      );
     });
 
     it('returns 400 for missing code', async () => {
@@ -395,7 +473,7 @@ describe('convex/http.ts', () => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=authorization_code&code=auth-code',
+          body: 'grant_type=authorization_code&code=auth-code&client_id=client-1&resource=https://mcp.example.com/mcp&code_verifier=verifier',
         },
         ctx,
       );
@@ -418,7 +496,7 @@ describe('convex/http.ts', () => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=authorization_code&code=used-code&redirect_uri=https://example.com/callback',
+          body: 'grant_type=authorization_code&code=used-code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&code_verifier=verifier',
         },
         ctx,
       );
@@ -434,10 +512,17 @@ describe('convex/http.ts', () => {
       const app = createApp(deps);
       ctx.runQuery.mockResolvedValue({
         userId: 'user123',
+        clientId: 'client-1',
+        resource: 'https://mcp.example.com/mcp',
         auth0RefreshToken: 'auth0-refresh',
       });
       (deps.oauth.refreshAuth0Token as Mock).mockResolvedValue({
         refresh_token: 'new-auth0-refresh',
+      });
+      ctx.runMutation.mockResolvedValue({
+        userId: 'user123',
+        tokenId: 'rotated-token-id',
+        resource: 'https://mcp.example.com/mcp',
       });
       (deps.tokens.createAccessToken as Mock).mockResolvedValue('new-access-token');
 
@@ -446,7 +531,7 @@ describe('convex/http.ts', () => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=refresh_token&refresh_token=token-id',
+          body: 'grant_type=refresh_token&refresh_token=token-id&client_id=client-1&resource=https://mcp.example.com/mcp',
         },
         ctx,
       );
@@ -455,7 +540,31 @@ describe('convex/http.ts', () => {
       const json = await res.json();
       expect(json.access_token).toBe('new-access-token');
       expect(json.token_type).toBe('Bearer');
-      expect(json.refresh_token).toBe('token-id');
+      expect(json.refresh_token).toBe('rotated-token-id');
+      expect(ctx.runMutation).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({
+          tokenId: 'token-id',
+          clientId: 'client-1',
+          resource: 'https://mcp.example.com/mcp',
+          auth0RefreshToken: 'auth0-refresh',
+        }),
+      );
+      expect(ctx.runMutation).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.objectContaining({
+          tokenId: 'rotated-token-id',
+          auth0RefreshToken: 'new-auth0-refresh',
+        }),
+      );
+      expect(deps.tokens.createAccessToken).toHaveBeenCalledWith(
+        'user123',
+        'rotated-token-id',
+        'http://localhost',
+        'https://mcp.example.com/mcp',
+      );
     });
 
     it('returns 400 for missing refresh_token', async () => {
@@ -486,7 +595,7 @@ describe('convex/http.ts', () => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=refresh_token&refresh_token=invalid-token',
+          body: 'grant_type=refresh_token&refresh_token=invalid-token&client_id=client-1&resource=https://mcp.example.com/mcp',
         },
         ctx,
       );
@@ -500,9 +609,16 @@ describe('convex/http.ts', () => {
       const app = createApp(deps);
       ctx.runQuery.mockResolvedValue({
         userId: 'user123',
+        clientId: 'client-1',
+        resource: 'https://mcp.example.com/mcp',
         auth0RefreshToken: 'auth0-refresh',
       });
       (deps.oauth.refreshAuth0Token as Mock).mockRejectedValue(new Error('Auth0 error'));
+      ctx.runMutation.mockResolvedValue({
+        userId: 'user123',
+        tokenId: 'rotated-token-id',
+        resource: 'https://mcp.example.com/mcp',
+      });
       (deps.tokens.createAccessToken as Mock).mockResolvedValue('new-access-token');
 
       const res = await app.request(
@@ -510,7 +626,7 @@ describe('convex/http.ts', () => {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'grant_type=refresh_token&refresh_token=token-id',
+          body: 'grant_type=refresh_token&refresh_token=token-id&client_id=client-1&resource=https://mcp.example.com/mcp',
         },
         ctx,
       );
@@ -537,338 +653,6 @@ describe('convex/http.ts', () => {
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toBe('unsupported_grant_type');
-    });
-  });
-
-  describe('POST /mcp - MCP Protocol', () => {
-    it('processes message and returns response', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue({ _id: 'user123', enabled: true });
-      ctx.runAction.mockResolvedValue({
-        jsonrpc: '2.0',
-        id: 1,
-        result: { sessionId: 'session-abc' },
-      });
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer valid-token',
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1 }),
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(200);
-      expect(res.headers.get('Mcp-Session-Id')).toBe('session-abc');
-      const json = await res.json();
-      expect(json.jsonrpc).toBe('2.0');
-    });
-
-    it('returns 204 for notification (null result)', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue({ _id: 'user123', enabled: true });
-      ctx.runAction.mockResolvedValue(null);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer valid-token',
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(204);
-    });
-
-    it('returns 401 for missing Authorization header', async () => {
-      const app = createApp(deps);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'test', id: 1 }),
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(401);
-      const json = await res.json();
-      expect(json.error).toBe('Missing or invalid Authorization header');
-    });
-
-    it('returns 401 for invalid Authorization header format', async () => {
-      const app = createApp(deps);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Basic dXNlcjpwYXNz',
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'test', id: 1 }),
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(401);
-      const json = await res.json();
-      expect(json.error).toBe('Missing or invalid Authorization header');
-    });
-
-    it('returns 401 for invalid access token', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue(null);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer invalid-token',
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'test', id: 1 }),
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(401);
-      const json = await res.json();
-      expect(json.error).toBe('Invalid or expired access token');
-    });
-
-    it('returns 401 for non-existent user', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue(null);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer valid-token',
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'test', id: 1 }),
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(401);
-      const json = await res.json();
-      expect(json.error).toBe('User not found');
-    });
-
-    it('returns 403 for disabled user', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue({ _id: 'user123', enabled: false });
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer valid-token',
-          },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'test', id: 1 }),
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(403);
-      const json = await res.json();
-      expect(json.error).toBe('User account is not enabled');
-    });
-
-    it('returns 400 for invalid JSON body', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue({ _id: 'user123', enabled: true });
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: 'Bearer valid-token',
-          },
-          body: 'not valid json',
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json.jsonrpc).toBe('2.0');
-      expect(json.error.code).toBe(-32700);
-      expect(json.error.message).toContain('Parse error');
-    });
-  });
-
-  describe('DELETE /mcp - Session Termination', () => {
-    it('deletes session and returns 204', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue({ sessionId: 'session-abc', userId: 'user123' });
-      ctx.runMutation.mockResolvedValue(undefined);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: 'Bearer valid-token',
-            'Mcp-Session-Id': 'session-abc',
-          },
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(204);
-      expect(ctx.runMutation).toHaveBeenCalledTimes(2); // updateSessionState + deleteSession
-    });
-
-    it('returns 401 for missing Authorization header', async () => {
-      const app = createApp(deps);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'DELETE',
-          headers: { 'Mcp-Session-Id': 'session-abc' },
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(401);
-    });
-
-    it('returns 401 for invalid token', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue(null);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: 'Bearer invalid-token',
-            'Mcp-Session-Id': 'session-abc',
-          },
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(401);
-    });
-
-    it('returns 400 for missing Mcp-Session-Id header', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'DELETE',
-          headers: { Authorization: 'Bearer valid-token' },
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json.error).toBe('Missing Mcp-Session-Id header');
-    });
-
-    it('returns 404 for non-existent session', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue(null);
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: 'Bearer valid-token',
-            'Mcp-Session-Id': 'non-existent',
-          },
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(404);
-      const json = await res.json();
-      expect(json.error).toBe('Session not found');
-    });
-
-    it('returns 403 when session belongs to different user', async () => {
-      const app = createApp(deps);
-      (deps.tokens.validateAccessToken as Mock).mockResolvedValue({
-        userId: 'user123',
-        tokenId: 'token456',
-      });
-      ctx.runQuery.mockResolvedValue({ sessionId: 'session-abc', userId: 'different-user' });
-
-      const res = await app.request(
-        'http://localhost/mcp',
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: 'Bearer valid-token',
-            'Mcp-Session-Id': 'session-abc',
-          },
-        },
-        ctx,
-      );
-
-      expect(res.status).toBe(403);
-      const json = await res.json();
-      expect(json.error).toBe('Session does not belong to this user');
     });
   });
 
