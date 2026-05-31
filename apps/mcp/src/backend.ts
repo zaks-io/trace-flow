@@ -42,7 +42,10 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
 
   const post = async (path: string, body: unknown): Promise<Response> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), BACKEND_REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(
+      () => controller.abort(new Error('Backend request timed out')),
+      BACKEND_REQUEST_TIMEOUT_MS,
+    );
 
     try {
       return await fetch(new URL(path, connectBaseUrl), {

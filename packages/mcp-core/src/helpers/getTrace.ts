@@ -141,9 +141,9 @@ export function buildOutputSpan(span: ParsedSpan, expand: Set<string>): Record<s
     name: span.name,
     duration_ms: span.duration_ms,
     status: span.status,
-    timestamp: span.timestamp,
   };
 
+  if (span.timestamp !== undefined) output.timestamp = span.timestamp;
   if (expand.has('parent') && span.parent_span_id) output.parent_span_id = span.parent_span_id;
   if (expand.has('status_message') && span.status_message)
     output.status_message = span.status_message;

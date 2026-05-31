@@ -399,4 +399,21 @@ describe('dispatchToolCall', () => {
     expect(response.error?.message).toBe('Tinybird down');
     expect(response.result).toBeUndefined();
   });
+
+  it('maps thrown backend errors to JSON-RPC internal errors', async () => {
+    const backend = createBackend({
+      getUserContext: vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'list_api_keys',
+      arguments: {},
+    });
+
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InternalError);
+    expect(response.error?.message).toBe('backend down');
+    expect(response.result).toBeUndefined();
+  });
 });

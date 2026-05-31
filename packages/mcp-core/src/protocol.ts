@@ -53,8 +53,10 @@ export function isInitializeParams(params: unknown): params is InitializeParams 
     typeof candidate.protocolVersion === 'string' &&
     !!candidate.capabilities &&
     typeof candidate.capabilities === 'object' &&
+    !Array.isArray(candidate.capabilities) &&
     !!clientInfo &&
     typeof clientInfo === 'object' &&
+    !Array.isArray(clientInfo) &&
     typeof clientInfo.name === 'string' &&
     typeof clientInfo.version === 'string'
   );

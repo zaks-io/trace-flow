@@ -14,15 +14,19 @@ export function jsonReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Object.prototype.toString.call(value) === '[object Object]';
+}
+
 export function stripNulls<T>(obj: T): T | undefined {
   if (obj === null || obj === undefined) return undefined;
   if (Array.isArray(obj)) {
     const filtered = obj.map(stripNulls).filter((v) => v !== undefined);
-    return filtered as T;
+    return filtered.length > 0 ? (filtered as T) : undefined;
   }
-  if (typeof obj === 'object') {
+  if (isPlainObject(obj)) {
     const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(obj)) {
       const stripped = stripNulls(value);
       if (stripped !== undefined) result[key] = stripped;
     }

@@ -33,10 +33,16 @@ export function getSigningKey(): Promise<CryptoKey> {
  * algorithm the worker matches against. Marked `use: 'sig'`.
  */
 export async function getPublicJwk(): Promise<JWK> {
+  const pem = requireEnv('MCP_JWT_PUBLIC_KEY');
   publicJwkPromise ??= (async () => {
-    const key = await importSPKI(requireEnv('MCP_JWT_PUBLIC_KEY'), MCP_ACCESS_TOKEN_ALG);
+    const key = await importSPKI(pem, MCP_ACCESS_TOKEN_ALG);
     const jwk = await exportJWK(key);
     return { ...jwk, kid: MCP_ACCESS_TOKEN_KID, alg: MCP_ACCESS_TOKEN_ALG, use: 'sig' };
   })();
-  return publicJwkPromise;
+  try {
+    return await publicJwkPromise;
+  } catch (error) {
+    publicJwkPromise = null;
+    throw error;
+  }
 }

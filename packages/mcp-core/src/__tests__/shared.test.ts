@@ -228,9 +228,14 @@ describe('stripNulls', () => {
     expect(result).toBeUndefined();
   });
 
-  it('returns empty array after stripping all null/undefined elements', () => {
+  it('returns undefined after stripping all null/undefined array elements', () => {
     const result = stripNulls([null, undefined]);
-    expect(result).toEqual([]);
+    expect(result).toBeUndefined();
+  });
+
+  it('leaves non-plain objects unchanged', () => {
+    const date = new Date('2026-01-01T00:00:00.000Z');
+    expect(stripNulls(date)).toBe(date);
   });
 });
 

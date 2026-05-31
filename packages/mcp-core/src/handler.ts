@@ -98,53 +98,57 @@ export async function dispatchToolCall(
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }
 
-  const userContext = await backend.getUserContext();
-  if (!userContext?.enabled) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidRequest,
-      'User not found or not enabled',
-    );
-  }
-
-  if (isListApiKeys) {
-    const meta = await backend.listApiKeys();
-    return createSuccessResponse(id, listApiKeys(meta));
-  }
-  // The earlier unknown-tool guard covers runtime; this keeps TypeScript narrowed
-  // under noUncheckedIndexedAccess after the list_api_keys branch.
-  if (!handler) {
-    return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
-  }
-
-  const rawIds = params.arguments?.api_key_ids;
-  if (
-    rawIds !== undefined &&
-    (!Array.isArray(rawIds) || !rawIds.every((v) => typeof v === 'string'))
-  ) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidParams,
-      'api_key_ids must be an array of strings',
-    );
-  }
-  const requestedIds = rawIds;
-
-  const resolved = await backend.resolveKeyIds(requestedIds);
-  if (!resolved.ok) {
-    return createErrorResponse(
-      id,
-      JsonRpcErrorCode.InvalidParams,
-      `Invalid or unauthorized API key IDs: ${resolved.invalidIds.join(', ')}`,
-    );
-  }
-  const keyIds = resolved.keyIds;
-
-  const { retentionDays } = userContext;
-
-  const ctx: ToolCtx = { mintToken: backend.mintToken, tinybirdBaseUrl, protocolVersion };
-  const args = params.arguments ?? {};
   try {
+    const userContext = await backend.getUserContext();
+    if (!userContext?.enabled) {
+      return createErrorResponse(
+        id,
+        JsonRpcErrorCode.InvalidRequest,
+        'User not found or not enabled',
+      );
+    }
+
+    if (isListApiKeys) {
+      const meta = await backend.listApiKeys();
+      return createSuccessResponse(id, listApiKeys(meta));
+    }
+    // The earlier unknown-tool guard covers runtime; this keeps TypeScript narrowed
+    // under noUncheckedIndexedAccess after the list_api_keys branch.
+    if (!handler) {
+      return createErrorResponse(
+        id,
+        JsonRpcErrorCode.InvalidParams,
+        `Unknown tool: ${params.name}`,
+      );
+    }
+
+    const rawIds = params.arguments?.api_key_ids;
+    if (
+      rawIds !== undefined &&
+      (!Array.isArray(rawIds) || !rawIds.every((v) => typeof v === 'string'))
+    ) {
+      return createErrorResponse(
+        id,
+        JsonRpcErrorCode.InvalidParams,
+        'api_key_ids must be an array of strings',
+      );
+    }
+    const requestedIds = rawIds;
+
+    const resolved = await backend.resolveKeyIds(requestedIds);
+    if (!resolved.ok) {
+      return createErrorResponse(
+        id,
+        JsonRpcErrorCode.InvalidParams,
+        `Invalid or unauthorized API key IDs: ${resolved.invalidIds.join(', ')}`,
+      );
+    }
+    const keyIds = resolved.keyIds;
+
+    const { retentionDays } = userContext;
+
+    const ctx: ToolCtx = { mintToken: backend.mintToken, tinybirdBaseUrl, protocolVersion };
+    const args = params.arguments ?? {};
     const result = await handler(ctx, keyIds, args, retentionDays);
     return createSuccessResponse(id, result);
   } catch (error) {

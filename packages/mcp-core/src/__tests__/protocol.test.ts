@@ -6,6 +6,7 @@ import {
   JsonRpcErrorCode,
   MCP_SERVER_INFO,
   MCP_SERVER_CAPABILITIES,
+  isInitializeParams,
 } from '../protocol';
 
 describe('SUPPORTED_PROTOCOL_VERSIONS', () => {
@@ -110,5 +111,25 @@ describe('MCP_SERVER_CAPABILITIES', () => {
 
   it('does not advertise prompts capability', () => {
     expect('prompts' in MCP_SERVER_CAPABILITIES).toBe(false);
+  });
+});
+
+describe('isInitializeParams', () => {
+  const validParams = {
+    protocolVersion: '2025-06-18',
+    capabilities: {},
+    clientInfo: { name: 'client', version: '1.0.0' },
+  };
+
+  it('accepts valid initialize params', () => {
+    expect(isInitializeParams(validParams)).toBe(true);
+  });
+
+  it('rejects array capabilities', () => {
+    expect(isInitializeParams({ ...validParams, capabilities: [] })).toBe(false);
+  });
+
+  it('rejects array clientInfo', () => {
+    expect(isInitializeParams({ ...validParams, clientInfo: [] })).toBe(false);
   });
 });

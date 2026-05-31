@@ -40,6 +40,13 @@ TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 SENTRY_ENVIRONMENT = "production"
 AXIOM_DATASET = "cloudflare"
 
+[env.production.observability]
+enabled = true
+head_sampling_rate = 0.1
+
+[env.production.observability.logs]
+enabled = true
+
 [[env.production.routes]]
 pattern = "mcp.trace-flow.dev/*"
 zone_name = "trace-flow.dev"

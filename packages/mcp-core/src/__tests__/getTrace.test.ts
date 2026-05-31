@@ -78,6 +78,18 @@ describe('parseSpanRow', () => {
     expect(result.status).toBe('error');
   });
 
+  it('treats unset status code as error', () => {
+    const row = { ...baseRow, StatusCode: 'STATUS_CODE_UNSET' };
+    const result = parseSpanRow(row);
+    expect(result.status).toBe('error');
+  });
+
+  it('treats missing status code as error', () => {
+    const row = { ...baseRow, StatusCode: undefined };
+    const result = parseSpanRow(row);
+    expect(result.status).toBe('error');
+  });
+
   it('extracts baggage attributes', () => {
     const row = {
       ...baseRow,
@@ -152,6 +164,12 @@ describe('buildOutputSpan', () => {
     expect(result.duration_ms).toBe(100);
     expect(result.status).toBe('ok');
     expect(result.timestamp).toBeDefined();
+  });
+
+  it('omits timestamp when unavailable', () => {
+    const result = buildOutputSpan({ ...span, timestamp: undefined }, new Set());
+    expect(result.timestamp).toBeUndefined();
+    expect(result).not.toHaveProperty('timestamp');
   });
 
   it('excludes optional fields when not expanded', () => {
