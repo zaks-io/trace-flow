@@ -103,6 +103,18 @@ describe('parseSpanRow', () => {
     expect(result.provider).toBe('anthropic');
     expect(result.model).toBe('claude-3');
   });
+
+  it('falls back safely for malformed attribute JSON', () => {
+    const result = parseSpanRow({ ...baseRow, SpanAttributes: 'not json' });
+    expect(result.provider).toBeUndefined();
+    expect(result.tokens).toBeUndefined();
+  });
+
+  it('falls back safely for invalid numeric fields', () => {
+    const result = parseSpanRow({ ...baseRow, Timestamp: 'bad', Duration: 'bad' });
+    expect(result.timestamp).toBeUndefined();
+    expect(result.duration_ms).toBe(0);
+  });
 });
 
 describe('buildOutputSpan', () => {

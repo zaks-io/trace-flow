@@ -27,6 +27,8 @@ interface WorkerBackendConfig {
   sharedSecret: string;
 }
 
+const BACKEND_REQUEST_TIMEOUT_MS = 10_000;
+
 /**
  * Worker-side `McpBackend`: forwards to the shared-secret `/mcp-backend/*`
  * routes on `connect.` so raw API keys and the Tinybird admin token stay in
@@ -38,15 +40,24 @@ export function createWorkerBackend(userId: string, config: WorkerBackendConfig)
   const { connectBaseUrl, sharedSecret } = config;
   let contextPromise: Promise<ContextResponse | null> | null = null;
 
-  const post = async (path: string, body: unknown): Promise<Response> =>
-    fetch(new URL(path, connectBaseUrl), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${sharedSecret}`,
-      },
-      body: JSON.stringify(body),
-    });
+  const post = async (path: string, body: unknown): Promise<Response> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), BACKEND_REQUEST_TIMEOUT_MS);
+
+    try {
+      return await fetch(new URL(path, connectBaseUrl), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sharedSecret}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
 
   const getContext = (): Promise<ContextResponse | null> => {
     contextPromise ??= (async () => {

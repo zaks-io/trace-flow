@@ -1,9 +1,13 @@
 import type { ToolCallResult } from '../protocol';
-import { buildTimeRangeNs, jsonReplacer, noApiKeysError, stripNulls } from './shared';
+import {
+  buildTimeRangeNs,
+  jsonReplacer,
+  noApiKeysError,
+  stripNulls,
+  DEFAULT_TRACE_SUMMARY_LIMIT,
+  MAX_TRACE_SUMMARY_LIMIT,
+} from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
-
-const DEFAULT_TRACE_SUMMARY_LIMIT = 20;
-const MAX_TRACE_SUMMARY_LIMIT = 100;
 
 interface TraceSummaryRow {
   trace_id: string;
@@ -88,7 +92,8 @@ export async function listTraceSummaries(
   );
 
   const limit = Math.min(params.limit ?? DEFAULT_TRACE_SUMMARY_LIMIT, MAX_TRACE_SUMMARY_LIMIT);
-  const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
+  const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   const { startTimeNs } = buildTimeRangeNs(params.hours);
 
   const pipeParams: Record<string, string | number | undefined> = {
@@ -114,7 +119,7 @@ export async function listTraceSummaries(
     traces: rows.map(formatTraceSummaryRow),
     pagination: {
       has_more: hasMore,
-      next_cursor: hasMore ? String(offset + limit) : undefined,
+      next_cursor: hasMore ? String(offset + rows.length) : undefined,
       limit,
     },
   };

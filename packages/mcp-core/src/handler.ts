@@ -86,6 +86,7 @@ export async function dispatchToolCall(
   tinybirdBaseUrl: string,
   id: string | number,
   params: ToolCallParams,
+  protocolVersion?: string,
 ): Promise<JsonRpcResponse> {
   if (!params.name) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Missing tool name');
@@ -135,7 +136,7 @@ export async function dispatchToolCall(
 
   const { retentionDays } = userContext;
 
-  const ctx: ToolCtx = { mintToken: backend.mintToken, tinybirdBaseUrl };
+  const ctx: ToolCtx = { mintToken: backend.mintToken, tinybirdBaseUrl, protocolVersion };
   const args = params.arguments ?? {};
   const result = await handler(ctx, keyIds, args, retentionDays);
   return createSuccessResponse(id, result);

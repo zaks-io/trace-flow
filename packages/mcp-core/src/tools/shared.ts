@@ -40,6 +40,15 @@ export const DEFAULT_HOURS = 24;
 export const DEFAULT_SPAN_LIMIT = 20;
 export const MAX_SPAN_LIMIT = 100;
 
+export const DEFAULT_EVENT_LIMIT = 20;
+export const MAX_EVENT_LIMIT = 100;
+
+export const DEFAULT_TRACE_SUMMARY_LIMIT = 20;
+export const MAX_TRACE_SUMMARY_LIMIT = 100;
+
+export const DEFAULT_ANALYTICS_LIMIT = 20;
+export const MAX_ANALYTICS_LIMIT = 100;
+
 export const DEFAULT_ANALYTICS_HOURS = 168;
 export const MAX_ANALYTICS_HOURS = 24 * 180;
 
@@ -61,7 +70,9 @@ export function buildTimeRangeNs(
   defaultHours = DEFAULT_ANALYTICS_HOURS,
   maxHours = MAX_ANALYTICS_HOURS,
 ): { hours: number; startTimeNs: string; endTimeNs: string } {
-  const resolvedHours = Math.min(hours ?? defaultHours, maxHours);
+  const requestedHours = hours ?? defaultHours;
+  const finiteHours = Number.isFinite(requestedHours) ? requestedHours : defaultHours;
+  const resolvedHours = Math.floor(Math.max(1, Math.min(finiteHours, maxHours)));
   const endEpochMs = BigInt(Date.now());
   const startEpochMs = endEpochMs - BigInt(resolvedHours) * 3_600_000n;
   return {

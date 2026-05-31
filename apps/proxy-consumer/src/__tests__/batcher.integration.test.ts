@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { env, runInDurableObject } from 'cloudflare:test';
+import { env as workerEnv } from 'cloudflare:workers';
+import { runInDurableObject } from 'cloudflare:test';
 import type { TraceBatcherInstance, MessageTraceBatchItem, MessageTraceResult } from '../batcher';
 import { TRACE_BATCHER_MAX_INSERT_ROWS } from '../batcher';
 import { createMockTrace } from './fixtures';
+
+const env = workerEnv as unknown as {
+  TRACE_BATCHER: DurableObjectNamespace<TraceBatcherInstance>;
+};
 
 // Stub the Tinybird transport so nothing leaves the isolate. The DO loads this
 // same module, so the mock covers any flush triggered inside the batcher. Tests

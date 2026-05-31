@@ -213,6 +213,13 @@ describe('resolveApiKeyIds', () => {
     });
   });
 
+  it('dedupes requested ids while preserving order', () => {
+    expect(resolveApiKeyIds(allKeys, ['key-2', 'key-1', 'key-2'])).toEqual({
+      ok: true,
+      keyIds: ['key-2', 'key-1'],
+    });
+  });
+
   it('returns single matching id', () => {
     expect(resolveApiKeyIds(allKeys, ['key-2'])).toEqual({ ok: true, keyIds: ['key-2'] });
   });

@@ -1109,6 +1109,7 @@ export function createApp(
       userContext.retentionDays,
       body.ttlSeconds,
     );
+    await logger.flush();
     return c.json({ token });
   });
 

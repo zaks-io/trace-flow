@@ -1,11 +1,18 @@
 import type { ToolDefinition } from '../protocol';
 import {
   DEFAULT_ANALYTICS_HOURS,
+  DEFAULT_ANALYTICS_LIMIT,
+  DEFAULT_EVENT_LIMIT,
   DEFAULT_HOURS,
   DEFAULT_LIMIT,
   DEFAULT_SPAN_LIMIT,
+  DEFAULT_TRACE_SUMMARY_LIMIT,
   MAX_ANALYTICS_HOURS,
+  MAX_ANALYTICS_LIMIT,
+  MAX_EVENT_LIMIT,
   MAX_LIMIT,
+  MAX_SPAN_LIMIT,
+  MAX_TRACE_SUMMARY_LIMIT,
 } from './shared';
 
 const API_KEY_IDS_PROPERTY = {
@@ -102,7 +109,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: 'Max traces per page (default 20, max 100)',
+          description: `Max traces per page (default ${DEFAULT_TRACE_SUMMARY_LIMIT}, max ${MAX_TRACE_SUMMARY_LIMIT})`,
         },
         hours: {
           type: 'number',
@@ -205,7 +212,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: `Max spans per page (default ${DEFAULT_SPAN_LIMIT}, max 100).`,
+          description: `Max spans per page (default ${DEFAULT_SPAN_LIMIT}, max ${MAX_SPAN_LIMIT}).`,
         },
         cursor: {
           type: 'string',
@@ -250,7 +257,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: 'Max events per page (default 20, max 100).',
+          description: `Max events per page (default ${DEFAULT_EVENT_LIMIT}, max ${MAX_EVENT_LIMIT}).`,
         },
         cursor: {
           type: 'string',
@@ -323,7 +330,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: 'Max operations to return (default 20, max 100)',
+          description: `Max operations to return (default ${DEFAULT_ANALYTICS_LIMIT}, max ${MAX_ANALYTICS_LIMIT})`,
         },
         api_key_ids: API_KEY_IDS_PROPERTY,
       },
@@ -355,7 +362,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: 'Max models to return (default 20, max 100)',
+          description: `Max models to return (default ${DEFAULT_ANALYTICS_LIMIT}, max ${MAX_ANALYTICS_LIMIT})`,
         },
         api_key_ids: API_KEY_IDS_PROPERTY,
       },

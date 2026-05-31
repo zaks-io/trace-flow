@@ -7,11 +7,10 @@ import {
   invalidTraceIdError,
   TRACE_ID_PATTERN,
   splitPatterns,
+  DEFAULT_EVENT_LIMIT,
+  MAX_EVENT_LIMIT,
 } from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
-
-const DEFAULT_EVENT_LIMIT = 20;
-const MAX_EVENT_LIMIT = 100;
 
 export interface EventRow {
   TraceId: string;
@@ -108,7 +107,8 @@ export async function getTraceEvents(
   );
 
   const limit = Math.min(params.limit ?? DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT);
-  const offset = params.cursor ? parseInt(params.cursor, 10) || 0 : 0;
+  const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
 
   const pipeParams: Record<string, string | number | undefined> = {
     trace_id: params.trace_id,
@@ -145,7 +145,7 @@ export async function getTraceEvents(
     events: formattedEvents,
     pagination: {
       has_more: hasMore,
-      next_cursor: hasMore ? String(offset + limit) : undefined,
+      next_cursor: hasMore ? String(offset + data.length) : undefined,
     },
   };
 

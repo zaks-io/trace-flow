@@ -29,6 +29,7 @@ export type TokenMinter = (
 export interface ToolCtx {
   mintToken: TokenMinter;
   tinybirdBaseUrl: string;
+  protocolVersion?: string;
 }
 
 /**

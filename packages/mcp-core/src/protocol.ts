@@ -43,6 +43,23 @@ export interface InitializeParams {
   };
 }
 
+export function isInitializeParams(params: unknown): params is InitializeParams {
+  if (!params || typeof params !== 'object') return false;
+
+  const candidate = params as Record<string, unknown>;
+  const clientInfo = candidate.clientInfo as Record<string, unknown> | undefined;
+
+  return (
+    typeof candidate.protocolVersion === 'string' &&
+    !!candidate.capabilities &&
+    typeof candidate.capabilities === 'object' &&
+    !!clientInfo &&
+    typeof clientInfo === 'object' &&
+    typeof clientInfo.name === 'string' &&
+    typeof clientInfo.version === 'string'
+  );
+}
+
 export interface InitializeResult {
   protocolVersion: string;
   capabilities: {

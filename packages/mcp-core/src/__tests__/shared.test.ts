@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   TRACE_ID_PATTERN,
+  buildTimeRangeNs,
   noApiKeysError,
   invalidTraceIdError,
   traceNotFoundError,
@@ -8,6 +9,18 @@ import {
   stripNulls,
   splitPatterns,
 } from '../tools/shared';
+
+describe('buildTimeRangeNs', () => {
+  it('floors fractional hours before converting to bigint', () => {
+    const result = buildTimeRangeNs(1.5);
+    expect(result.hours).toBe(1);
+  });
+
+  it('clamps non-positive hours to one hour', () => {
+    const result = buildTimeRangeNs(0);
+    expect(result.hours).toBe(1);
+  });
+});
 
 describe('TRACE_ID_PATTERN', () => {
   it('matches valid 32-character lowercase hex string', () => {

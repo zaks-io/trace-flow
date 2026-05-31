@@ -34,7 +34,7 @@ async function setup() {
       .setIssuer(opts.issuer)
       .setAudience(opts.audience ?? MCP_ACCESS_TOKEN_AUDIENCE)
       .setIssuedAt()
-      .setExpirationTime(`${opts?.expSeconds ?? 3600}s`)
+      .setExpirationTime(`${opts.expSeconds ?? 3600}s`)
       .sign(privateKey);
   return { jwk, sign };
 }

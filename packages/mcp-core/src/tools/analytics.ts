@@ -1,5 +1,12 @@
 import type { ToolCallResult } from '../protocol';
-import { buildTimeRangeNs, jsonReplacer, noApiKeysError, stripNulls } from './shared';
+import {
+  buildTimeRangeNs,
+  jsonReplacer,
+  noApiKeysError,
+  stripNulls,
+  DEFAULT_ANALYTICS_LIMIT,
+  MAX_ANALYTICS_LIMIT,
+} from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
 
 interface AnalyticsParams {
@@ -50,9 +57,6 @@ interface ModelUsageRow extends BaseUsageRow {
   model: string;
   cost_per_1k_output_tokens?: number;
 }
-
-const DEFAULT_BREAKDOWN_LIMIT = 20;
-const MAX_BREAKDOWN_LIMIT = 100;
 
 function buildTokens(row: BaseUsageRow) {
   return {
@@ -157,7 +161,7 @@ export async function listOperationUsage(
     retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
-  pipeParams.limit = Math.min(params.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT);
+  pipeParams.limit = Math.min(params.limit ?? DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT);
 
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'operations_leaderboard', pipeParams);
   const rows = data as unknown as OperationUsageRow[];
@@ -198,7 +202,7 @@ export async function listModelUsage(
     retentionDays,
   );
   const { hours, pipeParams } = buildPipeParams(params);
-  pipeParams.limit = Math.min(params.limit ?? DEFAULT_BREAKDOWN_LIMIT, MAX_BREAKDOWN_LIMIT);
+  pipeParams.limit = Math.min(params.limit ?? DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT);
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'llm_usage_by_model', pipeParams);
   const rows = data as unknown as ModelUsageRow[];
 

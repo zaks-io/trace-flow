@@ -9,6 +9,7 @@ import {
   MCP_SERVER_CAPABILITIES,
   isRequest,
   isNotification,
+  isInitializeParams,
   createErrorResponse,
   createSuccessResponse,
   handleToolsList,
@@ -116,7 +117,10 @@ async function handleRequest(
   const { method, params, id } = request;
 
   if (method === 'initialize') {
-    return handleInitialize(ctx, id, params as InitializeParams, userId);
+    if (!isInitializeParams(params)) {
+      return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Invalid initialize params');
+    }
+    return handleInitialize(ctx, id, params, userId);
   }
 
   if (method === 'ping') {
@@ -171,6 +175,7 @@ async function handleRequest(
       tinybirdBaseUrl,
       id,
       params as ToolCallParams,
+      session.protocolVersion,
     );
   }
 

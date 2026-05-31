@@ -9,6 +9,7 @@ import {
   MCP_SERVER_CAPABILITIES,
   isRequest,
   isNotification,
+  isInitializeParams,
   createErrorResponse,
   createSuccessResponse,
   handleToolsList,
@@ -169,7 +170,10 @@ async function handleRequest(
   const { method, params, id } = request;
 
   if (method === 'initialize') {
-    return handleInitialize(env, id, params as InitializeParams, userId);
+    if (!isInitializeParams(params)) {
+      return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Invalid initialize params');
+    }
+    return handleInitialize(env, id, params, userId);
   }
 
   if (method === 'ping') {
@@ -209,7 +213,13 @@ async function handleRequest(
       connectBaseUrl: env.CONNECT_BASE_URL,
       sharedSecret: env.MCP_BACKEND_SHARED_SECRET,
     });
-    return dispatchToolCall(backend, env.TINYBIRD_API_URL, id, params as ToolCallParams);
+    return dispatchToolCall(
+      backend,
+      env.TINYBIRD_API_URL,
+      id,
+      params as ToolCallParams,
+      session.protocolVersion,
+    );
   }
 
   return createErrorResponse(id, JsonRpcErrorCode.MethodNotFound, `Method not found: ${method}`);

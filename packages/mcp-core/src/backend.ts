@@ -71,5 +71,5 @@ export function resolveApiKeyIds(
   if (invalidIds.length > 0) {
     return { ok: false, invalidIds };
   }
-  return { ok: true, keyIds: requestedIds };
+  return { ok: true, keyIds: [...new Set(requestedIds)] };
 }

@@ -28,7 +28,7 @@ export interface ParsedSpan {
   span_id: string;
   parent_span_id: string | undefined;
   name: string;
-  timestamp: string;
+  timestamp: string | undefined;
   duration_ms: number;
   status: string;
   status_message: string | undefined;
@@ -45,9 +45,28 @@ export interface ParsedSpan {
 
 function parseSpanAttributes(spanAttributes: unknown): Record<string, unknown> {
   if (typeof spanAttributes === 'string') {
-    return JSON.parse(spanAttributes) as Record<string, unknown>;
+    try {
+      return JSON.parse(spanAttributes) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
   }
   return (spanAttributes as Record<string, unknown>) ?? {};
+}
+
+function parseTimestampIso(timestampNs: unknown): string | undefined {
+  const timestamp = Number(timestampNs);
+  if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  const date = new Date(timestamp / 1_000_000);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function parseDurationMs(durationNs: unknown): number {
+  const duration = Number(durationNs);
+  return Number.isFinite(duration) ? duration / 1_000_000 : 0;
 }
 
 function extractBaggage(attrs: Record<string, unknown>): Record<string, string> | undefined {
@@ -79,7 +98,6 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
   const outputCost = Number(attrs[GEN_AI_COST.OUTPUT]) || 0;
   const totalCost = Number(attrs[GEN_AI_COST.TOTAL]) || 0;
 
-  // Build tokens object with only non-zero values
   const tokens: Record<string, number> = {};
   if (promptTokens > 0) tokens.prompt = promptTokens;
   if (completionTokens > 0) tokens.completion = completionTokens;
@@ -87,7 +105,6 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
   if (cachedTokens > 0) tokens.cached = cachedTokens;
   if (reasoningTokens > 0) tokens.reasoning = reasoningTokens;
 
-  // Build cost object with only non-zero values
   const costUsd: Record<string, number> = {};
   if (inputCost > 0) costUsd.input = inputCost;
   if (outputCost > 0) costUsd.output = outputCost;
@@ -97,8 +114,8 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     span_id: row.SpanId as string,
     parent_span_id: row.ParentSpanId as string | undefined,
     name: row.SpanName as string,
-    timestamp: new Date(Number(row.Timestamp) / 1_000_000).toISOString(),
-    duration_ms: Number(row.Duration) / 1_000_000,
+    timestamp: parseTimestampIso(row.Timestamp),
+    duration_ms: parseDurationMs(row.Duration),
     status: row.StatusCode === STATUS_CODE.OK ? 'ok' : 'error',
     status_message: row.StatusMessage as string | undefined,
     provider: attrs[GEN_AI.SYSTEM] as string | undefined,
