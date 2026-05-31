@@ -48,8 +48,17 @@ if [[ "$TARGET_WORKSPACE" == "trace_flow_prod" ]]; then
   echo "PRODUCTION Tinybird deploy target: $TARGET_WORKSPACE"
 fi
 
-echo "Validating schema offline (tb build) ..."
-tb build
+# `tb build` validates offline but honours dev_mode=local in tinybird.config.json, so it needs a
+# running Tinybird Local container. CI's PR gate provides one (ci.yml `tinybird-local` service) and
+# runs the offline build there. The prod deploy job has no container — and doesn't need one: the
+# authoritative cloud validation is `tb --cloud deploy --check` below, which runs against the real
+# workspace right before the apply. So deploy.yml sets TB_SKIP_BUILD=1 to skip the local-only build.
+if [[ "${TB_SKIP_BUILD:-}" == "1" ]]; then
+  echo "Skipping offline tb build (TB_SKIP_BUILD=1); cloud deploy --check is the validation."
+else
+  echo "Validating schema offline (tb build) ..."
+  tb build
+fi
 
 echo "Validating deployment against $TARGET_WORKSPACE ..."
 tb --cloud deploy --check
