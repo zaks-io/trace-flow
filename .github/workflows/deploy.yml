@@ -128,10 +128,43 @@ jobs:
           command: deploy --env production
           packageManager: bun
 
+  # Schema must land before any consumer ships, or a consumer can write rows in the new shape while the
+  # live workspace still has the old schema -> inserts rejected into _quarantine (TRA-118). Both
+  # consumers `needs:` this job. A no-op (no schema diff) is a clean exit; `tb --cloud deploy` reports
+  # "no changes" and succeeds.
+  deploy-tinybird-schema:
+    name: Deploy Tinybird Schema
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [ci]
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Install Tinybird CLI
+        run: |
+          curl -fsSL https://tinybird.co | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # `tb build` + `tb --cloud deploy --check` then `tb --cloud deploy`, all scoped to trace_flow_prod
+      # by the deploy token. The script's guard refuses to apply if the token resolves to any other
+      # workspace.
+      - name: Deploy schema to trace_flow_prod
+        run: ./scripts/deploy-agent-tinybird.sh
+        env:
+          TB_TARGET_WORKSPACE: trace_flow_prod
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
+          TB_VERSION_WARNING: 0
+
   deploy-proxy-consumer:
     name: Deploy Proxy Consumer Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci]
+    needs: [ci, deploy-tinybird-schema]
     environment: Production
     steps:
       - uses: actions/checkout@v4
@@ -227,7 +260,7 @@ jobs:
   deploy-agent-consumer:
     name: Deploy Agent Consumer Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci]
+    needs: [ci, deploy-tinybird-schema]
     environment: Production
     permissions:
       contents: read
@@ -268,6 +301,7 @@ jobs:
     needs:
       - deploy-convex-and-web
       - deploy-proxy
+      - deploy-tinybird-schema
       - deploy-proxy-consumer
       - deploy-api
       - deploy-agent-ingest

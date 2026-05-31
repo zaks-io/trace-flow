@@ -31,6 +31,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       root: ${{ steps.filter.outputs.root }}
       workflows: ${{ steps.filter.outputs.workflows }}
+      tinybird: ${{ steps.filter.outputs.tinybird }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +96,9 @@ jobs:
               - 'tsconfig.json'
             workflows:
               - '.github/workflows/**'
+            tinybird:
+              - 'datasources/**'
+              - 'pipes/**'
 
   actionlint:
     name: Lint GitHub Actions
@@ -109,6 +113,34 @@ jobs:
         with:
           fetch-depth: 2
       - uses: devops-actions/actionlint@v0.1.3
+
+  tinybird-schema-check:
+    name: Tinybird Schema Check
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [changes]
+    if: needs.changes.outputs.tinybird == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Install Tinybird CLI
+        run: |
+          curl -fsSL https://tinybird.co | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Dry-run diff against trace_flow_prod: `tb build` + `tb --cloud deploy --check`. Fails the PR on
+      # an incompatible/destructive migration before it can merge. Token resolves to the prod workspace;
+      # the script's guard refuses to run if it doesn't.
+      - name: Tinybird deploy --check (trace_flow_prod)
+        run: ./scripts/deploy-agent-tinybird.sh --check
+        env:
+          TB_TARGET_WORKSPACE: trace_flow_prod
+          TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
+          TB_HOST: https://api.us-west-2.aws.tinybird.co
+          TB_VERSION_WARNING: 0
 
   utils:
     name: Utils Package
@@ -597,6 +629,7 @@ jobs:
     needs:
       - changes
       - actionlint
+      - tinybird-schema-check
       - utils
       - types
       - convex
