@@ -38,6 +38,37 @@ Endpoints default to production; override per environment:
 Rust gates (run by the workspace `rust` CI job): `bun run rust:fmt`, `rust:check`, `rust:clippy`,
 `rust:test`.
 
+## Release
+
+Desktop releases are manual GitHub Actions runs:
+
+```sh
+gh workflow run desktop-release.yml -f platform=both -f tag=traceflow-desktop-v0.1.0
+```
+
+Defaults:
+
+- tag: `traceflow-desktop-v{version}` from `src-tauri/tauri.conf.json`
+- GitHub Latest: desktop releases own the repository Latest channel
+- updater manifest: `traceflow-desktop-latest.json` from the repository Latest release
+- macOS artifact names: `traceflow-desktop-macos-arm64.*`
+- Windows artifact names: `traceflow-desktop-windows-x64.*`
+
+Required repository secrets:
+
+| Secret                               | Purpose                                     |
+| ------------------------------------ | ------------------------------------------- |
+| `APPLE_CERTIFICATE`                  | Base64 Developer ID `.p12`                  |
+| `APPLE_CERTIFICATE_PASSWORD`         | Password for the `.p12`                     |
+| `APPLE_SIGNING_IDENTITY`             | Developer ID Application identity           |
+| `KEYCHAIN_PASSWORD`                  | Temporary CI keychain password              |
+| `APPLE_API_ISSUER`                   | App Store Connect issuer ID                 |
+| `APPLE_API_KEY`                      | App Store Connect key ID                    |
+| `APPLE_API_KEY_BASE64`               | Base64 App Store Connect private key `.p8`  |
+| `TAURI_UPDATER_PUBLIC_KEY`           | Public key embedded in release Tauri config |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Private key for Tauri updater artifacts     |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the Tauri updater private key  |
+
 ## Follow-up work (not in this MVP)
 
 These remaining TRA-115 acceptance criteria are tracked as separate PRs:
@@ -46,8 +77,4 @@ These remaining TRA-115 acceptance criteria are tracked as separate PRs:
   status) with revoke, over the existing `api.collectorCredentials.list` / `revoke`. Revoke does not
   change Agent Session identity (ownership is pinned to `userId` in `agentSessionOwners`,
   independent of `collectorId`).
-- **Signed macOS arm64 release** — a `desktop-release.yml` workflow (a standard `tauri-action` matrix
-  build with Apple code-signing + a Tauri updater manifest). Needs Apple signing + Tauri updater
-  secrets provisioned in the repo. Also set a real CSP in `tauri.conf.json` (currently `null` for the
-  local static UI) as part of release hardening.
-- **Windows/Linux targets** and **Cursor source** (TRA-108) are out of scope for the macOS MVP.
+- **Linux desktop target** and **Cursor source** (TRA-108) are out of scope for the macOS/Windows MVP.

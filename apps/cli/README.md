@@ -2,6 +2,12 @@
 
 User-facing collector binary: `login`, `sources list`, `sync`, `status`, `disconnect`.
 
+Install the latest released CLI:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://trace-flow.dev/install.sh | sh
+```
+
 Build from the repo root:
 
 ```sh
@@ -38,3 +44,24 @@ Optional state relocation (tests and advanced setups):
 | `TRACE_FLOW_STATE_DIR` | Directory for connection state and sync cursors (default: OS config dir) |
 
 Copy `.env.example` as a starting point for dev overrides only — do not commit real secrets.
+
+## Release
+
+CLI releases are manual GitHub Actions runs:
+
+```sh
+gh workflow run cli-release.yml -f tag=trace-flow-cli-v0.1.0
+```
+
+Use `tag=dry-run` to build release artifacts without creating a GitHub Release. CLI releases are
+optional downloads and never own the repository Latest channel. The workflow publishes the versioned
+release plus a rolling `trace-flow-cli-latest` release containing `trace-flow-cli-installer.sh`;
+`/install.sh` redirects to that rolling CLI copy.
+
+Required repository secrets for signed macOS CLI artifacts:
+
+| Secret                          | Purpose                           |
+| ------------------------------- | --------------------------------- |
+| `CODESIGN_CERTIFICATE`          | Base64 Developer ID `.p12`        |
+| `CODESIGN_CERTIFICATE_PASSWORD` | Password for the `.p12`           |
+| `CODESIGN_IDENTITY`             | Developer ID Application identity |

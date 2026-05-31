@@ -16,6 +16,16 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ['recharts'],
   },
+  async redirects() {
+    return [
+      {
+        source: '/install.sh',
+        destination:
+          'https://github.com/zaks-io/trace-flow/releases/download/trace-flow-cli-latest/trace-flow-cli-installer.sh',
+        permanent: false,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
