@@ -114,7 +114,7 @@ export async function getTraceEvents(
     retentionDays,
   );
 
-  const limit = Math.min(params.limit ?? DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT);
+  const limit = Math.max(1, Math.min(params.limit ?? DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT));
   const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
   const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
 

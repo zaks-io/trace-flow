@@ -66,6 +66,14 @@ function parseDurationMs(durationNs: unknown): number {
   return Number.isFinite(duration) ? duration / 1_000_000 : 0;
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
 function extractBaggage(attrs: Record<string, unknown>): Record<string, string> | undefined {
   const baggage: Record<string, string> = {};
   for (const [key, value] of Object.entries(attrs)) {
@@ -121,7 +129,7 @@ export function parseSpanRow(row: SpanRow): ParsedSpan {
     http_status: attrs[HTTP.RESPONSE_STATUS_CODE] as string | undefined,
     tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
     cost_usd: Object.keys(costUsd).length > 0 ? costUsd : undefined,
-    time_to_first_token_ms: Number(attrs[GEN_AI.SERVER_TTFT]) || undefined,
+    time_to_first_token_ms: optionalNumber(attrs[GEN_AI.SERVER_TTFT]),
     baggage: extractBaggage(attrs),
     operation: attrs[GEN_AI.OPERATION_NAME] as string | undefined,
   };
@@ -145,7 +153,7 @@ export function buildOutputSpan(span: ParsedSpan, expand: Set<string>): Record<s
   if (expand.has('http') && span.http_status) output.http_status = span.http_status;
   if (expand.has('tokens') && span.tokens) output.tokens = span.tokens;
   if (expand.has('costs') && span.cost_usd) output.cost_usd = span.cost_usd;
-  if (expand.has('ttft') && span.time_to_first_token_ms)
+  if (expand.has('ttft') && span.time_to_first_token_ms !== undefined)
     output.time_to_first_token_ms = span.time_to_first_token_ms;
   if (expand.has('baggage') && span.baggage) output.baggage = span.baggage;
   if (expand.has('operation') && span.operation) output.operation = span.operation;

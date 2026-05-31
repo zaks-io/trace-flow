@@ -17,6 +17,18 @@ const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export type { AccessTokenPayload };
 
+let verificationKeyCache: { pem: string; key: Promise<CryptoKey> } | null = null;
+
+function getVerificationKey(publicKeyPem: string): Promise<CryptoKey> {
+  if (verificationKeyCache?.pem !== publicKeyPem) {
+    verificationKeyCache = {
+      pem: publicKeyPem,
+      key: importSPKI(publicKeyPem, MCP_ACCESS_TOKEN_ALG),
+    };
+  }
+  return verificationKeyCache.key;
+}
+
 export async function createAccessToken(
   userId: string,
   tokenId: string,
@@ -43,7 +55,7 @@ export async function validateAccessToken(
   }
 
   try {
-    const publicKey = await importSPKI(publicKeyPem, MCP_ACCESS_TOKEN_ALG);
+    const publicKey = await getVerificationKey(publicKeyPem);
     const { payload } = await jwtVerify(token, publicKey, {
       algorithms: [MCP_ACCESS_TOKEN_ALG],
       issuer,

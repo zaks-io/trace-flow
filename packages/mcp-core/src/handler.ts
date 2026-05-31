@@ -144,6 +144,11 @@ export async function dispatchToolCall(
 
   const ctx: ToolCtx = { mintToken: backend.mintToken, tinybirdBaseUrl, protocolVersion };
   const args = params.arguments ?? {};
-  const result = await handler(ctx, keyIds, args, retentionDays);
-  return createSuccessResponse(id, result);
+  try {
+    const result = await handler(ctx, keyIds, args, retentionDays);
+    return createSuccessResponse(id, result);
+  } catch (error) {
+    const message = error instanceof Error && error.message ? error.message : 'Internal tool error';
+    return createErrorResponse(id, JsonRpcErrorCode.InternalError, message);
+  }
 }

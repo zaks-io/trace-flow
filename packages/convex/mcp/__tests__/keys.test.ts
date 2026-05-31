@@ -69,7 +69,7 @@ describe('MCP RS256 access tokens + JWKS', () => {
     });
     await expect(
       jwtVerify(token, otherPublic, { algorithms: [MCP_ACCESS_TOKEN_ALG] }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/signature/i);
   });
 
   it('throws loudly when the signing key is unset', async () => {

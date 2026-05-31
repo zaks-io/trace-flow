@@ -35,8 +35,9 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
   return {
     mintToken: async (scopes, apiKeyIds, retentionDays, ttlSeconds) => {
       const keys = await getKeys();
+      const now = Date.now();
       const ids = new Set(apiKeyIds);
-      const rawKeys = keys.filter((k) => ids.has(k._id)).map((k) => k.key);
+      const rawKeys = keys.filter((k) => ids.has(k._id) && k.expiresAt > now).map((k) => k.key);
       const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
       return ctx.runAction(internal.integrations.tinybird.generateTokenInternal, {
         scopes,

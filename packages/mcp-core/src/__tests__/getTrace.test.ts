@@ -115,6 +115,14 @@ describe('parseSpanRow', () => {
     expect(result.timestamp).toBeUndefined();
     expect(result.duration_ms).toBe(0);
   });
+
+  it('preserves zero TTFT values', () => {
+    const result = parseSpanRow({
+      ...baseRow,
+      SpanAttributes: JSON.stringify({ 'gen_ai.server.time_to_first_token': 0 }),
+    });
+    expect(result.time_to_first_token_ms).toBe(0);
+  });
 });
 
 describe('buildOutputSpan', () => {
@@ -202,6 +210,11 @@ describe('buildOutputSpan', () => {
   it('includes ttft when expanded', () => {
     const result = buildOutputSpan(span, new Set(['ttft']));
     expect(result.time_to_first_token_ms).toBe(50);
+  });
+
+  it('includes zero ttft when expanded', () => {
+    const result = buildOutputSpan({ ...span, time_to_first_token_ms: 0 }, new Set(['ttft']));
+    expect(result.time_to_first_token_ms).toBe(0);
   });
 
   it('includes baggage when expanded', () => {

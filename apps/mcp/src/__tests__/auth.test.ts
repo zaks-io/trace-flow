@@ -5,7 +5,7 @@ import {
   MCP_ACCESS_TOKEN_AUDIENCE,
   MCP_ACCESS_TOKEN_KID,
 } from '@trace-flow/mcp-core';
-import { verifyAccessToken } from '../auth';
+import { TokenVerificationUnavailableError, verifyAccessToken } from '../auth';
 
 // Unique connect URL per test so jose's per-URL JWKS cache never bleeds across
 // cases (the worker module-level cache is keyed by connectBaseUrl).
@@ -108,5 +108,26 @@ describe('verifyAccessToken (JWKS)', () => {
 
   it('rejects garbage', async () => {
     expect(await verifyAccessToken('garbage', freshConnectUrl())).toBeNull();
+  });
+
+  it('surfaces JWKS fetch failures as service-unavailable errors', async () => {
+    const { sign } = await setup();
+    const connectUrl = freshConnectUrl();
+    const token = await sign({ userId: 'u-1', tokenId: 't-1' }, { issuer: connectUrl });
+    const fetchError = new TypeError('fetch failed');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(fetchError);
+    const logger = { error: vi.fn() };
+
+    await expect(verifyAccessToken(token, connectUrl, logger)).rejects.toBeInstanceOf(
+      TokenVerificationUnavailableError,
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'mcp.auth_jwks_unavailable',
+      fetchError,
+      expect.objectContaining({
+        connectBaseUrl: connectUrl,
+        phase: 'jwtVerify/getJwks',
+      }),
+    );
   });
 });

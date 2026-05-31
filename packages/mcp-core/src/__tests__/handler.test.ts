@@ -383,4 +383,20 @@ describe('dispatchToolCall', () => {
       30,
     );
   });
+
+  it('maps thrown tool errors to JSON-RPC internal errors', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Tinybird down'));
+    const backend = createBackend({
+      resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: ['key-1'] })),
+    });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'list_traces',
+      arguments: { api_key_ids: ['key-1'] },
+    });
+
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InternalError);
+    expect(response.error?.message).toBe('Tinybird down');
+    expect(response.result).toBeUndefined();
+  });
 });

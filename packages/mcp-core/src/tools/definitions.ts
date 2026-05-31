@@ -44,7 +44,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         model: {
           type: 'string',
-          description: 'Filter by model name (e.g., gpt-5, claude-4-5-sonnet)',
+          description: 'Filter by model name as captured in trace data.',
         },
         status: {
           type: 'string',
@@ -185,7 +185,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Filter by span names. Supports trailing-* prefixes (for example "chat *", "embeddings *", or "gen_ai.response.*").',
+            'Filter by span names. Supports prefix patterns with trailing wildcards (for example "chat *", "embeddings *", or "gen_ai.response.*").',
         },
         exclude_span_names: {
           type: 'array',

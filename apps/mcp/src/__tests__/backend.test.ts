@@ -38,7 +38,7 @@ describe('createWorkerBackend', () => {
   });
 
   it('flags unowned key ids without a network round trip beyond context', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({
         enabled: true,
         retentionDays: 30,
@@ -50,6 +50,7 @@ describe('createWorkerBackend', () => {
       ok: false,
       invalidIds: ['nope'],
     });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('mints via /mcp-backend/mint and never sends raw keys', async () => {

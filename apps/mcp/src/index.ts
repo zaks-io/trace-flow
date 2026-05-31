@@ -45,17 +45,16 @@ interface Variables {
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-app.use('*', async (c, next) => {
-  const mw = cors({
+app.use(
+  '*',
+  cors({
     origin: '*',
     allowMethods: ['POST', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Mcp-Protocol-Version'],
     exposeHeaders: ['Mcp-Session-Id'],
     maxAge: 86400,
-  });
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-  return mw(c, next);
-});
+  }),
+);
 
 app.use('*', async (c, next) => {
   const logger = createWorkerLogger({
@@ -67,6 +66,12 @@ app.use('*', async (c, next) => {
   c.set('logger', logger);
   const start = Date.now();
   await next();
+  if (c.error) {
+    logger.error('mcp.request_failed', c.error, {
+      status: c.res.status,
+      latencyMs: Date.now() - start,
+    });
+  }
   if (c.req.method !== 'OPTIONS') {
     logger.info('mcp.request_complete', {
       status: c.res.status,
@@ -84,6 +89,7 @@ function getClientIp(req: Request): string {
 async function authenticate(c: {
   req: { header(name: string): string | undefined };
   env: Env;
+  get(name: 'logger'): Logger;
 }): Promise<{ userId: string } | { error: Response }> {
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
@@ -91,7 +97,12 @@ async function authenticate(c: {
       error: jsonResponse({ error: 'Missing or invalid Authorization header' }, 401),
     };
   }
-  const payload = await verifyAccessToken(authHeader.slice(7), c.env.CONNECT_BASE_URL);
+  let payload;
+  try {
+    payload = await verifyAccessToken(authHeader.slice(7), c.env.CONNECT_BASE_URL, c.get('logger'));
+  } catch {
+    return { error: jsonResponse({ error: 'Token verification temporarily unavailable' }, 503) };
+  }
   if (!payload) {
     return { error: jsonResponse({ error: 'Invalid or expired access token' }, 401) };
   }

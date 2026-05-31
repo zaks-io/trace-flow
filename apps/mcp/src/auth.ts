@@ -5,6 +5,14 @@ import {
   MCP_ACCESS_TOKEN_AUDIENCE,
   type AccessTokenPayload,
 } from '@trace-flow/mcp-core';
+import type { Logger } from '@trace-flow/logging';
+
+export class TokenVerificationUnavailableError extends Error {
+  constructor() {
+    super('Token verification service unavailable');
+    this.name = 'TokenVerificationUnavailableError';
+  }
+}
 
 // One JWKS set per connect-base URL. createRemoteJWKSet caches keys and handles
 // rotation by kid, so verification is a local crypto op after the first fetch —
@@ -20,6 +28,22 @@ function getJwks(connectBaseUrl: string): ReturnType<typeof createRemoteJWKSet> 
   return jwks;
 }
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return undefined;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function isJwksFetchError(error: unknown): boolean {
+  const code = errorCode(error);
+  if (code === 'ERR_JWKS_TIMEOUT' || code === 'ERR_JWKS_INVALID') {
+    return true;
+  }
+  return error instanceof TypeError;
+}
+
 /**
  * Verifies an MCP access token against the RS256 public key published by
  * `connect.` at {@link JWKS_PATH}. Returns the identity payload, or null if the
@@ -29,6 +53,7 @@ function getJwks(connectBaseUrl: string): ReturnType<typeof createRemoteJWKSet> 
 export async function verifyAccessToken(
   token: string,
   connectBaseUrl: string,
+  logger?: Pick<Logger, 'error'>,
 ): Promise<AccessTokenPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getJwks(connectBaseUrl), {
@@ -40,7 +65,15 @@ export async function verifyAccessToken(
       return null;
     }
     return { userId: payload.userId, tokenId: payload.tokenId };
-  } catch {
+  } catch (error) {
+    if (isJwksFetchError(error)) {
+      logger?.error('mcp.auth_jwks_unavailable', error, {
+        connectBaseUrl,
+        phase: 'jwtVerify/getJwks',
+        code: errorCode(error),
+      });
+      throw new TokenVerificationUnavailableError();
+    }
     return null;
   }
 }

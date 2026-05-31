@@ -11,14 +11,24 @@ import {
 } from '../tools/shared';
 
 describe('buildTimeRangeNs', () => {
+  const ONE_HOUR_NS = 3_600_000_000_000n;
+
   it('floors fractional hours before converting to bigint', () => {
     const result = buildTimeRangeNs(1.5);
     expect(result.hours).toBe(1);
+    const start = BigInt(result.startTimeNs);
+    const end = BigInt(result.endTimeNs);
+    expect(start).toBeLessThan(end);
+    expect(end - start).toBe(ONE_HOUR_NS);
   });
 
   it('clamps non-positive hours to one hour', () => {
     const result = buildTimeRangeNs(0);
     expect(result.hours).toBe(1);
+    const start = BigInt(result.startTimeNs);
+    const end = BigInt(result.endTimeNs);
+    expect(start).toBeLessThan(end);
+    expect(end - start).toBe(ONE_HOUR_NS);
   });
 });
 
@@ -61,8 +71,10 @@ describe('noApiKeysError', () => {
   it('returns text content about no API keys', () => {
     const result = noApiKeysError();
     expect(result.content).toHaveLength(1);
-    expect(result.content[0]!.type).toBe('text');
-    expect(result.content[0]!.text).toContain('No API keys');
+    const item = result.content[0];
+    expect(item).toBeDefined();
+    expect(item?.type).toBe('text');
+    expect(item?.text).toContain('No API keys');
   });
 });
 
@@ -105,6 +117,26 @@ describe('jsonReplacer', () => {
   it('rounds floating point numbers', () => {
     const result = jsonReplacer('key', 0.123456789);
     expect(result).toBe(0.123457);
+  });
+
+  it('rounds negative floating point numbers', () => {
+    const result = jsonReplacer('key', -0.123456789);
+    expect(result).toBe(-0.123457);
+  });
+
+  it('leaves NaN unchanged', () => {
+    const result = jsonReplacer('key', NaN);
+    expect(result).toBeNaN();
+  });
+
+  it('leaves Infinity unchanged', () => {
+    const result = jsonReplacer('key', Infinity);
+    expect(result).toBe(Infinity);
+  });
+
+  it('leaves very large numbers unchanged', () => {
+    const result = jsonReplacer('key', 1e20);
+    expect(result).toBe(1e20);
   });
 
   it('leaves integers unchanged', () => {
@@ -168,6 +200,22 @@ describe('stripNulls', () => {
       nested: { x: null, y: 2 },
     });
     expect(result).toEqual({ a: 1, nested: { y: 2 } });
+  });
+
+  it('recursively strips deeply nested objects', () => {
+    const result = stripNulls({
+      level1: {
+        keep: 'root',
+        drop: null,
+        level2: {
+          level3: {
+            value: 42,
+            empty: undefined,
+          },
+        },
+      },
+    });
+    expect(result).toEqual({ level1: { keep: 'root', level2: { level3: { value: 42 } } } });
   });
 
   it('filters null values from arrays', () => {
