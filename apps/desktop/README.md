@@ -40,10 +40,13 @@ Rust gates (run by the workspace `rust` CI job): `bun run rust:fmt`, `rust:check
 
 ## Release
 
-Desktop releases are manual GitHub Actions runs:
+Desktop releases are manual GitHub Actions runs. For a real release, create and push the version tag
+first, then dispatch from that tag:
 
 ```sh
-gh workflow run desktop-release.yml -f platform=both -f tag=traceflow-desktop-v0.1.0
+git tag traceflow-desktop-v0.1.1
+git push origin traceflow-desktop-v0.1.1
+gh workflow run desktop-release.yml --ref traceflow-desktop-v0.1.1 -f platform=both -f tag=traceflow-desktop-v0.1.1
 ```
 
 Defaults:

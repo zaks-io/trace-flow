@@ -51,6 +51,10 @@ jobs:
               echo "::error::Invalid release tag: $TAG_INPUT"
               exit 1
             fi
+            if ! gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${TAG_INPUT}" --jq '.[].ref' | grep -Fx "refs/tags/$TAG_INPUT" >/dev/null; then
+              echo "::error::Release tag $TAG_INPUT does not exist. Create and push the tag before running this workflow."
+              exit 1
+            fi
             dist host --steps=create --tag="$TAG_INPUT" --output-format=json > plan-dist-manifest.json
             echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
             echo "publishing=true" >> "$GITHUB_OUTPUT"
@@ -112,6 +116,11 @@ jobs:
 
       - name: Install dependencies
         run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y \
+              libdbus-1-dev libssl-dev pkg-config
+          fi
           ${{ matrix.packages_install }}
 
       - name: Build artifacts
@@ -265,7 +274,6 @@ jobs:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
           ANNOUNCEMENT_TITLE: '${{ fromJson(steps.host.outputs.manifest).announcement_title }}'
           ANNOUNCEMENT_BODY: '${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}'
-          RELEASE_COMMIT: ${{ github.sha }}
           RELEASE_TAG: ${{ needs.plan.outputs.tag }}
         run: |
           echo "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
@@ -273,20 +281,4 @@ jobs:
           if [ -n "$PRERELEASE_FLAG" ]; then
             prerelease_args+=("$PRERELEASE_FLAG")
           fi
-          gh release create "$RELEASE_TAG" --target "$RELEASE_COMMIT" --latest=false "${prerelease_args[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
-
-      - name: Update CLI optional download channel
-        env:
-          CLI_CHANNEL_TAG: trace-flow-cli-latest
-          RELEASE_COMMIT: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          channel_title="Trace Flow CLI latest"
-          channel_notes="Optional Trace Flow CLI download. Desktop releases own the repository Latest channel."
-          printf '%s\n' "$channel_notes" > "$RUNNER_TEMP/cli-channel-notes.txt"
-          if gh release view "$CLI_CHANNEL_TAG" >/dev/null 2>&1; then
-            gh release edit "$CLI_CHANNEL_TAG" --target "$RELEASE_COMMIT" --title "$channel_title" --notes-file "$RUNNER_TEMP/cli-channel-notes.txt" --latest=false
-          else
-            gh release create "$CLI_CHANNEL_TAG" --target "$RELEASE_COMMIT" --title "$channel_title" --notes-file "$RUNNER_TEMP/cli-channel-notes.txt" --latest=false
-          fi
-          gh release upload "$CLI_CHANNEL_TAG" artifacts/* --clobber
+          gh release create "$RELEASE_TAG" --verify-tag --latest=false "${prerelease_args[@]}" --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*

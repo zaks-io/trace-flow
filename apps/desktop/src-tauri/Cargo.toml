@@ -1,6 +1,6 @@
 [package]
 name = "trace-flow-desktop"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Trace Flow Desktop: the menu-bar Collector that syncs local Claude/Codex transcripts (TRA-115)"

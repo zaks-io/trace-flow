@@ -4,6 +4,7 @@ members = ["cargo:."]
 [dist]
 cargo-dist-version = "0.31.0"
 ci = "github"
+packages = ["trace-flow-cli"]
 installers = ["shell"]
 # cli-release.yml carries hand-applied hardening beyond the generated dist workflow:
 # action SHA pinning, explicit permissions, and release tag validation. Re-run
@@ -24,6 +25,7 @@ pr-run-mode = "plan"
 # Dist signs macOS CLI binaries, but does not notarize raw binaries. Desktop
 # notarization lives in desktop-release.yml where Tauri builds notarizable bundles.
 macos-sign = true
+precise-builds = true
 
 install-success-msg = """
 trace-flow installed.
