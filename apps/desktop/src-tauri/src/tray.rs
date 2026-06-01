@@ -91,19 +91,46 @@ fn current_sync<R: Runtime>(app: &AppHandle<R>) -> SyncStatus {
 }
 
 fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) {
-    use tauri_plugin_autostart::ManagerExt;
-    let manager = app.autolaunch();
-    let enabled = manager.is_enabled().unwrap_or(false);
-    let result = if enabled {
-        manager.disable()
-    } else {
-        manager.enable()
+    let was_enabled = match crate::autostart::is_enabled(app) {
+        Ok(value) => value,
+        Err(err) => {
+            // Reading the current state failed; we can't know which way to toggle. Surface it and
+            // reconcile the bus from whatever the OS reports next, rather than guessing.
+            tracing::error!(error = %err, "autostart: failed to read state before toggle");
+            reconcile_autostart(app);
+            return;
+        }
     };
-    if let Err(err) = result {
-        tracing::warn!(error = %err, "failed to toggle autostart");
+
+    let target = !was_enabled;
+    let result = if was_enabled {
+        crate::autostart::disable(app)
+    } else {
+        crate::autostart::enable(app)
+    };
+
+    match result {
+        Ok(()) => tracing::info!(enabled = target, "autostart toggled"),
+        // Don't swallow it: log at error (so the tray "Recent error" row shows it) and fall through to
+        // reconcile, so the checkbox reflects the real OS state instead of the intended one.
+        Err(err) => tracing::error!(error = %err, target, "autostart: toggle failed"),
     }
+
+    reconcile_autostart(app);
+}
+
+/// Re-read the autostart state from disk (the source of truth) and publish it to the bus, so a failed
+/// or partial toggle leaves the menu checkbox showing reality, never a stale or wished-for value.
+fn reconcile_autostart<R: Runtime>(app: &AppHandle<R>) {
+    let actual = match crate::autostart::is_enabled(app) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::error!(error = %err, "autostart: failed to read state");
+            return;
+        }
+    };
     let bus: tauri::State<'_, AppStateBus> = app.state();
-    bus.update(|s| s.autostart = manager.is_enabled().unwrap_or(false));
+    bus.update(|s| s.autostart = actual);
 }
 
 fn open_dashboard<R: Runtime>(app: &AppHandle<R>) {

@@ -26,6 +26,9 @@ parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+# Cross-platform autostart. On macOS we override it with our own LaunchAgent writer (see
+# src/autostart.rs) so the entry shows in System Settings → Login Items; on Windows the plugin's
+# registry Run-key path is used as-is.
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
