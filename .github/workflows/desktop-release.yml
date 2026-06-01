@@ -305,7 +305,12 @@ jobs:
             }}' > traceflow-desktop-latest.json
           jq . traceflow-desktop-latest.json
 
-      - name: Create or update GitHub Release
+      - name: Create GitHub Release
+        env:
+          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
+          DARWIN_BUNDLE: ${{ steps.meta.outputs.darwin_bundle }}
+          MSI_FILE: ${{ steps.meta.outputs.msi_file }}
+          WIN_BUNDLE: ${{ steps.meta.outputs.windows_bundle }}
         run: |
           set -euo pipefail
           notes="$RELEASE_NOTES"
@@ -315,20 +320,10 @@ jobs:
           printf '%s\n' "$notes" > release-notes.txt
           title="Trace Flow Desktop ${VERSION}"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --title "$title" --notes-file release-notes.txt --latest=false
-          else
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "$title" --notes-file release-notes.txt --latest=false
+            echo "::error::Release $RELEASE_TAG already exists. Immutable releases cannot be updated; use a new tag or delete the empty failed release before retrying."
+            exit 1
           fi
-
-      - name: Upload release assets
-        env:
-          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
-          DARWIN_BUNDLE: ${{ steps.meta.outputs.darwin_bundle }}
-          MSI_FILE: ${{ steps.meta.outputs.msi_file }}
-          WIN_BUNDLE: ${{ steps.meta.outputs.windows_bundle }}
-        run: |
-          set -euo pipefail
-          gh release upload "$RELEASE_TAG" \
+          gh release create "$RELEASE_TAG" \
             "$DMG_FILE" \
             "$DARWIN_BUNDLE" \
             "${DARWIN_BUNDLE}.sig" \
@@ -336,7 +331,7 @@ jobs:
             "${WIN_BUNDLE}.sig" \
             "$MSI_FILE" \
             traceflow-desktop-latest.json \
-            --clobber
-
-      - name: Mark release as Latest
-        run: gh release edit "$RELEASE_TAG" --latest
+            --target "$GITHUB_SHA" \
+            --title "$title" \
+            --notes-file release-notes.txt \
+            --latest

@@ -290,8 +290,11 @@ jobs:
           channel_notes="Optional Trace Flow CLI download. Desktop releases own the repository Latest channel."
           printf '%s\n' "$channel_notes" > "$RUNNER_TEMP/cli-channel-notes.txt"
           if gh release view "$CLI_CHANNEL_TAG" >/dev/null 2>&1; then
-            gh release edit "$CLI_CHANNEL_TAG" --target "$RELEASE_COMMIT" --title "$channel_title" --notes-file "$RUNNER_TEMP/cli-channel-notes.txt" --latest=false
-          else
-            gh release create "$CLI_CHANNEL_TAG" --target "$RELEASE_COMMIT" --title "$channel_title" --notes-file "$RUNNER_TEMP/cli-channel-notes.txt" --latest=false
+            gh release delete "$CLI_CHANNEL_TAG" --cleanup-tag --yes
           fi
-          gh release upload "$CLI_CHANNEL_TAG" artifacts/* --clobber
+          gh release create "$CLI_CHANNEL_TAG" \
+            --target "$RELEASE_COMMIT" \
+            --title "$channel_title" \
+            --notes-file "$RUNNER_TEMP/cli-channel-notes.txt" \
+            --latest=false \
+            artifacts/*
