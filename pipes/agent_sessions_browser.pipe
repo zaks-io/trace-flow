@@ -2,8 +2,9 @@ DESCRIPTION >
     Browsable Agent Session table — the drill-down endpoint of the explorer. One row per
     session over the window with Source, a representative model, repo_fingerprint (resolved
     to a name client-side), estimated cost, message count, file-event counts, duration, and
-    last-event time. Paginated (limit/offset) and sortable by cost / files / duration /
-    messages; sort=cost reproduces the prior session-outliers view.
+    last-event time. Paginated (limit/offset) and sortable by recent / cost / files /
+    duration / messages. Default sort=recent (newest last_event first) so a fresh sync is
+    visible without paging; sort=cost reproduces the prior session-outliers view.
 
     Query-time over agent_messages FINAL + agent_file_events FINAL (the query-time-first
     launch path, same as agent_session_outliers). cost_usd sums priced rows only (null
@@ -96,10 +97,11 @@ SQL >
     LEFT JOIN session_files AS f USING (session_pk)
     ORDER BY
         multiIf(
-            {{ String(sort, 'cost') }} = 'files', toFloat64(file_event_count),
-            {{ String(sort, 'cost') }} = 'duration', toFloat64(duration_ms),
-            {{ String(sort, 'cost') }} = 'messages', toFloat64(message_count),
-            ifNull(cost_usd, -1)
+            {{ String(sort, 'recent') }} = 'files', toFloat64(file_event_count),
+            {{ String(sort, 'recent') }} = 'duration', toFloat64(duration_ms),
+            {{ String(sort, 'recent') }} = 'messages', toFloat64(message_count),
+            {{ String(sort, 'recent') }} = 'cost', ifNull(cost_usd, -1),
+            toFloat64(last_event_ms)
         ) DESC,
         session_pk ASC
     LIMIT {{ Int32(limit, 25) }}
