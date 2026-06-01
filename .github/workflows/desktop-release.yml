@@ -11,10 +11,6 @@ on:
           - both
           - macos
           - windows
-      tag:
-        description: GitHub release tag (default traceflow-desktop-v{version})
-        type: string
-        default: ''
       release_notes:
         description: Release notes shown in the updater manifest
         type: string
@@ -38,7 +34,6 @@ jobs:
     timeout-minutes: 5
     outputs:
       include: ${{ steps.matrix.outputs.include }}
-      tag: ${{ steps.matrix.outputs.tag }}
       version: ${{ steps.matrix.outputs.version }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -47,21 +42,10 @@ jobs:
 
       - id: matrix
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          INPUT_TAG: ${{ inputs.tag }}
           PLATFORM: ${{ inputs.platform }}
         run: |
           set -euo pipefail
           version=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
-          tag="${INPUT_TAG:-traceflow-desktop-v${version}}"
-          if ! printf '%s' "$tag" | grep -Eq '^[0-9A-Za-z._/-]+$'; then
-            echo "::error::Invalid release tag: $tag"
-            exit 1
-          fi
-          if ! gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" --jq '.[].ref' | grep -Fx "refs/tags/$tag" >/dev/null; then
-            echo "::error::Release tag $tag does not exist. Create and push the tag before running this workflow."
-            exit 1
-          fi
           macos='{"name":"macos","runner":"blacksmith-6vcpu-macos-latest","target":"aarch64-apple-darwin"}'
           windows='{"name":"windows","runner":"blacksmith-4vcpu-windows-2025","target":"x86_64-pc-windows-msvc"}'
           case "$PLATFORM" in
@@ -71,7 +55,6 @@ jobs:
           esac
           {
             echo "include=$include"
-            echo "tag=$tag"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
 
@@ -226,8 +209,9 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_NOTES: ${{ inputs.release_notes }}
-      RELEASE_TAG: ${{ needs.setup.outputs.tag }}
       VERSION: ${{ needs.setup.outputs.version }}
+      RELEASE_TAG: traceflow-desktop-v${{ needs.setup.outputs.version }}
+      RELEASE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -310,7 +294,7 @@ jobs:
             }}' > traceflow-desktop-latest.json
           jq . traceflow-desktop-latest.json
 
-      - name: Create GitHub Release
+      - name: Create draft GitHub Release
         env:
           DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
           DARWIN_BUNDLE: ${{ steps.meta.outputs.darwin_bundle }}
@@ -324,19 +308,28 @@ jobs:
           fi
           printf '%s\n' "$notes" > release-notes.txt
           title="Trace Flow Desktop ${VERSION}"
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "::error::Release $RELEASE_TAG already exists. Immutable releases cannot be updated; use a new tag or delete the empty failed release before retrying."
-            exit 1
+
+          # Always a DRAFT: nothing is published, nothing is immutable, no git
+          # tag is created. GitHub only creates the tag (RELEASE_TAG, at
+          # RELEASE_SHA) when you hit "Publish release" in the UI. Re-running
+          # replaces the prior draft for this version so they don't pile up.
+          existing=$(gh release list --json name,isDraft,tagName \
+            --jq ".[] | select(.name == \"$title\" and .isDraft) | .tagName" || true)
+          if [ -n "$existing" ]; then
+            gh release delete "$existing" --yes || true
           fi
+
           gh release create "$RELEASE_TAG" \
+            --draft \
+            --target "$RELEASE_SHA" \
+            --title "$title" \
+            --notes-file release-notes.txt \
             "$DMG_FILE" \
             "$DARWIN_BUNDLE" \
             "${DARWIN_BUNDLE}.sig" \
             "$WIN_BUNDLE" \
             "${WIN_BUNDLE}.sig" \
             "$MSI_FILE" \
-            traceflow-desktop-latest.json \
-            --verify-tag \
-            --title "$title" \
-            --notes-file release-notes.txt \
-            --latest
+            traceflow-desktop-latest.json
+
+          echo "::notice::Draft release '$title' created. Download the installers from the draft to test. Hit 'Publish release' in the GitHub UI when you're ready to ship."
