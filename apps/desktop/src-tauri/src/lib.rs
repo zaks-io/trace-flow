@@ -9,6 +9,7 @@
 //! window hosts source detection, the raw-upload opt-in (default off), and the explicit "Start
 //! syncing" egress gate; the tray menu mirrors status and drives the engine thereafter.
 
+mod autostart;
 mod commands;
 mod connector;
 mod engine;
@@ -28,10 +29,9 @@ use crate::menu::refresh::spawn_menu_refresh;
 use crate::menu::{build_menu, MenuHandles};
 use crate::state::AppStateBus;
 
-/// Reflect the OS autostart state into the bus on launch (the plugin is the source of truth).
+/// Reflect the OS autostart state into the bus on launch (the LaunchAgent plist is the source of truth).
 fn refresh_autostart<R: Runtime>(app: &tauri::AppHandle<R>, bus: &AppStateBus) {
-    use tauri_plugin_autostart::ManagerExt;
-    match app.autolaunch().is_enabled() {
+    match autostart::is_enabled(app) {
         Ok(enabled) => bus.update(|s| s.autostart = enabled),
         Err(err) => tracing::warn!(error = %err, "failed to read autostart state"),
     }
@@ -48,6 +48,9 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Cross-platform autostart. The plugin owns the Windows registry path; on macOS the
+        // `autostart` module overrides it with a LaunchAgent that surfaces in Login Items. The plugin
+        // must still be registered so its managed state (`app.autolaunch()`) exists on every platform.
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -110,8 +113,14 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Trace Flow Desktop")
         .run(|_app, event| {
-            // Keep running when the window is closed — it is a tray app, not a windowed one.
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            // Keep running when the *window* is closed — it is a tray app, not a windowed one.
+            // `code: None` is a user/window-close request (the case we want to swallow); `code: Some(_)`
+            // is a programmatic `app.exit()` (the tray "Quit" item). Preventing the latter too would
+            // make Quit a no-op, so only block the window-close case.
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
                 api.prevent_exit();
             }
         });
