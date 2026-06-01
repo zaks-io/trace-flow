@@ -51,7 +51,7 @@ jobs:
               echo "::error::Invalid release tag: $TAG_INPUT"
               exit 1
             fi
-            if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG_INPUT" >/dev/null; then
+            if ! gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${TAG_INPUT}" --jq '.[].ref' | grep -Fx "refs/tags/$TAG_INPUT" >/dev/null; then
               echo "::error::Release tag $TAG_INPUT does not exist. Create and push the tag before running this workflow."
               exit 1
             fi
