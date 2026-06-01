@@ -2,7 +2,7 @@
 
 User-facing collector binary: `login`, `sources list`, `sync`, `status`, `disconnect`.
 
-Install the latest released CLI:
+Install the currently published CLI:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://trace-flow.dev/install.sh | sh
@@ -47,16 +47,19 @@ Copy `.env.example` as a starting point for dev overrides only — do not commit
 
 ## Release
 
-CLI releases are manual GitHub Actions runs:
+CLI releases are manual GitHub Actions runs. For a real release, create and push the version tag
+first, then dispatch from that tag:
 
 ```sh
-gh workflow run cli-release.yml -f tag=trace-flow-cli-v0.1.0
+git tag trace-flow-cli-v0.1.1
+git push origin trace-flow-cli-v0.1.1
+gh workflow run cli-release.yml --ref trace-flow-cli-v0.1.1 -f tag=trace-flow-cli-v0.1.1
 ```
 
 Use `tag=dry-run` to build release artifacts without creating a GitHub Release. CLI releases are
-optional downloads and never own the repository Latest channel. The workflow publishes the versioned
-release plus a rolling `trace-flow-cli-latest` release containing `trace-flow-cli-installer.sh`;
-`/install.sh` redirects to that rolling CLI copy.
+optional downloads and never own the repository Latest channel. The workflow publishes only the
+versioned release; `/install.sh` redirects to the current versioned CLI installer because repository
+immutable releases make mutable `*-latest` release tags unusable.
 
 Required repository secrets for signed macOS CLI artifacts:
 

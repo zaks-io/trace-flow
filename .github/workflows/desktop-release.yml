@@ -57,6 +57,10 @@ jobs:
             echo "::error::Invalid release tag: $tag"
             exit 1
           fi
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::Release tag $tag does not exist. Create and push the tag before running this workflow."
+            exit 1
+          fi
           macos='{"name":"macos","runner":"blacksmith-6vcpu-macos-latest","target":"aarch64-apple-darwin"}'
           windows='{"name":"windows","runner":"blacksmith-4vcpu-windows-2025","target":"x86_64-pc-windows-msvc"}'
           case "$PLATFORM" in
@@ -331,7 +335,7 @@ jobs:
             "${WIN_BUNDLE}.sig" \
             "$MSI_FILE" \
             traceflow-desktop-latest.json \
-            --target "$GITHUB_SHA" \
+            --verify-tag \
             --title "$title" \
             --notes-file release-notes.txt \
             --latest

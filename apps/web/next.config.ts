@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
       {
         source: '/install.sh',
         destination:
-          'https://github.com/zaks-io/trace-flow/releases/download/trace-flow-cli-latest/trace-flow-cli-installer.sh',
+          'https://github.com/zaks-io/trace-flow/releases/download/trace-flow-cli-v0.1.1/trace-flow-cli-installer.sh',
         permanent: false,
       },
     ];
