@@ -213,7 +213,7 @@ export const AGENT_BREAKDOWN_DIMENSIONS = ['source', 'model', 'repo'] as const;
 export type AgentBreakdownDimension = (typeof AGENT_BREAKDOWN_DIMENSIONS)[number];
 
 /** Sort key for the browsable Agent Session table (all descending). */
-export type AgentSessionSort = 'cost' | 'files' | 'duration' | 'messages';
+export type AgentSessionSort = 'recent' | 'cost' | 'files' | 'duration' | 'messages';
 
 export const AGENT_SESSION_PAGE_SIZE = 25;
 

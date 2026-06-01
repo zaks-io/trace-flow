@@ -34,7 +34,8 @@ function repoName(fingerprint: string, repoLabelMap: Map<string, string>): strin
 /**
  * Browsable Agent Session drill-down: sortable, paginated, honoring the active filters.
  * Owns its sort + page state and fetches the agent_sessions_browser pipe directly so it
- * loads independently of the hero surfaces. Sort-by-cost reproduces the prior outliers.
+ * loads independently of the hero surfaces. Defaults to newest-first (Last event) so a
+ * fresh sync shows without paging; sort-by-cost reproduces the prior outliers view.
  */
 export function AgentSessionsTable({
   filterParams,
@@ -43,7 +44,7 @@ export function AgentSessionsTable({
   filterParams: Record<string, string | number>;
   repoLabelMap: Map<string, string>;
 }) {
-  const [sort, setSort] = useState<AgentSessionSort>('cost');
+  const [sort, setSort] = useState<AgentSessionSort>('recent');
   const [page, setPage] = useState(0);
 
   // Reset to the first page when the filters or sort change, so a narrowed result set can't
@@ -78,7 +79,7 @@ export function AgentSessionsTable({
     <AgentSection
       icon={Table2}
       title="Agent sessions"
-      subtitle="Browse sessions; sort by cost, files, duration, or messages. Cost is estimated, not billed."
+      subtitle="Browse sessions, newest first; sort by recency, cost, files, duration, or messages. Cost is estimated, not billed."
       count={rows.length}
       countLabel="sessions"
     >
@@ -108,7 +109,18 @@ export function AgentSessionsTable({
                       </button>
                     </th>
                   ))}
-                  <th className="pb-2 pr-3 text-right font-medium">Last event</th>
+                  <th className="pb-2 pr-3 text-right font-medium">
+                    <button
+                      type="button"
+                      onClick={() => selectSort('recent')}
+                      className={`inline-flex items-center gap-1 transition-colors hover:text-foreground ${
+                        sort === 'recent' ? 'text-primary' : ''
+                      }`}
+                    >
+                      Last event
+                      {sort === 'recent' && <ChevronDown className="h-3 w-3" />}
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
