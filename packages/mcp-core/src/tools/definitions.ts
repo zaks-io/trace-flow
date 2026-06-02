@@ -21,6 +21,72 @@ const API_KEY_IDS_PROPERTY = {
   description: 'Filter by specific API key IDs (from list_api_keys). Omit to use all keys.',
 } as const;
 
+const PROVIDER_PROPERTY = {
+  type: 'string',
+  description: 'Filter by provider',
+} as const;
+
+const MODEL_PROPERTY = {
+  type: 'string',
+  description: 'Filter by model',
+} as const;
+
+const STATUS_PROPERTY = {
+  type: 'string',
+  enum: ['STATUS_CODE_OK', 'STATUS_CODE_ERROR'],
+  description: 'Filter by status code',
+} as const;
+
+const CURSOR_PROPERTY = {
+  type: 'string',
+  description: 'Pagination cursor from previous response',
+} as const;
+
+const TRACE_SORT_BY_PROPERTY = {
+  type: 'string',
+  enum: ['timestamp', 'duration_ms', 'cost_usd', 'tokens'],
+  description: 'Field to sort by. Default: timestamp',
+} as const;
+
+const SORT_DESC_PROPERTY = {
+  type: 'string',
+  enum: ['asc', 'desc'],
+  description: 'Sort direction. Default: desc',
+} as const;
+
+const OPERATION_PROPERTY = {
+  type: 'string',
+  description: 'Filter by baggage.operation / workflow label',
+} as const;
+
+function limitProperty(defaultLimit: number, maxLimit: number, subject = 'results') {
+  return {
+    type: 'number',
+    description: `Max ${subject} to return (default ${defaultLimit}, max ${maxLimit})`,
+  } as const;
+}
+
+function hoursProperty(defaultHours: number, maxHours: number) {
+  return {
+    type: 'number',
+    description: `Look back period in hours (default ${defaultHours}, max ${maxHours})`,
+  } as const;
+}
+
+function analyticsProperties(options: { includeModel?: boolean; limitSubject?: string } = {}) {
+  return {
+    hours: hoursProperty(DEFAULT_ANALYTICS_HOURS, MAX_ANALYTICS_HOURS),
+    provider: PROVIDER_PROPERTY,
+    ...(options.includeModel === false ? {} : { model: MODEL_PROPERTY }),
+    operation: OPERATION_PROPERTY,
+    status: STATUS_PROPERTY,
+    ...(options.limitSubject
+      ? { limit: limitProperty(DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT, options.limitSubject) }
+      : {}),
+    api_key_ids: API_KEY_IDS_PROPERTY,
+  } as const;
+}
+
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'list_api_keys',
@@ -46,33 +112,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Filter by model name as captured in trace data.',
         },
-        status: {
-          type: 'string',
-          enum: ['STATUS_CODE_OK', 'STATUS_CODE_ERROR'],
-          description: 'Filter by status code',
-        },
-        limit: {
-          type: 'number',
-          description: `Max results to return (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`,
-        },
+        status: STATUS_PROPERTY,
+        limit: limitProperty(DEFAULT_LIMIT, MAX_LIMIT),
         hours: {
           type: 'number',
           description: `Look back period in hours (default ${DEFAULT_HOURS}, capped by your plan's retention period)`,
         },
-        cursor: {
-          type: 'string',
-          description: 'Pagination cursor from previous response',
-        },
-        sort_by: {
-          type: 'string',
-          enum: ['timestamp', 'duration_ms', 'cost_usd', 'tokens'],
-          description: 'Field to sort by. Default: timestamp',
-        },
-        order: {
-          type: 'string',
-          enum: ['asc', 'desc'],
-          description: 'Sort direction. Default: desc',
-        },
+        cursor: CURSOR_PROPERTY,
+        sort_by: TRACE_SORT_BY_PROPERTY,
+        order: SORT_DESC_PROPERTY,
         api_key_ids: API_KEY_IDS_PROPERTY,
       },
     },
@@ -94,8 +142,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description: 'Filter to traces that include this model name',
         },
         status: {
-          type: 'string',
-          enum: ['STATUS_CODE_OK', 'STATUS_CODE_ERROR'],
+          ...STATUS_PROPERTY,
           description: 'Filter to traces with or without any error spans',
         },
         operation: {
@@ -107,28 +154,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Exact trace_id lookup. Bypasses other filters when set.',
         },
-        limit: {
-          type: 'number',
-          description: `Max traces per page (default ${DEFAULT_TRACE_SUMMARY_LIMIT}, max ${MAX_TRACE_SUMMARY_LIMIT})`,
-        },
-        hours: {
-          type: 'number',
-          description: `Look back period in hours (default ${DEFAULT_ANALYTICS_HOURS}, max ${MAX_ANALYTICS_HOURS})`,
-        },
-        cursor: {
-          type: 'string',
-          description: 'Pagination cursor from previous response',
-        },
-        sort_by: {
-          type: 'string',
-          enum: ['timestamp', 'duration_ms', 'cost_usd', 'tokens'],
-          description: 'Field to sort by. Default: timestamp',
-        },
-        order: {
-          type: 'string',
-          enum: ['asc', 'desc'],
-          description: 'Sort direction. Default: desc',
-        },
+        limit: limitProperty(
+          DEFAULT_TRACE_SUMMARY_LIMIT,
+          MAX_TRACE_SUMMARY_LIMIT,
+          'traces per page',
+        ),
+        hours: hoursProperty(DEFAULT_ANALYTICS_HOURS, MAX_ANALYTICS_HOURS),
+        cursor: CURSOR_PROPERTY,
+        sort_by: TRACE_SORT_BY_PROPERTY,
+        order: SORT_DESC_PROPERTY,
         api_key_ids: API_KEY_IDS_PROPERTY,
       },
     },
@@ -197,8 +231,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description: 'Exclude spans below this duration (in milliseconds).',
         },
         sort_by: {
-          type: 'string',
-          enum: ['timestamp', 'duration_ms', 'cost_usd', 'tokens'],
+          ...TRACE_SORT_BY_PROPERTY,
           description: 'Sort order. Defaults to timestamp.',
         },
         order: {
@@ -210,14 +243,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'number',
           description: 'Return only top N spans by sort_by metric.',
         },
-        limit: {
-          type: 'number',
-          description: `Max spans per page (default ${DEFAULT_SPAN_LIMIT}, max ${MAX_SPAN_LIMIT}).`,
-        },
-        cursor: {
-          type: 'string',
-          description: 'Pagination cursor from previous response.',
-        },
+        limit: limitProperty(DEFAULT_SPAN_LIMIT, MAX_SPAN_LIMIT, 'spans per page'),
+        cursor: { ...CURSOR_PROPERTY, description: 'Pagination cursor from previous response.' },
         api_key_ids: API_KEY_IDS_PROPERTY,
       },
       required: ['trace_id'],
@@ -255,14 +282,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           enum: ['asc', 'desc'],
           description: 'Sort direction by timestamp. Default: asc.',
         },
-        limit: {
-          type: 'number',
-          description: `Max events per page (default ${DEFAULT_EVENT_LIMIT}, max ${MAX_EVENT_LIMIT}).`,
-        },
-        cursor: {
-          type: 'string',
-          description: 'Pagination cursor from previous response.',
-        },
+        limit: limitProperty(DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT, 'events per page'),
+        cursor: { ...CURSOR_PROPERTY, description: 'Pagination cursor from previous response.' },
         api_key_ids: API_KEY_IDS_PROPERTY,
       },
       required: ['trace_id'],
@@ -275,28 +296,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        hours: {
-          type: 'number',
-          description: `Look back period in hours (default ${DEFAULT_ANALYTICS_HOURS}, max ${MAX_ANALYTICS_HOURS})`,
-        },
-        provider: {
-          type: 'string',
-          description: 'Filter by provider',
-        },
-        model: {
-          type: 'string',
-          description: 'Filter by model',
-        },
-        operation: {
-          type: 'string',
-          description: 'Filter by baggage.operation / workflow label',
-        },
-        status: {
-          type: 'string',
-          enum: ['STATUS_CODE_OK', 'STATUS_CODE_ERROR'],
-          description: 'Filter by status code',
-        },
-        api_key_ids: API_KEY_IDS_PROPERTY,
+        ...analyticsProperties(),
       },
     },
   },
@@ -307,32 +307,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        hours: {
-          type: 'number',
-          description: `Look back period in hours (default ${DEFAULT_ANALYTICS_HOURS}, max ${MAX_ANALYTICS_HOURS})`,
-        },
-        provider: {
-          type: 'string',
-          description: 'Filter by provider',
-        },
-        model: {
-          type: 'string',
-          description: 'Filter by model',
-        },
-        operation: {
-          type: 'string',
-          description: 'Filter by baggage.operation / workflow label',
-        },
-        status: {
-          type: 'string',
-          enum: ['STATUS_CODE_OK', 'STATUS_CODE_ERROR'],
-          description: 'Filter by status code',
-        },
-        limit: {
-          type: 'number',
-          description: `Max operations to return (default ${DEFAULT_ANALYTICS_LIMIT}, max ${MAX_ANALYTICS_LIMIT})`,
-        },
-        api_key_ids: API_KEY_IDS_PROPERTY,
+        ...analyticsProperties({ limitSubject: 'operations' }),
       },
     },
   },
@@ -343,28 +318,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        hours: {
-          type: 'number',
-          description: `Look back period in hours (default ${DEFAULT_ANALYTICS_HOURS}, max ${MAX_ANALYTICS_HOURS})`,
-        },
-        provider: {
-          type: 'string',
-          description: 'Filter by provider',
-        },
-        operation: {
-          type: 'string',
-          description: 'Filter by baggage.operation / workflow label',
-        },
-        status: {
-          type: 'string',
-          enum: ['STATUS_CODE_OK', 'STATUS_CODE_ERROR'],
-          description: 'Filter by status code',
-        },
-        limit: {
-          type: 'number',
-          description: `Max models to return (default ${DEFAULT_ANALYTICS_LIMIT}, max ${MAX_ANALYTICS_LIMIT})`,
-        },
-        api_key_ids: API_KEY_IDS_PROPERTY,
+        ...analyticsProperties({ includeModel: false, limitSubject: 'models' }),
       },
     },
   },

@@ -1,11 +1,12 @@
 import type { ToolCallResult } from '../protocol';
 import {
-  jsonReplacer,
-  stripNulls,
   noApiKeysError,
   invalidTraceIdError,
   traceNotFoundError,
   TRACE_ID_PATTERN,
+  indexMetricRows,
+  jsonToolResult,
+  mintPipeReadToken,
 } from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
 
@@ -54,11 +55,7 @@ export async function getTrace(
   }
 
   const pipes = ['mcp_trace_summary', 'mcp_trace_by_provider', 'mcp_trace_by_model'];
-  const token = await ctx.mintToken(
-    pipes.map((p) => ({ type: 'PIPES:READ', resource: p })),
-    apiKeyIds,
-    retentionDays,
-  );
+  const token = await mintPipeReadToken(ctx, apiKeyIds, retentionDays, pipes);
 
   const baseParams = { trace_id: params.trace_id };
 
@@ -74,31 +71,8 @@ export async function getTrace(
     return traceNotFoundError(params.trace_id);
   }
 
-  const byProvider = (byProviderData as unknown as ByProviderRow[]).reduce(
-    (acc, row) => {
-      acc[row.provider] = {
-        count: row.count,
-        duration_ms: row.duration_ms,
-        cost_usd: row.cost_usd,
-        tokens: row.tokens,
-      };
-      return acc;
-    },
-    {} as Record<string, { count: number; duration_ms: number; cost_usd: number; tokens: number }>,
-  );
-
-  const byModel = (byModelData as unknown as ByModelRow[]).reduce(
-    (acc, row) => {
-      acc[row.model] = {
-        count: row.count,
-        duration_ms: row.duration_ms,
-        cost_usd: row.cost_usd,
-        tokens: row.tokens,
-      };
-      return acc;
-    },
-    {} as Record<string, { count: number; duration_ms: number; cost_usd: number; tokens: number }>,
-  );
+  const byProvider = indexMetricRows(byProviderData as unknown as ByProviderRow[], 'provider');
+  const byModel = indexMetricRows(byModelData as unknown as ByModelRow[], 'model');
 
   const timestamp = new Date(summaryRow.first_timestamp / 1_000_000).toISOString();
   const duration_ms =
@@ -122,7 +96,5 @@ export async function getTrace(
     },
   };
 
-  return {
-    content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
-  };
+  return jsonToolResult(result);
 }

@@ -1,11 +1,16 @@
 import type { ToolCallResult } from '../protocol';
 import {
   buildTimeRangeNs,
-  jsonReplacer,
   noApiKeysError,
-  stripNulls,
   DEFAULT_TRACE_SUMMARY_LIMIT,
   MAX_TRACE_SUMMARY_LIMIT,
+  addOptionalPipeParams,
+  jsonToolResult,
+  mintPipeReadToken,
+  offsetPipeParams,
+  offsetPaginationResult,
+  resolveOffsetPagination,
+  tokenSummary,
 } from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
 
@@ -54,11 +59,6 @@ function normalizeStringArray(value: unknown): string[] | undefined {
 }
 
 function formatTraceSummaryRow(row: TraceSummaryRow) {
-  const tokens: Record<string, number> = {};
-  if (row.prompt_tokens > 0) tokens.prompt = row.prompt_tokens;
-  if (row.completion_tokens > 0) tokens.completion = row.completion_tokens;
-  if (row.total_tokens > 0) tokens.total = row.total_tokens;
-
   return {
     trace_id: row.trace_id,
     timestamp: row.timestamp,
@@ -69,7 +69,7 @@ function formatTraceSummaryRow(row: TraceSummaryRow) {
     span_count: row.span_count,
     models: normalizeStringArray(row.models),
     operations: normalizeStringArray(row.operations),
-    tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
+    tokens: tokenSummary(row.prompt_tokens, row.completion_tokens, row.total_tokens),
     max_ttft_ms: row.max_ttft_ms > 0 ? row.max_ttft_ms : undefined,
     cost_usd: row.total_cost_usd > 0 ? row.total_cost_usd : undefined,
   };
@@ -85,49 +85,34 @@ export async function listTraceSummaries(
     return noApiKeysError();
   }
 
-  const token = await ctx.mintToken(
-    [{ type: 'PIPES:READ', resource: 'mcp_trace_summaries' }],
-    apiKeyIds,
-    retentionDays,
+  const token = await mintPipeReadToken(ctx, apiKeyIds, retentionDays, 'mcp_trace_summaries');
+  const pagination = resolveOffsetPagination(
+    params.limit,
+    params.cursor,
+    DEFAULT_TRACE_SUMMARY_LIMIT,
+    MAX_TRACE_SUMMARY_LIMIT,
   );
-
-  const limit = Math.max(
-    1,
-    Math.min(params.limit ?? DEFAULT_TRACE_SUMMARY_LIMIT, MAX_TRACE_SUMMARY_LIMIT),
-  );
-  const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
-  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
   const { startTimeNs } = buildTimeRangeNs(params.hours);
 
-  const pipeParams: Record<string, string | number | undefined> = {
-    start_time_ns: startTimeNs,
-    limit,
-    offset,
-  };
-
-  if (params.provider) pipeParams.provider = params.provider;
-  if (params.model) pipeParams.model = params.model;
-  if (params.status) pipeParams.status = params.status;
-  if (params.operation) pipeParams.operation = params.operation;
-  if (params.trace_id) pipeParams.trace_id = params.trace_id;
-  if (params.sort_by) pipeParams.sort_by = params.sort_by;
-  if (params.order) pipeParams.order = params.order;
+  const pipeParams = offsetPipeParams(startTimeNs, pagination);
+  addOptionalPipeParams(pipeParams, params, [
+    'provider',
+    'model',
+    'status',
+    'operation',
+    'trace_id',
+    'sort_by',
+    'order',
+  ]);
 
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_summaries', pipeParams);
   const rows = data as unknown as TraceSummaryRow[];
   const totalCount = rows.length > 0 ? rows[0]!.total_count : 0;
-  const hasMore = totalCount > offset + rows.length;
 
   const result = {
     traces: rows.map(formatTraceSummaryRow),
-    pagination: {
-      has_more: hasMore,
-      next_cursor: hasMore ? String(offset + rows.length) : undefined,
-      limit,
-    },
+    pagination: offsetPaginationResult(pagination, rows.length, totalCount, { includeLimit: true }),
   };
 
-  return {
-    content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
-  };
+  return jsonToolResult(result);
 }

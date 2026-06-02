@@ -17,6 +17,12 @@ import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './strip
 import { subscriptionValidator } from '../validators';
 import { ensureOrgHasSubscription } from '../auth/organizations';
 import { isProSubscriptionEnabled } from '../integrations/launchdarkly';
+import {
+  getCurrentBillingPeriod,
+  getSubscriptionByOrgId,
+  mutationReadCtx,
+  summarizeCurrentUsage,
+} from './currentPeriod';
 
 export function mapStripeStatusToInternal(
   status: string,
@@ -40,13 +46,14 @@ export function mapStripeStatusToInternal(
 
 async function requireOrgOwner(ctx: Parameters<typeof requireEnabledUser>[0]) {
   const user = await requireEnabledUser(ctx);
-  if (!user.orgId) throw new Error('Organization not found');
-  const org = await ctx.db.get(user.orgId);
+  const orgId = user.orgId;
+  if (!orgId) throw new Error('Organization not found');
+  const org = await ctx.db.get(orgId);
   if (!org) throw new Error('Organization not found');
   if (org.ownerId !== user._id) {
     throw new Error('Only organization owners can manage billing');
   }
-  return { user, org };
+  return { user: { ...user, orgId }, org };
 }
 
 async function requireOrgOwnerAction(ctx: ActionCtx) {
@@ -92,10 +99,7 @@ export const getForCurrentUser = query({
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
 
-    return await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
-      .first();
+    return getSubscriptionByOrgId(ctx, user.orgId);
   },
 });
 
@@ -128,22 +132,11 @@ export const getBillingSummaryForCurrentUser = query({
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
 
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
-      .first();
+    const currentPeriod = await getCurrentBillingPeriod(ctx, user.orgId);
+    if (!currentPeriod) return null;
 
-    if (!subscription) return null;
-
-    const usage = await ctx.db
-      .query('usage')
-      .withIndex('by_org_id_period', (q) =>
-        q.eq('orgId', user.orgId!).eq('periodStart', subscription.currentPeriodStart),
-      )
-      .first();
-
-    const totalUsed = (usage?.subscriptionUnitsUsed ?? 0) + (usage?.addonUnitsUsed ?? 0);
-    const totalAvailable = subscription.monthlyUnits + subscription.addonUnits;
+    const { subscription } = currentPeriod;
+    const usage = summarizeCurrentUsage(subscription, currentPeriod.usage);
 
     const membership = await ctx.db
       .query('organizationMembers')
@@ -153,9 +146,9 @@ export const getBillingSummaryForCurrentUser = query({
 
     return {
       subscription,
-      totalUsed,
-      totalAvailable,
-      remaining: Math.max(0, totalAvailable - totalUsed),
+      totalUsed: usage.totalUsed,
+      totalAvailable: usage.totalAvailable,
+      remaining: usage.remaining,
       currentPeriodEnd: subscription.currentPeriodEnd,
       role: membership?.role ?? 'member',
     };
@@ -169,10 +162,7 @@ export const setTier = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
 
     if (!subscription) throw new Error('Subscription not found');
 
@@ -195,10 +185,7 @@ export const addAddonUnits = internalMutation({
   handler: async (ctx, args) => {
     if (args.units <= 0) throw new Error('Units must be positive');
 
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
 
     if (!subscription) throw new Error('Subscription not found');
 
@@ -213,10 +200,7 @@ export const getByOrgId = internalQuery({
   args: { orgId: v.id('organizations') },
   returns: v.union(v.null(), subscriptionValidator),
   handler: async (ctx, args) => {
-    return await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    return getSubscriptionByOrgId(ctx, args.orgId);
   },
 });
 
@@ -401,10 +385,7 @@ export const updateAutoOverageSettings = mutation({
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
     const { user } = await requireOrgOwner(ctx);
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), user.orgId);
     if (!subscription) throw new Error('Subscription not found');
     if (subscription.tier !== 'pro') throw new Error('Auto-topup requires Pro');
     await ctx.db.patch(subscription._id, {
@@ -433,10 +414,7 @@ export const reserveAutoTopup = internalMutation({
     ctx,
     args,
   ): Promise<{ ok: true; idempotencyKey: string } | { ok: false; reason: string }> => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) return { ok: false, reason: 'subscription_not_found' };
     if (subscription.tier !== 'pro') return { ok: false, reason: 'not_pro' };
     if (!subscription.autoOverage) return { ok: false, reason: 'auto_topup_disabled' };
@@ -464,10 +442,7 @@ export const releaseAutoTopupReservation = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) return;
 
     await ctx.db.patch(subscription._id, {
@@ -635,10 +610,7 @@ export const setStripeCustomerId = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) throw new Error('Subscription not found');
     await ctx.db.patch(subscription._id, {
       stripeCustomerId: args.stripeCustomerId,
@@ -664,10 +636,7 @@ export const upsertStripeSubscriptionState = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) throw new Error('Subscription not found');
 
     // Cancel grace period scheduler when transitioning to active (try/catch: job may have already fired)
@@ -733,10 +702,7 @@ export const creditAddonPurchase = internalMutation({
       .first();
     if (existing) return;
 
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) throw new Error('Subscription not found');
 
     // For auto mode, reserveAutoTopup already checked the cap and reserved the spend.
@@ -774,10 +740,7 @@ export const revokeAddonPurchase = internalMutation({
       .first();
     if (!purchase) return;
 
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', purchase.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), purchase.orgId);
     if (!subscription) return;
 
     const newAddonUnits = Math.max(0, subscription.addonUnits - purchase.units);
@@ -791,10 +754,7 @@ export const revertToHobby = internalMutation({
   args: { orgId: v.id('organizations') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) return;
 
     // Cancel any pending grace->suspended scheduler before clearing the ID
@@ -852,10 +812,7 @@ export const scheduleGraceSuspension = internalMutation({
   args: { orgId: v.id('organizations') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) return;
     if (subscription.status !== 'grace') return;
     // Don't schedule if one is already pending
@@ -876,10 +833,7 @@ export const transitionGraceToSuspended = internalMutation({
   args: { orgId: v.id('organizations') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) return;
     if (subscription.status !== 'grace') return;
 

@@ -28,6 +28,7 @@ jobs:
       pricing: ${{ steps.filter.outputs.pricing }}
       agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
       agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
+      duplicates: ${{ steps.filter.outputs.duplicates }}
       rust: ${{ steps.filter.outputs.rust }}
       desktop: ${{ steps.filter.outputs.desktop }}
       root: ${{ steps.filter.outputs.root }}
@@ -80,6 +81,28 @@ jobs:
               - 'packages/logging/**'
               - 'packages/pricing/**'
               - 'packages/tinybird-client/**'
+            duplicates:
+              - '.jscpd.json'
+              - 'package.json'
+              - 'bun.lock'
+              - 'apps/**/*.ts'
+              - 'apps/**/*.tsx'
+              - 'apps/**/*.js'
+              - 'apps/**/*.jsx'
+              - 'apps/**/*.mjs'
+              - 'apps/**/*.cjs'
+              - 'packages/**/*.ts'
+              - 'packages/**/*.tsx'
+              - 'packages/**/*.js'
+              - 'packages/**/*.jsx'
+              - 'packages/**/*.mjs'
+              - 'packages/**/*.cjs'
+              - 'scripts/**/*.ts'
+              - 'scripts/**/*.tsx'
+              - 'scripts/**/*.js'
+              - 'scripts/**/*.jsx'
+              - 'scripts/**/*.mjs'
+              - 'scripts/**/*.cjs'
             rust:
               - '.github/workflows/ci.yml'
               - '.github/workflows/cli-release.yml'
@@ -107,6 +130,7 @@ jobs:
               - 'bun.lock'
               - 'turbo.json'
               - 'eslint.config.js'
+              - '.jscpd.json'
               - '.prettierrc'
               - '.prettierignore'
               - 'tsconfig.json'
@@ -177,6 +201,31 @@ jobs:
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0
+
+  duplicates:
+    name: Duplicate Code Check
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [changes]
+    if: needs.changes.outputs.duplicates == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check duplicate code
+        run: bun run duplicates:check
 
   utils:
     name: Utils Package
@@ -703,6 +752,7 @@ jobs:
       - changes
       - actionlint
       - tinybird-schema-check
+      - duplicates
       - utils
       - types
       - convex

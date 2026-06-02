@@ -1,5 +1,20 @@
-import { internalMutation, internalQuery } from '../_generated/server';
+import { internalMutation, internalQuery, type QueryCtx } from '../_generated/server';
 import { v } from 'convex/values';
+import type { Doc } from '../_generated/dataModel';
+
+interface StripeEventReadCtx {
+  db: QueryCtx['db'];
+}
+
+function getStripeEventByEventId(
+  ctx: StripeEventReadCtx,
+  eventId: string,
+): Promise<Doc<'stripeEvents'> | null> {
+  return ctx.db
+    .query('stripeEvents')
+    .withIndex('by_event_id', (q) => q.eq('eventId', eventId))
+    .first();
+}
 
 export const getByEventId = internalQuery({
   args: { eventId: v.string() },
@@ -18,10 +33,7 @@ export const getByEventId = internalQuery({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    return await ctx.db
-      .query('stripeEvents')
-      .withIndex('by_event_id', (q) => q.eq('eventId', args.eventId))
-      .first();
+    return getStripeEventByEventId(ctx, args.eventId);
   },
 });
 
@@ -36,10 +48,7 @@ export const startProcessing = internalMutation({
     eventDocId: v.id('stripeEvents'),
   }),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('stripeEvents')
-      .withIndex('by_event_id', (q) => q.eq('eventId', args.eventId))
-      .first();
+    const existing = await getStripeEventByEventId(ctx, args.eventId);
     if (existing) {
       if (existing.status === 'processed') {
         return { alreadyProcessed: true, eventDocId: existing._id };
@@ -75,10 +84,7 @@ export const markProcessed = internalMutation({
   args: { eventId: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('stripeEvents')
-      .withIndex('by_event_id', (q) => q.eq('eventId', args.eventId))
-      .first();
+    const existing = await getStripeEventByEventId(ctx, args.eventId);
     if (!existing) return;
     await ctx.db.patch(existing._id, {
       status: 'processed',
@@ -95,10 +101,7 @@ export const markFailed = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('stripeEvents')
-      .withIndex('by_event_id', (q) => q.eq('eventId', args.eventId))
-      .first();
+    const existing = await getStripeEventByEventId(ctx, args.eventId);
     if (!existing) return;
     await ctx.db.patch(existing._id, {
       status: 'failed',

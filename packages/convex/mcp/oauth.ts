@@ -39,10 +39,13 @@ async function fetchWithTimeout(url: string, options: RequestInit): Promise<Resp
   }
 }
 
-export async function exchangeAuth0Code(
-  code: string,
-  redirectUri: string,
-): Promise<Auth0TokenResponse> {
+interface Auth0ClientConfig {
+  domain: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+function getAuth0ClientConfig(): Auth0ClientConfig {
   const domain = process.env.AUTH0_DOMAIN;
   const clientId = process.env.AUTH0_CLIENT_ID;
   const clientSecret = process.env.AUTH0_CLIENT_SECRET;
@@ -51,17 +54,21 @@ export async function exchangeAuth0Code(
     throw new Error('Auth0 configuration missing');
   }
 
-  const tokenUrl = `https://${domain}/oauth/token`;
+  return { domain, clientId, clientSecret };
+}
 
+async function requestAuth0Token(
+  params: Record<string, string>,
+  failureLabel: string,
+): Promise<Auth0TokenResponse> {
+  const { domain, clientId, clientSecret } = getAuth0ClientConfig();
   const body = new URLSearchParams({
-    grant_type: 'authorization_code',
     client_id: clientId,
     client_secret: clientSecret,
-    code,
-    redirect_uri: redirectUri,
+    ...params,
   });
 
-  const response = await fetchWithTimeout(tokenUrl, {
+  const response = await fetchWithTimeout(`https://${domain}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
@@ -69,42 +76,34 @@ export async function exchangeAuth0Code(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Auth0 token exchange failed: ${response.status} - ${text}`);
+    throw new Error(`Auth0 token ${failureLabel} failed: ${response.status} - ${text}`);
   }
 
   return response.json();
 }
 
+export async function exchangeAuth0Code(
+  code: string,
+  redirectUri: string,
+): Promise<Auth0TokenResponse> {
+  return requestAuth0Token(
+    {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+    },
+    'exchange',
+  );
+}
+
 export async function refreshAuth0Token(refreshToken: string): Promise<Auth0TokenResponse> {
-  const domain = process.env.AUTH0_DOMAIN;
-  const clientId = process.env.AUTH0_CLIENT_ID;
-  const clientSecret = process.env.AUTH0_CLIENT_SECRET;
-
-  if (!domain || !clientId || !clientSecret) {
-    throw new Error('Auth0 configuration missing');
-  }
-
-  const tokenUrl = `https://${domain}/oauth/token`;
-
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken,
-  });
-
-  const response = await fetchWithTimeout(tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Auth0 token refresh failed: ${response.status} - ${text}`);
-  }
-
-  return response.json();
+  return requestAuth0Token(
+    {
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    },
+    'refresh',
+  );
 }
 
 export async function getAuth0UserInfo(accessToken: string): Promise<Auth0UserInfo> {

@@ -1,15 +1,8 @@
-import type { ModelPricing } from '@trace-flow/pricing';
-
-interface OpenRouterModel {
-  id: string;
-  pricing: {
-    prompt: string;
-    completion: string;
-    input_cache_read?: string;
-    input_cache_write?: string;
-    internal_reasoning?: string;
-  };
-}
+import {
+  convertOpenRouterModelPricing,
+  type ModelPricing,
+  type OpenRouterModel,
+} from '@trace-flow/pricing';
 
 interface OpenRouterModelsResponse {
   data: OpenRouterModel[];
@@ -38,37 +31,6 @@ async function fetchOpenRouterModels(): Promise<Map<string, OpenRouterModel>> {
   modelsCache = new Map(data.data.map((m): [string, OpenRouterModel] => [m.id, m]));
   cacheTimestamp = now;
   return modelsCache;
-}
-
-function convertPricing(orModel: OpenRouterModel): ModelPricing {
-  // OpenRouter returns prices as strings like "0.000003" (dollars per token)
-  // Convert to microdollars per million: price * 1_000_000 * 1_000_000
-  const promptCostPerMillion = Math.round(parseFloat(orModel.pricing.prompt) * 1_000_000_000_000);
-  const completionCostPerMillion = Math.round(
-    parseFloat(orModel.pricing.completion) * 1_000_000_000_000,
-  );
-
-  const cacheReadCostPerMillion = orModel.pricing.input_cache_read
-    ? Math.round(parseFloat(orModel.pricing.input_cache_read) * 1_000_000_000_000)
-    : undefined;
-
-  const cacheWriteCostPerMillion = orModel.pricing.input_cache_write
-    ? Math.round(parseFloat(orModel.pricing.input_cache_write) * 1_000_000_000_000)
-    : undefined;
-
-  const reasoningCostPerMillion = orModel.pricing.internal_reasoning
-    ? Math.round(parseFloat(orModel.pricing.internal_reasoning) * 1_000_000_000_000)
-    : undefined;
-
-  return {
-    promptCostPerMillion,
-    completionCostPerMillion,
-    cacheReadCostPerMillion,
-    cacheWriteCostPerMillion,
-    reasoningCostPerMillion,
-    updatedAt: Date.now(),
-    source: 'openrouter',
-  };
 }
 
 export async function fetchOpenRouterPricing(
@@ -101,7 +63,7 @@ export async function fetchOpenRouterPricing(
       return null;
     }
 
-    const pricing = convertPricing(orModel);
+    const pricing = convertOpenRouterModelPricing(orModel);
 
     // Cache the fetched pricing in KV for future requests (1 year TTL)
     const key = cacheKey ?? `pricing:openrouter:${model}`;

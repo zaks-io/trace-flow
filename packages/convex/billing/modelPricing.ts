@@ -6,7 +6,13 @@ import {
   mutation,
   query,
   type ActionCtx,
+  type MutationCtx,
 } from '../_generated/server';
+import {
+  convertOpenRouterModelRates,
+  parseOpenRouterModelId,
+  type OpenRouterModel,
+} from '@trace-flow/pricing';
 import { v } from 'convex/values';
 import { requireAuthenticated } from '../auth/auth';
 import { requireAdmin } from '../auth/users';
@@ -37,6 +43,31 @@ const pricingSourceValidator = v.union(
   v.literal('models.dev'),
 );
 
+type PricingSource = 'manual' | 'openrouter' | 'default' | 'models.dev';
+
+interface ContextTierPricing {
+  thresholdTokens: number;
+  promptCostPerMillion: number;
+  completionCostPerMillion: number;
+  cacheReadCostPerMillion?: number;
+  cacheWriteCostPerMillion?: number;
+  cacheWrite1hCostPerMillion?: number;
+  reasoningCostPerMillion?: number;
+}
+
+interface ModelPricingWrite {
+  provider: string;
+  model: string;
+  promptCostPerMillion: number;
+  completionCostPerMillion: number;
+  cacheReadCostPerMillion?: number;
+  cacheWriteCostPerMillion?: number;
+  cacheWrite1hCostPerMillion?: number;
+  reasoningCostPerMillion?: number;
+  contextTier?: ContextTierPricing;
+  source: PricingSource;
+}
+
 /** Shared upsert input — the writable pricing fields, reused by `upsert` and `upsertInternal`. */
 const pricingUpsertArgs = {
   provider: v.string(),
@@ -66,6 +97,34 @@ const modelPricingDoc = v.object({
   source: pricingSourceValidator,
   updatedAt: v.number(),
 });
+
+async function writeModelPricing(ctx: MutationCtx, args: ModelPricingWrite) {
+  const existing = await ctx.db
+    .query('modelPricing')
+    .withIndex('by_provider_model', (q) => q.eq('provider', args.provider).eq('model', args.model))
+    .first();
+
+  const data = {
+    provider: args.provider,
+    model: args.model,
+    promptCostPerMillion: args.promptCostPerMillion,
+    completionCostPerMillion: args.completionCostPerMillion,
+    cacheReadCostPerMillion: args.cacheReadCostPerMillion,
+    cacheWriteCostPerMillion: args.cacheWriteCostPerMillion,
+    cacheWrite1hCostPerMillion: args.cacheWrite1hCostPerMillion,
+    reasoningCostPerMillion: args.reasoningCostPerMillion,
+    contextTier: args.contextTier,
+    source: args.source,
+    updatedAt: Date.now(),
+  };
+
+  if (existing) {
+    await ctx.db.patch(existing._id, data);
+    return existing._id;
+  }
+
+  return ctx.db.insert('modelPricing', data);
+}
 
 export const list = query({
   args: {
@@ -126,37 +185,7 @@ export const upsert = mutation({
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
 
-    const existing = await ctx.db
-      .query('modelPricing')
-      .withIndex('by_provider_model', (q) =>
-        q.eq('provider', args.provider).eq('model', args.model),
-      )
-      .first();
-
-    const data = {
-      provider: args.provider,
-      model: args.model,
-      promptCostPerMillion: args.promptCostPerMillion,
-      completionCostPerMillion: args.completionCostPerMillion,
-      cacheReadCostPerMillion: args.cacheReadCostPerMillion,
-      cacheWriteCostPerMillion: args.cacheWriteCostPerMillion,
-      cacheWrite1hCostPerMillion: args.cacheWrite1hCostPerMillion,
-      reasoningCostPerMillion: args.reasoningCostPerMillion,
-      contextTier: args.contextTier,
-      source: args.source,
-      updatedAt: Date.now(),
-    };
-
-    if (existing) {
-      await ctx.db.patch(existing._id, data);
-      await ctx.scheduler.runAfter(0, internal.billing.pricingSync.syncToKV, {
-        provider: args.provider,
-        model: args.model,
-      });
-      return existing._id;
-    }
-
-    const id = await ctx.db.insert('modelPricing', data);
+    const id = await writeModelPricing(ctx, args);
     await ctx.scheduler.runAfter(0, internal.billing.pricingSync.syncToKV, {
       provider: args.provider,
       model: args.model,
@@ -169,33 +198,7 @@ export const upsertInternal = internalMutation({
   args: pricingUpsertArgs,
   returns: v.id('modelPricing'),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('modelPricing')
-      .withIndex('by_provider_model', (q) =>
-        q.eq('provider', args.provider).eq('model', args.model),
-      )
-      .first();
-
-    const data = {
-      provider: args.provider,
-      model: args.model,
-      promptCostPerMillion: args.promptCostPerMillion,
-      completionCostPerMillion: args.completionCostPerMillion,
-      cacheReadCostPerMillion: args.cacheReadCostPerMillion,
-      cacheWriteCostPerMillion: args.cacheWriteCostPerMillion,
-      cacheWrite1hCostPerMillion: args.cacheWrite1hCostPerMillion,
-      reasoningCostPerMillion: args.reasoningCostPerMillion,
-      contextTier: args.contextTier,
-      source: args.source,
-      updatedAt: Date.now(),
-    };
-
-    if (existing) {
-      await ctx.db.patch(existing._id, data);
-      return existing._id;
-    }
-
-    return await ctx.db.insert('modelPricing', data);
+    return writeModelPricing(ctx, args);
   },
 });
 
@@ -248,62 +251,8 @@ export const listAll = internalQuery({
   },
 });
 
-interface OpenRouterModel {
-  id: string;
-  pricing: {
-    prompt: string;
-    completion: string;
-    input_cache_read?: string;
-    input_cache_write?: string;
-    internal_reasoning?: string;
-  };
-}
-
 interface _OpenRouterModelsResponse {
   data: OpenRouterModel[];
-}
-
-function convertOpenRouterModel(orModel: OpenRouterModel): {
-  provider: string;
-  model: string;
-  promptCostPerMillion: number;
-  completionCostPerMillion: number;
-  cacheReadCostPerMillion?: number;
-  cacheWriteCostPerMillion?: number;
-  reasoningCostPerMillion?: number;
-} | null {
-  const [provider, ...modelParts] = orModel.id.split('/');
-  const modelName = modelParts.join('/');
-
-  if (!provider || !modelName) return null;
-
-  // Convert from per-token to per-million (microdollars)
-  // OpenRouter returns prices as strings like "0.000003" (dollars per token)
-  // We need microdollars per million: price * 1_000_000 * 1_000_000
-  const promptCostPerMillion = Math.round(parseFloat(orModel.pricing.prompt) * 1_000_000_000_000);
-  const completionCostPerMillion = Math.round(
-    parseFloat(orModel.pricing.completion) * 1_000_000_000_000,
-  );
-
-  const cacheReadCostPerMillion = orModel.pricing.input_cache_read
-    ? Math.round(parseFloat(orModel.pricing.input_cache_read) * 1_000_000_000_000)
-    : undefined;
-  const cacheWriteCostPerMillion = orModel.pricing.input_cache_write
-    ? Math.round(parseFloat(orModel.pricing.input_cache_write) * 1_000_000_000_000)
-    : undefined;
-  const reasoningCostPerMillion = orModel.pricing.internal_reasoning
-    ? Math.round(parseFloat(orModel.pricing.internal_reasoning) * 1_000_000_000_000)
-    : undefined;
-
-  return {
-    provider,
-    model: orModel.id,
-    promptCostPerMillion,
-    completionCostPerMillion,
-    cacheReadCostPerMillion,
-    cacheWriteCostPerMillion,
-    reasoningCostPerMillion,
-  };
 }
 
 export const importFromOpenRouter = action({
@@ -321,12 +270,12 @@ export const importFromOpenRouter = action({
     let imported = 0;
 
     for (const orModel of data.data) {
-      const converted = convertOpenRouterModel(orModel);
-      if (!converted) continue;
+      if (!parseOpenRouterModelId(orModel.id)) continue;
+      const converted = convertOpenRouterModelRates(orModel);
 
       await ctx.runMutation(internal.billing.modelPricing.upsertInternal, {
         provider: 'openrouter',
-        model: converted.model,
+        model: orModel.id,
         promptCostPerMillion: converted.promptCostPerMillion,
         completionCostPerMillion: converted.completionCostPerMillion,
         cacheReadCostPerMillion: converted.cacheReadCostPerMillion,
