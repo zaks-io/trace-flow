@@ -67,15 +67,11 @@ export function clampAnalyticsLimit(limit?: number): number {
   return Math.max(1, Math.min(limit ?? DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT));
 }
 
-export function clampLimit(
-  limit: number | undefined,
-  defaultLimit: number,
-  maxLimit: number,
-): number {
+function clampLimit(limit: number | undefined, defaultLimit: number, maxLimit: number): number {
   return Math.max(1, Math.min(limit ?? defaultLimit, maxLimit));
 }
 
-export interface OffsetPagination {
+interface OffsetPagination {
   limit: number;
   offset: number;
 }
