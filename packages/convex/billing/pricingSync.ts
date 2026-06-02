@@ -2,6 +2,59 @@ import { internalAction } from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
 
+interface PricingKvConfig {
+  apiToken: string;
+  namespaceUrl: string;
+}
+
+interface PricingKvRequest {
+  method: 'PUT' | 'DELETE';
+  body?: string;
+  failureLabel: string;
+  allowNotFound?: boolean;
+}
+
+function getPricingKvConfig(): PricingKvConfig {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  const namespaceId = process.env.CLOUDFLARE_PRICING_KV_NAMESPACE_ID;
+
+  if (!accountId || !apiToken || !namespaceId) {
+    throw new Error('Cloudflare pricing KV environment variables not set');
+  }
+
+  return {
+    apiToken,
+    namespaceUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values`,
+  };
+}
+
+function pricingKvKey(provider: string, model: string): string {
+  return `pricing:${provider}:${model}`;
+}
+
+async function requestPricingKv(
+  provider: string,
+  model: string,
+  request: PricingKvRequest,
+): Promise<void> {
+  const { apiToken, namespaceUrl } = getPricingKvConfig();
+  const url = `${namespaceUrl}/${encodeURIComponent(pricingKvKey(provider, model))}`;
+  const response = await fetch(url, {
+    method: request.method,
+    headers: {
+      Authorization: `Bearer ${apiToken}`,
+      ...(request.body ? { 'Content-Type': 'text/plain' } : {}),
+    },
+    body: request.body,
+  });
+
+  if (!response.ok && !(request.allowNotFound && response.status === 404)) {
+    const errorText = await response.text();
+    throw new Error(`Failed to ${request.failureLabel}: ${response.status} - ${errorText}`);
+  }
+}
+
 export const syncToKV = internalAction({
   args: {
     provider: v.string(),
@@ -15,17 +68,6 @@ export const syncToKV = internalAction({
     });
 
     if (!pricing) return null;
-
-    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
-    const namespaceId = process.env.CLOUDFLARE_PRICING_KV_NAMESPACE_ID;
-
-    if (!accountId || !apiToken || !namespaceId) {
-      throw new Error('Cloudflare pricing KV environment variables not set');
-    }
-
-    const key = `pricing:${args.provider}:${args.model}`;
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
 
     const value = JSON.stringify({
       promptCostPerMillion: pricing.promptCostPerMillion,
@@ -41,19 +83,11 @@ export const syncToKV = internalAction({
       source: pricing.source,
     });
 
-    const response = await fetch(url, {
+    await requestPricingKv(args.provider, args.model, {
       method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'text/plain',
-      },
       body: value,
+      failureLabel: 'sync pricing to KV',
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to sync pricing to KV: ${response.status} - ${errorText}`);
-    }
 
     return null;
   },
@@ -66,28 +100,11 @@ export const deleteFromKV = internalAction({
   },
   returns: v.null(),
   handler: async (_ctx, args) => {
-    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
-    const namespaceId = process.env.CLOUDFLARE_PRICING_KV_NAMESPACE_ID;
-
-    if (!accountId || !apiToken || !namespaceId) {
-      throw new Error('Cloudflare pricing KV environment variables not set');
-    }
-
-    const key = `pricing:${args.provider}:${args.model}`;
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
-
-    const response = await fetch(url, {
+    await requestPricingKv(args.provider, args.model, {
       method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-      },
+      failureLabel: 'delete pricing from KV',
+      allowNotFound: true,
     });
-
-    if (!response.ok && response.status !== 404) {
-      const errorText = await response.text();
-      throw new Error(`Failed to delete pricing from KV: ${response.status} - ${errorText}`);
-    }
 
     return null;
   },

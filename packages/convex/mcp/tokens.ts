@@ -1,7 +1,13 @@
 import { SignJWT, jwtVerify, importSPKI } from 'jose';
-import { internalMutation, internalQuery } from '../_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from '../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../_generated/api';
+import type { Doc, Id } from '../_generated/dataModel';
 import { sha256Hex } from '@trace-flow/utils';
 import {
   MCP_ACCESS_TOKEN_ALG,
@@ -13,6 +19,11 @@ import { getSigningKey } from './keys';
 
 const ACCESS_TOKEN_TTL_SECONDS = MCP_ACCESS_TOKEN_TTL_SECONDS;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+const oauthGrantResultValidator = v.union(
+  v.object({ error: v.string(), error_description: v.string() }),
+  v.object({ userId: v.id('users'), tokenId: v.string(), resource: v.string() }),
+);
 
 export type { AccessTokenPayload };
 
@@ -26,6 +37,64 @@ function getVerificationKey(publicKeyPem: string): Promise<CryptoKey> {
     };
   }
   return verificationKeyCache.key;
+}
+
+interface RefreshTokenReadCtx {
+  db: QueryCtx['db'];
+}
+
+interface RefreshTokenWriteCtx {
+  db: MutationCtx['db'];
+  scheduler: MutationCtx['scheduler'];
+}
+
+interface RefreshTokenInsert {
+  hashedTokenId: string;
+  userId: Id<'users'>;
+  clientId: string;
+  resource: string;
+  auth0RefreshToken: string;
+  expiresAt: number;
+}
+
+function refreshTokenExpiresAt(): number {
+  return Date.now() + REFRESH_TOKEN_TTL_MS;
+}
+
+async function getRefreshTokenByHash(
+  ctx: RefreshTokenReadCtx,
+  hashedTokenId: string,
+): Promise<Doc<'mcpRefreshTokens'> | null> {
+  return ctx.db
+    .query('mcpRefreshTokens')
+    .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashedTokenId))
+    .first();
+}
+
+async function getRefreshTokenByTokenId(
+  ctx: RefreshTokenReadCtx,
+  tokenId: string,
+): Promise<{ hashedTokenId: string; token: Doc<'mcpRefreshTokens'> | null }> {
+  const hashedTokenId = await sha256Hex(tokenId);
+  return { hashedTokenId, token: await getRefreshTokenByHash(ctx, hashedTokenId) };
+}
+
+async function scheduleRefreshTokenCleanup(
+  ctx: RefreshTokenWriteCtx,
+  hashedTokenId: string,
+  expiresAt: number,
+): Promise<void> {
+  await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
+    hashedTokenId,
+  });
+}
+
+async function insertRefreshTokenRecord(
+  ctx: RefreshTokenWriteCtx,
+  token: RefreshTokenInsert,
+): Promise<void> {
+  await ctx.db.insert('mcpRefreshTokens', token);
+  await scheduleRefreshTokenCleanup(ctx, token.hashedTokenId, token.expiresAt);
 }
 
 export async function createAccessToken(
@@ -79,19 +148,13 @@ export const createRefreshToken = internalMutation({
   handler: async (ctx, args): Promise<string> => {
     const tokenId = crypto.randomUUID();
     const hashedTokenId = await sha256Hex(tokenId);
-    const expiresAt = Date.now() + REFRESH_TOKEN_TTL_MS;
-
-    await ctx.db.insert('mcpRefreshTokens', {
+    await insertRefreshTokenRecord(ctx, {
       hashedTokenId,
       userId: args.userId,
       clientId: args.clientId,
       resource: args.resource,
       auth0RefreshToken: args.auth0RefreshToken,
-      expiresAt,
-    });
-
-    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
-      hashedTokenId,
+      expiresAt: refreshTokenExpiresAt(),
     });
 
     return tokenId;
@@ -115,11 +178,7 @@ export const getRefreshToken = internalQuery({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    const hashed = await sha256Hex(args.tokenId);
-    const token = await ctx.db
-      .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
-      .first();
+    const { token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
 
     if (!token) {
       return null;
@@ -137,11 +196,7 @@ export const deleteRefreshToken = internalMutation({
   args: { tokenId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
-    const hashed = await sha256Hex(args.tokenId);
-    const token = await ctx.db
-      .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
-      .first();
+    const { token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
 
     if (token) {
       await ctx.db.delete(token._id);
@@ -156,21 +211,15 @@ export const updateRefreshToken = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
-    const hashed = await sha256Hex(args.tokenId);
-    const token = await ctx.db
-      .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
-      .first();
+    const { hashedTokenId, token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
 
     if (token) {
-      const expiresAt = Date.now() + REFRESH_TOKEN_TTL_MS;
+      const expiresAt = refreshTokenExpiresAt();
       await ctx.db.patch(token._id, {
         auth0RefreshToken: args.auth0RefreshToken,
         expiresAt,
       });
-      await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
-        hashedTokenId: hashed,
-      });
+      await scheduleRefreshTokenCleanup(ctx, hashedTokenId, expiresAt);
     }
   },
 });
@@ -182,16 +231,9 @@ export const rotateRefreshToken = internalMutation({
     resource: v.string(),
     auth0RefreshToken: v.string(),
   },
-  returns: v.union(
-    v.object({ error: v.string(), error_description: v.string() }),
-    v.object({ userId: v.id('users'), tokenId: v.string(), resource: v.string() }),
-  ),
+  returns: oauthGrantResultValidator,
   handler: async (ctx, args) => {
-    const hashed = await sha256Hex(args.tokenId);
-    const token = await ctx.db
-      .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', hashed))
-      .first();
+    const { token } = await getRefreshTokenByTokenId(ctx, args.tokenId);
 
     if (
       !token ||
@@ -204,20 +246,15 @@ export const rotateRefreshToken = internalMutation({
 
     const tokenId = crypto.randomUUID();
     const hashedTokenId = await sha256Hex(tokenId);
-    const expiresAt = Date.now() + REFRESH_TOKEN_TTL_MS;
 
     await ctx.db.delete(token._id);
-    await ctx.db.insert('mcpRefreshTokens', {
+    await insertRefreshTokenRecord(ctx, {
       hashedTokenId,
       userId: token.userId,
       clientId: args.clientId,
       resource: args.resource,
       auth0RefreshToken: args.auth0RefreshToken,
-      expiresAt,
-    });
-
-    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
-      hashedTokenId,
+      expiresAt: refreshTokenExpiresAt(),
     });
 
     return { userId: token.userId, tokenId, resource: args.resource };
@@ -283,10 +320,7 @@ export const exchangeAuthCode = internalMutation({
     resource: v.string(),
     codeVerifier: v.string(),
   },
-  returns: v.union(
-    v.object({ error: v.string(), error_description: v.string() }),
-    v.object({ userId: v.id('users'), tokenId: v.string(), resource: v.string() }),
-  ),
+  returns: oauthGrantResultValidator,
   handler: async (ctx, args) => {
     const authCode = await ctx.db
       .query('mcpAuthCodes')
@@ -340,19 +374,14 @@ export const exchangeAuthCode = internalMutation({
     // Create refresh token
     const tokenId = crypto.randomUUID();
     const hashedTokenId = await sha256Hex(tokenId);
-    const expiresAt = Date.now() + REFRESH_TOKEN_TTL_MS;
 
-    await ctx.db.insert('mcpRefreshTokens', {
+    await insertRefreshTokenRecord(ctx, {
       hashedTokenId,
       userId: authCode.userId,
       clientId: authCode.clientId,
       resource: authCode.resource,
       auth0RefreshToken: authCode.auth0RefreshToken,
-      expiresAt,
-    });
-
-    await ctx.scheduler.runAt(expiresAt, internal.mcp.tokens.cleanupRefreshToken, {
-      hashedTokenId,
+      expiresAt: refreshTokenExpiresAt(),
     });
 
     return {
@@ -369,10 +398,7 @@ export const cleanupRefreshToken = internalMutation({
   args: { hashedTokenId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<void> => {
-    const token = await ctx.db
-      .query('mcpRefreshTokens')
-      .withIndex('by_token_id', (q) => q.eq('hashedTokenId', args.hashedTokenId))
-      .first();
+    const token = await getRefreshTokenByHash(ctx, args.hashedTokenId);
 
     if (token && token.expiresAt <= Date.now()) {
       await ctx.db.delete(token._id);
