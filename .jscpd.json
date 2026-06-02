@@ -1,0 +1,33 @@
+{
+  "threshold": 2.7,
+  "reporters": ["console", "ai"],
+  "format": ["typescript", "javascript"],
+  "minLines": 6,
+  "minTokens": 60,
+  "noTips": true,
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/coverage/**",
+    "**/.next/**",
+    "**/.open-next/**",
+    "**/.turbo/**",
+    "**/.wrangler/**",
+    "**/build/**",
+    "**/out/**",
+    "packages/sdk-tests/**",
+    "scripts/**/*smoke*",
+    "scripts/*smoke*",
+    "**/__snapshots__/**",
+    "**/__tests__/**",
+    "**/_generated/**",
+    "**/generated/**",
+    "**/*.d.ts",
+    "**/*.generated.*",
+    "**/*.gen.*",
+    "**/*.snap",
+    "**/*.spec.*",
+    "**/*.test.*",
+    "**/vitest.config.*"
+  ]
+}
