@@ -1,4 +1,5 @@
 import type { ToolCallResult } from '../protocol';
+import type { ToolCtx } from '../tinybird';
 
 // JSON formatting utilities
 
@@ -12,6 +13,12 @@ export function jsonReplacer(_key: string, value: unknown): unknown {
     return formatNumber(value);
   }
   return value;
+}
+
+export function jsonToolResult(result: unknown): ToolCallResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
+  };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -60,6 +67,84 @@ export function clampAnalyticsLimit(limit?: number): number {
   return Math.max(1, Math.min(limit ?? DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT));
 }
 
+export function clampLimit(
+  limit: number | undefined,
+  defaultLimit: number,
+  maxLimit: number,
+): number {
+  return Math.max(1, Math.min(limit ?? defaultLimit, maxLimit));
+}
+
+export interface OffsetPagination {
+  limit: number;
+  offset: number;
+}
+
+export function resolveOffsetPagination(
+  limit: number | undefined,
+  cursor: string | undefined,
+  defaultLimit: number,
+  maxLimit: number,
+): OffsetPagination {
+  const parsedOffset = cursor ? Number.parseInt(cursor, 10) : 0;
+  return {
+    limit: clampLimit(limit, defaultLimit, maxLimit),
+    offset: Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0,
+  };
+}
+
+export function offsetPaginationResult(
+  pagination: OffsetPagination,
+  rowCount: number,
+  totalCount: number,
+  options: { includeLimit?: boolean; total?: number } = {},
+): { has_more: boolean; next_cursor?: string; limit?: number; total?: number } {
+  const hasMore = totalCount > pagination.offset + rowCount;
+  return {
+    has_more: hasMore,
+    next_cursor: hasMore ? String(pagination.offset + rowCount) : undefined,
+    limit: options.includeLimit ? pagination.limit : undefined,
+    total: options.total,
+  };
+}
+
+export function offsetPipeParams(
+  startTimeNs: string,
+  pagination: OffsetPagination,
+): Record<string, string | number | undefined> {
+  return {
+    start_time_ns: startTimeNs,
+    limit: pagination.limit,
+    offset: pagination.offset,
+  };
+}
+
+export function addOptionalPipeParams(
+  target: Record<string, string | number | undefined>,
+  source: object,
+  keys: string[],
+): void {
+  const values = source as Record<string, unknown>;
+  for (const key of keys) {
+    const value = values[key];
+    if ((typeof value === 'string' && value.length > 0) || typeof value === 'number') {
+      target[key] = value;
+    }
+  }
+}
+
+export function tokenSummary(
+  promptTokens: number,
+  completionTokens: number,
+  totalTokens: number,
+): Record<string, number> | undefined {
+  const tokens: Record<string, number> = {};
+  if (promptTokens > 0) tokens.prompt = promptTokens;
+  if (completionTokens > 0) tokens.completion = completionTokens;
+  if (totalTokens > 0) tokens.total = totalTokens;
+  return Object.keys(tokens).length > 0 ? tokens : undefined;
+}
+
 export function splitPatterns(patterns: string[]): { exact: string[]; prefixes: string[] } {
   const exact: string[] = [];
   const prefixes: string[] = [];
@@ -71,6 +156,58 @@ export function splitPatterns(patterns: string[]): { exact: string[]; prefixes: 
     }
   }
   return { exact, prefixes };
+}
+
+export function addPatternParams(
+  params: Record<string, string | number | undefined>,
+  patterns: string[] | undefined,
+  exactParam: string,
+  prefixParam?: string,
+): void {
+  if (!patterns || patterns.length === 0) {
+    return;
+  }
+
+  const { exact, prefixes } = splitPatterns(patterns);
+  if (exact.length > 0) params[exactParam] = exact.join(',');
+  if (prefixParam && prefixes.length > 0) params[prefixParam] = prefixes.join(',');
+}
+
+export async function mintPipeReadToken(
+  ctx: ToolCtx,
+  apiKeyIds: string[],
+  retentionDays: number,
+  pipes: string | string[],
+): Promise<string> {
+  const resources = Array.isArray(pipes) ? pipes : [pipes];
+  return ctx.mintToken(
+    resources.map((resource) => ({ type: 'PIPES:READ', resource })),
+    apiKeyIds,
+    retentionDays,
+  );
+}
+
+interface MetricRow {
+  count: number;
+  duration_ms: number;
+  cost_usd: number;
+  tokens: number;
+}
+
+export function indexMetricRows<T extends MetricRow, K extends keyof T & string>(
+  rows: T[],
+  key: K,
+): Record<string, MetricRow> {
+  const indexed: Record<string, MetricRow> = {};
+  for (const row of rows) {
+    indexed[String(row[key])] = {
+      count: row.count,
+      duration_ms: row.duration_ms,
+      cost_usd: row.cost_usd,
+      tokens: row.tokens,
+    };
+  }
+  return indexed;
 }
 
 export function buildTimeRangeNs(

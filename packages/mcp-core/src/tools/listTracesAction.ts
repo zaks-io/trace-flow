@@ -1,12 +1,17 @@
 import type { ToolCallResult } from '../protocol';
 import {
-  jsonReplacer,
-  stripNulls,
   noApiKeysError,
   buildTimeRangeNs,
   DEFAULT_LIMIT,
   MAX_LIMIT,
   DEFAULT_HOURS,
+  addOptionalPipeParams,
+  jsonToolResult,
+  mintPipeReadToken,
+  offsetPipeParams,
+  offsetPaginationResult,
+  resolveOffsetPagination,
+  tokenSummary,
 } from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
 
@@ -36,11 +41,6 @@ interface FormattedTrace {
 }
 
 export function formatTraceRow(row: TraceRow): FormattedTrace {
-  const tokens: Record<string, number> = {};
-  if (row.prompt_tokens > 0) tokens.prompt = row.prompt_tokens;
-  if (row.completion_tokens > 0) tokens.completion = row.completion_tokens;
-  if (row.total_tokens > 0) tokens.total = row.total_tokens;
-
   return {
     trace_id: row.trace_id,
     timestamp: row.timestamp,
@@ -48,7 +48,7 @@ export function formatTraceRow(row: TraceRow): FormattedTrace {
     status: row.status,
     provider: row.provider,
     model: row.model,
-    tokens: Object.keys(tokens).length > 0 ? tokens : undefined,
+    tokens: tokenSummary(row.prompt_tokens, row.completion_tokens, row.total_tokens),
     cost_usd: row.cost_usd > 0 ? row.cost_usd : undefined,
   };
 }
@@ -74,46 +74,22 @@ export async function listTraces(
     return noApiKeysError();
   }
 
-  const token = await ctx.mintToken(
-    [{ type: 'PIPES:READ', resource: 'mcp_traces_list' }],
-    apiKeyIds,
-    retentionDays,
-  );
-
-  const limit = Math.max(1, Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
-  const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
-  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
+  const token = await mintPipeReadToken(ctx, apiKeyIds, retentionDays, 'mcp_traces_list');
+  const pagination = resolveOffsetPagination(params.limit, params.cursor, DEFAULT_LIMIT, MAX_LIMIT);
   const { startTimeNs } = buildTimeRangeNs(params.hours, DEFAULT_HOURS, retentionDays * 24);
 
-  const pipeParams: Record<string, string | number | undefined> = {
-    start_time_ns: startTimeNs,
-    limit,
-    offset,
-  };
-
-  if (params.provider) pipeParams.provider = params.provider;
-  if (params.model) pipeParams.model = params.model;
-  if (params.status) pipeParams.status = params.status;
-  if (params.sort_by) pipeParams.sort_by = params.sort_by;
-  if (params.order) pipeParams.order = params.order;
+  const pipeParams = offsetPipeParams(startTimeNs, pagination);
+  addOptionalPipeParams(pipeParams, params, ['provider', 'model', 'status', 'sort_by', 'order']);
 
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_traces_list', pipeParams);
 
   const totalCount = data.length > 0 ? (data[0] as unknown as TraceRow).total_count : 0;
-  const hasMore = totalCount > offset + data.length;
   const formattedTraces = data.map((row) => formatTraceRow(row as unknown as TraceRow));
-  const nextCursor = hasMore ? String(offset + data.length) : undefined;
 
   const result = {
     traces: formattedTraces,
-    pagination: {
-      has_more: hasMore,
-      next_cursor: nextCursor,
-      limit,
-    },
+    pagination: offsetPaginationResult(pagination, data.length, totalCount, { includeLimit: true }),
   };
 
-  return {
-    content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
-  };
+  return jsonToolResult(result);
 }

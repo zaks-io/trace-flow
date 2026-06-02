@@ -49,6 +49,10 @@ export interface CostBreakdown {
   totalCostMicrodollars: number;
 }
 
+export interface PricingStore {
+  get<T = unknown>(key: string, type: 'json'): Promise<T | null>;
+}
+
 /**
  * Extracts the model prefix by removing date suffixes (e.g., -20250929).
  * This allows pricing to be stored by model family rather than specific snapshots.
@@ -63,24 +67,24 @@ function extractModelPrefix(model: string): string | null {
 }
 
 export async function getPricing(
-  kv: KVNamespace,
+  kv: PricingStore,
   provider: string,
   model: string,
 ): Promise<ModelPricing | null> {
   // Try exact match first
   const exactKey = `pricing:${provider}:${model}`;
-  const exactMatch = await kv.get(exactKey, 'json');
+  const exactMatch = await kv.get<ModelPricing>(exactKey, 'json');
   if (exactMatch) {
-    return exactMatch as ModelPricing;
+    return exactMatch;
   }
 
   // Fall back to prefix match (without date suffix)
   const prefix = extractModelPrefix(model);
   if (prefix) {
     const prefixKey = `pricing:${provider}:${prefix}`;
-    const prefixMatch = await kv.get(prefixKey, 'json');
+    const prefixMatch = await kv.get<ModelPricing>(prefixKey, 'json');
     if (prefixMatch) {
-      return prefixMatch as ModelPricing;
+      return prefixMatch;
     }
   }
 

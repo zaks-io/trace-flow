@@ -221,6 +221,7 @@
         "@trace-flow/emails": "workspace:*",
         "@trace-flow/logging": "workspace:*",
         "@trace-flow/mcp-core": "workspace:*",
+        "@trace-flow/pricing": "workspace:*",
         "@trace-flow/tinybird-client": "workspace:*",
         "@trace-flow/types": "workspace:*",
         "@trace-flow/utils": "workspace:*",

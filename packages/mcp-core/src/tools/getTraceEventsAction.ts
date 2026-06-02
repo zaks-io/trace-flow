@@ -1,14 +1,16 @@
 import { GEN_AI } from '@trace-flow/otel-conventions';
 import type { ToolCallResult } from '../protocol';
 import {
-  jsonReplacer,
-  stripNulls,
   noApiKeysError,
   invalidTraceIdError,
   TRACE_ID_PATTERN,
-  splitPatterns,
   DEFAULT_EVENT_LIMIT,
   MAX_EVENT_LIMIT,
+  addPatternParams,
+  jsonToolResult,
+  mintPipeReadToken,
+  offsetPaginationResult,
+  resolveOffsetPagination,
 } from './shared';
 import { queryPipe, type ToolCtx } from '../tinybird';
 
@@ -108,31 +110,25 @@ export async function getTraceEvents(
     return invalidTraceIdError();
   }
 
-  const token = await ctx.mintToken(
-    [{ type: 'PIPES:READ', resource: 'mcp_trace_events' }],
-    apiKeyIds,
-    retentionDays,
+  const token = await mintPipeReadToken(ctx, apiKeyIds, retentionDays, 'mcp_trace_events');
+  const pagination = resolveOffsetPagination(
+    params.limit,
+    params.cursor,
+    DEFAULT_EVENT_LIMIT,
+    MAX_EVENT_LIMIT,
   );
-
-  const limit = Math.max(1, Math.min(params.limit ?? DEFAULT_EVENT_LIMIT, MAX_EVENT_LIMIT));
-  const parsedOffset = params.cursor ? Number.parseInt(params.cursor, 10) : 0;
-  const offset = Number.isFinite(parsedOffset) ? Math.max(0, parsedOffset) : 0;
 
   const pipeParams: Record<string, string | number | undefined> = {
     trace_id: params.trace_id,
-    limit,
-    offset,
+    limit: pagination.limit,
+    offset: pagination.offset,
   };
 
   if (params.span_id) {
     pipeParams.span_id = params.span_id;
   }
 
-  if (params.span_names && params.span_names.length > 0) {
-    const { exact, prefixes } = splitPatterns(params.span_names);
-    if (exact.length > 0) pipeParams.span_names = exact.join(',');
-    if (prefixes.length > 0) pipeParams.span_name_prefixes = prefixes.join(',');
-  }
+  addPatternParams(pipeParams, params.span_names, 'span_names', 'span_name_prefixes');
 
   if (params.event_names && params.event_names.length > 0) {
     pipeParams.event_names = params.event_names.join(',');
@@ -145,19 +141,13 @@ export async function getTraceEvents(
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_events', pipeParams);
 
   const totalCount = data.length > 0 ? (data[0] as unknown as EventRow).total_count : 0;
-  const hasMore = totalCount > offset + data.length;
   const formattedEvents = data.map((row) => formatEventRow(row as unknown as EventRow));
 
   const result = {
     trace_id: params.trace_id,
     events: formattedEvents,
-    pagination: {
-      has_more: hasMore,
-      next_cursor: hasMore ? String(offset + data.length) : undefined,
-    },
+    pagination: offsetPaginationResult(pagination, data.length, totalCount),
   };
 
-  return {
-    content: [{ type: 'text', text: JSON.stringify(stripNulls(result), jsonReplacer) }],
-  };
+  return jsonToolResult(result);
 }

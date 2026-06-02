@@ -4,6 +4,7 @@ import { requireAuthenticated } from '../auth/auth';
 import { getCurrentUser } from '../auth/users';
 import { internal } from '../_generated/api';
 import { TIER_CONFIG } from '@trace-flow/types';
+import { getCurrentBillingPeriod, getSubscriptionByOrgId, mutationReadCtx } from './currentPeriod';
 
 const usageDocValidator = v.union(
   v.object({
@@ -25,17 +26,7 @@ export const getCurrentUsage = query({
     await requireAuthenticated(ctx);
     const user = await getCurrentUser(ctx);
     if (!user?.orgId) return null;
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId!))
-      .first();
-    if (!subscription) return null;
-    return await ctx.db
-      .query('usage')
-      .withIndex('by_org_id_period', (q) =>
-        q.eq('orgId', user.orgId!).eq('periodStart', subscription.currentPeriodStart),
-      )
-      .first();
+    return (await getCurrentBillingPeriod(ctx, user.orgId))?.usage ?? null;
   },
 });
 
@@ -78,18 +69,7 @@ export const getForOrgInternal = internalQuery({
   args: { orgId: v.id('organizations') },
   returns: usageDocValidator,
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
-    if (!subscription) return null;
-
-    return await ctx.db
-      .query('usage')
-      .withIndex('by_org_id_period', (q) =>
-        q.eq('orgId', args.orgId).eq('periodStart', subscription.currentPeriodStart),
-      )
-      .first();
+    return (await getCurrentBillingPeriod(ctx, args.orgId))?.usage ?? null;
   },
 });
 
@@ -103,10 +83,7 @@ export const checkAutoTopup = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const subscription = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
-      .first();
+    const subscription = await getSubscriptionByOrgId(mutationReadCtx(ctx), args.orgId);
     if (!subscription) return;
     if (subscription.tier !== 'pro') return;
     if (!subscription.autoOverage) return;
