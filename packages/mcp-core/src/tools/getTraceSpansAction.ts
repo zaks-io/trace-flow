@@ -2,12 +2,11 @@ import type { ToolCallResult } from '../protocol';
 import {
   noApiKeysError,
   invalidTraceIdError,
-  traceNotFoundError,
   TRACE_ID_PATTERN,
   DEFAULT_SPAN_LIMIT,
   MAX_SPAN_LIMIT,
   addPatternParams,
-  jsonToolResult,
+  jsonReplacer,
   mintPipeReadToken,
   offsetPaginationResult,
   resolveOffsetPagination,
@@ -17,6 +16,18 @@ import { parseSpanRow, buildOutputSpan, type SpanRow } from '../helpers/getTrace
 
 interface SpanRowWithCount extends SpanRow {
   total_count: number;
+}
+
+interface TraceSpansResult {
+  trace_id: string;
+  spans: Record<string, unknown>[];
+  pagination: ReturnType<typeof offsetPaginationResult>;
+}
+
+function traceSpansResult(result: TraceSpansResult): ToolCallResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result, jsonReplacer) }],
+  };
 }
 
 interface GetTraceSpansParams {
@@ -89,7 +100,13 @@ export async function getTraceSpans(
   const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_detail', detailParams);
 
   if (data.length === 0) {
-    return traceNotFoundError(params.trace_id);
+    return traceSpansResult({
+      trace_id: params.trace_id,
+      spans: [],
+      pagination: offsetPaginationResult(pagination, 0, 0, {
+        total: cappedTopN ? 0 : undefined,
+      }),
+    });
   }
 
   const expand = new Set(params.expand ?? []);
@@ -123,5 +140,5 @@ export async function getTraceSpans(
     },
   };
 
-  return jsonToolResult(result);
+  return traceSpansResult(result);
 }
