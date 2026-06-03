@@ -118,8 +118,8 @@ A hidden desktop-ingest credential minted for **Trace Flow Desktop**, scoped to 
 _Avoid_: "desktop API key" when discussing the product surface.
 
 **Project**:
-A user-declared grouping that unifies all activity for one app or initiative — spanning both agent conversations (**Agent Sessions**) and proxied **LLM Requests** — so it can be viewed as a whole. May span many **API Keys**, Collector-originated **Agent Sessions**, and repositories. A Project groups data for viewing; it is not a property stamped onto the data. Not yet built.
-_Avoid_: confusing with `~/.claude/projects` (Claude Code's local per-workspace directory, which is closer to a single repository).
+A user-declared grouping that unifies all activity for one app or initiative — spanning both agent conversations (**Agent Sessions**) and proxied **LLM Requests** — so it can be viewed as a whole. May span many **API Keys**, Collector-originated **Agent Sessions**, and **Repos** (including fragmented **Provisional Repos**). A Project groups data for viewing; it is not a property stamped onto the data. It is the **stable trust anchor** above the messy **Repo** identity layer: untrustworthy or fragmented Repo data is associated to a Project by an explicit, reversible **Project Claim** rather than by trusting the underlying fingerprint. Not yet built.
+_Avoid_: confusing with `~/.claude/projects` (Claude Code's local per-workspace directory, which is closer to a single repository); treating Project membership as auto-derived from repo identity rather than from a **Project Claim**.
 
 **Subscription Tier**:
 `hobby` or `pro`. Drives `monthlyUnits`, overage pricing, **Retention Window**, and **Visibility Window**.
@@ -277,12 +277,12 @@ The first-class Trace Flow representation of a git repository. Identified by its
 _Avoid_: "worktree", "checkout", "path"; not a **Project** (which may span many Repos).
 
 **Provisional Repo**:
-A **Repo** created from a path/`cwd` fallback before Trace Flow has observed a normalized git remote. It keeps local-only and pre-push work visible and groupable, then can heal into a remote-backed **Repo** when a later observation from the same local path/worktree resolves a remote.
-_Avoid_: treating path identity as equivalent to remote identity; merging by repository name alone.
+A **Repo** identity derived from a path/`cwd` fallback because the Collector's sync layer could not resolve a normalized git remote at session time (`repo_source = 'path'`). It keeps local-only, pre-push, detached, and off-root work visible and groupable. A Provisional Repo's identity is `hash(path)`, so the same logical repository reached from a worktree, a renamed checkout, or a different absolute path produces _distinct_ Provisional Repos that do not merge. Provisional Repos are not automatically promoted to remote-backed **Repos**; they become trustworthy only by being claimed into a **Project**.
+_Avoid_: treating path identity as equivalent to remote identity; merging by repository name alone; assuming a Provisional Repo "heals" into a Repo on its own (no such promotion exists — claiming into a Project is the trust path).
 
 **Pull Request**:
-A reviewable unit of work in a **Repo**. The preferred grain for authoring-cost reporting because it can include many commits and represents the change as reviewed or merged.
-_Avoid_: using individual commits as the primary authoring-cost unit when a Pull Request exists.
+A reviewable unit of work in a **Repo**. A useful authoring-cost grain _when one **Agent Session** maps cleanly to one Pull Request_, because it can include many commits and represents the change as reviewed or merged. It is **not** a reliable grain for orchestrated workflows: when an orchestrator delegates across many **Agent Sessions** (dispatch, remote workers, review), spend smears across sessions that no single Pull Request can own, and a **Source** whose cost is unreported (e.g. `cursor`) leaves the per-Pull-Request total silently incomplete. For those workflows, report at the **Project** + daily aggregate altitude (**Repo Daily Authoring Cost**) and treat per-Pull-Request cost as a best-effort detail, never a total.
+_Avoid_: using individual commits as the primary authoring-cost unit when a Pull Request exists; presenting per-Pull-Request cost as a trustworthy total for orchestrated, multi-session work.
 
 **Pull Request Link**:
 An explicit link to a **Pull Request** in an **Agent Session** transcript. It is the v1 evidence Trace Flow trusts for **Pull Request Attribution** because it names both the code host repository and the pull request number.
@@ -299,6 +299,22 @@ _Avoid_: forcing every Agent Session into a Pull Request; splitting one Agent Se
 **Unattributed Repo Authoring Cost**:
 Agent-analytics cost known to belong to a **Repo** but not confidently assigned to a **Pull Request**. Expected for exploratory work, detached worktrees, local-only branches, and sessions before a pull request exists.
 _Avoid_: treating unattributed cost as an ingestion error.
+
+**Project Claim**:
+A user-declared, reversible association of a **Repo** (typically a **Provisional Repo**) to a **Project**. Identity is trustworthy only when it resolves to an unambiguous git remote; everything else stays **Unattributed** until a human asserts a Project Claim. A Claim is a rare, explicit, one-off act (not a heuristic), and it can be undone — a Repo can be unassociated or moved to a different Project. A Repo is atomic: a Claim attaches the whole Repo to one Project and never splits one Repo's cost across Projects. Claiming and unclaiming are bounded by **fact retention** — only days whose facts still exist (within the **EventAt** horizon) can be re-attributed; aged-out days are immutable.
+_Avoid_: auto-merging Repos by fuzzy signals (path stem, repo name) without a Claim; splitting one Repo across Projects; expecting to re-attribute data whose facts have expired.
+
+**Repo Daily Authoring Cost**:
+The estimated **Agent Session Authoring Cost** for one **Repo** on one day, summed across all **Sources**. The honest aggregate grain for orchestrated workflows: it requires no per-**Pull Request** or per-ticket allocation, so it is unaffected by spend smeared across an orchestrator's many **Agent Sessions**. Where a **Source**'s cost is unreported (`cursor`), the day's cost is flagged incomplete and that Source's _activity_ (session, message, and **Tool Event** counts) is reported instead of a fabricated cost.
+_Avoid_: presenting a day's cost as complete when a cost-unreported **Source** contributed; allocating a daily total down to individual **Pull Requests**.
+
+**Delivery Signal**:
+A per-**Repo**, per-day count of a delivery outcome pulled from an external issue/PR provider (e.g. GitHub Pull Requests merged or opened; Linear issues closed or moved). It is a count, not a cost, and carries no attribution to any **Agent Session**. Providers are interchangeable behind one count interface; a provider gap (API failure) is a visible missing day, never a silent zero.
+_Avoid_: joining a Delivery Signal to individual **Agent Sessions** or **Pull Request Authoring Cost**; treating an absent provider response as zero delivery.
+
+**Spend–Delivery Correlation**:
+The side-by-side presentation of **Repo Daily Authoring Cost** and one or more **Delivery Signals** on a shared `(Repo or Project, day)` axis. It is a _correlation of parallel trends_ — two independent series the viewer compares — never a causal or per-artifact claim. Rolls up from **Repo** to **Project** via **Project Claims**; **Unattributed** Repos render on their own until claimed.
+_Avoid_: stating or implying causation; allocating cost to the delivery artifacts it is shown beside; hiding the unattributed remainder.
 
 **Provider Usage Snapshot**:
 A point-in-time personal provider subscription, quota, credit, or rate-limit observation collected by **Trace Flow Desktop** through optional external tooling such as `codexbar` and uploaded with a **Collector Credential**. It is connected to a **User** inside an **Organization**, but not to a **Project**, **Repo**, **Agent Session**, or **Pull Request**. Provider account identity is grouped by a stable hash; human labels are redacted hints, such as `i***@zaks.io`, never full raw emails. Provider Usage Snapshots belong to the separate **Provider Usage Tracking** feature, not Collector v1.

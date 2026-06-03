@@ -2,7 +2,7 @@
  * Agent Collector ingest Worker. Authenticates the Collector Credential, enforces the compatibility
  * policy and per-org rate limit, re-redacts free-text fields, assembles canonical `*_pk` surrogates
  * + `repo_fingerprint`, claims first-writer session ownership, and enqueues sub-128 KiB messages for
- * the agent consumer (2c). See `docs/adr/agent-conversation-analytics.md` → "Transport".
+ * the agent consumer (2c). See `docs/adr/0012-agent-conversation-analytics.md` → "Transport".
  *
  * The bare `app` is exported for in-process tests (`app.fetch(req, env, ctx)` with stub bindings, the
  * only way to deterministically drive the RateLimit / Queue / Convex failure paths). The default

@@ -53,12 +53,12 @@ Rules:
 
 ## Authoritative Design Docs
 
-| Source                                                                         | Role                                                                       |
-| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| [`agent-conversation-analytics.md`](../../adr/agent-conversation-analytics.md) | Data model, tenancy, identity, pricing, and storage decisions.             |
-| [`trace-flow-desktop-collector.md`](../../adr/trace-flow-desktop-collector.md) | Desktop product design. Amended: CLI ships first as the production bridge. |
-| [`otto-extraction-reference.md`](../../adr/otto-extraction-reference.md)       | Reference map for vendored parser/sync code.                               |
-| [`runbook.md`](./runbook.md)                                                   | Production operations contract and current dev-only limitations.           |
+| Source                                                                                   | Role                                                                       |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [`0012-agent-conversation-analytics.md`](../../adr/0012-agent-conversation-analytics.md) | Data model, tenancy, identity, pricing, and storage decisions.             |
+| [`0015-trace-flow-desktop-collector.md`](../../adr/0015-trace-flow-desktop-collector.md) | Desktop product design. Amended: CLI ships first as the production bridge. |
+| [`0017-otto-extraction-reference.md`](../../adr/0017-otto-extraction-reference.md)       | Reference map for vendored parser/sync code.                               |
+| [`runbook.md`](./runbook.md)                                                             | Production operations contract and current dev-only limitations.           |
 
 ## Done
 
