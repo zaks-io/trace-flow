@@ -88,9 +88,9 @@ Mine the semantics and edge cases, not the persistence model. Trace Flow writes 
 
 ## Related Otto ADRs
 
-These Otto docs explain why the useful code is concentrated in Rust crates:
+These docs live in the **Otto source repo** (not this repo — the paths below are Otto-relative) and explain why the useful code is concentrated in Rust crates:
 
-- `docs/adr/0001-pivot-to-coding-agent-observability.md`
-- `docs/adr/0003-single-source-rust-parser.md`
-- `docs/adr/0004-flat-cli-command-surface.md`
-- `docs/adr/0006-clean-break-cli-config-compat.md`
+- Otto `docs/adr/0001-pivot-to-coding-agent-observability.md`
+- Otto `docs/adr/0003-single-source-rust-parser.md`
+- Otto `docs/adr/0004-flat-cli-command-surface.md`
+- Otto `docs/adr/0006-clean-break-cli-config-compat.md`
