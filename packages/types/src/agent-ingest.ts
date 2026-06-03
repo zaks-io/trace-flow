@@ -1,6 +1,6 @@
 /**
  * Wire contract for agent Collector ingest (see
- * `docs/adr/agent-conversation-analytics.md` → "Transport" and "Data model").
+ * `docs/adr/0012-agent-conversation-analytics.md` → "Transport" and "Data model").
  *
  * Two boundaries live here:
  *  1. `AgentIngestEnvelope` — what the Collector POSTs to the ingest Worker. It carries

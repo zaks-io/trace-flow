@@ -55,8 +55,8 @@ For agent workflow or Linear work, also read:
   with Tinybird tooling when the issue requires it.
 - `pipes/` contains Tinybird pipe SQL for dashboard, MCP, and alert queries.
 - `specs/architecture/data-model.md` explains the high-level data model.
-- `docs/adr/tinybird-analytics.md`, `docs/adr/otel-semantic-conventions.md`,
-  and `docs/adr/agent-conversation-analytics.md` constrain schema and query
+- `docs/adr/0009-tinybird-analytics.md`, `docs/adr/0005-otel-semantic-conventions.md`,
+  and `docs/adr/0012-agent-conversation-analytics.md` constrain schema and query
   changes.
 
 Tinybird changes are high risk. Check sorting keys, avoid unnecessary
@@ -118,7 +118,7 @@ path.
   body storage ADRs.
 - Auth, orgs, billing, or Tinybird JWTs: start in `packages/convex`, then
   `specs/integrations/auth0.md`, `specs/features/stripe-billing.md`, and
-  `docs/adr/jwt-tinybird-auth.md`.
+  `docs/adr/0002-jwt-tinybird-auth.md`.
 - Agent analytics: start in
   `docs/guides/agent-conversation-analytics/README.md`, then its roadmap, ADR,
   `apps/agent-ingest`, `apps/agent-consumer`, and `packages/collector-*`.
