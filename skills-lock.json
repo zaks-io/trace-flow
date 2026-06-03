@@ -1,53 +1,53 @@
 {
   "version": 1,
   "skills": {
-    "workflow-agent-implement": {
+    "ziw-code-review": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-agent-implement/SKILL.md",
-      "computedHash": "8e9f3af175a0e88a9f507ba82cbb2f9a7e1b3909d11449a698d200ed1edc0c35"
+      "skillPath": "skills/ziw-code-review/SKILL.md",
+      "computedHash": "5175046e22b0d5993eedc43b317e2e6cdd7899669ee7d4ed0326fda94338a9a7"
     },
-    "workflow-agent-orchestrator": {
+    "ziw-implement": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-agent-orchestrator/SKILL.md",
-      "computedHash": "0dff495633501299e498c4fc4b57b15f76e78d3c1be25a471ce92e79ede41e6d"
+      "skillPath": "skills/ziw-implement/SKILL.md",
+      "computedHash": "1f743db80ded4272a21ee0c678fd19b938907f9cfbba8ec4200f983e9822458f"
     },
-    "workflow-agent-review": {
+    "ziw-orchestrate": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-agent-review/SKILL.md",
-      "computedHash": "7d29a5acdca256697ed8266125661811ae9efce67e21893f475d3f2b2ff2f2ae"
+      "skillPath": "skills/ziw-orchestrate/SKILL.md",
+      "computedHash": "796dc0ac585e904ca05dc278b646e5cd225749e5ddb31ebed6794e5ad15a8b28"
     },
-    "workflow-code-review": {
+    "ziw-pr": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-code-review/SKILL.md",
-      "computedHash": "393f642e23d7c320c48c47e2ea4f15855c885a38256876127dba3e12997b737c"
+      "skillPath": "skills/ziw-pr/SKILL.md",
+      "computedHash": "a11dd3407475f33b22da04e68f7410da82db85b8f726a2918f01bd357f414ee0"
     },
-    "workflow-create-pr": {
+    "ziw-review": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-create-pr/SKILL.md",
-      "computedHash": "659f637de6fa0e34c08973663c04dfbdbe1932a26ff5ef16c3b43404ea8f8ccf"
+      "skillPath": "skills/ziw-review/SKILL.md",
+      "computedHash": "38d188485fb58a695e9498ded6ea335df7981beeffe2e7a7305968ebd17e3891"
     },
-    "workflow-issue-triage": {
+    "ziw-setup": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-issue-triage/SKILL.md",
-      "computedHash": "e7dcc424ccd588069ccadfeb6d6895e5ae8a5d331c93708f47d8b4d6ee083885"
+      "skillPath": "skills/ziw-setup/SKILL.md",
+      "computedHash": "51c86dab48e1718742fdbce884518380e09bfb75ea330cd045d2eef617e6ca22"
     },
-    "workflow-secret-redaction": {
+    "ziw-to-issues": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-secret-redaction/SKILL.md",
-      "computedHash": "e29e4865c984fbb2ae45504694fd737048c2fa50ec6bf9a460bac03d15b92652"
+      "skillPath": "skills/ziw-to-issues/SKILL.md",
+      "computedHash": "db2971f0d57f2bfd7745ba2f931d38bf2bb840943c1c94d25311b1a71d298a17"
     },
-    "workflow-setup": {
+    "ziw-triage": {
       "source": "zaks-io/skills",
       "sourceType": "github",
-      "skillPath": "skills/workflow-setup/SKILL.md",
-      "computedHash": "5ae9b2a213cb3bd878d46f0f2e4cc7ea00214b537ee4ced0449fa91925327cd8"
+      "skillPath": "skills/ziw-triage/SKILL.md",
+      "computedHash": "f9b3d0aa6bd8b6a6388287d8aa446967ad1b7ccc20eb5db1ebf8722acd08c0b1"
     }
   }
 }

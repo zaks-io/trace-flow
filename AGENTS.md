@@ -102,14 +102,15 @@ reloads the files.
 
 ### Workflow skills
 
-Workflow logic lives in the centrally-managed `workflow-*` org skills (pinned in
+Workflow logic lives in the centrally-managed `ziw-*` org skills (pinned in
 `skills-lock.json`). Repo-specific values live in
 `docs/agents/workflow/config.md` — read it before using any workflow skill.
-Core skills: `workflow-agent-orchestrator` (orchestration),
-`workflow-agent-implement` (one issue → PR), `workflow-agent-review`
-(independent PR + main-drift review), `workflow-issue-triage` (tracker cleanup),
-`workflow-code-review` (shared review gate), `workflow-create-pr` (PR creation),
-`workflow-secret-redaction` (redact before reading secret files).
+Core skills: `ziw-orchestrate` (orchestration),
+`ziw-implement` (one issue → PR), `ziw-review`
+(independent PR + main-drift review), `ziw-triage` (tracker cleanup),
+`ziw-to-issues` (spec/epic → dependency-ordered tickets),
+`ziw-code-review` (shared review gate), `ziw-pr` (PR creation),
+`ziw-setup` (repo workflow config).
 
 Shared workflow docs:
 
@@ -123,7 +124,7 @@ Shared workflow docs:
 
 ### Code review
 
-Review happens **locally first** with `workflow-code-review` before any commit
+Review happens **locally first** with `ziw-code-review` before any commit
 or PR. It should load `docs/agents/review-invariants.md` for the Trace Flow
 gotchas (streams, `waitUntil`, queue `ack`, Tinybird/Convex schema, redaction
 boundary, required bindings, R2 keys) and the CodeRabbit escalation rubric.

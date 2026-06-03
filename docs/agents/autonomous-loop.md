@@ -48,7 +48,7 @@ Workers should:
    branch name when the orchestrator did not assign a branch.
 5. Implement only the stated scope.
 6. Run ticket-specific checks first, then broader checks as needed.
-7. Run or request `workflow-code-review` before PR handoff.
+7. Run or request `ziw-code-review` before PR handoff.
 8. Open a ready-for-review PR, link the Linear issue, and move the issue to
    `In Review`.
 
