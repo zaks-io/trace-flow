@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-28
 
-Workflow lookup table for the `workflow-*` skills. Repo-specific values live here;
+Workflow lookup table for the `ziw-*` skills. Repo-specific values live here;
 workflow logic lives in the centrally-managed org skills pinned by `skills-lock.json`.
 
 ## Verification
@@ -101,16 +101,16 @@ workflow logic lives in the centrally-managed org skills pinned by `skills-lock.
 - Claude Code symlinks: `.claude/skills/<name>` → `../../.agents/skills/<name>`
 - Claude Code verification: `ls -la .claude/skills` resolves all entries
 - Review model policy: strongest available tier for auth, secrets, schema, queue, stream, public contracts, destructive data; fast models fine for scoped implementation
-- Agent Orchestrator: `workflow-agent-orchestrator`
-- Agent Review: `workflow-agent-review`
-- Agent Implement: `workflow-agent-implement`
+- Agent Orchestrator: `ziw-orchestrate`
+- Agent Review: `ziw-review`
+- Agent Implement: `ziw-implement`
 
 ## Pull Requests
 
 - PR title: Conventional Commits (`feat(scope): …`, `fix(...)`, `chore(...)`), squash-merged with `(#NN)`
 - PR body: summary, linked Linear issue (`TRA-NNN`), checks run, review verdict
 - Required checks: `bun run ci:check` / GitHub Actions CI
-- Code review: `workflow-code-review` (local-first); repo invariants in `docs/agents/review-invariants.md`
+- Code review: `ziw-code-review` (local-first); repo invariants in `docs/agents/review-invariants.md`
 - CodeRabbit: on-demand only (auto + incremental disabled in `.coderabbit.yaml`); escalate per `review-invariants.md` rubric
 - Issue update: attach PR to Linear issue, move to `In Review`
 - Merge authority: human only
@@ -133,7 +133,7 @@ workflow logic lives in the centrally-managed org skills pinned by `skills-lock.
 
 See `docs/agents/review-invariants.md` — CF Workers stream/`tee()`/`waitUntil`, queue `ack`,
 Tinybird/Convex schema and auth, secret-redaction boundary, required bindings, R2 key format,
-and the CodeRabbit escalation rubric. `workflow-code-review` should load it for this repo.
+and the CodeRabbit escalation rubric. `ziw-code-review` should load it for this repo.
 
 ## Unknowns
 

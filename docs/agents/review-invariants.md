@@ -1,6 +1,6 @@
 # Trace Flow Review Invariants
 
-Repo-specific review rules for `workflow-code-review` (the org skill's bug taxonomy is
+Repo-specific review rules for `ziw-code-review` (the org skill's bug taxonomy is
 generic; these are the traps that have actually bitten this codebase). Load this alongside
 the skill's checklist when reviewing Trace Flow diffs or PRs.
 

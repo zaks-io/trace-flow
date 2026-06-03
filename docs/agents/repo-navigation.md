@@ -84,7 +84,7 @@ sync with `packages/otel-conventions`.
 - `.codex/` contains Codex project configuration and hooks.
 - `.cursor/` contains Cursor Background Agent environment and rules.
 
-The `workflow-*` skills are centrally managed and version-pinned in `skills-lock.json`. After
+The `ziw-*` skills are centrally managed and version-pinned in `skills-lock.json`. After
 editing agent workflow files, confirm `.claude/skills/<name>` still resolves to
 `.agents/skills/<name>` (e.g. `ls -la .claude/skills`).
 

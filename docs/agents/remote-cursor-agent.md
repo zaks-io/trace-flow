@@ -36,17 +36,18 @@ Canonical skill files live under `.agents/skills`, and `.claude/skills` links
 to those directories for Claude-compatible runtimes. Remote environments should
 preserve those links.
 
-- `.agents/skills/workflow-agent-implement`
-- `.agents/skills/workflow-agent-orchestrator`
-- `.agents/skills/workflow-agent-review`
-- `.agents/skills/workflow-code-review`
-- `.agents/skills/workflow-create-pr`
-- `.agents/skills/workflow-issue-triage`
-- `.agents/skills/workflow-secret-redaction`
+- `.agents/skills/ziw-implement`
+- `.agents/skills/ziw-orchestrate`
+- `.agents/skills/ziw-review`
+- `.agents/skills/ziw-code-review`
+- `.agents/skills/ziw-pr`
+- `.agents/skills/ziw-triage`
+- `.agents/skills/ziw-to-issues`
+- `.agents/skills/ziw-setup`
 
 Read `docs/agents/workflow/config.md` first for repo-specific values. Use
-`workflow-agent-implement` for implementation. Before opening a PR, run or
-request `workflow-code-review` as a read-only review pass; it should load
+`ziw-implement` for implementation. Before opening a PR, run or
+request `ziw-code-review` as a read-only review pass; it should load
 `docs/agents/review-invariants.md` for Trace Flow invariants. Use CodeRabbit
 only when the local review recommends escalation or the change is high risk:
 auth, authorization, secrets, Tinybird or Convex schema, destructive data
