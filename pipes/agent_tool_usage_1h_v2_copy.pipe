@@ -3,7 +3,8 @@ DESCRIPTION >
     the target with rebuilt bucket rows for the recent window, so stale
     bucket/dimension rows are removed when base facts dedupe or dimensions heal.
     Parameters allow an explicit repair window; scheduled runs default to the last
-    72 hours.
+    72 hours with the lower bound snapped to the hour, so the first included
+    bucket is complete.
 
 NODE rollup
 SQL >
@@ -14,7 +15,7 @@ SQL >
         {{ Int32(rebuild_hours, 72) }} AS rebuild_hours,
         toDateTime64(now(), 3) AS rebuilt_at,
         if(end_ms = 0, rebuilt_at, fromUnixTimestamp64Milli(end_ms)) AS rebuild_end_dt,
-        if(start_ms = 0, rebuild_end_dt - toIntervalHour(rebuild_hours), fromUnixTimestamp64Milli(start_ms)) AS rebuild_start_dt
+        toStartOfHour(if(start_ms = 0, rebuild_end_dt - toIntervalHour(rebuild_hours), fromUnixTimestamp64Milli(start_ms))) AS rebuild_start_dt
     SELECT
         toStartOfHour(toDateTime(EventAt)) AS BucketStart,
         OrgId,
