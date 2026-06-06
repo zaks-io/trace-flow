@@ -185,6 +185,8 @@ function jsonResponse(body: unknown, status = 200, headers?: Record<string, stri
   });
 }
 
+app.get('/healthz', (c) => c.json({ status: 'ok' }));
+
 app.get(PROTECTED_RESOURCE_PATH, (c) =>
   c.json({
     resource: mcpResourceUrl(c.req.raw),

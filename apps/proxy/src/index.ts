@@ -56,6 +56,8 @@ app.doc('/openapi.json', {
 app.post('/v1/traces', handleOTLPTraces);
 app.openAPIRegistry.registerPath(otlpTracesRoute);
 
+app.get('/healthz', (c) => c.json({ status: 'ok' }));
+
 app.all('*', async (c) => {
   const validateResult = await validateRequest(c);
   if (validateResult.kind === 'reject') return validateResult.response;

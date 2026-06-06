@@ -79,6 +79,8 @@ app.use('*', async (c, next) => {
   c.executionCtx.waitUntil(logger.flush());
 });
 
+app.get('/healthz', (c) => c.json({ status: 'ok' }));
+
 app.route('/', tinybirdProxy);
 
 app.get('/bodies/:requestId', async (c) => {
