@@ -1,0 +1,24 @@
+DESCRIPTION >
+    Hourly rolling snapshots of Tool Event mix and outcomes, by org/source/tool/
+    command_family/repo. The copy pipe replaces this target with the current rebuild
+    window, so stale bucket/dimension rows disappear when noisy base facts dedupe or
+    dimensions heal.
+
+SCHEMA >
+    `BucketStart` DateTime,
+    `OrgId` String,
+    `source` LowCardinality(String),
+    `tool_name` LowCardinality(String),
+    `command_family` LowCardinality(String),
+    `repo_fingerprint` String,
+    `EventCount` UInt64,
+    `SuccessCount` UInt64,
+    `FailureCount` UInt64,
+    `UnknownCount` UInt64,
+    `DurationMsSum` UInt64,
+    `RebuiltAt` DateTime64(3)
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "OrgId, BucketStart, source, tool_name, command_family, repo_fingerprint"
+ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
+ENGINE_TTL "BucketStart + toIntervalYear(1)"

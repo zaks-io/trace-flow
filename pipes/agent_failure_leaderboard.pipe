@@ -1,10 +1,9 @@
 DESCRIPTION >
     Failure leaderboard: ranks (tool_name, command_family) by failure rate and
-    event volume over a window. Lambda over `agent_tool_usage_1h` + the live tail of
-    `agent_tool_events FINAL`: the watermark is the rollup's latest bucket start
-    (max(BucketStart)); the rollup serves hours strictly below it, the base branch serves
-    at/after it (incl. the latest partial hour, live), so a stale or partial rollup can never
-    hide recent failures. The union is re-aggregated by (tool_name, command_family).
+    event volume over a window. Lambda over `agent_tool_usage_1h_v2` replacement
+    snapshots + base `agent_tool_events FINAL`: snapshots serve buckets inside
+    [min(BucketStart), max(BucketStart)), while base FINAL serves older history and
+    the live tail. The union is re-aggregated by (tool_name, command_family).
     Counts are exact either way (the tool rollup holds only count/sum states, no HLL).
     `failure_rate = failure / (success + failure)`; `unknown` is counted in
     `event_count` but excluded from the denominator (ADR "Failure semantics"). A display
@@ -19,10 +18,8 @@ SQL >
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(start_ms = 0, toDateTime64(now() - toIntervalDay(7), 3), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
-        -- Lambda watermark = rollup's latest bucket start: rollup serves hours strictly below it,
-        -- the base branch serves at/after it (incl. the latest partial hour). Empty rollup ->
-        -- epoch -> base serves everything.
-        (SELECT max(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
+        (SELECT min(BucketStart) FROM agent_tool_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS rollup_min,
+        (SELECT max(BucketStart) FROM agent_tool_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
     SELECT
         tool_name,
         command_family,
@@ -39,12 +36,13 @@ SQL >
         SELECT
             tool_name,
             command_family,
-            countMerge(EventCount) AS event_count,
-            sumMerge(SuccessCount) AS success_count,
-            sumMerge(FailureCount) AS failure_count,
-            sumMerge(UnknownCount) AS unknown_count
-        FROM agent_tool_usage_1h
-        WHERE BucketStart < rollup_watermark
+            sum(EventCount) AS event_count,
+            sum(SuccessCount) AS success_count,
+            sum(FailureCount) AS failure_count,
+            sum(UnknownCount) AS unknown_count
+        FROM agent_tool_usage_1h_v2
+        WHERE BucketStart >= rollup_min
+            AND BucketStart < rollup_watermark
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -70,7 +68,7 @@ SQL >
             countIf(status = 'failure') AS failure_count,
             countIf(status = 'unknown') AS unknown_count
         FROM agent_tool_events FINAL
-        WHERE EventAt >= rollup_watermark
+        WHERE (EventAt < rollup_min OR EventAt >= rollup_watermark)
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= start_dt
             AND EventAt < end_dt

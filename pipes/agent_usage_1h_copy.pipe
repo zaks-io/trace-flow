@@ -4,7 +4,8 @@ DESCRIPTION >
     target so a re-parse or replay can never leave a stale bucket. Reads the
     direct-message rows of the view (subagent fallback usage is uncosted and surfaces
     only in agent_sessions coverage), so CostUsd agrees with agent_sessions by
-    construction. Hourly cadence (not the proxy's 10-min) sized to the one-year fact TTL.
+    construction. Legacy full-table read cache retained as a low-frequency safety net;
+    the dashboard reads agent_usage_1h_v2 for normal traffic.
 
 NODE rollup
 SQL >
@@ -29,5 +30,5 @@ SQL >
 
 TYPE COPY
 TARGET_DATASOURCE agent_usage_1h
-COPY_SCHEDULE */10 * * * *
+COPY_SCHEDULE 3 3 * * *
 COPY_MODE replace

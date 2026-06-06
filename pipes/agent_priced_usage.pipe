@@ -1,7 +1,7 @@
 DESCRIPTION >
     Canonical Agent Session Authoring Cost view: one row per billable model-usage
     record, each counted exactly once. This is the single place the subagent dedup
-    rule lives (ADR "Cost and pricing"); agent_sessions, agent_usage_1h/_1d, and PR
+    rule lives (ADR "Cost and pricing"); agent_sessions, agent_usage_1h_v2/_1d_v2, and PR
     authoring-cost all read this pipe so they agree by construction. Generic pipe (no
     TYPE) — Tinybird Forward's replacement for include files, referenced by name from
     the copy pipes.

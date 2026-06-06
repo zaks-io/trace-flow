@@ -2,7 +2,8 @@ DESCRIPTION >
     Daily rollup of direct Agent Message usage and cost. Same shape as
     agent_usage_1h_copy with a day-truncated BucketStart, over the canonical
     agent_priced_usage view. COPY_MODE replace rebuilds the whole target each run.
-    Staggered 15 min after the hourly copy to avoid concurrent full-table scans.
+    Legacy full-table read cache retained as a low-frequency safety net; the dashboard
+    reads agent_usage_1d_v2 for normal traffic.
 
 NODE rollup
 SQL >
@@ -27,5 +28,5 @@ SQL >
 
 TYPE COPY
 TARGET_DATASOURCE agent_usage_1d
-COPY_SCHEDULE 2-59/10 * * * *
+COPY_SCHEDULE 13 3 * * *
 COPY_MODE replace

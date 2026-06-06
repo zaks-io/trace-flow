@@ -1,11 +1,45 @@
 DESCRIPTION >
-    Low-frequency full rebuild of the agent_sessions aggregate from base FINAL via the
-    canonical agent_priced_usage view, so session cost stays consistent with
-    agent_usage_* and the PR cost path by construction. A separate on-demand recent
-    repair copy is available for explicit hot repairs. COPY_MODE replace swaps the whole
-    table, removing sessions that disappear after source dedupe or parser fixes.
-    Token/cost columns come from agent_priced_usage; tool/file/PR counts join from their
-    base tables.
+    On-demand affected-session repair for the agent_sessions aggregate. The copy finds
+    sessions touched by the recent EventAt window, rebuilds those sessions from base
+    FINAL via the canonical agent_priced_usage view, and appends replacement rows.
+    agent_sessions uses ReplacingMergeTree(IngestedAt), so the newest row wins for the
+    same (OrgId, session_pk). The daily agent_sessions_copy full replace removes any
+    stale rows that disappear entirely after source dedupe or parser fixes.
+
+NODE affected_sessions
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        {{ Int32(rebuild_hours, 72) }} AS rebuild_hours,
+        toDateTime64(now(), 3) AS rebuilt_at,
+        if(end_ms = 0, rebuilt_at, fromUnixTimestamp64Milli(end_ms)) AS rebuild_end_dt,
+        if(start_ms = 0, rebuild_end_dt - toIntervalHour(rebuild_hours), fromUnixTimestamp64Milli(start_ms)) AS rebuild_start_dt
+    SELECT DISTINCT OrgId, session_pk
+    FROM (
+        SELECT OrgId, session_pk
+        FROM agent_messages FINAL
+        WHERE EventAt >= rebuild_start_dt AND EventAt < rebuild_end_dt
+
+        UNION ALL
+
+        SELECT OrgId, session_pk
+        FROM agent_tool_events FINAL
+        WHERE EventAt >= rebuild_start_dt AND EventAt < rebuild_end_dt
+
+        UNION ALL
+
+        SELECT OrgId, session_pk
+        FROM agent_file_events FINAL
+        WHERE EventAt >= rebuild_start_dt AND EventAt < rebuild_end_dt
+
+        UNION ALL
+
+        SELECT OrgId, session_pk
+        FROM agent_pull_request_links FINAL
+        WHERE EventAt >= rebuild_start_dt AND EventAt < rebuild_end_dt
+    )
 
 NODE session_usage
 SQL >
@@ -42,7 +76,8 @@ SQL >
             CAST(NULL AS Nullable(Float64)),
             CAST(sum(ifNull(cost_usd, 0.)) AS Nullable(Float64))
         ) AS cost_usd
-    FROM agent_priced_usage
+    FROM agent_priced_usage AS u
+    INNER JOIN affected_sessions AS a USING (OrgId, session_pk)
     GROUP BY OrgId, session_pk
 
 NODE session_tools
@@ -53,6 +88,7 @@ SQL >
         toUInt32(count()) AS tool_event_count,
         toUInt32(countIf(status = 'failure')) AS failure_count
     FROM agent_tool_events FINAL
+    INNER JOIN affected_sessions AS a USING (OrgId, session_pk)
     GROUP BY OrgId, session_pk
 
 NODE session_files
@@ -62,6 +98,7 @@ SQL >
         session_pk,
         toUInt32(count()) AS file_event_count
     FROM agent_file_events FINAL
+    INNER JOIN affected_sessions AS a USING (OrgId, session_pk)
     GROUP BY OrgId, session_pk
 
 NODE session_prs
@@ -71,11 +108,13 @@ SQL >
         session_pk,
         if(uniqExact(url) = 1, any(url), '') AS primary_pull_request_url
     FROM agent_pull_request_links FINAL
+    INNER JOIN affected_sessions AS a USING (OrgId, session_pk)
     WHERE url != ''
     GROUP BY OrgId, session_pk
 
 NODE assemble
 SQL >
+    WITH toDateTime64(now(), 3) AS rebuilt_at
     SELECT
         u.OrgId AS OrgId,
         u.session_pk AS session_pk,
@@ -90,7 +129,7 @@ SQL >
         u.StartedAt AS StartedAt,
         u.LastEventAt AS LastEventAt,
         u.VendorStartedAt AS VendorStartedAt,
-        u.IngestedAt AS IngestedAt,
+        rebuilt_at AS IngestedAt,
         u.git_branch AS git_branch,
         u.git_head_sha AS git_head_sha,
         ifNull(p.primary_pull_request_url, '') AS primary_pull_request_url,
@@ -114,5 +153,4 @@ SQL >
 
 TYPE COPY
 TARGET_DATASOURCE agent_sessions
-COPY_SCHEDULE 1 4 * * *
-COPY_MODE replace
+COPY_MODE append

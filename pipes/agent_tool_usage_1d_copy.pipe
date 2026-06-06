@@ -4,10 +4,10 @@ DESCRIPTION >
     rebuilds the whole target each run. Success/Failure/Unknown kept separate so
     failure_rate can exclude unknown from the denominator while still counting it.
     Tool-event mix is not a cost surface, so this copy reads base FINAL directly rather
-    than agent_priced_usage. Staggered to :50 — clear of every other agent copy that
-    scans agent_tool_events: the hourly tool copy (:30) and agent_sessions_copy (:45) —
-    and of the usage copies (:00 hourly, :15 daily) — to avoid concurrent full-table
-    scans of agent_tool_events.
+    than agent_priced_usage. Staggered after the other legacy daily full-table copies to
+    avoid concurrent full-table scans of agent_tool_events.
+    Legacy full-table read cache retained as a low-frequency safety net; the dashboard
+    reads agent_tool_usage_1d_v2 for normal traffic.
 
 NODE rollup
 SQL >
@@ -28,5 +28,5 @@ SQL >
 
 TYPE COPY
 TARGET_DATASOURCE agent_tool_usage_1d
-COPY_SCHEDULE 6-59/10 * * * *
+COPY_SCHEDULE 33 3 * * *
 COPY_MODE replace

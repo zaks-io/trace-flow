@@ -130,6 +130,52 @@ consumer uses, and never on the client/collector path. The token resolves to `tr
 script refuses to deploy anywhere else. The local build/test steps need no token. When adding or
 changing a pipe, add a matching `tests/<pipe>.yaml` so the PR gate verifies its output.
 
+### Agent rollup v2 rollout
+
+`agent_usage_*_v2` and `agent_tool_usage_*_v2` are temporary sidecar read caches for the
+rolling-snapshot rollout. Deploy them through the normal PR/merge Tinybird schema path. Empty v2
+tables are safe: endpoint lambdas read base `FINAL` outside the populated snapshot bounds.
+
+After merge, allow scheduled copies to populate naturally, or run an approved production warmup:
+
+```sh
+# Explicit production data operation; run only after approval.
+tb --cloud copy run agent_usage_1h_v2_copy --wait --mode replace
+tb --cloud copy run agent_tool_usage_1h_v2_copy --wait --mode replace
+tb --cloud copy run agent_usage_1d_v2_copy --wait --mode replace
+tb --cloud copy run agent_tool_usage_1d_v2_copy --wait --mode replace
+```
+
+Verify before calling the rollout healthy:
+
+- v2 datasources have expected row counts and bucket bounds.
+- v2 snapshot totals match raw base `FINAL` for the same window.
+- changed endpoints return data for a real org and match raw-base totals where exact.
+- copy-job `virtual_cpu_time_microseconds` and rows/bytes read are materially lower over a full day.
+- `agent_sessions` remains canonical after the daily cleanup (`count() = uniqExact(session_pk)`).
+
+Do not schedule `agent_sessions_recent_copy`; it is an on-demand repair tool only. Dev verification
+showed the realistic 72-hour repair still read more than enough rows to erase the CPU win.
+
+### Removing `_v2`
+
+Remove `_v2` only after the sidecar rollout has passed production parity and CPU checks for at
+least one full day. Use a separate PR because this is a destructive derived-cache migration.
+
+1. Confirm no endpoint still depends on legacy unsuffixed aggregate-state tables.
+2. Delete the legacy unsuffixed derived-cache datasources and copy pipes:
+   `agent_usage_1h`, `agent_usage_1d`, `agent_tool_usage_1h`, `agent_tool_usage_1d`, and their copy
+   pipes. These are read caches, not source-of-truth facts.
+3. Recreate the unsuffixed names with the v2 `MergeTree` schemas and rolling `COPY_MODE replace`
+   copy logic.
+4. Switch endpoints from `_v2` names back to canonical unsuffixed names.
+5. Seed canonical copy windows in production with approved copy runs.
+6. Verify parity and endpoint health again.
+7. Delete the temporary `_v2` datasources and copy pipes.
+
+Done: production has no `_v2` Tinybird resources, endpoints read canonical rollup names, raw fact
+tables are untouched, and copy-job CPU remains at the reduced level.
+
 **Break-glass (manual fallback only):** if CI is unavailable, deploy from a local `tb` cloud login.
 This is the opt-in escape hatch, not the normal path:
 
