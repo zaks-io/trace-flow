@@ -382,6 +382,12 @@ All deterministic, zero tuning. The research note's "failing above baseline" det
 
 `agent_tool_usage_1h` is logically keyed on `BucketStart` (hour), `OrgId`, `source`, `tool_name`, `command_family`, and `repo_fingerprint`, with counts for success/failure/unknown and summed duration. The sorting key orders dimensions from low to high cardinality, so the high-cardinality `repo_fingerprint` hash comes last. Whether it is materialized or computed at query time is an implementation choice, but materialized rows are rebuilt by a whole-target `COPY_MODE replace` from base `FINAL`, never appended per replay.
 
+Post-launch product signals are tracked in
+[`signal-catalog.md`](../guides/agent-conversation-analytics/signal-catalog.md). That catalog separates
+high-confidence signals such as runaway Agent Sessions, cache-read pressure, tool failure categories,
+file hotspots, and Pull Request Link coverage from weaker or non-actionable signals. Product surfaces
+must preserve those confidence labels instead of turning exploratory correlations into claims.
+
 ### Trust boundary
 
 Trusted in v1: deduped counts, windowed trends, source attribution, remote-resolved repo attribution (`repo_source = remote`), deterministic rankings.

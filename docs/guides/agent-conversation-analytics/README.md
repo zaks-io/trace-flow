@@ -53,12 +53,14 @@ Rules:
 
 ## Authoritative Design Docs
 
-| Source                                                                                   | Role                                                                       |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [`0012-agent-conversation-analytics.md`](../../adr/0012-agent-conversation-analytics.md) | Data model, tenancy, identity, pricing, and storage decisions.             |
-| [`0015-trace-flow-desktop-collector.md`](../../adr/0015-trace-flow-desktop-collector.md) | Desktop product design. Amended: CLI ships first as the production bridge. |
-| [`0017-otto-extraction-reference.md`](../../adr/0017-otto-extraction-reference.md)       | Reference map for vendored parser/sync code.                               |
-| [`runbook.md`](./runbook.md)                                                             | Production operations contract and current dev-only limitations.           |
+| Source                                                                                                               | Role                                                                       |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [`0012-agent-conversation-analytics.md`](../../adr/0012-agent-conversation-analytics.md)                             | Data model, tenancy, identity, pricing, and storage decisions.             |
+| [`0015-trace-flow-desktop-collector.md`](../../adr/0015-trace-flow-desktop-collector.md)                             | Desktop product design. Amended: CLI ships first as the production bridge. |
+| [`0017-otto-extraction-reference.md`](../../adr/0017-otto-extraction-reference.md)                                   | Reference map for vendored parser/sync code.                               |
+| [`0019-agent-analytics-derived-signal-read-models.md`](../../adr/0019-agent-analytics-derived-signal-read-models.md) | Derived signal read models for dashboard and MCP guidance.                 |
+| [`runbook.md`](./runbook.md)                                                                                         | Production operations contract and current dev-only limitations.           |
+| [`signal-catalog.md`](./signal-catalog.md)                                                                           | Evidence-based signal confidence, non-signals, and parser gaps.            |
 
 ## Done
 
@@ -68,3 +70,5 @@ The docs are correct when a reader can answer:
 - What is still dev-only?
 - What work remains before production launch?
 - Which Linear ticket owns each production gate?
+- Which agent analytics signals are trustworthy, directional, or too weak to productize?
+- Why dashboard and MCP guidance must read bounded derived signal models instead of raw facts?
