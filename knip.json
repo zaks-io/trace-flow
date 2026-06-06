@@ -7,7 +7,7 @@
     ".claude/.agents/skills/**",
     "apps/desktop/ui/**"
   ],
-  "ignoreBinaries": ["wrangler"],
+  "ignoreBinaries": ["wrangler", "tb"],
   "ignoreDependencies": ["cloudflare"],
   "workspaces": {
     "packages/convex": {
