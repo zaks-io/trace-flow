@@ -24,6 +24,9 @@ Last updated: YYYY-MM-DD
 - Package manager:
 - Install:
 - Full local gate:
+- Local gate cache policy:
+- CI env passthrough:
+- Coverage and secret-scan scope:
 - Focused checks:
 - Build:
 - Generated artifacts:
@@ -63,11 +66,17 @@ Last updated: YYYY-MM-DD
 - Active states: In Progress, Blocked, In Review, Changes Requested, Ready to Merge
 - Done state: Done
 - Status transition owner: Issue Triage may reconcile verified stale states and move requested intake cleanup to ready state; Agent Orchestrator owns active workflow transitions
+- Code-host issue sync policy: for Linear + GitHub, assume linked tickets and PRs
+  are synced when both exist; Linear may advance ticket states from PR status, so
+  refresh both before manual state repair
 - Readiness labels: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix
 - Readiness label policy:
   - ready-for-agent: no further human refinement is needed before agent handoff; does not mean unblocked or startable; remove when the issue moves to Done
   - needs-info:
   - ready-for-human:
+- Readiness-label query policy: queries for ready-for-agent, ready-for-human,
+  or equivalent attention labels exclude the configured Done state unless the
+  user explicitly asks to audit or repair done-ticket cleanup
 - Worker environment labels:
 - Worker environment label policy:
   - remote-cursor: approved to run in the remote Cursor environment; does not mean unblocked or startable
@@ -90,6 +99,9 @@ Last updated: YYYY-MM-DD
 - Priority policy:
 - Dependency policy:
 - Dependency graph mechanism: tracker relationship/blocker field, or configured body shape
+- Auto-Done integration policy: whether PR links can move issues to Done, and
+  how Orchestrator verifies full scope before leaving multi-PR or partial-scope
+  issues Done
 - File footprint convention: where To Issues records predicted files/packages per slice
 - Review-debt footprint convention: where Agent Review or triage records likely
   files/packages for review-created `kind-slice` tickets before Orchestrator can
@@ -102,12 +114,29 @@ Last updated: YYYY-MM-DD
 
 - Worker delegation paths: local-worktree, issue-assigned, or both
 - Default worker path:
-- Parallelism policy:
-- Concurrency cap: max workers dispatched at once (default 3 if unset)
+- Capacity policy:
+- Active PR/preview cap: max active delivery slots (default 3 if unset). Count
+  repo-level open PRs, active PR-scoped previews, and implementation dispatches
+  that have not yet produced a PR
+- Cap count policy: count each open PR once, add active previews that are not
+  clearly linked to an already counted PR, then add unreturned implementation
+  dispatches. Obey any stricter preview-provider or worker-session limit
+- Capacity drain policy: when active delivery slots are at or over cap,
+  Orchestrator advances, merges, routes fixes, cleans up previews, or escalates
+  existing PRs and previews before dispatching new implementation work
+- PR closure guard: capacity pressure is not a closure reason. Orchestrator may
+  close PRs only with refreshed code-host and tracker evidence of duplicate,
+  explicitly canceled or abandoned, already-terminal, or security/policy-required
+  work. Draft, active, recently updated, or unclear-ownership PRs stay open and
+  become capacity blockers or active work to advance. PR age, draft status, and
+  active-delivery pressure are not abandonment evidence
 - Stuck-worker timeout: ticks or wall-clock with no branch/PR/worker signal before nudge, re-dispatch, or escalation
+- Duplicate worker or PR policy: idempotency key, session-handle source, and how
+  to choose a canonical PR when one dispatch creates more than one session
 - Attempt cap: implement+review attempts on one ticket before the thrash circuit breaker escalates
 - Required checks for merge: the CI checks that define green for the integrate gate
 - Auto-merge risk tiers: which risk tiers Orchestrator may auto-merge vs route to human merge
+- Merge method: squash, merge commit, rebase merge, or repo-specific command
 - Post-merge preparation: install, build, generated-artifact, or dependency refresh needed before local post-merge checks are trustworthy
 - Post-merge check: command or signal that confirms the default branch is healthy after merge, if any
 - Authoritative issue state:
@@ -115,6 +144,9 @@ Last updated: YYYY-MM-DD
 - Authoritative check state:
 - Authoritative deploy state:
 - Orchestrator mutation authority:
+- Single-ticket one-off policy: whether a direct user request for one issue
+  grants mutation authority to orchestrate only that issue through configured
+  states, including Done when merge and verification evidence exists
 - Orchestrator recurring mechanism: Claude Code `/loop`, schedule, or wake-up
   timer; Codex automations, either cron automations or heartbeat automations;
   exact configured mechanism or "none"
@@ -129,11 +161,13 @@ Last updated: YYYY-MM-DD
   ticket through implementation, PR, review, and merge, and repairs routine label,
   status, route, handoff, and review-evidence mismatches from current evidence
 - Completely-blocked stop policy: stop the recurring orchestrator run for the
-  scoped queue when no startable tickets, PRs to advance, stuck workers to nudge,
-  checks to rerun or route, stale metadata repairs, or in-flight work can still
-  produce signal
+  scoped queue when no startable tickets, PRs or previews to advance, stuck
+  workers to nudge, checks to rerun or route, stale metadata repairs, or
+  in-flight work can still produce signal
 - Friction-log ticket: dedicated ticket ID, parked out of the work queue, for orchestrator friction comments
 - Delivery metrics: merge rate, first-pass check rate, review rework, stuck workers, human escalations, and agent cost when available
+- Capacity metrics: open PRs, active previews, active delivery slots, and
+  remaining headroom at start and end of orchestration runs
 - Handoff format:
 
 ## Agent Access
@@ -144,6 +178,8 @@ Last updated: YYYY-MM-DD
 - Issue-assigned continuation replies: reply into the agent-session thread (its thread-root comment's parentId); top-level issue comments are not continuation unless verified here. For Linear + Cursor this is the "agent session" thread; record the session handle (such as the cursor.com/agents/bc-id URL)
 - Issue-assigned liveness signals: session reply, branch, PR, check activity, or provider-specific signal that proves the worker is alive
 - Issue-assigned stuck-worker policy: nudge the existing continuation target before re-delegating unless current evidence proves the session cannot continue
+- Issue-assigned duplicate-dispatch policy: check for multiple session handles,
+  branches, or PRs for the same issue before assigning again
 - Delegation probe policy: never mutate real implementation issues
 - Claude:
 - Claude Code source of truth:
@@ -184,6 +220,9 @@ Last updated: YYYY-MM-DD
 - Development backing services:
 - Preview: PR-scoped unless this repo says otherwise
 - Preview purpose:
+- Preview provider cap:
+- Preview cleanup policy: how to close stale or orphaned previews before new work
+  is dispatched
 - Production: explicit approval required
 - Production forbidden without approval:
 - Hosted checks allowed without approval:
@@ -239,9 +278,15 @@ ticket moves to Done. Worker environment labels such as `remote-cursor` should
 answer "is this issue allowed to run in that configured environment?" They must
 not be used as dependency, status, or scheduling signals.
 
+The tracker query contract should exclude the configured Done state from
+readiness-label queues such as `ready-for-agent` and `ready-for-human`. Done
+cleanup still removes stale readiness labels when a Done ticket is touched, but
+the normal queue should not load terminal tickets just to rediscover that label
+drift.
+
 Issue-assigned worker config should be stable enough for Orchestrator to act
 without probing real work. Record the configured worker path, environment labels
 or fields, environment approval labels, delegation tool or field, known agent
-names or IDs when verified, and the parallelism policy. If the tool cannot
+names or IDs when verified, and the capacity policy. If the tool cannot
 expose assignable agents through a read-only query, record that unknown instead
 of forcing Orchestrator to discover it by assignment.

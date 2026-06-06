@@ -45,8 +45,12 @@ Last updated: 2026-06-01
 - Intake states: Triage, Backlog
 - Active states: In Progress, Blocked, In Review, Changes Requested, Ready to Merge
 - Done state: Done
+- Code-host issue sync policy: GitHub PR links and Linear tickets are synced when
+  both exist; Linear may auto-advance ticket state from PR status
 - Kind labels: kind-spec, kind-epic, kind-slice (single-select; only kind-slice dispatchable)
 - Readiness labels: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix
+- Readiness-label query policy: label queries for ready-for-agent or
+  ready-for-human exclude state:Done unless explicitly auditing Done cleanup
 - Worker environment labels: remote-cursor (approved to run in remote Cursor)
 - Repo-route label: <org>/example-app (REQUIRED before issue-assigned delegation;
   tells Cursor which GitHub repo to clone)
@@ -61,7 +65,14 @@ Last updated: 2026-06-01
 
 - Worker delegation paths: issue-assigned (Cursor), local-worktree
 - Default worker path: issue-assigned (Cursor)
-- Concurrency cap: 3 concurrent Cursor agents
+- Active PR/preview cap: 3 active delivery slots. Count repo-level open PRs,
+  active PR-scoped previews, and Cursor dispatches that have not yet returned a
+  PR
+- Cap count policy: count each open PR once, add active previews that are not
+  clearly linked to an already counted PR, then add unreturned Cursor
+  dispatches. Do not double-count a normal linked PR+preview
+- Capacity drain policy: when the cap is full, review, merge, close, or escalate
+  existing PRs/previews before assigning more Cursor work
 - Stuck-worker timeout: no branch/PR/agent-thread reply within <N> min -> direct
   thread nudge, then escalate or re-delegate only if the session cannot continue
 - Attempt cap: 3 implement+review cycles before the thrash breaker escalates
@@ -78,7 +89,12 @@ Last updated: 2026-06-01
 - Authoritative issue state: Linear
 - Authoritative PR state: GitHub
 - Merge authority: orchestrator for LOW/MEDIUM green PRs; human for HIGH
+- Single-ticket one-off policy: a direct user request for one Linear issue grants
+  authority to orchestrate only that issue through configured states, including
+  Done when merge and verification evidence exists
 - Friction-log ticket: <parked Linear ticket id, out of the work queue>
+- Capacity metrics: open PRs, active previews, active delivery slots, and
+  remaining headroom at start and end of orchestration runs
 
 ## Agent Access
 
@@ -104,6 +120,11 @@ Last updated: 2026-06-01
 ## Environments
 
 - Local: self-contained unless this repo says otherwise
+- Preview: PR-scoped Cursor/GitHub preview environment
+- Preview provider cap: 3 active previews
+- Preview cleanup policy: close verified duplicate PRs or terminate orphan
+  previews before assigning more work; never close draft or in-progress PRs only
+  to free capacity
 - Production: explicit approval required
 - Hosted checks allowed without approval: <list or none>
 - Hosted checks requiring approval: <list>
