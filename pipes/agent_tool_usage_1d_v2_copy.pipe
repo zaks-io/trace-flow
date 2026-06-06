@@ -2,7 +2,8 @@ DESCRIPTION >
     Rolling daily replacement snapshots for Tool Event outcomes. The copy replaces
     the target with rebuilt day rows for the recent window, so stale day/dimension rows
     are removed when base facts dedupe or dimensions heal. Parameters allow an explicit
-    repair window; scheduled runs default to the last 45 days.
+    repair window; scheduled runs default to the last 45 days with the lower bound
+    snapped to the day, so the first included bucket is complete.
 
 NODE rollup
 SQL >
@@ -13,7 +14,7 @@ SQL >
         {{ Int32(rebuild_days, 45) }} AS rebuild_days,
         toDateTime64(now(), 3) AS rebuilt_at,
         if(end_ms = 0, rebuilt_at, fromUnixTimestamp64Milli(end_ms)) AS rebuild_end_dt,
-        if(start_ms = 0, rebuild_end_dt - toIntervalDay(rebuild_days), fromUnixTimestamp64Milli(start_ms)) AS rebuild_start_dt
+        toStartOfDay(if(start_ms = 0, rebuild_end_dt - toIntervalDay(rebuild_days), fromUnixTimestamp64Milli(start_ms))) AS rebuild_start_dt
     SELECT
         toStartOfDay(toDateTime(EventAt)) AS BucketStart,
         OrgId,

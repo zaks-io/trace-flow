@@ -146,6 +146,10 @@ tb --cloud copy run agent_usage_1d_v2_copy --wait --mode replace
 tb --cloud copy run agent_tool_usage_1d_v2_copy --wait --mode replace
 ```
 
+The copy pipes snap the lower rebuild bound to the target grain (hour or day). The upper bound remains
+`now`, so the current partial bucket exists only as the endpoint high-water mark and is excluded from
+snapshot reads.
+
 Verify before calling the rollout healthy:
 
 - v2 datasources have expected row counts and bucket bounds.
