@@ -36,6 +36,11 @@ when the tracker label group does not.
 - `kind-slice`: a one-PR ticket. The only kind a worker runs. Only `kind-slice`
   is startable; the orchestrator hard-refuses to dispatch a container.
 
+`kind-slice` work should close in one PR. If a plan needs scaffold, CI gate,
+data migration, preview flip, and final wiring, To Issues splits those into
+separate slices under a container so the first linked PR cannot falsely close the
+whole scope.
+
 ## Agent Suitability
 
 Agent delegation should follow task type, risk, and verification quality. Good
@@ -76,16 +81,27 @@ domain behavior, and performance work without benchmarks.
   (Claude Code schedule, `/loop`, or wake-up timer; Codex automations, either
   cron automations or heartbeat automations) and never needs a human to
   re-trigger a pass. Each tick wakes light, rebuilds the queue from systems of
-  record, acts on a bounded slice, persists only the ledger and checkpoint, and
-  sleeps only when future external signal can still arrive.
+  record, refreshes the repo-level open PR and preview footprint, acts on a
+  bounded slice, persists only the ledger and checkpoint, and sleeps only when
+  future external signal can still arrive.
+- The active PR/preview cap protects delivery capacity, not worker count. Open
+  PRs, active PR-scoped previews, and implementation dispatches that have not yet
+  produced a PR consume capacity. When the cap is full, Orchestrator advances,
+  merges, routes fixes, cleans up previews, or escalates existing PRs/previews
+  before dispatching new work. It closes PRs only when refreshed code-host and
+  tracker evidence satisfies the PR closure guard; draft or in-progress PRs are
+  never closed just to make room. Age, draft status, and capacity pressure are
+  not abandonment evidence.
 - If the refreshed scope is completely blocked, Orchestrator stops the recurring
   loop for that scope instead of waking forever. Completely blocked means there
-  are no startable tickets, returned PRs to advance, stuck workers to nudge,
+  are no startable tickets, PRs or previews to advance, stuck workers to nudge,
   failed checks to rerun or route, stale metadata repairs, or in-flight work that
   can still produce signal. The blocked report names each blocker, next owner,
   and the condition that would make the scope runnable again.
 - Review and integrate are steps the orchestrator calls inside a tick, not loops.
   To Issues and triage are front-loaded steps the user runs before orchestration.
+- Integrate merges through the configured code-host method only and runs the
+  configured post-merge preparation before judging the default branch.
 
 ## Self-Healing
 
@@ -120,6 +136,21 @@ evidence, set repo-route metadata, or mark a PR ready-for-review are workflow
 repairs. Orchestrator should fix them from tracker, PR, check, and config
 evidence and keep going instead of escalating them.
 
+Before selecting new startable work, Orchestrator checks the repo-level active
+delivery footprint against the configured active PR/preview cap. If open PRs or
+active previews already fill the cap, it must drain those first by advancing,
+merging, routing fixes, cleaning up previews, or escalating exact blockers.
+Outside-scope PRs and previews still consume repo capacity; if Orchestrator lacks
+authority to change them, it reports a capacity blocker instead of dispatching
+more work. It must not close a draft, active, recently updated, or
+unclear-ownership PR merely to reduce the footprint.
+
+A direct user request to handle one ticket is delegated authority to orchestrate
+that ticket only. The agent should move that one issue through configured states
+as evidence allows, including `Done` after merge, post-merge check, synced state
+refresh, and full-scope verification. It must not use a one-off request as
+permission to work the wider queue.
+
 It can be invoked for explicit tickets, a tracker filter, a project, a
 milestone, a label, one pass, or an `until clear` target. `Clear` means every
 issue in scope has a truthful next state and owner: implemented, delegated,
@@ -127,6 +158,12 @@ ready for review, ready to merge, blocked, needs human input, or terminal. It
 does not mean implementing vague future work without triage. If every scoped
 issue is blocked and no orchestration action remains, the loop stops for that
 scope.
+
+Readiness-label scopes such as `ready-for-agent` and `ready-for-human`
+automatically exclude the configured `Done` state unless the user explicitly asks
+to audit Done cleanup. A stale readiness label on a terminal ticket should be
+removed when that ticket is touched, but it should not pull the ticket into the
+normal queue.
 
 Config should name the worker delegation paths this repo supports:
 
@@ -169,6 +206,10 @@ For issue-assigned delegation:
   thread-root comment's `parentId`. For remote Cursor agents, a top-level issue
   comment does not continue the session; record the session handle (such as the
   `cursor.com/agents/bc-<id>` URL) in the ledger.
+- Before starting or re-delegating work, Orchestrator checks for multiple session
+  handles, branches, or PRs tied to the same issue. Duplicate sessions are
+  resolved by choosing the canonical branch or PR from current code-host evidence
+  and stopping the duplicate according to config.
 - PR draft state lives in the code host. When a PR is stuck in draft, Agent
   Orchestrator diagnoses the blocker from repo policy, PR state, checks,
   comments, handoff notes, and the original worker session. Draft state alone is
@@ -198,6 +239,8 @@ Issue Triage may move complete issues from configured intake states to the
 configured ready state during requested intake cleanup, and may reconcile
 verified stale states such as moving tickets with merged linked PRs to `Done`.
 When it marks a ticket `Done`, it removes `ready-for-agent`.
+Readiness-label queries still exclude `Done` by default, so stale labels on done
+tickets do not inflate the active queue.
 Agent Orchestrator does not store authoritative workflow state locally. It reads
 and writes the systems of record:
 
@@ -210,6 +253,11 @@ and writes the systems of record:
 - check and preview state: CI, preview, or hosted check provider
 - deployment state: deployment provider
 
+When a repo uses Linear and GitHub and both linked entities exist, assume the
+integration sync is active. GitHub PR status can automatically advance Linear
+ticket state, so agents refresh both systems before deciding a manual transition
+is needed.
+
 Orchestrator-local files, run logs, checkpoints, and the dispatch ledger are only
 scratch state. They can speed up polling or avoid duplicate work, but agents must
 refresh the systems of record before acting. The friction log is retrospective,
@@ -217,11 +265,18 @@ not state: append-only comments on a parked ticket, never read back to decide
 anything.
 
 Create PR can mark the PR ready-for-review when its local gates pass and verify
-the code-host PR is non-draft. Orchestrator diagnoses stuck draft PRs without
-treating draft state as a review request, repairs blockers, verifies the
-code-host PR is non-draft, and applies or removes `Code review passed` based on
-current PR head SHA evidence. When Orchestrator moves a ticket to `Done`, it
-removes `ready-for-agent`.
+the code-host PR is non-draft. Its local gate must match configured CI scopes,
+thresholds, cache policy, generated-artifact checks, and secret-scan range.
+When invoked directly for one ticket, Agent Implement can run single-ticket
+orchestration for that ticket only if config or the user grants mutation
+authority.
+Orchestrator diagnoses stuck draft PRs without treating draft state as a review
+request, repairs blockers, verifies the code-host PR is non-draft, and applies or
+removes `Code review passed` based on current PR head SHA evidence. When
+Orchestrator moves a ticket to `Done`, it verifies the full issue scope is
+complete and removes `ready-for-agent`. If a code-host integration auto-moved a
+partial or multi-PR issue to `Done`, Orchestrator reopens or narrows it according
+to config before continuing.
 
 ## Adapter Minimum
 

@@ -2,7 +2,7 @@
 name: ziw-code-review
 description: Use for code review before opening a PR, before handing off a branch, or when reviewing the latest committed changes, an explicitly requested working tree, a PR branch, or a main-branch commit range for correctness, security, scope, tests, and issue tracker fit.
 when_to_use: Use automatically for code review requests, pre-PR review gates, PR branch review, main drift review, or when another workflow skill asks for ziw-code-review.
-argument-hint: '[branch|pr-url|range]'
+argument-hint: "[branch|pr-url|range]"
 context: fork
 agent: general-purpose
 ---

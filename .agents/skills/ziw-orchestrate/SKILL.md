@@ -1,7 +1,7 @@
 ---
 name: ziw-orchestrate
 description: Use to orchestrate a specific ticket set, filter, project, or backlog-until-clear run by selecting startable issues, delegating to local or remote workers, calling review and integrate as steps, recording a friction log, updating the tracker, and stopping when human input or a completely blocked queue leaves no safe action.
-argument-hint: '[ticket-ids|filter|project|until-clear]'
+argument-hint: "[ticket-ids|filter|project|until-clear]"
 disable-model-invocation: true
 ---
 
@@ -42,7 +42,7 @@ moving.
   filter.
 - Optional completion target such as `until clear`, `until backlog clear`,
   `until no startable work remains`, or `one pass`.
-- Current tracker and PR state for the configured workflow.
+- Current tracker, PR, preview, and worker state for the configured workflow.
 
 ## Invocation Modes
 
@@ -53,6 +53,10 @@ continue. Ask only when multiple real scopes remain plausible.
 - Explicit tickets: work exactly the listed issue IDs or URLs. Include linked
   blockers, PRs, and child issues only when they affect whether those tickets
   can move.
+- Single-ticket one-off: when the user asks to handle one ticket, orchestrate
+  exactly that ticket through claim, implementation, review, integrate, synced
+  tracker repair, and `Done` when evidence allows. Do not branch into the wider
+  ready queue.
 - Filtered queue: work the configured tracker query, project, milestone, label,
   status, assignee, or roadmap the user named.
 - Current-work loop: when no scope is named, work configured ready and active
@@ -71,6 +75,12 @@ continue. Ask only when multiple real scopes remain plausible.
   lacking merge authority, or otherwise has no safe next action.
 - One pass or budgeted loop: stop after the requested pass count, worker count,
   ticket count, time budget, or first meaningful state change.
+
+When the requested scope is a readiness label such as `ready-for-agent` or
+`ready-for-human`, automatically exclude the configured done state from the
+initial tracker query. Done tickets are terminal even when a stale readiness
+label remains. Include them only when the user explicitly asks to audit or repair
+done-ticket cleanup.
 
 Do not interpret "clear the backlog" as permission to implement vague future
 work. Clear means every issue in scope has a truthful next state and owner:
@@ -105,6 +115,8 @@ In the main orchestration context, keep only:
 - scope query, pass budget, and completion target
 - compact issue queue with ID, title, state, readiness, blockers, PR, owner, and
   next action
+- active delivery footprint: open PR count, active preview count, unreturned
+  implementation dispatch count, cap, and remaining headroom
 - compact worker ledger with issue, branch or PR, agent path, started time,
   latest status, and next check
 - blocker and human-question list
@@ -177,6 +189,11 @@ Refresh the systems of record before acting:
 - local Git refs, worktrees, HEAD, and `git status --short --branch` from the
   repo when a local checkout is in play
 
+When config says the tracker is Linear and the code host is GitHub, assume linked
+PRs and tickets are synced when both exist. GitHub PR status may automatically
+advance Linear ticket state, so refresh both before making a manual tracker state
+transition.
+
 Orchestrator may keep local scratch state only for polling, checkpoints, or
 duplicate suppression. The next action must be valid against the refreshed
 external state. Local Git is an observation, not the authority, but stale local
@@ -197,6 +214,7 @@ Per in-flight dispatch, record only:
 - issue ID
 - worker path (`local-worktree` or `issue-assigned`) and target (agent or branch)
 - dispatch idempotency key (issue ID + claim marker), to avoid double dispatch
+- external session handle when the worker exposes one
 - first-dispatch tick or timestamp, for stuck detection
 - last observed external signal (branch created, PR opened, review verdict)
 
@@ -204,6 +222,67 @@ On every tick, reconcile the ledger against refreshed tracker and PR state.
 Trust external state over the ledger. Drop ledger entries that external state has
 moved past. Never act on a ledger entry without confirming it against the
 tracker or code host first.
+
+## Active Delivery Cap
+
+The configured cap protects the repo's active PR and preview footprint, not just
+the number of live worker sessions. Open PRs and active previews continue to
+consume capacity after an implementation worker returns.
+
+Default to 3 active delivery slots when config names no cap. Treat
+`Active PR/preview cap` as the preferred config field; accept a legacy
+`Concurrency cap` only with the active-delivery semantics below.
+
+On every tick, compute the repo-level active delivery footprint before
+dispatching:
+
+- open PRs for the configured repo, including draft PRs
+- active PR-scoped preview environments, including stale or orphaned previews
+  until they are verified closed
+- implementation dispatches that have not yet produced a PR or been stopped
+
+Do not double-count a PR and its normal linked preview as two delivery slots.
+Count each open PR once, add active previews that are not clearly linked to an
+already counted PR, then add unreturned implementation dispatches. If config
+names a stricter preview-provider or worker-session limit, obey the stricter
+limit.
+
+If the active delivery footprint is at or above the cap, do not dispatch new
+implementation work. First reduce the footprint by advancing existing PRs and
+previews: diagnose draft PRs, rerun or route checks, request or apply review,
+send fixes to the original worker, integrate green PRs when authority allows,
+terminate orphan previews according to config, or escalate exact human merge or
+provider actions. Close PRs only when they pass the PR Closure Guard below. If
+outside-scope PRs or previews consume capacity and Orchestrator lacks authority
+to change them, report that capacity blocker instead of starting more work.
+
+If preview state cannot be refreshed and config says previews count toward the
+cap, treat headroom as unknown and full for new dispatch. Continue only with
+actions that advance existing PRs or repair the missing config/tooling evidence.
+
+## PR Closure Guard
+
+Capacity pressure is never a reason to close legitimate in-progress work. Do not
+close a draft PR, a PR linked to an active ticket, a PR with recent worker,
+branch, check, or review activity, or a PR with unclear ownership only to make
+room under the active delivery cap.
+
+Before closing any PR, refresh code-host and tracker state and verify one of
+these closure reasons:
+
+- duplicate PR for the same issue after a canonical PR has been selected from
+  current code-host evidence
+- explicitly canceled, abandoned, or out-of-scope work, with owner or config
+  evidence that closing the PR is allowed
+- already merged, superseded, or otherwise terminal according to code-host and
+  tracker evidence
+- security or policy reason that requires closing the PR, with the reason
+  recorded
+
+PR age, draft status, and active-delivery pressure are not abandonment evidence.
+If an open PR consumes capacity but does not satisfy this guard, keep it open,
+pause new dispatch, and route the next action: review, worker feedback, check
+repair, merge escalation, or an exact capacity blocker report.
 
 ## Tracker Tooling
 
@@ -320,64 +399,82 @@ Each tick is stateless against external state. On each pass:
 1. Refresh code host and issue tracker state for the configured locations using
    the configured tracker tool/MCP and verified IDs. Refresh local Git refs and
    status for the repo, including relevant branches and worktrees, then note the
-   current default branch HEAD.
+   current default branch HEAD. Refresh repo-level open PRs and active preview
+   environments, not only the requested issue filter, because preview providers
+   usually cap repo or project resources.
 2. Reconcile the dispatch ledger against refreshed state. For each in-flight
    dispatch with no branch, PR, or worker signal past the configured stuck
    timeout, treat the worker as stuck: reply directly to the assigned agent's
    continuation target or escalate, and record a `stuck-worker` friction entry.
    Prefer one direct nudge before re-delegating when the original worker session
    can still continue; re-delegation risks duplicate branches and PRs.
-3. Find active work: `In Progress`, `Blocked`, `In Review`,
+3. Detect duplicate worker sessions or duplicate PRs for the same issue before
+   starting new work. If duplicates exist, choose a canonical branch or PR from
+   current code-host evidence, stop or close the duplicate according to config,
+   and log `stuck-worker` or `config-gap` friction.
+4. Compute the active delivery footprint: open PRs, active previews, and
+   unreturned implementation dispatches. Use the repo-level footprint for
+   capacity decisions even when the user's ticket scope is narrower.
+5. Find active work: `In Progress`, `Blocked`, `In Review`,
    `Changes Requested`, and `Ready to Merge`. Prefer advancing active work over
    starting new work.
-4. Advance returned PRs, including draft PRs with no clear next action, through
+6. If the active delivery footprint is at or above the configured cap, dispatch
+   no new work this tick. Advance, merge, route fixes, clean up previews, or
+   escalate existing PRs and previews first. Close a PR only when it satisfies
+   the PR Closure Guard. If capacity is consumed by outside-scope work the
+   orchestrator cannot mutate, stop with a capacity blocker and exact PR/preview
+   list.
+7. Advance returned PRs, including draft PRs with no clear next action, through
    the PR Review And Integrate process below.
-5. Reconcile the configured review-debt intake route. Send broad or incomplete
+8. Reconcile the configured review-debt intake route. Send broad or incomplete
    findings to triage or To Issues, and include concrete review-created
    `kind-slice` issues in the startable frontier once their body, labels,
    dependencies, and route are complete.
-6. Find startable work: `kind-slice` plus `Todo` plus `ready-for-agent`,
-   unblocked, with a complete agent-ready body. `ready-for-agent` means no
-   further human refinement is needed before agent handoff; it can be present on
-   blocked issues. Never treat a `kind-spec` or `kind-epic` container as
-   startable. Check provider blocker relationships and explicit body blockers
-   before starting or delegating work. Treat labels as signals and statuses as
-   the workflow state. For verified-ready backlog work, if the only gap is a
-   routine label or status mismatch and the correct state is clear from evidence,
-   repair it and continue instead of skipping the ticket.
-7. Select new work by dependency order, milestone/project priority, risk, and
-   file/package contention. Do not dispatch a ticket whose predicted files
-   collide with an in-flight dispatch; defer it and record a `file-collision`
-   friction entry.
-8. Respect the configured concurrency cap. Default to 3 concurrent in-flight
-   workers when config names no cap. Dispatch new work only up to
-   `cap - in-flight`. If the cap is reached, advance existing work only.
-9. Choose the next orchestration action. The following actions are examples, not
-   limits; use model judgment to handle any other evidence-backed workflow action
-   needed to keep the ticket moving:
-   - isolated implementation worker, such as Claude Code
-     `ziw-implementer`, Codex `$ziw-implement`, or local
-     worktree for `local-worktree`
-   - tracker-exposed assigned agent for `issue-assigned`
-   - isolated review worker, such as Claude Code `ziw-reviewer` or Codex
-     `$ziw-review`, for independent PR review and main-branch drift
-     review
-   - isolated triage worker, such as Claude Code `ziw-triager` or Codex
-     `$ziw-triage`, for issue metadata cleanup
-   - draft-state repair, additional code review, CodeRabbit escalation, or check
-     rerun when the PR state needs evidence
-   - integrate for a reviewed, green PR
-   - direct worker nudge or feedback reply when the original worker can continue
-   - human-review marker only when model judgment cannot safely resolve the next
-     step from evidence and config
-   - local Codex for orchestration repair, metadata updates, and small
-     coordination fixes
-   - planning agent for ambiguous product, security, or architecture
-10. Build the worker prompt, assignment comment, or tracker handoff from config,
+9. Find startable work: `kind-slice` plus `Todo` plus `ready-for-agent`,
+   excluding the configured done state, unblocked, with a complete agent-ready
+   body. `ready-for-agent` means no further human refinement is needed before
+   agent handoff; it can be present on blocked issues. Never treat a `kind-spec`
+   or `kind-epic` container as startable. Check provider blocker relationships
+   and explicit body blockers before starting or delegating work. Treat labels as
+   signals and statuses as the workflow state. For verified-ready backlog work,
+   if the only gap is a routine label or status mismatch and the correct state is
+   clear from evidence, repair it and continue instead of skipping the ticket.
+10. Select new work by dependency order, milestone/project priority, risk, and
+    file/package contention. Do not dispatch a ticket whose predicted files
+    collide with an in-flight dispatch; defer it and record a `file-collision`
+    friction entry.
+11. Respect the configured active PR/preview cap. Default to 3 active delivery
+    slots when config names no cap. Dispatch new work only up to remaining
+    headroom. If the cap is reached, advance existing work only.
+12. Choose the next orchestration action. The following actions are examples, not
+    limits; use model judgment to handle any other evidence-backed workflow action
+    needed to keep the ticket moving:
+
+- isolated implementation worker, such as Claude Code
+  `ziw-implementer`, Codex `$ziw-implement`, or local
+  worktree for `local-worktree`
+- tracker-exposed assigned agent for `issue-assigned`, only when active delivery
+  headroom exists
+- isolated review worker, such as Claude Code `ziw-reviewer` or Codex
+  `$ziw-review`, for independent PR review and main-branch drift
+  review
+- isolated triage worker, such as Claude Code `ziw-triager` or Codex
+  `$ziw-triage`, for issue metadata cleanup
+- draft-state repair, additional code review, CodeRabbit escalation, or check
+  rerun when the PR state needs evidence
+- integrate for a reviewed, green PR
+- direct worker nudge or feedback reply when the original worker can continue
+- human-review marker only when model judgment cannot safely resolve the next
+  step from evidence and config
+- local Codex for orchestration repair, metadata updates, and small
+  coordination fixes
+- planning agent for ambiguous product, security, or architecture
+
+13. Build the worker prompt, assignment comment, or tracker handoff from config,
     issue body, linked docs, required checks, branch/worktree, and
     `ziw-implement`. Record the dispatch in the ledger and tracker with
     an idempotency key.
-11. Append friction entries for this tick (see Friction Log). Continue only while
+14. Append friction entries for this tick (see Friction Log). Continue only while
     safe actions remain and the user-specified loop budget allows it. If no safe
     action remains because the scoped queue is completely blocked, stop the
     recurring loop for that scope.
@@ -451,12 +548,14 @@ Before starting issue-assigned work, run a read-only preflight:
 - verify blockers and dependencies from provider relationships and body text
 - verify the requested agent is exposed by the tracker or the config has a
   previously verified delegation tool, field, or agent ID
-- verify the issue is not already claimed, delegated, linked to an open PR, or
-  waiting on review feedback
+- verify the issue is not already claimed, delegated, linked to an open PR,
+  represented by another active worker session, or waiting on review feedback
+- verify the active PR/preview footprint is below the configured cap before
+  assigning another worker
 
-See [../../ziw-setup/references/operating-profile.md](../../ziw-setup/references/operating-profile.md)
+See [../ziw-setup/references/operating-profile.md](../ziw-setup/references/operating-profile.md)
 for the full delegation preflight table, the agent-session continuation
-mechanic, the concurrency default, and the merge-safety decision table.
+mechanic, the active PR/preview cap default, and the merge-safety decision table.
 
 Configured worker environment labels or fields, such as `remote-cursor`, are
 environment approval metadata. Apply or preserve them when the issue identity,
@@ -476,6 +575,7 @@ To start issue-assigned work:
 - if the user explicitly requested issue-assigned agents and an
   implementation-ready issue is missing only the configured worker environment
   label or field, repair that environment metadata and continue; do not ask again
+- verify the active PR/preview footprint is below the configured cap
 - assign the selected agent to the issue through the configured issue tracker
 - record the delegation in the issue tracker and ledger, including expected PR
   and check requirements
@@ -505,7 +605,10 @@ For each returned PR, Orchestrator owns the state machine. Review and integrate
 are called steps, not inlined work:
 
 1. Refresh PR draft status, branch head, required checks, review comments, and
-   linked issue state from the code host and tracker.
+   linked issue state from the code host and tracker. If the tracker/code-host
+   integration syncs linked PRs and tickets, assume the synced state is real when
+   both linked entities exist; manually repair only after both systems have been
+   refreshed.
 2. If the PR is draft, diagnose draft state before asking for review: inspect
    repo draft policy, PR body, check state, unresolved review comments, linked
    issue state, handoff notes, `Code review passed` evidence, and the original
@@ -530,7 +633,8 @@ are called steps, not inlined work:
    existing friction category, usually `stuck-worker` for live worker churn or
    `config-gap` for missing check-state expectations.
 6. When the review target is stable, ask Agent Review to run `ziw-code-review`
-   in a subagent or disposable worktree.
+   in a subagent or disposable worktree. Parallel reviews must use isolated
+   worktrees or sessions, never one shared mutable checkout.
 7. If Agent Review ran, read the review verdict and CodeRabbit recommendation
    from the review artifact. If multiple current review artifacts disagree on
    blocking findings, reconcile conservatively: treat the PR as blocked until a
@@ -615,7 +719,9 @@ When the gate passes:
    merge a stale branch on the assumption it still applies. Record a
    `merge-conflict` friction entry if the rebase needed manual resolution and
    escalate instead of guessing on a real conflict.
-3. Merge through the configured mechanism.
+3. Merge through the configured mechanism, such as squash, merge commit, or
+   rebase merge. If the code host rejects the configured method, stop, log
+   `config-gap`, and refresh setup instead of retrying with a guessed method.
 4. Refresh local Git refs and update the local default branch to the merged head
    before any post-merge check, next PR decision, or issue `Done` transition.
 5. Run configured post-merge preparation before judging the default branch:
@@ -626,10 +732,15 @@ When the gate passes:
    Mergeable does not prove correct after merge. If a prep step clears a stale
    local artifact failure, log `config-gap`; if the checked default branch still
    fails, record `post-merge-break` and escalate.
-6. Move the issue to `Done` only after the merge and post-merge check succeed.
-   In the same tracker update, remove `ready-for-agent` or the repo-configured
-   readiness label from the done ticket. Done work is no longer waiting for agent
-   handoff.
+6. Move the issue to `Done` only after the merge and post-merge check succeed and
+   the full issue scope is complete. For Linear + GitHub, assume the linked PR can
+   auto-advance the ticket state; do not duplicate that transition unless
+   refreshed state still needs repair. If a code-host integration auto-moved the
+   issue to `Done` after the first linked PR but acceptance criteria remain, reopen
+   or narrow the issue according to config, record the residual scope, and log
+   `config-gap`. In the same tracker update for true Done, remove
+   `ready-for-agent` or the repo-configured readiness label from the done ticket.
+   Done work is no longer waiting for agent handoff.
 
 Never merge or deploy production without explicit approval. A label alone is
 never permission to merge.
@@ -717,14 +828,14 @@ Stop and report when:
   attempt cap across implement and review
 
 Completely blocked means the refreshed scope has no startable tickets, returned
-PRs to advance, stuck workers to nudge, failed checks to rerun or route, stale
-metadata to repair, or in-flight work that can still produce signal. Every
-non-terminal ticket is waiting on an explicit external blocker, missing authority,
-human/provider/customer input, credentials, merge authority, or a decision the
-orchestrator cannot safely make. When the queue is completely blocked, stop the
-recurring loop or schedule for that scope; do not keep sleeping and waking to
-rediscover the same blocked state. Report the blocker list, next owner, and exact
-condition that would make the scope runnable again.
+PRs or previews to advance, stuck workers to nudge, failed checks to rerun or
+route, stale metadata to repair, or in-flight work that can still produce signal.
+Every non-terminal ticket is waiting on an explicit external blocker, missing
+authority, human/provider/customer input, credentials, merge authority, or a
+decision the orchestrator cannot safely make. When the queue is completely
+blocked, stop the recurring loop or schedule for that scope; do not keep sleeping
+and waking to rediscover the same blocked state. Report the blocker list, next
+owner, and exact condition that would make the scope runnable again.
 
 When all in-flight work is done, the ready frontier is empty, and no scoped
 ticket remains blocked or waiting on outside input, report the backlog as
@@ -748,6 +859,8 @@ loop.
   tried.
 - Never start a new worker for review fixes when the original worker can
   continue.
+- Never dispatch new implementation work when the configured active PR/preview
+  cap is full or preview headroom is unknown.
 - Never merge a stale branch without rerunning checks and review after updating
   it.
 - Never merge or deploy production without explicit approval.
@@ -762,6 +875,8 @@ Report:
 
 - issues started, nudged, reviewed, integrated, blocked, or moved
 - PRs checked, reviewed, merged, and their state
+- open PRs, active previews, active delivery cap, and remaining headroom used for
+  dispatch decisions
 - draft PRs diagnosed, marked ready-for-review, or left draft/pre-review with
   exact reason
 - `Code review passed` labels applied, preserved, or removed with reviewed head
