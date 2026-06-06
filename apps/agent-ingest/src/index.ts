@@ -15,7 +15,7 @@ import { handleIngest } from './handler';
 
 export const app = new Hono<{ Bindings: AgentIngestEnv }>();
 
-app.get('/health', (c) => c.json({ status: 'ok' }));
+app.get('/healthz', (c) => c.json({ status: 'ok' }));
 
 app.post('/v1/ingest', handleIngest);
 
