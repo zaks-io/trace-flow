@@ -1,0 +1,28 @@
+DESCRIPTION >
+    Daily rolling snapshots of Agent Message usage and cost, by org/source/model/repo.
+    The copy pipe replaces this target with the current rebuild window, so stale
+    day/dimension rows disappear when noisy base facts dedupe or dimensions heal.
+    SessionCount stays an aggregate state so rollups across model or repo can merge
+    distinct sessions without double-counting.
+
+SCHEMA >
+    `BucketStart` DateTime,
+    `OrgId` String,
+    `source` LowCardinality(String),
+    `model` LowCardinality(String),
+    `repo_fingerprint` String,
+    `MessageCount` UInt64,
+    `SessionCount` AggregateFunction(uniq, String),
+    `InputTokens` UInt64,
+    `OutputTokens` UInt64,
+    `CacheReadTokens` UInt64,
+    `CacheCreationTokens` UInt64,
+    `ReasoningTokens` UInt64,
+    `PricedMessageCount` UInt64,
+    `CostUsd` Float64,
+    `RebuiltAt` DateTime64(3)
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "OrgId, BucketStart, source, model, repo_fingerprint"
+ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
+ENGINE_TTL "BucketStart + toIntervalYear(1)"

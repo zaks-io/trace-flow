@@ -1,8 +1,10 @@
 DESCRIPTION >
-    One Agent Session aggregate, rebuilt from the base tables FINAL via the
-    canonical priced-usage view (Copy Pipe, COPY_MODE replace) so session cost stays
-    consistent with agent_usage_* and the PR cost path by construction. Powers the
-    session-outliers launch query (top sessions by cost, file count, duration).
+    One Agent Session aggregate, rebuilt from the base tables FINAL via the canonical
+    priced-usage view so session cost stays consistent with agent_usage_* and the PR
+    cost path by construction. An on-demand affected-session copy can append explicit
+    hot repairs; a daily full replace copy removes sessions that disappear after source
+    dedupe or parser fixes. Powers the session-outliers launch query (top sessions by
+    cost, file count, duration).
     Not partitioned: one row per session, and partitioning by the mutable LastEventAt
     would scatter a re-synced session across daily partitions where FINAL dedupes
     only within a partition. cost_usd is the only Nullable column.

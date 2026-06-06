@@ -220,16 +220,16 @@ Bespoke typed fact tables written directly by the consumer, the `llm_requests` a
 
 Five base tables, rebuildable read aggregates, one session aggregate:
 
-| Table                        | Grain                                           | Role                                                                                                                                 |
-| ---------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `agent_messages`             | one turn (Agent Message)                        | direct model-call tokens and estimated cost. Numeric token/cache columns are non-null; coverage columns explain missing source data. |
-| `agent_tool_events`          | one tool invocation (Tool Event)                | failures, command families, durations, subagent/result facts.                                                                        |
-| `agent_file_events`          | one file touch                                  | repeated-path attention and hotspots. Repo-relative paths only.                                                                      |
-| `agent_capability_snapshots` | one conversation-visible capability observation | opportunistic capability metadata (Codex strongest); retained for later Context Bloat analysis, no v1 launch query.                  |
-| `agent_pull_request_links`   | one canonical Pull Request Link observation     | passive PR attribution evidence without GitHub/GitLab API calls.                                                                     |
-| `agent_usage_1h` / `_1d`     | hour / day, by org/source/repo/model            | rebuildable read aggregate for token, cost, cache, message, and session trends.                                                      |
-| `agent_tool_usage_1h`        | hour, by org/source/repo/tool/command_family    | rebuildable read aggregate for tool mix and failure rates.                                                                           |
-| `agent_sessions`             | one Agent Session (aggregate)                   | session-level outliers (cost, file count, duration).                                                                                 |
+| Table                               | Grain                                              | Role                                                                                                                                 |
+| ----------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `agent_messages`                    | one turn (Agent Message)                           | direct model-call tokens and estimated cost. Numeric token/cache columns are non-null; coverage columns explain missing source data. |
+| `agent_tool_events`                 | one tool invocation (Tool Event)                   | failures, command families, durations, subagent/result facts.                                                                        |
+| `agent_file_events`                 | one file touch                                     | repeated-path attention and hotspots. Repo-relative paths only.                                                                      |
+| `agent_capability_snapshots`        | one conversation-visible capability observation    | opportunistic capability metadata (Codex strongest); retained for later Context Bloat analysis, no v1 launch query.                  |
+| `agent_pull_request_links`          | one canonical Pull Request Link observation        | passive PR attribution evidence without GitHub/GitLab API calls.                                                                     |
+| `agent_usage_1h_v2` / `_1d_v2`      | hour / day, by org/source/repo/model               | replacement-snapshot read aggregate for token, cost, cache, message, and session trends.                                             |
+| `agent_tool_usage_1h_v2` / `_1d_v2` | hour / day, by org/source/repo/tool/command_family | replacement-snapshot read aggregate for tool mix and failure rates.                                                                  |
+| `agent_sessions`                    | one Agent Session (aggregate)                      | session-level outliers (cost, file count, duration).                                                                                 |
 
 Tool mix, web/research domains, and task subjects/statuses are cheap queries over the base tables, not their own rollups. Subagent patterns ride on `is_subagent_spawn` / `agent_depth` (messages) and `extracted_subagent_*` (tool events), not a separate table. Tool-event subagent fields are evidence used by the cost classifier and subagent dashboards. Pull Request Links are extracted into their own fact table so PR attribution can work when the link appears in assistant text, tool output, or another transcript record; PR authoring cost reads the canonical session aggregate after dedupe/classification, not raw tool-event cost fields directly.
 
@@ -296,7 +296,8 @@ agent_pull_request_links
   TTL EventAt + INTERVAL 1 YEAR
 
 agent_sessions
-  REBUILT FROM base tables FINAL via the canonical priced-usage view (Copy Pipe, COPY_MODE replace)
+  HOT REPAIR affected sessions from base tables FINAL via the canonical priced-usage view (on-demand Copy Pipe, COPY_MODE append)
+  FULL CLEANUP from base tables FINAL via the same view (Copy Pipe, COPY_MODE replace, daily)
   ENGINE ReplacingMergeTree(IngestedAt)
   SORTING KEY OrgId, session_pk
   NO PARTITION KEY  -- one row per session; partitioning by the mutable LastEventAt would scatter a
@@ -304,17 +305,19 @@ agent_sessions
                     -- dedupe only within a partition (see note below)
   TTL LastEventAt + INTERVAL 1 YEAR
 
-agent_usage_1h / agent_usage_1d
-  REBUILT FROM base tables FINAL via the canonical priced-usage view (Copy Pipe, COPY_MODE replace)
-  ENGINE AggregatingMergeTree, mirroring llm_usage_1h / _1d
-  REBUILD swaps the whole target from base FINAL on a schedule; never append aggregate states per
-    queue message or replay (ReplacingMergeTree replacement does not retract the prior aggregate state)
+agent_usage_1h_v2 / agent_usage_1d_v2
+  REBUILT FOR rolling or explicit windows from base tables FINAL via the canonical priced-usage view (Copy Pipe, COPY_MODE replace)
+  ENGINE MergeTree
+  SORTING KEY OrgId, BucketStart, source, model, repo_fingerprint
+  REBUILD replaces the rolling target window; never append additive aggregate states per queue
+    message or replay
   TTL BucketStart + INTERVAL 1 YEAR
 
-agent_tool_usage_1h
-  REBUILT FROM agent_tool_events FINAL (Copy Pipe, COPY_MODE replace)
-  ENGINE AggregatingMergeTree
-  REBUILD swaps the whole target from base FINAL on a schedule; never append aggregate states per replay
+agent_tool_usage_1h_v2 / agent_tool_usage_1d_v2
+  REBUILT FOR rolling or explicit windows from agent_tool_events FINAL (Copy Pipe, COPY_MODE replace)
+  ENGINE MergeTree
+  SORTING KEY OrgId, BucketStart, source, tool_name, command_family, repo_fingerprint
+  REBUILD replaces the rolling target window; never append additive aggregate states per replay
   TTL BucketStart + INTERVAL 1 YEAR
 
 session_pk  = hash(source, vendor_session_id)
@@ -339,7 +342,16 @@ All fact-row event timestamps (`EventAt`, `IngestedAt`, `LastEventAt`, `StartedA
 
 ReplacingMergeTree keyed on the stable surrogate identity (`*_pk`), with `IngestedAt` as the version column. Reads use `FINAL`. Re-syncing the same session collapses to one row per ID, newest `IngestedAt` winning. A re-parse under a newer `parser_version` self-heals the row.
 
-Materialized rollups are read caches, not the source of truth. They are rebuilt by a Copy Pipe that reads base tables with `FINAL` and writes the target with `COPY_MODE replace`, exactly as `llm_usage_1h_copy` / `llm_usage_1d_copy` do today; because `replace` swaps the whole target, a re-parse or replay can never leave a stale aggregate behind. They must never be maintained by appending aggregate states from every queue message or replay, because ReplacingMergeTree replacement does not retract the old aggregate state. The v1-safe default is query-time rollup over base `FINAL` rows; the materialized `agent_usage_1h` / `_1d` and `agent_tool_usage_1h` Copy Pipes are an optimization on top, and any launch query can fall back to base `FINAL` if a rollup is missing or stale. One sizing caveat carries over from the proxy path: a full-target `replace` re-scans the entire base table under `FINAL`, and the agent fact tables carry a one-year TTL versus 90 days for `llm_usage`, so the Copy Pipe `COPY_SCHEDULE` must be tuned to that larger scan (less frequent than the proxy's 10-minute cadence, or windowed) rather than copied verbatim.
+Materialized rollups are read caches, not the source of truth. They must never be maintained by appending additive aggregate states from every queue message or replay, because replacement of raw facts does not retract old aggregate-state contributions. Agent rollup v2 targets therefore use rolling `COPY_MODE replace` snapshots: a copy pipe reads base tables with `FINAL`, rebuilds only a rolling or explicit window, and replaces the target with that window. This still drops stale bucket/dimension rows when noisy source facts dedupe or dimensions heal, without rescanning the whole one-year fact table every few minutes. Endpoint lambdas read snapshots inside `[min(BucketStart), max(BucketStart))` and fall back to base `FINAL` for older history and the live tail, so an empty or warming snapshot table cannot hide data. Legacy whole-target `COPY_MODE replace` rollups remain only as low-frequency safety nets; normal dashboard traffic reads the v2 snapshot tables.
+
+The `_v2` suffix is a rollout sidecar, not the permanent model name. It lets production run the
+new rolling-snapshot tables beside the legacy whole-target rollups while endpoint lambdas can
+fall back to base facts. After production proves parity and lower copy CPU over at least one
+full day, canonicalize in a separate destructive-gated Tinybird change: delete the legacy
+unsuffixed derived-cache datasources/copy pipes, recreate the unsuffixed names with the v2
+`MergeTree` schemas and rolling `COPY_MODE replace` copy logic, switch endpoints back to
+canonical unsuffixed names, seed the canonical windows, verify parity again, then delete the
+temporary `_v2` datasources and copy pipes. Raw fact tables are never part of this removal.
 
 ### Cost and pricing
 
@@ -354,7 +366,7 @@ The canonical cost unit is Agent Session Authoring Cost: every billable model us
 
 This rule comes from checking Otto's parser and local Claude Code data, not from a theoretical schema. Otto persists `extracted_subagent_*` token fields on tool-result rows, while Claude Code also writes subagent transcript files under the same session with `isSidechain=true` and `agentId`. In current Claude data the parent/subagent `toolUseResult.usage` can match one sidechain assistant call, not the whole subagent transcript; blindly adding both over-counts, while ignoring the tool-result usage can under-count older or incomplete imports where the sidechain transcript is missing. Trace Flow stores both forms as facts, classifies them into one priced-usage view, and exposes coverage when only summary/fallback subagent usage is available.
 
-`agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and Pull Request authoring-cost queries must all read from that same canonical priced-usage view or aggregate. No code path should define PR cost as "sum `agent_messages.cost_usd`" or "sum messages plus all tool subagent costs" independently, because those two shortcuts fail in opposite directions.
+`agent_sessions.cost_usd`, `agent_usage_1h_v2` / `_1d_v2`, and Pull Request authoring-cost queries must all read from that same canonical priced-usage view or aggregate. No code path should define PR cost as "sum `agent_messages.cost_usd`" or "sum messages plus all tool subagent costs" independently, because those two shortcuts fail in opposite directions.
 
 A shared `@trace-flow/pricing` workspace package holds the calculation, used by both the proxy consumer and the agent consumer. A daily Convex cron `importFromModelsDev` mirrors `importFromOpenRouter`: it pulls `models.dev/api.json` into the `modelPricing` table, then syncs to Cloudflare KV. First-party providers only; gateway re-listings of the same model are skipped. Pinning to first-party is mandatory, not a preference: each corpus model also appears under roughly 25 gateway re-listings (helicone, auriko, databricks, nano-gpt) at divergent prices, so the import must read the `anthropic` and `openai` provider entries specifically or it will silently mis-price. `gpt-5.5` uses context-tier pricing (about 2x above a 200k-token context) and Codex runs near a 258k window, so `calculateCost` must be context-tier-aware for it rather than applying one flat rate. `importFromOpenRouter` stays for `provider=openrouter`. The `source` enum gains `'models.dev'` (three files: `schema.ts`, `modelPricing.ts`, `pricing.ts`).
 
@@ -377,10 +389,10 @@ Visibility is tier-gated at read time and decoupled from storage: a hobby org se
 All deterministic, zero tuning. The research note's "failing above baseline" detector is dropped; it would have needed fine-tuning to be useful.
 
 1. **Failure leaderboard.** Rank (`tool_name`, `command_family`) by failure rate and count over a window, with a display floor of at least N events so rare tools do not top the chart on one failure.
-2. **Period-over-period delta.** This window versus the prior, sorted by movement, via a query-time rollup over `agent_tool_events FINAL` or a self-join on rebuilt `agent_tool_usage_1h` when that read cache is fresh.
+2. **Period-over-period delta.** This window versus the prior, sorted by movement, via a query-time rollup over `agent_tool_events FINAL` or a self-join on rebuilt `agent_tool_usage_1h_v2` when that read cache is fresh.
 3. **Session outliers.** Top sessions by cost and file count (the "$400 and 200 files" case) from the `agent_sessions` aggregate.
 
-`agent_tool_usage_1h` is logically keyed on `BucketStart` (hour), `OrgId`, `source`, `tool_name`, `command_family`, and `repo_fingerprint`, with counts for success/failure/unknown and summed duration. The sorting key orders dimensions from low to high cardinality, so the high-cardinality `repo_fingerprint` hash comes last. Whether it is materialized or computed at query time is an implementation choice, but materialized rows are rebuilt by a whole-target `COPY_MODE replace` from base `FINAL`, never appended per replay.
+`agent_tool_usage_1h_v2` is logically keyed on `BucketStart` (hour), `OrgId`, `source`, `tool_name`, `command_family`, and `repo_fingerprint`, with counts for success/failure/unknown and summed duration. Materialized rows are replacement snapshots rebuilt from base `FINAL`, never additive aggregate-state appends per replay.
 
 Post-launch product signals are tracked in
 [`signal-catalog.md`](../guides/agent-conversation-analytics/signal-catalog.md). That catalog separates
@@ -495,9 +507,9 @@ Verifiable outcomes for the v1 slice:
 - If an Agent Session has no Pull Request evidence, or credible evidence for multiple Pull Requests, its cost remains Unattributed Repo Authoring Cost and is not split across pull requests.
 - A Claude session, a Codex session, and a Cursor session (from `state.vscdb` `cursorDiskKV`: `composerData:` sessions and `bubbleId:` messages) each parse to facts under a vendor-UUID `session_pk`; Claude and Codex carry full token, model, and cache columns, while Cursor carries a normalized model and, where the bubble `tokenCount` is populated with nonzero values, tokens; Cursor cache columns are zero with `cache_coverage = 'missing'`. Claude and Cursor subagent transcripts land under their parent's `session_pk` with `agent_depth` > 0, not as standalone Agent Sessions.
 - The Cursor parser snapshots `state.vscdb` before reading, joins `bubbleId:<composerId>:*` messages to their `composerData:<composerId>` session with `GLOB` prefix scans (never `LIKE`), normalizes the composer `modelConfig.modelName` label (reasoning suffixes stripped, house `composer-*`/`default` left unpriced), and emits nonzero tokens only where the bubble `tokenCount` is nonzero.
-- Agent Session Authoring Cost includes top-level, nested, and sidechain model usage exactly once; `agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and PR authoring-cost queries all agree because they use the same canonical priced-usage view.
+- Agent Session Authoring Cost includes top-level, nested, and sidechain model usage exactly once; `agent_sessions.cost_usd`, `agent_usage_1h_v2` / `_1d_v2`, and PR authoring-cost queries all agree because they use the same canonical priced-usage view.
 - A Claude fixture with both a subagent transcript file and a matching `toolUseResult.usage` row does not double-count the overlapping subagent usage; a fixture with only tool-result subagent usage counts that fallback usage and marks the session's subagent cost coverage as partial/fallback.
-- Re-syncing the same Agent Session twice does not change counts after `FINAL`; query-time rollups over base `FINAL` rows match deduped base counts, and any materialized rollup read cache is rebuilt by a whole-target `COPY_MODE replace` from base `FINAL` rather than append-updated from replay messages. A session whose facts span two `EventAt` days rebuilds to exactly one `agent_sessions` row.
+- Re-syncing the same Agent Session twice does not change counts after `FINAL`; query-time rollups over base `FINAL` rows match deduped base counts, and any materialized rollup read cache is rebuilt as replacement snapshots from base `FINAL` rather than additive aggregate-state appends from replay messages. A session whose facts span two `EventAt` days rebuilds to exactly one `agent_sessions` row.
 - Direct `agent_messages.cost_usd` and any included fallback subagent usage cost are computed in the consumer from KV pricing; no pricing math runs in the Collector; priced-token coverage % is queryable.
 - The Collector source has no local cost calculation, and a fact reaches the consumer carrying tokens and model but no price.
 - The daily `importFromModelsDev` cron populates `modelPricing` with `source='models.dev'`; a known first-party model resolves to a non-zero price; an unknown model lands with null `cost_usd` and is backfilled on a later run once the catalog covers it.

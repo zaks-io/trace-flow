@@ -4,7 +4,9 @@ DESCRIPTION >
     agent_tool_events FINAL. COPY_MODE replace rebuilds the whole target each run.
     Success/Failure/Unknown kept separate so failure_rate can exclude unknown from the
     denominator while still counting it. Tool-event mix is not a cost surface, so this
-    copy reads base FINAL directly rather than agent_priced_usage. Staggered 30 min.
+    copy reads base FINAL directly rather than agent_priced_usage. Legacy full-table
+    read cache retained as a low-frequency safety net; the dashboard reads
+    agent_tool_usage_1h_v2 for normal traffic.
 
 NODE rollup
 SQL >
@@ -25,5 +27,5 @@ SQL >
 
 TYPE COPY
 TARGET_DATASOURCE agent_tool_usage_1h
-COPY_SCHEDULE 4-59/10 * * * *
+COPY_SCHEDULE 23 3 * * *
 COPY_MODE replace

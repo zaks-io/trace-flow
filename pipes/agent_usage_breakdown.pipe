@@ -5,15 +5,14 @@ DESCRIPTION >
     and applies top-N/Other for repo, consistent with the hero chart. Rows cross-filter the
     page on click.
 
-    Lambda over agent_usage_1h (the canonical priced-usage hourly rollup) + the live tail of
-    agent_messages FINAL: the watermark is the rollup's latest bucket start (max(BucketStart)).
-    The rollup serves hours strictly below it (fully-materialized only), the base branch serves
-    rows at/after it (including the latest still-partial hour, live), so a stale or partial
-    rollup can never hide a dimension value. Both branches can contribute to the same
-    group_value (its rollup part + its live part), so the union is re-aggregated by group_value.
+    Lambda over agent_usage_1h_v2 replacement snapshots + base agent_messages FINAL:
+    snapshots serve buckets inside [min(BucketStart), max(BucketStart)), while base FINAL
+    serves older history and the live tail. A stale, partial, empty, or warming snapshot
+    table can never hide a dimension value. Both branches can contribute to the same
+    group_value, so the union is re-aggregated by group_value.
     cost_usd sums priced rows only (an estimate, never billed spend). Honors the active filters
     (sources, models, repos). org_id and retention_days are enforced via the JWT fixed_params.
-    NOTE: session_count is uniqMerge over an HLL state (~0.5-2% error) on the rollup branch vs
+    NOTE: session_count is uniqMerge over an HLL state (~0.5-2% error) on the snapshot branch vs
     uniqExact on the live branch; the branches cover disjoint hour ranges so no session is
     counted in both.
 
@@ -25,10 +24,8 @@ SQL >
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        -- Lambda watermark = rollup's latest bucket start: rollup serves hours strictly below it,
-        -- the base branch serves at/after it (incl. the latest partial hour). Empty rollup ->
-        -- epoch -> base serves everything.
-        (SELECT max(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
+        (SELECT min(BucketStart) FROM agent_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS rollup_min,
+        (SELECT max(BucketStart) FROM agent_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
     SELECT
         group_value,
         sum(message_count) AS message_count,
@@ -42,13 +39,14 @@ SQL >
                 {{ String(dimension, 'source') }} = 'repo', toString(repo_fingerprint),
                 toString(source)
             ) AS group_value,
-            countMerge(MessageCount) AS message_count,
+            sum(MessageCount) AS message_count,
             uniqMerge(SessionCount) AS session_count,
-            sumMerge(InputTokens) + sumMerge(OutputTokens) + sumMerge(CacheReadTokens)
-                + sumMerge(CacheCreationTokens) + sumMerge(ReasoningTokens) AS total_tokens,
-            round(sumMerge(CostUsd), 6) AS cost_usd
-        FROM agent_usage_1h
-        WHERE BucketStart < rollup_watermark
+            sum(InputTokens) + sum(OutputTokens) + sum(CacheReadTokens)
+                + sum(CacheCreationTokens) + sum(ReasoningTokens) AS total_tokens,
+            round(sum(CostUsd), 6) AS cost_usd
+        FROM agent_usage_1h_v2
+        WHERE BucketStart >= rollup_min
+            AND BucketStart < rollup_watermark
             AND OrgId = {{ String(org_id, '') }}
             AND BucketStart >= start_dt
             AND BucketStart < end_dt
@@ -77,7 +75,7 @@ SQL >
             sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens) AS total_tokens,
             round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd
         FROM agent_messages FINAL
-        WHERE EventAt >= rollup_watermark
+        WHERE (EventAt < rollup_min OR EventAt >= rollup_watermark)
             AND role = 'assistant'
             AND OrgId = {{ String(org_id, '') }}
             AND EventAt >= start_dt
