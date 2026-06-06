@@ -12,9 +12,8 @@ DESCRIPTION >
     group_value, so the union is re-aggregated by group_value.
     cost_usd sums priced rows only (an estimate, never billed spend). Honors the active filters
     (sources, models, repos). org_id and retention_days are enforced via the JWT fixed_params.
-    NOTE: session_count is uniqMerge over an HLL state (~0.5-2% error) on the snapshot branch vs
-    uniqExact on the live branch; the branches cover disjoint hour ranges so no session is
-    counted in both.
+    session_count merges aggregate states across snapshot/base branches so sessions that cross
+    the rollup boundary are counted once within each displayed group.
 
 NODE breakdown
 SQL >
@@ -29,7 +28,7 @@ SQL >
     SELECT
         group_value,
         sum(message_count) AS message_count,
-        sum(session_count) AS session_count,
+        uniqMerge(session_state) AS session_count,
         sum(total_tokens) AS total_tokens,
         round(sum(cost_usd), 6) AS cost_usd
     FROM (
@@ -40,7 +39,7 @@ SQL >
                 toString(source)
             ) AS group_value,
             sum(MessageCount) AS message_count,
-            uniqMerge(SessionCount) AS session_count,
+            uniqMergeState(SessionCount) AS session_state,
             sum(InputTokens) + sum(OutputTokens) + sum(CacheReadTokens)
                 + sum(CacheCreationTokens) + sum(ReasoningTokens) AS total_tokens,
             round(sum(CostUsd), 6) AS cost_usd
@@ -71,7 +70,7 @@ SQL >
                 toString(source)
             ) AS group_value,
             count() AS message_count,
-            uniqExact(session_pk) AS session_count,
+            uniqState(session_pk) AS session_state,
             sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens) AS total_tokens,
             round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd
         FROM agent_messages FINAL
