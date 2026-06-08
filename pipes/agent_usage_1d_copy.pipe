@@ -1,32 +1,43 @@
 DESCRIPTION >
-    Daily rollup of direct Agent Message usage and cost. Same shape as
-    agent_usage_1h_copy with a day-truncated BucketStart, over the canonical
-    agent_priced_usage view. COPY_MODE replace rebuilds the whole target each run.
-    Legacy full-table read cache retained as a low-frequency safety net; the dashboard
-    reads agent_usage_1d_v2 for normal traffic.
+    Rolling daily replacement snapshots for Agent usage. The copy replaces the target
+    with rebuilt day rows for the recent window, so stale day/dimension rows are
+    removed when base facts dedupe or dimensions heal. Parameters allow an explicit
+    repair window; scheduled runs default to the last 45 days with the
+    lower bound snapped to the day, so the first included bucket is complete.
 
 NODE rollup
 SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        {{ Int32(rebuild_days, 45) }} AS rebuild_days,
+        toDateTime64(now(), 3) AS rebuilt_at,
+        if(end_ms = 0, rebuilt_at, fromUnixTimestamp64Milli(end_ms)) AS rebuild_end_dt,
+        toStartOfDay(if(start_ms = 0, rebuild_end_dt - toIntervalDay(rebuild_days), fromUnixTimestamp64Milli(start_ms))) AS rebuild_start_dt
     SELECT
         toStartOfDay(toDateTime(EventAt)) AS BucketStart,
         OrgId,
         source,
         model,
         repo_fingerprint,
-        countState() AS MessageCount,
+        toUInt64(count()) AS MessageCount,
         uniqState(session_pk) AS SessionCount,
-        sumState(input_tokens) AS InputTokens,
-        sumState(output_tokens) AS OutputTokens,
-        sumState(cache_read_tokens) AS CacheReadTokens,
-        sumState(cache_creation_tokens) AS CacheCreationTokens,
-        sumState(reasoning_tokens) AS ReasoningTokens,
-        sumState(toUInt64(cost_usd IS NOT NULL)) AS PricedMessageCount,
-        sumState(ifNull(cost_usd, 0.)) AS CostUsd
+        sum(input_tokens) AS InputTokens,
+        sum(output_tokens) AS OutputTokens,
+        sum(cache_read_tokens) AS CacheReadTokens,
+        sum(cache_creation_tokens) AS CacheCreationTokens,
+        sum(reasoning_tokens) AS ReasoningTokens,
+        sum(toUInt64(cost_usd IS NOT NULL)) AS PricedMessageCount,
+        sum(ifNull(cost_usd, 0.)) AS CostUsd,
+        rebuilt_at AS RebuiltAt
     FROM agent_priced_usage
     WHERE usage_kind = 'direct'
+        AND EventAt >= rebuild_start_dt
+        AND EventAt < rebuild_end_dt
     GROUP BY BucketStart, OrgId, source, model, repo_fingerprint
 
 TYPE COPY
 TARGET_DATASOURCE agent_usage_1d
-COPY_SCHEDULE 13 3 * * *
+COPY_SCHEDULE 17 */6 * * *
 COPY_MODE replace

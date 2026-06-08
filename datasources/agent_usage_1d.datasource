@@ -1,8 +1,9 @@
 DESCRIPTION >
-    Daily rollup of Agent Message usage and cost, by org/source/model/repo.
-    Same shape as agent_usage_1h with a day-truncated BucketStart. Rebuilt from
-    agent_messages FINAL via the canonical priced-usage view (Copy Pipe,
-    COPY_MODE replace) — never appended per queue message or replay.
+    Daily rolling snapshots of Agent Message usage and cost, by org/source/model/repo.
+    The copy pipe replaces this target with the current rebuild window, so stale
+    day/dimension rows disappear when noisy base facts dedupe or dimensions heal.
+    SessionCount stays an aggregate state so rollups across model or repo can merge
+    distinct sessions without double-counting.
 
 SCHEMA >
     `BucketStart` DateTime,
@@ -10,17 +11,36 @@ SCHEMA >
     `source` LowCardinality(String),
     `model` LowCardinality(String),
     `repo_fingerprint` String,
-    `MessageCount` AggregateFunction(count),
+    `MessageCount` UInt64,
     `SessionCount` AggregateFunction(uniq, String),
-    `InputTokens` AggregateFunction(sum, UInt64),
-    `OutputTokens` AggregateFunction(sum, UInt64),
-    `CacheReadTokens` AggregateFunction(sum, UInt64),
-    `CacheCreationTokens` AggregateFunction(sum, UInt64),
-    `ReasoningTokens` AggregateFunction(sum, UInt64),
-    `PricedMessageCount` AggregateFunction(sum, UInt64),
-    `CostUsd` AggregateFunction(sum, Float64)
+    `InputTokens` UInt64,
+    `OutputTokens` UInt64,
+    `CacheReadTokens` UInt64,
+    `CacheCreationTokens` UInt64,
+    `ReasoningTokens` UInt64,
+    `PricedMessageCount` UInt64,
+    `CostUsd` Float64,
+    `RebuiltAt` DateTime64(3)
 
-ENGINE "AggregatingMergeTree"
-ENGINE_SORTING_KEY "BucketStart, OrgId, source, model, repo_fingerprint"
+FORWARD_QUERY >
+    SELECT
+        BucketStart,
+        OrgId,
+        source,
+        model,
+        repo_fingerprint,
+        toUInt64(finalizeAggregation(MessageCount)) AS MessageCount,
+        SessionCount,
+        toUInt64(finalizeAggregation(InputTokens)) AS InputTokens,
+        toUInt64(finalizeAggregation(OutputTokens)) AS OutputTokens,
+        toUInt64(finalizeAggregation(CacheReadTokens)) AS CacheReadTokens,
+        toUInt64(finalizeAggregation(CacheCreationTokens)) AS CacheCreationTokens,
+        toUInt64(finalizeAggregation(ReasoningTokens)) AS ReasoningTokens,
+        toUInt64(finalizeAggregation(PricedMessageCount)) AS PricedMessageCount,
+        toFloat64(finalizeAggregation(CostUsd)) AS CostUsd,
+        defaultValueOfTypeName('DateTime64(3)') AS RebuiltAt
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "OrgId, BucketStart, source, model, repo_fingerprint"
 ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
 ENGINE_TTL "BucketStart + toIntervalYear(1)"

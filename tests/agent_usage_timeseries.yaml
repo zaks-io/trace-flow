@@ -1,5 +1,5 @@
 # Fixtures: fixtures/agent_messages.ndjson + fixtures/agent_tool_events.ndjson.
-# V2 rollups (agent_usage_1h_v2/_1d_v2, agent_tool_usage_1h_v2/_1d_v2) are empty in tests,
+# Canonical rollups (agent_usage_1h/_1d, agent_tool_usage_1h/_1d) are empty in tests,
 # so the pipe takes the base-FINAL fallback path (the local-dev / pre-Copy-Pipe case).
 # org_1c assistant Agent Messages (all claude / claude-opus-4-7), hourly buckets:
 #   2026-05-20 09:00  span1            -> 1 msg, in 100, out 0,   cost 0.5

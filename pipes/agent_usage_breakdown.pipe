@@ -5,7 +5,7 @@ DESCRIPTION >
     and applies top-N/Other for repo, consistent with the hero chart. Rows cross-filter the
     page on click.
 
-    Lambda over agent_usage_1h_v2 replacement snapshots + base agent_messages FINAL:
+    Lambda over agent_usage_1h replacement snapshots + base agent_messages FINAL:
     snapshots serve buckets inside [min(BucketStart), max(BucketStart)), while base FINAL
     serves older history and the live tail. A stale, partial, empty, or warming snapshot
     table can never hide a dimension value. Both branches can contribute to the same
@@ -23,8 +23,8 @@ SQL >
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        (SELECT min(BucketStart) FROM agent_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS rollup_min,
-        (SELECT max(BucketStart) FROM agent_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
+        (SELECT min(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_min,
+        (SELECT max(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
     SELECT
         group_value,
         sum(message_count) AS message_count,
@@ -43,7 +43,7 @@ SQL >
             sum(InputTokens) + sum(OutputTokens) + sum(CacheReadTokens)
                 + sum(CacheCreationTokens) + sum(ReasoningTokens) AS total_tokens,
             round(sum(CostUsd), 6) AS cost_usd
-        FROM agent_usage_1h_v2
+        FROM agent_usage_1h
         WHERE BucketStart >= rollup_min
             AND BucketStart < rollup_watermark
             AND OrgId = {{ String(org_id, '') }}

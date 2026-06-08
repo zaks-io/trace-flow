@@ -4,8 +4,8 @@ DESCRIPTION >
     estimated Agent Session Authoring Cost, token components, message/session counts, and
     Tool Event outcomes. The granularity param controls bucket size: 'auto' (default)
     picks hourly buckets for windows <= 30 days and daily beyond that; 'hour' forces
-    hourly (reads agent_usage_1h_v2 / agent_tool_usage_1h_v2 even on > 30d windows);
-    'day' forces daily (reads agent_usage_1d_v2 / agent_tool_usage_1d_v2 even on <= 30d windows).
+    hourly (reads agent_usage_1h / agent_tool_usage_1h even on > 30d windows);
+    'day' forces daily (reads agent_usage_1d / agent_tool_usage_1d even on <= 30d windows).
     Both the usage and tool series resolve the same use_daily from shared params, so
     their buckets align in the endpoint join.
 
@@ -18,8 +18,8 @@ DESCRIPTION >
     only applies to the usage branches (Tool Events have no model), so a model filter scopes
     cost/tokens/messages/sessions but leaves the tool-events series unfiltered.
 
-    Lambda: replacement snapshots + base fallback. Reads agent_usage_*_v2 and
-    agent_tool_usage_*_v2 for buckets inside each snapshot window
+    Lambda: replacement snapshots + base fallback. Reads agent_usage_* and
+    agent_tool_usage_* for buckets inside each snapshot window
     [min(BucketStart), max(BucketStart)), and reads base FINAL rows for older history and
     the live tail. A stale, partial, empty, or warming snapshot table can never hide data.
 
@@ -40,10 +40,10 @@ SQL >
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
         (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily,
-        (SELECT min(BucketStart) FROM agent_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_h_min,
-        (SELECT max(BucketStart) FROM agent_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_h,
-        (SELECT min(BucketStart) FROM agent_usage_1d_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_d_min,
-        (SELECT max(BucketStart) FROM agent_usage_1d_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_d
+        (SELECT min(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_h_min,
+        (SELECT max(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_h,
+        (SELECT min(BucketStart) FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_d_min,
+        (SELECT max(BucketStart) FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_d
     SELECT
         bucket_dt,
         group_value,
@@ -71,7 +71,7 @@ SQL >
             sum(ReasoningTokens) AS reasoning_tokens,
             round(sum(CostUsd), 6) AS cost_usd,
             sum(PricedMessageCount) AS priced_message_count
-        FROM agent_usage_1h_v2
+        FROM agent_usage_1h
         WHERE NOT use_daily
             AND BucketStart >= wm_h_min
             AND BucketStart < wm_h
@@ -104,7 +104,7 @@ SQL >
             sum(ReasoningTokens) AS reasoning_tokens,
             round(sum(CostUsd), 6) AS cost_usd,
             sum(PricedMessageCount) AS priced_message_count
-        FROM agent_usage_1d_v2
+        FROM agent_usage_1d
         WHERE use_daily
             AND BucketStart >= wm_d_min
             AND BucketStart < wm_d
@@ -170,10 +170,10 @@ SQL >
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
         (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily,
-        (SELECT min(BucketStart) FROM agent_tool_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_th_min,
-        (SELECT max(BucketStart) FROM agent_tool_usage_1h_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_th,
-        (SELECT min(BucketStart) FROM agent_tool_usage_1d_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_td_min,
-        (SELECT max(BucketStart) FROM agent_tool_usage_1d_v2 WHERE OrgId = {{ String(org_id, '') }}) AS wm_td
+        (SELECT min(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_th_min,
+        (SELECT max(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_th,
+        (SELECT min(BucketStart) FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_td_min,
+        (SELECT max(BucketStart) FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_td
     SELECT * FROM (
         SELECT
             BucketStart AS bucket_dt,
@@ -182,7 +182,7 @@ SQL >
             sum(SuccessCount) AS tool_success_count,
             sum(FailureCount) AS tool_failure_count,
             sum(UnknownCount) AS tool_unknown_count
-        FROM agent_tool_usage_1h_v2
+        FROM agent_tool_usage_1h
         WHERE NOT use_daily
             AND BucketStart >= wm_th_min
             AND BucketStart < wm_th
@@ -207,7 +207,7 @@ SQL >
             sum(SuccessCount) AS tool_success_count,
             sum(FailureCount) AS tool_failure_count,
             sum(UnknownCount) AS tool_unknown_count
-        FROM agent_tool_usage_1d_v2
+        FROM agent_tool_usage_1d
         WHERE use_daily
             AND BucketStart >= wm_td_min
             AND BucketStart < wm_td

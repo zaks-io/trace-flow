@@ -5,7 +5,7 @@ DESCRIPTION >
     show a delta. Prior period is the immediately-preceding window of equal length (same
     convention as agent_tool_period_delta).
 
-    Lambda over agent_usage_1h_v2 replacement snapshots + base agent_messages FINAL. The
+    Lambda over agent_usage_1h replacement snapshots + base agent_messages FINAL. The
     snapshot window is [min(BucketStart), max(BucketStart)): snapshots serve only fully
     rebuilt buckets inside that range; base FINAL serves older history and the live tail.
     A stale, partial, empty, or warming snapshot table can never hide data.
@@ -36,12 +36,12 @@ SQL >
         -- Empty snapshots yield epoch bounds; the base branch then serves the whole window.
         (
             SELECT min(BucketStart)
-            FROM agent_usage_1h_v2
+            FROM agent_usage_1h
             WHERE OrgId = {{ String(org_id, '') }}
         ) AS rollup_min,
         (
             SELECT max(BucketStart)
-            FROM agent_usage_1h_v2
+            FROM agent_usage_1h
             WHERE OrgId = {{ String(org_id, '') }}
         ) AS rollup_watermark
     -- The branches are scalar aggregates (no GROUP BY): the snapshot side sums buckets inside
@@ -82,7 +82,7 @@ SQL >
                 + sumIf(ReasoningTokens, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_total_tokens,
             sumIf(MessageCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_message_count,
             uniqMergeStateIf(SessionCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_session_state
-        FROM agent_usage_1h_v2
+        FROM agent_usage_1h
         WHERE BucketStart >= rollup_min
             AND BucketStart < rollup_watermark
             AND OrgId = {{ String(org_id, '') }}
