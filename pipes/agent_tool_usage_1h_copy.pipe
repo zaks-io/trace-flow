@@ -1,15 +1,21 @@
 DESCRIPTION >
-    Hourly rollup of Tool Event mix and outcomes, by org/source/tool/command_family/repo.
-    Powers the failure leaderboard and period-over-period delta as a read cache over
-    agent_tool_events FINAL. COPY_MODE replace rebuilds the whole target each run.
-    Success/Failure/Unknown kept separate so failure_rate can exclude unknown from the
-    denominator while still counting it. Tool-event mix is not a cost surface, so this
-    copy reads base FINAL directly rather than agent_priced_usage. Legacy full-table
-    read cache retained as a low-frequency safety net; the dashboard reads
-    agent_tool_usage_1h_v2 for normal traffic.
+    Rolling hourly replacement snapshots for Tool Event outcomes. The copy replaces
+    the target with rebuilt bucket rows for the recent window, so stale
+    bucket/dimension rows are removed when base facts dedupe or dimensions heal.
+    Parameters allow an explicit repair window; scheduled runs default to the last
+    72 hours with the lower bound snapped to the hour, so the first included
+    bucket is complete.
 
 NODE rollup
 SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        {{ Int32(rebuild_hours, 72) }} AS rebuild_hours,
+        toDateTime64(now(), 3) AS rebuilt_at,
+        if(end_ms = 0, rebuilt_at, fromUnixTimestamp64Milli(end_ms)) AS rebuild_end_dt,
+        toStartOfHour(if(start_ms = 0, rebuild_end_dt - toIntervalHour(rebuild_hours), fromUnixTimestamp64Milli(start_ms))) AS rebuild_start_dt
     SELECT
         toStartOfHour(toDateTime(EventAt)) AS BucketStart,
         OrgId,
@@ -17,15 +23,18 @@ SQL >
         tool_name,
         command_family,
         repo_fingerprint,
-        countState() AS EventCount,
-        sumState(toUInt64(status = 'success')) AS SuccessCount,
-        sumState(toUInt64(status = 'failure')) AS FailureCount,
-        sumState(toUInt64(status = 'unknown')) AS UnknownCount,
-        sumState(toUInt64(duration_ms)) AS DurationMsSum
+        toUInt64(count()) AS EventCount,
+        sum(toUInt64(status = 'success')) AS SuccessCount,
+        sum(toUInt64(status = 'failure')) AS FailureCount,
+        sum(toUInt64(status = 'unknown')) AS UnknownCount,
+        sum(toUInt64(duration_ms)) AS DurationMsSum,
+        rebuilt_at AS RebuiltAt
     FROM agent_tool_events FINAL
+    WHERE EventAt >= rebuild_start_dt
+        AND EventAt < rebuild_end_dt
     GROUP BY BucketStart, OrgId, source, tool_name, command_family, repo_fingerprint
 
 TYPE COPY
 TARGET_DATASOURCE agent_tool_usage_1h
-COPY_SCHEDULE 23 3 * * *
+COPY_SCHEDULE 5-59/15 * * * *
 COPY_MODE replace
