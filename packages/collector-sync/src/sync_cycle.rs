@@ -270,7 +270,6 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
     // counted: their cursors were never advanced, so they re-send next cycle. `aborted_early` already
     // records that the cycle did not finish its work.
     drop(inflight);
-    drop(pending);
 
     // A cancelled cycle has no failures yet did not finish its work, so it must not report success:
     // `JobSucceeded` would return the orchestrator to `Watching` as if the batch were drained. Any
