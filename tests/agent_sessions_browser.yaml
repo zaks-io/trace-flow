@@ -1,45 +1,45 @@
 # Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_file_event_facts.ndjson (org_test).
-# Per session in window [2026-05-20, 2026-05-21) — staggered EventAt so recency != cost order:
-#   s1: 3 messages (1.5 + 2.0 + 0.5 = 4.0), 5 file events (5 distinct paths), EventAt 09:00
-#   s2: 1 message (0.1),                     1 file event,                    EventAt 10:00 (latest)
-#   s3: 2 messages (0.8 + null = 0.8),       2 file events,                   EventAt 08:30 (earliest)
-# last_event_ms per session: s2=1779271200000 (10:00) > s1=1779267600000 (09:00) > s3=1779265800000 (08:30).
-# So default sort=recent yields s2, s1, s3; sort=cost yields s1, s3, s2 — distinct orders, both exercised.
+# Per session in window [2026-05-20, 2026-05-21):
+#   s1: 3 messages at 09:00, 5 file events at 10:00, cost 4.0, duration 1h
+#   s2: 1 message at 10:00, 1 file event  at 10:00, cost 0.1, duration 0
+#   s3: 2 messages at 08:30, 2 file events at 10:00, cost 0.8, duration 1.5h
+# All sessions have last_event_ms=1779271200000 after file events advance LastEventAt.
+# So default sort=recent ties and falls back to session_pk; cost and duration sorts exercise distinct orders.
 # retention_days=20000 neutralizes the now()-relative tier floor (production passes 7..365).
 
 - name: sessions_default_sort_is_recent
-  description: default sort=recent returns sessions newest-first by last_event_ms (s2 > s1 > s3)
+  description: default sort=recent returns sessions newest-first by last_event_ms, then session_pk ASC on ties
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
   expected_result: |
+    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000}
     {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
-    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":0,"last_event_ms":1779267600000}
-    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":0,"last_event_ms":1779265800000}
+    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000}
 
 - name: sessions_sort_by_cost_reproduces_outliers
   description: explicit sort=cost descending reproduces the prior outliers ranking (s1 > s3 > s2)
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sort=cost
   expected_result: |
-    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":0,"last_event_ms":1779267600000}
-    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":0,"last_event_ms":1779265800000}
+    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000}
+    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000}
     {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
 
 - name: sessions_sort_by_duration_breaks_ties_by_pk
-  description: sort=duration (all 0 here) falls back to session_pk ASC, a different order than cost or recency
+  description: sort=duration desc ranks sessions by message-to-file activity span
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sort=duration
   expected_result: |
-    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":0,"last_event_ms":1779267600000}
+    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":5400000,"last_event_ms":1779271200000}
+    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":3600000,"last_event_ms":1779271200000}
     {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
-    {"session_pk":"s3","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":2,"file_event_count":2,"unique_file_count":2,"cost_usd":0.8,"duration_ms":0,"last_event_ms":1779265800000}
 
 - name: sessions_pagination
-  description: limit=1 offset=1 returns the second session by the default recency sort (s1)
+  description: limit=1 offset=1 returns the second session by the default recency tie-break sort (s2)
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&limit=1&offset=1
   expected_result: |
-    {"session_pk":"s1","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":3,"file_event_count":5,"unique_file_count":5,"cost_usd":4,"duration_ms":0,"last_event_ms":1779267600000}
+    {"session_pk":"s2","source":"claude","model":"claude-opus-4-7","repo_fingerprint":"repo_abc","message_count":1,"file_event_count":1,"unique_file_count":1,"cost_usd":0.1,"duration_ms":0,"last_event_ms":1779271200000}
 
 - name: sessions_respects_source_filter
   description: sources=codex isolates a source with no org_test sessions -> empty
