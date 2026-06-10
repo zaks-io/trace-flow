@@ -13,6 +13,7 @@ env:
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -70,10 +71,13 @@ jobs:
 
       # Post/update comment with preview URLs
       - name: Comment PR
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
-            const body = `## 🚀 Preview Deployed
+            const marker = '<!-- trace-flow-preview-comment -->';
+            const body = `${marker}
+            ## 🚀 Preview Deployed
 
             | Service | URL |
             |---------|-----|
@@ -82,27 +86,35 @@ jobs:
             | Proxy | https://trace-flow-proxy-preview.isaac-a46.workers.dev |
             `;
 
-            // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number
             });
 
-            const botComment = comments.find(c => c.body.includes('🚀 Preview Deployed'));
+            const botComment = comments.find(comment =>
+              comment.user?.type === 'Bot' &&
+              comment.user?.login === 'github-actions[bot]' &&
+              (comment.body?.includes(marker) || comment.body?.includes('🚀 Preview Deployed'))
+            );
 
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              });
-            } else {
+            try {
+              if (botComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body
+                });
+                return;
+              }
+
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
                 body
               });
+            } catch (error) {
+              core.warning(`Unable to write preview comment: ${error.message}`);
             }
