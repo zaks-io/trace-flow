@@ -6,6 +6,7 @@ import type { AgentConsumerEnv } from './context';
 import {
   CATEGORIES,
   DATASOURCES,
+  LEGACY_DATASOURCES,
   ROW_IDENTITY_FIELDS,
   rowIdentity,
   stableHash,
@@ -21,6 +22,7 @@ type AddStatus = 'accepted' | 'failed';
 
 interface AgentFactBatch {
   rows: Record<Category, unknown[]>;
+  writeLegacy?: boolean;
 }
 
 interface AgentFactBatchResult {
@@ -100,19 +102,29 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
               contentHash,
               now,
             );
+            const rowData = JSON.stringify(row);
             this.ctx.storage.sql.exec(
               `INSERT INTO pending_facts (category, data, created_at_ms)
                VALUES (?, ?, ?)`,
               category,
-              JSON.stringify(row),
+              rowData,
               now,
             );
+            if (batch.writeLegacy) {
+              this.ctx.storage.sql.exec(
+                `INSERT INTO legacy_pending_facts (category, data, created_at_ms)
+                 VALUES (?, ?, ?)`,
+                category,
+                rowData,
+                now,
+              );
+            }
             acceptedRows++;
           }
         }
       });
 
-      this.queuedRows += acceptedRows;
+      this.queuedRows += acceptedRows * (batch.writeLegacy ? 2 : 1);
       if (repairRows > 0) {
         this.logger.warn('agent_fact_batcher.repair_rows_detected', { repairRows });
       }
@@ -167,9 +179,22 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
         sent_at_ms INTEGER
       )
     `);
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS legacy_pending_facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        data TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        sent_at_ms INTEGER
+      )
+    `);
     this.ensureColumn('pending_facts', 'sent_at_ms', 'INTEGER');
+    this.ensureColumn('legacy_pending_facts', 'sent_at_ms', 'INTEGER');
     this.ctx.storage.sql.exec(
       'CREATE INDEX IF NOT EXISTS idx_pending_facts_category_id ON pending_facts(category, id)',
+    );
+    this.ctx.storage.sql.exec(
+      'CREATE INDEX IF NOT EXISTS idx_legacy_pending_facts_category_id ON legacy_pending_facts(category, id)',
     );
   }
 
@@ -187,9 +212,16 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
 
   private countPendingRows(): number {
     return (
+      this.countTablePendingRows('pending_facts') +
+      this.countTablePendingRows('legacy_pending_facts')
+    );
+  }
+
+  private countTablePendingRows(table: 'pending_facts' | 'legacy_pending_facts'): number {
+    return (
       [
         ...this.ctx.storage.sql.exec<{ count: number }>(
-          'SELECT COUNT(*) AS count FROM pending_facts',
+          `SELECT COUNT(*) AS count FROM ${table} WHERE sent_at_ms IS NULL`,
         ),
       ][0]?.count ?? 0
     );
@@ -211,7 +243,8 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     this.flushInProgress = true;
     try {
       for (const category of CATEGORIES) {
-        await this.flushCategory(category);
+        await this.flushCategory('pending_facts', DATASOURCES[category], category);
+        await this.flushCategory('legacy_pending_facts', LEGACY_DATASOURCES[category], category);
       }
     } finally {
       this.queuedRows = this.countPendingRows();
@@ -223,13 +256,17 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     }
   }
 
-  private async flushCategory(category: Category): Promise<void> {
-    this.deleteSentFacts(category);
+  private async flushCategory(
+    table: 'pending_facts' | 'legacy_pending_facts',
+    datasource: string,
+    category: Category,
+  ): Promise<void> {
+    this.deleteSentFacts(table, category);
 
     const rows = [
       ...this.ctx.storage.sql.exec<{ id: number; data: string }>(
         `SELECT id, data
-         FROM pending_facts
+         FROM ${table}
          WHERE category = ? AND sent_at_ms IS NULL
          ORDER BY id
          LIMIT ?`,
@@ -242,20 +279,20 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     }
 
     const facts = rows.map((row) => JSON.parse(row.data) as unknown);
-    await insertRows(facts, this.env.TINYBIRD_TOKEN, DATASOURCES[category], this.env.TINYBIRD_HOST);
+    await insertRows(facts, this.env.TINYBIRD_TOKEN, datasource, this.env.TINYBIRD_HOST);
 
     const ids = rows.map((row) => row.id);
-    this.markFactsSent(ids);
-    this.deleteSentFacts(category);
+    this.markFactsSent(table, ids);
+    this.deleteSentFacts(table, category);
   }
 
-  private markFactsSent(ids: number[]): void {
+  private markFactsSent(table: 'pending_facts' | 'legacy_pending_facts', ids: number[]): void {
     const sentAt = Date.now();
     this.ctx.storage.transactionSync(() => {
       for (let i = 0; i < ids.length; i += MAX_INSERT_ROWS) {
         const chunk = ids.slice(i, i + MAX_INSERT_ROWS);
         this.ctx.storage.sql.exec(
-          `UPDATE pending_facts
+          `UPDATE ${table}
            SET sent_at_ms = ?
            WHERE id IN (${chunk.map(() => '?').join(',')})`,
           sentAt,
@@ -265,9 +302,12 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     });
   }
 
-  private deleteSentFacts(category: Category): void {
+  private deleteSentFacts(
+    table: 'pending_facts' | 'legacy_pending_facts',
+    category: Category,
+  ): void {
     this.ctx.storage.sql.exec(
-      'DELETE FROM pending_facts WHERE category = ? AND sent_at_ms IS NOT NULL',
+      `DELETE FROM ${table} WHERE category = ? AND sent_at_ms IS NOT NULL`,
       category,
     );
   }

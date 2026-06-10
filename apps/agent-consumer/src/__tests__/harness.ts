@@ -3,7 +3,7 @@ import type { ModelPricing } from '@trace-flow/pricing';
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
 import { insertRows } from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from '../context';
-import { CATEGORIES, DATASOURCES, type Accumulator } from '../facts';
+import { CATEGORIES, DATASOURCES, LEGACY_DATASOURCES, type Accumulator } from '../facts';
 
 const TINYBIRD_HOST = 'https://tb.test';
 
@@ -53,7 +53,13 @@ function makeFactBatcher(): AgentConsumerEnv['AGENT_FACT_BATCHER'] {
   return {
     getByName: () =>
       ({
-        addFacts: async ({ rows }: { rows: Accumulator }) => {
+        addFacts: async ({
+          rows,
+          writeLegacy = false,
+        }: {
+          rows: Accumulator;
+          writeLegacy?: boolean;
+        }) => {
           try {
             let acceptedRows = 0;
             for (const category of CATEGORIES) {
@@ -62,6 +68,14 @@ function makeFactBatcher(): AgentConsumerEnv['AGENT_FACT_BATCHER'] {
               }
               acceptedRows += rows[category].length;
               await insertRows(rows[category], 'tb-token', DATASOURCES[category], TINYBIRD_HOST);
+              if (writeLegacy) {
+                await insertRows(
+                  rows[category],
+                  'tb-token',
+                  LEGACY_DATASOURCES[category],
+                  TINYBIRD_HOST,
+                );
+              }
             }
             return { status: 'accepted', acceptedRows, duplicateRows: 0, repairRows: 0 };
           } catch {

@@ -96,24 +96,10 @@ async function accumulateMessage(
 /** Hands rows to the configured Tinybird write targets. Returns false when any target failed. */
 async function flush(acc: Accumulator, env: AgentConsumerEnv, logger: Logger): Promise<boolean> {
   const mode = writeMode(env);
-  const results = await Promise.allSettled([
-    ...(mode === 'clean' || mode === 'dual' ? [flushClean(acc, env, logger)] : []),
-    ...(mode === 'legacy' || mode === 'dual' ? [flushLegacy(acc, env, logger)] : []),
-  ]);
-
-  let ok = true;
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      ok = false;
-      logger.error('agent_consumer.write_target_failed', result.reason, { mode });
-      Sentry.captureException(result.reason, { tags: { operation: 'agent_write_target' } });
-      continue;
-    }
-    if (!result.value) {
-      ok = false;
-    }
+  if (mode === 'legacy') {
+    return flushLegacy(acc, env, logger);
   }
-  return ok;
+  return flushClean(acc, env, logger, mode === 'dual');
 }
 
 function writeMode(env: AgentConsumerEnv): WriteMode {
@@ -129,6 +115,7 @@ async function flushClean(
   acc: Accumulator,
   env: AgentConsumerEnv,
   logger: Logger,
+  writeLegacy: boolean,
 ): Promise<boolean> {
   const byOrg = groupRowsByOrg(acc);
   if (byOrg.size === 0) {
@@ -138,7 +125,7 @@ async function flushClean(
   const results = await Promise.allSettled(
     [...byOrg.entries()].map(async ([orgId, rows]) => {
       const batcher = env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
-      const result = await batcher.addFacts({ rows });
+      const result = await batcher.addFacts({ rows, writeLegacy });
       if (result.status === 'failed') {
         throw new Error(`agent fact batcher rejected org ${orgId}`);
       }

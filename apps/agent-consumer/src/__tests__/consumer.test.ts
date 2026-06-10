@@ -285,6 +285,28 @@ describe('processAgentBatch', () => {
     expect(msg.ack).toHaveBeenCalledOnce();
   });
 
+  it('routes dual writes through the fact batcher instead of direct legacy inserts', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const msg = stubMessage(queueMessage(), 'm1');
+    const env = makeEnv(kv, { TINYBIRD_AGENT_WRITE_MODE: 'dual' });
+    const addFacts = vi.fn(async () => ({
+      status: 'accepted',
+      acceptedRows: 1,
+      duplicateRows: 0,
+      repairRows: 0,
+    }));
+    env.AGENT_FACT_BATCHER = {
+      getByName: () => ({ addFacts }),
+    } as unknown as typeof env.AGENT_FACT_BATCHER;
+
+    await processAgentBatch(batchOf([msg]), env);
+
+    expect(addFacts).toHaveBeenCalledWith(expect.objectContaining({ writeLegacy: true }));
+    expect(tb.inserts).toHaveLength(0);
+    expect(msg.ack).toHaveBeenCalledOnce();
+  });
+
   it('can write legacy-only for rollback while clean tables remain untouched', async () => {
     tb = mockTinybird();
     const { kv } = makeKv({ [PRICING_KEY]: PRICING });

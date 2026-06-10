@@ -176,7 +176,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install Tinybird CLI
@@ -192,6 +192,9 @@ jobs:
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
           TINYBIRD_DEPLOY_PHASE: expand
+          # Last main commit before the clean Tinybird resource cutover. The deploy job fetches full
+          # history so expand/switch can restore legacy prod resources after this PR merges.
+          TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0

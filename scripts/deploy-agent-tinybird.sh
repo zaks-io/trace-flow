@@ -101,11 +101,32 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
+legacy_ref_has_resources() {
+  local ref="$1"
+  local path
+  for path in datasources/agent_messages.datasource pipes/agent_usage_summary.pipe; do
+    if ! git cat-file -e "$ref:$path" 2>/dev/null; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 resolve_legacy_ref() {
   local candidate
-  for candidate in "${TINYBIRD_LEGACY_REF:-}" origin/main HEAD^1 HEAD^; do
-    [[ -n "$candidate" ]] || continue
-    if git rev-parse --verify --quiet "$candidate^{tree}" >/dev/null; then
+  if [[ -n "${TINYBIRD_LEGACY_REF:-}" ]]; then
+    if git rev-parse --verify --quiet "$TINYBIRD_LEGACY_REF^{tree}" >/dev/null &&
+      legacy_ref_has_resources "$TINYBIRD_LEGACY_REF"; then
+      echo "$TINYBIRD_LEGACY_REF"
+      return 0
+    fi
+    echo "TINYBIRD_LEGACY_REF '$TINYBIRD_LEGACY_REF' does not contain required legacy Tinybird files." >&2
+    return 1
+  fi
+
+  for candidate in origin/main HEAD^1 HEAD^; do
+    if git rev-parse --verify --quiet "$candidate^{tree}" >/dev/null &&
+      legacy_ref_has_resources "$candidate"; then
       echo "$candidate"
       return 0
     fi
