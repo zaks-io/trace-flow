@@ -1,0 +1,18 @@
+DESCRIPTION >
+    Incremental trace filter dimensions from GenAI span facts.
+
+NODE rollup
+SQL >
+    SELECT
+        ApiKey,
+        Provider,
+        Model,
+        StatusCode,
+        BaggageOperation,
+        maxState(ReceivedAt) AS LastSeenAt
+    FROM otel_genai_spans
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+    GROUP BY ApiKey, Provider, Model, StatusCode, BaggageOperation
+
+TYPE MATERIALIZED
+DATASOURCE trace_filter_options

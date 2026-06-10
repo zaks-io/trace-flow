@@ -1,7 +1,7 @@
 # Codex Usage Verification (last 7 days)
 
 Independent reconciliation of Codex agent usage: **raw `~/.codex/sessions` transcripts** →
-**Tinybird `agent_messages`** → **`/app/agents` UI** → **CodexBar**. Done 2026-05-28 to answer "the
+**Tinybird `agent_message_facts`** → **`/app/agents` UI** → **CodexBar**. Done 2026-05-28 to answer "the
 chart data does not match, we're missing data."
 
 ## TL;DR

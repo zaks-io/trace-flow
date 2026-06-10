@@ -35,7 +35,7 @@ const NO_ORG_SENTINEL = '__NO_ORG__';
 
 /**
  * Stamp the row-security fixed_params onto every scope. `api_keys` +
- * `retention_days` gate the `llm_requests` pipes; `org_id` gates the agent
+ * `retention_days` gate the `llm_request_facts` pipes; `org_id` gates the agent
  * pipes (which deliberately do NOT use `api_keys`). Both token-minting paths
  * (`generateToken` and the MCP `generateTokenInternal`) build their fixed_params
  * here so neither can silently issue a token missing `org_id`.
@@ -220,12 +220,12 @@ export const deleteOrgTraces = internalAction({
     const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
 
     const datasources = [
-      'otel_traces',
-      'otel_traces_genai',
-      'llm_requests',
-      'llm_usage_1h',
-      'llm_usage_1d',
-      'llm_usage_1mo',
+      'otel_trace_spans',
+      'otel_genai_spans',
+      'llm_request_facts',
+      'llm_usage_hourly',
+      'llm_usage_daily',
+      'llm_usage_monthly',
     ];
 
     const results: Record<string, { success: boolean; error?: string }> = {};
@@ -290,7 +290,7 @@ export const extendRetention = internalAction({
     const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
 
     // Datasources to update
-    const datasources = ['otel_traces', 'otel_traces_genai', 'llm_requests'];
+    const datasources = ['otel_trace_spans', 'otel_genai_spans', 'llm_request_facts'];
 
     const results: Record<string, { success: boolean; error?: string }> = {};
 

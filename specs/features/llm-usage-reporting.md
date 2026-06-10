@@ -18,7 +18,7 @@ All pipes return cost values already converted to USD (divided by 1,000,000 in t
 
 ### Pipe Changes (from baseline)
 
-All pipes were updated to SELECT the individual cost columns (`InputCostMicrodollars`, `OutputCostMicrodollars`, `CacheReadCostMicrodollars`, `CacheCreationCostMicrodollars`, `ReasoningCostMicrodollars`) that already exist in the `llm_usage_1h/1d/1mo` rollup tables. No schema migrations required.
+All pipes were updated to SELECT the individual cost columns (`InputCostMicrodollars`, `OutputCostMicrodollars`, `CacheReadCostMicrodollars`, `CacheCreationCostMicrodollars`, `ReasoningCostMicrodollars`) that already exist in the `llm_usage_hourly/1d/1mo` rollup tables. No schema migrations required.
 
 - **`llm_usage_by_model`** also adds `cost_per_1k_output_tokens` computed column
 - **`llm_usage_by_operation`** is a new pipe grouping by `BaggageOperation`

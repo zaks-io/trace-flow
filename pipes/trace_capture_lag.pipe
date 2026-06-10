@@ -17,7 +17,7 @@ SQL >
         max(ReceivedAt - Timestamp) / 1000000 AS max_lag_ms,
         quantile(0.95)(ReceivedAt - Timestamp) / 1000000 AS p95_lag_ms,
         quantile(0.99)(ReceivedAt - Timestamp) / 1000000 AS p99_lag_ms
-    FROM llm_requests FINAL
+    FROM llm_request_facts
     WHERE ReceivedAt >= start_ns
         AND ReceivedAt <= end_ns
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})

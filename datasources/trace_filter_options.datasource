@@ -1,0 +1,13 @@
+DESCRIPTION >
+    Incremental trace filter dimensions for API key scoped dashboard controls.
+
+SCHEMA >
+    `ApiKey` LowCardinality(String),
+    `Provider` LowCardinality(String),
+    `Model` LowCardinality(String),
+    `StatusCode` LowCardinality(String),
+    `BaggageOperation` LowCardinality(String),
+    `LastSeenAt` AggregateFunction(max, Int64)
+
+ENGINE "AggregatingMergeTree"
+ENGINE_SORTING_KEY "ApiKey, Provider, Model, StatusCode, BaggageOperation"

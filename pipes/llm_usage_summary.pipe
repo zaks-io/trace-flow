@@ -57,7 +57,7 @@ SQL >
             AvgDurationNano,
             MaxDurationNano,
             P95DurationNano
-        FROM llm_usage_1h
+        FROM llm_usage_hourly
         WHERE range_days <= 30
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -100,7 +100,7 @@ SQL >
             AvgDurationNano,
             MaxDurationNano,
             P95DurationNano
-        FROM llm_usage_1d
+        FROM llm_usage_daily
         WHERE range_days > 30
             AND range_days <= 180
             AND BucketStart >= start_dt
@@ -144,7 +144,7 @@ SQL >
             AvgDurationNano,
             MaxDurationNano,
             P95DurationNano
-        FROM llm_usage_1mo
+        FROM llm_usage_monthly
         WHERE range_days > 180
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt

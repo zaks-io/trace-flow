@@ -1,0 +1,13 @@
+DESCRIPTION >
+    Incremental repo directory for Agent dashboard labels.
+
+SCHEMA >
+    `OrgId` String,
+    `repo_fingerprint` String,
+    `normalized_git_remote` AggregateFunction(argMax, String, DateTime64(3)),
+    `repo_path_fallback` AggregateFunction(argMax, String, DateTime64(3)),
+    `repo_source` AggregateFunction(argMax, String, DateTime64(3)),
+    `LastSeenAt` AggregateFunction(max, DateTime64(3))
+
+ENGINE "AggregatingMergeTree"
+ENGINE_SORTING_KEY "OrgId, repo_fingerprint"

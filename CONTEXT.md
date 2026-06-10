@@ -31,7 +31,7 @@ The top-level OTel grouping identified by a `TraceId`. May contain many Spans.
 _Avoid_: using "trace" to mean a single row.
 
 **Span**:
-One row in Tinybird's `otel_traces`. Write-shape is `TinybirdTrace` (`@trace-flow/types`); read-shape is `TraceSpanRow` (`@trace-flow/spans`).
+One row in Tinybird's `otel_trace_spans`. Write-shape is `TinybirdTrace` (`@trace-flow/types`); read-shape is `TraceSpanRow` (`@trace-flow/spans`).
 _Avoid_: "trace row", "trace record".
 
 **Span Variant**:
@@ -160,7 +160,7 @@ A fully local, no-cloud-credentials data plane: **Local Workers** plus **Convex 
 _Avoid_: conflating with **Cloud-Dev**; assuming agents on this stack can see a developer's Cloud-Dev data, or vice versa.
 
 **Control Plane** / **Data Plane**:
-The **Control Plane** is Convex: it mints **Collector Credentials**, holds the compatibility policy, and answers Agent Session ownership claims. The **Data Plane** is Tinybird: the `otel_traces` and `agent_*` **Datasources** the **Consumer**/agent-consumer write and the **Web** reads. A given set of **Local Workers** can point each plane at cloud or local independently (e.g. Tinybird Cloud-Dev for rows while Convex stays local), which is why "dev" must always name _which plane_ points _where_.
+The **Control Plane** is Convex: it mints **Collector Credentials**, holds the compatibility policy, and answers Agent Session ownership claims. The **Data Plane** is Tinybird: the `otel_trace_spans` and `agent_*` **Datasources** the **Consumer**/agent-consumer write and the **Web** reads. A given set of **Local Workers** can point each plane at cloud or local independently (e.g. Tinybird Cloud-Dev for rows while Convex stays local), which is why "dev" must always name _which plane_ points _where_.
 
 #### Concrete endpoints (canonical — stop rediscovering these)
 
@@ -192,7 +192,7 @@ Worker** process, not the deployed cloud `-dev` Worker, and is only used in **Se
 A named Tinybird query, e.g. `trace_detail.pipe`. Frontend calls Pipes via the Tinybird Client (`@trace-flow/tinybird-client`).
 
 **Datasource**:
-A Tinybird table, e.g. `otel_traces.datasource`. Has an attached `_quarantine` datasource for schema-rejected rows.
+A Tinybird table, e.g. `otel_trace_spans.datasource`. Has an attached `_quarantine` datasource for schema-rejected rows.
 
 **Pipe Token**:
 Short-lived JWT (HS256, 10-minute TTL) signed by Convex with `fixed_params` for row-level read constraints. Proxied **LLM Request** pipes use `api_keys` and `retention_days`; agent-analytics pipes use organization scope; the separate **Provider Usage Tracking** feature adds user scope for user-private **Provider Usage Snapshots**.
@@ -345,7 +345,7 @@ _Avoid_: conflating with **StartedAt**.
 - A **Client** calls the **Proxy**, which forwards to a **Provider** matched by **Route**.
 - The **Proxy** writes one **Body Object** to R2 and sends one **Queue Message** per **LLM Request**.
 - The **Consumer** receives **Queue Message** batches, builds **Spans**, and hands them to a **Trace Shard**.
-- A **Trace Shard** flushes accumulated **Spans** into the `otel_traces` **Datasource**.
+- A **Trace Shard** flushes accumulated **Spans** into the `otel_trace_spans` **Datasource**.
 - The **Web** app reads **Spans** through Tinybird **Pipes** (using a **Pipe Token**) and fetches **Body Objects** through the **API Worker**.
 - An **Organization** owns its user-facing **API Keys** and hidden **Collector Credentials**, and has exactly one **Subscription Tier**; the Tier determines the **Retention Window** stamped onto each **Span**.
 - A **Pipe Token** is scoped to an **Organization**'s **API Keys** and **Retention Window**.

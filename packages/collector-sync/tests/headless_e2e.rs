@@ -28,7 +28,7 @@
 //!
 //! Client-side this asserts the bytes that leave the machine carry no home dir, username, or
 //! `cost_usd`, and that cursors move only on acceptance. The **server-side** half — that real rows
-//! land in `agent_messages` / `agent_file_events` / `agent_tool_events`, that no `agent_file_events`
+//! land in `agent_message_facts` / `agent_file_event_facts` / `agent_tool_event_facts`, that no `agent_file_event_facts`
 //! path contains `/Users/`, and that `cost_usd` stays null until the consumer prices it — is a manual
 //! Tinybird **dev** check (never prod); the run prints the reminder. 3d is done only once that
 //! server-side check passes, not on `cargo build`.
@@ -151,7 +151,7 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
     // POSTs is the `collector_batch_id` string supplied here, which carries no path or cost. Two
     // distinct ADR invariants, on the two fact shapes that carry paths:
     //
-    //   1. `agent_file_events` paths are repo-relative or the `outside_repo` sentinel, never an
+    //   1. `agent_file_event_facts` paths are repo-relative or the `outside_repo` sentinel, never an
     //      absolute / home / username path (ADR: "File facts store repo-relative paths only").
     //   2. Free-text excerpts (`command_excerpt` / `error_excerpt`) keep bounded operational context
     //      but with absolute home paths de-identified. `redact_field` masks only the username
@@ -186,7 +186,7 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
             "a fact carries a cost_usd field; pricing is server-side only"
         );
 
-        // (1) Every `agent_file_events` path is repo-relative or the sentinel: no absolute prefix and
+        // (1) Every `agent_file_event_facts` path is repo-relative or the sentinel: no absolute prefix and
         // no `/Users/` or `/home/` home marker, independent of what redaction does to free text.
         for ev in value["facts"]["file_events"]
             .as_array()
@@ -200,7 +200,7 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
                 .unwrap_or_else(|| panic!("file event has no string normalized_repo_path: {ev:?}"));
             assert!(
                 !path.starts_with('/') && !path.contains("/Users/") && !path.contains("/home/"),
-                "agent_file_events path is not repo-relative: {path:?} in {}",
+                "agent_file_event_facts path is not repo-relative: {path:?} in {}",
                 file_cursor(unit).file_path
             );
         }
@@ -242,8 +242,8 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
 
     eprintln!(
         "headless E2E POSTed {} Claude session(s). Now confirm in the Tinybird DEV workspace (never \
-         prod): rows landed in agent_messages / agent_file_events / agent_tool_events for this batch, \
-         no agent_file_events path contains '/Users/', and cost_usd is null until the consumer prices \
+         prod): rows landed in agent_message_facts / agent_file_event_facts / agent_tool_event_facts for this batch, \
+         no agent_file_event_facts path contains '/Users/', and cost_usd is null until the consumer prices \
          it (the Collector never sets it).",
         report.advanced
     );

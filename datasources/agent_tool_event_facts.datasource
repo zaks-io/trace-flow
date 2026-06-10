@@ -1,0 +1,58 @@
+DESCRIPTION >
+    One Tool Event (tool-use + tool-result blocks folded into one row by the
+    Collector, sharing one tool_use_id → one tool_use_pk, so the failure-rate
+    denominator counts each invocation once). Carries the invocation (tool name,
+    command family/program/subcommand, target paths, extracted provider/repo/PR)
+    and the outcome (status, exit code, duration), plus capped redacted excerpts
+    and tool-result subagent token facts. status in {success, failure, unknown};
+    exit_code/duration_ms are 0 when absent (status disambiguates).
+    JSONPaths are defined because the consumer POSTs rows here via /v0/events;
+    keys match column names exactly (the ingest contract for this fact table).
+
+SCHEMA >
+    `OrgId` String `json:$.OrgId`,
+    `UserId` String `json:$.UserId`,
+    `CollectorId` String `json:$.CollectorId`,
+    `CollectorCredentialId` String `json:$.CollectorCredentialId`,
+    `session_pk` String `json:$.session_pk`,
+    `tool_use_pk` String `json:$.tool_use_pk`,
+    `repo_fingerprint` String `json:$.repo_fingerprint`,
+    `repo_source` LowCardinality(String) `json:$.repo_source`,
+    `source` LowCardinality(String) `json:$.source`,
+    `parser_version` LowCardinality(String) `json:$.parser_version`,
+    `EventAt` DateTime64(3) `json:$.EventAt`,
+    `IngestedAt` DateTime64(3) `json:$.IngestedAt`,
+    `vendor_session_id` String `json:$.vendor_session_id`,
+    `vendor_message_id` String `json:$.vendor_message_id`,
+    `tool_use_id` String `json:$.tool_use_id`,
+    `source_block_index` UInt32 `json:$.source_block_index`,
+    `tool_name` LowCardinality(String) `json:$.tool_name`,
+    `command_family` LowCardinality(String) `json:$.command_family`,
+    `command_program` String `json:$.command_program`,
+    `command_subcommand` String `json:$.command_subcommand`,
+    `status` LowCardinality(String) `json:$.status`,
+    `exit_code` Int32 `json:$.exit_code`,
+    `duration_ms` UInt32 `json:$.duration_ms`,
+    `repo_relative_paths` Array(String) DEFAULT [] `json:$.repo_relative_paths[:]`,
+    `extracted_provider` LowCardinality(String) `json:$.extracted_provider`,
+    `extracted_repo` String `json:$.extracted_repo`,
+    `extracted_pr_number` UInt32 `json:$.extracted_pr_number`,
+    `command_excerpt` String `json:$.command_excerpt`,
+    `error_excerpt` String `json:$.error_excerpt`,
+    `extracted_subagent_agent_id` String `json:$.extracted_subagent_agent_id`,
+    `extracted_subagent_model` String `json:$.extracted_subagent_model`,
+    `extracted_subagent_input_tokens` UInt32 `json:$.extracted_subagent_input_tokens`,
+    `extracted_subagent_output_tokens` UInt32 `json:$.extracted_subagent_output_tokens`,
+    `extracted_subagent_cache_read_tokens` UInt32 `json:$.extracted_subagent_cache_read_tokens`,
+    `extracted_subagent_cache_creation_tokens` UInt32 `json:$.extracted_subagent_cache_creation_tokens`,
+    `dropped_sensitive` UInt32 `json:$.dropped_sensitive`
+
+FORWARD_QUERY >
+  SELECT OrgId, UserId, CollectorId, CollectorCredentialId, session_pk, tool_use_pk, repo_fingerprint, repo_source, source, parser_version, EventAt, IngestedAt, vendor_session_id, vendor_message_id, tool_use_id, source_block_index, tool_name, command_family, command_program, command_subcommand, status, exit_code, duration_ms, repo_relative_paths, CAST(extracted_provider, 'LowCardinality(String)') AS extracted_provider, extracted_repo, extracted_pr_number, command_excerpt, error_excerpt, extracted_subagent_agent_id, extracted_subagent_model, extracted_subagent_input_tokens, extracted_subagent_output_tokens, extracted_subagent_cache_read_tokens, extracted_subagent_cache_creation_tokens, dropped_sensitive
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "OrgId, session_pk, tool_use_pk"
+ENGINE_PARTITION_KEY "toYYYYMMDD(EventAt)"
+ENGINE_TTL "toDateTime(EventAt) + toIntervalYear(1)"
+
+TOKEN "agent_consumer_append" APPEND

@@ -47,11 +47,16 @@ describe('insertIntoTinybird', () => {
     });
     vi.stubGlobal('fetch', mockFetch);
 
-    await insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co');
+    await insertIntoTinybird(
+      [mockTrace],
+      'test-token',
+      'otel_trace_spans',
+      'https://api.tinybird.co',
+    );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://api.tinybird.co/v0/events?name=otel_traces',
+      'https://api.tinybird.co/v0/events?name=otel_trace_spans',
       expect.objectContaining({
         method: 'POST',
         headers: {
@@ -76,7 +81,7 @@ describe('insertIntoTinybird', () => {
     await insertIntoTinybird(
       [trace1, trace2],
       'test-token',
-      'otel_traces',
+      'otel_trace_spans',
       'https://api.tinybird.co',
     );
 
@@ -118,7 +123,7 @@ describe('insertIntoTinybird', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     await expect(
-      insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co'),
+      insertIntoTinybird([mockTrace], 'test-token', 'otel_trace_spans', 'https://api.tinybird.co'),
     ).rejects.toThrow('Tinybird insert failed: 400 Bad request error');
   });
 
@@ -131,7 +136,12 @@ describe('insertIntoTinybird', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     await expect(
-      insertIntoTinybird([mockTrace], 'invalid-token', 'otel_traces', 'https://api.tinybird.co'),
+      insertIntoTinybird(
+        [mockTrace],
+        'invalid-token',
+        'otel_trace_spans',
+        'https://api.tinybird.co',
+      ),
     ).rejects.toThrow('Tinybird insert failed: 401 Unauthorized');
   });
 
@@ -144,7 +154,7 @@ describe('insertIntoTinybird', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     await expect(
-      insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co'),
+      insertIntoTinybird([mockTrace], 'test-token', 'otel_trace_spans', 'https://api.tinybird.co'),
     ).rejects.toThrow('Tinybird insert failed: 500 Internal server error');
   });
 
@@ -156,7 +166,12 @@ describe('insertIntoTinybird', () => {
     });
     vi.stubGlobal('fetch', mockFetch);
 
-    await insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'http://localhost:7181');
+    await insertIntoTinybird(
+      [mockTrace],
+      'test-token',
+      'otel_trace_spans',
+      'http://localhost:7181',
+    );
 
     const call = mockFetch.mock.calls[0];
     const url = call?.[0] as string;
@@ -177,7 +192,7 @@ describe('insertIntoTinybird', () => {
       TraceId: `trace-${i}`,
     }));
 
-    await insertIntoTinybird(traces, 'test-token', 'otel_traces', 'https://api.tinybird.co');
+    await insertIntoTinybird(traces, 'test-token', 'otel_trace_spans', 'https://api.tinybird.co');
 
     const call = mockFetch.mock.calls[0];
     const body = call?.[1]?.body as string;
@@ -189,7 +204,7 @@ describe('insertIntoTinybird', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     await expect(
-      insertIntoTinybird([mockTrace], 'test-token', 'otel_traces', 'https://api.tinybird.co'),
+      insertIntoTinybird([mockTrace], 'test-token', 'otel_trace_spans', 'https://api.tinybird.co'),
     ).rejects.toThrow('Network error');
   });
 });
@@ -244,7 +259,7 @@ describe('insertIntoTinybirdWithRetry', () => {
     await insertIntoTinybirdWithRetry(
       [mockTrace],
       'test-token',
-      'otel_traces',
+      'otel_trace_spans',
       'https://api.tinybird.co',
     );
 
@@ -265,7 +280,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       insertIntoTinybirdWithRetry(
         [mockTrace],
         'test-token',
-        'otel_traces',
+        'otel_trace_spans',
         'https://api.tinybird.co',
         mockDelay,
       ),
@@ -289,7 +304,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       insertIntoTinybirdWithRetry(
         [mockTrace],
         'test-token',
-        'otel_traces',
+        'otel_trace_spans',
         'https://api.tinybird.co',
         mockDelay,
       ),
@@ -313,7 +328,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       insertIntoTinybirdWithRetry(
         [mockTrace],
         'test-token',
-        'otel_traces',
+        'otel_trace_spans',
         'https://api.tinybird.co',
         mockDelay,
       ),
@@ -333,7 +348,7 @@ describe('insertIntoTinybirdWithRetry', () => {
       insertIntoTinybirdWithRetry(
         [mockTrace],
         'test-token',
-        'otel_traces',
+        'otel_trace_spans',
         'https://api.tinybird.co',
         mockDelay,
       ),

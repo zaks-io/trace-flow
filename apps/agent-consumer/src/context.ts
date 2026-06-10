@@ -1,4 +1,5 @@
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
+import type { AgentFactBatcherInstance } from './fact-batcher';
 
 /**
  * Bindings for the agent-consumer Worker. All bindings are required — a misconfigured deploy must
@@ -11,10 +12,17 @@ export interface AgentConsumerEnv {
   AGENT_QUEUE: Queue<AgentIngestQueueMessage>;
   /** Shared model pricing catalog, keyed `pricing:<provider>:<model>` (models.dev import, 2d). */
   MODEL_PRICING: KVNamespace;
+  /** Durable Object ledger that dedupes and batches facts before Tinybird insert. */
+  AGENT_FACT_BATCHER: DurableObjectNamespace<AgentFactBatcherInstance>;
   /** Tinybird Events API token with DATASOURCE:APPEND scope. */
   TINYBIRD_TOKEN: string;
   /** Tinybird regional API host, e.g. `https://api.us-west-2.aws.tinybird.co`. */
   TINYBIRD_HOST: string;
+  /**
+   * Rollout write mode. `dual` keeps legacy ReplacingMergeTree tables warm until endpoint parity
+   * proves the clean serving path is safe; `clean` is the final steady state.
+   */
+  TINYBIRD_AGENT_WRITE_MODE?: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };

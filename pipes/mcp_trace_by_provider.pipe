@@ -11,7 +11,7 @@ SQL >
         sum(Duration) / 1000000 as duration_ms,
         sum(JSONExtractFloat(SpanAttributes, 'gen_ai.cost.total')) as cost_usd,
         sum(JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens')) + sum(JSONExtractInt(SpanAttributes, 'gen_ai.usage.output_tokens')) as tokens
-    FROM otel_traces FINAL
+    FROM otel_trace_spans
     WHERE TraceId = {{ String(trace_id, '') }}
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000

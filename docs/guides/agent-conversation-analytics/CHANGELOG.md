@@ -53,7 +53,7 @@ desktop connect flow). Phase boundary reached → open PR to `main`, then STOP (
   (count_delta default-green, failure_delta inverted-red), `SessionOutliersTable`, plus
   `useAgentFilters` / `useAgentData` hooks and row types. Nav entry added to `AppSidebar`. Mirrors
   `OperationsAnalytics` state handling. EMPTY state has **no** desktop-app CTA (slice B is headless).
-- **`datasources/agent_tool_events.datasource`:** added a `FORWARD_QUERY` casting
+- **`datasources/agent_tool_event_facts.datasource`:** added a `FORWARD_QUERY` casting
   `extracted_provider` `String → LowCardinality(String)`. The committed schema (#269) is correct per
   the CLAUDE.md LowCardinality rule; dev cloud held the older `String`, so the `agent_priced_coverage`
   deploy (and the rest of the Phase 4 boundary) needed a zero-downtime migration to land. Dev-only
@@ -62,7 +62,7 @@ desktop connect flow). Phase boundary reached → open PR to `main`, then STOP (
 **Verified (live, local dev — `bun run dev:all` + `bunx convex dev` + Next.js on localhost, driven by
 Chrome):**
 
-- Dev Tinybird deploy #68 promoted: `agent_priced_coverage` (new) + `agent_tool_events` (forward) +
+- Dev Tinybird deploy #68 promoted: `agent_priced_coverage` (new) + `agent_tool_event_facts` (forward) +
   3 dependent pipes; all 4 agent endpoints resolve against the evolved schema.
 - Authenticated `/app/agents` mints a Convex agent JWT carrying `org_id` + `retention_days: 7` +
   `api_keys` in `fixed_params`; the client sends **no** `org_id` (server-stamped). That is the **4b**
@@ -93,13 +93,13 @@ are human-gated (GUI + Apple signing) and outside the autonomous driver.
 - **New `pipes/agent_priced_coverage.pipe`** — the priced-token coverage% read ENDPOINT that 4a's
   header surface needs and that 1b never shipped. The three launch pipes
   (`agent_failure_leaderboard`, `agent_session_outliers`, `agent_tool_period_delta`) expose no
-  coverage metric, and the `agent_usage_1h` rollup (`PricedMessageCount`/`MessageCount`) has no read
+  coverage metric, and the `agent_usage_hourly` rollup (`PricedMessageCount`/`MessageCount`) has no read
   endpoint. The ADR mandates the metric (§ "Honesty about cost": "priced-token coverage % … is
   queryable", `count(cost_usd)/count(*)`, dollars labeled "estimated cost", not "$ spent").
 - **Lane note (driver step 4):** 4a's declared lane is `apps/web` only; the coverage% it requires
   needs a `pipes/` file (Phase 1-family). Rather than reach across lanes silently, this landed as its
   own tracked row **4z** (human-approved). 4a now depends on 4z.
-- Query-time over `agent_messages FINAL`; `org_id` enforced via JWT `fixed_params` (agent pipes use
+- Query-time over `agent_message_facts FINAL`; `org_id` enforced via JWT `fixed_params` (agent pipes use
   `org_id`, not `api_keys`); retention-gated; optional `source`/`repo_fingerprint` filters — matching
   the sibling launch pipes. Returns `message_count` (all roles), `billable_message_count`,
   `priced_message_count`, `coverage_pct = round(priced/billable, 4)` (NULL when no billable turns),
@@ -109,7 +109,7 @@ are human-gated (GUI + Apple signing) and outside the autonomous driver.
   would deflate the ratio. `message_count` (all roles) is also returned so `count(cost_usd)/count(*)`
   stays derivable. Verified against dev: 2807 messages but 2626 billable, so a `count(*)` denominator
   would have deflated coverage ~6%.
-- **`fixtures/agent_messages.ndjson`:** appended 5 `org_cov` rows (new org, leaves `org_test`/`org_1c`
+- **`fixtures/agent_message_facts.ndjson`:** appended 5 `org_cov` rows (new org, leaves `org_test`/`org_1c`
   tests untouched): 3 priced + 1 null-cost assistant across claude/codex, plus 1 `user` turn —
   exercising role-scoping, null skip-in-sum/skip-in-count, and the `source` filter.
 - **`tests/agent_priced_coverage.yaml`:** 3 cases with hand-computed aggregates (0.75 over billable;
@@ -147,12 +147,12 @@ live by 4a's pages in the preview. 4c is ⛔ (never claim).
   **cloud** token (host `aws-us-west-2`, the `agent_consumer_e2e` ADMIN token) drained the queue 58/58
   with zero `insert_failed`. Full path proven: parser → sync → gzip POST → ingest auth → Convex policy +
   claim-sessions → queue → consumer → Tinybird insert.
-- **Verified real rows in Tinybird DEV:** `agent_messages` 2807, `agent_tool_events` 2805,
-  `agent_file_events` 1265, `agent_pull_request_links` 62. **0** `agent_file_events` paths contain
+- **Verified real rows in Tinybird DEV:** `agent_message_facts` 2807, `agent_tool_event_facts` 2805,
+  `agent_file_event_facts` 1265, `agent_pull_request_facts` 62. **0** `agent_file_event_facts` paths contain
   `/Users/` or a username; `cost_usd` is null on every fact (0/2807). `git_head_sha`/`agent_id` empty by
   design (confirmed in `assemble_units.rs`, not a parse defect).
 - **`pipes/agent_priced_usage.pipe` (commit `5ca34af`):** field-parse audit found a degenerate
-  `agent_sessions.token_coverage='missing'` — the `direct_usage` node counted zero-token user/system/tool
+  `agent_session_summaries.token_coverage='missing'` — the `direct_usage` node counted zero-token user/system/tool
   turns as billable `'direct'` usage, so every session read as missing source data and `message_count`
   overcounted. Scoped `direct_usage` to `role = 'assistant'`. Output columns unchanged (no `role` added
   to the SELECT, preserving the `SELECT * … UNION ALL SELECT *` shape vs `subagent_fallback_usage`).
@@ -189,7 +189,7 @@ blockers). 3d stays 🚧: it is done only once the live run is verifiably green 
   used blanket substring bans (`no /Users/`, `no cost_usd`) that were both wrong: redaction MASKS the
   username and keeps path shape (`/Users/[REDACTED]/...` survives by design), and a command excerpt may
   legitimately quote the literal text `cost_usd`. The gate now asserts the real invariants: no real
-  `$HOME` un-masked anywhere in the envelope, every `agent_file_events.normalized_repo_path` is
+  `$HOME` un-masked anywhere in the envelope, every `agent_file_event_facts.normalized_repo_path` is
   repo-relative (no leading `/`, no `/Users/`, no `/home/`; a missing/non-string path now panics), and
   no fact carries a `cost_usd` _field_ (recursive key check). This supersedes the gate description in
   the scaffold entry below.
@@ -223,8 +223,8 @@ worktree. To finish 3d's live verification: (a) create `apps/agent-ingest/.dev.v
 `CONVEX_SITE_URL` + `AGENT_INGEST_SHARED_SECRET` matching a running `bunx convex dev` deployment;
 (b) seed the `2a` compatibility policy + ensure the `claim-sessions` route is deployed; (c) confirm the
 consumer drains `agent-ingest-dev` to the Tinybird **DEV** workspace; (d) re-run, expect 0 failures /
-all cursors advance; (e) verify in Tinybird DEV — rows in `agent_messages`/`agent_file_events`/
-`agent_tool_events`, no `agent_file_events` path containing `/Users/`, `cost_usd` null until the
+all cursors advance; (e) verify in Tinybird DEV — rows in `agent_message_facts`/`agent_file_event_facts`/
+`agent_tool_event_facts`, no `agent_file_event_facts` path containing `/Users/`, `cost_usd` null until the
 consumer prices it. Only then flip 3d ✅ and open the Phase 3 PR to `main` (human merges; no
 self-merge). This is a user-controlled infra bring-up (Convex dev + dev secrets + Tinybird dev login).
 
@@ -264,7 +264,7 @@ any port, no `bun run dev:all` running, `tb` shows no active workspace. The live
 verification cannot run here. **Next (human):** start `bun run dev:all` + the Tinybird dev workspace,
 mint a dev Collector credential, run `TRACE_FLOW_INGEST_URL=… TRACE_FLOW_COLLECTOR_SECRET=… cargo test
 -p collector-sync --test headless_e2e -- --ignored --nocapture`, then confirm in Tinybird **dev**
-(never prod): real rows in `agent_*`, no `agent_file_events` path with `/Users/`, `cost_usd` null until
+(never prod): real rows in `agent_*`, no `agent_file_event_facts` path with `/Users/`, `cost_usd` null until
 the consumer prices it. Only then flip 3d ✅. That completes the Phase 3 boundary → open a PR to `main`
 (human merges; never self-merge — merge = ungated prod deploy). Phase 4 (4a/4b dashboards) is a
 different lane (`apps/web`, needs preview + browser verification); 4c stays deferred.
@@ -1147,7 +1147,7 @@ than inventing a taxonomy. Then 3b / 3d.
 **Status:** 🚧 in progress
 **Changed:** Added `packages/collector-parser/src/paths.rs`, the second trust-boundary leaf utility
 after `redaction.rs`. `relativize_repo_path(repo_root, candidate)` is the single gate every touched
-path passes before it becomes an `agent_file_events` / Tool Event `repo_relative_paths` field. An
+path passes before it becomes an `agent_file_event_facts` / Tool Event `repo_relative_paths` field. An
 absolute candidate is lexically (no filesystem access — the file may be gone by parse time) stripped
 against the session's repo root and returned forward-slash repo-relative; anything not provably inside
 the root collapses to the `outside_repo` sentinel. Adapted from otto `normalize.rs`
@@ -1201,7 +1201,7 @@ canary; expanding it belongs in a cross-layer change that updates `fixtures/reda
 **Next / blockers:** 3a stays 🚧. Remaining sub-work (next invocations): Claude parser (collapse
 repeated `message.usage` by `message.id`), Codex parser (sum `last_token_usage` deltas, NEVER
 `total_token_usage`), tool-use+tool-result fold (same `tool_use_id` → one Tool Event), repo-relative
-path relativization for `agent_file_events` (no `/Users/`/`$HOME`/username; outside-repo →
+path relativization for `agent_file_event_facts` (no `/Users/`/`$HOME`/username; outside-repo →
 `outside_repo`), capability snapshots (counts/hashes/sizes only), Codex turn-index determinism, and
 the fact emitters onto `collector-contracts`. Then 3b (`collector-sync`) and 3d (headless e2e). A
 future cross-layer change should add Stripe/IPv6 to the shared canary + both redactors.
@@ -1372,7 +1372,7 @@ URL-encoded datasource, `TinybirdInsertError` fields, retry classifier). CodeRab
 findings (applied `vi.stubGlobal` + all-malformed log; skipped per-datasource retry granularity — retry-all
 is correct under FINAL idempotency — and `toClickhouseDateTime64` range-guard — `toISOString()` already
 throws → retry/DLQ, and the suggested `<0` bound rejects valid pre-epoch). Pass 2 → **0 findings**.
-**Next / blockers:** Live `agent_messages FINAL` confirmation (priced rows, exact constant-cost sum,
+**Next / blockers:** Live `agent_message_facts FINAL` confirmation (priced rows, exact constant-cost sum,
 re-post unchanged) is **not** headless-reachable; it runs in **2e** (`dev:all` + deployed `agent-ingest`/
 `agent-consumer`) against the **1d** schema. Phase 2 still open: **2d** (models.dev pricing import, resolves
 Cursor null cost), **2e** (Wrangler/dev wiring — add `agent-ingest`+`agent-consumer` deploy+preview jobs to
@@ -1464,10 +1464,10 @@ not in CI, so this is the manual/scripted path 2c (consumer) and 2e (end-to-end)
 `trace_flow_dev` (prod stays gated until 2e), validates offline (`tb build`) and via
 `tb --cloud deploy --check`, then `tb --cloud deploy`. No new pipe/datasource files (this task only
 deploys 1a/1b/1c). Prod was not touched.
-**Verified:** pre-deploy, `tb --cloud sql "SELECT count() FROM agent_messages"` → `Forbidden: Resource
-'agent_messages' not found`. `tb build` clean; `tb --cloud deploy --check` → all `agent_*` resources
+**Verified:** pre-deploy, `tb --cloud sql "SELECT count() FROM agent_message_facts"` → `Forbidden: Resource
+'agent_message_facts' not found`. `tb build` clean; `tb --cloud deploy --check` → all `agent_*` resources
 `status: new`, no destructive ops, "Deployment is valid". Ran the wrapper → deployment #67 promoted and
-live. Post-deploy, `agent_messages`, `agent_priced_usage`, and `agent_sessions` all resolve (count 0,
+live. Post-deploy, `agent_message_facts`, `agent_priced_usage`, and `agent_session_summaries` all resolve (count 0,
 empty as expected — no rows inserted into shared dev); `tb --cloud datasource ls` shows all 9
 `agent_*` datasources. CodeRabbit clean (pass 2; pass 1 added the offline `tb build` step to the
 wrapper).
@@ -1483,7 +1483,7 @@ point.
 rollups, and PR authoring cost agree by construction. `pipes/agent_priced_usage.pipe` is a generic
 pipe (no `TYPE` — Forward's include-file replacement, referenced by name) that lives the subagent
 dedup rule once: every direct Agent Message (top-level, nested, sidechain) counts; source-reported
-subagent usage (`agent_tool_events.extracted_subagent_*`) counts only when no matching
+subagent usage (`agent_tool_event_facts.extracted_subagent_*`) counts only when no matching
 nested/sidechain message exists for `(source, session_pk, agent_id)`, and the fallback row carries
 tokens with `cost_usd` NULL + `subagent_cost_coverage = 'fallback'` (lowers priced coverage instead of
 mis-counting). `pipes/agent_sessions_copy.pipe` (5 nodes) rebuilds one row per session over the view,
@@ -1491,7 +1491,7 @@ joining tool/file/PR base tables; `COPY_MODE replace` + unpartitioned target mea
 multiple `EventAt` days collapses to one row; PR url is set only when exactly one distinct link
 exists. `pipes/agent_usage_1h_copy.pipe` / `_1d_copy.pipe` roll up `usage_kind = 'direct'` rows
 (MessageCount stays a true message count); `pipes/agent_tool_usage_1h_copy.pipe` reads base
-`agent_tool_events FINAL` (tool mix is not a cost surface) and keeps success/failure/unknown separate.
+`agent_tool_event_facts FINAL` (tool mix is not a cost surface) and keeps success/failure/unknown separate.
 Schedules staggered (1h `0 * * * *`, 1d `15 * * * *`, tool `30 * * * *`, sessions `45 * * * *`),
 matching the `llm_usage_*_copy` hourly-refresh-of-daily-bucket convention. Added
 `scripts/gen_1c_fixtures.py` and additive `org_1c` fixture rows (the 1b `org_test` endpoint tests are
@@ -1500,11 +1500,11 @@ untouched — every launch pipe filters by org).
 quarantine rows; `tb copy run` populated all four targets and a second run left counts identical
 (idempotent `replace`). Asserted via `tb --local sql`: `agent_priced_usage` org*1c = 10 rows, exactly
 1 `subagent_fallback` (sub1 both-forms counts the overlap once with no fallback row; sub2 fallback-only
-adds one row, output 70, NULL cost, coverage `fallback`); `agent_sessions` cc1 constant-cost = 4 msgs
+adds one row, output 70, NULL cost, coverage `fallback`); `agent_session_summaries` cc1 constant-cost = 4 msgs
 × 0.25 → cost 1.0 (input 400, tools 2, failure 1, files 2, PR pull/1); span1 = ONE row across
 2026-05-20→05-21 (duration 86400000 ms, cost 1.0, ambiguous PR url ''); sub1 cost 0.8, sub2 cost 0.4 /
-output 90. `agent_usage_1h` 10:00 bucket = 7 msgs / 3 sessions / 2.2 cost; `agent_usage_1d` 05-20 = 8
-msgs / 4 sessions / 2.7; `agent_tool_usage_1h` git 3/3 success, npm 1/1 failure. `tb test run` 3/3
+output 90. `agent_usage_hourly` 10:00 bucket = 7 msgs / 3 sessions / 2.2 cost; `agent_usage_daily` 05-20 = 8
+msgs / 4 sessions / 2.7; `agent_tool_usage_hourly` git 3/3 success, npm 1/1 failure. `tb test run` 3/3
 (1b endpoint tests green with org_1c added). CodeRabbit: pass 1 fixed 3 script nits; pass 2's 6
 findings all verified false-positive (1d cron matches `llm_usage_1d_copy`; branch label correct;
 ruff/ANN401 not configured; `CacheCoverage = 'full' | 'missing'` has no 'partial'; duration
@@ -1521,8 +1521,8 @@ over a window, with a `min_events` display floor; `failure_rate = failure / (suc
 `unknown` is counted in `event_count` but excluded from the denominator (ADR §357), and is null when
 the denominator is 0. `pipes/agent_tool_period_delta.pipe` compares the requested window against the
 immediately-preceding equal-length window, ranking by `abs(count_delta)`. `pipes/agent_session_outliers.pipe`
-(three nodes) aggregates per session from `agent_messages FINAL` (cost via `sum(cost_usd)`, which skips
-the lone nullable column) LEFT JOIN `agent_file_events FINAL` (event + unique-path counts), ranked by
+(three nodes) aggregates per session from `agent_message_facts FINAL` (cost via `sum(cost_usd)`, which skips
+the lone nullable column) LEFT JOIN `agent_file_event_facts FINAL` (event + unique-path counts), ranked by
 estimated cost. All three enforce `org_id` (JWT `fixed_params`), accept optional `source` /
 `repo_fingerprint` filters, and clamp to `retention_days`. **Bootstrapped the repo's first `tb` test
 harness:** `tests/{agent_failure_leaderboard,agent_tool_period_delta,agent_session_outliers}.yaml` plus
@@ -1547,24 +1547,24 @@ yet deployed to the cloud dev workspace — that is 1d, gated until 2e.
 
 **Status:** ✅ done
 **Changed:** Added the 9 `agent_*` Tinybird datasources. Five base fact tables
-(`agent_messages`, `agent_tool_events`, `agent_file_events`, `agent_capability_snapshots`,
-`agent_pull_request_links`) are `ReplacingMergeTree(IngestedAt)` keyed `OrgId, session_pk, <row>_pk`,
-partitioned `toYYYYMMDD(EventAt)`, TTL `toDateTime(EventAt) + 1y`. `agent_sessions` is
+(`agent_message_facts`, `agent_tool_event_facts`, `agent_file_event_facts`, `agent_capability_snapshot_facts`,
+`agent_pull_request_facts`) are `ReplacingMergeTree(IngestedAt)` keyed `OrgId, session_pk, <row>_pk`,
+partitioned `toYYYYMMDD(EventAt)`, TTL `toDateTime(EventAt) + 1y`. `agent_session_summaries` is
 `ReplacingMergeTree(IngestedAt)` keyed `OrgId, session_pk` with no partition key, TTL on `LastEventAt`.
-Three rollups (`agent_usage_1h`, `agent_usage_1d`, `agent_tool_usage_1h`) are `AggregatingMergeTree`
-keyed low-to-high cardinality with `BucketStart` leading (mirroring `llm_usage_1h`). `cost_usd
+Three rollups (`agent_usage_hourly`, `agent_usage_daily`, `agent_tool_usage_hourly`) are `AggregatingMergeTree`
+keyed low-to-high cardinality with `BucketStart` leading (mirroring `llm_usage_hourly`). `cost_usd
 Nullable(Float64)` is the only nullable column. The 5 base fact tables carry `json:$.<col>` JSONPaths
-(keys == column names) because the consumer POSTs to them via `/v0/events`; `agent_sessions` + rollups
-omit JSONPaths since they are rebuilt from base `FINAL` by Copy Pipes (1c), like `llm_requests`.
+(keys == column names) because the consumer POSTs to them via `/v0/events`; `agent_session_summaries` + rollups
+omit JSONPaths since they are rebuilt from base `FINAL` by Copy Pipes (1c), like `llm_request_facts`.
 **Verified:** `tb build` clean across the full project (datasources + all existing pipes). Live insert
-against a local `tb` instance via `POST /v0/events?name=agent_messages` (2 rows, 0 quarantined):
+against a local `tb` instance via `POST /v0/events?name=agent_message_facts` (2 rows, 0 quarantined):
 same `message_pk` twice with newer `IngestedAt` → `SELECT … FINAL` count = 1 keeping the newer row
 (output_tokens 999, cost_usd 0.99); a distinct `message_pk` → `FINAL` count = 2; `cost_usd: null`
-ingests as `None`. Root-caused a pre-existing `tb build` failure on `otel_traces` to a stale local CLI
+ingests as `None`. Root-caused a pre-existing `tb build` failure on `otel_trace_spans` to a stale local CLI
 (4.2.1 → 4.5.8) — out of lane, fixed by updating the CLI, not the datasource. CodeRabbit: 2 trivial
 findings (move `OrgId` before `BucketStart` in the two rollup sorting keys) declined as false positives
 — the ADR (§Table physics, line 373) and ROADMAP (1a) explicitly specify low-to-high cardinality with
-`BucketStart` leading, matching the `llm_usage_1h` template; the high-cardinality-first rule applies to
+`BucketStart` leading, matching the `llm_usage_hourly` template; the high-cardinality-first rule applies to
 the base fact tables, which already lead with `OrgId`.
 **Next / blockers:** 1b (launch-query pipes) and 1c (COPY rollup pipes) now unblocked. Schema is not
 deployed to the cloud dev workspace yet — that is 1d (gated until 2e per the deploy-gate).
@@ -1695,7 +1695,7 @@ two trust-boundary tests: **2a** concurrent first-writer claim (two simultaneous
 cache plus a failed policy fetch returns 503 `policy_unavailable`, never a fail-open 202). Hardened
 **2e/2f** deploy completeness (new workers added to `deploy-status.needs`, not just the deploy jobs;
 1d schema must be live on dev first; the 1d deploy command recorded in the 2f runbook). Pinned **1c**
-`COPY_SCHEDULE` to hourly and added an `agent_sessions` whole-table-rebuild Watch-item (its `replace`
+`COPY_SCHEDULE` to hourly and added an `agent_session_summaries` whole-table-rebuild Watch-item (its `replace`
 cost scales with total session count, not the recent window). Carried 1d and 2g into the slice-B task
 list and "v1 slice complete when". **README:** dependency graph now shows `1d` (after 1a+1b+1c), `2g`
 (after 2b+2c), and `2d` after `0c + 2a`; added a scope note that the new workers use `wrangler.jsonc`
@@ -1703,11 +1703,11 @@ list and "v1 slice complete when". **README:** dependency graph now shows `1d` (
 scope. An **Outside Voice** (independent sonnet review) then surfaced three more autonomous-safety
 gaps, all applied: a **shared envelope contract fixture** in 0a (`fixtures/agent-envelope.sample.json`,
 loaded by both the Rust round-trip and a TS deserialize test, replacing the single-sided check so a
-serde or TS rename cannot silently drift); the **`agent_sessions` rebuild assertion relocated from 2c
+serde or TS rename cannot silently drift); the **`agent_session_summaries` rebuild assertion relocated from 2c
 to 1c** (2c does not depend on 1c, so it now asserts base-fact inserts only and the rollup check lives
 with the pipe that owns it); and a **file_events path-privacy assertion in 3a** (every path
 repo-relative, no `/Users/` or `$HOME`, outside-repo maps to `outside_repo`), so a relativization bug
-fails at 3a, not only at 3d. Its proposed scope cut (drop `agent_capability_snapshots`) was
+fails at 3a, not only at 3d. Its proposed scope cut (drop `agent_capability_snapshot_facts`) was
 **rejected**: the ADR retains that data deliberately for deferred Context Bloat analysis, and
 re-ingesting aged-out local transcripts is unreliable. The accepted **ADR was left unedited**.
 **Verified:** Docs only, no build run. ROADMAP board carries 1d and 2g with resolvable `depends-on`;

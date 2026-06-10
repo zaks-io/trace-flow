@@ -7,7 +7,7 @@
 // aggregates as one row only when anchored to the session's own repo root).
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
-//! Repo-relative path normalization for `agent_file_events`. `relativize_repo_path` is the single
+//! Repo-relative path normalization for `agent_file_event_facts`. `relativize_repo_path` is the single
 //! gate every touched path passes before it becomes a fact field; anything it cannot prove sits
 //! inside the session's repo root collapses to [`OUTSIDE_REPO`] rather than leaking a local path.
 

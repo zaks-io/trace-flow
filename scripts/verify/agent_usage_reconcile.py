@@ -3,7 +3,7 @@
 
 Independently recomputes token + cost ground truth from the raw `~/.claude/projects` and
 `~/.codex/sessions` logs using the SAME dedup rules the Trace Flow parser uses, queries the live
-Tinybird `agent_messages` datasource, and prints a per-source diff with a pass/fail tolerance. Use it
+Tinybird `agent_message_facts` datasource, and prints a per-source diff with a pass/fail tolerance. Use it
 to catch parser/ingestion drift (dropped turns, double-counts, pricing skew) before trusting the UI.
 
 Ground-truth rules (must match the parser — see docs/.../codex-usage-verification.md):
@@ -195,7 +195,7 @@ def tb_scalar_row(where):
         "toString(sum(input_tokens)),'|',toString(sum(output_tokens)),'|',"
         "toString(sum(cache_creation_tokens)),'|',toString(sum(cache_read_tokens)),'|',"
         "toString(round(sum(cost_usd),2))) r "
-        f"FROM agent_messages FINAL WHERE {where}"
+        f"FROM agent_message_facts WHERE {where}"
     )
     out = subprocess.run(
         ["tb", "--cloud", "sql", sql], capture_output=True, text=True, timeout=60
@@ -278,7 +278,7 @@ def main():
 
     print(f"Agent usage reconciliation — last {args.days} days "
           f"(tolerance {tol*100:.1f}%{'' if tol == args.tolerance else f', relaxed from {args.tolerance*100:.0f}% for the short window'})")
-    print("ground truth = raw local transcripts (parser dedup rules); tinybird = agent_messages FINAL")
+    print("ground truth = raw local transcripts (parser dedup rules); tinybird = agent_message_facts")
 
     if args.source in ("claude", "all"):
         agg = claude_truth(cutoff)

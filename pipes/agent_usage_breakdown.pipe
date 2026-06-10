@@ -1,19 +1,6 @@
 DESCRIPTION >
-    Ranked breakdown of Agent usage by a single dimension (source / model / repo) for the
-    explorer's breakdown panels. Returns one row per dimension value with the usage metrics
-    (estimated cost, tokens, messages, sessions); the UI ranks/displays by the active metric
-    and applies top-N/Other for repo, consistent with the hero chart. Rows cross-filter the
-    page on click.
-
-    Lambda over agent_usage_1h replacement snapshots + base agent_messages FINAL:
-    snapshots serve buckets inside [min(BucketStart), max(BucketStart)), while base FINAL
-    serves older history and the live tail. A stale, partial, empty, or warming snapshot
-    table can never hide a dimension value. Both branches can contribute to the same
-    group_value, so the union is re-aggregated by group_value.
-    cost_usd sums priced rows only (an estimate, never billed spend). Honors the active filters
-    (sources, models, repos). org_id and retention_days are enforced via the JWT fixed_params.
-    session_count merges aggregate states across snapshot/base branches so sessions that cross
-    the rollup boundary are counted once within each displayed group.
+    Ranked Agent usage breakdown by source, model, or repo. Reads the incremental
+    hourly serving table only.
 
 NODE breakdown
 SQL >
@@ -22,78 +9,34 @@ SQL >
         {{ Int64(start_time_ms, 0) }} AS start_ms,
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
-        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        (SELECT min(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_min,
-        (SELECT max(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
     SELECT
-        group_value,
-        sum(message_count) AS message_count,
-        uniqMerge(session_state) AS session_count,
-        sum(total_tokens) AS total_tokens,
-        round(sum(cost_usd), 6) AS cost_usd
-    FROM (
-        SELECT
-            multiIf(
-                {{ String(dimension, 'source') }} = 'model', toString(model),
-                {{ String(dimension, 'source') }} = 'repo', toString(repo_fingerprint),
-                toString(source)
-            ) AS group_value,
-            sum(MessageCount) AS message_count,
-            uniqMergeState(SessionCount) AS session_state,
-            sum(InputTokens) + sum(OutputTokens) + sum(CacheReadTokens)
-                + sum(CacheCreationTokens) + sum(ReasoningTokens) AS total_tokens,
-            round(sum(CostUsd), 6) AS cost_usd
-        FROM agent_usage_1h
-        WHERE BucketStart >= rollup_min
-            AND BucketStart < rollup_watermark
-            AND OrgId = {{ String(org_id, '') }}
-            AND BucketStart >= start_dt
-            AND BucketStart < end_dt
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(models) %}
-            AND model IN splitByChar(',', {{ String(models) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-        GROUP BY group_value
-
-        UNION ALL
-
-        SELECT
-            multiIf(
-                {{ String(dimension, 'source') }} = 'model', toString(model),
-                {{ String(dimension, 'source') }} = 'repo', toString(repo_fingerprint),
-                toString(source)
-            ) AS group_value,
-            count() AS message_count,
-            uniqState(session_pk) AS session_state,
-            sum(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens) AS total_tokens,
-            round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd
-        FROM agent_messages FINAL
-        WHERE (EventAt < rollup_min OR EventAt >= rollup_watermark)
-            AND role = 'assistant'
-            AND OrgId = {{ String(org_id, '') }}
-            AND EventAt >= start_dt
-            AND EventAt < end_dt
-            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(models) %}
-            AND model IN splitByChar(',', {{ String(models) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-        GROUP BY group_value
-    )
+        multiIf(
+            {{ String(dimension, 'source') }} = 'model', toString(model),
+            {{ String(dimension, 'source') }} = 'repo', toString(repo_fingerprint),
+            toString(source)
+        ) AS group_value,
+        sum(finalizeAggregation(MessageCount)) AS message_count,
+        uniqMerge(SessionCount) AS session_count,
+        sum(finalizeAggregation(InputTokens)) + sum(finalizeAggregation(OutputTokens))
+            + sum(finalizeAggregation(CacheReadTokens)) + sum(finalizeAggregation(CacheCreationTokens))
+            + sum(finalizeAggregation(ReasoningTokens)) AS total_tokens,
+        round(sum(finalizeAggregation(CostUsd)), 6) AS cost_usd
+    FROM agent_usage_hourly
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= start_dt
+        AND BucketStart < end_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
     GROUP BY group_value
-    -- Order by the active metric so the LIMIT keeps the rows the UI will actually rank by
-    -- (a high-token/low-cost dimension value must not be truncated before a tokens ranking).
     ORDER BY
         multiIf(
             {{ String(order_by, 'cost_usd') }} = 'total_tokens', toFloat64(total_tokens),

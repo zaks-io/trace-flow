@@ -12,11 +12,11 @@ fi
 
 TB_VERSION_WARNING=0 tb local status >/dev/null 2>&1 || "$TRACE_FLOW_DEV_DIR/start.sh"
 
-for fixture in fixtures/agent_messages.ndjson \
-  fixtures/agent_tool_events.ndjson \
-  fixtures/agent_file_events.ndjson \
-  fixtures/agent_pull_request_links.ndjson \
-  fixtures/agent_capability_snapshots.ndjson
+for fixture in fixtures/agent_message_facts.ndjson \
+  fixtures/agent_tool_event_facts.ndjson \
+  fixtures/agent_file_event_facts.ndjson \
+  fixtures/agent_pull_request_facts.ndjson \
+  fixtures/agent_capability_snapshot_facts.ndjson
 do
   if [[ -f "$fixture" ]]; then
     datasource="$(basename "$fixture" .ndjson)"

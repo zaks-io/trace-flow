@@ -1,0 +1,26 @@
+DESCRIPTION >
+    Incremental daily Agent usage rollup from append-clean message facts.
+
+NODE rollup
+SQL >
+    SELECT
+        toStartOfDay(toDateTime(EventAt)) AS BucketStart,
+        OrgId,
+        source,
+        model,
+        repo_fingerprint,
+        countState() AS MessageCount,
+        uniqState(session_pk) AS SessionCount,
+        sumState(toUInt64(input_tokens)) AS InputTokens,
+        sumState(toUInt64(output_tokens)) AS OutputTokens,
+        sumState(toUInt64(cache_read_tokens)) AS CacheReadTokens,
+        sumState(toUInt64(cache_creation_tokens)) AS CacheCreationTokens,
+        sumState(toUInt64(reasoning_tokens)) AS ReasoningTokens,
+        sumState(toUInt64(cost_usd IS NOT NULL)) AS PricedMessageCount,
+        sumState(ifNull(cost_usd, 0.)) AS CostUsd
+    FROM agent_message_facts
+    WHERE role = 'assistant'
+    GROUP BY BucketStart, OrgId, source, model, repo_fingerprint
+
+TYPE MATERIALIZED
+DATASOURCE agent_usage_daily

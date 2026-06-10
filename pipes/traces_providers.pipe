@@ -8,7 +8,7 @@ SQL >
     SELECT
         JSONExtractString(SpanAttributes, 'gen_ai.system') as provider,
         countDistinct(SpanId) as request_count
-    FROM otel_traces FINAL
+    FROM otel_trace_spans
     WHERE ParentSpanId = ''
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000

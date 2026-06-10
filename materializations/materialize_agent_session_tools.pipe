@@ -1,0 +1,40 @@
+DESCRIPTION >
+    Incremental session summary states from Tool Event facts.
+
+NODE rollup
+SQL >
+    SELECT
+        OrgId,
+        session_pk,
+        argMaxState(toString(source), EventAt) AS source,
+        argMaxState(UserId, EventAt) AS UserId,
+        argMaxState(CollectorId, EventAt) AS CollectorId,
+        argMaxState(CollectorCredentialId, EventAt) AS CollectorCredentialId,
+        argMaxState(repo_fingerprint, EventAt) AS repo_fingerprint,
+        argMaxState(toString(repo_source), EventAt) AS repo_source,
+        argMaxState('', toDateTime64(0, 3)) AS model,
+        argMaxState(toString(parser_version), EventAt) AS parser_version,
+        minState(EventAt) AS StartedAt,
+        maxState(EventAt) AS LastEventAt,
+        maxState(toDateTime64(0, 3)) AS VendorStartedAt,
+        maxState(IngestedAt) AS IngestedAt,
+        argMaxState('', toDateTime64(0, 3)) AS git_branch,
+        argMaxState('', toDateTime64(0, 3)) AS git_head_sha,
+        argMaxState('', toDateTime64(0, 3)) AS primary_pull_request_url,
+        sumState(toUInt64(0)) AS MessageCount,
+        sumState(toUInt64(1)) AS ToolEventCount,
+        sumState(toUInt64(0)) AS FileEventCount,
+        uniqStateIf('', 0) AS UniqueFileCount,
+        sumState(toUInt64(status = 'failure')) AS FailureCount,
+        sumState(toUInt64(0)) AS InputTokens,
+        sumState(toUInt64(0)) AS OutputTokens,
+        sumState(toUInt64(0)) AS CacheReadTokens,
+        sumState(toUInt64(0)) AS CacheCreationTokens,
+        sumState(toUInt64(0)) AS ReasoningTokens,
+        sumState(toUInt64(0)) AS PricedMessageCount,
+        sumState(toFloat64(0)) AS CostUsd
+    FROM agent_tool_event_facts
+    GROUP BY OrgId, session_pk
+
+TYPE MATERIALIZED
+DATASOURCE agent_session_summaries

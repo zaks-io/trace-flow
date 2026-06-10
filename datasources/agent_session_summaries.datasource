@@ -1,0 +1,41 @@
+DESCRIPTION >
+    Incremental Agent Session serving table. Multiple materialized pipes write
+    compatible aggregate states from message, tool, file, and PR facts; endpoints merge
+    those states by (OrgId, session_pk) instead of rebuilding sessions on a schedule.
+
+SCHEMA >
+    `OrgId` String,
+    `session_pk` String,
+    `source` AggregateFunction(argMax, String, DateTime64(3)),
+    `UserId` AggregateFunction(argMax, String, DateTime64(3)),
+    `CollectorId` AggregateFunction(argMax, String, DateTime64(3)),
+    `CollectorCredentialId` AggregateFunction(argMax, String, DateTime64(3)),
+    `repo_fingerprint` AggregateFunction(argMax, String, DateTime64(3)),
+    `repo_source` AggregateFunction(argMax, String, DateTime64(3)),
+    `model` AggregateFunction(argMax, String, DateTime64(3)),
+    `parser_version` AggregateFunction(argMax, String, DateTime64(3)),
+    `StartedAt` AggregateFunction(min, DateTime64(3)),
+    `LastEventAt` AggregateFunction(max, DateTime64(3)),
+    `VendorStartedAt` AggregateFunction(max, DateTime64(3)),
+    `IngestedAt` AggregateFunction(max, DateTime64(3)),
+    `git_branch` AggregateFunction(argMax, String, DateTime64(3)),
+    `git_head_sha` AggregateFunction(argMax, String, DateTime64(3)),
+    `primary_pull_request_url` AggregateFunction(argMax, String, DateTime64(3)),
+    `MessageCount` AggregateFunction(sum, UInt64),
+    `ToolEventCount` AggregateFunction(sum, UInt64),
+    `FileEventCount` AggregateFunction(sum, UInt64),
+    `UniqueFileCount` AggregateFunction(uniq, String),
+    `FailureCount` AggregateFunction(sum, UInt64),
+    `InputTokens` AggregateFunction(sum, UInt64),
+    `OutputTokens` AggregateFunction(sum, UInt64),
+    `CacheReadTokens` AggregateFunction(sum, UInt64),
+    `CacheCreationTokens` AggregateFunction(sum, UInt64),
+    `ReasoningTokens` AggregateFunction(sum, UInt64),
+    `PricedMessageCount` AggregateFunction(sum, UInt64),
+    `CostUsd` AggregateFunction(sum, Float64)
+
+ENGINE "AggregatingMergeTree"
+ENGINE_SORTING_KEY "OrgId, session_pk"
+
+FORWARD_QUERY >
+    SELECT *

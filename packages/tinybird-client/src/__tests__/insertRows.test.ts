@@ -20,11 +20,11 @@ describe('insertRows', () => {
   it('POSTs NDJSON to /v0/events with the bearer token', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okResponse());
 
-    await insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_messages', HOST);
+    await insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_facts', HOST);
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe(`${HOST}/v0/events?name=agent_messages`);
+    expect(String(url)).toBe(`${HOST}/v0/events?name=agent_message_facts`);
     expect(init?.method).toBe('POST');
     const headers = init?.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer tok');
@@ -44,7 +44,7 @@ describe('insertRows', () => {
   it('serializes an empty row set to an empty body', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okResponse());
 
-    await insertRows([], 'tok', 'agent_messages', HOST);
+    await insertRows([], 'tok', 'agent_message_facts', HOST);
 
     expect(fetchMock.mock.calls[0]![1]?.body).toBe('');
   });
@@ -52,7 +52,7 @@ describe('insertRows', () => {
   it('throws TinybirdInsertError carrying status + body on a non-2xx', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(errorResponse(422, 'quarantined rows'));
 
-    await expect(insertRows([{ a: 1 }], 'tok', 'agent_messages', HOST)).rejects.toMatchObject({
+    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toMatchObject({
       name: 'TinybirdInsertError',
       status: 422,
       responseText: 'quarantined rows',
@@ -63,7 +63,7 @@ describe('insertRows', () => {
   it('propagates network errors unchanged', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network error'));
 
-    await expect(insertRows([{ a: 1 }], 'tok', 'agent_messages', HOST)).rejects.toThrow(
+    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toThrow(
       'Network error',
     );
   });

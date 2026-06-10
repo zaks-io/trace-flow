@@ -7,7 +7,7 @@ drift before you do.
 ## `agent_usage_reconcile.py`
 
 Reconciles agent-analytics token + cost: **raw `~/.claude/projects` + `~/.codex/sessions` logs** vs
-**Tinybird `agent_messages`** vs (optionally) **ccusage**. Recomputes ground truth with the same dedup
+**Tinybird `agent_message_facts`** vs (optionally) **ccusage**. Recomputes ground truth with the same dedup
 rules the Rust parser uses (Claude: first-seen output / max input+cache per `message.id`; Codex: diff
 cumulative `total_token_usage` snapshots, skip non-advancing duplicates — ccusage#884).
 

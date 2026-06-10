@@ -161,8 +161,8 @@ def append(path: str, rows: list[dict[str, Any]]) -> None:
             fh.write(json.dumps(r) + "\n")
 
 
-append("fixtures/agent_messages.ndjson", messages)
-append("fixtures/agent_tool_events.ndjson", tools)
-append("fixtures/agent_file_events.ndjson", files)
-append("fixtures/agent_pull_request_links.ndjson", prs)
+append("fixtures/agent_message_facts.ndjson", messages)
+append("fixtures/agent_tool_event_facts.ndjson", tools)
+append("fixtures/agent_file_event_facts.ndjson", files)
+append("fixtures/agent_pull_request_facts.ndjson", prs)
 print(f"messages+={len(messages)} tools+={len(tools)} files+={len(files)} prs={len(prs)}")

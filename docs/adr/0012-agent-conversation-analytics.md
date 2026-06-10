@@ -14,7 +14,7 @@ ingest/queue/consumer path, and read the result in `/app/agents` without Tinybir
 Convex dev, local KV seeding, or ignored tests. A minimal CLI may ship before the desktop app to prove
 the production ingestion path. Trace Flow Desktop remains the intended long-term product surface.
 
-Trace Flow becomes the analytics system of record for local AI-agent activity (Claude Code, Codex, Cursor), alongside proxied LLM Requests. A local Collector parses transcripts into typed facts and syncs them to a Collector Credential-authenticated ingest Worker. The Worker rate-limits, assembles canonical IDs, and enqueues. A stateless consumer prices the facts server-side and writes them into bespoke Tinybird datasources that mirror the `llm_requests` pattern without reusing API-key identity. Otto is the proof of concept this is extracted from: Trace Flow vendors and refactors Otto's working parser, source discovery, remote resolution, and desktop shell, and replaces the contracts around that code (wire format, local pricing, app/state model, IDs). Trace Flow owns the ingest contract, the storage design, and the Trace Flow types and tests the vendored code is refactored behind, but it does not rebuild what already works.
+Trace Flow becomes the analytics system of record for local AI-agent activity (Claude Code, Codex, Cursor), alongside proxied LLM Requests. A local Collector parses transcripts into typed facts and syncs them to a Collector Credential-authenticated ingest Worker. The Worker rate-limits, assembles canonical IDs, and enqueues. A stateless consumer prices the facts server-side and writes them into bespoke Tinybird datasources that mirror the `llm_request_facts` pattern without reusing API-key identity. Otto is the proof of concept this is extracted from: Trace Flow vendors and refactors Otto's working parser, source discovery, remote resolution, and desktop shell, and replaces the contracts around that code (wire format, local pricing, app/state model, IDs). Trace Flow owns the ingest contract, the storage design, and the Trace Flow types and tests the vendored code is refactored behind, but it does not rebuild what already works.
 
 ## Context
 
@@ -41,13 +41,13 @@ One heavy user (135-day span, 2026-01-08 to 2026-05-23): 427,759 messages (~3,17
 - Base fact tables at 1-year TTL: ~240 MB/user. 1,000 such users: ~240 GB, about $14/month at the $0.058/GB-month storage overage rate.
 - Hourly/daily rollups at 1-year TTL: ~28 MB/user. 1,000 users: ~28 GB, about $1.65/month.
 
-Storage is not the cost driver on Tinybird (vCPU-hours are), so keeping the facts a full year is cheap (~$14/month at 1,000 heavy users). The 90-day cap applies only to raw transcripts, where it is a deliberate privacy choice rather than a cost ceiling; derived facts do not carry full prompt/response transcript text, but they may carry bounded redacted operational excerpts as described below. Derived facts live the full year. Correctness comes from deduped base facts first; any materialized rollups are derived read caches that must be rebuildable from base `FINAL` rows.
+Storage is not the cost driver on Tinybird (vCPU-hours are), so keeping the facts a full year is cheap (~$14/month at 1,000 heavy users). The 90-day cap applies only to raw transcripts, where it is a deliberate privacy choice rather than a cost ceiling; derived facts do not carry full prompt/response transcript text, but they may carry bounded redacted operational excerpts as described below. Derived facts live the full year. Correctness comes from append-clean base facts first: the Collector keeps local fact checksums, the ingest path has a Durable Object ledger, and materialized rollups are derived serving tables that must be rebuildable from clean facts.
 
 ## Scope (v1)
 
 A vertical slice that proves ingestion, dedupe, pricing, rollup, and the three launch queries end to end, for all three sources from day one. No source fork. `source` is a dimension column, not a branch in the pipeline.
 
-Day-one breadth means source-tagged activity, not uniform economics. Verified against the live corpus (Data quality verification): Claude and Codex carry full tokens, model, and cache detail, while Cursor carries partial economics from its `state.vscdb` store — session-grain model and sparse message-grain token counts, no cache breakdown. So the full cost, token, and cache product is Claude plus Codex; Cursor `agent_messages` rows carry a normalized model and, where the bubble `tokenCount` is populated with nonzero values, tokens. Missing Cursor token/cache components are stored as zero-valued numeric columns plus explicit coverage fields (`token_coverage`, `cache_coverage`), not nullable metric columns; `cost_usd` is null when usage or pricing is unavailable. The architecture stays unforked; the asymmetry is in the data each source exposes, not in the pipeline.
+Day-one breadth means source-tagged activity, not uniform economics. Verified against the live corpus (Data quality verification): Claude and Codex carry full tokens, model, and cache detail, while Cursor carries partial economics from its `state.vscdb` store — session-grain model and sparse message-grain token counts, no cache breakdown. So the full cost, token, and cache product is Claude plus Codex; Cursor `agent_message_facts` rows carry a normalized model and, where the bubble `tokenCount` is populated with nonzero values, tokens. Missing Cursor token/cache components are stored as zero-valued numeric columns plus explicit coverage fields (`token_coverage`, `cache_coverage`), not nullable metric columns; `cost_usd` is null when usage or pricing is unavailable. The architecture stays unforked; the asymmetry is in the data each source exposes, not in the pipeline.
 
 ## Decisions
 
@@ -138,7 +138,7 @@ The trade-off: refactoring the vendored Otto code behind Trace Flow-owned contra
 
 Agent facts are org-scoped, not API-key-scoped. The Collector Credential authenticates upload, but fact rows carry durable identity columns: `OrgId`, `UserId`, `CollectorId`, and `CollectorCredentialId` for internal audit. `OrgId`, `UserId`, and `CollectorId` come from the credential record; `CollectorCredentialId` is not a dedupe key and may change on reconnect, rotation, or Stronghold recovery. Project is a read-time grouping that spans agent and LLM data; it is not stamped onto facts and its Convex entity is deferred.
 
-This diverges from the proxied LLM Request path on purpose. User-facing API Keys remain the row-security and dashboard filter for `llm_requests`; hidden Collector Credentials are short-lived/replaceable desktop credentials and should not pollute a user's API key inventory or fragment Agent Sessions. Agent Tinybird pipes use Convex-generated fixed params such as `org_id`, not the existing `api_keys` parameter.
+This diverges from the proxied LLM Request path on purpose. User-facing API Keys remain the row-security and dashboard filter for `llm_request_facts`; hidden Collector Credentials are short-lived/replaceable desktop credentials and should not pollute a user's API key inventory or fragment Agent Sessions. Agent Tinybird pipes use Convex-generated fixed params such as `org_id`, not the existing `api_keys` parameter.
 
 Within an Organization, the first accepted upload of an Agent Session claims that `session_pk` for the uploading `UserId`. A later upload of the same Source transcript under a different `UserId` is a permanent ownership conflict, not an overwrite. The ingest Worker checks a narrow server-side session ownership claim keyed by `OrgId + session_pk` before enqueueing facts; if the claim exists for another user, it returns a structured `session_owner_conflict` result for that Agent Session and does not enqueue or store raw for it. Mixed sync batches skip only the conflicting Agent Sessions and continue with unrelated sessions, so one historical ownership conflict does not block current work. This prevents a logout/login on the same machine from reassigning historical conversations while keeping `UserId` out of Tinybird row identity. The claim exists only to protect ingestion ownership and dedupe semantics; it is not a user-facing conversation-sharing or reassignment model. If ownership ever needs to move, it should be an explicit admin/support repair path, not an automatic Collector behavior.
 
@@ -203,33 +203,33 @@ Raw storage also skips when the org's shared R2 Storage Budget is exhausted, ret
 
 Raw Session Bundles exist for two reasons, both bounded to the 90-day window:
 
-- Reprocess without re-syncing. A parser fix, a new derived column, or a pricing correction re-reads the stored transcript server-side, re-parses, and re-inserts; ReplacingMergeTree heals the rows by newest `IngestedAt`. This is the primary dev loop and the whole point of ingest-once: the source machine is never touched again. With raw off, the same fix has to re-sync from the machine, which is the cost of opting out.
+- Reprocess without re-syncing. A parser fix, a new derived column, or a pricing correction re-reads the stored transcript server-side, re-parses, and replays facts through the same dedupe ledger. Same key and hash is skipped; same key with a different hash becomes an explicit repair signal instead of a hot duplicate insert. This is the primary dev loop and the whole point of ingest-once: the source machine is never touched again. With raw off, the same fix has to re-sync from the machine, which is the cost of opting out.
 - Bounded deep analysis. Agentic or analyst scanning of conversation content runs against this store, inside the same window.
 
-Replay heals rather than duplicates only because the dedupe key is stable identity (see Table physics). One caveat remains: a fix that changes a row's `EventAt` moves that row to a different partition, where ReplacingMergeTree will not collapse it against the original. An intentional `EventAt` correction therefore means rebuilding or dropping the affected partitions before replaying, not a bare re-insert.
+Replay heals rather than duplicates only because the dedupe key is stable identity (see Table physics). A fix that changes an existing row's `EventAt` is not a normal append: the ledger treats that as changed content for the same fact key and routes it to repair so the affected serving rows can be rebuilt deliberately.
 
 An Agent Session's raw bundle expires 90 days after the latest accepted raw write, but its fact rows live a year by `EventAt` (Table physics), so the two capabilities decouple. Re-pricing spans the full fact lifetime: a cost-only fix re-runs pricing over the stored token columns in place (no raw read, no re-parse) any time within that year, including after the raw bundle is gone. Structural re-derivation or new columns need the raw, so that is the capability bounded to 90 days; past it a structural fix needs a fresh import. Past one year the facts and derived summaries expire too and cannot be re-priced. So 90 days is the window to get structural derivation right; pricing has the full year.
 
-### No agent batching Durable Object
+### Agent fact batching Durable Object
 
-The proxy path uses `TraceBatcher` (a Durable Object) because individual LLM Requests arrive unbatched and need accumulation. Agent ingest diverges: the Collector already pre-batches a sync, and ReplacingMergeTree dedups on read, so a second batching tier buys nothing. Skipping an agent-specific batching DO keeps the consumer simple and avoids per-shard state we would otherwise have to flush and monitor. This does not rule out the shared `STORAGE_BUDGET` Durable Object from [R2 Storage Caps](./r2-storage-caps.md), which is a cross-feature billing guardrail rather than an ingest batching tier.
+The proxy path uses `TraceBatcher` (a Durable Object) because individual LLM Requests arrive unbatched and need accumulation. Agent ingest also uses a Durable Object boundary, but for a different reason: it is the server-side fact ledger keyed by `(OrgId, fact type, fact id)`. Exact duplicate facts are skipped before Tinybird; changed same-key facts are captured as repair signals. This makes `MergeTree` fact tables viable and keeps query-time `FINAL` off the product path. This does not replace the shared `STORAGE_BUDGET` Durable Object from [R2 Storage Caps](./r2-storage-caps.md), which is a cross-feature billing guardrail rather than an ingest dedupe ledger.
 
 ### Data model
 
-Bespoke typed fact tables written directly by the consumer, the `llm_requests` analogue. Never routed through `otel_traces`. Agent conversations are not proxied LLM Requests; forcing them into the span schema would lose the turn and tool grain.
+Bespoke typed fact tables written directly by the consumer, the `llm_request_facts` analogue. Never routed through `otel_trace_spans`. Agent conversations are not proxied LLM Requests; forcing them into the span schema would lose the turn and tool grain.
 
 Five base tables, rebuildable read aggregates, one session aggregate:
 
-| Table                         | Grain                                              | Role                                                                                                                                 |
-| ----------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `agent_messages`              | one turn (Agent Message)                           | direct model-call tokens and estimated cost. Numeric token/cache columns are non-null; coverage columns explain missing source data. |
-| `agent_tool_events`           | one tool invocation (Tool Event)                   | failures, command families, durations, subagent/result facts.                                                                        |
-| `agent_file_events`           | one file touch                                     | repeated-path attention and hotspots. Repo-relative paths only.                                                                      |
-| `agent_capability_snapshots`  | one conversation-visible capability observation    | opportunistic capability metadata (Codex strongest); retained for later Context Bloat analysis, no v1 launch query.                  |
-| `agent_pull_request_links`    | one canonical Pull Request Link observation        | passive PR attribution evidence without GitHub/GitLab API calls.                                                                     |
-| `agent_usage_1h` / `_1d`      | hour / day, by org/source/repo/model               | replacement-snapshot read aggregate for token, cost, cache, message, and session trends.                                             |
-| `agent_tool_usage_1h` / `_1d` | hour / day, by org/source/repo/tool/command_family | replacement-snapshot read aggregate for tool mix and failure rates.                                                                  |
-| `agent_sessions`              | one Agent Session (aggregate)                      | session-level outliers (cost, file count, duration).                                                                                 |
+| Table                             | Grain                                              | Role                                                                                                                                 |
+| --------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `agent_message_facts`             | one turn (Agent Message)                           | direct model-call tokens and estimated cost. Numeric token/cache columns are non-null; coverage columns explain missing source data. |
+| `agent_tool_event_facts`          | one tool invocation (Tool Event)                   | failures, command families, durations, subagent/result facts.                                                                        |
+| `agent_file_event_facts`          | one file touch                                     | repeated-path attention and hotspots. Repo-relative paths only.                                                                      |
+| `agent_capability_snapshot_facts` | one conversation-visible capability observation    | opportunistic capability metadata (Codex strongest); retained for later Context Bloat analysis, no v1 launch query.                  |
+| `agent_pull_request_facts`        | one canonical Pull Request Link observation        | passive PR attribution evidence without GitHub/GitLab API calls.                                                                     |
+| `agent_usage_hourly` / `_1d`      | hour / day, by org/source/repo/model               | replacement-snapshot read aggregate for token, cost, cache, message, and session trends.                                             |
+| `agent_tool_usage_hourly` / `_1d` | hour / day, by org/source/repo/tool/command_family | replacement-snapshot read aggregate for tool mix and failure rates.                                                                  |
+| `agent_session_summaries`         | one Agent Session (aggregate)                      | session-level outliers (cost, file count, duration).                                                                                 |
 
 Tool mix, web/research domains, and task subjects/statuses are cheap queries over the base tables, not their own rollups. Subagent patterns ride on `is_subagent_spawn` / `agent_depth` (messages) and `extracted_subagent_*` (tool events), not a separate table. Tool-event subagent fields are evidence used by the cost classifier and subagent dashboards. Pull Request Links are extracted into their own fact table so PR attribution can work when the link appears in assistant text, tool output, or another transcript record; PR authoring cost reads the canonical session aggregate after dedupe/classification, not raw tool-event cost fields directly.
 
@@ -241,14 +241,14 @@ Context Bloat and Context Rot Exposure are deferred. They began as exploratory q
 
 v1 keeps the door open by retaining the inputs, not by computing the signals:
 
-- `agent_messages` already stores input/cache/output tokens for cost, which is also the raw material for any later session-token analysis (first-call context load, cache-creation spikes, tokens per Tool Event). No extra work.
-- `agent_capability_snapshots` opportunistically captures conversation-visible capability metadata where a Source exposes it (Codex strongest), so a later analysis has historical coverage instead of starting from zero. It is best-effort and backs no v1 launch query. Capture stays passive and conversation-only: privacy-safe counts, hashed/redacted identities, and size estimates; never raw schema text, skill bodies, config values, environment variables, secrets, or absolute paths. If a transcript does not record the available surface, Trace Flow does not infer it from local config. It never starts MCP servers, calls `list_tools`, shells out to CLIs, or scans agent config.
+- `agent_message_facts` already stores input/cache/output tokens for cost, which is also the raw material for any later session-token analysis (first-call context load, cache-creation spikes, tokens per Tool Event). No extra work.
+- `agent_capability_snapshot_facts` opportunistically captures conversation-visible capability metadata where a Source exposes it (Codex strongest), so a later analysis has historical coverage instead of starting from zero. It is best-effort and backs no v1 launch query. Capture stays passive and conversation-only: privacy-safe counts, hashed/redacted identities, and size estimates; never raw schema text, skill bodies, config values, environment variables, secrets, or absolute paths. If a transcript does not record the available surface, Trace Flow does not infer it from local config. It never starts MCP servers, calls `list_tools`, shells out to CLIs, or scans agent config.
 
 The metrics, the benchmark catalog, and the report are listed under Deferred. If the retained data later shows the signal is real, that work can be picked up without a re-ingest.
 
 #### Tool use/result reconciliation
 
-The parser emits the tool-use block and the tool-result block as separate events sharing one `tool_use_id`; `extracted_success`, `extracted_exit_code`, and duration live on the result. The Collector folds the pair into one Tool Event fact before sync, carrying both the invocation (tool name, command family, extracted files/queries) and the outcome (status, exit code, duration). This is required for correctness. The use and result blocks share one `tool_use_id`, hence one `tool_use_pk`: keep them as two rows and the failure-rate denominator double-counts every invocation; let ReplacingMergeTree dedupe them on that key and it collapses the pair into a single row holding only half the fields (invocation or outcome, whichever wins on `IngestedAt`). Folding the pair in the Collector avoids both. This single reconciled row replaces the research note's `tool_phase` column.
+The parser emits the tool-use block and the tool-result block as separate events sharing one `tool_use_id`; `extracted_success`, `extracted_exit_code`, and duration live on the result. The Collector folds the pair into one Tool Event fact before sync, carrying both the invocation (tool name, command family, extracted files/queries) and the outcome (status, exit code, duration). This is required for correctness. The use and result blocks share one `tool_use_id`, hence one `tool_use_pk`: keep them as two rows and the failure-rate denominator double-counts every invocation, while a pre-Tinybird ledger would treat one side as a conflicting repair for the other. Folding the pair in the Collector avoids both. This single reconciled row replaces the research note's `tool_phase` column.
 
 Operational context is structured first, excerpt second. Tool Event facts carry normalized fields for `tool_name`, `command_family`, command program/subcommand where available, status, exit code, duration, target repo-relative paths, and extracted provider/repo/PR hints. They may also carry capped redacted excerpts such as `command_excerpt` and `error_excerpt` for debugging context. `command_excerpt` is capped at 1 KB, `error_excerpt` is capped at 4 KB, and total excerpt text per Tool Event is capped at 5 KB. Dashboards and rollups should group by structured fields; excerpts are supporting detail, not identity or aggregation keys.
 
@@ -265,59 +265,52 @@ Branch name and HEAD SHA are optional attribution hints, not identity. When chea
 ### Table physics
 
 ```sql
-agent_messages
-  ENGINE ReplacingMergeTree(IngestedAt)
+agent_message_facts
+  ENGINE MergeTree
   SORTING KEY OrgId, session_pk, message_pk
   PARTITION BY toYYYYMMDD(EventAt)
   TTL EventAt + INTERVAL 1 YEAR
 
-agent_tool_events
-  ENGINE ReplacingMergeTree(IngestedAt)
+agent_tool_event_facts
+  ENGINE MergeTree
   SORTING KEY OrgId, session_pk, tool_use_pk
   PARTITION BY toYYYYMMDD(EventAt)
   TTL EventAt + INTERVAL 1 YEAR
 
-agent_file_events
-  ENGINE ReplacingMergeTree(IngestedAt)
+agent_file_event_facts
+  ENGINE MergeTree
   SORTING KEY OrgId, session_pk, file_event_pk
   PARTITION BY toYYYYMMDD(EventAt)
   TTL EventAt + INTERVAL 1 YEAR
 
-agent_capability_snapshots
-  ENGINE ReplacingMergeTree(IngestedAt)
+agent_capability_snapshot_facts
+  ENGINE MergeTree
   SORTING KEY OrgId, session_pk, capability_snapshot_pk
   PARTITION BY toYYYYMMDD(EventAt)
   TTL EventAt + INTERVAL 1 YEAR
 
-agent_pull_request_links
-  ENGINE ReplacingMergeTree(IngestedAt)
+agent_pull_request_facts
+  ENGINE MergeTree
   SORTING KEY OrgId, session_pk, pull_request_link_pk
   PARTITION BY toYYYYMMDD(EventAt)
   TTL EventAt + INTERVAL 1 YEAR
 
-agent_sessions
-  HOT REPAIR affected sessions from base tables FINAL via the canonical priced-usage view (on-demand Copy Pipe, COPY_MODE append)
-  FULL CLEANUP from base tables FINAL via the same view (Copy Pipe, COPY_MODE replace, daily)
-  ENGINE ReplacingMergeTree(IngestedAt)
+agent_session_summaries
+  ENGINE AggregatingMergeTree
   SORTING KEY OrgId, session_pk
-  NO PARTITION KEY  -- one row per session; partitioning by the mutable LastEventAt would scatter a
-                    -- re-synced session across daily partitions, where ReplacingMergeTree/FINAL
-                    -- dedupe only within a partition (see note below)
-  TTL LastEventAt + INTERVAL 1 YEAR
+  NO PARTITION KEY
+  maintained by incremental materializations from append-clean fact tables
 
-agent_usage_1h / agent_usage_1d
-  REBUILT FOR rolling or explicit windows from base tables FINAL via the canonical priced-usage view (Copy Pipe, COPY_MODE replace)
-  ENGINE MergeTree
+agent_usage_hourly / agent_usage_daily
+  ENGINE AggregatingMergeTree
   SORTING KEY OrgId, BucketStart, source, model, repo_fingerprint
-  REBUILD replaces the rolling target window; never append additive aggregate states per queue
-    message or replay
+  maintained by incremental materializations from append-clean message facts
   TTL BucketStart + INTERVAL 1 YEAR
 
-agent_tool_usage_1h / agent_tool_usage_1d
-  REBUILT FOR rolling or explicit windows from agent_tool_events FINAL (Copy Pipe, COPY_MODE replace)
-  ENGINE MergeTree
+agent_tool_usage_hourly / agent_tool_usage_daily
+  ENGINE AggregatingMergeTree
   SORTING KEY OrgId, BucketStart, source, tool_name, command_family, repo_fingerprint
-  REBUILD replaces the rolling target window; never append additive aggregate states per replay
+  maintained by incremental materializations from append-clean tool facts
   TTL BucketStart + INTERVAL 1 YEAR
 
 session_pk  = hash(source, vendor_session_id)
@@ -328,21 +321,36 @@ capability_snapshot_pk = hash(source, vendor_session_id, source_snapshot_id_or_s
 pull_request_link_pk = hash(source, vendor_session_id, source_event_id_or_stable_turn_index, canonical_pull_request_url)
 ```
 
-The sorting key holds stable identity only, because ReplacingMergeTree dedupes on the entire sorting key, so any column in it becomes part of row identity. `llm_requests` can keep `Model`, `Provider`, and the rest in its key because the proxy emits those once and never re-derives them. Agent facts are the opposite: they are re-parsed, and `model`, `repo_fingerprint`, `command_family`, `tool_name`, capability labels, size estimates, and PR-link confidence are parser outputs that improve over time. In the key, a better `command_family` on re-sync would mint a new row instead of replacing the old one, and counts would inflate. So they live as regular columns, free to change, while the `*_pk` surrogates hash immutable vendor IDs and stable source positions and never move. This gives up `repo`/`model` locality on raw scans (the derived aggregates carry those dimensions) in exchange for making re-import idempotent and self-healing.
+The sorting key holds stable tenant and row identity first. The ingest ledger, not ClickHouse merge
+behavior, is responsible for idempotency. Agent facts are re-parsed over time, and `model`,
+`repo_fingerprint`, `command_family`, `tool_name`, capability labels, size estimates, and PR-link
+confidence can improve. Those mutable parser outputs stay out of fact identity; the `*_pk`
+surrogates hash immutable vendor IDs and stable source positions. Query-local dimensions live in
+serving tables ordered by the dashboard filters.
 
 `OrgId` leads for org-scoped reads; `session_pk` groups a session's rows for drilldown. `UserId`, `CollectorId`, and `CollectorCredentialId` are regular columns because they are attribution and internal audit metadata, not row identity. Partition and TTL key on `EventAt` for fact rows, never ingest time and never session `StartedAt`. `EventAt` is the timestamp of the specific message, tool result, file event, capability observation, or pull request link evidence. Partitioning by event time lets a re-synced old row land in its original partition and dedupe while avoiding the long-lived-session trap where a session that started a year ago but resumed today would immediately age out new work. A one-time historical backfill still keeps only the last year of facts because rows with old `EventAt` values are TTL-eligible on arrival.
 
-`StartedAt` remains session metadata: the earliest observed conversation-turn timestamp (`user`/`assistant` records only), computed in the ingest Worker so it stays a pure function of the session's turn bytes. `LastEventAt` is the newest event timestamp observed for the Agent Session and is the retention anchor for the `agent_sessions` summary. `VendorStartedAt` is the Source's declared session start when it exists (Codex emits it in `session_meta`; Claude's UUIDv4 id does not, so it stores a zero sentinel to preserve the single-Nullable-column rule). Excluding app-metadata record types (`ai-title`, `queue-operation`, `attachment`, `pr-link`, `last-prompt`) from `StartedAt` keeps Claude Code version drift from shifting session metadata; changing `EventAt` for a real fact is the partition-moving case that requires an affected-partition rebuild before replay.
+`StartedAt` remains session metadata: the earliest observed conversation-turn timestamp (`user`/`assistant` records only), computed in the ingest Worker so it stays a pure function of the session's turn bytes. `LastEventAt` is the newest event timestamp observed for the Agent Session and is the retention anchor for the `agent_session_summaries` summary. `VendorStartedAt` is the Source's declared session start when it exists (Codex emits it in `session_meta`; Claude's UUIDv4 id does not, so it stores a zero sentinel to preserve the single-Nullable-column rule). Excluding app-metadata record types (`ai-title`, `queue-operation`, `attachment`, `pr-link`, `last-prompt`) from `StartedAt` keeps Claude Code version drift from shifting session metadata; changing `EventAt` for a real fact is the partition-moving case that requires an affected-partition rebuild before replay.
 
-All fact-row event timestamps (`EventAt`, `IngestedAt`, `LastEventAt`, `StartedAt`, `VendorStartedAt`) are `DateTime64(3)`; rollup `BucketStart` is `DateTime`. This deliberately diverges from `llm_requests`, which stores `Int64` epoch-nanoseconds because its source is OTel spans; agent facts are parsed from transcripts with no nanosecond source, so the partition and TTL expressions above (`toYYYYMMDD(EventAt)`, `EventAt + INTERVAL 1 YEAR`) read the column directly with no `/1e9` conversion. `VendorStartedAt`'s zero sentinel is the epoch (`1970-01-01 00:00:00.000`).
+All fact-row event timestamps (`EventAt`, `IngestedAt`, `LastEventAt`, `StartedAt`, `VendorStartedAt`) are `DateTime64(3)`; rollup `BucketStart` is `DateTime`. This deliberately diverges from `llm_request_facts`, which stores `Int64` epoch-nanoseconds because its source is OTel spans; agent facts are parsed from transcripts with no nanosecond source, so the partition and TTL expressions above (`toYYYYMMDD(EventAt)`, `EventAt + INTERVAL 1 YEAR`) read the column directly with no `/1e9` conversion. `VendorStartedAt`'s zero sentinel is the epoch (`1970-01-01 00:00:00.000`).
 
-`agent_sessions` is not partitioned. It holds one row per session, and partitioning by the mutable `LastEventAt` would scatter a session's re-synced rows across daily partitions, where ReplacingMergeTree and `FINAL` dedupe only within a partition (the same constraint stated above for `EventAt`). It is rebuilt from base `FINAL` via the canonical priced-usage view, which also keeps it consistent with `agent_usage_*` and the Pull Request cost path by construction rather than by a separate consumer-side aggregation that could see only a partial sync batch.
+`agent_session_summaries` is not partitioned. It holds aggregate states by `(OrgId, session_pk)`, and
+materialized pipes merge message, tool, file, and pull-request facts into one serving table. Session
+metadata chooses the latest relevant event with aggregate states instead of rebuilding a full snapshot
+on a schedule.
 
 ### Dedupe
 
-ReplacingMergeTree keyed on the stable surrogate identity (`*_pk`), with `IngestedAt` as the version column. Reads use `FINAL`. Re-syncing the same session collapses to one row per ID, newest `IngestedAt` winning. A re-parse under a newer `parser_version` self-heals the row.
+Facts are deduped before Tinybird. The Collector stores local cursors and fact checksums so normal
+appends only send new or changed facts. The agent consumer then routes rows through a sharded Durable
+Object ledger keyed by `(OrgId, fact type, fact id)`. Same key and hash is skipped. Same key with a
+different hash is captured as a repair signal and not inserted into the hot fact table.
 
-Materialized rollups are read caches, not the source of truth. They must never be maintained by appending additive aggregate states from every queue message or replay, because replacement of raw facts does not retract old aggregate-state contributions. Agent rollup targets therefore use rolling `COPY_MODE replace` snapshots: a copy pipe reads base tables with `FINAL`, rebuilds only a rolling or explicit window, and replaces the target with that window. This still drops stale bucket/dimension rows when noisy source facts dedupe or dimensions heal, without rescanning the whole one-year fact table every few minutes. Endpoint lambdas read snapshots inside `[min(BucketStart), max(BucketStart))` and fall back to base `FINAL` for older history and the live tail, so an empty or warming snapshot table cannot hide data.
+Materialized rollups are serving tables, not the source of truth. They are maintained incrementally
+from append-clean facts with `AggregatingMergeTree` aggregate states. Because duplicate physical facts
+are blocked before Tinybird, additive aggregate states are safe in the normal path. Repairs and
+backfills are explicit operations over bounded windows; they do not run as scheduled replacement-copy
+jobs.
 
 ### Cost and pricing
 
@@ -357,7 +365,7 @@ The canonical cost unit is Agent Session Authoring Cost: every billable model us
 
 This rule comes from checking Otto's parser and local Claude Code data, not from a theoretical schema. Otto persists `extracted_subagent_*` token fields on tool-result rows, while Claude Code also writes subagent transcript files under the same session with `isSidechain=true` and `agentId`. In current Claude data the parent/subagent `toolUseResult.usage` can match one sidechain assistant call, not the whole subagent transcript; blindly adding both over-counts, while ignoring the tool-result usage can under-count older or incomplete imports where the sidechain transcript is missing. Trace Flow stores both forms as facts, classifies them into one priced-usage view, and exposes coverage when only summary/fallback subagent usage is available.
 
-`agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and Pull Request authoring-cost queries must all read from that same canonical priced-usage view or aggregate. No code path should define PR cost as "sum `agent_messages.cost_usd`" or "sum messages plus all tool subagent costs" independently, because those two shortcuts fail in opposite directions.
+`agent_session_summaries.cost_usd`, `agent_usage_hourly` / `_1d`, and Pull Request authoring-cost queries must all read from that same canonical priced-usage view or aggregate. No code path should define PR cost as "sum `agent_message_facts.cost_usd`" or "sum messages plus all tool subagent costs" independently, because those two shortcuts fail in opposite directions.
 
 A shared `@trace-flow/pricing` workspace package holds the calculation, used by both the proxy consumer and the agent consumer. A daily Convex cron `importFromModelsDev` mirrors `importFromOpenRouter`: it pulls `models.dev/api.json` into the `modelPricing` table, then syncs to Cloudflare KV. First-party providers only; gateway re-listings of the same model are skipped. Pinning to first-party is mandatory, not a preference: each corpus model also appears under roughly 25 gateway re-listings (helicone, auriko, databricks, nano-gpt) at divergent prices, so the import must read the `anthropic` and `openai` provider entries specifically or it will silently mis-price. `gpt-5.5` uses context-tier pricing (about 2x above a 200k-token context) and Codex runs near a 258k window, so `calculateCost` must be context-tier-aware for it rather than applying one flat rate. `importFromOpenRouter` stays for `provider=openrouter`. The `source` enum gains `'models.dev'` (three files: `schema.ts`, `modelPricing.ts`, `pricing.ts`).
 
@@ -371,7 +379,7 @@ Cost is a derived value the store can rebuild, not a number frozen at first inge
 
 ### Retention and visibility
 
-Storage splits by sensitivity, not by frequency. Raw transcripts in R2 live 90 days and count against the shared org Storage Budget; everything derived from them lives at least a year. The fact tables carry a one-year TTL by `EventAt`, and the `agent_sessions` summary carries a one-year TTL by `LastEventAt`. Capping raw transcripts at 90 days is the deliberate privacy/replay bound: it is the window for replay and for analyst or agent scanning of full conversations, after which Trace Flow is not holding full prompt/response transcript content indefinitely. The separate Storage Budget is the cost and abuse bound: once exhausted, new raw transcripts are not stored until the org has capacity again. Derived facts may carry bounded redacted operational excerpts (`command_excerpt`, `error_excerpt`) for the fact retention window, but they do not carry full prompt/response transcript text. That keeps cost and usage history queryable at row grain while preserving the sharper privacy boundary around Raw Transcript storage.
+Storage splits by sensitivity, not by frequency. Raw transcripts in R2 live 90 days and count against the shared org Storage Budget; everything derived from them lives at least a year. The fact tables carry a one-year TTL by `EventAt`, and the `agent_session_summaries` summary carries a one-year TTL by `LastEventAt`. Capping raw transcripts at 90 days is the deliberate privacy/replay bound: it is the window for replay and for analyst or agent scanning of full conversations, after which Trace Flow is not holding full prompt/response transcript content indefinitely. The separate Storage Budget is the cost and abuse bound: once exhausted, new raw transcripts are not stored until the org has capacity again. Derived facts may carry bounded redacted operational excerpts (`command_excerpt`, `error_excerpt`) for the fact retention window, but they do not carry full prompt/response transcript text. That keeps cost and usage history queryable at row grain while preserving the sharper privacy boundary around Raw Transcript storage.
 
 Visibility is tier-gated at read time and decoupled from storage: a hobby org sees the last 7 days, a pro org the full retained window. A tier upgrade reveals already-stored history without re-ingestion, an upsell lever rather than an accident. Both terms are defined in the glossary (Retention Window, Visibility Window).
 
@@ -380,10 +388,10 @@ Visibility is tier-gated at read time and decoupled from storage: a hobby org se
 All deterministic, zero tuning. The research note's "failing above baseline" detector is dropped; it would have needed fine-tuning to be useful.
 
 1. **Failure leaderboard.** Rank (`tool_name`, `command_family`) by failure rate and count over a window, with a display floor of at least N events so rare tools do not top the chart on one failure.
-2. **Period-over-period delta.** This window versus the prior, sorted by movement, via a query-time rollup over `agent_tool_events FINAL` or a self-join on rebuilt `agent_tool_usage_1h` when that read cache is fresh.
-3. **Session outliers.** Top sessions by cost and file count (the "$400 and 200 files" case) from the `agent_sessions` aggregate.
+2. **Period-over-period delta.** This window versus the prior, sorted by movement, via a self-join on `agent_tool_usage_hourly` or `agent_tool_usage_daily`.
+3. **Session outliers.** Top sessions by cost and file count (the "$400 and 200 files" case) from the `agent_session_summaries` aggregate.
 
-`agent_tool_usage_1h` is logically keyed on `BucketStart` (hour), `OrgId`, `source`, `tool_name`, `command_family`, and `repo_fingerprint`, with counts for success/failure/unknown and summed duration. Materialized rows are replacement snapshots rebuilt from base `FINAL`, never additive aggregate-state appends per replay.
+`agent_tool_usage_hourly` is logically keyed on `BucketStart` (hour), `OrgId`, `source`, `tool_name`, `command_family`, and `repo_fingerprint`, with counts for success/failure/unknown and summed duration. Materialized rows are aggregate states from append-clean facts.
 
 Post-launch product signals are tracked in
 [`signal-catalog.md`](../guides/agent-conversation-analytics/signal-catalog.md). That catalog separates
@@ -411,7 +419,7 @@ Provisional, surfaced honestly rather than hidden:
 - Cross-version totals. Every fact carries `parser_version`; re-ingest self-heals via newer `IngestedAt`; windows mixing versions are flagged.
 - Cross-user reuploads. `UserId` is first-writer-owned for an `OrgId + session_pk`. A same-transcript upload from another user is rejected as `session_owner_conflict` rather than overwriting attribution or duplicating the Agent Session.
 - Outcome attribution beyond `status` is deferred; facts stay descriptive.
-- Raw base rows are counted only through `FINAL` or rebuilt read aggregates, never trusted pre-merge.
+- Raw base rows are append-clean before Tinybird; dashboards read serving aggregates or clean facts without query-time dedupe.
 - Paths are normalized to repo-relative at ingest, which doubles as a privacy guard stripping the home directory and username.
 
 Data quality is surfaced inline (coverage %, version flags) rather than in a separate detector table.
@@ -436,7 +444,7 @@ The corpus is statistically ample: a single 300-file Claude sample held 15,806 a
 
 Both raw stores need de-duplication; naive summation overcounts badly.
 
-Claude repeats per-message usage. Claude Code writes several JSONL records per assistant message (one per content block), each carrying the same `message.usage`. Summing raw records against de-duplicating by `message.id` diverged by 2x to 15x across sampled sessions (one case: 49 records collapse to 15 messages, raw 19,600 versus deduped 1,320 output tokens). The `message_pk` surrogate plus ReplacingMergeTree collapses this correctly, which confirms message-grain dedup is load-bearing rather than an optimization.
+Claude repeats per-message usage. Claude Code writes several JSONL records per assistant message (one per content block), each carrying the same `message.usage`. Summing raw records against de-duplicating by `message.id` diverged by 2x to 15x across sampled sessions (one case: 49 records collapse to 15 messages, raw 19,600 versus deduped 1,320 output tokens). The `message_pk` surrogate plus the pre-Tinybird fact ledger collapses this correctly, which confirms message-grain dedupe is load-bearing rather than an optimization.
 
 Codex token counts are cumulative. Each `event_msg.token_count` carries a running `total_token_usage` and a per-turn `last_token_usage`. In one 671-event session: final `total_token_usage` was 83.3M; summing `last_token_usage` deltas gave 83.4M (consistent); summing `total_token_usage` gave 27.6B, a 331x overcount. The Collector must sum `last_token_usage`, or take the final cumulative, and never sum the running totals. This belongs in Collector obligation 1 next to "strip local pricing."
 
@@ -473,7 +481,7 @@ Explicitly out of v1, to be added when a real need appears:
 - Secondary Repo references and split-cost attribution for multi-repo Agent Sessions.
 - Split-cost attribution for Agent Sessions that span multiple Pull Requests.
 - The Project Convex entity.
-- Context Bloat metrics: capability utilization rate, unused-capability context tokens, and context-tax estimate. v1 opportunistically stores `agent_capability_snapshots` but computes and reports none of these.
+- Context Bloat metrics: capability utilization rate, unused-capability context tokens, and context-tax estimate. v1 opportunistically stores `agent_capability_snapshot_facts` but computes and reports none of these.
 - Context Rot Exposure and its Convex Effective Context Length benchmark catalog (HELM/MRCR/RULER bands), plus the context-engineering report. v1 retains session token/cache facts but ships no bands, no catalog, and no report.
 - Active MCP probing or local config scanning. Starting MCP servers, calling dynamic tool-list APIs, or reading agent configuration files outside the Source transcript stores is out of scope; any later Context Bloat work stays derived from conversations, not direct tool discovery.
 - Running Trace Flow's own long-context benchmark suite. Independent verification is deferred until the signal proves valuable; any earlier Context Rot work would use public/curated Effective Context Length data only.
@@ -490,18 +498,18 @@ Explicitly out of v1, to be added when a real need appears:
 
 Verifiable outcomes for the v1 slice:
 
-- A local transcript parsed by the Collector becomes queryable typed facts (`agent_messages`, `agent_tool_events`, `agent_file_events`, `agent_capability_snapshots`, `agent_pull_request_links`) for the owning org, filterable by `source` and `repo_fingerprint`.
+- A local transcript parsed by the Collector becomes queryable typed facts (`agent_message_facts`, `agent_tool_event_facts`, `agent_file_event_facts`, `agent_capability_snapshot_facts`, `agent_pull_request_facts`) for the owning org, filterable by `source` and `repo_fingerprint`.
 - A remote-backed Agent Session resolves to one first-class Repo record with normalized display metadata; multiple worktrees or renamed checkouts for the same normalized remote collapse to that Repo.
 - A local-only Agent Session without a remote still creates a Provisional Repo; after the same observed path/worktree later resolves a remote, the Provisional Repo heals into the remote-backed Repo, while same-name-only repos do not merge.
 - Pull Request authoring cost is queryable from canonical Agent Session Authoring Cost when passive transcript evidence contains exactly one Pull Request Link in the same Repo; no GitHub/GitLab integration or local `gh` auth is required.
-- Pull Request Link evidence lands in `agent_pull_request_links` with canonical host/owner/repo/number/url fields, source evidence metadata, and confidence; links are extracted passively from transcripts only.
+- Pull Request Link evidence lands in `agent_pull_request_facts` with canonical host/owner/repo/number/url fields, source evidence metadata, and confidence; links are extracted passively from transcripts only.
 - If an Agent Session has no Pull Request evidence, or credible evidence for multiple Pull Requests, its cost remains Unattributed Repo Authoring Cost and is not split across pull requests.
 - A Claude session, a Codex session, and a Cursor session (from `state.vscdb` `cursorDiskKV`: `composerData:` sessions and `bubbleId:` messages) each parse to facts under a vendor-UUID `session_pk`; Claude and Codex carry full token, model, and cache columns, while Cursor carries a normalized model and, where the bubble `tokenCount` is populated with nonzero values, tokens; Cursor cache columns are zero with `cache_coverage = 'missing'`. Claude and Cursor subagent transcripts land under their parent's `session_pk` with `agent_depth` > 0, not as standalone Agent Sessions.
 - The Cursor parser snapshots `state.vscdb` before reading, joins `bubbleId:<composerId>:*` messages to their `composerData:<composerId>` session with `GLOB` prefix scans (never `LIKE`), normalizes the composer `modelConfig.modelName` label (reasoning suffixes stripped, house `composer-*`/`default` left unpriced), and emits nonzero tokens only where the bubble `tokenCount` is nonzero.
-- Agent Session Authoring Cost includes top-level, nested, and sidechain model usage exactly once; `agent_sessions.cost_usd`, `agent_usage_1h` / `_1d`, and PR authoring-cost queries all agree because they use the same canonical priced-usage view.
+- Agent Session Authoring Cost includes top-level, nested, and sidechain model usage exactly once; `agent_session_summaries.cost_usd`, `agent_usage_hourly`, `agent_usage_daily`, and PR authoring-cost queries all agree because they derive from the same append-clean facts.
 - A Claude fixture with both a subagent transcript file and a matching `toolUseResult.usage` row does not double-count the overlapping subagent usage; a fixture with only tool-result subagent usage counts that fallback usage and marks the session's subagent cost coverage as partial/fallback.
-- Re-syncing the same Agent Session twice does not change counts after `FINAL`; query-time rollups over base `FINAL` rows match deduped base counts, and any materialized rollup read cache is rebuilt as replacement snapshots from base `FINAL` rather than additive aggregate-state appends from replay messages. A session whose facts span two `EventAt` days rebuilds to exactly one `agent_sessions` row.
-- Direct `agent_messages.cost_usd` and any included fallback subagent usage cost are computed in the consumer from KV pricing; no pricing math runs in the Collector; priced-token coverage % is queryable.
+- Re-syncing the same Agent Session twice does not change counts: local checksums and the server-side ledger skip same-key/same-hash facts before Tinybird. Query-time rollups over clean facts match materialized serving aggregates. A session whose facts span two `EventAt` days materializes to exactly one `agent_session_summaries` row.
+- Direct `agent_message_facts.cost_usd` and any included fallback subagent usage cost are computed in the consumer from KV pricing; no pricing math runs in the Collector; priced-token coverage % is queryable.
 - The Collector source has no local cost calculation, and a fact reaches the consumer carrying tokens and model but no price.
 - The daily `importFromModelsDev` cron populates `modelPricing` with `source='models.dev'`; a known first-party model resolves to a non-zero price; an unknown model lands with null `cost_usd` and is backfilled on a later run once the catalog covers it.
 - The import reads first-party (`anthropic`, `openai`) prices, not gateway re-listings, so a model with both does not pick up a gateway rate; a `gpt-5.5` usage record above the 200k-token context tier prices at the higher tier, not the flat base rate.
@@ -511,7 +519,7 @@ Verifiable outcomes for the v1 slice:
 - Collector Credential creation, rotation, revocation, and Stronghold recovery do not create user-facing API Keys and do not fragment Agent Session rows; the same transcript re-synced under a replacement Collector Credential dedupes by `OrgId` + `session_pk` + row key, with the new credential retained only as hidden internal audit metadata.
 - Re-syncing the same transcript under the original `UserId` may update rows through normal dedupe; re-syncing it under a different `UserId` in the same Organization is rejected as `session_owner_conflict` and does not overwrite the original uploader's attribution.
 - `status` is one of {`success`, `failure`, `unknown`}; `unknown` is excluded from the failure-rate denominator; the schema's only Nullable column is `cost_usd` (null = unpriced model or missing usable token coverage).
-- No stored `agent_file_events` path contains a home directory or username (verified by scanning a sample for `/Users/` and `$HOME`); stored paths are repo-relative.
+- No stored `agent_file_event_facts` path contains a home directory or username (verified by scanning a sample for `/Users/` and `$HOME`); stored paths are repo-relative.
 - An oversized POST returns 413; an over-rate org returns 429; the ingest Worker chunks a large batch into sub-128KB queue messages; a backfill of the 135-day heavy-user corpus drains through the queue without the consumer hitting CPU/subrequest limits or shedding to the DLQ.
 - Fact tables carry a one-year TTL on `EventAt`; re-syncing a row older than its original partition still dedupes (partition/TTL key on event time, not ingest time); a backfilled row whose `EventAt` predates the one-year fact window does not survive the next merge; a long-lived Agent Session that resumed today keeps today's facts even if `StartedAt` is older than one year; a hobby org's reads are clamped to the last 7 days while a pro org sees the full retained window.
 - Raw and facts sit on different horizons: a session whose `LastEventAt` aged past 90 days can still have queryable facts but no Raw Session Bundle (raw 90-day R2 lifecycle, facts one-year TTL); a cost-only re-price over that session's stored tokens still succeeds, while a structural re-derivation reports the raw is gone.

@@ -8,7 +8,7 @@
 //! grouped and ordered by the reader) into one [`AgentMessageFact`] per genuine conversational turn —
 //! user bubbles and assistant bubbles that delivered text or thinking. Tool-call frames and empty
 //! streaming placeholders are skipped (see `is_message_bubble`); Cursor writes thousands of them and
-//! they already flow to `agent_tool_events` / `agent_file_events`, so emitting them as messages would
+//! they already flow to `agent_tool_event_facts` / `agent_file_event_facts`, so emitting them as messages would
 //! double-count tool turns and inflate message volume ~7x off the Claude/Codex grain.
 //!
 //! **Token coverage is honest-Partial-or-Missing, never Full.** Cursor records `tokenCount` on only ~1%
@@ -33,15 +33,15 @@ use crate::cursor_records::{
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
 
-/// Whether a bubble is a genuine conversational turn that belongs in `agent_messages`, as opposed to a
+/// Whether a bubble is a genuine conversational turn that belongs in `agent_message_facts`, as opposed to a
 /// tool-call frame, an empty streaming placeholder, or other non-message bubble Cursor writes by the
 /// thousands. This keeps Cursor's message grain aligned with the Claude/Codex emitters, which likewise
-/// skip tool-result-only records — otherwise `agent_messages` double-counts every tool turn (it already
-/// lands in `agent_tool_events`) and inflates message volume ~7x.
+/// skip tool-result-only records — otherwise `agent_message_facts` double-counts every tool turn (it already
+/// lands in `agent_tool_event_facts`) and inflates message volume ~7x.
 ///
 /// A **user** bubble is always a turn. An **assistant** bubble counts only when it delivered something:
 /// visible `text` or a `thinking` block. A tool-only / blank assistant bubble carries neither and is not
-/// a message (its tool invocation flows to `agent_tool_events` / `agent_file_events` instead).
+/// a message (its tool invocation flows to `agent_tool_event_facts` / `agent_file_event_facts` instead).
 fn is_message_bubble(record: &Value) -> bool {
     match bubble_type(record) {
         Some(BUBBLE_TYPE_USER) => true,
@@ -127,7 +127,7 @@ fn message_fact(record: &Value, turn_index: i64, ctx: &SessionContext) -> AgentM
 /// Emits one [`AgentMessageFact`] per genuine conversational turn in the composer, in the reader's
 /// createdAt order. Non-message bubbles (tool-call frames, empty streaming placeholders) are skipped via
 /// `is_message_bubble` so the table matches the Claude/Codex message grain and never double-counts the
-/// tool turns that already populate `agent_tool_events`. The model is the session-grain label on every
+/// tool turns that already populate `agent_tool_event_facts`. The model is the session-grain label on every
 /// fact; `turn_index` is the 0-based position **among emitted messages** (bubbles carry no turn number),
 /// and identity rides the bubble's own id via `vendor_message_id`.
 ///
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn a_tool_only_assistant_bubble_is_skipped_not_a_message() {
         // Cursor writes thousands of textless assistant bubbles that are tool-call frames (their
-        // invocation already lands in agent_tool_events). They are not messages — emitting them would
+        // invocation already lands in agent_tool_event_facts). They are not messages — emitting them would
         // double-count every tool turn and inflate message volume ~7x. Only the user turn survives here.
         let records = [
             bubble(

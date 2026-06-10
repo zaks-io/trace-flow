@@ -25,7 +25,7 @@
 /// the sync layer resolved for the session (the git root it walked up to from the session `cwd`, the
 /// same walk that froze `normalized_git_remote`), used only as the anchor that
 /// [`relativize_repo_path`](crate::paths::relativize_repo_path) strips off every touched file path so
-/// `agent_file_events` store a repo-relative path and never a home dir or username. An empty
+/// `agent_file_event_facts` store a repo-relative path and never a home dir or username. An empty
 /// `repo_root` is "root unknown", which makes every absolute path collapse to the `outside_repo`
 /// sentinel rather than leak — the safe default.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

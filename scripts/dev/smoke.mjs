@@ -311,7 +311,7 @@ async function postOtlpTrace() {
 }
 
 async function insertTinybirdTrace() {
-  await tinybirdEvents('otel_traces', [
+  await tinybirdEvents('otel_trace_spans', [
     {
       ReceivedAt: Number(nowNs),
       Timestamp: Number(nowNs),
@@ -353,7 +353,7 @@ async function waitForTrace() {
     async () => {
       const sql = [
         'SELECT count() AS count',
-        'FROM otel_traces FINAL',
+        'FROM otel_trace_spans',
         `WHERE TraceId = '${traceId}'`,
         `AND ApiKey = '${apiKey}'`,
       ].join(' ');

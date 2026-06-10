@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_messages.ndjson (org_cov, window [2026-05-20, 2026-05-21)).
+# Fixtures: fixtures/agent_message_facts.ndjson (org_cov, window [2026-05-20, 2026-05-21)).
 # org_cov messages in window:
 #   claude/assistant cost 0.2   (priced)
 #   claude/assistant cost 0.3   (priced)
@@ -6,9 +6,8 @@
 #   codex/assistant  cost 0.5   (priced)
 #   claude/user      cost null  (not billable; excluded from the denominator)
 # Coverage denominator is role='assistant' turns (matches agent_priced_usage): a user
-# turn is never priced, so counting it would deflate the ratio against rows that were
-# never billable. message_count (all roles) is also returned so count(cost_usd)/count(*)
-# stays derivable. retention_days=20000 neutralizes the now()-relative tier floor for
+# turn is never priced, so the rollup-backed endpoint reports the billable message count
+# as both message_count and billable_message_count. retention_days=20000 neutralizes the now()-relative tier floor for
 # these fixed-date fixtures (production passes 7..365).
 
 - name: coverage_over_billable_turns
@@ -16,14 +15,14 @@
   expected_http_status: 200
   parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
   expected_result: |
-    {"message_count":5,"billable_message_count":4,"priced_message_count":3,"coverage_pct":0.75,"estimated_cost_usd":1}
+    {"message_count":4,"billable_message_count":4,"priced_message_count":3,"coverage_pct":0.75,"estimated_cost_usd":1}
 
 - name: coverage_respects_source_filter
   description: source=claude narrows to 3 billable (2 priced) -> 0.6667; the codex turn is excluded
   expected_http_status: 200
   parameters: org_id=org_cov&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&source=claude
   expected_result: |
-    {"message_count":4,"billable_message_count":3,"priced_message_count":2,"coverage_pct":0.6667,"estimated_cost_usd":0.5}
+    {"message_count":3,"billable_message_count":3,"priced_message_count":2,"coverage_pct":0.6667,"estimated_cost_usd":0.5}
 
 - name: coverage_full_when_all_billable_priced
   description: source=codex isolates the single fully-priced billable turn -> 1.0

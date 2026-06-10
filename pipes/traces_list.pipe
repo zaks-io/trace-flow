@@ -17,7 +17,7 @@ SQL >
         StatusCode,
         SpanAttributes,
         BaggageOperation
-    FROM otel_traces_genai FINAL
+    FROM otel_genai_spans
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000

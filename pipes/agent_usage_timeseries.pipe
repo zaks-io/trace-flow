@@ -1,33 +1,6 @@
 DESCRIPTION >
-    Hero time-series for the Agent usage explorer: one bucketed row per period (and per
-    group value when group_by is set) with the metrics the chart's switcher needs —
-    estimated Agent Session Authoring Cost, token components, message/session counts, and
-    Tool Event outcomes. The granularity param controls bucket size: 'auto' (default)
-    picks hourly buckets for windows <= 30 days and daily beyond that; 'hour' forces
-    hourly (reads agent_usage_1h / agent_tool_usage_1h even on > 30d windows);
-    'day' forces daily (reads agent_usage_1d / agent_tool_usage_1d even on <= 30d windows).
-    Both the usage and tool series resolve the same use_daily from shared params, so
-    their buckets align in the endpoint join.
-
-    group_by (none/source/model) splits the series by a rollup dimension. group_value is
-    '' when group_by=none, else the source or model. Tool Events carry source but no model,
-    so when group_by=model their group_value stays '' (the model split is a usage-only
-    dimension); the UI keeps Model grouping off the tool-events metric.
-
-    Filters: sources and models are optional comma-separated IN-lists (multi-select). models
-    only applies to the usage branches (Tool Events have no model), so a model filter scopes
-    cost/tokens/messages/sessions but leaves the tool-events series unfiltered.
-
-    Lambda: replacement snapshots + base fallback. Reads agent_usage_* and
-    agent_tool_usage_* for buckets inside each snapshot window
-    [min(BucketStart), max(BucketStart)), and reads base FINAL rows for older history and
-    the live tail. A stale, partial, empty, or warming snapshot table can never hide data.
-
-    Cost is a single estimated figure (the agent data model carries one cost_usd per
-    Agent Message, not provider-style per-component cost). cost_usd sums priced rows only;
-    priced_message_count / message_count give the priced-token coverage the UI shows beside
-    the estimate (ADR "Honesty about cost"). org_id and retention_days are enforced via the
-    JWT fixed_params.
+    Agent usage and tool-event time series. Reads incremental hourly/daily serving tables
+    only; raw fact tables are not on the normal dashboard path.
 
 NODE usage_series
 SQL >
@@ -39,125 +12,43 @@ SQL >
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
-        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily,
-        (SELECT min(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_h_min,
-        (SELECT max(BucketStart) FROM agent_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_h,
-        (SELECT min(BucketStart) FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_d_min,
-        (SELECT max(BucketStart) FROM agent_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_d
+        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
     SELECT
-        bucket_dt,
-        group_value,
-        message_count,
-        session_count,
-        input_tokens,
-        output_tokens,
-        cache_read_tokens,
-        cache_creation_tokens,
-        reasoning_tokens,
-        input_tokens + output_tokens + cache_read_tokens
-            + cache_creation_tokens + reasoning_tokens AS total_tokens,
-        cost_usd,
-        priced_message_count
+        BucketStart AS bucket_dt,
+        multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
+        sum(finalizeAggregation(MessageCount)) AS message_count,
+        uniqMerge(SessionCount) AS session_count,
+        sum(finalizeAggregation(InputTokens)) AS input_tokens,
+        sum(finalizeAggregation(OutputTokens)) AS output_tokens,
+        sum(finalizeAggregation(CacheReadTokens)) AS cache_read_tokens,
+        sum(finalizeAggregation(CacheCreationTokens)) AS cache_creation_tokens,
+        sum(finalizeAggregation(ReasoningTokens)) AS reasoning_tokens,
+        input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens AS total_tokens,
+        round(sum(finalizeAggregation(CostUsd)), 6) AS cost_usd,
+        sum(finalizeAggregation(PricedMessageCount)) AS priced_message_count
     FROM (
-        SELECT
-            BucketStart AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
-            sum(MessageCount) AS message_count,
-            uniqMerge(SessionCount) AS session_count,
-            sum(InputTokens) AS input_tokens,
-            sum(OutputTokens) AS output_tokens,
-            sum(CacheReadTokens) AS cache_read_tokens,
-            sum(CacheCreationTokens) AS cache_creation_tokens,
-            sum(ReasoningTokens) AS reasoning_tokens,
-            round(sum(CostUsd), 6) AS cost_usd,
-            sum(PricedMessageCount) AS priced_message_count
-        FROM agent_usage_1h
+        SELECT *
+        FROM agent_usage_hourly
         WHERE NOT use_daily
-            AND BucketStart >= wm_h_min
-            AND BucketStart < wm_h
-            AND OrgId = {{ String(org_id, '') }}
-            AND BucketStart >= start_dt
-            AND BucketStart < end_dt
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-            {% if defined(models) %}
-            AND model IN splitByChar(',', {{ String(models) }})
-            {% end %}
-        GROUP BY bucket_dt, group_value
-
         UNION ALL
-
-        SELECT
-            BucketStart AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
-            sum(MessageCount) AS message_count,
-            uniqMerge(SessionCount) AS session_count,
-            sum(InputTokens) AS input_tokens,
-            sum(OutputTokens) AS output_tokens,
-            sum(CacheReadTokens) AS cache_read_tokens,
-            sum(CacheCreationTokens) AS cache_creation_tokens,
-            sum(ReasoningTokens) AS reasoning_tokens,
-            round(sum(CostUsd), 6) AS cost_usd,
-            sum(PricedMessageCount) AS priced_message_count
-        FROM agent_usage_1d
+        SELECT *
+        FROM agent_usage_daily
         WHERE use_daily
-            AND BucketStart >= wm_d_min
-            AND BucketStart < wm_d
-            AND OrgId = {{ String(org_id, '') }}
-            AND BucketStart >= start_dt
-            AND BucketStart < end_dt
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-            {% if defined(models) %}
-            AND model IN splitByChar(',', {{ String(models) }})
-            {% end %}
-        GROUP BY bucket_dt, group_value
-
-        UNION ALL
-
-        SELECT
-            if(use_daily, toStartOfDay(toDateTime(EventAt)), toStartOfHour(toDateTime(EventAt))) AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
-            count() AS message_count,
-            uniqExact(session_pk) AS session_count,
-            sum(input_tokens) AS input_tokens,
-            sum(output_tokens) AS output_tokens,
-            sum(cache_read_tokens) AS cache_read_tokens,
-            sum(cache_creation_tokens) AS cache_creation_tokens,
-            sum(reasoning_tokens) AS reasoning_tokens,
-            round(sum(ifNull(cost_usd, 0.)), 6) AS cost_usd_total,
-            sum(toUInt64(cost_usd IS NOT NULL)) AS priced_message_count
-        FROM agent_messages FINAL
-        WHERE role = 'assistant'
-            AND (
-                EventAt < if(use_daily, wm_d_min, wm_h_min)
-                OR EventAt >= if(use_daily, wm_d, wm_h)
-            )
-            AND OrgId = {{ String(org_id, '') }}
-            AND EventAt >= start_dt
-            AND EventAt < end_dt
-            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-            {% if defined(models) %}
-            AND model IN splitByChar(',', {{ String(models) }})
-            {% end %}
-        GROUP BY bucket_dt, group_value
     )
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= start_dt
+        AND BucketStart < end_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+    GROUP BY bucket_dt, group_value
 
 NODE tool_series
 SQL >
@@ -169,86 +60,34 @@ SQL >
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
-        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily,
-        (SELECT min(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_th_min,
-        (SELECT max(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS wm_th,
-        (SELECT min(BucketStart) FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_td_min,
-        (SELECT max(BucketStart) FROM agent_tool_usage_1d WHERE OrgId = {{ String(org_id, '') }}) AS wm_td
-    SELECT * FROM (
-        SELECT
-            BucketStart AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
-            sum(EventCount) AS tool_event_count,
-            sum(SuccessCount) AS tool_success_count,
-            sum(FailureCount) AS tool_failure_count,
-            sum(UnknownCount) AS tool_unknown_count
-        FROM agent_tool_usage_1h
+        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
+    SELECT
+        BucketStart AS bucket_dt,
+        multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
+        sum(finalizeAggregation(EventCount)) AS tool_event_count,
+        sum(finalizeAggregation(SuccessCount)) AS tool_success_count,
+        sum(finalizeAggregation(FailureCount)) AS tool_failure_count,
+        sum(finalizeAggregation(UnknownCount)) AS tool_unknown_count
+    FROM (
+        SELECT *
+        FROM agent_tool_usage_hourly
         WHERE NOT use_daily
-            AND BucketStart >= wm_th_min
-            AND BucketStart < wm_th
-            AND OrgId = {{ String(org_id, '') }}
-            AND BucketStart >= start_dt
-            AND BucketStart < end_dt
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-        GROUP BY bucket_dt, group_value
-
         UNION ALL
-
-        SELECT
-            BucketStart AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
-            sum(EventCount) AS tool_event_count,
-            sum(SuccessCount) AS tool_success_count,
-            sum(FailureCount) AS tool_failure_count,
-            sum(UnknownCount) AS tool_unknown_count
-        FROM agent_tool_usage_1d
+        SELECT *
+        FROM agent_tool_usage_daily
         WHERE use_daily
-            AND BucketStart >= wm_td_min
-            AND BucketStart < wm_td
-            AND OrgId = {{ String(org_id, '') }}
-            AND BucketStart >= start_dt
-            AND BucketStart < end_dt
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-        GROUP BY bucket_dt, group_value
-
-        UNION ALL
-
-        SELECT
-            if(use_daily, toStartOfDay(toDateTime(EventAt)), toStartOfHour(toDateTime(EventAt))) AS bucket_dt,
-            multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
-            count() AS tool_event_count,
-            countIf(status = 'success') AS tool_success_count,
-            countIf(status = 'failure') AS tool_failure_count,
-            countIf(status = 'unknown') AS tool_unknown_count
-        FROM agent_tool_events FINAL
-        WHERE (
-                EventAt < if(use_daily, wm_td_min, wm_th_min)
-                OR EventAt >= if(use_daily, wm_td, wm_th)
-            )
-            AND OrgId = {{ String(org_id, '') }}
-            AND EventAt >= start_dt
-            AND EventAt < end_dt
-            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-        GROUP BY bucket_dt, group_value
     )
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= start_dt
+        AND BucketStart < end_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+    GROUP BY bucket_dt, group_value
 
 NODE endpoint
 SQL >

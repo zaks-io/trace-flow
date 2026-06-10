@@ -1,0 +1,17 @@
+DESCRIPTION >
+    Incremental repo directory from append-clean Agent Message facts.
+
+NODE rollup
+SQL >
+    SELECT
+        OrgId,
+        repo_fingerprint,
+        argMaxState(normalized_git_remote, EventAt) AS normalized_git_remote,
+        argMaxState(repo_path_fallback, EventAt) AS repo_path_fallback,
+        argMaxState(toString(repo_source), EventAt) AS repo_source,
+        maxState(EventAt) AS LastSeenAt
+    FROM agent_message_facts
+    GROUP BY OrgId, repo_fingerprint
+
+TYPE MATERIALIZED
+DATASOURCE agent_repositories

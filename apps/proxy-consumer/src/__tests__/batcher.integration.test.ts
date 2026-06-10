@@ -72,6 +72,46 @@ describe('TraceBatcher logic', () => {
     ]);
   });
 
+  it('dedupes repeated span identity across different messageIds', async () => {
+    const trace = createMockTrace('trace-same');
+
+    await addTraces([{ messageId: 'msg-1', traces: [trace] }]);
+    const second = await addTraces([{ messageId: 'msg-2', traces: [trace] }]);
+
+    expect(second).toEqual([{ messageId: 'msg-2', status: 'inserted' }]);
+
+    const stats = await getStats();
+    expect(stats.queuedTraces).toBe(1);
+  });
+
+  it('routes changed span content to repair without queueing another trace', async () => {
+    await addTraces([{ messageId: 'msg-1', traces: [createMockTrace('trace-repair')] }]);
+
+    const changedTrace = {
+      ...createMockTrace('trace-repair'),
+      StatusMessage: 'changed after first ingestion',
+    };
+    await addTraces([{ messageId: 'msg-2', traces: [changedTrace] }]);
+
+    const { repairCount, queuedTraces } = await runInDurableObject(
+      batcher,
+      (instance: TraceBatcherInstance, state) => {
+        const repairRows = [
+          ...state.storage.sql.exec<{ count: number }>(
+            'SELECT COUNT(*) AS count FROM trace_repairs',
+          ),
+        ];
+        return {
+          repairCount: repairRows[0]?.count ?? 0,
+          queuedTraces: instance.getStats().queuedTraces,
+        };
+      },
+    );
+
+    expect(repairCount).toBe(1);
+    expect(queuedTraces).toBe(1);
+  });
+
   it('keeps the oldest queued trace timestamp across later inserts', async () => {
     const firstInsertTime = Date.now();
     await addTraces([{ messageId: 'msg-a', traces: [createMockTrace('t-a')] }]);

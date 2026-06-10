@@ -23,7 +23,7 @@ SQL >
             `Events.Timestamp`[idx] as event_timestamp,
             `Events.Attributes`[idx] as event_attributes,
             idx
-        FROM otel_traces FINAL
+        FROM otel_trace_spans
         ARRAY JOIN arrayEnumerate(`Events.Name`) as idx
         WHERE TraceId = {{ String(trace_id, '') }}
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})

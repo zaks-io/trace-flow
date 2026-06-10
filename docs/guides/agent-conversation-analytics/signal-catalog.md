@@ -28,8 +28,8 @@ failures, or navigation tools.
 
 Why it is strong:
 
-- `agent_messages` gives message count, token totals, and event duration by `session_pk`.
-- `agent_tool_events` gives tool volume and failures by the same `session_pk`.
+- `agent_message_facts` gives message count, token totals, and event duration by `session_pk`.
+- `agent_tool_event_facts` gives tool volume and failures by the same `session_pk`.
 - The shape is extreme enough that rough thresholds are useful before any model-specific tuning.
 
 Evidence from the sample:
@@ -77,7 +77,7 @@ input/output, but huge cache-read volume is the visible footprint of long-contex
 
 ### Tool Failure Categories
 
-Signal: recurring failure categories from `agent_tool_events.status='failure'` and redacted
+Signal: recurring failure categories from `agent_tool_event_facts.status='failure'` and redacted
 `error_excerpt`.
 
 Why it is strong:
@@ -112,7 +112,7 @@ Signal: repo-relative file paths repeatedly read, edited, or written across many
 
 Why it is strong:
 
-- `agent_file_events.normalized_repo_path` is repo-relative and privacy-safe.
+- `agent_file_event_facts.normalized_repo_path` is repo-relative and privacy-safe.
 - `operation` separates read/edit/write.
 - Repeated paths across many sessions reveal stable orientation and ownership hotspots.
 
@@ -140,7 +140,7 @@ Signal: passive PR-link observations can connect Agent Sessions to Pull Requests
 
 Why it is strong:
 
-- `agent_pull_request_links` stores canonical GitHub PR evidence with `url`, `number`,
+- `agent_pull_request_facts` stores canonical GitHub PR evidence with `url`, `number`,
   `confidence`, and `evidence`.
 - It provides a bridge from session cost/failures/files to review and merge units.
 
@@ -210,7 +210,7 @@ Signal: capability snapshots report visible instruction/tool surface size.
 
 Why it is medium:
 
-- `agent_capability_snapshots` records privacy-safe counts and token estimates.
+- `agent_capability_snapshot_facts` records privacy-safe counts and token estimates.
 - It does not store raw instruction or tool schemas, so it is a size signal, not a content signal.
 - Source coverage is still limited.
 
@@ -274,7 +274,7 @@ Do not build product claims on these without additional evidence:
    navigation tools.
 2. Context replay report: cache-read ratio, fresh-input ratio, output ratio, and session length.
 3. Tool failure coach: ranked error categories with concrete remediation.
-4. Repo map proposal: compact file/directory hints generated from `agent_file_events`.
+4. Repo map proposal: compact file/directory hints generated from `agent_file_event_facts`.
 5. PR authoring report: only when PR-link evidence is clean; otherwise keep cost at repo/day grain.
 6. Coverage panel: priced-token coverage, unknown-status rate, parser version mix, remote-vs-path repo
    attribution.

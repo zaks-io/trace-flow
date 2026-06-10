@@ -1,0 +1,74 @@
+DESCRIPTION >
+    Materialized view extracting request-level usage and cost metrics from otel_trace_spans.
+    Filters to proxy root request spans and normalizes GenAI attributes.
+
+NODE extract
+SQL >
+    SELECT
+        ReceivedAt,
+        Timestamp,
+        TraceId,
+        SpanId,
+        ApiKey,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.system'), ''), '') AS Provider,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), ''), '') AS Model,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.operation.name'), ''), '') AS OperationName,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'baggage.operation'), ''), '') AS BaggageOperation,
+        coalesce(nullIf(JSONExtractString(SpanAttributes, 'baggage.user_id'), ''), nullIf(JSONExtractString(SpanAttributes, 'baggage.userId'), ''), '') AS BaggageUserId,
+        StatusCode,
+        toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens')) AS InputTokens,
+        toUInt32(
+            greatest(
+                if(
+                    JSONHas(SpanAttributes, 'gen_ai.usage.input_tokens_uncached'),
+                    toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens_uncached')),
+                    toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.input_tokens'))
+                        - toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_read_input_tokens'))
+                        - toInt64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_creation_input_tokens'))
+                ),
+                0
+            )
+        ) AS UncachedInputTokens,
+        toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.output_tokens')) AS OutputTokens,
+        toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_read_input_tokens')) AS CacheReadInputTokens,
+        toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.cache_creation_input_tokens')) AS CacheCreationInputTokens,
+        toUInt32OrZero(JSONExtractString(SpanAttributes, 'gen_ai.usage.reasoning_tokens')) AS ReasoningTokens,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.input')) * 1000000)
+        ) AS InputCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.output')) * 1000000)
+        ) AS OutputCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.cache_read')) * 1000000)
+        ) AS CacheReadCostMicrodollars,
+        toUInt64(
+            round(
+                toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.cache_creation')) * 1000000
+            )
+        ) AS CacheCreationCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.reasoning')) * 1000000)
+        ) AS ReasoningCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.prompt_baseline')) * 1000000)
+        ) AS PromptBaselineCostMicrodollars,
+        toInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.cache_impact')) * 1000000)
+        ) AS CacheImpactCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.upstream')) * 1000000)
+        ) AS UpstreamCostMicrodollars,
+        toUInt64(
+            round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'gen_ai.cost.total')) * 1000000)
+        ) AS TotalCostMicrodollars,
+        Duration AS DurationNano,
+        toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.proxy_overhead_ms')) * 1000000)) AS ProxyOverheadNano,
+        toInt64(round(toFloat64OrZero(JSONExtractString(SpanAttributes, 'trace_flow.upstream_ttfb_ms')) * 1000000)) AS UpstreamTtfbNano,
+        TierAtIngestion,
+        RetentionExpiresAt
+    FROM otel_trace_spans
+    WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
+
+TYPE MATERIALIZED
+DATASOURCE llm_request_facts

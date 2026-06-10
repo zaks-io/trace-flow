@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_messages.ndjson.
+# Fixtures: fixtures/agent_message_facts.ndjson.
 # org_cov billable (assistant) turns in [2026-05-20, 2026-05-21): cov1 {0.2, 0.3, null},
 # cov2 {0.5}. 3 of 4 priced -> coverage 0.75; cost 1.0; tokens 90; 2 sessions. The user
 # turn is excluded (role != assistant). No org_cov rows in the prior window -> prior all 0.
