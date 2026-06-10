@@ -17,7 +17,7 @@ SQL >
     SELECT DISTINCT Provider AS value
     FROM (
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1h
+        FROM llm_usage_hourly
         WHERE range_days <= 30
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -38,7 +38,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1d
+        FROM llm_usage_daily
         WHERE range_days > 30
             AND range_days <= 180
             AND BucketStart >= start_dt
@@ -60,7 +60,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1mo
+        FROM llm_usage_monthly
         WHERE range_days > 180
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -97,7 +97,7 @@ SQL >
     SELECT DISTINCT Model AS value
     FROM (
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1h
+        FROM llm_usage_hourly
         WHERE range_days <= 30
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -118,7 +118,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1d
+        FROM llm_usage_daily
         WHERE range_days > 30
             AND range_days <= 180
             AND BucketStart >= start_dt
@@ -140,7 +140,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1mo
+        FROM llm_usage_monthly
         WHERE range_days > 180
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -177,7 +177,7 @@ SQL >
     SELECT DISTINCT BaggageOperation AS value
     FROM (
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1h
+        FROM llm_usage_hourly
         WHERE range_days <= 30
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -198,7 +198,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1d
+        FROM llm_usage_daily
         WHERE range_days > 30
             AND range_days <= 180
             AND BucketStart >= start_dt
@@ -220,7 +220,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1mo
+        FROM llm_usage_monthly
         WHERE range_days > 180
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -257,7 +257,7 @@ SQL >
     SELECT DISTINCT ApiKey AS value
     FROM (
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1h
+        FROM llm_usage_hourly
         WHERE range_days <= 30
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
@@ -278,7 +278,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1d
+        FROM llm_usage_daily
         WHERE range_days > 30
             AND range_days <= 180
             AND BucketStart >= start_dt
@@ -300,7 +300,7 @@ SQL >
             {% end %}
         UNION ALL
         SELECT Provider, Model, ApiKey, BaggageOperation, BaggageUserId
-        FROM llm_usage_1mo
+        FROM llm_usage_monthly
         WHERE range_days > 180
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt

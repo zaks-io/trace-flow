@@ -1,22 +1,6 @@
 DESCRIPTION >
-    Headline KPIs for the Agent usage explorer: estimated Agent Session Authoring Cost,
-    total tokens, billable message count, session count, and priced-token coverage % for
-    the requested window, each paired with the equivalent prior-period total so the UI can
-    show a delta. Prior period is the immediately-preceding window of equal length (same
-    convention as agent_tool_period_delta).
-
-    Lambda over agent_usage_1h replacement snapshots + base agent_messages FINAL. The
-    snapshot window is [min(BucketStart), max(BucketStart)): snapshots serve only fully
-    rebuilt buckets inside that range; base FINAL serves older history and the live tail.
-    A stale, partial, empty, or warming snapshot table can never hide data.
-    Window totals read the hourly snapshots (daily buckets straddle sub-day window
-    boundaries, so hourly is the only grain that nests cleanly into an arbitrary window).
-    cost_usd sums priced rows only;
-    coverage_pct = priced / billable is the data-quality signal the UI shows beside the
-    estimate (ADR "Honesty about cost"), never "$ spent". This supersedes
-    agent_priced_coverage for the explorer header. org_id and retention_days are enforced
-    via the JWT fixed_params. session_count merges aggregate states across snapshot/base
-    branches so sessions that cross the rollup boundary are counted once.
+    Headline KPIs for the Agent usage explorer. Reads the incremental hourly serving
+    table only, so dashboard summary queries do not scan raw message facts.
 
 NODE summary
 SQL >
@@ -31,108 +15,43 @@ SQL >
         end_ms - start_ms AS span_ms,
         fromUnixTimestamp64Milli(start_ms) AS start_dt,
         fromUnixTimestamp64Milli(end_ms) AS end_dt,
-        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt,
-        -- Snapshot bounds are per-org so one org's stale copy cannot shift another's boundary.
-        -- Empty snapshots yield epoch bounds; the base branch then serves the whole window.
-        (
-            SELECT min(BucketStart)
-            FROM agent_usage_1h
-            WHERE OrgId = {{ String(org_id, '') }}
-        ) AS rollup_min,
-        (
-            SELECT max(BucketStart)
-            FROM agent_usage_1h
-            WHERE OrgId = {{ String(org_id, '') }}
-        ) AS rollup_watermark
-    -- The branches are scalar aggregates (no GROUP BY): the snapshot side sums buckets inside
-    -- the materialized window, while the base side sums rows outside it. Collapse the pair to
-    -- one row by re-aggregating the union; session states are merged, not summed, because a
-    -- session can span the snapshot/base boundary.
+        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt
     SELECT
-        round(sum(estimated_cost_usd), 6) AS estimated_cost_usd,
-        sum(total_tokens) AS total_tokens,
-        sum(message_count) AS message_count,
-        uniqMerge(session_state) AS session_count,
-        sum(priced_message_count) AS priced_message_count,
+        round(sumIf(finalizeAggregation(CostUsd), BucketStart >= start_dt AND BucketStart < end_dt), 6) AS estimated_cost_usd,
+        sumIf(finalizeAggregation(InputTokens), BucketStart >= start_dt AND BucketStart < end_dt)
+            + sumIf(finalizeAggregation(OutputTokens), BucketStart >= start_dt AND BucketStart < end_dt)
+            + sumIf(finalizeAggregation(CacheReadTokens), BucketStart >= start_dt AND BucketStart < end_dt)
+            + sumIf(finalizeAggregation(CacheCreationTokens), BucketStart >= start_dt AND BucketStart < end_dt)
+            + sumIf(finalizeAggregation(ReasoningTokens), BucketStart >= start_dt AND BucketStart < end_dt) AS total_tokens,
+        sumIf(finalizeAggregation(MessageCount), BucketStart >= start_dt AND BucketStart < end_dt) AS message_count,
+        uniqMergeIf(SessionCount, BucketStart >= start_dt AND BucketStart < end_dt) AS session_count,
+        sumIf(finalizeAggregation(PricedMessageCount), BucketStart >= start_dt AND BucketStart < end_dt) AS priced_message_count,
         if(
             message_count = 0,
             CAST(NULL, 'Nullable(Float64)'),
             round(priced_message_count / message_count, 4)
         ) AS coverage_pct,
-        round(sum(prior_cost_usd), 6) AS prior_cost_usd,
-        sum(prior_total_tokens) AS prior_total_tokens,
-        sum(prior_message_count) AS prior_message_count,
-        uniqMerge(prior_session_state) AS prior_session_count
-    FROM (
-        SELECT
-            sumIf(CostUsd, BucketStart >= start_dt AND BucketStart < end_dt) AS estimated_cost_usd,
-            sumIf(InputTokens, BucketStart >= start_dt AND BucketStart < end_dt)
-                + sumIf(OutputTokens, BucketStart >= start_dt AND BucketStart < end_dt)
-                + sumIf(CacheReadTokens, BucketStart >= start_dt AND BucketStart < end_dt)
-                + sumIf(CacheCreationTokens, BucketStart >= start_dt AND BucketStart < end_dt)
-                + sumIf(ReasoningTokens, BucketStart >= start_dt AND BucketStart < end_dt) AS total_tokens,
-            sumIf(MessageCount, BucketStart >= start_dt AND BucketStart < end_dt) AS message_count,
-            uniqMergeStateIf(SessionCount, BucketStart >= start_dt AND BucketStart < end_dt) AS session_state,
-            sumIf(PricedMessageCount, BucketStart >= start_dt AND BucketStart < end_dt) AS priced_message_count,
-            sumIf(CostUsd, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_cost_usd,
-            sumIf(InputTokens, BucketStart >= prior_start_dt AND BucketStart < start_dt)
-                + sumIf(OutputTokens, BucketStart >= prior_start_dt AND BucketStart < start_dt)
-                + sumIf(CacheReadTokens, BucketStart >= prior_start_dt AND BucketStart < start_dt)
-                + sumIf(CacheCreationTokens, BucketStart >= prior_start_dt AND BucketStart < start_dt)
-                + sumIf(ReasoningTokens, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_total_tokens,
-            sumIf(MessageCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_message_count,
-            uniqMergeStateIf(SessionCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_session_state
-        FROM agent_usage_1h
-        WHERE BucketStart >= rollup_min
-            AND BucketStart < rollup_watermark
-            AND OrgId = {{ String(org_id, '') }}
-            AND BucketStart >= prior_start_dt
-            AND BucketStart < end_dt
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 14) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(models) %}
-            AND model IN splitByChar(',', {{ String(models) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-
-        UNION ALL
-
-        SELECT
-            sumIf(ifNull(cost_usd, 0.), EventAt >= start_dt AND EventAt < end_dt) AS estimated_cost_usd,
-            sumIf(
-                input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens,
-                EventAt >= start_dt AND EventAt < end_dt
-            ) AS total_tokens,
-            countIf(EventAt >= start_dt AND EventAt < end_dt) AS message_count,
-            uniqStateIf(session_pk, EventAt >= start_dt AND EventAt < end_dt) AS session_state,
-            countIf(EventAt >= start_dt AND EventAt < end_dt AND cost_usd IS NOT NULL) AS priced_message_count,
-            sumIf(ifNull(cost_usd, 0.), EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_cost_usd,
-            sumIf(
-                input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens,
-                EventAt >= prior_start_dt AND EventAt < start_dt
-            ) AS prior_total_tokens,
-            countIf(EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_message_count,
-            uniqStateIf(session_pk, EventAt >= prior_start_dt AND EventAt < start_dt) AS prior_session_state
-        FROM agent_messages FINAL
-        WHERE (EventAt < rollup_min OR EventAt >= rollup_watermark)
-            AND role = 'assistant'
-            AND OrgId = {{ String(org_id, '') }}
-            AND EventAt >= prior_start_dt
-            AND EventAt < end_dt
-            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 14) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(models) %}
-            AND model IN splitByChar(',', {{ String(models) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-    )
+        round(sumIf(finalizeAggregation(CostUsd), BucketStart >= prior_start_dt AND BucketStart < start_dt), 6) AS prior_cost_usd,
+        sumIf(finalizeAggregation(InputTokens), BucketStart >= prior_start_dt AND BucketStart < start_dt)
+            + sumIf(finalizeAggregation(OutputTokens), BucketStart >= prior_start_dt AND BucketStart < start_dt)
+            + sumIf(finalizeAggregation(CacheReadTokens), BucketStart >= prior_start_dt AND BucketStart < start_dt)
+            + sumIf(finalizeAggregation(CacheCreationTokens), BucketStart >= prior_start_dt AND BucketStart < start_dt)
+            + sumIf(finalizeAggregation(ReasoningTokens), BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_total_tokens,
+        sumIf(finalizeAggregation(MessageCount), BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_message_count,
+        uniqMergeIf(SessionCount, BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_session_count
+    FROM agent_usage_hourly
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= prior_start_dt
+        AND BucketStart < end_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 14) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
 
 TYPE ENDPOINT

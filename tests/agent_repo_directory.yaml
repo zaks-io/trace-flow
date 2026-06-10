@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_messages.ndjson (org_repo).
+# Fixtures: fixtures/agent_message_facts.ndjson (org_repo).
 # org_repo repos at 2026-05-20 10:00:
 #   fp_gh    -> normalized_git_remote "github.com/acme/widgets"   (client label: acme/widgets)
 #   fp_local -> repo_path_fallback "/Users/dev/projects/scratch-pad" (client label: local: scratch-pad)

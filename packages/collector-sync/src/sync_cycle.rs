@@ -26,7 +26,7 @@ use collector_parser::session_context::SessionContext;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError, FileCursor};
+use crate::cursor::{ComposerCursor, CursorStore, CursorStoreError, FactCursor, FileCursor};
 use crate::envelope::{build_envelope, BatchMeta};
 use crate::orchestrator::{Action, Orchestrator, Trigger};
 
@@ -149,6 +149,7 @@ impl Default for SyncTuning {
 struct PreparedBatch {
     envelope: AgentIngestEnvelope,
     cursors: Vec<UnitCursor>,
+    fact_cursors: Vec<FactCursor>,
 }
 
 /// Run one sync cycle against `units` with default tuning. Advances a unit's cursor only after the
@@ -206,17 +207,17 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
     // nothing.
     let concurrency = tuning.max_concurrent_uploads.max(1);
     let mut inflight = FuturesUnordered::new();
-    let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning).peekable();
+    let mut pending = BatchPreparer::new(meta, units, mint_batch_id, tuning);
 
     // A token already cancelled before we start must POST nothing, but still counts as an early abort
     // if there was work to do (so the cycle fails the job rather than reporting a clean drain).
     let precancelled = cancel.is_some_and(CancellationToken::is_cancelled);
     if precancelled {
-        report.aborted_early = pending.peek().is_some();
+        report.aborted_early = !units.is_empty();
     } else {
         // Prime the pipeline up to the concurrency limit.
         for _ in 0..concurrency {
-            match pending.next() {
+            match pending.next_batch(store)? {
                 Some(batch) => inflight.push(post_batch(client, batch, cancel)),
                 None => break,
             }
@@ -229,6 +230,10 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
                 // A cursor-store write failure is terminal for the cycle and propagates as `Err`. Drive
                 // the orchestrator to its failed state first so it can't stay stuck in `Syncing` when the
                 // caller tears down; un-advanced cursors re-send this batch's sessions next cycle.
+                if let Err(err) = store.advance_facts(meta.source, &batch.fact_cursors) {
+                    orchestrator.apply(Trigger::JobFailed);
+                    return Err(err);
+                }
                 for cursor in &batch.cursors {
                     if let Err(err) = cursor.advance(store, meta.source) {
                         orchestrator.apply(Trigger::JobFailed);
@@ -256,7 +261,7 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
             report.aborted_early = true;
             break 'drain;
         }
-        if let Some(batch) = pending.next() {
+        if let Some(batch) = pending.next_batch(store)? {
             inflight.push(post_batch(client, batch, cancel));
         }
     }
@@ -304,7 +309,8 @@ async fn post_batch<C: IngestClient>(
 /// all-empty envelope as an accepted no-op.
 struct BatchPreparer<'a, M: FnMut() -> String> {
     meta: &'a BatchMeta,
-    units: std::slice::Iter<'a, SyncUnit>,
+    units: &'a [SyncUnit],
+    next_unit: usize,
     mint_batch_id: M,
     max_sessions: usize,
     max_bytes: usize,
@@ -319,24 +325,26 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
     ) -> Self {
         Self {
             meta,
-            units: units.iter(),
+            units,
+            next_unit: 0,
             mint_batch_id,
             max_sessions: tuning.max_sessions_per_batch.max(1),
             max_bytes: tuning.max_batch_bytes.max(1),
         }
     }
-}
 
-impl<M: FnMut() -> String> Iterator for BatchPreparer<'_, M> {
-    type Item = PreparedBatch;
-
-    fn next(&mut self) -> Option<PreparedBatch> {
+    fn next_batch(
+        &mut self,
+        store: &CursorStore,
+    ) -> Result<Option<PreparedBatch>, CursorStoreError> {
         let mut open_facts = AgentIngestFacts::default();
         let mut open_cursors: Vec<UnitCursor> = Vec::new();
+        let mut open_fact_cursors: Vec<FactCursor> = Vec::new();
         let mut open_bytes: usize = 0;
 
-        while let Some(unit) = self.units.clone().next() {
+        while let Some(unit) = self.units.get(self.next_unit) {
             let facts = session_facts(self.meta.source, &unit.records, &unit.ctx);
+            let (facts, fact_cursors) = store.filter_unsent_facts(self.meta.source, facts)?;
             let facts_bytes = estimate_facts_bytes(&facts);
 
             // If adding this unit would overflow the open (non-empty) batch, close and return it now —
@@ -345,26 +353,29 @@ impl<M: FnMut() -> String> Iterator for BatchPreparer<'_, M> {
                 && (open_cursors.len() >= self.max_sessions
                     || open_bytes + facts_bytes > self.max_bytes);
             if would_overflow {
-                return Some(PreparedBatch {
+                return Ok(Some(PreparedBatch {
                     envelope: build_envelope(self.meta, (self.mint_batch_id)(), open_facts),
                     cursors: open_cursors,
-                });
+                    fact_cursors: open_fact_cursors,
+                }));
             }
 
             // Commit the peeked unit into the open batch.
-            self.units.next();
+            self.next_unit += 1;
             merge_facts(&mut open_facts, facts);
             open_cursors.push(unit.next_cursor.clone());
+            open_fact_cursors.extend(fact_cursors);
             open_bytes += facts_bytes;
         }
 
         if open_cursors.is_empty() {
-            return None;
+            return Ok(None);
         }
-        Some(PreparedBatch {
+        Ok(Some(PreparedBatch {
             envelope: build_envelope(self.meta, (self.mint_batch_id)(), open_facts),
             cursors: open_cursors,
-        })
+            fact_cursors: open_fact_cursors,
+        }))
     }
 }
 
@@ -400,6 +411,7 @@ mod tests {
     use super::*;
     use collector_api_client::error::IngestOk;
     use collector_contracts::AgentSource;
+    use serde_json::json;
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
 
@@ -408,6 +420,7 @@ mod tests {
     struct MockClient {
         scripted: RefCell<VecDeque<IngestResult>>,
         calls: Cell<u32>,
+        envelopes: RefCell<Vec<AgentIngestEnvelope>>,
     }
 
     impl MockClient {
@@ -415,6 +428,7 @@ mod tests {
             Self {
                 scripted: RefCell::new(results.into_iter().collect()),
                 calls: Cell::new(0),
+                envelopes: RefCell::new(Vec::new()),
             }
         }
     }
@@ -422,10 +436,11 @@ mod tests {
     impl IngestClient for MockClient {
         async fn ingest(
             &self,
-            _envelope: &AgentIngestEnvelope,
+            envelope: &AgentIngestEnvelope,
             _cancel: Option<&CancellationToken>,
         ) -> IngestResult {
             self.calls.set(self.calls.get() + 1);
+            self.envelopes.borrow_mut().push(envelope.clone());
             // The borrow is released before this returns; nothing holds it across an `.await`, so the
             // single-threaded test runtime never sees an overlapping borrow.
             self.scripted
@@ -455,6 +470,40 @@ mod tests {
         SyncUnit {
             records: Vec::new(),
             ctx: SessionContext::default(),
+            next_cursor: UnitCursor::File(FileCursor {
+                file_path: path.to_string(),
+                mtime_ms: 1.0,
+                byte_offset: 10,
+                content_hash_head: "h".to_string(),
+            }),
+        }
+    }
+
+    fn message_unit(path: &str, model: &str) -> SyncUnit {
+        let mut ctx = SessionContext {
+            vendor_session_id: "vs1".to_string(),
+            vendor_started_at: Some(1_778_964_000_000),
+            ..SessionContext::default()
+        };
+        ctx.normalized_git_remote = "github.com/acme/app".to_string();
+        SyncUnit {
+            records: vec![json!({
+                "type": "assistant",
+                "timestamp": "2026-05-25T23:37:23.355Z",
+                "message": {
+                    "id": "msg_1",
+                    "model": model,
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "hello" }],
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 20,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            })],
+            ctx,
             next_cursor: UnitCursor::File(FileCursor {
                 file_path: path.to_string(),
                 mtime_ms: 1.0,
@@ -635,6 +684,78 @@ mod tests {
             .get(AgentSource::Claude, "/a.jsonl")
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn accepted_facts_are_not_reposted_from_the_same_local_state() {
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut mint = counter();
+        let unit = message_unit("/a.jsonl", "claude-opus-4-7");
+
+        let first = MockClient::new([ok()]);
+        let mut o1 = syncing_orchestrator();
+        run_sync_cycle(
+            &first,
+            &store,
+            &mut o1,
+            &meta(),
+            std::slice::from_ref(&unit),
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.envelopes.borrow()[0].facts.messages.len(), 1);
+
+        let second = MockClient::new([ok()]);
+        let mut o2 = syncing_orchestrator();
+        run_sync_cycle(
+            &second,
+            &store,
+            &mut o2,
+            &meta(),
+            std::slice::from_ref(&unit),
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.envelopes.borrow()[0].facts.messages.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn changed_fact_content_with_the_same_identity_is_reposted() {
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut mint = counter();
+
+        let first = MockClient::new([ok()]);
+        let mut o1 = syncing_orchestrator();
+        run_sync_cycle(
+            &first,
+            &store,
+            &mut o1,
+            &meta(),
+            &[message_unit("/a.jsonl", "claude-opus-4-7")],
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let changed = MockClient::new([ok()]);
+        let mut o2 = syncing_orchestrator();
+        run_sync_cycle(
+            &changed,
+            &store,
+            &mut o2,
+            &meta(),
+            &[message_unit("/a.jsonl", "claude-haiku-4-5")],
+            &mut mint,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(changed.envelopes.borrow()[0].facts.messages.len(), 1);
     }
 
     /// One session per envelope, one POST at a time — reproduces the pre-batching contract so the

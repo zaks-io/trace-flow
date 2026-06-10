@@ -36,6 +36,8 @@ export interface Env {
   STORAGE: R2Bucket;
   TINYBIRD_TOKEN: string;
   TINYBIRD_DATASOURCE?: string;
+  TINYBIRD_LEGACY_DATASOURCE?: string;
+  TINYBIRD_TRACE_WRITE_MODE?: string;
   TINYBIRD_HOST?: string;
   TRACE_BATCHER: DurableObjectNamespace<TraceBatcherInstance>;
   NUM_SHARDS?: number;

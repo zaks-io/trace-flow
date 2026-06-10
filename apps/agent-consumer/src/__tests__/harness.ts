@@ -1,7 +1,9 @@
 import { vi } from 'vitest';
 import type { ModelPricing } from '@trace-flow/pricing';
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
+import { insertRows } from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from '../context';
+import { CATEGORIES, DATASOURCES, type Accumulator } from '../facts';
 
 const TINYBIRD_HOST = 'https://tb.test';
 
@@ -33,13 +35,41 @@ export function makeKv(entries: Record<string, ModelPricing>): {
   return { kv: { get } as unknown as KVNamespace, get };
 }
 
-export function makeEnv(kv: KVNamespace): AgentConsumerEnv {
+export function makeEnv(
+  kv: KVNamespace,
+  overrides: Partial<Pick<AgentConsumerEnv, 'TINYBIRD_AGENT_WRITE_MODE'>> = {},
+): AgentConsumerEnv {
   return {
     AGENT_QUEUE: {} as unknown as AgentConsumerEnv['AGENT_QUEUE'],
     MODEL_PRICING: kv,
+    AGENT_FACT_BATCHER: makeFactBatcher(),
     TINYBIRD_TOKEN: 'tb-token',
     TINYBIRD_HOST,
+    ...overrides,
   };
+}
+
+function makeFactBatcher(): AgentConsumerEnv['AGENT_FACT_BATCHER'] {
+  return {
+    getByName: () =>
+      ({
+        addFacts: async ({ rows }: { rows: Accumulator }) => {
+          try {
+            let acceptedRows = 0;
+            for (const category of CATEGORIES) {
+              if (rows[category].length === 0) {
+                continue;
+              }
+              acceptedRows += rows[category].length;
+              await insertRows(rows[category], 'tb-token', DATASOURCES[category], TINYBIRD_HOST);
+            }
+            return { status: 'accepted', acceptedRows, duplicateRows: 0, repairRows: 0 };
+          } catch {
+            return { status: 'failed', acceptedRows: 0, duplicateRows: 0, repairRows: 0 };
+          }
+        },
+      }) as unknown,
+  } as unknown as AgentConsumerEnv['AGENT_FACT_BATCHER'];
 }
 
 export interface CapturedInsert {

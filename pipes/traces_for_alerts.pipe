@@ -14,7 +14,7 @@ SQL >
         StatusCode,
         SpanAttributes,
         Timestamp as ReceivedAt
-    FROM otel_traces FINAL
+    FROM otel_trace_spans
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000

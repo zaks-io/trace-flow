@@ -1,0 +1,22 @@
+DESCRIPTION >
+    Incremental daily Tool Event rollup from append-clean tool facts.
+
+NODE rollup
+SQL >
+    SELECT
+        toStartOfDay(toDateTime(EventAt)) AS BucketStart,
+        OrgId,
+        source,
+        tool_name,
+        command_family,
+        repo_fingerprint,
+        countState() AS EventCount,
+        sumState(toUInt64(status = 'success')) AS SuccessCount,
+        sumState(toUInt64(status = 'failure')) AS FailureCount,
+        sumState(toUInt64(status = 'unknown')) AS UnknownCount,
+        sumState(toUInt64(duration_ms)) AS DurationMsSum
+    FROM agent_tool_event_facts
+    GROUP BY BucketStart, OrgId, source, tool_name, command_family, repo_fingerprint
+
+TYPE MATERIALIZED
+DATASOURCE agent_tool_usage_daily

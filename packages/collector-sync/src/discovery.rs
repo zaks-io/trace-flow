@@ -13,11 +13,11 @@
 //! the next 3d leaf; this module decides only *which* files, never opening one except to confirm the
 //! head hash.
 //!
-//! **Whole-file model (ADR / otto).** A cursor records the file's size, mtime, and head-hash at the
-//! last successful ingest; "unchanged" means all three still match. There is no incremental byte
-//! range: a changed file is re-read in full and server-side `ReplacingMergeTree` dedupe absorbs the
-//! repeat, which sidesteps splitting a JSONL record across an offset boundary and keeps session-level
-//! assembly whole. `byte_offset` is therefore the file *size* at last ingest, used only for this test.
+//! **Whole-file read, delta fact send (ADR / otto).** A cursor records the file's size, mtime, and
+//! head-hash at the last successful ingest; "unchanged" means all three still match. A changed file is
+//! re-read in full so JSONL record boundaries and session-level assembly stay correct, then the sync
+//! cycle sends only new or changed fact hashes. `byte_offset` is therefore the file *size* at last
+//! ingest, used only for this test.
 //!
 //! I/O here is synchronous to match the synchronous [`CursorStore`]; the embedder runs a pass off its
 //! hot path. The walk is best-effort (an unreadable entry is skipped and reappears next scan); only a

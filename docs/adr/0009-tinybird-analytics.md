@@ -55,7 +55,7 @@ SELECT
     avg(Duration) / 1000000 as avg_duration_ms,
     sum(JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens')) as total_input_tokens,
     countIf(StatusCode = 'STATUS_CODE_ERROR') as error_count
-FROM otel_traces
+FROM otel_trace_spans
 WHERE ReceivedAt >= now() - INTERVAL 1 DAY
 ```
 

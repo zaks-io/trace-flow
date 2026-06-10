@@ -1,70 +1,73 @@
 DESCRIPTION >
-    Get distinct filter options (providers, models, statuses) for the requests table.
-    Uses otel_traces_genai materialized view for efficient distinct value lookups.
-    The api_keys parameter is enforced via JWT fixed_params for security.
+    Distinct trace filter options from the incremental trace_filter_options table.
 
 NODE providers
 SQL >
     %
-    SELECT DISTINCT Provider as value
-    FROM otel_traces_genai FINAL
+    SELECT DISTINCT Provider AS value
+    FROM trace_filter_options
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Provider != ''
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
         {% end %}
+    GROUP BY Provider
+    HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
     ORDER BY value
     LIMIT 100
 
 NODE models
 SQL >
     %
-    SELECT DISTINCT Model as value
-    FROM otel_traces_genai FINAL
+    SELECT DISTINCT Model AS value
+    FROM trace_filter_options
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND Model != ''
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
         {% end %}
+    GROUP BY Model
+    HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
     ORDER BY value
     LIMIT 100
 
 NODE statuses
 SQL >
     %
-    SELECT DISTINCT StatusCode as value
-    FROM otel_traces_genai FINAL
+    SELECT DISTINCT StatusCode AS value
+    FROM trace_filter_options
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
         {% end %}
+    GROUP BY StatusCode
+    HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
     ORDER BY value
 
 NODE operations
 SQL >
     %
-    SELECT DISTINCT BaggageOperation as value
-    FROM otel_traces_genai FINAL
+    SELECT DISTINCT BaggageOperation AS value
+    FROM trace_filter_options
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND BaggageOperation != ''
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
         {% end %}
+    GROUP BY BaggageOperation
+    HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
     ORDER BY value
     LIMIT 100
 
 NODE api_keys_list
 SQL >
     %
-    SELECT DISTINCT ApiKey as value
-    FROM otel_traces_genai FINAL
+    SELECT DISTINCT ApiKey AS value
+    FROM trace_filter_options
     WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND ApiKey != ''
+    GROUP BY ApiKey
+    HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
     ORDER BY value
     LIMIT 100
 
@@ -72,10 +75,10 @@ NODE endpoint
 SQL >
     %
     SELECT
-        (SELECT groupArray(value) FROM providers) as providers,
-        (SELECT groupArray(value) FROM models) as models,
-        (SELECT groupArray(value) FROM statuses) as statuses,
-        (SELECT groupArray(value) FROM operations) as operations,
-        (SELECT groupArray(value) FROM api_keys_list) as api_keys
+        (SELECT groupArray(value) FROM providers) AS providers,
+        (SELECT groupArray(value) FROM models) AS models,
+        (SELECT groupArray(value) FROM statuses) AS statuses,
+        (SELECT groupArray(value) FROM operations) AS operations,
+        (SELECT groupArray(value) FROM api_keys_list) AS api_keys
 
 TYPE ENDPOINT

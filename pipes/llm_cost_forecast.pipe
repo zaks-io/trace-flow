@@ -1,7 +1,7 @@
 DESCRIPTION >
     Run-rate cost forecast with confidence intervals, trend detection,
     and anomaly flagging. Uses a rolling 30-day daily average for stable
-    projections at any point in the month, plus llm_usage_1h for accurate MTD.
+    projections at any point in the month, plus llm_usage_hourly for accurate MTD.
     The api_keys parameter is enforced via JWT fixed_params for security.
 
 NODE daily_costs
@@ -10,7 +10,7 @@ SQL >
     SELECT
         toDate(BucketStart) AS day,
         sumMerge(TotalCostMicrodollars) / 1000000 AS cost_usd
-    FROM llm_usage_1d
+    FROM llm_usage_daily
     WHERE BucketStart >= today() - INTERVAL 30 DAY
         AND BucketStart < today()
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
@@ -68,7 +68,7 @@ SQL >
         -- MTD from hourly table for freshest data
         (
             SELECT coalesce(sumMerge(TotalCostMicrodollars) / 1000000, 0)
-            FROM llm_usage_1h
+            FROM llm_usage_hourly
             WHERE BucketStart >= month_start
                 AND BucketStart <= now()
                 AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})

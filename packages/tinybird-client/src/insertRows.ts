@@ -9,8 +9,8 @@ const TINYBIRD_TIMEOUT_MS = 60_000;
  * consumer passes flat rows directly.
  *
  * The Events API is non-idempotent — a re-POST writes duplicate physical rows. Callers must make
- * redelivery safe at the schema level (`ReplacingMergeTree(IngestedAt)` keyed on a stable `*_pk`
- * collapses duplicates under `FINAL`) before leaning on at-least-once queue delivery.
+ * redelivery safe before leaning on at-least-once queue delivery. Hot callers should dedupe before
+ * insert instead of relying on Tinybird query-time cleanup.
  */
 export async function insertRows(
   rows: readonly unknown[],

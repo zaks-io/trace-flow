@@ -23,7 +23,7 @@ SQL >
         `Events.Timestamp`,
         `Events.Name`,
         `Events.Attributes`
-    FROM otel_traces FINAL
+    FROM otel_trace_spans
     WHERE TraceId = {{ String(trace_id, '') }}
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000

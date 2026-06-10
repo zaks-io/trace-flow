@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_messages.ndjson + fixtures/agent_file_events.ndjson (org_test).
+# Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_file_event_facts.ndjson (org_test).
 # Per session in window [2026-05-20, 2026-05-21) — staggered EventAt so recency != cost order:
 #   s1: 3 messages (1.5 + 2.0 + 0.5 = 4.0), 5 file events (5 distinct paths), EventAt 09:00
 #   s2: 1 message (0.1),                     1 file event,                    EventAt 10:00 (latest)

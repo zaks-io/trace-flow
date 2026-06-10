@@ -1,6 +1,6 @@
-# Fixtures: fixtures/agent_messages.ndjson + fixtures/agent_tool_events.ndjson.
-# Canonical rollups (agent_usage_1h/_1d, agent_tool_usage_1h/_1d) are empty in tests,
-# so the pipe takes the base-FINAL fallback path (the local-dev / pre-Copy-Pipe case).
+# Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_tool_event_facts.ndjson.
+# Canonical rollups (agent_usage_hourly/_1d, agent_tool_usage_hourly/_1d) are empty in tests,
+# so the pipe exercises the materialized serving-table path in local tests.
 # org_1c assistant Agent Messages (all claude / claude-opus-4-7), hourly buckets:
 #   2026-05-20 09:00  span1            -> 1 msg, in 100, out 0,   cost 0.5
 #   2026-05-20 10:00  cc1*4+sub1+sub2  -> 7 msg, in 400, out 130, cost 2.2, 3 sessions

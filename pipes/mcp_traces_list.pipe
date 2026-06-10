@@ -19,7 +19,7 @@ SQL >
         JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens') + JSONExtractInt(SpanAttributes, 'gen_ai.usage.output_tokens') as total_tokens,
         JSONExtractFloat(SpanAttributes, 'gen_ai.cost.total') as cost_usd,
         count(*) OVER() as total_count
-    FROM otel_traces FINAL
+    FROM otel_trace_spans
     WHERE JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000

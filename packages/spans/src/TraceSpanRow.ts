@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Canonical read shape for spans returned by Tinybird otel_traces pipes.
+ * Canonical read shape for spans returned by Tinybird otel_trace_spans pipes.
  *
  * Subset of the write shape (`TinybirdTrace` in @trace-flow/types); fields that
  * only certain pipes SELECT are optional. The `SpanAttributes` /

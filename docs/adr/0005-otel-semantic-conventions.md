@@ -172,10 +172,10 @@ SELECT
     coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.operation.name'), ''), '') AS OperationName,
     coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.system'), ''), '') AS Provider,
     coalesce(nullIf(JSONExtractString(SpanAttributes, 'gen_ai.request.model'), ''), '') AS Model
-FROM otel_traces
+FROM otel_trace_spans
 ```
 
-The `otel_traces_genai` datasource has indexed columns for `OperationName`, `Provider`, and `Model`, making filtered queries much faster.
+The `otel_genai_spans` datasource has indexed columns for `OperationName`, `Provider`, and `Model`, making filtered queries much faster.
 
 ## Benefits
 
@@ -185,7 +185,7 @@ The `otel_traces_genai` datasource has indexed columns for `OperationName`, `Pro
 SELECT
     JSONExtractString(SpanAttributes, 'gen_ai.system') as provider,
     sum(JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens')) as total_input
-FROM otel_traces
+FROM otel_trace_spans
 GROUP BY provider
 ```
 

@@ -23,9 +23,10 @@
 //! and forces a full multi-GB scan. Every key scan here is a `GLOB` prefix (`composerData:*`,
 //! `bubbleId:<id>:*`) so the index is used; the composer id is GLOB-escaped before interpolation.
 //!
-//! **Whole-composer re-send.** A composer is changed iff its bubble count or newest bubble timestamp
-//! advanced past the stored watermark; a changed composer is re-assembled in full and the server's
-//! `ReplacingMergeTree` dedups the overlap — the SQLite analog of the JSONL whole-file model.
+//! **Whole-composer read, delta fact send.** A composer is changed iff its bubble count or newest
+//! bubble timestamp advanced past the stored watermark. A changed composer is re-assembled in full so
+//! session-level parsing stays correct; the sync cycle sends only new or changed fact hashes, and the
+//! server-side fact ledger blocks repeat physical Tinybird inserts.
 
 use std::fs;
 use std::path::{Path, PathBuf};

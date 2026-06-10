@@ -681,6 +681,7 @@ dependencies = [
  "collector-parser",
  "futures-util",
  "rusqlite",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

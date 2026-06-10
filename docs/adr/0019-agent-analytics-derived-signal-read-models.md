@@ -24,7 +24,7 @@ The same review also exposed the limits of direct raw querying:
 - high-cardinality arrays or raw excerpts would create unbounded MCP token output
 - daily-only batching would miss the active-session risk that is most useful to an agent while it is still working
 
-The existing `agent_usage_1h` and `agent_tool_usage_1h` rollups are useful cost and tool-count foundations, but they do not express the higher-level signals we need: session risk, file attention, error categories, confidence, freshness, and bounded guidance payloads.
+The existing `agent_usage_hourly` and `agent_tool_usage_hourly` rollups are useful cost and tool-count foundations, but they do not express the higher-level signals we need: session risk, file attention, error categories, confidence, freshness, and bounded guidance payloads.
 
 ## Decision
 

@@ -138,10 +138,12 @@ jobs:
               - '.github/workflows/**'
             tinybird:
               - 'datasources/**'
+              - 'materializations/**'
               - 'pipes/**'
               - 'tests/**'
               - 'tinybird.config.json'
               - 'scripts/deploy-agent-tinybird.sh'
+              - 'scripts/verify-tinybird-cost-contract.sh'
 
   actionlint:
     name: Lint GitHub Actions
@@ -187,17 +189,20 @@ jobs:
       # Offline against the Local service container: schema build + fixture/output tests. No token.
       - name: Build and test against Tinybird Local
         run: |
+          bash scripts/verify-tinybird-cost-contract.sh
           tb --local build
           tb --local test run
         env:
           TB_VERSION_WARNING: 0
 
-      # Cloud dry-run diff against trace_flow_prod. Fails the PR on an incompatible/destructive migration
-      # before it can merge. Token resolves to the prod workspace; the script's guard refuses otherwise.
+      # Cloud dry-run diff against trace_flow_prod in the non-destructive expansion phase. The script
+      # generates a temporary deploy tree that preserves legacy prod resources, so this catches
+      # incompatible changes without requiring cleanup approval.
       - name: Tinybird deploy --check (trace_flow_prod)
         run: ./scripts/deploy-agent-tinybird.sh --check
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
+          TINYBIRD_DEPLOY_PHASE: expand
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0

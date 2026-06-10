@@ -2,9 +2,9 @@
 
 Trace Flow uses Tinybird as its managed ClickHouse database for trace storage and real-time analytics. This document covers the datasource schema, materialized views, pipes, and authentication patterns.
 
-## Datasource: otel_traces
+## Datasource: otel_trace_spans
 
-The primary datasource stores OpenTelemetry-formatted spans. See `datasources/otel_traces.datasource`.
+The primary datasource stores OpenTelemetry-formatted spans. See `datasources/otel_trace_spans.datasource`.
 
 ```sql
 SCHEMA >
@@ -32,30 +32,32 @@ SCHEMA >
     Links.Attributes Array(String)
 
 ENGINE MergeTree
-ENGINE_SORTING_KEY ReceivedAt, ApiKey, TraceId, SpanId
+ENGINE_SORTING_KEY ApiKey, ReceivedAt, TraceId, SpanId
 ENGINE_PARTITION_KEY toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))
-ENGINE_TTL toDateTime(ReceivedAt / 1000000000) + INTERVAL 90 DAY
+ENGINE_TTL toDateTime(RetentionExpiresAt / 1000000000) + INTERVAL 0 DAY
 ```
 
 **Design decisions:**
 
-- `ReceivedAt` first in sorting key for time-range queries (most common pattern)
-- `ApiKey` second for multi-tenant row-level security
+- `ApiKey` first in sorting key for tenant-filtered reads
+- `ReceivedAt` second for time-range queries inside a tenant
 - `LowCardinality` on enum-like fields for compression
 - 90-day TTL balances storage costs with retention needs
 - JSON blobs for `SpanAttributes` enable flexible schema evolution
 
-## Materialized View: otel_traces_genai
+## Materialization: otel_genai_spans
 
-Extracts GenAI semantic convention attributes into indexed columns. See `datasources/otel_traces_genai.datasource` and `pipes/otel_traces_mv.pipe`.
+Extracts GenAI semantic convention attributes into indexed columns. See
+`datasources/otel_genai_spans.datasource` and
+`materializations/materialize_otel_genai_spans.pipe`.
 
 ```sql
 SELECT
-    -- All base columns from otel_traces, plus:
+    -- All base columns from otel_trace_spans, plus:
     JSONExtractString(SpanAttributes, 'gen_ai.operation.name') AS OperationName,
     JSONExtractString(SpanAttributes, 'gen_ai.system') AS Provider,
     JSONExtractString(SpanAttributes, 'gen_ai.request.model') AS Model
-FROM otel_traces
+FROM otel_trace_spans
 ```
 
 This enables efficient filtering on provider and model without JSON parsing at query time.
@@ -75,7 +77,7 @@ SELECT
     countIf(StatusCode = 'STATUS_CODE_ERROR' AND ParentSpanId = '') * 100.0 /
         nullIf(countIf(ParentSpanId = ''), 0) as error_rate_percent,
     sumIf(JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens'), ParentSpanId = '') as total_input_tokens
-FROM otel_traces
+FROM otel_trace_spans
 WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
     AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
 ```
@@ -96,8 +98,8 @@ Single trace fetch returning all spans for a given `TraceId`.
 
 We maintain a request-level fact table and time-bucketed rollups for high-volume token and cost analytics:
 
-- `llm_requests` stores one row per proxy request span with extracted token and cost metrics.
-- `llm_usage_1h`, `llm_usage_1d`, `llm_usage_1mo` store hourly/daily/monthly rollups using `AggregatingMergeTree`.
+- `llm_request_facts` stores one row per proxy request span with extracted token and cost metrics.
+- `llm_usage_hourly`, `llm_usage_daily`, `llm_usage_monthly` store hourly/daily/monthly rollups using `AggregatingMergeTree`.
 
 Pipes used by the dashboard:
 
@@ -186,7 +188,7 @@ tb local start
 tb dev
 
 # Check local datasource
-tb datasource data otel_traces --limit 10
+tb datasource data otel_trace_spans --limit 10
 ```
 
 Create `apps/proxy-consumer/.dev.vars`:
@@ -194,7 +196,7 @@ Create `apps/proxy-consumer/.dev.vars`:
 ```bash
 TINYBIRD_HOST=http://localhost:7181
 TINYBIRD_TOKEN=<token from tb local status>
-TINYBIRD_DATASOURCE=otel_traces
+TINYBIRD_DATASOURCE=otel_trace_spans
 ```
 
 ## Quarantine

@@ -27,8 +27,14 @@
 
 use std::path::Path;
 
+use collector_contracts::envelope::AgentIngestFacts;
+use collector_contracts::facts::{
+    AgentCapabilitySnapshotFact, AgentFileEventFact, AgentMessageFact, AgentPullRequestLinkFact,
+    AgentToolEventFact,
+};
 use collector_contracts::AgentSource;
 use rusqlite::{params, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 
 // WAL + `synchronous=NORMAL` is the standard durable-desktop pairing: readers never block the
 // writer, and a crash can lose at most the last committed advance — harmless here, because a lost
@@ -60,6 +66,18 @@ CREATE TABLE IF NOT EXISTS composer_cursors (
     bubble_count   INTEGER NOT NULL,
     max_created_at INTEGER NOT NULL,
     PRIMARY KEY (org_id, source, composer_id)
+) WITHOUT ROWID;
+-- Stable fact-level send state. File/composer cursors say a local source unit was accepted; this table
+-- says which logical facts inside that unit were already accepted, so a whole-file reparse can upload
+-- only new or changed facts. The ingest Worker still owns canonical at-rest IDs; these identities
+-- mirror its deterministic input parts for local filtering only.
+CREATE TABLE IF NOT EXISTS fact_cursors (
+    org_id       TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    category     TEXT NOT NULL,
+    fact_identity TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    PRIMARY KEY (org_id, source, category, fact_identity)
 ) WITHOUT ROWID;";
 
 /// How far one transcript file has been ingested. The four fields the discovery pass needs to decide
@@ -97,12 +115,23 @@ pub struct ComposerCursor {
     pub max_created_at: i64,
 }
 
+/// One fact the collector has successfully uploaded, keyed by the same stable identity inputs the
+/// ingest Worker later hashes into the at-rest `*_pk`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactCursor {
+    pub category: &'static str,
+    pub fact_identity: String,
+    pub content_hash: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CursorStoreError {
     /// Wraps every SQLite failure, including a `byte_offset` past `i64::MAX` on write or a negative
     /// stored offset on read — rusqlite's `u64` mapping surfaces both as range errors here.
     #[error("cursor store sqlite error")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("cursor store serialization error")]
+    Serialize(#[from] serde_json::Error),
 }
 
 /// Durable cursor store for one Organization. Open with [`CursorStore::open`] (or
@@ -268,6 +297,111 @@ impl CursorStore {
         )?;
         Ok(())
     }
+
+    /// Drop facts whose latest accepted content hash is already recorded locally. The returned
+    /// `FactCursor`s must be committed only after the envelope carrying those facts returns `2xx`.
+    pub fn filter_unsent_facts(
+        &self,
+        source: AgentSource,
+        facts: AgentIngestFacts,
+    ) -> Result<(AgentIngestFacts, Vec<FactCursor>), CursorStoreError> {
+        let mut sent = Vec::new();
+        let messages = self.filter_category(source, facts.messages, message_cursor, &mut sent)?;
+        let tool_events =
+            self.filter_category(source, facts.tool_events, tool_event_cursor, &mut sent)?;
+        let file_events =
+            self.filter_category(source, facts.file_events, file_event_cursor, &mut sent)?;
+        let capability_snapshots = self.filter_category(
+            source,
+            facts.capability_snapshots,
+            capability_snapshot_cursor,
+            &mut sent,
+        )?;
+        let pull_request_links = self.filter_category(
+            source,
+            facts.pull_request_links,
+            pull_request_link_cursor,
+            &mut sent,
+        )?;
+
+        Ok((
+            AgentIngestFacts {
+                messages,
+                tool_events,
+                file_events,
+                capability_snapshots,
+                pull_request_links,
+            },
+            sent,
+        ))
+    }
+
+    fn filter_category<T>(
+        &self,
+        source: AgentSource,
+        rows: Vec<T>,
+        cursor: fn(AgentSource, &T) -> Result<FactCursor, CursorStoreError>,
+        sent: &mut Vec<FactCursor>,
+    ) -> Result<Vec<T>, CursorStoreError> {
+        let mut kept = Vec::with_capacity(rows.len());
+        for row in rows {
+            let fact_cursor = cursor(source, &row)?;
+            if self.is_fact_current(source, &fact_cursor)? {
+                continue;
+            }
+            sent.push(fact_cursor);
+            kept.push(row);
+        }
+        Ok(kept)
+    }
+
+    fn is_fact_current(
+        &self,
+        source: AgentSource,
+        cursor: &FactCursor,
+    ) -> Result<bool, CursorStoreError> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT content_hash FROM fact_cursors \
+             WHERE org_id = ?1 AND source = ?2 AND category = ?3 AND fact_identity = ?4",
+        )?;
+        let stored = stmt
+            .query_row(
+                params![
+                    self.org_id,
+                    source_key(source),
+                    cursor.category,
+                    cursor.fact_identity,
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        Ok(stored.as_deref() == Some(cursor.content_hash.as_str()))
+    }
+
+    /// Commit fact send state after the envelope carrying those facts was accepted.
+    pub fn advance_facts(
+        &self,
+        source: AgentSource,
+        cursors: &[FactCursor],
+    ) -> Result<(), CursorStoreError> {
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT INTO fact_cursors \
+                (org_id, source, category, fact_identity, content_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(org_id, source, category, fact_identity) DO UPDATE SET \
+                content_hash = excluded.content_hash",
+        )?;
+        for cursor in cursors {
+            stmt.execute(params![
+                self.org_id,
+                source_key(source),
+                cursor.category,
+                cursor.fact_identity,
+                cursor.content_hash,
+            ])?;
+        }
+        Ok(())
+    }
 }
 
 /// The source's internal DB key. It is a *persisted* key, deliberately decoupled from the serde wire
@@ -279,6 +413,132 @@ fn source_key(source: AgentSource) -> &'static str {
         AgentSource::Codex => "codex",
         AgentSource::Cursor => "cursor",
     }
+}
+
+fn message_cursor(
+    source: AgentSource,
+    fact: &AgentMessageFact,
+) -> Result<FactCursor, CursorStoreError> {
+    let message_identity = fact
+        .vendor_message_id
+        .clone()
+        .unwrap_or_else(|| format!("turn:{}", fact.turn_index));
+    Ok(FactCursor {
+        category: "messages",
+        fact_identity: identity([
+            source_identity(source),
+            fact.vendor_session_id.as_str(),
+            message_identity.as_str(),
+        ]),
+        content_hash: content_hash(fact)?,
+    })
+}
+
+fn tool_event_cursor(
+    source: AgentSource,
+    fact: &AgentToolEventFact,
+) -> Result<FactCursor, CursorStoreError> {
+    let tool_identity = fact.tool_use_id.clone().unwrap_or_else(|| {
+        format!(
+            "block:{}:{}",
+            fact.vendor_message_id.as_deref().unwrap_or(""),
+            fact.source_block_index
+        )
+    });
+    Ok(FactCursor {
+        category: "tool_events",
+        fact_identity: identity([
+            source_identity(source),
+            fact.vendor_session_id.as_str(),
+            tool_identity.as_str(),
+        ]),
+        content_hash: content_hash(fact)?,
+    })
+}
+
+fn file_event_cursor(
+    source: AgentSource,
+    fact: &AgentFileEventFact,
+) -> Result<FactCursor, CursorStoreError> {
+    let operation = serde_json::to_string(&fact.operation)?;
+    Ok(FactCursor {
+        category: "file_events",
+        fact_identity: identity([
+            source_identity(source),
+            fact.vendor_session_id.as_str(),
+            fact.vendor_message_id.as_deref().unwrap_or(""),
+            fact.normalized_repo_path.as_str(),
+            operation.trim_matches('"'),
+            &fact.source_block_index.to_string(),
+        ]),
+        content_hash: content_hash(fact)?,
+    })
+}
+
+fn capability_snapshot_cursor(
+    source: AgentSource,
+    fact: &AgentCapabilitySnapshotFact,
+) -> Result<FactCursor, CursorStoreError> {
+    let snapshot_identity = fact
+        .source_snapshot_id
+        .clone()
+        .unwrap_or_else(|| format!("turn:{}", fact.stable_turn_index));
+    Ok(FactCursor {
+        category: "capability_snapshots",
+        fact_identity: identity([
+            source_identity(source),
+            fact.vendor_session_id.as_str(),
+            snapshot_identity.as_str(),
+        ]),
+        content_hash: content_hash(fact)?,
+    })
+}
+
+fn pull_request_link_cursor(
+    source: AgentSource,
+    fact: &AgentPullRequestLinkFact,
+) -> Result<FactCursor, CursorStoreError> {
+    let event_identity = fact
+        .source_event_id
+        .clone()
+        .unwrap_or_else(|| format!("turn:{}", fact.stable_turn_index));
+    Ok(FactCursor {
+        category: "pull_request_links",
+        fact_identity: identity([
+            source_identity(source),
+            fact.vendor_session_id.as_str(),
+            event_identity.as_str(),
+            fact.url.as_str(),
+        ]),
+        content_hash: content_hash(fact)?,
+    })
+}
+
+fn source_identity(source: AgentSource) -> &'static str {
+    match source {
+        AgentSource::Claude => "claude",
+        AgentSource::Codex => "codex",
+        AgentSource::Cursor => "cursor",
+    }
+}
+
+fn identity<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
+    parts
+        .into_iter()
+        .map(|p| format!("{}:{p}", p.len()))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn content_hash<T: serde::Serialize>(value: &T) -> Result<String, CursorStoreError> {
+    let encoded = serde_json::to_vec(value)?;
+    let digest = Sha256::digest(encoded);
+    let mut out = String::with_capacity("sha256:".len() + digest.len() * 2);
+    out.push_str("sha256:");
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

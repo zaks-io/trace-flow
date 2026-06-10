@@ -66,7 +66,7 @@ Multi-tenant isolation is critical. Users must only see traces for API keys they
 Every Tinybird pipe includes an `api_keys` parameter in its WHERE clause:
 
 ```sql
-SELECT * FROM otel_traces
+SELECT * FROM otel_trace_spans
 WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
 ```
 

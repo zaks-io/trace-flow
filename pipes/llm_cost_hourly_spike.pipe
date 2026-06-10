@@ -1,6 +1,6 @@
 DESCRIPTION >
     Hourly spend spike detector for cost alerts. Compares a completed hour's spend
-    to a trailing hourly baseline from llm_usage_1h.
+    to a trailing hourly baseline from llm_usage_hourly.
     When use_previous_hour=1, compares the last fully completed hour (avoids
     partial-hour false negatives). Otherwise compares the current partial hour.
     The api_keys parameter is required and enforced by the caller.
@@ -21,7 +21,7 @@ SQL >
         SELECT
             BucketStart,
             sumMerge(TotalCostMicrodollars) / 1000000 AS hour_cost_usd
-        FROM llm_usage_1h
+        FROM llm_usage_hourly
         WHERE BucketStart >= target_hour - toIntervalHour(baseline_hours)
             AND BucketStart < target_hour
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
@@ -50,7 +50,7 @@ SQL >
         (SELECT baseline_hourly_cost_usd FROM baseline) AS baseline_hourly_cost_usd,
         (
             SELECT coalesce(sumMerge(TotalCostMicrodollars) / 1000000, 0)
-            FROM llm_usage_1h
+            FROM llm_usage_hourly
             WHERE BucketStart = target_hour
                 AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
                 {% if defined(provider) %}

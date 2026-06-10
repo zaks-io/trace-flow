@@ -3,6 +3,15 @@ import type { AgentIngestQueueMessage } from '@trace-flow/types';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { insertRows } from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from './context';
+import {
+  CATEGORIES,
+  LEGACY_DATASOURCES,
+  ROW_IDENTITY_FIELDS,
+  emptyAccumulator,
+  rowIdentity,
+  rowOrgId,
+  type Accumulator,
+} from './facts';
 import { PriceCache, priceMessage } from './pricing';
 import {
   batchContext,
@@ -14,31 +23,7 @@ import {
 } from './rows';
 
 type Logger = ReturnType<typeof createLogger>;
-
-/** Base fact category → its Tinybird datasource name. Order is the insert order. */
-const DATASOURCES = {
-  messages: 'agent_messages',
-  tool_events: 'agent_tool_events',
-  file_events: 'agent_file_events',
-  capability_snapshots: 'agent_capability_snapshots',
-  pull_request_links: 'agent_pull_request_links',
-} as const;
-
-type Category = keyof typeof DATASOURCES;
-
-const CATEGORIES = Object.keys(DATASOURCES) as Category[];
-
-type Accumulator = Record<Category, unknown[]>;
-
-function emptyAccumulator(): Accumulator {
-  return {
-    messages: [],
-    tool_events: [],
-    file_events: [],
-    capability_snapshots: [],
-    pull_request_links: [],
-  };
-}
+type WriteMode = 'clean' | 'legacy' | 'dual';
 
 /**
  * Structural guard — the named "malformed message → DLQ" trigger. The producer is our own worker, so
@@ -108,39 +93,159 @@ async function accumulateMessage(
   }
 }
 
-/** Inserts every non-empty category. Returns the categories whose insert failed (empty = all ok). */
-async function flush(acc: Accumulator, env: AgentConsumerEnv, logger: Logger): Promise<Category[]> {
-  const pending = CATEGORIES.filter((category) => acc[category].length > 0);
+/** Hands rows to the configured Tinybird write targets. Returns false when any target failed. */
+async function flush(acc: Accumulator, env: AgentConsumerEnv, logger: Logger): Promise<boolean> {
+  const mode = writeMode(env);
+  const results = await Promise.allSettled([
+    ...(mode === 'clean' || mode === 'dual' ? [flushClean(acc, env, logger)] : []),
+    ...(mode === 'legacy' || mode === 'dual' ? [flushLegacy(acc, env, logger)] : []),
+  ]);
+
+  let ok = true;
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      ok = false;
+      logger.error('agent_consumer.write_target_failed', result.reason, { mode });
+      Sentry.captureException(result.reason, { tags: { operation: 'agent_write_target' } });
+      continue;
+    }
+    if (!result.value) {
+      ok = false;
+    }
+  }
+  return ok;
+}
+
+function writeMode(env: AgentConsumerEnv): WriteMode {
+  const mode = env.TINYBIRD_AGENT_WRITE_MODE ?? 'clean';
+  if (mode === 'clean' || mode === 'legacy' || mode === 'dual') {
+    return mode;
+  }
+  throw new Error(`invalid TINYBIRD_AGENT_WRITE_MODE: ${mode}`);
+}
+
+/** Hands rows to the sharded Durable Object ledger. Returns false when any shard failed. */
+async function flushClean(
+  acc: Accumulator,
+  env: AgentConsumerEnv,
+  logger: Logger,
+): Promise<boolean> {
+  const byOrg = groupRowsByOrg(acc);
+  if (byOrg.size === 0) {
+    return true;
+  }
 
   const results = await Promise.allSettled(
-    pending.map((category) =>
-      insertRows(acc[category], env.TINYBIRD_TOKEN, DATASOURCES[category], env.TINYBIRD_HOST),
+    [...byOrg.entries()].map(async ([orgId, rows]) => {
+      const batcher = env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
+      const result = await batcher.addFacts({ rows });
+      if (result.status === 'failed') {
+        throw new Error(`agent fact batcher rejected org ${orgId}`);
+      }
+      if (result.repairRows > 0) {
+        logger.warn('agent_consumer.repair_rows_detected', {
+          orgId,
+          repairRows: result.repairRows,
+        });
+      }
+    }),
+  );
+
+  let ok = true;
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      ok = false;
+      logger.error('agent_consumer.fact_batcher_failed', result.reason);
+      Sentry.captureException(result.reason, { tags: { operation: 'agent_fact_batcher' } });
+    }
+  }
+  return ok;
+}
+
+/** Writes legacy ReplacingMergeTree tables during the rollout rollback window. */
+async function flushLegacy(
+  acc: Accumulator,
+  env: AgentConsumerEnv,
+  logger: Logger,
+): Promise<boolean> {
+  const results = await Promise.allSettled(
+    CATEGORIES.filter((category) => acc[category].length > 0).map((category) =>
+      insertRows(
+        acc[category],
+        env.TINYBIRD_TOKEN,
+        LEGACY_DATASOURCES[category],
+        env.TINYBIRD_HOST,
+      ),
     ),
   );
 
-  return pending.filter((category, index) => {
-    const result = results[index]!;
+  let ok = true;
+  for (const result of results) {
     if (result.status === 'rejected') {
-      logger.error('agent_consumer.insert_failed', result.reason, {
-        datasource: DATASOURCES[category],
-        rows: acc[category].length,
-      });
-      Sentry.captureException(result.reason, {
-        level: 'error',
-        tags: { operation: 'insert', datasource: DATASOURCES[category] },
-        extra: { rows: acc[category].length },
-      });
-      return true;
+      ok = false;
+      logger.error('agent_consumer.legacy_insert_failed', result.reason);
+      Sentry.captureException(result.reason, { tags: { operation: 'agent_legacy_insert' } });
     }
-    return false;
-  });
+  }
+  return ok;
+}
+
+function groupRowsByOrg(acc: Accumulator): Map<string, Accumulator> {
+  const byOrg = new Map<string, Accumulator>();
+  for (const category of CATEGORIES) {
+    for (const row of acc[category]) {
+      const orgId = rowOrgId(row);
+      if (!orgId) {
+        continue;
+      }
+      let orgRows = byOrg.get(orgId);
+      if (!orgRows) {
+        orgRows = emptyAccumulator();
+        byOrg.set(orgId, orgRows);
+      }
+      orgRows[category].push(row);
+    }
+  }
+  return byOrg;
+}
+
+function dedupeAccumulator(acc: Accumulator): number {
+  let removed = 0;
+  for (const category of CATEGORIES) {
+    const before = acc[category].length;
+    acc[category] = dedupeRows(acc[category], ROW_IDENTITY_FIELDS[category]);
+    removed += before - acc[category].length;
+  }
+  return removed;
+}
+
+function dedupeRows(rows: unknown[], keyFields: string[]): unknown[] {
+  const byKey = new Map<string, unknown>();
+  for (const row of rows) {
+    const key = rowIdentity(row, keyFields);
+    const prior = byKey.get(key);
+    if (!prior || compareIngestedAt(row, prior) >= 0) {
+      byKey.set(key, row);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function compareIngestedAt(left: unknown, right: unknown): number {
+  const l = isRecord(left) && typeof left.IngestedAt === 'string' ? left.IngestedAt : '';
+  const r = isRecord(right) && typeof right.IngestedAt === 'string' ? right.IngestedAt : '';
+  return l.localeCompare(r);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 /**
- * Drains one queue batch: prices each message, accumulates one row set per base datasource, and
- * issues one insert per datasource. Named failure paths — a malformed message dead-letters (retry
- * exhausts to the DLQ); an insert failure retries every contributing message (re-POST is safe under
- * `ReplacingMergeTree(IngestedAt)` FINAL). Nothing is silently dropped.
+ * Drains one queue batch: prices each message and accumulates one row set per base datasource.
+ * Named failure paths — a malformed message dead-letters (retry
+ * exhausts to the DLQ); a ledger failure retries every contributing message. Duplicate redelivery is
+ * absorbed by the AgentFactBatcher ledger before Tinybird insert. Nothing is silently dropped.
  */
 export async function processAgentBatch(
   batch: MessageBatch<unknown>,
@@ -188,13 +293,13 @@ export async function processAgentBatch(
       return;
     }
 
-    const failed = await flush(acc, env, logger);
-    if (failed.length > 0) {
+    const dedupedRows = dedupeAccumulator(acc);
+    const flushed = await flush(acc, env, logger);
+    if (!flushed) {
       for (const message of wellFormed) {
         message.retry();
       }
       logger.warn('agent_consumer.batch_retried', {
-        failedDatasources: failed.map((c) => DATASOURCES[c]),
         retried: wellFormed.length,
       });
       return;
@@ -206,6 +311,7 @@ export async function processAgentBatch(
     logger.info('agent_consumer.batch_processed', {
       messages: wellFormed.length,
       rows: CATEGORIES.reduce((sum, category) => sum + acc[category].length, 0),
+      dedupedRows,
     });
   } finally {
     await logger.flush();

@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe('processAgentBatch', () => {
-  it('prices a message and inserts it into agent_messages, then acks', async () => {
+  it('prices a message and inserts it into agent_message_facts, then acks', async () => {
     tb = mockTinybird();
     const { kv } = makeKv({ [PRICING_KEY]: PRICING });
     const msg = stubMessage(
@@ -62,7 +62,7 @@ describe('processAgentBatch', () => {
 
     await processAgentBatch(batchOf([msg]), makeEnv(kv));
 
-    const insert = insertFor(tb.inserts, 'agent_messages');
+    const insert = insertFor(tb.inserts, 'agent_message_facts');
     expect(insert?.rows).toHaveLength(1);
     expect(insert?.rows[0]?.cost_usd).toBe(PER_MESSAGE_USD);
     expect(insert?.rows[0]?.OrgId).toBe('org-1');
@@ -81,7 +81,7 @@ describe('processAgentBatch', () => {
 
     await processAgentBatch(batchOf([msg]), makeEnv(kv));
 
-    const rows = insertFor(tb.inserts, 'agent_messages')!.rows;
+    const rows = insertFor(tb.inserts, 'agent_message_facts')!.rows;
     expect(rows).toHaveLength(N);
     for (const row of rows) {
       expect(row.cost_usd).toBe(PER_MESSAGE_USD);
@@ -104,7 +104,7 @@ describe('processAgentBatch', () => {
 
     await processAgentBatch(batchOf([msg]), makeEnv(kv));
 
-    expect(insertFor(tb.inserts, 'agent_messages')!.rows[0]?.cost_usd).toBeNull();
+    expect(insertFor(tb.inserts, 'agent_message_facts')!.rows[0]?.cost_usd).toBeNull();
     expect(msg.ack).toHaveBeenCalledOnce();
   });
 
@@ -122,7 +122,7 @@ describe('processAgentBatch', () => {
 
     await processAgentBatch(batchOf([msg]), makeEnv(kv));
 
-    expect(insertFor(tb.inserts, 'agent_messages')!.rows[0]?.cost_usd).toBeNull();
+    expect(insertFor(tb.inserts, 'agent_message_facts')!.rows[0]?.cost_usd).toBeNull();
   });
 
   it('reads the price catalog once per distinct (provider, model), not per message', async () => {
@@ -212,11 +212,11 @@ describe('processAgentBatch', () => {
 
     expect(bad.retry).toHaveBeenCalledOnce();
     expect(good.ack).toHaveBeenCalledOnce();
-    expect(insertFor(tb.inserts, 'agent_messages')!.rows).toHaveLength(1);
+    expect(insertFor(tb.inserts, 'agent_message_facts')!.rows).toHaveLength(1);
   });
 
   it('retries every contributing message when an insert fails (no ack, no silent drop)', async () => {
-    tb = mockTinybird(['agent_messages']);
+    tb = mockTinybird(['agent_message_facts']);
     const { kv } = makeKv({ [PRICING_KEY]: PRICING });
     const a = stubMessage(queueMessage(), 'a');
     const b = stubMessage(queueMessage(), 'b');
@@ -230,7 +230,7 @@ describe('processAgentBatch', () => {
     expect(Sentry.captureException).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        tags: expect.objectContaining({ operation: 'insert', datasource: 'agent_messages' }),
+        tags: expect.objectContaining({ operation: 'agent_fact_batcher' }),
       }),
     );
   });
@@ -253,13 +253,74 @@ describe('processAgentBatch', () => {
     await processAgentBatch(batchOf([msg]), makeEnv(kv));
 
     expect(tb.inserts.map((i) => i.datasource).sort()).toEqual([
-      'agent_capability_snapshots',
-      'agent_file_events',
-      'agent_messages',
-      'agent_pull_request_links',
-      'agent_tool_events',
+      'agent_capability_snapshot_facts',
+      'agent_file_event_facts',
+      'agent_message_facts',
+      'agent_pull_request_facts',
+      'agent_tool_event_facts',
     ]);
     expect(msg.ack).toHaveBeenCalledOnce();
+  });
+
+  it('dual-writes clean and legacy agent tables during phased rollout', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const msg = stubMessage(
+      queueMessage({
+        facts: {
+          ...emptyQueueFacts(),
+          messages: [messageFact({ input_tokens: 1_000_000 })],
+        },
+      }),
+    );
+
+    await processAgentBatch(batchOf([msg]), makeEnv(kv, { TINYBIRD_AGENT_WRITE_MODE: 'dual' }));
+
+    expect(tb.inserts.map((i) => i.datasource).sort()).toEqual([
+      'agent_message_facts',
+      'agent_messages',
+    ]);
+    expect(insertFor(tb.inserts, 'agent_message_facts')?.rows[0]?.cost_usd).toBe(PER_MESSAGE_USD);
+    expect(insertFor(tb.inserts, 'agent_messages')?.rows[0]?.cost_usd).toBe(PER_MESSAGE_USD);
+    expect(msg.ack).toHaveBeenCalledOnce();
+  });
+
+  it('can write legacy-only for rollback while clean tables remain untouched', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const msg = stubMessage(queueMessage());
+
+    await processAgentBatch(batchOf([msg]), makeEnv(kv, { TINYBIRD_AGENT_WRITE_MODE: 'legacy' }));
+
+    expect(tb.inserts.map((i) => i.datasource)).toEqual(['agent_messages']);
+    expect(msg.ack).toHaveBeenCalledOnce();
+  });
+
+  it('dedupes repeated rows inside one queue batch before inserting', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const first = stubMessage(
+      queueMessage({
+        collector_batch_id: 'batch-a',
+        facts: { ...emptyQueueFacts(), messages: [messageFact({ input_tokens: 1 })] },
+      }),
+      'a',
+    );
+    const second = stubMessage(
+      queueMessage({
+        collector_batch_id: 'batch-b',
+        facts: { ...emptyQueueFacts(), messages: [messageFact({ input_tokens: 2 })] },
+      }),
+      'b',
+    );
+
+    await processAgentBatch(batchOf([first, second]), makeEnv(kv));
+
+    const rows = insertFor(tb.inserts, 'agent_message_facts')!.rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.input_tokens).toBe(2);
+    expect(first.ack).toHaveBeenCalledOnce();
+    expect(second.ack).toHaveBeenCalledOnce();
   });
 
   it('acks an empty-facts message without inserting', async () => {

@@ -2,14 +2,14 @@
 
 ## 1. Create Tinybird Datasource
 
-Create the `otel_traces` datasource in Tinybird:
+Create the `otel_trace_spans` datasource in Tinybird:
 
 ```bash
 # Deploy Tinybird resources (datasources, pipes, etc.)
 tb push
 
 # Or manually create datasource from schema
-tb datasource create --file datasources/otel_traces.datasource
+tb datasource create --file datasources/otel_trace_spans.datasource
 ```
 
 This will create the necessary table in your Tinybird workspace (managed ClickHouse).
@@ -41,7 +41,7 @@ cd apps/proxy-consumer
 
 # Development environment
 wrangler secret put TINYBIRD_TOKEN
-wrangler secret put TINYBIRD_DATASOURCE  # Optional, defaults to "otel_traces"
+wrangler secret put TINYBIRD_DATASOURCE  # Optional, defaults to "otel_trace_spans"
 wrangler secret put TINYBIRD_HOST        # Optional, defaults to "https://api.tinybird.co"
 
 # Staging environment
@@ -153,7 +153,7 @@ To test locally, you'll need to set up environment variables. Create a `.dev.var
 
 ```
 TINYBIRD_TOKEN=your-dev-token-here
-TINYBIRD_DATASOURCE=otel_traces
+TINYBIRD_DATASOURCE=otel_trace_spans
 TINYBIRD_HOST=https://api.tinybird.co
 ```
 
@@ -187,7 +187,7 @@ SELECT
     SpanName,
     Duration / 1000000 as DurationMs,
     SpanAttributes
-FROM otel_traces
+FROM otel_trace_spans
 ORDER BY Timestamp DESC
 LIMIT 10
 FORMAT JSON
@@ -196,7 +196,7 @@ FORMAT JSON
 Or use the Tinybird CLI:
 
 ```bash
-tb sql "SELECT * FROM otel_traces ORDER BY Timestamp DESC LIMIT 10 FORMAT JSON"
+tb sql "SELECT * FROM otel_trace_spans ORDER BY Timestamp DESC LIMIT 10 FORMAT JSON"
 ```
 
 ## 9. Architecture
@@ -246,7 +246,7 @@ SELECT
     Duration / 1000000 as DurationMs,
     CAST(SpanAttributes['gen_ai.usage.input_tokens'] as Int64) +
     CAST(SpanAttributes['gen_ai.usage.output_tokens'] as Int64) as TotalTokens
-FROM otel_traces
+FROM otel_trace_spans
 WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
 ORDER BY Timestamp DESC
 LIMIT 10;
@@ -259,7 +259,7 @@ SELECT
     SpanAttributes['gen_ai.system'] as Provider,
     avg(Duration / 1000000) as AvgLatencyMs,
     count() as RequestCount
-FROM otel_traces
+FROM otel_trace_spans
 WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
   AND Timestamp > now() - INTERVAL 1 HOUR
 GROUP BY Provider;
@@ -274,7 +274,7 @@ SELECT
     SpanAttributes['gen_ai.system'] as Provider,
     SpanAttributes['gen_ai.request.model'] as Model,
     Duration / 1000000 as DurationMs
-FROM otel_traces
+FROM otel_trace_spans
 WHERE JSONHas(SpanAttributes, 'gen_ai.operation.name')
   AND Duration > 5000000000
 ORDER BY Duration DESC
@@ -303,5 +303,5 @@ You can connect Grafana to your ClickHouse Cloud instance to build dashboards:
 
 1. Install the ClickHouse data source plugin in Grafana
 2. Configure connection to your ClickHouse Cloud instance
-3. Create dashboards querying the `otel_traces` table
+3. Create dashboards querying the `otel_trace_spans` table
 4. Visualize metrics like request latency, token usage, error rates, etc.

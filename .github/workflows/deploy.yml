@@ -184,13 +184,14 @@ jobs:
           curl -fsSL https://tinybird.co | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # `tb build` + `tb --cloud deploy --check` then `tb --cloud deploy`, all scoped to trace_flow_prod
-      # by the deploy token. The script's guard refuses to apply if the token resolves to any other
-      # workspace.
-      - name: Deploy schema to trace_flow_prod
+      # Automatic production deploy is the non-destructive expansion phase: new clean resources are
+      # deployed while legacy resources and legacy endpoint pipes remain live. Switch/cleanup are
+      # separate explicit operator steps after backfill and parity.
+      - name: Deploy schema to trace_flow_prod (expand)
         run: ./scripts/deploy-agent-tinybird.sh
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
+          TINYBIRD_DEPLOY_PHASE: expand
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0

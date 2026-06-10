@@ -1,0 +1,38 @@
+DESCRIPTION >
+    Incremental daily LLM request rollup from append-clean request facts.
+
+NODE rollup
+SQL >
+    SELECT
+        toStartOfDay(toDateTime(ReceivedAt / 1000000000, 'UTC')) AS BucketStart,
+        ApiKey,
+        Provider,
+        Model,
+        OperationName,
+        BaggageOperation,
+        BaggageUserId,
+        StatusCode,
+        countState() AS RequestCount,
+        sumState(toUInt64(InputTokens)) AS InputTokens,
+        sumState(toUInt64(UncachedInputTokens)) AS UncachedInputTokens,
+        sumState(toUInt64(OutputTokens)) AS OutputTokens,
+        sumState(toUInt64(CacheReadInputTokens)) AS CacheReadInputTokens,
+        sumState(toUInt64(CacheCreationInputTokens)) AS CacheCreationInputTokens,
+        sumState(toUInt64(ReasoningTokens)) AS ReasoningTokens,
+        sumState(toUInt64(InputCostMicrodollars)) AS InputCostMicrodollars,
+        sumState(toUInt64(OutputCostMicrodollars)) AS OutputCostMicrodollars,
+        sumState(toUInt64(CacheReadCostMicrodollars)) AS CacheReadCostMicrodollars,
+        sumState(toUInt64(CacheCreationCostMicrodollars)) AS CacheCreationCostMicrodollars,
+        sumState(toUInt64(ReasoningCostMicrodollars)) AS ReasoningCostMicrodollars,
+        sumState(toUInt64(PromptBaselineCostMicrodollars)) AS PromptBaselineCostMicrodollars,
+        sumState(CacheImpactCostMicrodollars) AS CacheImpactCostMicrodollars,
+        sumState(toUInt64(UpstreamCostMicrodollars)) AS UpstreamCostMicrodollars,
+        sumState(toUInt64(TotalCostMicrodollars)) AS TotalCostMicrodollars,
+        avgState(DurationNano) AS AvgDurationNano,
+        maxState(DurationNano) AS MaxDurationNano,
+        quantileState(0.95)(DurationNano) AS P95DurationNano
+    FROM llm_request_facts
+    GROUP BY BucketStart, ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId, StatusCode
+
+TYPE MATERIALIZED
+DATASOURCE llm_usage_daily

@@ -1,0 +1,38 @@
+DESCRIPTION >
+    One conversation-visible capability observation (Codex strongest). Privacy-safe
+    counts, hashed/redacted identities, and size estimates only — never raw schema
+    text, skill bodies, config values, or absolute paths. Retained for later Context
+    Bloat analysis; backs no v1 launch query.
+    JSONPaths are defined because the consumer POSTs rows here via /v0/events;
+    keys match column names exactly (the ingest contract for this fact table).
+
+SCHEMA >
+    `OrgId` String `json:$.OrgId`,
+    `UserId` String `json:$.UserId`,
+    `CollectorId` String `json:$.CollectorId`,
+    `CollectorCredentialId` String `json:$.CollectorCredentialId`,
+    `session_pk` String `json:$.session_pk`,
+    `capability_snapshot_pk` String `json:$.capability_snapshot_pk`,
+    `repo_fingerprint` String `json:$.repo_fingerprint`,
+    `repo_source` LowCardinality(String) `json:$.repo_source`,
+    `source` LowCardinality(String) `json:$.source`,
+    `parser_version` LowCardinality(String) `json:$.parser_version`,
+    `EventAt` DateTime64(3) `json:$.EventAt`,
+    `IngestedAt` DateTime64(3) `json:$.IngestedAt`,
+    `vendor_session_id` String `json:$.vendor_session_id`,
+    `source_snapshot_id` String `json:$.source_snapshot_id`,
+    `stable_turn_index` UInt32 `json:$.stable_turn_index`,
+    `capability_kind` LowCardinality(String) `json:$.capability_kind`,
+    `item_count` UInt32 `json:$.item_count`,
+    `total_size_bytes` UInt64 `json:$.total_size_bytes`,
+    `total_tokens_estimate` UInt32 `json:$.total_tokens_estimate`,
+    `content_hash` String `json:$.content_hash`,
+    `redacted_label` String `json:$.redacted_label`,
+    `dropped_sensitive` UInt32 `json:$.dropped_sensitive`
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "OrgId, session_pk, capability_snapshot_pk"
+ENGINE_PARTITION_KEY "toYYYYMMDD(EventAt)"
+ENGINE_TTL "toDateTime(EventAt) + toIntervalYear(1)"
+
+TOKEN "agent_consumer_append" APPEND

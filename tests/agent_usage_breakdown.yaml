@@ -1,4 +1,4 @@
-# Fixtures: fixtures/agent_messages.ndjson (org_cov).
+# Fixtures: fixtures/agent_message_facts.ndjson (org_cov).
 # org_cov assistant turns at 2026-05-20 10:00: claude/claude-opus-4-7 {0.2, 0.3},
 #   claude/composer-1 {null}, codex/gpt-5.5 {0.5}. Ranked by cost desc, then group_value.
 # retention_days=20000 neutralizes the now()-relative tier floor (production passes 7..365).

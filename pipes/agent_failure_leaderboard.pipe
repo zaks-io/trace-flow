@@ -1,14 +1,5 @@
 DESCRIPTION >
-    Failure leaderboard: ranks (tool_name, command_family) by failure rate and
-    event volume over a window. Lambda over `agent_tool_usage_1h` replacement
-    snapshots + base `agent_tool_events FINAL`: snapshots serve buckets inside
-    [min(BucketStart), max(BucketStart)), while base FINAL serves older history and
-    the live tail. The union is re-aggregated by (tool_name, command_family).
-    Counts are exact either way (the tool rollup holds only count/sum values, no HLL).
-    `failure_rate = failure / (success + failure)`; `unknown` is counted in
-    `event_count` but excluded from the denominator (ADR "Failure semantics"). A display
-    floor (`min_events`) keeps a rare tool off the top on a single failure. `org_id` is
-    enforced via the JWT `fixed_params`.
+    Tool failure leaderboard. Reads the incremental hourly tool serving table only.
 
 NODE leaderboard
 SQL >
@@ -17,73 +8,33 @@ SQL >
         {{ Int64(start_time_ms, 0) }} AS start_ms,
         {{ Int64(end_time_ms, 0) }} AS end_ms,
         if(start_ms = 0, toDateTime64(now() - toIntervalDay(7), 3), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
-        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
-        (SELECT min(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_min,
-        (SELECT max(BucketStart) FROM agent_tool_usage_1h WHERE OrgId = {{ String(org_id, '') }}) AS rollup_watermark
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt
     SELECT
         tool_name,
         command_family,
-        sum(event_count) AS event_count,
-        sum(success_count) AS success_count,
-        sum(failure_count) AS failure_count,
-        sum(unknown_count) AS unknown_count,
+        sum(finalizeAggregation(EventCount)) AS event_count,
+        sum(finalizeAggregation(SuccessCount)) AS success_count,
+        sum(finalizeAggregation(FailureCount)) AS failure_count,
+        sum(finalizeAggregation(UnknownCount)) AS unknown_count,
         if(
             success_count + failure_count = 0,
             CAST(NULL, 'Nullable(Float64)'),
             round(failure_count / (success_count + failure_count), 4)
         ) AS failure_rate
-    FROM (
-        SELECT
-            tool_name,
-            command_family,
-            sum(EventCount) AS event_count,
-            sum(SuccessCount) AS success_count,
-            sum(FailureCount) AS failure_count,
-            sum(UnknownCount) AS unknown_count
-        FROM agent_tool_usage_1h
-        WHERE BucketStart >= rollup_min
-            AND BucketStart < rollup_watermark
-            AND OrgId = {{ String(org_id, '') }}
-            AND BucketStart >= start_dt
-            AND BucketStart < end_dt
-            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-            {% if defined(repo_fingerprint) %}
-            AND repo_fingerprint = {{ String(repo_fingerprint) }}
-            {% end %}
-        GROUP BY tool_name, command_family
-
-        UNION ALL
-
-        SELECT
-            tool_name,
-            command_family,
-            count() AS event_count,
-            countIf(status = 'success') AS success_count,
-            countIf(status = 'failure') AS failure_count,
-            countIf(status = 'unknown') AS unknown_count
-        FROM agent_tool_events FINAL
-        WHERE (EventAt < rollup_min OR EventAt >= rollup_watermark)
-            AND OrgId = {{ String(org_id, '') }}
-            AND EventAt >= start_dt
-            AND EventAt < end_dt
-            AND EventAt >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-            {% if defined(repo_fingerprint) %}
-            AND repo_fingerprint = {{ String(repo_fingerprint) }}
-            {% end %}
-        GROUP BY tool_name, command_family
-    )
+    FROM agent_tool_usage_hourly
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= start_dt
+        AND BucketStart < end_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+        {% if defined(repo_fingerprint) %}
+        AND repo_fingerprint = {{ String(repo_fingerprint) }}
+        {% end %}
     GROUP BY tool_name, command_family
     HAVING event_count >= {{ Int32(min_events, 10) }}
     ORDER BY failure_rate DESC NULLS LAST, event_count DESC, tool_name ASC, command_family ASC

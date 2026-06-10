@@ -120,9 +120,10 @@ run` (the `tests/*.yaml` fixture/output tests, offline against a `tinybirdco/tin
   container — catches pipe SQL that compiles but returns wrong rows), then `tb --cloud deploy --check`
   (dry-run diff against `trace_flow_prod` — catches incompatible/destructive migrations). Either failing
   blocks the PR.
-- **Merge to `main`:** `.github/workflows/deploy.yml` `deploy-tinybird-schema` runs the apply, and the
-  consumer deploys (`deploy-proxy-consumer`, `deploy-agent-consumer`) `needs:` it — so the schema always
-  lands before any consumer ships the new shape.
+- **Merge to `main`:** `.github/workflows/deploy.yml` `deploy-tinybird-schema` runs the non-destructive
+  `expand` apply, and the consumer deploys (`deploy-proxy-consumer`, `deploy-agent-consumer`) `needs:` it
+  — so clean schema exists before any consumer ships the new shape. The automatic merge deploy does not
+  delete legacy Tinybird resources.
 
 The cloud steps authenticate headless via the `TINYBIRD_DEPLOY_TOKEN` repo secret (also exposed to the
 Production environment), a `WORKSPACE:DEPLOY`-scoped token — never the append-only `TINYBIRD_TOKEN` the
@@ -130,51 +131,76 @@ consumer uses, and never on the client/collector path. The token resolves to `tr
 script refuses to deploy anywhere else. The local build/test steps need no token. When adding or
 changing a pipe, add a matching `tests/<pipe>.yaml` so the PR gate verifies its output.
 
-### Agent rollup replacement snapshots
+### Tinybird cost-refactor rollout
 
-`agent_usage_*` and `agent_tool_usage_*` are canonical rolling-snapshot read caches. Deploy them
-through the normal PR/merge Tinybird schema path. Empty tables are safe: endpoint lambdas read base
-`FINAL` outside the populated snapshot bounds.
+The cost refactor is an expand/contract rollout. `main` keeps clean final resource names, but the deploy
+script can generate temporary deploy trees that preserve legacy prod resources during rollout.
 
-After merge, allow scheduled copies to populate naturally, or run an approved production warmup:
+1. Expansion deploy: automatic on merge.
+   - `TINYBIRD_DEPLOY_PHASE=expand`
+   - Adds clean fact/serving resources.
+   - Preserves legacy datasources, legacy endpoint pipe definitions, and legacy copy pipes.
+   - Does not pass `--allow-destructive-operations`.
+2. Backfill clean facts:
+   - `TINYBIRD_BACKFILL_APPROVED=trace_flow_prod_YYYYMMDD TB_TARGET_WORKSPACE=trace_flow_prod bun run tinybird:backfill`
+   - The script only exports legacy rows missing from clean targets by stable identity, so it is safe
+     after dual-write starts.
+3. Parity:
+   - `TB_TARGET_WORKSPACE=trace_flow_prod bun run tinybird:parity -- 24`
+   - Missing clean identities must be zero for the soak window.
+   - Serving aggregate totals must match clean fact totals.
+   - Copy jobs are still expected before the read switch.
+4. Read switch:
+   - `TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh`
+   - Deploys clean endpoint pipe definitions.
+   - Keeps legacy datasources and unscheduled/materialized legacy pipes for rollback/parity.
+   - Stops restoring scheduled legacy replacement copy pipes, so rebuild CPU should drop during soak.
+5. Soak:
+   - Keep agent and proxy consumers in `dual` write mode for 24-48h.
+   - Copy job CPU should be zero after the switch deploy.
+   - Rollback remains a schema deploy back to legacy endpoint pipe definitions; if rollback is needed,
+     run the expansion deploy and refresh legacy rollups before treating old dashboards as current.
+6. Cleanup:
+   - Set consumer write modes to `clean`.
+   - Run final parity and performance reports.
+   - `TINYBIRD_DEPLOY_PHASE=cleanup TINYBIRD_CLEANUP_APPROVED=trace_flow_prod_YYYYMMDD TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh`
+   - This is the only phase allowed to pass `--allow-destructive-operations`.
 
-```sh
-# Explicit production data operation; run only after approval.
-tb --cloud copy run agent_usage_1h_copy --wait --mode replace
-tb --cloud copy run agent_tool_usage_1h_copy --wait --mode replace
-tb --cloud copy run agent_usage_1d_copy --wait --mode replace
-tb --cloud copy run agent_tool_usage_1d_copy --wait --mode replace
-```
+### Agent incremental rollups
 
-The copy pipes snap the lower rebuild bound to the target grain (hour or day). The upper bound remains
-`now`, so the current partial bucket exists only as the endpoint high-water mark and is excluded from
-snapshot reads.
+`agent_usage_hourly`, `agent_usage_daily`, `agent_tool_usage_hourly`, and
+`agent_tool_usage_daily` are canonical incremental serving tables. They are maintained by
+materialized pipes from append-clean fact tables. There are no scheduled replacement copy jobs in the
+steady-state path.
+
+Deploy schema changes through the normal PR/merge Tinybird path. For a repair or backfill, use a
+bounded, explicitly approved Tinybird branch/cloud-dev operation first, then promote through CI. Any
+repo-backed repair pipe must live under `copies/`, be unscheduled, and use a `repair_*` name.
 
 Verify before calling the rollout healthy:
 
 - canonical datasources have expected row counts and bucket bounds.
-- snapshot totals match raw base `FINAL` for the same window.
-- changed endpoints return data for a real org and match raw-base totals where exact.
-- copy-job `virtual_cpu_time_microseconds` and rows/bytes read are materially lower over a full day.
-- `agent_sessions` remains canonical after the daily cleanup (`count() = uniqExact(session_pk)`).
-
-Do not schedule `agent_sessions_recent_copy`; it is an on-demand repair tool only. Dev verification
-showed the realistic 72-hour repair still read more than enough rows to erase the CPU win.
+- materialized totals match clean fact totals for the same window.
+- changed endpoints return data for a real org and match serving-table totals where exact.
+- scheduled `COPY_MODE replace` job count is zero.
+- `agent_session_summaries` remains canonical after the daily cleanup (`count() = uniqExact(session_pk)`).
 
 ### Rollup cleanup
 
 The rolling snapshot rollout passed production soak on 2026-06-08 and the canonical rollup names now
-own the optimized `MergeTree` schemas and rolling `COPY_MODE replace` copy logic.
+own the optimized serving schemas. The follow-up cost refactor removes scheduled replacement copies
+from the steady-state design.
 
-Done: endpoints read canonical rollup names, raw fact tables are untouched, and copy-job CPU remains
-at the reduced level.
+Done: endpoints read canonical rollup names, raw fact tables are append-clean, and replacement-copy CPU
+is zero in the normal path.
 
 **Break-glass (manual fallback only):** if CI is unavailable, deploy from a local `tb` cloud login.
 This is the opt-in escape hatch, not the normal path:
 
 ```sh
 TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh --check   # validate only
-TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh           # deploy
+TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh           # expansion deploy
+TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh
 ```
 
 ## Release Gate

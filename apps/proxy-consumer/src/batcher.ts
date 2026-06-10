@@ -24,6 +24,26 @@ export const TRACE_BATCHER_MAX_INSERT_ROWS = MAX_INSERT_ROWS;
 
 type MessageTraceStatus = 'inserted' | 'duplicate' | 'failed';
 
+interface TraceInsertSummary {
+  messageInserted: boolean;
+  queuedTraces: number;
+  duplicateTraces: number;
+  repairTraces: number;
+}
+
+interface StoredTraceRow {
+  [key: string]: string | number | null;
+  id: number;
+  data: string;
+  clean_sent_at_ms: number | null;
+  legacy_sent_at_ms: number | null;
+}
+
+interface TinybirdTraceTarget {
+  datasource: string;
+  sentColumn: 'clean_sent_at_ms' | 'legacy_sent_at_ms';
+}
+
 export interface MessageTraceBatchItem {
   messageId: string;
   traces: TinybirdTrace[];
@@ -109,14 +129,36 @@ class TraceBatcherBase extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS traces (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         data TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
+        timestamp INTEGER NOT NULL,
+        clean_sent_at_ms INTEGER,
+        legacy_sent_at_ms INTEGER
       )
     `);
+    this.ensureColumn('traces', 'clean_sent_at_ms', 'INTEGER');
+    this.ensureColumn('traces', 'legacy_sent_at_ms', 'INTEGER');
 
     this.durableState.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS processed_messages (
         message_id TEXT PRIMARY KEY,
         processed_at_ms INTEGER NOT NULL
+      )
+    `);
+
+    this.durableState.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS trace_ledger (
+        trace_key TEXT PRIMARY KEY,
+        content_hash TEXT NOT NULL,
+        first_seen_at_ms INTEGER NOT NULL
+      )
+    `);
+
+    this.durableState.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS trace_repairs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trace_key TEXT NOT NULL,
+        old_hash TEXT NOT NULL,
+        new_hash TEXT NOT NULL,
+        seen_at_ms INTEGER NOT NULL
       )
     `);
 
@@ -174,6 +216,18 @@ class TraceBatcherBase extends DurableObject<Env> {
     }
   }
 
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const existing = [
+      ...this.durableState.storage.sql.exec<{ name: string }>(
+        `SELECT name FROM pragma_table_info('${table}') WHERE name = ?`,
+        column,
+      ),
+    ];
+    if (existing.length === 0) {
+      this.durableState.storage.sql.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
+  }
+
   async addMessageTraces(items: MessageTraceBatchItem[]): Promise<MessageTraceResult[]> {
     if (items.length === 0) {
       return [];
@@ -187,13 +241,19 @@ class TraceBatcherBase extends DurableObject<Env> {
 
     for (const item of items) {
       try {
-        const inserted = this.insertMessageTraces(item, now);
-        if (inserted) {
-          insertedTraceCount += item.traces.length;
+        const summary = this.insertMessageTraces(item, now);
+        if (summary.messageInserted) {
+          insertedTraceCount += summary.queuedTraces;
+        }
+        if (summary.repairTraces > 0) {
+          this.logger.warn('consumer.trace_repair_rows_detected', {
+            messageId: item.messageId,
+            repairTraces: summary.repairTraces,
+          });
         }
         results.push({
           messageId: item.messageId,
-          status: inserted ? 'inserted' : 'duplicate',
+          status: summary.messageInserted ? 'inserted' : 'duplicate',
         });
       } catch (error) {
         this.logger
@@ -265,8 +325,11 @@ class TraceBatcherBase extends DurableObject<Env> {
     try {
       for (let i = 0; i < batchCount; i++) {
         const rows = [
-          ...this.durableState.storage.sql.exec<{ id: number; data: string }>(
-            'SELECT id, data FROM traces ORDER BY id LIMIT ?',
+          ...this.durableState.storage.sql.exec<StoredTraceRow>(
+            `SELECT id, data, clean_sent_at_ms, legacy_sent_at_ms
+             FROM traces
+             ORDER BY id
+             LIMIT ?`,
             BATCH_SIZE,
           ),
         ];
@@ -275,31 +338,38 @@ class TraceBatcherBase extends DurableObject<Env> {
           break;
         }
 
-        const traces: TinybirdTrace[] = rows.map((row) => JSON.parse(row.data) as TinybirdTrace);
+        const targets = tinybirdWriteTargets(this.env);
         const ids = rows.map((row) => row.id);
 
         try {
-          const datasource = this.env.TINYBIRD_DATASOURCE ?? 'otel_traces';
           const host = this.env.TINYBIRD_HOST ?? 'https://api.us-west-2.aws.tinybird.co';
-          await insertIntoTinybirdWithRetry(traces, this.env.TINYBIRD_TOKEN, datasource, host);
-
-          this.durableState.storage.transactionSync(() => {
-            for (let j = 0; j < ids.length; j += MAX_SQL_PARAMS) {
-              const chunk = ids.slice(j, j + MAX_SQL_PARAMS);
-              this.durableState.storage.sql.exec(
-                `DELETE FROM traces WHERE id IN (${chunk.map(() => '?').join(',')})`,
-                ...chunk,
-              );
+          for (const target of targets) {
+            const targetRows = rows.filter((row) => row[target.sentColumn] === null);
+            if (targetRows.length === 0) {
+              continue;
             }
-          });
 
-          this.traceCount -= traces.length;
+            const traces = targetRows.map((row) => JSON.parse(row.data) as TinybirdTrace);
+            await insertIntoTinybirdWithRetry(
+              traces,
+              this.env.TINYBIRD_TOKEN,
+              target.datasource,
+              host,
+            );
+            this.markTraceTargetSent(
+              targetRows.map((row) => row.id),
+              target.sentColumn,
+            );
+          }
+
+          const deleted = this.deleteFullySentTraces(ids, targets);
+          this.traceCount -= deleted;
           lastSuccessfulFlushTime = Date.now();
         } catch (error) {
           this.logger
-            .child({ traceId: traces[0]?.TraceId })
+            .child({ traceId: firstTraceId(rows) })
             .error('consumer.tinybird_flush_failed', error, {
-              batchSize: traces.length,
+              batchSize: rows.length,
             });
           const ageMs = Date.now() - this.lastSuccessfulFlushTime;
           const isStale = ageMs > STALE_FLUSH_THRESHOLD_MS;
@@ -318,7 +388,7 @@ class TraceBatcherBase extends DurableObject<Env> {
               stale_shard: isStale ? 'true' : 'false',
             },
             extra: {
-              batchSize: traces.length,
+              batchSize: rows.length,
               queuedTraces: this.traceCount,
               lastSuccessfulFlushAgeMs: ageMs,
             },
@@ -361,6 +431,53 @@ class TraceBatcherBase extends DurableObject<Env> {
     );
   }
 
+  private markTraceTargetSent(ids: number[], column: TinybirdTraceTarget['sentColumn']): void {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const sentAt = Date.now();
+    this.durableState.storage.transactionSync(() => {
+      for (let i = 0; i < ids.length; i += MAX_SQL_PARAMS - 1) {
+        const chunk = ids.slice(i, i + MAX_SQL_PARAMS - 1);
+        this.durableState.storage.sql.exec(
+          `UPDATE traces
+           SET ${column} = ?
+           WHERE id IN (${chunk.map(() => '?').join(',')})`,
+          sentAt,
+          ...chunk,
+        );
+      }
+    });
+  }
+
+  private deleteFullySentTraces(ids: number[], targets: TinybirdTraceTarget[]): number {
+    if (ids.length === 0 || targets.length === 0) {
+      return 0;
+    }
+
+    const sentCondition = targets.map((target) => `${target.sentColumn} IS NOT NULL`).join(' AND ');
+    let deleted = 0;
+
+    this.durableState.storage.transactionSync(() => {
+      for (let i = 0; i < ids.length; i += MAX_SQL_PARAMS) {
+        const chunk = ids.slice(i, i + MAX_SQL_PARAMS);
+        this.durableState.storage.sql.exec(
+          `DELETE FROM traces
+           WHERE id IN (${chunk.map(() => '?').join(',')})
+             AND ${sentCondition}`,
+          ...chunk,
+        );
+        const changes = [
+          ...this.durableState.storage.sql.exec<{ changes: number }>('SELECT changes() AS changes'),
+        ][0];
+        deleted += changes?.changes ?? 0;
+      }
+    });
+
+    return deleted;
+  }
+
   // Manually drain stuck traces. Call via RPC from an admin endpoint when a
   // shard has wedged for unrelated reasons (old code, prior incident, etc).
   async forceFlush(): Promise<{ before: number; after: number }> {
@@ -388,9 +505,13 @@ class TraceBatcherBase extends DurableObject<Env> {
     };
   }
 
-  private insertMessageTraces(item: MessageTraceBatchItem, now: number): boolean {
-    let inserted = false;
-    let tracesInserted = 0;
+  private insertMessageTraces(item: MessageTraceBatchItem, now: number): TraceInsertSummary {
+    const summary: TraceInsertSummary = {
+      messageInserted: false,
+      queuedTraces: 0,
+      duplicateTraces: 0,
+      repairTraces: 0,
+    };
 
     this.durableState.storage.transactionSync(() => {
       this.durableState.storage.sql.exec(
@@ -403,16 +524,56 @@ class TraceBatcherBase extends DurableObject<Env> {
       const changeRow = [
         ...this.durableState.storage.sql.exec<{ changes: number }>('SELECT changes() as changes'),
       ][0];
-      inserted = (changeRow?.changes ?? 0) > 0;
+      summary.messageInserted = (changeRow?.changes ?? 0) > 0;
 
-      if (!inserted) {
+      if (!summary.messageInserted) {
         return;
       }
 
       if (item.traces.length > 0) {
         const timestamp = now;
-        for (let j = 0; j < item.traces.length; j += MAX_INSERT_ROWS) {
-          const chunk = item.traces.slice(j, j + MAX_INSERT_ROWS);
+        const tracesToQueue: TinybirdTrace[] = [];
+
+        for (const trace of item.traces) {
+          const traceKey = traceIdentity(trace);
+          const contentHash = stableHash(trace);
+          const existing = [
+            ...this.durableState.storage.sql.exec<{ content_hash: string }>(
+              'SELECT content_hash FROM trace_ledger WHERE trace_key = ?',
+              traceKey,
+            ),
+          ][0];
+
+          if (existing?.content_hash === contentHash) {
+            summary.duplicateTraces++;
+            continue;
+          }
+
+          if (existing) {
+            summary.repairTraces++;
+            this.durableState.storage.sql.exec(
+              `INSERT INTO trace_repairs (trace_key, old_hash, new_hash, seen_at_ms)
+               VALUES (?, ?, ?, ?)`,
+              traceKey,
+              existing.content_hash,
+              contentHash,
+              now,
+            );
+            continue;
+          }
+
+          this.durableState.storage.sql.exec(
+            `INSERT INTO trace_ledger (trace_key, content_hash, first_seen_at_ms)
+             VALUES (?, ?, ?)`,
+            traceKey,
+            contentHash,
+            now,
+          );
+          tracesToQueue.push(trace);
+        }
+
+        for (let j = 0; j < tracesToQueue.length; j += MAX_INSERT_ROWS) {
+          const chunk = tracesToQueue.slice(j, j + MAX_INSERT_ROWS);
           const values = chunk.map(() => '(?, ?)').join(', ');
           const params = chunk.flatMap((trace) => [JSON.stringify(trace), timestamp]);
           this.durableState.storage.sql.exec(
@@ -420,14 +581,14 @@ class TraceBatcherBase extends DurableObject<Env> {
             ...params,
           );
         }
-        tracesInserted = item.traces.length;
+        summary.queuedTraces = tracesToQueue.length;
       }
     });
 
-    if (inserted) {
-      this.traceCount += tracesInserted;
+    if (summary.messageInserted) {
+      this.traceCount += summary.queuedTraces;
     }
-    return inserted;
+    return summary;
   }
 
   private cleanupProcessedMessages(now: number): void {
@@ -442,6 +603,81 @@ class TraceBatcherBase extends DurableObject<Env> {
     );
     this.lastCleanupTime = now;
   }
+}
+
+function traceIdentity(trace: TinybirdTrace): string {
+  return [trace.ApiKey, trace.TraceId, trace.SpanId].map(identityPart).join('\x1f');
+}
+
+function firstTraceId(rows: StoredTraceRow[]): string | undefined {
+  const first = rows[0];
+  if (!first) {
+    return undefined;
+  }
+
+  try {
+    return (JSON.parse(first.data) as TinybirdTrace).TraceId;
+  } catch {
+    return undefined;
+  }
+}
+
+function stableHash(value: unknown): string {
+  const input = stableStringify(value);
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = BigInt.asUintN(64, hash * prime);
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function identityPart(value: string): string {
+  return value;
+}
+
+interface TinybirdTraceWriteEnv {
+  TINYBIRD_DATASOURCE?: string;
+  TINYBIRD_LEGACY_DATASOURCE?: string;
+  TINYBIRD_TRACE_WRITE_MODE?: string;
+}
+
+function tinybirdWriteTargets(env: TinybirdTraceWriteEnv): TinybirdTraceTarget[] {
+  const clean = env.TINYBIRD_DATASOURCE ?? 'otel_trace_spans';
+  const legacy = env.TINYBIRD_LEGACY_DATASOURCE ?? 'otel_traces';
+  const mode = env.TINYBIRD_TRACE_WRITE_MODE ?? 'clean';
+
+  if (mode === 'clean') return [{ datasource: clean, sentColumn: 'clean_sent_at_ms' }];
+  if (mode === 'legacy') return [{ datasource: legacy, sentColumn: 'legacy_sent_at_ms' }];
+  if (mode === 'dual') {
+    if (legacy === clean) {
+      return [{ datasource: clean, sentColumn: 'clean_sent_at_ms' }];
+    }
+    return [
+      { datasource: legacy, sentColumn: 'legacy_sent_at_ms' },
+      { datasource: clean, sentColumn: 'clean_sent_at_ms' },
+    ];
+  }
+
+  throw new Error(`invalid TINYBIRD_TRACE_WRITE_MODE: ${mode}`);
 }
 
 export const TraceBatcher = Sentry.instrumentDurableObjectWithSentry(

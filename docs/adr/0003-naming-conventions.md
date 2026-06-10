@@ -12,7 +12,7 @@ Canonical naming patterns across the Trace Flow codebase. Follow these conventio
 | shadcn/ui components        | kebab-case                  | `dropdown-menu.tsx`, `data-table.tsx`, `table-toolbar.tsx`       |
 | React hooks                 | camelCase with `use` prefix | `useApiKeyMap.ts`, `useTinybirdPipe.ts`, `useTableFilters.ts`    |
 | Lib utilities               | camelCase or kebab-case     | `cacheMetrics.ts`, `auth-cookies.ts`, `traceToMarkdown.ts`       |
-| Tinybird datasources        | snake_case                  | `llm_requests.datasource`, `otel_traces.datasource`              |
+| Tinybird datasources        | snake_case                  | `llm_request_facts.datasource`, `otel_trace_spans.datasource`    |
 | Tinybird pipes              | snake_case                  | `trace_detail.pipe`, `llm_usage_timeseries.pipe`                 |
 | Convex modules              | camelCase                   | `apiKeys.ts`, `stripeEvents.ts`, `modelPricing.ts`               |
 | Convex migrations           | camelCase                   | `backfillOrgs.ts`, `backfillOrgBilling.ts`                       |
@@ -109,7 +109,7 @@ Dot-separated PascalCase: `Events.Timestamp`, `Events.Name`, `Links.TraceId`
 
 ### Datasource File Names
 
-snake_case: `otel_traces.datasource`, `llm_requests.datasource`, `llm_usage_1h.datasource`
+snake_case: `otel_trace_spans.datasource`, `llm_request_facts.datasource`, `llm_usage_hourly.datasource`
 
 ### Pipe File Names
 

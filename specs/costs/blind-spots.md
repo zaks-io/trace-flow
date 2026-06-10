@@ -25,7 +25,7 @@ The cost model in `cost-analysis.md` is directionally correct but has gaps that 
 | Streaming + 2 tool calls       | 5-7         | 1-1.4x       |
 | Agentic loop (3 tool rounds)   | 8-15        | 1.6-3x       |
 
-**Why it matters:** Tinybird storage is per-byte. Each span is a full row in `otel_traces` with 25 columns including `SpanAttributes` (2-5KB JSON per span). An agentic trace with 10 spans could be 30-50KB in Tinybird, not the modeled 10KB.
+**Why it matters:** Tinybird storage is per-byte. Each span is a full row in `otel_trace_spans` with 25 columns including `SpanAttributes` (2-5KB JSON per span). An agentic trace with 10 spans could be 30-50KB in Tinybird, not the modeled 10KB.
 
 **Impact on cost model:**
 
@@ -33,7 +33,7 @@ The cost model in `cost-analysis.md` is directionally correct but has gaps that 
 - At 1M traces/mo with avg 8 spans: storage jumps from $1.74 to ~$4-5/mo
 - At 5M traces/mo: from $8.70 to ~$20-25/mo
 
-**Also feeds into:** AggregatingMergeTree rollup tables (`llm_usage_1h`, `llm_usage_1d`, `llm_usage_1mo`) consume additional vCPU time proportional to ingestion volume. These exist in `datasources/` and run continuous background aggregation.
+**Also feeds into:** AggregatingMergeTree rollup tables (`llm_usage_hourly`, `llm_usage_daily`, `llm_usage_monthly`) consume additional vCPU time proportional to ingestion volume. These exist in `datasources/` and run continuous background aggregation.
 
 ---
 
@@ -198,22 +198,22 @@ QPS is trivially fixed with caching. So what actually limits Tinybird scaling? W
 On Tinybird's vCPU model, your baseline vCPU runs 24/7. It handles:
 
 - **Ingestion** — parsing, indexing, sorting key maintenance
-- **Background merges** — ReplacingMergeTree dedup, AggregatingMergeTree rollups, standard compaction
-- **Materialized views** — `otel_traces_genai` processes every row from `otel_traces`
+- **Background merges** — AggregatingMergeTree rollups and standard MergeTree compaction
+- **Materialized views** — `otel_genai_spans` processes every row from `otel_trace_spans`
 - **Query execution** — dashboard reads, API endpoint calls
 
 ### Per-trace data pipeline (5 spans avg)
 
-| Datasource          | Rows/trace | Engine                  | Background Merge Type      |
-| ------------------- | ---------- | ----------------------- | -------------------------- |
-| `otel_traces`       | 5          | ReplacingMergeTree      | Deduplication merges       |
-| `otel_traces_genai` | 5          | ReplacingMergeTree (MV) | Deduplication merges       |
-| `llm_requests`      | 1          | MergeTree               | Standard compaction        |
-| `llm_usage_1h`      | agg state  | AggregatingMergeTree    | Continuous aggregate merge |
-| `llm_usage_1d`      | agg state  | AggregatingMergeTree    | Continuous aggregate merge |
-| `llm_usage_1mo`     | agg state  | AggregatingMergeTree    | Continuous aggregate merge |
+| Datasource          | Rows/trace | Engine               | Background Merge Type      |
+| ------------------- | ---------- | -------------------- | -------------------------- |
+| `otel_trace_spans`  | 5          | MergeTree            | Standard compaction        |
+| `otel_genai_spans`  | 5          | MergeTree            | Standard compaction        |
+| `llm_request_facts` | 1          | MergeTree            | Standard compaction        |
+| `llm_usage_hourly`  | agg state  | AggregatingMergeTree | Continuous aggregate merge |
+| `llm_usage_daily`   | agg state  | AggregatingMergeTree | Continuous aggregate merge |
+| `llm_usage_monthly` | agg state  | AggregatingMergeTree | Continuous aggregate merge |
 
-**11 row inserts + 3 aggregation updates per trace.** The `otel_traces_genai` materialized view effectively doubles ingestion compute for the trace table.
+**11 row inserts + 3 aggregation updates per trace.** The `otel_genai_spans` materialized view effectively doubles ingestion compute for the trace table.
 
 ### At $30K MRR (250M traces/mo)
 
@@ -221,13 +221,13 @@ Sustained ingestion rate: **~96 traces/sec → ~1,056 rows/sec** across all tabl
 
 ClickHouse processes 1-5M rows/sec on a single core for typical OLAP schemas. Our 1K rows/sec is ~0.1% of single-core capacity. Even with background merge amplification (3-10x rewrite during compaction), the total CPU demand is modest:
 
-| Activity                                     | Estimated vCPU | vCPU-hours/mo |
-| -------------------------------------------- | -------------- | ------------- |
-| Ingestion + indexing                         | 0.02-0.05      | 14-36         |
-| Background merges (ReplacingMergeTree dedup) | 0.03-0.08      | 22-58         |
-| AggregatingMergeTree rollups (3 tables)      | 0.01-0.03      | 7-22          |
-| Query execution (with caching, ~5 QPS)       | 0.02-0.05      | 14-36         |
-| **Total sustained**                          | **0.08-0.21**  | **57-152**    |
+| Activity                                | Estimated vCPU | vCPU-hours/mo |
+| --------------------------------------- | -------------- | ------------- |
+| Ingestion + indexing                    | 0.02-0.05      | 14-36         |
+| Background MergeTree compaction         | 0.01-0.03      | 7-22          |
+| AggregatingMergeTree rollups (3 tables) | 0.01-0.03      | 7-22          |
+| Query execution (with caching, ~5 QPS)  | 0.02-0.05      | 14-36         |
+| **Total sustained**                     | **0.08-0.21**  | **57-152**    |
 
 Dev 0.25 includes **150 vCPU-hours/mo** (baseline 0.25 vCPU × 720 hrs = 180 theoretical, 150 included). At the high estimate we're right at the limit, with auto-scale to 0.5 vCPU handling bursts.
 

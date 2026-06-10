@@ -1,0 +1,20 @@
+DESCRIPTION >
+    Hourly Tool Event usage rollup, maintained incrementally from clean tool facts.
+
+SCHEMA >
+    `BucketStart` DateTime,
+    `OrgId` String,
+    `source` LowCardinality(String),
+    `tool_name` LowCardinality(String),
+    `command_family` LowCardinality(String),
+    `repo_fingerprint` String,
+    `EventCount` AggregateFunction(count),
+    `SuccessCount` AggregateFunction(sum, UInt64),
+    `FailureCount` AggregateFunction(sum, UInt64),
+    `UnknownCount` AggregateFunction(sum, UInt64),
+    `DurationMsSum` AggregateFunction(sum, UInt64)
+
+ENGINE "AggregatingMergeTree"
+ENGINE_SORTING_KEY "OrgId, BucketStart, source, tool_name, command_family, repo_fingerprint"
+ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
+ENGINE_TTL "BucketStart + toIntervalYear(1)"

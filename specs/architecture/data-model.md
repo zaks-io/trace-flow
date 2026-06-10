@@ -20,9 +20,9 @@ Using the right tool for each workload provides better performance and simpler c
 
 Tinybird provides managed ClickHouse with an HTTP API for ingestion and SQL queries. Traces are stored in OpenTelemetry format.
 
-### Primary Datasource: `otel_traces`
+### Primary Datasource: `otel_trace_spans`
 
-Defined in `datasources/otel_traces.datasource`:
+Defined in `datasources/otel_trace_spans.datasource`:
 
 ```
 SCHEMA >
@@ -111,9 +111,9 @@ This enables:
 
 Common attributes are extracted into the materialized view for indexed access.
 
-### Materialized View: `otel_traces_genai`
+### Materialized View: `otel_genai_spans`
 
-Defined in `datasources/otel_traces_genai.datasource`:
+Defined in `datasources/otel_genai_spans.datasource`:
 
 ```
 DESCRIPTION >
@@ -121,7 +121,7 @@ DESCRIPTION >
     Provides indexed columns for efficient filtering on operation, provider, and model.
 
 SCHEMA >
-    // ... all columns from otel_traces, plus:
+    // ... all columns from otel_trace_spans, plus:
     `OperationName` LowCardinality(String),
     `Provider` LowCardinality(String),
     `Model` LowCardinality(String)
@@ -299,7 +299,7 @@ API keys connect the two databases:
 ┌─────────────────────────┐
 │       Tinybird          │
 ├─────────────────────────┤
-│ otel_traces             │
+│ otel_trace_spans             │
 │   ApiKey column         │
 └─────────────────────────┘
 ```
@@ -332,7 +332,7 @@ SELECT
   toStartOfHour(toDateTime(Timestamp / 1000000000)) as hour,
   count() as requests,
   avg(Duration / 1000000) as avg_latency_ms
-FROM otel_traces
+FROM otel_trace_spans
 WHERE ReceivedAt BETWEEN {start} AND {end}
   AND ApiKey IN splitByChar(',', {api_keys})
 GROUP BY hour
@@ -343,7 +343,7 @@ ORDER BY hour
 
 ```sql
 SELECT *
-FROM otel_traces
+FROM otel_trace_spans
 WHERE TraceId = {trace_id}
   AND ApiKey IN splitByChar(',', {api_keys})
 ORDER BY Timestamp
