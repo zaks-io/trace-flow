@@ -143,6 +143,7 @@ jobs:
               - 'tests/**'
               - 'tinybird.config.json'
               - 'scripts/deploy-agent-tinybird.sh'
+              - 'scripts/verify-tinybird-copy-policy.sh'
               - 'scripts/verify-tinybird-cost-contract.sh'
 
   actionlint:
@@ -178,7 +179,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install Tinybird CLI
@@ -190,19 +191,27 @@ jobs:
       - name: Build and test against Tinybird Local
         run: |
           bash scripts/verify-tinybird-cost-contract.sh
+          TB_TARGET_WORKSPACE=trace_flow_prod \
+            TINYBIRD_DEPLOY_PHASE=switch \
+            TINYBIRD_LEGACY_REF=11613a4619444adb0e27abc3df958cebb43cc280 \
+            TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY=1 \
+            bash scripts/deploy-agent-tinybird.sh
           tb --local build
           tb --local test run
         env:
           TB_VERSION_WARNING: 0
 
-      # Cloud dry-run diff against trace_flow_prod in the non-destructive expansion phase. The script
-      # generates a temporary deploy tree that preserves legacy prod resources, so this catches
-      # incompatible changes without requiring cleanup approval.
+      # Cloud dry-run diff against trace_flow_prod in the non-destructive switch phase. The script
+      # generates a temporary deploy tree that preserves legacy rollback resources without restoring
+      # legacy copy pipes, so this catches incompatible changes without requiring cleanup approval.
       - name: Tinybird deploy --check (trace_flow_prod)
         run: ./scripts/deploy-agent-tinybird.sh --check
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
-          TINYBIRD_DEPLOY_PHASE: expand
+          TINYBIRD_DEPLOY_PHASE: switch
+          # Last main commit before the clean Tinybird resource cutover. The generated switch tree
+          # keeps rollback resources from this ref while excluding legacy copy pipes.
+          TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
           TB_TOKEN: ${{ secrets.TINYBIRD_DEPLOY_TOKEN }}
           TB_HOST: https://api.us-west-2.aws.tinybird.co
           TB_VERSION_WARNING: 0

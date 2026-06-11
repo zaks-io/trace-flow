@@ -36,6 +36,7 @@
 #   scripts/deploy-agent-tinybird.sh --check
 #   TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh --check
 #   TB_TARGET_WORKSPACE=trace_flow_prod TINYBIRD_DEPLOY_PHASE=switch scripts/deploy-agent-tinybird.sh
+#   TB_TARGET_WORKSPACE=trace_flow_prod TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY=1 scripts/deploy-agent-tinybird.sh
 #   TB_TARGET_WORKSPACE=trace_flow_prod TINYBIRD_DEPLOY_PHASE=cleanup \
 #     TINYBIRD_CLEANUP_APPROVED=trace_flow_prod_YYYYMMDD scripts/deploy-agent-tinybird.sh
 #   # headless: export TB_TOKEN=<prod deploy token> first
@@ -65,7 +66,7 @@ esac
 if [[ -n "${TINYBIRD_DEPLOY_PHASE:-}" ]]; then
   DEPLOY_PHASE="$TINYBIRD_DEPLOY_PHASE"
 elif [[ "$TARGET_WORKSPACE" == "trace_flow_prod" ]]; then
-  DEPLOY_PHASE="expand"
+  DEPLOY_PHASE="switch"
 else
   DEPLOY_PHASE="cleanup"
 fi
@@ -93,6 +94,7 @@ fi
 ROOT_DIR="$(pwd)"
 DEPLOY_DIR="$ROOT_DIR"
 TMP_DIR=""
+DEFAULT_LEGACY_REF="11613a4619444adb0e27abc3df958cebb43cc280"
 
 cleanup_tmp() {
   if [[ -n "$TMP_DIR" ]]; then
@@ -124,7 +126,7 @@ resolve_legacy_ref() {
     return 1
   fi
 
-  for candidate in origin/main HEAD^1 HEAD^; do
+  for candidate in "${TINYBIRD_DEFAULT_LEGACY_REF:-$DEFAULT_LEGACY_REF}" origin/main HEAD^1 HEAD^; do
     if git rev-parse --verify --quiet "$candidate^{tree}" >/dev/null &&
       legacy_ref_has_resources "$candidate"; then
       echo "$candidate"
@@ -137,7 +139,7 @@ resolve_legacy_ref() {
 copy_current_project() {
   local dest="$1"
   mkdir -p "$dest"
-  for path in tinybird.config.json datasources pipes materializations tests fixtures; do
+  for path in tinybird.config.json datasources pipes materializations copies tests fixtures; do
     if [[ -e "$path" ]]; then
       cp -R "$path" "$dest/"
     fi
@@ -152,17 +154,31 @@ restore_file_from_ref() {
   git show "$ref:$path" > "$dest/$path"
 }
 
-is_scheduled_copy_pipe() {
+is_copy_pipe() {
   local ref="$1"
   local path="$2"
   [[ "$path" == pipes/* ]] || return 1
-  git show "$ref:$path" | grep -q '^COPY_SCHEDULE'
+  git show "$ref:$path" | grep -Eq '^TYPE[[:space:]]+COPY([[:space:]]|$)'
+}
+
+has_legacy_copy_resource_name() {
+  local path="$1"
+  local name="${path##*/}"
+  [[ "$name" == *_copy.* ]]
 }
 
 should_restore_legacy_path() {
   local phase="$1"
   local ref="$2"
   local path="$3"
+
+  if has_legacy_copy_resource_name "$path"; then
+    return 1
+  fi
+
+  if is_copy_pipe "$ref" "$path"; then
+    return 1
+  fi
 
   if [[ "$phase" == "expand" && "$path" == pipes/* ]]; then
     return 0
@@ -171,10 +187,6 @@ should_restore_legacy_path() {
   if [[ "$path" == datasources/* ]]; then
     [[ ! -e "$TMP_DIR/$path" ]]
     return
-  fi
-
-  if is_scheduled_copy_pipe "$ref" "$path"; then
-    return 1
   fi
 
   [[ ! -e "$TMP_DIR/$path" ]]
@@ -212,6 +224,13 @@ prepare_phase_project() {
 }
 
 prepare_phase_project "$DEPLOY_PHASE"
+
+"$ROOT_DIR/scripts/verify-tinybird-copy-policy.sh" "$DEPLOY_DIR"
+
+if [[ "${TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY:-}" == "1" ]]; then
+  echo "Validate-deploy-tree-only run; skipping Tinybird build/deploy."
+  exit 0
+fi
 
 if [[ -z "${TB_TOKEN:-}" && -f "$ROOT_DIR/.tinyb" ]]; then
   export TB_TOKEN

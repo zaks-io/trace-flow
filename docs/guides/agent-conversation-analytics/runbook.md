@@ -153,8 +153,8 @@ script can generate temporary deploy trees that preserve legacy prod resources d
 4. Read switch:
    - `TINYBIRD_DEPLOY_PHASE=switch TB_TARGET_WORKSPACE=trace_flow_prod scripts/deploy-agent-tinybird.sh`
    - Deploys clean endpoint pipe definitions.
-   - Keeps legacy datasources and unscheduled/materialized legacy pipes for rollback/parity.
-   - Stops restoring scheduled legacy replacement copy pipes, so rebuild CPU should drop during soak.
+   - Keeps legacy datasources and non-copy legacy pipes for rollback/parity.
+   - Stops restoring legacy copy pipes, so rebuild CPU should drop during soak.
 5. Soak:
    - Keep agent and proxy consumers in `dual` write mode for 24-48h.
    - Copy job CPU should be zero after the switch deploy.
