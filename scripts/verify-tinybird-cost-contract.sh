@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-roots=(datasources materializations pipes)
-
 failed=0
 
 check() {
@@ -21,11 +19,7 @@ check "published SQL must not use FINAL" \
 check "Tinybird datasources must not use ReplacingMergeTree" \
   rg -n 'ENGINE "ReplacingMergeTree"' datasources
 
-check "scheduled replacement copy pipes are not allowed" \
-  rg -n 'COPY_SCHEDULE|COPY_MODE replace|TYPE COPY' materializations pipes
-
-check "Tinybird resource names must not keep migration suffixes" \
-  find "${roots[@]}" -type f \( -name '*_copy.*' -o -name '*_mv.*' -o -name '*_v2.*' -o -name '*_v3.*' -o -name '*_clean.*' -o -name '*_next.*' -o -name '*_tmp.*' -o -name '*_migration.*' \) -print
+bash scripts/verify-tinybird-copy-policy.sh
 
 if [[ "$failed" -ne 0 ]]; then
   exit 1

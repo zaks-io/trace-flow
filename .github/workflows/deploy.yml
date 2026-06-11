@@ -184,14 +184,14 @@ jobs:
           curl -fsSL https://tinybird.co | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Automatic production deploy is the non-destructive expansion phase: new clean resources are
-      # deployed while legacy resources and legacy endpoint pipes remain live. Switch/cleanup are
-      # separate explicit operator steps after backfill and parity.
-      - name: Deploy schema to trace_flow_prod (expand)
+      # Automatic production deploy is the non-destructive switch phase: clean endpoint pipes stay
+      # live while legacy rollback resources remain available without restoring legacy copy pipes.
+      # Cleanup is a separate explicit operator step after soak and parity.
+      - name: Deploy schema to trace_flow_prod (switch)
         run: ./scripts/deploy-agent-tinybird.sh
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
-          TINYBIRD_DEPLOY_PHASE: expand
+          TINYBIRD_DEPLOY_PHASE: switch
           # Last main commit before the clean Tinybird resource cutover. The deploy job fetches full
           # history so expand/switch can restore legacy prod resources after this PR merges.
           TINYBIRD_LEGACY_REF: 11613a4619444adb0e27abc3df958cebb43cc280
