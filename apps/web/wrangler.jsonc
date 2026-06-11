@@ -32,6 +32,7 @@
       "workers_dev": true,
       "vars": {
         "AXIOM_DATASET": "cloudflare",
+        "SENTRY_ENVIRONMENT": "development",
       },
       "ratelimits": [
         {
@@ -46,6 +47,7 @@
       "workers_dev": false,
       "vars": {
         "AXIOM_DATASET": "cloudflare",
+        "SENTRY_ENVIRONMENT": "prod",
       },
       "ratelimits": [
         {

@@ -42,7 +42,7 @@ const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.use('*', async (c, next) => {
-  const isDev = c.env.SENTRY_ENVIRONMENT !== 'production';
+  const isDev = c.env.SENTRY_ENVIRONMENT !== 'prod';
   const allowed = isDev ? [...PRODUCTION_ORIGINS, ...DEV_ORIGINS] : PRODUCTION_ORIGINS;
   const mw = cors({
     origin: (origin) => (allowed.includes(origin) ? origin : null),
