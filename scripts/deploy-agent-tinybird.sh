@@ -161,7 +161,7 @@ is_copy_pipe() {
   git show "$ref:$path" | grep -Eq '^TYPE[[:space:]]+COPY([[:space:]]|$)'
 }
 
-has_legacy_copy_name() {
+has_legacy_copy_resource_name() {
   local path="$1"
   local name="${path##*/}"
   [[ "$name" == *_copy.* ]]
@@ -172,7 +172,7 @@ should_restore_legacy_path() {
   local ref="$2"
   local path="$3"
 
-  if has_legacy_copy_name "$path"; then
+  if has_legacy_copy_resource_name "$path"; then
     return 1
   fi
 

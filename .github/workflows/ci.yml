@@ -143,6 +143,7 @@ jobs:
               - 'tests/**'
               - 'tinybird.config.json'
               - 'scripts/deploy-agent-tinybird.sh'
+              - 'scripts/verify-tinybird-copy-policy.sh'
               - 'scripts/verify-tinybird-cost-contract.sh'
 
   actionlint:
