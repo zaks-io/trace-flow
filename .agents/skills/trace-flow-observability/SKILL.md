@@ -66,7 +66,7 @@ Cron: consumer runs `*/5 * * * *` to flush stale TraceBatcher shards.
 - Org slug: `zaksio` | regionUrl: `https://us.sentry.io` | dashboard: `https://zaksio.sentry.io`
 - Project slug: `trace-flow` (single project covers all four workers + web)
 - Sibling projects in same org: `apictx`, `medical-mcp`, `neuron-app`, `news`, `otto`, `panda-pet`, `scrape`, `time`
-- Env: `SENTRY_ENVIRONMENT` = `development` | `preview` | `production`. Workers send via `env.SENTRY_DSN`; web via `NEXT_PUBLIC_SENTRY_DSN`.
+- Env: Workers and Convex use `environment:prod` for production Sentry events. Worker deployment env names are still Wrangler `[env.production]`; only the Sentry tag is normalized to `prod`.
 
 ## Convex
 
@@ -160,7 +160,7 @@ The only way to read trace data without a Tinybird JWT. Scoped to the API keys t
 
 - **"Why did this request fail?"** Get `requestId` -> `trace-flow-prod.get_trace` for spans/events -> if body needed, hit `https://api.trace-flow.dev/bodies/<requestId>` (auth required, Auth0 JWT) -> Axiom query on `cloudflare` dataset filtering `request_id` for proxy/consumer logs.
 - **"Queue is backed up."** Cloudflare MCP `workers_get_worker` for `trace-flow-consumer` deploy state -> Axiom on `service == "proxy-consumer"` for batcher errors (look at `data.unhealthyShards`, `data.queuedTraces`, `data.lastSuccessfulFlushAgeMs`) -> check DLQ `trace-flow-requests-dlq-prod` via Cloudflare dashboard. Fix history: see commits 2b45bbf (stale TraceBatcher) and 8e585ce (SQL param overflow).
-- **"Spike in errors."** Sentry `search_issues` filtered by `environment:production` -> cross-reference Axiom `cloudflare` dataset for the same window -> if proxy error, check `trace-flow-proxy` analytics dataset for skip rate.
+- **"Spike in errors."** Sentry `search_issues` filtered by `environment:prod` -> cross-reference Axiom `convex` or `cloudflare` for the same window -> if proxy error, check `trace-flow-proxy` analytics dataset for skip rate.
 - **"Tinybird query slow."** Check sorting key order in the relevant `.datasource` (highest-cardinality filter first), prefer `PREWHERE` on small columns, filter before joins. Pipes live in `pipes/`.
 - **"Schema migration."** Use `FORWARD_QUERY` for zero-downtime; validate with `tb build`; deletes need `--allow-destructive-operations`. Bad rows land in `<datasource>_quarantine`.
 

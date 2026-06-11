@@ -53,7 +53,7 @@ workers_dev = false
 [env.production.vars]
 AUTH0_DOMAIN = "auth0.zaks.io"
 AUTH0_CLIENT_ID = "asEG3J6UWZOeKWclu2WxONmoIhTsCfdp"
-SENTRY_ENVIRONMENT = "production"
+SENTRY_ENVIRONMENT = "prod"
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
 BODY_ENCRYPTION_KEY_ID = "v1"

@@ -27,8 +27,11 @@ export class ConvexUnreachableError extends Error {
 /** Convex caps the claim batch; larger claim sets are split into chunks of this size. */
 const MAX_CLAIM_BATCH = 1000;
 
-/** Bound the control-plane round trip so a hung Convex doesn't pin the request open. */
-const CLAIM_TIMEOUT_MS = 5000;
+/**
+ * Keep this below the collector's 30s POST timeout, but above Convex's observed response tail for
+ * successful claims. A 5s cutoff caused the Worker to abort after Convex had already committed claims.
+ */
+const CLAIM_TIMEOUT_MS = 15000;
 
 interface ClaimRequest {
   orgId: string;

@@ -69,7 +69,7 @@ name = "trace-flow-proxy"
 workers_dev = false
 
 [env.production.vars]
-SENTRY_ENVIRONMENT = "production"
+SENTRY_ENVIRONMENT = "prod"
 AXIOM_DATASET = "cloudflare"
 BODY_ENCRYPTION_KEY_ID = "v1"
 

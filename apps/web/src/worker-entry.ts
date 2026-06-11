@@ -20,7 +20,7 @@ export default Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
-    environment: env.SENTRY_ENVIRONMENT ?? 'production',
+    environment: env.SENTRY_ENVIRONMENT ?? 'prod',
     tracesSampleRate: env.SENTRY_ENVIRONMENT === 'development' ? 1.0 : 0.1,
   }),
   {

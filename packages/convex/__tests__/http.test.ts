@@ -68,6 +68,9 @@ describe('convex/http.ts', () => {
       );
 
       expect(res.status).toBe(200);
+      expect(res.headers.get('Cache-Control')).toBe(
+        'public, max-age=3600, stale-while-revalidate=86400',
+      );
       const json = await res.json();
       expect(json).toEqual({
         issuer: 'http://localhost',

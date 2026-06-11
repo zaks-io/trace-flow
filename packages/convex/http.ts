@@ -473,6 +473,7 @@ export function createApp(
     const url = new URL(c.req.url);
     const issuer = url.origin;
 
+    c.header('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
     return c.json({
       issuer,
       authorization_endpoint: `${issuer}/mcp/authorize`,

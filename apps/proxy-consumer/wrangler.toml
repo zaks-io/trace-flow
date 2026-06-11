@@ -82,7 +82,7 @@ name = "trace-flow-consumer"
 workers_dev = false
 
 [env.production.vars]
-SENTRY_ENVIRONMENT = "production"
+SENTRY_ENVIRONMENT = "prod"
 AXIOM_DATASET = "cloudflare"
 TINYBIRD_HOST = "https://api.us-west-2.aws.tinybird.co"
 TINYBIRD_TRACE_WRITE_MODE = "dual"

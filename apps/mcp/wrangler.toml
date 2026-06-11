@@ -37,7 +37,7 @@ workers_dev = false
 [env.production.vars]
 CONNECT_BASE_URL = "https://connect.trace-flow.dev"
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
-SENTRY_ENVIRONMENT = "production"
+SENTRY_ENVIRONMENT = "prod"
 AXIOM_DATASET = "cloudflare"
 
 [env.production.observability]
