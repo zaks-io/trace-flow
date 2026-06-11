@@ -18,19 +18,6 @@ for root in datasources materializations pipes copies; do
   fi
 done
 
-if [[ "${#roots[@]}" -gt 0 ]]; then
-  forbidden_names="$(
-    find "${roots[@]}" -type f \
-      \( -name '*_copy.*' -o -name '*_mv.*' -o -name '*_v2.*' -o -name '*_v3.*' \
-      -o -name '*_clean.*' -o -name '*_next.*' -o -name '*_tmp.*' \
-      -o -name '*_migration.*' \) -print
-  )"
-  if [[ -n "$forbidden_names" ]]; then
-    fail "resource names must not keep migration suffixes:
-$forbidden_names"
-  fi
-fi
-
 while IFS= read -r -d '' file; do
   is_copy=0
   has_schedule=0
@@ -61,6 +48,16 @@ while IFS= read -r -d '' file; do
     fail "COPY_SCHEDULE/COPY_MODE replace directives are only allowed in unscheduled repair copy pipes: $file"
   fi
 done < <(find materializations pipes copies -type f -name '*.pipe' -print0 2>/dev/null || true)
+
+if [[ "${#roots[@]}" -gt 0 ]]; then
+  copy_names="$(
+    find "${roots[@]}" -type f -name '*_copy.*' -print
+  )"
+  if [[ -n "$copy_names" ]]; then
+    fail "copy resources must use unscheduled copies/repair_* names:
+$copy_names"
+  fi
+fi
 
 if [[ -d copies ]]; then
   if [[ ! -f tinybird.config.json ]]; then

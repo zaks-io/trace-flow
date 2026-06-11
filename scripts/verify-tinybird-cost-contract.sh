@@ -21,6 +21,18 @@ check "Tinybird datasources must not use ReplacingMergeTree" \
 
 bash scripts/verify-tinybird-copy-policy.sh
 
+declare -a roots=()
+for root in datasources materializations pipes copies; do
+  if [[ -d "$root" ]]; then
+    roots+=("$root")
+  fi
+done
+
+if [[ "${#roots[@]}" -gt 0 ]]; then
+  check "Tinybird resource names must not keep migration suffixes" \
+    find "${roots[@]}" -type f \( -name '*_copy.*' -o -name '*_mv.*' -o -name '*_v2.*' -o -name '*_v3.*' -o -name '*_clean.*' -o -name '*_next.*' -o -name '*_tmp.*' -o -name '*_migration.*' \) -print
+fi
+
 if [[ "$failed" -ne 0 ]]; then
   exit 1
 fi

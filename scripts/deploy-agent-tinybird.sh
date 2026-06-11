@@ -161,12 +161,10 @@ is_copy_pipe() {
   git show "$ref:$path" | grep -Eq '^TYPE[[:space:]]+COPY([[:space:]]|$)'
 }
 
-has_forbidden_resource_suffix() {
+has_legacy_copy_name() {
   local path="$1"
   local name="${path##*/}"
-  [[ "$name" == *_copy.* || "$name" == *_mv.* || "$name" == *_v2.* || "$name" == *_v3.* ||
-    "$name" == *_clean.* || "$name" == *_next.* || "$name" == *_tmp.* ||
-    "$name" == *_migration.* ]]
+  [[ "$name" == *_copy.* ]]
 }
 
 should_restore_legacy_path() {
@@ -174,7 +172,7 @@ should_restore_legacy_path() {
   local ref="$2"
   local path="$3"
 
-  if has_forbidden_resource_suffix "$path"; then
+  if has_legacy_copy_name "$path"; then
     return 1
   fi
 
