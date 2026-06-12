@@ -122,9 +122,7 @@ describe('tinybird API key sanitization', () => {
 
     it('rejects DATASOURCES:READ scopes', () => {
       expect(() =>
-        assertMintableTinybirdScopes([
-          { type: 'DATASOURCES:READ', resource: 'otel_traces' },
-        ]),
+        assertMintableTinybirdScopes([{ type: 'DATASOURCES:READ', resource: 'otel_traces' }]),
       ).toThrow(/scope type not allowed/i);
     });
 
