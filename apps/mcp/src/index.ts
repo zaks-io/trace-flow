@@ -209,6 +209,12 @@ app.get('/mcp/authorize', (c) => {
   return c.redirect(target.toString(), 302);
 });
 
+app.get('/mcp', (c) =>
+  c.json({ error: 'SSE stream is not supported on this endpoint' }, 405, {
+    Allow: 'POST, DELETE, OPTIONS',
+  }),
+);
+
 app.post('/mcp', async (c) => {
   const logger = c.get('logger');
 
