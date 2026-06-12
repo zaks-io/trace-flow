@@ -82,7 +82,7 @@ export async function describeAgentAnalytics(
     discovered_values_may_have_more: {
       sources: sourceRows.length === baseParams.limit,
       models: modelRows.length === baseParams.limit,
-      repo_fingerprints: directoryRows.length === baseParams.limit,
+      repo_fingerprints: repoBreakdownRows.length === baseParams.limit,
     },
   });
 }

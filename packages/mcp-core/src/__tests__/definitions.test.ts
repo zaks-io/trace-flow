@@ -459,6 +459,9 @@ describe('query_agent_analytics tool definition', () => {
     expect(props.dimension?.enum).toContain('model');
     expect(props.sort?.enum).toContain('cost');
     expect(props.limit?.type).toBe('number');
+    expect(props.limit?.description).toContain('default 25');
+    expect(props.limit?.description).toContain('max 100');
+    expect(props.limit?.description).toContain('timeseries default/max 50');
   });
 });
 
@@ -480,5 +483,7 @@ describe('describe_agent_analytics tool definition', () => {
     expect(props.filters?.type).toBe('object');
     expect(props.include_values?.type).toBe('boolean');
     expect(props.limit?.type).toBe('number');
+    expect(props.limit?.description).toContain('default 25');
+    expect(props.limit?.description).toContain('max 50');
   });
 });

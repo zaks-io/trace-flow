@@ -38,7 +38,7 @@ SQL >
     GROUP BY tool_name, command_family
     HAVING event_count >= {{ Int32(min_events, 10) }}
     ORDER BY failure_rate DESC NULLS LAST, event_count DESC, tool_name ASC, command_family ASC
-    LIMIT {{ Int32(limit, 100) }}
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
     OFFSET {{ Int32(offset, 0) }}
 
 TYPE ENDPOINT

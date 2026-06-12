@@ -17,6 +17,7 @@ describe('queryAgentAnalytics', () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('describes allowed filters with discovered values', async () => {
@@ -128,6 +129,31 @@ describe('queryAgentAnalytics', () => {
     expect(payload.discovered_values).toBeUndefined();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(mockCtx.mintToken).not.toHaveBeenCalled();
+  });
+
+  it('reports more repo values from the bounded breakdown, not directory metadata', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ data: [] }))
+      .mockResolvedValueOnce(jsonResponse({ data: [] }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [
+            {
+              group_value: 'repo_123',
+              message_count: 10,
+              session_count: 2,
+              total_tokens: 900,
+              cost_usd: 0.45,
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ data: [] }));
+
+    const result = await describeAgentAnalytics(mockCtx, [], { limit: 1 }, 30);
+    const payload = JSON.parse(result.content[0]!.text!);
+
+    expect(payload.discovered_values_may_have_more.repo_fingerprints).toBe(true);
   });
 
   it('queries summary with normalized filters and org-scoped token minting', async () => {
@@ -299,6 +325,33 @@ describe('queryAgentAnalytics', () => {
     const payload = JSON.parse(result.content[0]!.text!);
     const startMs = Date.parse('2026-06-04T00:00:00Z');
     const endMs = Date.parse('2026-06-11T00:00:00Z');
+
+    expect(payload.window.start_time_ms).toBe(startMs);
+    expect(payload.window.end_time_ms).toBe(endMs);
+
+    const call = fetchSpy.mock.calls[0]![0] as string;
+    expect(call).toContain(`start_time_ms=${startMs}`);
+    expect(call).toContain(`end_time_ms=${endMs}`);
+  });
+
+  it('ignores explicit date ranges outside the retention window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-11T00:00:00Z'));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ data: [] }));
+
+    const result = await queryAgentAnalytics(
+      mockCtx,
+      [],
+      {
+        view: 'projects',
+        start_time: '1960-01-01T00:00:00Z',
+        end_time: '2099-01-01T00:00:00Z',
+      },
+      7,
+    );
+    const payload = JSON.parse(result.content[0]!.text!);
+    const endMs = Date.parse('2026-06-11T00:00:00Z');
+    const startMs = Date.parse('2026-06-04T00:00:00Z');
 
     expect(payload.window.start_time_ms).toBe(startMs);
     expect(payload.window.end_time_ms).toBe(endMs);

@@ -118,6 +118,15 @@ function parseTimeParam(
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
+function inRetentionWindow(
+  value: number | undefined,
+  minMs: number,
+  maxMs: number,
+): number | undefined {
+  if (value === undefined || Number.isNaN(value)) return undefined;
+  return value >= minMs && value <= maxMs ? value : undefined;
+}
+
 export function invalidTimeParam(params: AgentAnalyticsParams): string | undefined {
   if (
     params.start_time !== undefined &&
@@ -145,14 +154,15 @@ export function buildWindowParams(
   params: AgentAnalyticsParams,
   retentionDays: number,
 ): AgentWindow {
-  const parsedEndMs = parseTimeParam(params.end_time_ms, params.end_time);
-  const endMs = parsedEndMs === undefined || Number.isNaN(parsedEndMs) ? Date.now() : parsedEndMs;
+  const nowMs = Date.now();
   const maxHours = Math.min(MAX_AGENT_HOURS, Math.max(1, retentionDays * 24));
+  const minAllowedMs = nowMs - maxHours * 3_600_000;
+  const parsedEndMs = parseTimeParam(params.end_time_ms, params.end_time);
+  const endMs = inRetentionWindow(parsedEndMs, minAllowedMs, nowMs) ?? nowMs;
   const requestedHours = clampNumber(params.hours, DEFAULT_AGENT_HOURS, maxHours);
   const earliestStartMs = endMs - requestedHours * 3_600_000;
   const parsedStartMs = parseTimeParam(params.start_time_ms, params.start_time);
-  const startMs =
-    parsedStartMs === undefined || Number.isNaN(parsedStartMs) ? earliestStartMs : parsedStartMs;
+  const startMs = inRetentionWindow(parsedStartMs, minAllowedMs, nowMs) ?? earliestStartMs;
   const boundedStartMs = Math.max(startMs, endMs - maxHours * 3_600_000);
   const resolvedStartMs = Math.min(boundedStartMs, endMs);
   const resolvedEndMs = Math.max(boundedStartMs, endMs);

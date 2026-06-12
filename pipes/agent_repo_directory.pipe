@@ -24,7 +24,11 @@ SQL >
         AND maxMerge(LastSeenAt) < end_dt
         AND maxMerge(LastSeenAt) >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
     ORDER BY repo_fingerprint ASC
-    LIMIT {{ Int32(limit, 10000) }}
+    {% if defined(limit) %}
+    LIMIT greatest(1, least({{ Int32(limit) }}, 100))
+    {% else %}
+    LIMIT 10000
+    {% end %}
     OFFSET {{ Int32(offset, 0) }}
 
 TYPE ENDPOINT

@@ -113,7 +113,11 @@ SQL >
     FULL OUTER JOIN tool_series AS t
         ON u.bucket_dt = t.bucket_dt AND u.group_value = t.group_value
     ORDER BY bucket_start ASC, group_value ASC
-    LIMIT {{ Int32(limit, 10000) }}
+    {% if defined(limit) %}
+    LIMIT greatest(1, least({{ Int32(limit) }}, 50))
+    {% else %}
+    LIMIT 10000
+    {% end %}
     OFFSET {{ Int32(offset, 0) }}
     SETTINGS join_use_nulls = 1
 

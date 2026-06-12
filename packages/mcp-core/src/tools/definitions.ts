@@ -82,10 +82,23 @@ const AGENT_FILTERS_PROPERTY = {
   },
 } as const;
 
+const AGENT_DISCOVERY_DEFAULT_LIMIT = 25;
+const AGENT_DISCOVERY_MAX_LIMIT = 50;
+const AGENT_DEFAULT_LIMIT = 25;
+const AGENT_MAX_LIMIT = 100;
+const AGENT_TIMESERIES_LIMIT = 50;
+
 function limitProperty(defaultLimit: number, maxLimit: number, subject = 'results') {
   return {
     type: 'number',
     description: `Max ${subject} to return (default ${defaultLimit}, max ${maxLimit})`,
+  } as const;
+}
+
+function agentAnalyticsLimitProperty() {
+  return {
+    type: 'number',
+    description: `Max rows to return (default ${AGENT_DEFAULT_LIMIT}, max ${AGENT_MAX_LIMIT}; timeseries default/max ${AGENT_TIMESERIES_LIMIT})`,
   } as const;
 }
 
@@ -376,7 +389,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             'When false, returns only static allowed views, filters, and view parameters. Defaults to true.',
         },
-        limit: limitProperty(DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT, 'discovered values'),
+        limit: limitProperty(
+          AGENT_DISCOVERY_DEFAULT_LIMIT,
+          AGENT_DISCOVERY_MAX_LIMIT,
+          'discovered values',
+        ),
       },
     },
   },
@@ -450,7 +467,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'number',
           description: 'For view="tool_failures", minimum tool events before a row is returned.',
         },
-        limit: limitProperty(DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT, 'rows'),
+        limit: agentAnalyticsLimitProperty(),
         offset: {
           type: 'number',
           description: 'For paged multi-row views, zero-based row offset.',
