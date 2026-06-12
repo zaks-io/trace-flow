@@ -12,9 +12,18 @@ SQL >
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
-        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
+        {{ String(timezone, 'UTC') }} AS tz,
+        (granularity = 'auto' AND range_days > 30) AS use_rollup_daily
     SELECT
-        BucketStart AS bucket_dt,
+        if(
+            use_rollup_daily,
+            BucketStart,
+            if(
+                granularity = 'day',
+                toTimeZone(toStartOfDay(toTimeZone(BucketStart, tz)), 'UTC'),
+                BucketStart
+            )
+        ) AS bucket_dt,
         multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'model', toString(model), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
         sum(finalizeAggregation(MessageCount)) AS message_count,
         uniqMerge(SessionCount) AS session_count,
@@ -29,11 +38,11 @@ SQL >
     FROM (
         SELECT *
         FROM agent_usage_hourly
-        WHERE NOT use_daily
+        WHERE NOT use_rollup_daily
         UNION ALL
         SELECT *
         FROM agent_usage_daily
-        WHERE use_daily
+        WHERE use_rollup_daily
     )
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= start_dt
@@ -60,9 +69,18 @@ SQL >
         if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt,
         dateDiff('day', start_dt, end_dt) AS range_days,
         {{ String(granularity, 'auto') }} AS granularity,
-        (granularity = 'day' OR (granularity = 'auto' AND range_days > 30)) AS use_daily
+        {{ String(timezone, 'UTC') }} AS tz,
+        (granularity = 'auto' AND range_days > 30) AS use_rollup_daily
     SELECT
-        BucketStart AS bucket_dt,
+        if(
+            use_rollup_daily,
+            BucketStart,
+            if(
+                granularity = 'day',
+                toTimeZone(toStartOfDay(toTimeZone(BucketStart, tz)), 'UTC'),
+                BucketStart
+            )
+        ) AS bucket_dt,
         multiIf({{ String(group_by, 'none') }} = 'source', toString(source), {{ String(group_by, 'none') }} = 'repo', toString(repo_fingerprint), '') AS group_value,
         sum(finalizeAggregation(EventCount)) AS tool_event_count,
         sum(finalizeAggregation(SuccessCount)) AS tool_success_count,
@@ -71,11 +89,11 @@ SQL >
     FROM (
         SELECT *
         FROM agent_tool_usage_hourly
-        WHERE NOT use_daily
+        WHERE NOT use_rollup_daily
         UNION ALL
         SELECT *
         FROM agent_tool_usage_daily
-        WHERE use_daily
+        WHERE use_rollup_daily
     )
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= start_dt

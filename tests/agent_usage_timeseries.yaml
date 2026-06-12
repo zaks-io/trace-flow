@@ -28,6 +28,14 @@
     {"bucket_start":"2026-05-20 00:00:00","group_value":"","message_count":8,"session_count":4,"input_tokens":500,"output_tokens":130,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":630,"cost_usd":2.7,"priced_message_count":8,"tool_event_count":4,"tool_success_count":3,"tool_failure_count":1,"tool_unknown_count":0}
     {"bucket_start":"2026-05-21 00:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":100,"output_tokens":0,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":100,"cost_usd":0.5,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
 
+- name: timeseries_forced_daily_uses_viewer_timezone
+  description: granularity=day groups hourly rollups by the viewer's local day instead of the UTC day
+  expected_http_status: 200
+  parameters: org_id=org_tz&start_time_ms=1779253200000&end_time_ms=1779267600000&retention_days=20000&granularity=day&timezone=America/Los_Angeles
+  expected_result: |
+    {"bucket_start":"2026-05-19 07:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":70,"output_tokens":7,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":77,"cost_usd":7,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+    {"bucket_start":"2026-05-20 07:00:00","group_value":"","message_count":1,"session_count":1,"input_tokens":80,"output_tokens":8,"cache_read_tokens":0,"cache_creation_tokens":0,"reasoning_tokens":0,"total_tokens":88,"cost_usd":8,"priced_message_count":1,"tool_event_count":0,"tool_success_count":0,"tool_failure_count":0,"tool_unknown_count":0}
+
 - name: timeseries_group_by_source
   description: group_by=source splits each bucket per source; tool events join on (bucket, source)
   expected_http_status: 200

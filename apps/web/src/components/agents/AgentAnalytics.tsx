@@ -314,6 +314,7 @@ export function AgentAnalytics() {
               data={timeseries}
               metric={metric}
               groupBy={groupBy}
+              granularity={granularity}
               chartStyle={chartStyle}
               onGroupClick={onGroupClick}
               labelFor={labelFor}
