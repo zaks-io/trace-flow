@@ -24,6 +24,7 @@ import {
   AGENT_METRIC_VALUE_KIND,
   REPO_TOP_N,
   type AgentChartStyle,
+  type AgentGranularity,
   type AgentGroupBy,
   type AgentMetric,
   type AgentTimeseriesRow,
@@ -48,6 +49,7 @@ export function AgentUsageChart({
   data,
   metric,
   groupBy,
+  granularity,
   chartStyle,
   onGroupClick,
   labelFor,
@@ -55,6 +57,7 @@ export function AgentUsageChart({
   data: AgentTimeseriesRow[];
   metric: AgentMetric;
   groupBy: AgentGroupBy;
+  granularity: AgentGranularity;
   chartStyle: AgentChartStyle;
   /** Toggle a group value into the active filter (click-to-filter); only when grouped. */
   onGroupClick?: (value: string) => void;
@@ -119,11 +122,13 @@ export function AgentUsageChart({
   };
 
   const hourly =
-    data.length > 1 &&
-    Math.abs(
-      parseTinybirdDate(data[1].bucket_start).getTime() -
-        parseTinybirdDate(data[0].bucket_start).getTime(),
-    ) < 86_400_000;
+    granularity === 'hour' ||
+    (granularity === 'auto' &&
+      data.length > 1 &&
+      Math.abs(
+        parseTinybirdDate(data[1].bucket_start).getTime() -
+          parseTinybirdDate(data[0].bucket_start).getTime(),
+      ) < 86_400_000);
 
   return (
     <ChartContainer config={config} className="!aspect-auto h-[320px] w-full">

@@ -22,6 +22,8 @@ type UseAgentDataParams = {
 };
 
 export function useAgentData({ filterParams, groupBy, granularity, models }: UseAgentDataParams) {
+  const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', []);
+
   // Tool events / sessions have no model, so models scopes only the usage surfaces.
   const usageParams = useMemo(
     () => (models.length > 0 ? { ...filterParams, models: models.join(',') } : filterParams),
@@ -32,8 +34,9 @@ export function useAgentData({ filterParams, groupBy, granularity, models }: Use
     const params: Record<string, string | number> = { ...usageParams };
     if (groupBy !== 'none') params.group_by = groupBy;
     if (granularity !== 'auto') params.granularity = granularity;
+    params.timezone = timezone;
     return params;
-  }, [usageParams, groupBy, granularity]);
+  }, [usageParams, groupBy, granularity, timezone]);
 
   const timeseriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
     pipe: 'agent_usage_timeseries',
