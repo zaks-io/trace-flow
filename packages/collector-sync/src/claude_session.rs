@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Original Trace Flow code. The Claude record field names read here (`sessionId`, `timestamp`, `cwd`,
-// `gitBranch`) match what otto-parser/src/parser/claude_code/mod.rs reads (~/src/otto, 2026-05-25), but
-// otto read them per-event inside its parser; here the sync layer resolves them once per session to
-// seed a `SessionContext`. Trace Flow owns the contract, IDs, pricing, redaction, and storage around
-// this code.
+// `gitBranch`, `agentId`) match what otto-parser/src/parser/claude_code/mod.rs reads
+// (~/src/otto, 2026-05-25), but otto read them per-event inside its parser; here the sync layer
+// resolves them once per session to seed a `SessionContext`. Trace Flow owns the contract, IDs,
+// pricing, redaction, and storage around this code.
 
 //! Claude session-field extraction.
 //!
 //! The record-reading half of building a session's
 //! [`SessionContext`](collector_parser::session_context::SessionContext): given one Claude transcript's
 //! parsed records, [`claude_session_fields`] pulls out the per-session identity the emitters need but
-//! the records repeat on every line — the vendor session id, the session start instant, and the working
-//! directory + branch hint that seed git resolution. The async git resolution and `SyncUnit` assembly
-//! are the next 3d leaf; this module is pure and reads records only, never the filesystem.
+//! the records repeat on every line — the vendor session id, Claude sub-agent id, the session start
+//! instant, and the working directory + branch hint that seed git resolution. The async git resolution
+//! and `SyncUnit` assembly are the next 3d leaf; this module is pure and reads records only, never the
+//! filesystem.
 //!
 //! Every field is taken from the *first* record that carries a usable value (sessions repeat `sessionId`
-//! / `cwd` / `gitBranch` on every line; the freeze cache keys on the first `cwd`, so picking the first
-//! here matches it). `vendor_started_at` is the *earliest* parseable `timestamp`, so it is correct even
-//! if a leading summary record is undated or the file is not strictly time-ordered.
+//! / `agentId` / `cwd` / `gitBranch` on every line; the freeze cache keys on the first `cwd`, so
+//! picking the first here matches it). `vendor_started_at` is the *earliest* parseable `timestamp`, so
+//! it is correct even if a leading summary record is undated or the file is not strictly time-ordered.
 
 use serde_json::Value;
 
@@ -29,6 +30,7 @@ use collector_parser::timestamp::rfc3339_to_epoch_ms;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClaudeSessionFields {
     pub vendor_session_id: String,
+    pub agent_id: String,
     pub vendor_started_at: Option<i64>,
     /// The session's working directory — the input to git resolution and the `repo_root` anchor.
     pub cwd: Option<String>,
@@ -41,6 +43,7 @@ pub struct ClaudeSessionFields {
 pub fn claude_session_fields(records: &[Value]) -> ClaudeSessionFields {
     ClaudeSessionFields {
         vendor_session_id: first_nonempty_str(records, "sessionId").unwrap_or_default(),
+        agent_id: first_nonempty_str(records, "agentId").unwrap_or_default(),
         vendor_started_at: earliest_timestamp(records),
         cwd: first_nonempty_str(records, "cwd"),
         git_branch: first_nonempty_str(records, "gitBranch"),
@@ -94,11 +97,12 @@ mod tests {
     }
 
     #[test]
-    fn extracts_session_id_started_at_cwd_and_branch() {
+    fn extracts_session_id_agent_id_started_at_cwd_and_branch() {
         let recs = records(json!([
             {
                 "type": "user",
                 "sessionId": "11111111-2222-3333-4444-555555555555",
+                "agentId": "agent-a4816690be3dffb45",
                 "cwd": "/work/trace-flow",
                 "gitBranch": "main",
                 "timestamp": "2026-05-26T16:38:59.892Z"
@@ -109,6 +113,7 @@ mod tests {
             fields.vendor_session_id,
             "11111111-2222-3333-4444-555555555555"
         );
+        assert_eq!(fields.agent_id, "agent-a4816690be3dffb45");
         assert_eq!(fields.cwd.as_deref(), Some("/work/trace-flow"));
         assert_eq!(fields.git_branch.as_deref(), Some("main"));
         assert_eq!(fields.vendor_started_at, Some(1_779_813_539_892));
@@ -132,6 +137,7 @@ mod tests {
         let fields = claude_session_fields(&[]);
         assert_eq!(fields, ClaudeSessionFields::default());
         assert_eq!(fields.vendor_session_id, "");
+        assert_eq!(fields.agent_id, "");
         assert_eq!(fields.vendor_started_at, None);
         assert_eq!(fields.cwd, None);
         assert_eq!(fields.git_branch, None);
@@ -140,11 +146,12 @@ mod tests {
     #[test]
     fn blank_strings_are_skipped_for_the_first_real_value() {
         let recs = records(json!([
-            { "sessionId": "   ", "cwd": "" },
-            { "sessionId": "real-session", "cwd": "/work/repo" }
+            { "sessionId": "   ", "agentId": " ", "cwd": "" },
+            { "sessionId": "real-session", "agentId": "agent-real", "cwd": "/work/repo" }
         ]));
         let fields = claude_session_fields(&recs);
         assert_eq!(fields.vendor_session_id, "real-session");
+        assert_eq!(fields.agent_id, "agent-real");
         assert_eq!(fields.cwd.as_deref(), Some("/work/repo"));
     }
 
