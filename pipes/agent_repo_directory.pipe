@@ -16,10 +16,15 @@ SQL >
         argMaxMerge(repo_source) AS repo_source
     FROM agent_repositories
     WHERE OrgId = {{ String(org_id, '') }}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
     GROUP BY repo_fingerprint
     HAVING maxMerge(LastSeenAt) >= start_dt
         AND maxMerge(LastSeenAt) < end_dt
         AND maxMerge(LastSeenAt) >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
     ORDER BY repo_fingerprint ASC
+    LIMIT {{ Int32(limit, 10000) }}
+    OFFSET {{ Int32(offset, 0) }}
 
 TYPE ENDPOINT

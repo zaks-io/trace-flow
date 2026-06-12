@@ -25,6 +25,8 @@ describe('TOOL_DEFINITIONS', () => {
     expect(toolNames).toContain('get_usage_summary');
     expect(toolNames).toContain('list_operation_usage');
     expect(toolNames).toContain('list_model_usage');
+    expect(toolNames).toContain('describe_agent_analytics');
+    expect(toolNames).toContain('query_agent_analytics');
   });
 });
 
@@ -420,6 +422,63 @@ describe('list_model_usage tool definition', () => {
     expect(props.provider?.type).toBe('string');
     expect(props.operation?.type).toBe('string');
     expect(props.status?.enum).toContain('STATUS_CODE_ERROR');
+    expect(props.limit?.type).toBe('number');
+  });
+});
+
+describe('query_agent_analytics tool definition', () => {
+  const agentAnalyticsTool = TOOL_DEFINITIONS.find((t) => t.name === 'query_agent_analytics')!;
+
+  it('has correct name', () => {
+    expect(agentAnalyticsTool.name).toBe('query_agent_analytics');
+  });
+
+  it('requires a view', () => {
+    expect(agentAnalyticsTool.inputSchema.required).toContain('view');
+  });
+
+  it('allowlists agent analytics views', () => {
+    const props = agentAnalyticsTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+    expect(props.view?.enum).toEqual([
+      'summary',
+      'timeseries',
+      'breakdown',
+      'sessions',
+      'tool_failures',
+      'tool_deltas',
+      'projects',
+    ]);
+  });
+
+  it('exposes generic filters and view-specific controls', () => {
+    const props = agentAnalyticsTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+    expect(props.filters?.type).toBe('object');
+    expect(props.start_time?.type).toBe('string');
+    expect(props.end_time?.type).toBe('string');
+    expect(props.group_by?.enum).toContain('repo');
+    expect(props.dimension?.enum).toContain('model');
+    expect(props.sort?.enum).toContain('cost');
+    expect(props.limit?.type).toBe('number');
+  });
+});
+
+describe('describe_agent_analytics tool definition', () => {
+  const describeTool = TOOL_DEFINITIONS.find((t) => t.name === 'describe_agent_analytics')!;
+
+  it('has correct name', () => {
+    expect(describeTool.name).toBe('describe_agent_analytics');
+  });
+
+  it('does not require parameters', () => {
+    expect(describeTool.inputSchema.required).toBeUndefined();
+  });
+
+  it('exposes date range, filter, and value-discovery controls', () => {
+    const props = describeTool.inputSchema.properties as Record<string, JsonSchemaProperty>;
+    expect(props.start_time?.type).toBe('string');
+    expect(props.end_time?.type).toBe('string');
+    expect(props.filters?.type).toBe('object');
+    expect(props.include_values?.type).toBe('boolean');
     expect(props.limit?.type).toBe('number');
   });
 });

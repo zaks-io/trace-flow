@@ -59,6 +59,29 @@ const OPERATION_PROPERTY = {
   description: 'Filter by baggage.operation / workflow label',
 } as const;
 
+const AGENT_FILTERS_PROPERTY = {
+  type: 'object',
+  description: 'Optional filters applied to agent analytics views.',
+  properties: {
+    sources: {
+      type: 'array',
+      items: { type: 'string', enum: ['claude', 'codex', 'cursor'] },
+      description: 'Agent sources to include.',
+    },
+    models: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Model names to include.',
+    },
+    repo_fingerprints: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Repo/project fingerprints to include. Use view="projects" to discover available values.',
+    },
+  },
+} as const;
+
 function limitProperty(defaultLimit: number, maxLimit: number, subject = 'results') {
   return {
     type: 'number',
@@ -320,6 +343,120 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         ...analyticsProperties({ includeModel: false, limitSubject: 'models' }),
       },
+    },
+  },
+  {
+    name: 'describe_agent_analytics',
+    description:
+      'Describe the agent analytics query contract and list discovered filter values for the authenticated org. Use this before query_agent_analytics so agents do not invent repo fingerprints, model names, or view-specific parameters.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hours: hoursProperty(DEFAULT_ANALYTICS_HOURS, MAX_ANALYTICS_HOURS),
+        start_time: {
+          type: 'string',
+          description:
+            'Inclusive ISO date/time window start for discovered values. Example: 2026-06-04T00:00:00Z.',
+        },
+        end_time: {
+          type: 'string',
+          description: 'Exclusive ISO date/time window end for discovered values. Defaults to now.',
+        },
+        start_time_ms: {
+          type: 'number',
+          description: 'Inclusive Unix epoch millisecond window start. If omitted, hours is used.',
+        },
+        end_time_ms: {
+          type: 'number',
+          description: 'Exclusive Unix epoch millisecond window end. Defaults to now.',
+        },
+        filters: AGENT_FILTERS_PROPERTY,
+        include_values: {
+          type: 'boolean',
+          description:
+            'When false, returns only static allowed views, filters, and view parameters. Defaults to true.',
+        },
+        limit: limitProperty(DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT, 'discovered values'),
+      },
+    },
+  },
+  {
+    name: 'query_agent_analytics',
+    description:
+      'Query org-scoped agent conversation analytics from allowlisted views. Use this for project/repo, model, source, token, cost, session, and tool-failure metrics without reading raw transcripts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        view: {
+          type: 'string',
+          enum: [
+            'summary',
+            'timeseries',
+            'breakdown',
+            'sessions',
+            'tool_failures',
+            'tool_deltas',
+            'projects',
+          ],
+          description:
+            'Analytics view to query. summary is a KPI row; timeseries returns buckets; breakdown ranks source/model/repo; sessions lists sessions; projects lists repo fingerprints.',
+        },
+        hours: hoursProperty(DEFAULT_ANALYTICS_HOURS, MAX_ANALYTICS_HOURS),
+        start_time: {
+          type: 'string',
+          description:
+            'Inclusive ISO date/time window start. Example: 2026-06-04T00:00:00Z. start_time_ms takes precedence when both are set.',
+        },
+        end_time: {
+          type: 'string',
+          description:
+            'Exclusive ISO date/time window end. Defaults to now. end_time_ms takes precedence when both are set.',
+        },
+        start_time_ms: {
+          type: 'number',
+          description: 'Inclusive Unix epoch millisecond window start. If omitted, hours is used.',
+        },
+        end_time_ms: {
+          type: 'number',
+          description: 'Exclusive Unix epoch millisecond window end. Defaults to now.',
+        },
+        filters: AGENT_FILTERS_PROPERTY,
+        group_by: {
+          type: 'string',
+          enum: ['none', 'source', 'model', 'repo'],
+          description: 'For view="timeseries", split buckets by this dimension.',
+        },
+        granularity: {
+          type: 'string',
+          enum: ['auto', 'hour', 'day'],
+          description: 'For view="timeseries", bucket size.',
+        },
+        dimension: {
+          type: 'string',
+          enum: ['source', 'model', 'repo'],
+          description: 'For view="breakdown", dimension to rank.',
+        },
+        order_by: {
+          type: 'string',
+          enum: ['cost_usd', 'total_tokens', 'message_count', 'session_count'],
+          description: 'For view="breakdown", metric to rank by.',
+        },
+        sort: {
+          type: 'string',
+          enum: ['recent', 'cost', 'files', 'duration', 'messages'],
+          description: 'For view="sessions", descending sort key.',
+        },
+        min_events: {
+          type: 'number',
+          description: 'For view="tool_failures", minimum tool events before a row is returned.',
+        },
+        limit: limitProperty(DEFAULT_ANALYTICS_LIMIT, MAX_ANALYTICS_LIMIT, 'rows'),
+        offset: {
+          type: 'number',
+          description: 'For paged multi-row views, zero-based row offset.',
+        },
+      },
+      required: ['view'],
     },
   },
 ];

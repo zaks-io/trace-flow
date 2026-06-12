@@ -384,6 +384,63 @@ describe('dispatchToolCall', () => {
     );
   });
 
+  it('dispatches agent analytics without requiring API keys', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: [
+            {
+              estimated_cost_usd: 1.25,
+              total_tokens: 50000,
+              message_count: 10,
+              session_count: 2,
+            },
+          ],
+        }),
+    } as Response);
+
+    const mintToken = vi.fn(async () => 'tb-token');
+    const backend = createBackend({
+      mintToken,
+      resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: [] })),
+    });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'query_agent_analytics',
+      arguments: {
+        view: 'summary',
+        filters: { repo_fingerprints: ['repo_123'] },
+      },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(mintToken).toHaveBeenCalledWith(
+      [{ type: 'PIPES:READ', resource: 'agent_usage_summary' }],
+      [],
+      30,
+    );
+  });
+
+  it('dispatches agent analytics description without requiring API keys', async () => {
+    const mintToken = vi.fn(async () => 'tb-token');
+    const backend = createBackend({
+      mintToken,
+      resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: [] })),
+    });
+
+    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
+      name: 'describe_agent_analytics',
+      arguments: { include_values: false },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(mintToken).not.toHaveBeenCalled();
+    const result = response.result as { content: [{ text: string }] };
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.filters.sources.allowed_values).toEqual(['claude', 'codex', 'cursor']);
+  });
+
   it('maps thrown tool errors to JSON-RPC internal errors', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Tinybird down'));

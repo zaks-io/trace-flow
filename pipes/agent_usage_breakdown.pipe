@@ -46,5 +46,6 @@ SQL >
         ) DESC,
         group_value ASC
     LIMIT {{ Int32(limit, 100) }}
+    OFFSET {{ Int32(offset, 0) }}
 
 TYPE ENDPOINT

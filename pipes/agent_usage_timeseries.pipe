@@ -91,6 +91,7 @@ SQL >
 
 NODE endpoint
 SQL >
+    %
     SELECT
         coalesce(u.bucket_dt, t.bucket_dt) AS bucket_start,
         coalesce(u.group_value, t.group_value) AS group_value,
@@ -112,6 +113,8 @@ SQL >
     FULL OUTER JOIN tool_series AS t
         ON u.bucket_dt = t.bucket_dt AND u.group_value = t.group_value
     ORDER BY bucket_start ASC, group_value ASC
+    LIMIT {{ Int32(limit, 10000) }}
+    OFFSET {{ Int32(offset, 0) }}
     SETTINGS join_use_nulls = 1
 
 TYPE ENDPOINT
