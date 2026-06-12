@@ -59,6 +59,15 @@ const payload = {
 - `resource`: Pipe name the token can access
 - `fixed_params`: Parameters injected into every query (row-level security)
 
+### Scope allowlist (TRA-128)
+
+`generateToken` and `generateTokenInternal` reject any scope that is not `PIPES:READ` on a
+known pipe from `pipes/`. This blocks `DATASOURCES:*` and `SQL:*` scopes: those permission
+types enforce row security via Tinybird JWT `filter` (SQL WHERE), not `fixed_params`, so a
+caller could otherwise read raw datasources across tenants. Pipe resources are allowlisted in
+`packages/convex/integrations/tinybirdScopes.ts` and must be updated when shipping a new pipe
+that the dashboard or MCP will query via JWT.
+
 ## Row-Level Security with fixed_params
 
 Multi-tenant isolation is critical. Users must only see traces for API keys they are allowed to use (same scope as the API keys page: org keys plus their own keys).
@@ -165,6 +174,8 @@ export const generateToken = action({
 
     const user = await ctx.runQuery(api.users.getCurrentUserQuery, {});
     const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
+
+    assertMintableTinybirdScopes(args.scopes);
 
     // Inject api_keys into all scopes
     const scopesWithApiKeys = args.scopes.map((scope) => ({

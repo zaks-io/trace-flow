@@ -2,6 +2,11 @@
 // These are provided via vitest.config.ts env configuration.
 import { describe, it, expect } from 'vitest';
 import { joinSanitizedApiKeys, sanitizeApiKeys, UUID_PATTERN } from '../integrations/tinybird';
+import {
+  ALLOWED_TINYBIRD_PIPE_RESOURCES,
+  assertMintableTinybirdScopes,
+  TINYBIRD_PIPES_READ_SCOPE,
+} from '../integrations/tinybirdScopes';
 
 describe('tinybird API key sanitization', () => {
   describe('UUID_PATTERN', () => {
@@ -94,6 +99,95 @@ describe('tinybird API key sanitization', () => {
       // Whitespace would still be interpolated and could cause query issues
       expect(sanitizeApiKeys([' 550e8400-e29b-41d4-a716-446655440000'])).toEqual([]);
       expect(sanitizeApiKeys(['550e8400-e29b-41d4-a716-446655440000 '])).toEqual([]);
+    });
+  });
+
+  describe('assertMintableTinybirdScopes', () => {
+    it('accepts PIPES:READ on allowlisted dashboard pipes', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([
+          { type: TINYBIRD_PIPES_READ_SCOPE, resource: 'traces_list' },
+          { type: TINYBIRD_PIPES_READ_SCOPE, resource: 'trace_detail' },
+        ]),
+      ).not.toThrow();
+    });
+
+    it('accepts PIPES:READ on allowlisted MCP pipes', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([
+          { type: TINYBIRD_PIPES_READ_SCOPE, resource: 'mcp_traces_list' },
+        ]),
+      ).not.toThrow();
+    });
+
+    it('rejects DATASOURCES:READ scopes', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([
+          { type: 'DATASOURCES:READ', resource: 'otel_traces' },
+        ]),
+      ).toThrow(/scope type not allowed/i);
+    });
+
+    it('rejects SQL:READ scopes', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([{ type: 'SQL:READ', resource: 'otel_traces' }]),
+      ).toThrow(/scope type not allowed/i);
+    });
+
+    it('rejects PIPES:READ on unknown pipe names', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([
+          { type: TINYBIRD_PIPES_READ_SCOPE, resource: 'otel_traces' },
+        ]),
+      ).toThrow(/pipe not allowed/i);
+    });
+
+    it('rejects empty scope lists', () => {
+      expect(() => assertMintableTinybirdScopes([])).toThrow(/at least one/i);
+    });
+
+    it('allowlist includes every pipe shipped in pipes/', () => {
+      const shippedPipes = [
+        'agent_failure_leaderboard',
+        'agent_priced_coverage',
+        'agent_priced_usage',
+        'agent_repo_directory',
+        'agent_sessions_browser',
+        'agent_tool_period_delta',
+        'agent_usage_breakdown',
+        'agent_usage_summary',
+        'agent_usage_timeseries',
+        'filter_options',
+        'llm_cost_forecast',
+        'llm_cost_hourly_spike',
+        'llm_request_stats',
+        'llm_usage_by_api_key',
+        'llm_usage_by_model',
+        'llm_usage_by_provider',
+        'llm_usage_summary',
+        'llm_usage_timeseries',
+        'mcp_trace_by_model',
+        'mcp_trace_by_provider',
+        'mcp_trace_detail',
+        'mcp_trace_events',
+        'mcp_trace_summaries',
+        'mcp_trace_summary',
+        'mcp_traces_list',
+        'operation_user_breakdown',
+        'operations_filter_options',
+        'operations_leaderboard',
+        'trace_capture_lag',
+        'trace_detail',
+        'traces_for_alerts',
+        'traces_grouped',
+        'traces_list',
+        'traces_models',
+        'traces_providers',
+        'traces_summary',
+      ];
+      for (const pipe of shippedPipes) {
+        expect(ALLOWED_TINYBIRD_PIPE_RESOURCES.has(pipe)).toBe(true);
+      }
     });
   });
 

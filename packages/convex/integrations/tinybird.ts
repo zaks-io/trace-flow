@@ -7,6 +7,7 @@ import { api, internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
 import { rateLimiter } from '../rateLimits';
+import { assertMintableTinybirdScopes } from './tinybirdScopes';
 
 const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
 const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
@@ -99,6 +100,8 @@ export const generateToken = action({
     const tier = subscription?.tier ?? 'hobby';
     const retentionDays = RETENTION_DAYS[tier];
 
+    assertMintableTinybirdScopes(args.scopes);
+
     const scopesWithApiKeys = withRowSecurityParams(args.scopes, {
       apiKeyString,
       retentionDays,
@@ -159,6 +162,8 @@ export const generateTokenInternal = internalAction({
   },
   returns: v.string(),
   handler: async (_, args) => {
+    assertMintableTinybirdScopes(args.scopes);
+
     // Validate API keys are UUIDs before inclusion in JWT (defense in depth)
     const validKeys = sanitizeApiKeys(args.apiKeys);
 
