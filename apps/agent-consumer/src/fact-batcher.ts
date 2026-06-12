@@ -13,10 +13,13 @@ import {
   type Category,
 } from './facts';
 
-const BATCH_SIZE = 5000;
-const FLUSH_INTERVAL_MS = 5000;
+const BATCH_SIZE = 10_000;
+// Agent dashboards do not need sub-minute ingest visibility; fewer larger inserts reduce part churn.
+const FLUSH_INTERVAL_MS = 60_000;
 const MAX_SQL_PARAMS = 90;
 const MAX_INSERT_ROWS = Math.floor(MAX_SQL_PARAMS / 3);
+
+export const AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS = FLUSH_INTERVAL_MS;
 
 type AddStatus = 'accepted' | 'failed';
 

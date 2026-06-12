@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env as workerEnv } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import type { TraceBatcherInstance, MessageTraceBatchItem, MessageTraceResult } from '../batcher';
-import { TRACE_BATCHER_MAX_INSERT_ROWS } from '../batcher';
+import {
+  TRACE_BATCHER_FLUSH_INTERVAL_MS,
+  TRACE_BATCHER_MAX_INSERT_ROWS,
+  TRACE_BATCHER_MAX_JITTER_MS,
+} from '../batcher';
 import { createMockTrace } from './fixtures';
 
 const env = workerEnv as unknown as {
@@ -123,6 +127,31 @@ describe('TraceBatcher logic', () => {
     const stats = await getStats();
     expect(stats.queuedTraces).toBe(2);
     expect(stats.oldestQueuedTraceTime).toBe(firstInsertTime);
+  });
+
+  it('waits for the low-volume flush interval before flushing sparse traffic', async () => {
+    vi.useRealTimers();
+
+    const scheduled = await runInDurableObject(
+      batcher,
+      async (instance: TraceBatcherInstance, state) => {
+        const before = Date.now();
+        await instance.addMessageTraces([
+          { messageId: 'msg-sparse', traces: [createMockTrace('t-sparse')] },
+        ]);
+        const scheduledAlarm = await state.storage.getAlarm();
+        const after = Date.now();
+        await state.storage.deleteAlarm();
+        return { after, before, alarm: scheduledAlarm };
+      },
+    );
+
+    expect(scheduled.alarm).toBeGreaterThanOrEqual(
+      scheduled.before + TRACE_BATCHER_FLUSH_INTERVAL_MS,
+    );
+    expect(scheduled.alarm).toBeLessThanOrEqual(
+      scheduled.after + TRACE_BATCHER_FLUSH_INTERVAL_MS + TRACE_BATCHER_MAX_JITTER_MS,
+    );
   });
 
   // insertMessageTraces chunks by TRACE_BATCHER_MAX_INSERT_ROWS

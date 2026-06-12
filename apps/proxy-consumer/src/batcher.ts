@@ -6,7 +6,8 @@ import type { Env } from './index';
 import { insertIntoTinybirdWithRetry } from './tinybird';
 
 const BATCH_SIZE = 10_000;
-const FLUSH_INTERVAL_MS = 5000;
+// Dashboard freshness tolerates minute-level latency; sparse traffic should batch for ClickHouse.
+const FLUSH_INTERVAL_MS = 60_000;
 const MAX_JITTER_MS = 1000;
 // Threshold for emitting a Sentry alert when a shard has been unable to flush.
 // One hour gives enough headroom that a transient Tinybird outage doesn't page,
@@ -20,6 +21,8 @@ const PROCESSED_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 export const TRACE_BATCHER_BATCH_SIZE = BATCH_SIZE;
+export const TRACE_BATCHER_FLUSH_INTERVAL_MS = FLUSH_INTERVAL_MS;
+export const TRACE_BATCHER_MAX_JITTER_MS = MAX_JITTER_MS;
 export const TRACE_BATCHER_MAX_INSERT_ROWS = MAX_INSERT_ROWS;
 
 type MessageTraceStatus = 'inserted' | 'duplicate' | 'failed';
