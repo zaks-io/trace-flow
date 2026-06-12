@@ -73,7 +73,7 @@ dataset = "trace-flow-consumer-dev"
 # TINYBIRD_TOKEN - Auth token with DATASOURCE:APPEND scope (set via wrangler secret)
 # TINYBIRD_DATASOURCE - Data source name (optional, defaults to "otel_trace_spans")
 # TINYBIRD_LEGACY_DATASOURCE - rollout fallback datasource (optional, defaults to "otel_traces")
-# TINYBIRD_TRACE_WRITE_MODE - clean, legacy, or dual (prod starts dual until cleanup)
+# TINYBIRD_TRACE_WRITE_MODE - clean, legacy, or dual (prod uses clean; legacy is rollback-only)
 # TINYBIRD_HOST - API host (regional endpoint, e.g. "https://api.us-west-2.aws.tinybird.co")
 # AXIOM_TOKEN - Auth token for Axiom ingest (set via wrangler secret)
 
@@ -85,7 +85,7 @@ workers_dev = false
 SENTRY_ENVIRONMENT = "prod"
 AXIOM_DATASET = "cloudflare"
 TINYBIRD_HOST = "https://api.us-west-2.aws.tinybird.co"
-TINYBIRD_TRACE_WRITE_MODE = "dual"
+TINYBIRD_TRACE_WRITE_MODE = "clean"
 
 [env.production.triggers]
 crons = ["*/5 * * * *"]

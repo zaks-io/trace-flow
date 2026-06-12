@@ -19,8 +19,8 @@ export interface AgentConsumerEnv {
   /** Tinybird regional API host, e.g. `https://api.us-west-2.aws.tinybird.co`. */
   TINYBIRD_HOST: string;
   /**
-   * Rollout write mode. `dual` keeps legacy ReplacingMergeTree tables warm until endpoint parity
-   * proves the clean serving path is safe; `clean` is the final steady state.
+   * Tinybird write mode. `clean` is steady state; `legacy` and `dual` are rollback-only rollout
+   * modes for keeping the old ReplacingMergeTree path available during incident response.
    */
   TINYBIRD_AGENT_WRITE_MODE?: string;
   SENTRY_DSN?: string;
