@@ -57,7 +57,7 @@
       "vars": {
         "SENTRY_ENVIRONMENT": "prod",
         "TINYBIRD_HOST": "https://api.us-west-2.aws.tinybird.co",
-        "TINYBIRD_AGENT_WRITE_MODE": "dual",
+        "TINYBIRD_AGENT_WRITE_MODE": "clean",
       },
       "kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "45dd0d5e619d44fc831ccab01ed428a4" }],
       "durable_objects": {
