@@ -42,6 +42,16 @@ describe('MCP worker auth discovery', () => {
     expect(await res.json()).toEqual({ error: 'Missing or invalid Authorization header' });
   });
 
+  it('405s GET /mcp so streamable HTTP clients do not fall back to legacy SSE', async () => {
+    const res = await SELF.fetch('http://localhost/mcp', {
+      headers: { Accept: 'text/event-stream' },
+    });
+
+    expect(res.status).toBe(405);
+    expect(res.headers.get('Allow')).toBe('POST, DELETE, OPTIONS');
+    expect(await res.json()).toEqual({ error: 'SSE stream is not supported on this endpoint' });
+  });
+
   it('proxies authorization-server metadata to Connect for legacy clients', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const req = new Request(input, init);
