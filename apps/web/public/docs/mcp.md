@@ -99,6 +99,63 @@ Fetch model-level usage rollups for a time range.
 
 Use this for top cost, p95 latency, and cost efficiency by model.
 
+## `describe_agent_analytics`
+
+Describe the agent analytics query contract and list usable filter values for your org.
+
+Call this before `query_agent_analytics` so your agent can discover valid repo fingerprints, model names, sources, views, and view-specific parameters instead of guessing.
+
+Common parameters:
+
+- `hours` (number): lookback window, default 168
+- `start_time` / `end_time` (string): explicit ISO date/time window
+- `start_time_ms` / `end_time_ms` (number): explicit Unix millisecond window
+- `filters.sources` (array): scope discovered values to `claude`, `codex`, or `cursor`
+- `filters.models` (array): scope discovered values to model names
+- `filters.repo_fingerprints` (array): scope discovered values to repo/project fingerprints
+- `include_values` (boolean): set false to return only the static contract
+- `limit` (number): max discovered values per dynamic list. Defaults to 25 and caps at 50.
+
+Returns:
+
+- allowed views for `query_agent_analytics`
+- allowed filter keys and static enum values
+- allowed view-specific parameters
+- discovered `sources`, `models`, and `repo_fingerprints` for the selected date range
+
+## `query_agent_analytics`
+
+Query agent conversation analytics with one generic, allowlisted tool.
+
+Use `view` to choose the read model:
+
+- `summary`: one KPI row for cost, tokens, messages, sessions, and priced coverage
+- `timeseries`: bucketed usage and tool-event metrics
+- `breakdown`: ranked usage by `source`, `model`, or `repo`
+- `sessions`: recent or expensive agent sessions
+- `tool_failures`: tool failure leaderboard
+- `tool_deltas`: period-over-period tool usage movement
+- `projects`: available repo/project fingerprints for filtering
+
+Common parameters:
+
+- `hours` (number): lookback window, default 168
+- `start_time` / `end_time` (string): explicit ISO date/time window
+- `start_time_ms` / `end_time_ms` (number): explicit Unix millisecond window
+- `filters.sources` (array): `claude`, `codex`, or `cursor`
+- `filters.models` (array): model names
+- `filters.repo_fingerprints` (array): repo/project fingerprints from `view="projects"`
+
+View-specific parameters:
+
+- `group_by`: for `timeseries`, `none`, `source`, `model`, or `repo`
+- `granularity`: for `timeseries`, `auto`, `hour`, or `day`
+- `dimension`: for `breakdown`, `source`, `model`, or `repo`
+- `order_by`: for `breakdown`, `cost_usd`, `total_tokens`, `message_count`, or `session_count`
+- `sort`: for `sessions`, `recent`, `cost`, `files`, `duration`, or `messages`
+- `min_events`: for `tool_failures`
+- `limit` / `offset`: bounded row paging for every multi-row view. Defaults to 25 rows except `timeseries`, which is capped at 50 rows per page.
+
 ## Example prompts for your agent
 
 - "Use `list_trace_summaries` with status `STATUS_CODE_ERROR` and `hours=1` to find failed traces, then inspect the top result with `get_trace_spans`."
@@ -106,6 +163,8 @@ Use this for top cost, p95 latency, and cost efficiency by model.
 - "Use `get_trace_events` filtered to `input.tool_use` and `input.tool_result` to verify the tool loop order."
 - "Use `get_usage_summary` and `list_operation_usage` for the last 168 hours to identify the most expensive workflows."
 - "Use `list_model_usage` to compare p95 latency and cost efficiency across models."
+- "Use `describe_agent_analytics` for the last 7 days to discover available repo fingerprints and models."
+- "Use `query_agent_analytics` with `view=\"projects\"`, then query `view=\"summary\"` with a repo fingerprint to show tokens spent on that project in the last week."
 
 ## Auth behavior
 

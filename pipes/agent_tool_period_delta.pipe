@@ -42,6 +42,7 @@ SQL >
     GROUP BY tool_name, command_family
     HAVING current_count > 0 OR prior_count > 0
     ORDER BY abs(count_delta) DESC, tool_name ASC, command_family ASC
-    LIMIT {{ Int32(limit, 100) }}
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
+    OFFSET {{ Int32(offset, 0) }}
 
 TYPE ENDPOINT

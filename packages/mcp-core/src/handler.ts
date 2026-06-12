@@ -17,6 +17,7 @@ import { getTraceSpans } from './tools/getTraceSpansAction';
 import { getTraceEvents } from './tools/getTraceEventsAction';
 import { listTraceSummaries } from './tools/listTraceSummaries';
 import { getUsageSummary, listModelUsage, listOperationUsage } from './tools/analytics';
+import { describeAgentAnalytics, queryAgentAnalytics } from './tools/agentAnalytics';
 import { listApiKeys } from './tools/listApiKeys';
 
 export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
@@ -73,6 +74,8 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   get_usage_summary: getUsageSummary,
   list_operation_usage: listOperationUsage,
   list_model_usage: listModelUsage,
+  describe_agent_analytics: describeAgentAnalytics,
+  query_agent_analytics: queryAgentAnalytics,
 };
 
 /**
