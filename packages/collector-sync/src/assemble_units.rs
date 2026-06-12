@@ -131,17 +131,22 @@ pub fn build_session_context(
         repo_root.as_str()
     };
 
+    let agent_depth = agent_depth_from_transcript_path(transcript_path);
+
     SessionContext {
         vendor_session_id: fields.vendor_session_id.clone(),
-        // Resolved server-side from the connected credential; the headless collector has none.
-        agent_id: String::new(),
+        agent_id: if agent_depth > 0 {
+            fields.agent_id.clone()
+        } else {
+            String::new()
+        },
         normalized_git_remote,
         repo_path_fallback: basename(label_source).to_string(),
         git_branch,
         // Claude records carry no HEAD sha (left empty); Codex embeds one in `session_meta.payload.git`.
         git_head_sha: git_head_sha.to_string(),
         vendor_started_at: fields.vendor_started_at,
-        agent_depth: agent_depth_from_transcript_path(transcript_path),
+        agent_depth,
         repo_root,
     }
 }
@@ -163,6 +168,7 @@ mod tests {
     fn fields(cwd: Option<&str>, branch: Option<&str>) -> ClaudeSessionFields {
         ClaudeSessionFields {
             vendor_session_id: "sess-1".to_string(),
+            agent_id: String::new(),
             vendor_started_at: Some(1_779_813_539_892),
             cwd: cwd.map(str::to_string),
             git_branch: branch.map(str::to_string),
@@ -257,6 +263,25 @@ mod tests {
     fn agent_depth_is_read_from_the_transcript_path() {
         let ctx = build_session_context(&fields(None, None), "/p/subagents/child.jsonl", None, "");
         assert_eq!(ctx.agent_depth, 1);
+    }
+
+    #[test]
+    fn nested_claude_transcripts_keep_their_agent_id() {
+        let mut fields = fields(Some("/work/trace-flow"), Some("feature-x"));
+        fields.agent_id = "agent-a4816690be3dffb45".to_string();
+
+        let top_level = build_session_context(&fields, "/p/parent.jsonl", None, "");
+        assert_eq!(top_level.agent_depth, 0);
+        assert_eq!(top_level.agent_id, "");
+
+        let nested = build_session_context(
+            &fields,
+            "/p/parent/subagents/workflows/wf_ad9cf9af-963/agent-a4816690be3dffb45.jsonl",
+            None,
+            "",
+        );
+        assert_eq!(nested.agent_depth, 1);
+        assert_eq!(nested.agent_id, "agent-a4816690be3dffb45");
     }
 
     fn run_git(dir: &Path, args: &[&str]) {

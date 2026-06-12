@@ -86,6 +86,8 @@ pub fn codex_session_fields(records: &[Value]) -> CodexSessionFields {
     CodexSessionFields {
         fields: ClaudeSessionFields {
             vendor_session_id: nonempty_str(payload, "id").unwrap_or_default(),
+            // Codex does not expose a separate Claude-style sub-agent id.
+            agent_id: String::new(),
             // Prefer the session_meta timestamp; fall back to the earliest record timestamp.
             vendor_started_at: payload
                 .get("timestamp")
