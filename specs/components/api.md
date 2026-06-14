@@ -4,7 +4,7 @@ The API Worker provides a secure endpoint for retrieving stored request/response
 
 ## What It Does
 
-The API worker exposes a single endpoint that retrieves the combined body payload from R2 storage. It validates Auth0 JWT tokens to ensure only authenticated users can access body data.
+The API worker exposes a single endpoint that retrieves the combined encrypted body payload from R2 storage. It validates Auth0 JWT tokens to ensure only authenticated users can access body data.
 
 ## Why a Separate Worker
 
@@ -83,6 +83,9 @@ The API worker authorizes access in two steps:
    - `hobby`: last 7 days
    - `pro`: last 30 days
 
+The object payload is encrypted with the organization-scoped body key. The API Worker verifies that
+the encrypted envelope org matches R2 metadata before decrypting.
+
 This keeps storage uniform while preserving tier-based visibility in the read path.
 
 ## Error Handling
@@ -115,12 +118,14 @@ The worker is wrapped with Sentry for error monitoring. All unhandled exceptions
 
 ## Bindings
 
-| Binding           | Type         | Purpose                                   |
-| ----------------- | ------------ | ----------------------------------------- |
-| `STORAGE`         | R2 Bucket    | Reads combined body payloads              |
-| `API_KEYS`        | KV Namespace | Org membership and subscription tier data |
-| `AUTH0_DOMAIN`    | Variable     | Auth0 tenant domain                       |
-| `AUTH0_CLIENT_ID` | Variable     | Auth0 application client ID               |
+| Binding/Variable           | Type         | Purpose                                   |
+| -------------------------- | ------------ | ----------------------------------------- |
+| `STORAGE`                  | R2 Bucket    | Reads combined body payloads              |
+| `API_KEYS`                 | KV Namespace | Org membership and subscription tier data |
+| `AUTH0_DOMAIN`             | Variable     | Auth0 tenant domain                       |
+| `AUTH0_CLIENT_ID`          | Variable     | Auth0 application client ID               |
+| `BODY_ENCRYPTION_ROOT_KEY` | Secret       | Root key for decrypting stored bodies     |
+| `BODY_ENCRYPTION_KEY_ID`   | Variable     | Current body-encryption write key id      |
 
 ## Key Files
 

@@ -35,7 +35,7 @@ One row in Tinybird's `otel_trace_spans`. Write-shape is `TinybirdTrace` (`@trac
 _Avoid_: "trace row", "trace record".
 
 **Span Variant**:
-One of four roles a Span plays within a Trace. The Consumer emits each variant from `buildSpans`:
+One of four roles a Span plays within a Trace. The Proxy Consumer emits each variant from `buildSpans`:
 
 - **Root Span** — `SPAN_KIND_CLIENT`, named `{operation} {model}`. Carries request-level attributes (tokens, cost, latency, TTFT, response metadata).
 - **Response Span** — `SPAN_KIND_INTERNAL`, named `gen_ai.response.{text|embedding}`. Emitted for non-streaming responses, child of Root Span.
@@ -48,9 +48,9 @@ One of four roles a Span plays within a Trace. The Consumer emits each variant f
 **Proxy**:
 `apps/proxy`. Edge worker that streams LLM Requests to providers and emits Body Objects + Queue Messages.
 
-**Consumer**:
+**Proxy Consumer**:
 `apps/proxy-consumer`. Queue consumer that turns Queue Messages into Spans and forwards them to Trace Shards.
-_Avoid_: "ingester".
+_Avoid_: "Consumer" when agent analytics is also in scope; use "Proxy Consumer" to distinguish it from **Agent Consumer**.
 
 **TraceBatcher**:
 The Durable Object class (`apps/proxy-consumer/src/batcher.ts`) that accumulates Spans before insert. One instance per Trace Shard.
@@ -58,6 +58,17 @@ The Durable Object class (`apps/proxy-consumer/src/batcher.ts`) that accumulates
 **Trace Shard**:
 A single TraceBatcher instance. Queue Messages fan out across Trace Shards to amortize Tinybird inserts. A `*/5 * * * *` cron flushes stale Trace Shards. Named with the "Trace" prefix so other shard types (e.g. for usage rollups or rate limits) can coexist without ambiguity.
 _Avoid_: "shard" (unqualified), "partition", "batcher worker".
+
+**Agent Ingest**:
+`apps/agent-ingest`. Public Collector intake worker for Agent Conversation Analytics. It accepts gzip fact envelopes from the CLI/Desktop Collector, authenticates **Collector Credentials**, applies compatibility and rate-limit checks, claims **Agent Session** ownership through Convex, and enqueues agent fact messages.
+_Avoid_: "agent proxy", "desktop API", "collector backend".
+
+**Agent Consumer**:
+`apps/agent-consumer`. Queue consumer that drains agent fact messages, prices **Agent Message** facts from `MODEL_PRICING`, dedupes through **AgentFactBatcher**, and writes `agent_*` Tinybird datasources.
+_Avoid_: "Consumer" without the "Agent" qualifier.
+
+**AgentFactBatcher**:
+The Durable Object class (`apps/agent-consumer/src/fact-batcher.ts`) that owns cross-delivery dedupe for agent fact rows before Tinybird insert. Same-key changed facts are repair signals, not blind overwrites.
 
 **API Worker**:
 `apps/api`. Read-side worker for Body Object retrieval and Tinybird Pipe passthrough used by the Web app.
@@ -148,7 +159,7 @@ _Avoid_: "retention" when you mean what a Tier can see.
 The word **"dev"** is overloaded and has caused real confusion: a Worker named `*-dev` is not a deployed cloud environment, and "run the dev env" can mean two different data planes. These terms fix that. The split that matters is **control plane** (which Worker code runs, and _where_) vs **data plane** (which Convex deployment + Tinybird workspace the running Workers read and write).
 
 **Local Workers**:
-The five Workers run as local `wrangler dev` processes via `bun run dev:all` (`scripts/dev/workers.sh`), under their default top-level config — the `*-dev` names (`trace-flow-agent-ingest-dev`, etc.). The `*-dev` name is the **default/top-level wrangler config**, the code that runs locally; it is _not_ a separately deployed cloud "dev" Worker. The only other real deployed environments are `[env.production]` and (for some Workers) `[env.preview]`. `apps/agent-ingest` and `apps/agent-consumer` currently have _only_ this default config — no production block yet (see the agent-analytics production roadmap, TRA-110).
+The five non-Web Workers run as local `wrangler dev` processes via `bun run dev:all` (`scripts/dev/workers.sh`): **Proxy**, **Proxy Consumer**, **API Worker**, **Agent Ingest**, and **Agent Consumer**. They run under their default top-level config, which uses `*-dev` names (`trace-flow-agent-ingest-dev`, etc.). The `*-dev` name is the **default/top-level wrangler config**, the code that runs locally; it is _not_ by itself a separately deployed cloud "dev" Worker. The other real deployed environments are `[env.production]` and, for some Workers, `[env.preview]`. `apps/agent-ingest` and `apps/agent-consumer` now have production env blocks, but production readiness still depends on the agent-analytics gates in `docs/guides/agent-conversation-analytics/ROADMAP.md`.
 _Avoid_: saying "deploy to dev" or "the dev Workers" as if a cloud dev environment exists; it does not.
 
 **Cloud-Dev**:
@@ -160,7 +171,7 @@ A fully local, no-cloud-credentials data plane: **Local Workers** plus **Convex 
 _Avoid_: conflating with **Cloud-Dev**; assuming agents on this stack can see a developer's Cloud-Dev data, or vice versa.
 
 **Control Plane** / **Data Plane**:
-The **Control Plane** is Convex: it mints **Collector Credentials**, holds the compatibility policy, and answers Agent Session ownership claims. The **Data Plane** is Tinybird: the `otel_trace_spans` and `agent_*` **Datasources** the **Consumer**/agent-consumer write and the **Web** reads. A given set of **Local Workers** can point each plane at cloud or local independently (e.g. Tinybird Cloud-Dev for rows while Convex stays local), which is why "dev" must always name _which plane_ points _where_.
+The **Control Plane** is Convex: it mints **Collector Credentials**, holds the compatibility policy, and answers Agent Session ownership claims. The **Data Plane** is Tinybird: the `otel_trace_spans` and `agent_*` **Datasources** the **Proxy Consumer** and **Agent Consumer** write and the **Web** reads. A given set of **Local Workers** can point each plane at cloud or local independently (e.g. Tinybird Cloud-Dev for rows while Convex stays local), which is why "dev" must always name _which plane_ points _where_.
 
 #### Concrete endpoints (canonical — stop rediscovering these)
 
@@ -344,9 +355,12 @@ _Avoid_: conflating with **StartedAt**.
 
 - A **Client** calls the **Proxy**, which forwards to a **Provider** matched by **Route**.
 - The **Proxy** writes one **Body Object** to R2 and sends one **Queue Message** per **LLM Request**.
-- The **Consumer** receives **Queue Message** batches, builds **Spans**, and hands them to a **Trace Shard**.
+- The **Proxy Consumer** receives **Queue Message** batches, builds **Spans**, and hands them to a **Trace Shard**.
 - A **Trace Shard** flushes accumulated **Spans** into the `otel_trace_spans` **Datasource**.
 - The **Web** app reads **Spans** through Tinybird **Pipes** (using a **Pipe Token**) and fetches **Body Objects** through the **API Worker**.
+- The **Collector** parses local **Source** transcripts into agent facts and uploads them to **Agent Ingest** with a **Collector Credential**.
+- **Agent Ingest** validates the upload, claims **Agent Session** ownership through Convex, and sends agent fact messages to the agent queue.
+- **Agent Consumer** prices, dedupes, and writes agent facts to `agent_*` **Datasources** for `/app/agents`.
 - An **Organization** owns its user-facing **API Keys** and hidden **Collector Credentials**, and has exactly one **Subscription Tier**; the Tier determines the **Retention Window** stamped onto each **Span**.
 - A **Pipe Token** is scoped to an **Organization**'s **API Keys** and **Retention Window**.
 - Agent-analytics reads are scoped by **Organization** and do not use user-facing **API Keys** as identity; the separate **Provider Usage Tracking** feature adds **User** scope for user-private **Provider Usage Snapshots**.
@@ -355,7 +369,7 @@ _Avoid_: conflating with **StartedAt**.
 ## Example dialogue
 
 > **Dev:** "When the Proxy captures a streaming response, does it write the Body Object before sending the Queue Message?"
-> **Domain expert:** "Both happen inside `waitUntil`. Order isn't guaranteed, but the Consumer doesn't need the Body Object — only the Web app does, and that's much later. The Queue Message and Body Object share a `requestId` so they can be joined on read."
+> **Domain expert:** "Both happen inside `waitUntil`. Order isn't guaranteed, but the Proxy Consumer doesn't need the Body Object — only the Web app does, and that's much later. The Queue Message and Body Object share a `requestId` so they can be joined on read."
 >
 > **Dev:** "If a Hobby user's Retention Window is 7 days, does the Span disappear from Tinybird at 7 days?"
 > **Domain expert:** "No. `RetentionExpiresAt` is stamped at write-time, but the row stays. We filter on it at read-time using the caller's current Tier, so an upgrade widens visibility for already-stored Spans. The Body Object has its own lifecycle (30 days, R2-managed) independent of Span retention."

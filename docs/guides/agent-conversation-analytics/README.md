@@ -9,21 +9,23 @@ Not production-ready.
 What exists today:
 
 - agent ingestion contracts and Cloudflare Worker code
-- dev queue and dev consumer wiring
+- dev and production-configured queue/consumer wiring
 - Tinybird `agent_*` datasources and read pipes
 - Rust parser/sync libraries for Claude and Codex
+- user-facing `trace-flow` CLI code path for login, source listing, sync, status, and disconnect
+- macOS Tauri desktop Collector code path using the shared collector embedder
+- Convex Collector Credential mint/revoke/KV sync and Agent Session ownership claims
 - `/app/agents` dashboard surfaces
 
 What does not exist today:
 
-- a production collector CLI
-- a desktop app
-- production agent queue/KV/DLQ/resource wiring
-- production Tinybird schema deploy gate
-- required Rust collector CI
+- a green production smoke proving the normal-user collector path end to end
+- signed, distributed desktop release with updater path
+- Connected Desktops web surface for list/revoke/status
 - live production observability gates
 - Cursor ingestion
-- any normal-user path that syncs local transcripts without admin-only setup
+- launch-level dashboard truth states for empty/setup/data flows
+- final release evidence that a normal user can sync local transcripts without operator setup
 
 ## Production Definition
 

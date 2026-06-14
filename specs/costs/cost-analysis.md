@@ -2,18 +2,23 @@
 
 Last updated: 2026-03-10
 
+> **Status:** This is a legacy pricing model. It predates the current single encrypted
+> `bodies/{requestId}` object, the agent ingest/consumer pipeline, and any post-2026-03-10 pricing
+> refresh. Use it for historical reasoning only until the full cost model is recalculated.
+> Current Cloudflare cost drivers are summarized in `cloudflare-pricing.md`.
+
 ## Tech Stack Cost Summary
 
 ### Fixed Monthly Costs (Base Fees)
 
-| Service                 | Role                              | Base Cost                |
-| ----------------------- | --------------------------------- | ------------------------ |
-| Cloudflare Workers Paid | Proxy, Consumer, API, Web runtime | $5/mo                    |
-| Tinybird Developer 1    | Trace analytics (ClickHouse)      | $99/mo                   |
-| Convex Professional     | Backend DB, auth, billing logic   | $25/dev/mo               |
-| Sentry Team             | Error monitoring across 4 workers | $26/mo                   |
-| Domain (trace-flow.dev) | DNS                               | ~$1/mo                   |
-| **Total fixed**         |                                   | **$156/mo** (single dev) |
+| Service                 | Role                                                                  | Base Cost                |
+| ----------------------- | --------------------------------------------------------------------- | ------------------------ |
+| Cloudflare Workers Paid | Proxy, proxy consumer, agent ingest, agent consumer, API, Web runtime | $5/mo                    |
+| Tinybird Developer 1    | Trace analytics (ClickHouse)                                          | $99/mo                   |
+| Convex Professional     | Backend DB, auth, billing logic                                       | $25/dev/mo               |
+| Sentry Team             | Error monitoring across workers                                       | $26/mo                   |
+| Domain (trace-flow.dev) | DNS                                                                   | ~$1/mo                   |
+| **Total fixed**         |                                                                       | **$156/mo** (single dev) |
 
 Tinybird tier scales with concurrent dashboard users (QPS is the binding constraint, not storage or ingestion). Upgrade path: Dev 0.5 ($49) at ~10 users, Dev 1 ($99) at ~30 users, Dev 2 ($199) at ~50+ users. See `blind-spots.md` for full QPS analysis.
 
@@ -43,7 +48,7 @@ Auth0 (free to 25K MAU), GitHub Actions (free to 3K min/mo), and Stripe (no base
 
 ## Per-Request Cost Breakdown
 
-### Operations Per Recorded Trace (Scenario A)
+### Operations Per Recorded Trace (Scenario A - Legacy Baseline)
 
 Full path: Client -> Proxy -> Queue -> Consumer -> Tinybird + R2
 
@@ -52,7 +57,7 @@ Full path: Client -> Proxy -> Queue -> Consumer -> Tinybird + R2
 | Workers         | Proxy invocation                       | 1             | $0.30/M              | $0.0000003     |
 | Workers         | Consumer invocation                    | 0.1 (batched) | $0.30/M              | $0.00000003    |
 | KV              | Reads (auth + billing + pricing)       | 3             | $0.50/M              | $0.0000015     |
-| R2              | PUTs (request + response body)         | 2             | $4.50/M              | $0.0000090     |
+| R2              | PUTs (request + response body objects) | 2             | $4.50/M              | $0.0000090     |
 | R2              | Storage (15KB avg, 30-day retention)   | 15KB          | $0.015/GB-mo         | $0.00000023    |
 | Queues          | Operations (send + receive)            | 2             | $0.40/M              | $0.0000008     |
 | Durable Objects | Requests (UsageTracker + TraceBatcher) | 1.1           | $0.15/M              | $0.00000017    |
@@ -65,7 +70,7 @@ Full path: Client -> Proxy -> Queue -> Consumer -> Tinybird + R2
 
 **Marginal cost per recorded trace: ~$0.015 per 1,000 traces ($15/million traces)**
 
-The dominant cost driver is **R2 PUT operations** (60% of per-trace cost), followed by **DO SQLite writes** (20%).
+The dominant cost driver in this legacy two-object model is **R2 PUT operations** (60% of per-trace cost), followed by **DO SQLite writes** (20%).
 
 ### Operations Per Passthrough Request (Scenario B - No Recording)
 
@@ -285,7 +290,7 @@ Small transactions have disproportionately high Stripe fees due to the $0.30 fix
 
 At scale, these are the dominant costs:
 
-1. **R2 PUT operations** -- $4.50/M operations, 2 per trace = $9/M traces. This is 60% of per-trace cost. Consider batching or compressing bodies.
+1. **R2 PUT operations** -- the current implementation writes one encrypted combined `bodies/{requestId}` object per recorded trace. Older estimates in this file assumed two PUTs and need recalculation.
 2. **Tinybird plan + storage** -- Fixed plan cost ($25-299 depending on QPS needs) + storage grows with retention. At 90-day TTL, storage accumulates 3x monthly ingestion. QPS is the binding constraint — tier upgrades driven by concurrent dashboard users, not trace volume.
 3. **KV reads** -- $0.50/M, 2-3 per request. The two-layer cache helps but every cache miss hits KV. At scale this adds up.
 4. **Convex plan** -- $25/dev/mo is a fixed cost that kicks in once you exceed free tier limits.
@@ -416,7 +421,7 @@ Monthly fixed costs: **$156/mo** (CF Workers $5 + Tinybird Dev 1 $99 + Convex $2
 
 2. **R2 Infrequent Access storage class** -- For hobby tier (7-day retention), bodies are rarely re-read. IA storage is $0.01/GB vs $0.015/GB, but Class A ops are $9/M (2x). Only worth it if read ratio is very low.
 
-3. **Batch R2 writes** -- Currently 2 PUTs per trace (request + response separately). Could combine into a single PUT with a delimiter, cutting R2 Class A costs by 50% ($4.50/M saved per M traces).
+3. **Keep body writes combined** -- the current implementation already stores request and response in one encrypted R2 object. Recalculate this section before using the old R2 savings model.
 
 4. **Tinybird TTL tuning** -- 90-day TTL on trace data. If hobby gets 7-day body retention, consider shorter Tinybird TTL for hobby (30 days?) to reduce storage.
 
@@ -442,14 +447,14 @@ Monthly fixed costs: **$156/mo** (CF Workers $5 + Tinybird Dev 1 $99 + Convex $2
 
 Two changes applied together:
 
-1. **Combine request + response into a single object** — 1 PUT per trace instead of 2
+1. **Combined request + response object already shipped** -- current R2 writes are 1 PUT per recorded trace
 2. **Swap R2 for Backblaze B2** — $0.40/M PUTs (vs $4.50/M), $0.005/GB storage (vs $0.015/GB), free egress through Cloudflare (Bandwidth Alliance)
 
 Bodies are write-heavy, rarely-read, and always accessed via `waitUntil()` (no user-facing latency). B2's S3-compatible API means the code change is swapping the client endpoint + auth credentials.
 
 ### Optimized Per-Trace Breakdown
 
-| Service         | Operation                              | Count/Trace   | Unit Price     | Cost/Trace     | vs Current         |
+| Service         | Operation                              | Count/Trace   | Unit Price     | Cost/Trace     | vs Legacy R2       |
 | --------------- | -------------------------------------- | ------------- | -------------- | -------------- | ------------------ |
 | Workers         | Proxy invocation                       | 1             | $0.30/M        | $0.0000003     |                    |
 | Workers         | Consumer invocation                    | 0.1 (batched) | $0.30/M        | $0.00000003    |                    |
@@ -471,16 +476,16 @@ The dominant cost shifts from body storage ops to **DO SQLite writes** (43% of p
 
 ### Optimized User Cost Summary
 
-| User Type    | Traces/mo | Current Cost | Optimized Cost | Savings |
-| ------------ | --------- | ------------ | -------------- | ------- |
-| Hobby        | 25K       | $0.43        | $0.20          | 54%     |
-| Moderate Pro | 100K      | $1.68        | $0.78          | 54%     |
-| Heavy Pro    | 1M        | $16.87       | $7.77          | 54%     |
-| Extreme      | 5M        | $84.31       | $38.81         | 54%     |
+| User Type    | Traces/mo | Legacy R2 Cost | Optimized Cost | Savings |
+| ------------ | --------- | -------------- | -------------- | ------- |
+| Hobby        | 25K       | $0.43          | $0.20          | 54%     |
+| Moderate Pro | 100K      | $1.68          | $0.78          | 54%     |
+| Heavy Pro    | 1M        | $16.87         | $7.77          | 54%     |
+| Extreme      | 5M        | $84.31         | $38.81         | 54%     |
 
 ### Impact on $30K MRR Scenario (~250M traces/mo)
 
-| Component                | Current (R2)            | Optimized (B2)        | Savings     |
+| Component                | Legacy R2               | Optimized (B2)        | Savings     |
 | ------------------------ | ----------------------- | --------------------- | ----------- |
 | Body PUTs                | 500M × $4.50/M = $2,250 | 250M × $0.40/M = $100 | **$2,150**  |
 | Body Storage (3.75 TB)   | $0.015/GB = $56         | $0.005/GB = $19       | $37         |
@@ -493,13 +498,13 @@ The dominant cost shifts from body storage ops to **DO SQLite writes** (43% of p
 
 ### Impact on Unit Economics
 
-| Metric                        | Current | Optimized |
-| ----------------------------- | ------- | --------- |
-| Cost per 1K traces            | $0.017  | $0.007    |
-| Pro user variable cost (100K) | $1.68   | $0.78     |
-| Net profit per Pro org        | $26.01  | $27.23    |
-| Trace pack margin ($5/100K)   | 57%     | 80%       |
-| Break-even orgs               | ~6      | ~6        |
+| Metric                        | Legacy R2 | Optimized |
+| ----------------------------- | --------- | --------- |
+| Cost per 1K traces            | $0.017    | $0.007    |
+| Pro user variable cost (100K) | $1.68     | $0.78     |
+| Net profit per Pro org        | $26.01    | $27.23    |
+| Trace pack margin ($5/100K)   | 57%       | 80%       |
+| Break-even orgs               | ~6        | ~6        |
 
 Break-even doesn't change much (fixed costs dominate at small scale), but trace pack margins jump from 57% to 80% — making the growth engine significantly more profitable.
 
@@ -520,7 +525,7 @@ DO writes ($1.00/M) are 4.5x cheaper than R2 PUTs ($4.50/M). The tradeoff: DO st
 
 ### Per-Trace Breakdown (DO Bodies)
 
-| Service         | Operation                              | Count/Trace   | Unit Price     | Cost/Trace      | vs Current         |
+| Service         | Operation                              | Count/Trace   | Unit Price     | Cost/Trace      | vs Legacy R2       |
 | --------------- | -------------------------------------- | ------------- | -------------- | --------------- | ------------------ |
 | Workers         | Proxy invocation                       | 1             | $0.30/M        | $0.0000003      |                    |
 | Workers         | Consumer invocation                    | 0.1 (batched) | $0.30/M        | $0.00000003     |                    |
@@ -541,22 +546,22 @@ DO writes ($1.00/M) are 4.5x cheaper than R2 PUTs ($4.50/M). The tradeoff: DO st
 
 ### Scaling Comparison (All Three Options)
 
-| Scale          | R2 (current, 30-day) | DO SQLite (7-day) | B2 (30-day) |
-| -------------- | -------------------- | ----------------- | ----------- |
-| 100K traces/mo | $0.92                | $0.15             | $0.06       |
-| 1M traces/mo   | $9.23                | $1.75             | $0.12       |
-| 5M traces/mo   | $46.13               | $9.38             | $0.62       |
-| 50M traces/mo  | $461                 | $88               | $12         |
-| 250M traces/mo | $2,306               | $438              | $119        |
+| Scale          | Legacy R2 (30-day) | DO SQLite (7-day) | B2 (30-day) |
+| -------------- | ------------------ | ----------------- | ----------- |
+| 100K traces/mo | $0.92              | $0.15             | $0.06       |
+| 1M traces/mo   | $9.23              | $1.75             | $0.12       |
+| 5M traces/mo   | $46.13             | $9.38             | $0.62       |
+| 50M traces/mo  | $461               | $88               | $12         |
+| 250M traces/mo | $2,306             | $438              | $119        |
 
 ### Unit Economics (All Three)
 
-| Metric                        | Current (R2) | DO SQLite (7-day) | B2 (30-day) |
-| ----------------------------- | ------------ | ----------------- | ----------- |
-| Cost per 1K traces            | $0.017       | $0.008            | $0.007      |
-| Pro user variable cost (100K) | $1.68        | $0.87             | $0.78       |
-| Net profit per Pro org        | $26.01       | $27.14            | $27.23      |
-| Trace pack margin ($5/100K)   | 57%          | 77%               | 80%         |
+| Metric                        | Legacy R2 | DO SQLite (7-day) | B2 (30-day) |
+| ----------------------------- | --------- | ----------------- | ----------- |
+| Cost per 1K traces            | $0.017    | $0.008            | $0.007      |
+| Pro user variable cost (100K) | $1.68     | $0.87             | $0.78       |
+| Net profit per Pro org        | $26.01    | $27.14            | $27.23      |
+| Trace pack margin ($5/100K)   | 57%       | 77%               | 80%         |
 
 ### Recommended Approach: DO Default + B2 Retention Add-On
 

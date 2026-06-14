@@ -1,15 +1,16 @@
 # Worker Architecture
 
-The platform is split into four Cloudflare Workers, each with a focused responsibility. This document explains why we chose this separation and how the workers communicate.
+The primary observability runtime is split into six Cloudflare Workers, each with a focused responsibility. This document explains why we chose this separation and how those workers communicate. The repo also has an MCP Worker for agent access to trace data; it is a separate read-side integration, not part of the proxy or collector ingestion paths.
 
-## Why Four Workers?
+## Why Separate Workers?
 
 A single monolithic worker would be simpler to deploy but would create several problems:
 
-1. **Conflicting execution models**: The proxy must respond in milliseconds; the consumer can take seconds to process batches
+1. **Conflicting execution models**: The proxy must respond in milliseconds; consumers can take seconds to process batches
 2. **Resource contention**: Queue processing consumes CPU that could affect proxy latency
-3. **Deployment coupling**: A bug in trace processing would require redeploying the proxy
-4. **Scaling mismatch**: Proxy scales with request volume; consumer scales with processing load
+3. **Different auth boundaries**: LLM proxy API keys, dashboard Auth0 JWTs, and Collector Credentials are separate security domains
+4. **Deployment coupling**: A bug in trace or agent-fact processing would require redeploying the proxy
+5. **Scaling mismatch**: Proxy and ingest workers scale with request volume; consumers scale with processing load
 
 Splitting into focused workers provides isolation, independent scaling, and cleaner failure domains.
 
@@ -68,11 +69,11 @@ binding = "API_KEYS"
 id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 ```
 
-## Consumer Worker
+## Proxy Consumer Worker
 
 **Location**: `apps/proxy-consumer/`
 
-**Responsibility**: Process queue batches, transform into OpenTelemetry traces, calculate costs, and batch insert to Tinybird.
+**Responsibility**: Process LLM trace queue batches, transform them into OpenTelemetry traces, calculate costs, and batch insert to Tinybird.
 
 ### What It Owns
 
@@ -88,6 +89,7 @@ id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 - R2 body reading (bodies are stored by proxy, read by API worker)
 - Real-time processing guarantees (batching introduces latency)
 - User-facing APIs
+- Agent conversation facts
 
 ### Communication
 
@@ -138,6 +140,116 @@ const shardId = calculateShardId(apiKey, NUM_SHARDS);
 const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
 ```
 
+## Agent Ingest Worker
+
+**Location**: `apps/agent-ingest/`
+
+**Responsibility**: Accept collector uploads, authenticate Collector Credentials, validate and normalize agent fact envelopes, claim session ownership, and enqueue sub-128 KiB fact messages for the agent consumer.
+
+Agent analytics is still not production-ready until the gates in `docs/guides/agent-conversation-analytics/ROADMAP.md` are complete.
+
+### What It Owns
+
+- Collector Credential authentication via `COLLECTOR_CREDS` KV
+- Convex-owned compatibility policy enforcement for desktop/parser versions
+- Per-org ingest rate limiting via `AGENT_INGEST_LIMITER`
+- Gzip body inflation with request-size caps
+- Envelope shape validation
+- Server-side re-redaction of free-text excerpts
+- Stable `session_pk`, row `*_pk`, and `repo_fingerprint` assembly
+- First-writer Agent Session ownership claims through Convex
+- Queue chunking and `sendBatch` enqueue to `AGENT_QUEUE`
+
+### What It Does NOT Own
+
+- Model pricing or cost calculation
+- Tinybird writes
+- User-facing API key auth
+- LLM proxying
+- Raw transcript R2 storage in the current implementation. The wire contract has deferred slots for optional Raw Session Bundles, but collector sync omits them until that path ships.
+
+### Communication
+
+- **Inbound**: `POST /v1/ingest` from Trace Flow CLI/Desktop collectors
+- **Outbound**:
+  - KV for Collector Credential lookup
+  - Convex HTTP routes for compatibility policy and session ownership claims
+  - Cloudflare Rate Limiting for per-org burst control
+  - Cloudflare Queue for agent fact messages
+
+### Configuration
+
+Defined in `apps/agent-ingest/wrangler.jsonc`:
+
+```jsonc
+"kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "..." }],
+"queues": {
+  "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }]
+},
+"ratelimits": [{ "name": "AGENT_INGEST_LIMITER", "namespace_id": "2006" }]
+```
+
+Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the production `COLLECTOR_CREDS` namespace, and `agent-ingest-prod`.
+
+## Agent Consumer Worker
+
+**Location**: `apps/agent-consumer/`
+
+**Responsibility**: Drain the agent ingest queue, price Agent Message facts, map typed facts into Tinybird rows, dedupe by stable fact identity, and write `agent_*` datasources.
+
+### What It Owns
+
+- Queue consumption and message acknowledgment/retry
+- Queue contract validation
+- Agent Message pricing through the shared `MODEL_PRICING` KV catalog
+- Row mapping for messages, tool events, file events, capability snapshots, and pull request links
+- Org-sharded `AGENT_FACT_BATCHER` Durable Object coordination
+- Tinybird Events API insertion for `agent_*` datasources
+- Repair-signal detection for same-key changed facts
+
+### What It Does NOT Own
+
+- Collector Credential authentication
+- Session ownership claims
+- Raw transcript parsing
+- LLM request trace spans
+- Dashboard read APIs
+
+### Communication
+
+- **Inbound**: Queue messages from Agent Ingest
+- **Outbound**:
+  - KV for model pricing lookup
+  - Durable Objects for fact dedupe and insert batching
+  - Tinybird Events API for `agent_*` datasources
+
+### Scaling Characteristics
+
+The consumer scales with `agent-ingest-{env}` queue depth. It processes up to 100 messages per batch, uses bounded concurrency, and retries contributing messages when the fact ledger or Tinybird insert path fails. Duplicate redelivery is absorbed by the Durable Object ledger before Tinybird insert.
+
+### Configuration
+
+Defined in `apps/agent-consumer/wrangler.jsonc`:
+
+```jsonc
+"queues": {
+  "consumers": [{
+    "queue": "agent-ingest-dev",
+    "max_batch_size": 100,
+    "max_batch_timeout": 5,
+    "max_concurrency": 10,
+    "max_retries": 5,
+    "dead_letter_queue": "agent-ingest-dlq-dev"
+  }]
+},
+"kv_namespaces": [{ "binding": "MODEL_PRICING", "id": "..." }],
+"durable_objects": {
+  "bindings": [{ "name": "AGENT_FACT_BATCHER", "class_name": "AgentFactBatcher" }]
+}
+```
+
+Production uses `trace-flow-agent-consumer`, `agent-ingest-prod`, `agent-ingest-dlq-prod`, and the production model-pricing namespace.
+
 ## API Worker
 
 **Location**: `apps/api/`
@@ -155,6 +267,7 @@ const batcherId = env.TRACE_BATCHER.idFromName(`batcher-${shardId}`);
 - Body storage (handled by proxy)
 - Trace queries (handled by frontend to Tinybird directly)
 - User management
+- Agent analytics ingest
 
 ### Communication
 
@@ -187,27 +300,28 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 
 **Location**: `apps/web/`
 
-**Responsibility**: Serve the static dashboard and provide the user interface.
+**Responsibility**: Serve the dashboard and provide the user interface.
 
 ### What It Owns
 
 - Next.js SSR and static assets via OpenNext on Cloudflare Workers
 - React-based dashboard UI
 - Tinybird query generation and execution
-- Real-time data visualization
+- LLM trace and agent analytics views
 
 ### What It Does NOT Own
 
 - Backend API endpoints (uses Convex for backend logic)
 - Body storage or retrieval (uses API worker)
 - Authentication state (uses Auth0)
+- Agent fact ingestion
 
 ### Communication
 
 - **Inbound**: Browser requests
 - **Outbound**:
-  - Convex for user data, API keys, alerts
-  - Tinybird for trace queries (via JWT from Convex)
+  - Convex for user data, API keys, collector credentials, alerts, and Tinybird JWTs
+  - Tinybird for trace and agent queries
   - API worker for body retrieval
 
 ### Deployment Architecture
@@ -220,7 +334,7 @@ The web worker uses `@opennextjs/cloudflare` to compile Next.js for the Cloudfla
 
 ## Cross-Worker Communication
 
-### Queue Messages (Proxy to Consumer)
+### Queue Messages (Proxy to Proxy Consumer)
 
 The proxy enqueues structured messages containing all captured data:
 
@@ -240,7 +354,31 @@ interface QueueMessage {
 }
 ```
 
-The consumer transforms this into OpenTelemetry traces, adding computed fields like cost.
+The proxy consumer transforms this into OpenTelemetry traces, adding computed fields like cost.
+
+### Agent Queue Messages (Agent Ingest to Agent Consumer)
+
+The agent ingest worker accepts `AgentIngestEnvelope` uploads from collectors and enqueues `AgentIngestQueueMessage` chunks:
+
+```typescript
+interface AgentIngestQueueMessage {
+  type: 'agent';
+  source: 'claude' | 'codex' | 'cursor';
+  parser_version: string;
+  desktop_version: string;
+  collector_batch_id: string;
+  tenancy: {
+    org_id: string;
+    user_id: string;
+    collector_id: string;
+    collector_credential_id: string;
+  };
+  facts: AgentIngestQueueFacts;
+  enqueued_at: number;
+}
+```
+
+The ingest worker stamps tenancy and final row identities. The collector never sends trusted org/user IDs, cost, or final Tinybird primary keys.
 
 ### R2 Keys (Proxy to API)
 
@@ -252,11 +390,13 @@ The API worker reconstructs this key from the `requestId` parameter.
 
 ### Shared Types
 
-The `@trace-flow/types` package defines interfaces used by both proxy and consumer, ensuring type safety across the queue boundary:
+The `@trace-flow/types` package defines interfaces used across worker boundaries, ensuring type safety across queue boundaries:
 
 - `QueueMessage`: Raw capture data from proxy
 - `TinybirdTrace`: OpenTelemetry-format trace for storage
 - `SSEStreamData`: Parsed SSE events and timing
+- `AgentIngestEnvelope`: Collector upload contract
+- `AgentIngestQueueMessage`: Agent ingest to agent consumer contract
 
 ## Failure Handling
 
@@ -266,12 +406,30 @@ The `@trace-flow/types` package defines interfaces used by both proxy and consum
 - R2 storage failures result in queue messages without body keys
 - Queue send failures are logged; traces are lost (acceptable tradeoff for latency)
 
-### Consumer Failures
+### Proxy Consumer Failures
 
 - Message processing failures trigger retry via `message.retry()`
 - After `max_retries` (5), messages go to dead-letter queue
 - Tinybird insertion failures trigger retry with exponential backoff
 - Durable Object persists unflushed traces in SQLite across restarts
+
+### Agent Ingest Failures
+
+- Invalid Collector Credentials return 401
+- Invalid envelopes return 400
+- Oversized bodies return 413
+- Unsupported desktop/parser versions return 426
+- Missing compatibility policy returns retryable 503
+- Session claim outages return retryable 503
+- Rate-limit violations return 429
+- Queue enqueue failures return retryable 503
+
+### Agent Consumer Failures
+
+- Malformed queue messages retry and then dead-letter
+- Pricing misses produce null `cost_usd` when usage or pricing coverage is insufficient
+- Fact ledger failures retry all contributing queue messages
+- Tinybird insert failures keep rows pending in `AGENT_FACT_BATCHER` SQLite and retry on the next flush
 
 ### API Failures
 
@@ -280,12 +438,15 @@ The `@trace-flow/types` package defines interfaces used by both proxy and consum
 
 ## Environment Isolation
 
-Each worker connects to environment-specific resources via `wrangler.toml`:
+Each worker connects to environment-specific resources via its Wrangler config:
 
-| Worker   | Dev Queue               | Dev R2 Bucket          | Dev KV                  |
-| -------- | ----------------------- | ---------------------- | ----------------------- |
-| Proxy    | trace-flow-requests-dev | trace-flow-storage-dev | trace-flow-api-keys-dev |
-| Consumer | trace-flow-requests-dev | trace-flow-storage-dev | (model pricing)         |
-| API      | -                       | trace-flow-storage-dev | -                       |
+| Worker         | Dev Queue               | Dev R2 Bucket          | Dev KV                  |
+| -------------- | ----------------------- | ---------------------- | ----------------------- |
+| Proxy          | trace-flow-requests-dev | trace-flow-storage-dev | trace-flow-api-keys-dev |
+| Proxy Consumer | trace-flow-requests-dev | -                      | model pricing           |
+| Agent Ingest   | agent-ingest-dev        | -                      | collector credentials   |
+| Agent Consumer | agent-ingest-dev        | -                      | model pricing           |
+| API            | -                       | trace-flow-storage-dev | user/org access cache   |
+| Web            | -                       | -                      | -                       |
 
-Production uses `-prod` suffixes. Preview uses `-preview` suffixes.
+Production uses production resource names. Preview support is worker-specific and follows each `wrangler` config and GitHub Actions workflow.

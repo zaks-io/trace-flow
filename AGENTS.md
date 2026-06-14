@@ -1,17 +1,29 @@
 # AGENTS.md
 
-LLM observability platform on Cloudflare Workers. Four workers: **Proxy** (streaming capture), **Consumer** (queue → Tinybird), **API** (R2 body retrieval), **Web** (Next.js dashboard via OpenNext).
+LLM observability platform on Cloudflare Workers. Six workers: **Proxy** (streaming LLM capture), **Proxy Consumer** (LLM queue to Tinybird), **Agent Ingest** (collector fact intake), **Agent Consumer** (agent queue to Tinybird), **API** (R2 body retrieval), **Web** (Next.js dashboard via OpenNext).
 
 Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web/public/agents.md)
 
 ## Architecture & Data Flow
 
+### LLM Request Path
+
 1. Proxy receives LLM request via route paths (`/openai/*`, `/anthropic/*`, `/openrouter/*`, `/groq/*`, `/google/*`)
 2. `tee()` duplicates request stream — one for proxying, one for R2 capture
 3. `TransformStream` captures response chunks while streaming back to client
 4. `c.executionCtx.waitUntil()` defers R2 storage + queue enqueue (non-blocking)
-5. Consumer processes queue batches → sends OTel traces to Tinybird
+5. Proxy Consumer processes queue batches → sends OTel traces to Tinybird
 6. Web fetches trace metadata from Tinybird, bodies from API worker
+
+### Agent Conversation Path
+
+1. Collector (`apps/cli` or `apps/desktop`) parses local agent transcripts into typed facts
+2. Collector posts gzip envelopes to Agent Ingest with `X-Trace-Flow-Collector-Secret`
+3. Agent Ingest authenticates `COLLECTOR_CREDS`, checks Convex compatibility policy, rate-limits per org, re-redacts excerpts, claims session ownership, and chunks facts onto `AGENT_QUEUE`
+4. Agent Consumer prices Agent Message facts via `MODEL_PRICING`, dedupes through `AGENT_FACT_BATCHER`, and writes `agent_*` Tinybird datasources
+5. Web `/app/agents` fetches agent metadata from Tinybird using Convex-minted org-scoped JWTs
+
+**Status:** Agent Conversation Analytics is not production-ready until the production gates in `docs/guides/agent-conversation-analytics/ROADMAP.md` are complete.
 
 **Why `tee()`**: CF Workers streams are read-once. Both streams MUST be consumed or the Worker hangs.
 
@@ -21,7 +33,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 - **`--persist-to` must match** across all workers or R2/KV storage is isolated per worker
 - **Queue consumers only work** when workers run together via `bun run dev:all` (or multi `-c` flags). Running separately won't connect the queue.
-- **Consumer requires `nodejs_compat`** compatibility flag for OpenTelemetry
+- **Proxy Consumer requires `nodejs_compat`** compatibility flag for OpenTelemetry
 - **Web requires Convex** running in a separate terminal (`bunx convex dev`)
 - **Agent/local setup is scripted**: run `scripts/dev/start.sh` to create ignored local env files and
   Tinybird Local state, then `scripts/dev/verify.sh` before handoff
@@ -63,7 +75,9 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - **R2 keys**: `bodies/${requestId}` (single object with request + response)
 - **Stream handling**: Always `tee()`, both streams must be consumed
 - **Queue consumer**: Must call `message.ack()` after processing
-- **OTel**: Consumer uses `@microlabs/otel-cf-workers`
+- **OTel**: Proxy Consumer uses `@microlabs/otel-cf-workers`
+- **Agent ingest auth**: Collector Credentials are separate from API keys; they live in Convex, sync to `COLLECTOR_CREDS`, and cannot call the Proxy
+- **Agent fact ledger**: `AGENT_FACT_BATCHER` dedupes by stable fact identity before Tinybird insert; same-key changed facts become repair signals
 
 ## Deployment
 

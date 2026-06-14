@@ -48,6 +48,27 @@ Last updated: 2026-03-06. All prices USD. Pricing model changed Jan 2025 to vCPU
 - QPS burst: 2x baseline for 1 minute, 5-minute cooldown
 - Parameterized pipe endpoints count as standard queries
 
+## Trace Flow Cost Drivers
+
+Tinybird spend is mostly storage, materialization CPU, and read query CPU.
+
+### LLM Request Path
+
+- `otel_trace_spans` write volume from Proxy Consumer
+- `llm_request_facts` and usage rollup materializations
+- dashboard, MCP, operations, and alert forecast pipes
+- retention and visibility windows by subscription tier
+
+### Agent Conversation Path
+
+- base `agent_*_facts` insert volume from Agent Consumer
+- session, usage, tool, and repository materializations
+- `/app/agents` pipes filtered by `org_id`
+- long agent fact retention and repeated dashboard breakdown queries
+
+Agent analytics can create many rows from one local transcript sync. Model costs using fact rows and
+materialized-view work, not just collector upload count.
+
 ## Sources
 
 - https://www.tinybird.co/pricing

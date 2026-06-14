@@ -1,222 +1,102 @@
-# Encrypt Request Bodies at Rest
+# Encryption At Rest
 
-## Overview
+Trace Flow encrypts stored LLM request/response bodies before writing them to Cloudflare R2. Agent raw
+transcript storage is deferred and is not part of the current implementation.
 
-Request and response bodies are currently stored unencrypted in Cloudflare R2. These bodies may contain sensitive information (API keys, PII, credentials). Implement encryption before storage.
+## Current Body Storage Path
 
-## Current Architecture
+`apps/proxy/src/storage.ts` stores one encrypted R2 object per proxied LLM request:
 
-**Storage flow** (`apps/proxy/src/storage.ts`):
-
-```
-Client Request -> Proxy Worker -> R2 Bucket
-                     |
-              Plain text storage at:
-              - bodies/{requestId}
+```text
+Client -> Proxy -> encrypted R2 object at bodies/{requestId}
 ```
 
-**Retrieval flow** (`apps/api/src/index.ts`):
-
-```
-Dashboard -> API Worker -> R2 Bucket -> Plain text response
-```
-
-## Implementation Approach
-
-Use tenant-scoped **AES-256-GCM** encryption with the Web Crypto API (available in Cloudflare Workers). Body payloads are encrypted with an org-specific key derived from a shared root secret, so encryption is scoped to the owning organization.
-
-### Key Management
-
-Store the root encryption key in Cloudflare Workers secrets on both the proxy and API workers:
-
-```bash
-wrangler secret put BODY_ENCRYPTION_ROOT_KEY --env production
-# Generate: openssl rand -base64 32
-```
-
-Set `BODY_ENCRYPTION_KEY_ID` for rotation support and include org context in the encrypted envelope:
+The stored plaintext shape before encryption is:
 
 ```typescript
-interface EncryptedPayload {
-  v: 1; // Version for future format changes
+interface StoredBodiesPayload {
+  requestBody: string | null;
+  responseBody: string | null;
+  truncated?: boolean;
+}
+```
+
+The persisted object shape is `EncryptedStoredBodiesPayload` from `packages/types/src/storage.ts`:
+
+```typescript
+interface EncryptedStoredBodiesPayload {
+  v: 1;
   alg: 'AES-GCM';
   kdf: 'HKDF-SHA-256';
-  kid: string; // Key ID for rotation
-  orgId: string; // Owning organization
-  iv: string; // Base64 initialization vector
-  data: string; // Base64 ciphertext
-}
-```
-
-Workers derive an org-scoped AES key using HKDF-SHA-256 from `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ENCRYPTION_KEY_ID`, and `orgId`. HKDF uses a fixed zero salt because the root key provides the entropy; `orgId` and `keyId` are included in `info` as domain/context binding. AES-GCM additional authenticated data includes the envelope version, algorithm, KDF, key ID, `orgId`, and R2 object key so encrypted bodies cannot be replayed across organizations, key versions, or object keys.
-
-### Encryption Module
-
-**File**: `packages/utils/src/crypto.ts`
-
-```typescript
-interface BodyEncryptionOptions {
-  rootKeyBase64: string; // Base64 encoded 32-byte root key
+  kid: string;
   orgId: string;
-  objectKey: string;
-  keyId?: string; // For rotation, defaults to 'v1'
-}
-
-export async function encryptStoredBodyPayload(
-  plaintext: string,
-  options: BodyEncryptionOptions,
-): Promise<EncryptedPayload>;
-
-export async function decryptStoredBodyPayload(
-  payload: EncryptedPayload,
-  options: BodyEncryptionOptions,
-): Promise<string>;
-```
-
-### Update Storage Module
-
-**File**: `apps/proxy/src/storage.ts`
-
-```typescript
-const payload = JSON.stringify({ requestBody, responseBody, truncated });
-const encryptedPayload = await encryptStoredBodyPayload(payload, {
-  rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
-  keyId: env.BODY_ENCRYPTION_KEY_ID,
-  orgId,
-  objectKey: bodyKey,
-});
-
-await storage.put(bodyKey, JSON.stringify(encryptedPayload), {
-  customMetadata: { orgId },
-  httpMetadata: { contentType: 'application/json' },
-});
-```
-
-### Update API Worker
-
-**File**: `apps/api/src/index.ts`
-
-```typescript
-async function getStoredBodies(requestId: string, env: Env): Promise<StoredBodiesPayload | null> {
-  const key = `bodies/${requestId}`;
-  const object = await env.STORAGE.get(key);
-
-  if (!object) return null;
-
-  const raw = await object.text();
-  const parsed = JSON.parse(raw);
-
-  if (isEncryptedStoredBodiesPayload(parsed)) {
-    const orgId = object.customMetadata?.orgId;
-    if (parsed.orgId !== orgId) {
-      throw new Error('Organization metadata mismatch');
-    }
-    const decrypted = await decryptStoredBodyPayload(parsed, {
-      rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
-      keyId: env.BODY_ENCRYPTION_KEY_ID,
-      orgId,
-      objectKey: key,
-    });
-    return parseStoredBodiesPayload(decrypted);
-  }
-
-  // Legacy plaintext fallback is logged and can be removed after the R2 TTL window.
-  return parseStoredBodiesPayload(raw);
+  iv: string;
+  data: string;
 }
 ```
 
-## Migration Strategy
+R2 custom metadata stores `orgId` so the API Worker can enforce organization ownership before serving
+the object.
 
-### Option A: Encrypt on Read (Lazy Migration)
+## Encryption Design
 
-Leave existing data unencrypted. New data is encrypted. Reads handle both formats (see API worker code above), but encrypted reads require matching R2 org metadata and envelope org ID.
+Encryption lives in `packages/utils/src/crypto.ts`.
 
-**Pros**: No downtime, simple
-**Cons**: Old data remains unencrypted until TTL expires
+- algorithm: AES-256-GCM
+- key derivation: HKDF-SHA-256
+- root secret: `BODY_ENCRYPTION_ROOT_KEY`
+- write key id: `BODY_ENCRYPTION_KEY_ID`, defaulting to `v1`
+- key context: organization id and key id
+- authenticated data: envelope metadata plus the R2 object key
 
-### Option B: Background Migration
+The Proxy refuses to store body objects when the organization id or root encryption key is missing.
+Storage failure does not block the client response; the request still streams and the queue message
+can still be sent.
 
-Run a migration script to encrypt existing data in place:
+## Read Path
 
-```typescript
-// scripts/migrate-encryption.ts
-async function migrateR2Object(bucket: R2Bucket, key: string, env: EncryptionEnv) {
-  const object = await bucket.get(key);
-  if (!object) return;
+`apps/api/src/bodies.ts` reads `bodies/{requestId}` and:
 
-  const plaintext = await object.text();
+1. parses the R2 object
+2. verifies the encrypted envelope org matches R2 metadata
+3. requires `BODY_ENCRYPTION_ROOT_KEY`
+4. decrypts with the key id recorded in the envelope
+5. parses the decrypted `StoredBodiesPayload`
+6. applies organization membership and visibility-window checks before returning the body
 
-  // Skip if already encrypted
-  try {
-    const parsed = JSON.parse(plaintext);
-    if (parsed.v === 1) return;
-  } catch {}
-
-  const encrypted = await encrypt(plaintext, env);
-  await bucket.put(key, encrypted);
-}
-```
-
-**Recommended**: Option A for simplicity. R2 data has 90-day TTL, so unencrypted data naturally ages out.
+The API Worker still logs and parses a legacy plaintext fallback for old objects. New Proxy writes are
+encrypted.
 
 ## Key Rotation
 
-`BODY_ENCRYPTION_KEY_ID` can be rotated without downtime as long as the root key remains the same:
+Changing `BODY_ENCRYPTION_KEY_ID` rotates the HKDF context for new writes while allowing old objects
+to decrypt because the envelope records `kid`.
 
-1. Assign a new key ID
-2. New writes use the new key ID for HKDF derivation and record it as `kid` in the envelope
-3. Reads use `kid` from the payload, not the currently configured write key ID, to derive the matching tenant key from the same root
-4. After TTL, old key IDs no longer appear in stored envelopes
+Changing `BODY_ENCRYPTION_ROOT_KEY` is a breaking rotation with the current single-root design. Old
+objects cannot be decrypted with a new root until a future multi-root lookup exists. Prefer key-id
+rotation unless there is a root-key incident.
 
-Rotating `BODY_ENCRYPTION_ROOT_KEY` itself is a flag-day operation with the current single-root configuration. Existing encrypted objects cannot be decrypted with a new root key, even when their original `kid` is present, until a future multi-root key lookup is implemented. If the root key must be replaced, expect old encrypted objects to fail decryption until they expire via R2 TTL.
+## Agent Raw Transcript Storage
 
-## Performance Considerations
+Agent Conversation Analytics currently uploads typed facts only. The Rust sync envelope explicitly
+omits `raw_session_bundles`, and Agent Ingest has no R2 binding for raw transcript storage.
 
-- AES-GCM is hardware-accelerated on modern CPUs
-- Encryption adds ~1-2ms per operation (negligible for typical body sizes)
-- Memory: Encryption processes full body in memory (existing behavior)
-- Large bodies (>10MB): Consider streaming encryption (future enhancement)
+Before raw transcript upload ships, the design must add:
 
-## Testing
+- explicit user opt-in, default off
+- R2 binding and lifecycle policy
+- server-side encryption equivalent to or stronger than body object encryption
+- replay-window retention separate from one-year fact retention
+- redaction and access rules for replay/debug tooling
+- production smoke coverage
 
-### Unit Tests
+Do not describe raw transcript R2 storage as live until those pieces exist.
 
-**File**: `apps/proxy/src/__tests__/crypto.test.ts`
+## Tests
 
-```typescript
-describe('Encryption', () => {
-  const env = { ENCRYPTION_KEY: btoa(crypto.getRandomValues(new Uint8Array(32))) };
+Current coverage lives in:
 
-  it('encrypts and decrypts round-trip', async () => {
-    const plaintext = 'sensitive data';
-    const encrypted = await encrypt(plaintext, env);
-    const decrypted = await decrypt(encrypted, env);
-    expect(decrypted).toBe(plaintext);
-  });
-
-  it('produces different ciphertext for same input (unique IV)', async () => {
-    const plaintext = 'test';
-    const e1 = await encrypt(plaintext, env);
-    const e2 = await encrypt(plaintext, env);
-    expect(e1).not.toBe(e2);
-  });
-
-  it('handles unicode and special characters', async () => {
-    const plaintext = '{"message": "Hello world"}';
-    const encrypted = await encrypt(plaintext, env);
-    const decrypted = await decrypt(encrypted, env);
-    expect(decrypted).toBe(plaintext);
-  });
-});
-```
-
-## Acceptance Criteria
-
-- [ ] New request/response bodies stored encrypted in R2
-- [ ] API worker decrypts bodies for display
-- [ ] Backward compatible with existing unencrypted data
-- [ ] Root encryption key stored as Worker secret on proxy and API
-- [ ] Org ID is included in key derivation and AES-GCM authenticated data
-- [ ] Unit tests for encrypt/decrypt
-- [ ] Integration test verifying encrypted storage
-- [ ] Documentation updated with security note
+- `packages/utils/src/crypto.test.ts`
+- `apps/proxy/src/__tests__/storage.test.ts`
+- `apps/proxy/src/__tests__/index.test.ts`
+- `apps/api/src/__tests__/bodies.test.ts`

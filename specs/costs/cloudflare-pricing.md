@@ -78,6 +78,31 @@ Includes allowances across all Cloudflare developer services below.
 - Storage: Free
 - Only SSR Worker invocations incur standard Workers charges
 
+## Trace Flow Cost Drivers
+
+The current runtime uses Cloudflare in two ingestion paths.
+
+### LLM Request Path
+
+- Proxy Worker request and CPU for each proxied provider call
+- R2 Class A write for each stored `bodies/{requestId}` object
+- Queue operations for `trace-flow-requests-*`
+- Proxy Consumer CPU and `TRACE_BATCHER` Durable Object requests/storage
+- API Worker reads and R2 Class B reads when users open stored bodies
+- KV reads for API key, subscription, and pricing lookups, mostly hidden by Worker-side caches
+
+### Agent Conversation Path
+
+- Agent Ingest Worker request and CPU per collector upload
+- `COLLECTOR_CREDS` KV reads for Collector Credential auth
+- `agent-ingest-*` queue operations, charged per 64 KiB chunk
+- Agent Consumer CPU for validation, pricing, row mapping, and Tinybird inserts
+- `AGENT_FACT_BATCHER` Durable Object requests/storage for fact dedupe before Tinybird writes
+- `MODEL_PRICING` KV reads for server-side cost calculation
+
+Raw transcript R2 storage is deferred. Do not model agent raw transcript R2 storage until that path
+has an R2 binding, lifecycle policy, and launch decision.
+
 ## Sources
 
 - https://developers.cloudflare.com/workers/platform/pricing/

@@ -25,6 +25,11 @@ trace-flow login
 trace-flow sync --since 7d
 ```
 
+The production defaults are wired, but Agent Conversation Analytics is still launch-gated by
+`docs/guides/agent-conversation-analytics/ROADMAP.md`. Treat this CLI as the collector path under
+verification until the production smoke, dashboard truth states, CI, and observability gates are
+green.
+
 ## Environment variables
 
 | Variable                      | Required | Default                                  | Purpose                                                    |

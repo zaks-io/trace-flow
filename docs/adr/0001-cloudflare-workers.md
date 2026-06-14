@@ -2,7 +2,7 @@
 
 ## Decision
 
-Trace Flow runs on Cloudflare Workers as its primary compute platform, with all four workers (proxy, consumer, API, web) deployed to the edge.
+Trace Flow runs on Cloudflare Workers as its primary compute platform. Runtime workers include proxy, proxy consumer, agent ingest, agent consumer, API, and web, with environment-specific bindings deployed to the edge.
 
 ## Context
 

@@ -13,7 +13,7 @@ The proxy receives HTTP requests destined for LLM providers, forwards them immed
 3. Request is forwarded to the target provider
 4. Response streams back to client immediately
 5. Request/response bodies are stored in R2 asynchronously
-6. Metadata is enqueued for processing by the consumer worker
+6. Metadata is enqueued for processing by the Proxy Consumer
 
 ## Provider Routing
 
@@ -68,6 +68,10 @@ Request and response bodies are stored together in R2 with consistent key naming
 
 Each request gets a unique ID, so bodies are never overwritten even when multiple requests share the same trace ID. Storage failures are handled gracefully; the queue message is still sent without stored body data.
 
+Body objects are encrypted before storage using `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ENCRYPTION_KEY_ID`,
+and the owning organization id. The Proxy refuses to store bodies when the encryption context is
+missing.
+
 ## Queue Message Structure
 
 After capturing data, the proxy enqueues a message containing:
@@ -94,11 +98,16 @@ In addition to LLM proxying, the worker exposes a `/v1/traces` endpoint for dire
 
 ## Bindings
 
-| Binding         | Type         | Purpose                                |
-| --------------- | ------------ | -------------------------------------- |
-| `REQUEST_QUEUE` | Queue        | Sends captured data to consumer worker |
-| `STORAGE`       | R2 Bucket    | Stores request/response bodies         |
-| `API_KEYS`      | KV Namespace | Validates API keys                     |
+| Binding         | Type         | Purpose                               |
+| --------------- | ------------ | ------------------------------------- |
+| `REQUEST_QUEUE` | Queue        | Sends captured data to Proxy Consumer |
+| `STORAGE`       | R2 Bucket    | Stores request/response bodies        |
+| `API_KEYS`      | KV Namespace | Validates API keys                    |
+
+Secrets and variables:
+
+- `BODY_ENCRYPTION_ROOT_KEY` - root key for encrypted body objects
+- `BODY_ENCRYPTION_KEY_ID` - write key id recorded in encrypted envelopes
 
 ## Caching
 
