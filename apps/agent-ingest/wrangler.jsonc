@@ -1,9 +1,9 @@
 {
   // Agent Collector ingest Worker. Authenticates the Collector Credential, assembles canonical
   // *_pk surrogates + repo_fingerprint, claims session ownership, and enqueues sub-128KB messages
-  // for the agent consumer (2c). Wired into the CI deploy matrix in 2e: deploy.yml runs an explicit
-  // deploy job and preview.yml auto-discovers the `deploy:preview` script. Deploys flat (dev-named,
-  // dev resources) — slice B has no production agent pipeline yet.
+  // for the agent consumer. Default deploys use the dev-named worker and dev resources; the
+  // production env block below binds prod resources. Production readiness still depends on the
+  // gates in docs/guides/agent-conversation-analytics/ROADMAP.md.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trace-flow-agent-ingest-dev",
   "main": "src/index.ts",

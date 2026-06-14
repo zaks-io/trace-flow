@@ -21,11 +21,19 @@ Client → Proxy Worker → LLM Provider
               ↓
          R2 + Queue
               ↓
-       Consumer Worker
+   Proxy Consumer Worker
               ↓
-          Tinybird
+      Tinybird otel_*
               ↓
     Web Dashboard ← API Worker (bodies)
+
+Collector CLI/Desktop → Agent Ingest Worker → Agent Queue
+                              ↓
+                      Agent Consumer Worker
+                              ↓
+                      Tinybird agent_*
+                              ↓
+                         /app/agents
 ```
 
 ## Documentation
@@ -56,7 +64,9 @@ Why we chose specific technologies and patterns.
 What each part of the system does.
 
 - [Proxy](components/proxy.md) - Streaming LLM proxy worker
-- [Consumer](components/consumer.md) - Queue consumer and trace builder
+- [Proxy Consumer](components/consumer.md) - LLM trace queue consumer and trace builder
+- [Agent Ingest](components/agent-ingest.md) - Collector credential auth, validation, session claims, and queue enqueue
+- [Agent Consumer](components/agent-consumer.md) - Agent fact pricing, dedupe, and Tinybird writes
 - [API](components/api.md) - Body retrieval service
 - [Web](components/web.md) - Dashboard frontend
 - [Convex](components/convex.md) - Backend services

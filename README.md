@@ -4,10 +4,12 @@ LLM request proxy and analytics platform built on Cloudflare Workers.
 
 ## Architecture
 
-This monorepo contains four Cloudflare Workers:
+The primary observability runtime contains six Cloudflare Workers across two ingestion paths:
 
 - **Proxy** (`apps/proxy`) - LLM request proxy that logs requests and enqueues them for processing
-- **Proxy Consumer** (`apps/proxy-consumer`) - Queue consumer that writes traces to Tinybird and stores bodies in R2
+- **Proxy Consumer** (`apps/proxy-consumer`) - Queue consumer that writes LLM traces to Tinybird
+- **Agent Ingest** (`apps/agent-ingest`) - Collector intake worker for local AI-agent transcript facts
+- **Agent Consumer** (`apps/agent-consumer`) - Queue consumer that prices and writes agent facts to Tinybird
 - **API** (`apps/api`) - Provides R2 access for fetching request/response bodies
 - **Web** (`apps/web`) - Next.js analytics dashboard (Cloudflare Workers via OpenNext)
 
@@ -19,7 +21,19 @@ When a client sends a request to your LLM API endpoint, the Cloudflare Worker ac
 
 While streaming the response, the Worker accumulates the necessary observability metadata, such as timing, request/response bodies, and trace context. Once the response is fully streamed, the Worker asynchronously sends this metadata and trace data to a Cloudflare Queue. This ensures that the user-facing proxy remains fast and that any downstream processing does not block the user experience.
 
-The Cloudflare Queue acts as a buffer and decouples the ingestion workload from the rest of the pipeline. A consumer Worker processes messages from the queue, handling retries and error cases as needed. This consumer is responsible for writing the finalized trace, request, and response metadata into ClickHouse for long-term storage and analytics.
+The Cloudflare Queue acts as a buffer and decouples the ingestion workload from the rest of the pipeline. The Proxy Consumer processes messages from the queue, handling retries and error cases as needed. This worker is responsible for writing the finalized trace, request, and response metadata into ClickHouse for long-term storage and analytics.
+
+Agent Conversation Analytics uses a separate Collector path. The local collector in the CLI or desktop
+app parses supported agent transcripts into typed facts, authenticates with a hidden Collector
+Credential, and posts to the Agent Ingest Worker. Agent Ingest validates the credential, checks
+collector compatibility, rate-limits by organization, re-redacts free-text fields, claims session
+ownership in Convex, and chunks facts onto the agent queue. Agent Consumer drains that queue, prices
+message facts from the shared model-pricing KV catalog, dedupes through the `AGENT_FACT_BATCHER`
+Durable Object ledger, and writes the `agent_*` Tinybird datasources used by `/app/agents`.
+
+Agent analytics is still not production-ready until the production gates in
+[docs/guides/agent-conversation-analytics](./docs/guides/agent-conversation-analytics/README.md)
+are complete.
 
 ### Key Features
 
@@ -44,12 +58,18 @@ The platform includes several production-ready capabilities:
 trace-flow/
 ├── packages/
 │   ├── types/               # Shared TypeScript types
-│   └── utils/               # Shared utilities
+│   ├── utils/               # Shared utilities
+│   └── collector-*          # Shared Rust collector crates
 └── apps/
     ├── proxy/               # LLM proxy worker
     ├── proxy-consumer/      # Queue consumer worker
+    ├── agent-ingest/        # Agent collector ingest worker
+    ├── agent-consumer/      # Agent fact queue consumer worker
     ├── api/                 # API worker for R2 body access
-    └── web/                 # Next.js dashboard (Cloudflare Workers via OpenNext)
+    ├── mcp/                 # MCP worker for agent access to trace data
+    ├── web/                 # Next.js dashboard (Cloudflare Workers via OpenNext)
+    ├── cli/                 # Collector CLI
+    └── desktop/             # Tauri desktop collector
 ```
 
 ## Setup
@@ -132,16 +152,18 @@ its HTTP API, but `scripts/dev/start.sh` discovers or generates that local token
 
 `scripts/dev/smoke.sh` seeds a local API key, posts an OTLP trace through the local Worker stack, and
 queries Tinybird for the captured trace. It will start `scripts/dev/workers.sh` for the run when the
-Worker server is not already listening on port 8787.
+Worker server is not already listening on port 8787. Agent-ingest production verification uses the
+separate smoke harness in
+[docs/guides/agent-conversation-analytics/runbook.md](./docs/guides/agent-conversation-analytics/runbook.md).
 
 See [docs/agents/local-environment.md](./docs/agents/local-environment.md) for the full contract.
 
 ### Full Local Stack (Recommended)
 
-Run all workers together with shared R2 storage:
+Run the five non-Web Workers together with shared local R2, queues, KV, and Durable Objects:
 
 ```bash
-# Terminal 1: All workers with shared R2
+# Terminal 1: Proxy, Proxy Consumer, API, Agent Ingest, Agent Consumer
 bun run dev:all
 
 # Terminal 2: Convex backend (watch mode)
@@ -151,15 +173,22 @@ bunx convex dev
 cd apps/web && bun run dev
 ```
 
-### Running Proxy + Consumer + API Together
+### Running Workers Together
 
-To test the complete message flow from proxy → queue → consumer locally:
+To test Worker-to-Worker bindings locally without the helper script:
 
 ```bash
-wrangler dev -c apps/proxy/wrangler.toml -c apps/proxy-consumer/wrangler.toml -c apps/api/wrangler.toml --persist-to .wrangler/state
+wrangler dev \
+  -c apps/proxy/wrangler.toml \
+  -c apps/proxy-consumer/wrangler.toml \
+  -c apps/api/wrangler.toml \
+  -c apps/agent-ingest/wrangler.jsonc \
+  -c apps/agent-consumer/wrangler.jsonc \
+  --persist-to .wrangler/state
 ```
 
-This runs all workers in a single process with shared local R2 bucket and queue.
+This runs the proxy and agent ingestion paths in one process so local queues and storage bindings are
+shared.
 
 ### Running Web Worker
 
@@ -192,11 +221,17 @@ You can also run workers separately:
 # Proxy only
 cd apps/proxy && bun run dev
 
-# Consumer only
+# Proxy Consumer only
 cd apps/proxy-consumer && bun run dev
 
 # API only
 cd apps/api && bun run dev
+
+# Agent Ingest only
+cd apps/agent-ingest && bun run dev
+
+# Agent Consumer only
+cd apps/agent-consumer && bun run dev
 
 # Web only (still requires Convex)
 cd apps/web && bun run dev
@@ -217,8 +252,9 @@ bun run build
 Production deployments are automated via GitHub Actions. When code is merged to `main`, the workflow:
 
 1. Runs CI checks (format, lint, type-check, test, build)
-2. Deploys Convex backend
-3. Deploys all Cloudflare Workers in parallel (proxy, proxy-consumer, api, web)
+2. Deploys Convex and builds Web together, so `NEXT_PUBLIC_CONVEX_URL` is baked into the OpenNext build
+3. Deploys the Tinybird schema before the proxy and agent consumers
+4. Deploys Cloudflare Workers with dependency ordering: proxy, proxy-consumer, API, MCP, Web, Agent Ingest, and Agent Consumer
 
 See `.github/workflows/deploy.yml` for the full workflow.
 
@@ -249,10 +285,11 @@ Before deploying, you need to create Cloudflare resources.
 
 Quick overview:
 
-1. **Queues** - `trace-flow-requests-dev`/`trace-flow-requests-prod` and DLQ queues
-2. **R2 Bucket** - `trace-flow-storage-dev`/`trace-flow-storage-prod` for storing request/response bodies
-3. **KV Namespace** - `trace-flow-api-keys-dev`/`trace-flow-api-keys-prod` for API key validation
-4. **Tinybird** - Configure token and datasource for trace storage
+1. **Queues** - `trace-flow-requests-*` for LLM traces and `agent-ingest-*` for agent facts, each with DLQs
+2. **R2 Bucket** - `trace-flow-storage-*` for encrypted request/response bodies
+3. **KV Namespaces** - API keys, model pricing, and Collector Credential lookup
+4. **Durable Objects** - usage tracking, trace batching, and agent fact dedupe
+5. **Tinybird** - trace and agent datasources, materializations, pipes, and JWT-scoped reads
 
 ## Tech Stack
 

@@ -29,8 +29,11 @@ For agent workflow or Linear work, also read:
 | `apps/proxy-consumer` | Queue consumer and durable batching for trace ingestion into Tinybird.                    | Queue delivery, OpenTelemetry rows, Tinybird writes, batch retries, DLQ behavior. |
 | `apps/api`            | Authenticated API for body retrieval and scoped data access.                              | R2 body reads, API auth, JWT boundaries, dashboard API calls.                     |
 | `apps/web`            | Next.js dashboard on OpenNext/Workers.                                                    | UI, routes, dashboard data views, auth UX, docs pages.                            |
+| `apps/mcp`            | Cloudflare Worker MCP server for agent access to trace data.                              | MCP auth, tool calls, trace-read integration.                                     |
 | `apps/agent-ingest`   | Agent conversation ingest worker.                                                         | Local agent transcript upload, ingest validation, queue enqueue.                  |
 | `apps/agent-consumer` | Agent conversation queue consumer.                                                        | Agent analytics rows, pricing, transcript fact processing.                        |
+| `apps/cli`            | User-facing collector CLI.                                                                | Login, source listing, sync, status, disconnect, release packaging.               |
+| `apps/desktop`        | Tauri desktop collector.                                                                  | Tray UX, keychain storage, first-egress gate, desktop sync loop, autostart.       |
 
 ## Shared Packages
 

@@ -2,7 +2,7 @@
 
 ## Problem
 
-API keys are passed as parameters to Tinybird queries via JWT tokens. The keys are joined into a comma-separated string in `convex/tinybird.ts` and passed to Tinybird's `fixed_params.api_keys`. If a malicious API key value contains SQL metacharacters, it could potentially inject SQL into Tinybird queries.
+API keys are passed as parameters to Tinybird queries via JWT tokens. The keys are joined into a comma-separated string in `packages/convex/integrations/tinybird.ts` and passed to Tinybird's `fixed_params.api_keys`. If a malicious API key value contains SQL metacharacters, it could potentially inject SQL into Tinybird queries.
 
 ## Current Flow
 
@@ -10,6 +10,10 @@ API keys are passed as parameters to Tinybird queries via JWT tokens. The keys a
 2. `packages/convex/integrations/tinybird.ts` fetches keys via `listForUser`, sanitizes UUID-shaped values, and joins them for `fixed_params.api_keys`
 3. JWT token includes `fixed_params: { api_keys: 'key1,key2,key3' }`
 4. Tinybird pipes use: `WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})`
+
+Agent analytics does not use this API-key path. Collector uploads authenticate with hidden Collector
+Credentials, and agent Tinybird pipes use `fixed_params.org_id`. Collector Credential IDs and secrets
+must never be added to `fixed_params.api_keys` or API-key dashboard filters.
 
 ## Risk Assessment
 
@@ -21,7 +25,7 @@ API keys are passed as parameters to Tinybird queries via JWT tokens. The keys a
 
 ### 1. API Key Validation at Creation
 
-**File**: `convex/apiKeys.ts`
+**File**: `packages/convex/apiKeys.ts`
 
 Add validation when creating/updating API keys:
 
@@ -72,6 +76,7 @@ Audit all Tinybird pipes to ensure they use parameterized queries properly:
 - `pipes/traces_list.pipe`
 - `pipes/trace_detail.pipe`
 - `pipes/llm_usage_*.pipe`
+- `pipes/agent_*.pipe` for the opposite invariant: they must filter by `org_id`, not `api_keys`
 
 Current pattern (safe when combined with sanitization):
 
@@ -118,6 +123,7 @@ describe('API Key Validation', () => {
 - [ ] API key creation validates against allowed character set
 - [ ] Token generation sanitizes all keys before inclusion
 - [ ] All Tinybird pipes audited and documented
+- [ ] Agent Tinybird pipes filter by `org_id` and never by Collector Credential or API key identity
 - [ ] Unit tests for validation and sanitization
 - [ ] Integration tests for end-to-end flow
 - [ ] Migration plan for existing data

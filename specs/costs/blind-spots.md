@@ -2,6 +2,11 @@
 
 Last updated: 2026-03-06. Based on codebase audit of all workers, Convex functions, and Tinybird config.
 
+> **Status:** This is a legacy audit. It predates the agent ingest/consumer pipeline and some current
+> body-storage changes. The body-read section has been updated, but the scale tables still need a
+> full refresh before business planning. Scale tables below still use the old two-object R2 body
+> model.
+
 The cost model in `cost-analysis.md` is directionally correct but has gaps that could cause surprises at scale. This document ranks them by severity and estimated impact.
 
 ---
@@ -127,7 +132,7 @@ Rough distribution:
 | Sentry Team                                    |                    | $26          |
 | Domain                                         |                    | $1           |
 | **Variable**                                   |                    |              |
-| R2 PUTs (500M ops)                             | 250M × 2 × $4.50/M | $2,250       |
+| R2 PUTs (500M legacy ops)                      | 250M × 2 × $4.50/M | $2,250       |
 | DO SQLite Writes (750M rows)                   | 250M × 3 × $1.00/M | $750         |
 | KV Reads (750M)                                | 250M × 3 × $0.50/M | $375         |
 | Queue Ops (500M)                               | 250M × 2 × $0.40/M | $200         |
@@ -244,7 +249,7 @@ Dev 0.25 includes **150 vCPU-hours/mo** (baseline 0.25 vCPU × 720 hrs = 180 the
 
 If vCPU-hours become tight (which would manifest as slower query response times), upgrading to Dev 0.5 ($49/mo, 300 vCPU-hrs) gives 2x headroom. You'd likely stay on Dev 0.5 well beyond $30K MRR.
 
-**The real cost scaling pain is Cloudflare, not Tinybird:** R2 PUTs ($2,250/mo), DO SQLite writes ($750/mo), and KV reads ($375/mo) together are ~$3,375/mo at $30K MRR. Tinybird is ~$30-50/mo. The ratio is roughly **100:1 Cloudflare vs Tinybird**.
+**The real cost scaling pain is Cloudflare, not Tinybird in this legacy model:** R2 PUTs ($2,250/mo), DO SQLite writes ($750/mo), and KV reads ($375/mo) together are ~$3,375/mo at $30K MRR. Tinybird is ~$30-50/mo. The ratio is roughly **100:1 Cloudflare vs Tinybird**.
 
 ---
 
@@ -296,7 +301,7 @@ This is NOT per-trace (the DO batches to 60-second intervals), so the impact is 
 **Model assumes:** Part of "dashboard cost is negligible"
 **Reality:** Each new browser session generates a Convex action call per Tinybird pipe
 
-`generateToken` in `packages/convex/tinybird.ts` is a Convex **action** (more expensive than queries). Token cache (`apps/web/src/lib/tinybird.ts`) is:
+`generateToken` in `packages/convex/integrations/tinybird.ts` is a Convex **action** (more expensive than queries). Token cache (`apps/web/src/lib/tinybird.ts`) is:
 
 - Per-pipe, per-browser-session
 - TTL: 9 minutes (tokens expire at 10 min)
@@ -311,20 +316,21 @@ At 100 DAU × 5 sessions/day × ~3 token generations each = 1,500 action calls/d
 ## MEDIUM: API Worker Body Fetch Costs (Dashboard Usage)
 
 **Model assumes:** Dashboard R2 GETs at ~$0.36/M
-**Reality:** 3 R2 GETs per body fetch (checking pro/hobby/legacy key paths) + 2 KV reads
+**Reality:** 1 R2 GET per body fetch for the combined `bodies/{requestId}` object + 2 KV reads
 
 When a user clicks to view a trace body in the dashboard:
 
 1. API worker validates auth: 2 KV reads (`user-org:{userSub}` + `sub:{orgId}`)
-2. Fetches body: 3 parallel R2 GETs (`requests/pro/{id}`, `requests/hobby/{id}`, `requests/{id}`)
+2. Fetches body: 1 R2 GET (`bodies/{requestId}`)
 
-The 3-GET pattern exists to handle tier prefix migration and legacy format (`apps/api/src/index.ts`).
+The previous 3-GET pattern handled tier prefix migration. The current API Worker reads the combined
+object format and applies tier visibility on read.
 
 **Impact:** If 50 Pro users each view 20 trace bodies/day:
 
-- R2 GETs: 50 × 20 × 3 × 2 (request + response) = 6,000 GETs/day = 180K/mo = $0.06/mo
+- R2 GETs: 50 × 20 × 1 = 1,000 GETs/day = 30K/mo = $0.01/mo
 - KV reads: 50 × 20 × 2 = 2,000/day = 60K/mo = $0.03/mo
-- Negligible in isolation, but the 3x GET multiplier is worth knowing about
+- Negligible in isolation, but body-viewer usage can still create concentrated API Worker and R2 read bursts
 
 ---
 
@@ -373,7 +379,7 @@ Under normal conditions, cache hit rates are 80-90%. During traffic spikes or de
 
 | Component            | Original Model | Adjusted Estimate | Delta                   |
 | -------------------- | -------------- | ----------------- | ----------------------- |
-| R2 PUTs (per trace)  | $0.0000090     | $0.0000090        | 0% (confirmed)          |
+| R2 PUTs (per trace)  | $0.0000090     | $0.0000090        | 0% (legacy model)       |
 | DO SQLite writes     | $0.0000030     | $0.0000030        | 0% (confirmed)          |
 | KV reads (per trace) | $0.0000015     | $0.0000015        | 0% (cache math holds)   |
 | Queue ops            | $0.0000008     | $0.0000008        | 0% (confirmed)          |
@@ -382,18 +388,18 @@ Under normal conditions, cache hit rates are 80-90%. During traffic spikes or de
 | Workers              | $0.0000003     | $0.0000003        | 0%                      |
 | **Total per trace**  | **$0.0000150** | **$0.0000159**    | **+6%**                 |
 
-The per-trace cost increase is modest (~6%) because the dominant cost (R2 PUTs at 60%) is confirmed accurate. The Tinybird storage increase matters more at scale and with longer retention.
+The per-trace cost increase is modest (~6%) inside the legacy two-object body model because R2 PUTs remain the dominant modeled cost. The current single-object body path needs a full refresh before these percentages are used for planning.
 
 **The real risks are not per-trace costs but Cloudflare operational costs:**
 
-| Risk                            | When It Bites                         | Estimated Impact                    |
-| ------------------------------- | ------------------------------------- | ----------------------------------- |
-| **R2 PUTs dominate cost**       | Always — 60% of per-trace cost        | $2,250/mo at $30K MRR               |
-| **DO SQLite writes scale fast** | Always — 2nd largest cost component   | $750/mo at $30K MRR                 |
-| R2 body sizes unknown           | Until measured in production          | Storage costs could be 1-5× modeled |
-| Agentic trace storage bloat     | Users with heavy tool-use workflows   | 2-3× Tinybird storage costs         |
-| Tinybird QPS (without caching)  | >2 concurrent dashboard loads         | Solved with server-side caching     |
-| Convex reactive re-runs         | Many open dashboards during ingestion | Negligible cost, but wasted compute |
+| Risk                             | When It Bites                         | Estimated Impact                    |
+| -------------------------------- | ------------------------------------- | ----------------------------------- |
+| **R2 PUTs dominate legacy cost** | Legacy model: 60% of per-trace cost   | $2,250/mo at $30K MRR               |
+| **DO SQLite writes scale fast**  | Always — 2nd largest cost component   | $750/mo at $30K MRR                 |
+| R2 body sizes unknown            | Until measured in production          | Storage costs could be 1-5× modeled |
+| Agentic trace storage bloat      | Users with heavy tool-use workflows   | 2-3× Tinybird storage costs         |
+| Tinybird QPS (without caching)   | >2 concurrent dashboard loads         | Solved with server-side caching     |
+| Convex reactive re-runs          | Many open dashboards during ingestion | Negligible cost, but wasted compute |
 
 **Key insight: Tinybird is NOT the scaling bottleneck.** At $30K MRR, Tinybird costs ~$30-50/mo while Cloudflare costs ~$3,375/mo. The 100:1 ratio means optimization effort should focus on Cloudflare (R2 write batching, DO consolidation) not Tinybird.
 
@@ -404,7 +410,7 @@ The per-trace cost increase is modest (~6%) because the dominant cost (R2 PUTs a
 ### Before Launch
 
 1. **Add Tinybird query result caching** — Server-side cache for Usage dashboard queries (60s TTL). Eliminates N× query multiplication across users viewing the same org.
-2. **Consolidate API worker R2 lookups** — Store tier prefix in trace metadata so the API worker can do 1 GET instead of 3.
+2. **Keep API worker body reads consolidated** — the current `bodies/{requestId}` object avoids the old multi-prefix lookup pattern.
 
 ### After Launch (Monitor First)
 

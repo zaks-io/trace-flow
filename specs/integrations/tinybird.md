@@ -1,210 +1,167 @@
 # Tinybird Integration
 
-Trace Flow uses Tinybird as its managed ClickHouse database for trace storage and real-time analytics. This document covers the datasource schema, materialized views, pipes, and authentication patterns.
+Trace Flow uses Tinybird as the ClickHouse-backed analytics data plane. Tinybird stores two
+independent product paths:
 
-## Datasource: otel_trace_spans
+- proxied LLM traces and LLM usage
+- Agent Conversation Analytics facts, rollups, and read models
 
-The primary datasource stores OpenTelemetry-formatted spans. See `datasources/otel_trace_spans.datasource`.
+Convex signs short-lived Tinybird JWTs for read access. Workers use append-only tokens for writes.
+Clients never receive Tinybird admin or append tokens.
 
-```sql
-SCHEMA >
-    ReceivedAt Int64,           -- Nanoseconds timestamp for partitioning
-    Timestamp Int64,            -- Span start time (nanoseconds)
-    TraceId String,
-    SpanId String,
-    ParentSpanId String,
-    TraceState String,
-    SpanName LowCardinality(String),
-    SpanKind LowCardinality(String),
-    ServiceName LowCardinality(String),
-    ResourceAttributes String,  -- JSON blob
-    SpanAttributes String,      -- JSON blob with gen_ai.* attributes
-    Duration Int64,             -- Nanoseconds
-    StatusCode LowCardinality(String),
-    StatusMessage String,
-    ApiKey LowCardinality(String),
-    Events.Timestamp Array(Int64),
-    Events.Name Array(String),
-    Events.Attributes Array(String),
-    Links.TraceId Array(String),
-    Links.SpanId Array(String),
-    Links.TraceState Array(String),
-    Links.Attributes Array(String)
+## Project Layout
 
-ENGINE MergeTree
-ENGINE_SORTING_KEY ApiKey, ReceivedAt, TraceId, SpanId
-ENGINE_PARTITION_KEY toYYYYMMDD(toDateTime(ReceivedAt / 1000000000))
-ENGINE_TTL toDateTime(RetentionExpiresAt / 1000000000) + INTERVAL 0 DAY
-```
+| Path                               | Purpose                                                |
+| ---------------------------------- | ------------------------------------------------------ |
+| `datasources/`                     | ClickHouse tables and materialized target datasources  |
+| `materializations/`                | materialized-view pipes that write derived datasources |
+| `pipes/`                           | parameterized read endpoints used by Web and MCP       |
+| `tests/`                           | Tinybird Local endpoint fixtures                       |
+| `scripts/check-tinybird.sh`        | local schema validation helper                         |
+| `scripts/deploy-agent-tinybird.sh` | production-safe deploy helper                          |
 
-**Design decisions:**
+## Trace Storage
 
-- `ApiKey` first in sorting key for tenant-filtered reads
-- `ReceivedAt` second for time-range queries inside a tenant
-- `LowCardinality` on enum-like fields for compression
-- 90-day TTL balances storage costs with retention needs
-- JSON blobs for `SpanAttributes` enable flexible schema evolution
+`otel_trace_spans` is the raw OpenTelemetry span datasource written by the Proxy Consumer. It stores
+span identity, attributes, events, links, duration, status, `ApiKey`, and retention metadata.
 
-## Materialization: otel_genai_spans
+Derived trace/LLM tables:
 
-Extracts GenAI semantic convention attributes into indexed columns. See
-`datasources/otel_genai_spans.datasource` and
-`materializations/materialize_otel_genai_spans.pipe`.
+- `otel_genai_spans`
+- `llm_request_facts`
+- `llm_usage_hourly`
+- `llm_usage_daily`
+- `llm_usage_monthly`
+- `trace_filter_options`
 
-```sql
-SELECT
-    -- All base columns from otel_trace_spans, plus:
-    JSONExtractString(SpanAttributes, 'gen_ai.operation.name') AS OperationName,
-    JSONExtractString(SpanAttributes, 'gen_ai.system') AS Provider,
-    JSONExtractString(SpanAttributes, 'gen_ai.request.model') AS Model
-FROM otel_trace_spans
-```
+Representative trace pipes:
 
-This enables efficient filtering on provider and model without JSON parsing at query time.
+- `traces_summary`
+- `traces_list`
+- `traces_grouped`
+- `trace_detail`
+- `llm_usage_summary`
+- `llm_usage_timeseries`
+- `llm_usage_by_model`
+- `llm_usage_by_provider`
+- `llm_usage_by_api_key`
+- `operations_leaderboard`
 
-## Pipes
+Trace and LLM usage reads are scoped by `fixed_params.api_keys` plus `retention_days`.
 
-Pipes are parameterized SQL endpoints. All dashboard queries use pipes with JWT-enforced `api_keys` parameter.
+## Agent Analytics Storage
 
-### traces_summary
+Agent facts are separate from proxy spans. They are org-scoped, not API-key-scoped, because Collector
+Credentials are hidden ingest credentials and should not become read-side identity.
 
-Dashboard statistics aggregated across all traces for a user's API keys.
+Base fact datasources:
 
-```sql
-SELECT
-    countIf(ParentSpanId = '') as total_requests,
-    avgIf(Duration, ParentSpanId = '') / 1000000 as avg_duration_ms,
-    countIf(StatusCode = 'STATUS_CODE_ERROR' AND ParentSpanId = '') * 100.0 /
-        nullIf(countIf(ParentSpanId = ''), 0) as error_rate_percent,
-    sumIf(JSONExtractInt(SpanAttributes, 'gen_ai.usage.input_tokens'), ParentSpanId = '') as total_input_tokens
-FROM otel_trace_spans
-WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
-    AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
-```
+- `agent_message_facts`
+- `agent_tool_event_facts`
+- `agent_file_event_facts`
+- `agent_capability_snapshot_facts`
+- `agent_pull_request_facts`
 
-### traces_list
+Derived agent datasources:
 
-Paginated trace list with filtering. Supports `provider`, `model`, `status`, and `search` parameters.
+- `agent_session_summaries`
+- `agent_usage_hourly`
+- `agent_usage_daily`
+- `agent_tool_usage_hourly`
+- `agent_tool_usage_daily`
+- `agent_repositories`
 
-### traces_grouped
+Representative agent pipes:
 
-Aggregated trace view showing total duration, token counts, and error counts per trace.
+- `agent_usage_summary`
+- `agent_usage_timeseries`
+- `agent_usage_breakdown`
+- `agent_sessions_browser`
+- `agent_failure_leaderboard`
+- `agent_tool_period_delta`
+- `agent_repo_directory`
+- `agent_priced_usage`
+- `agent_priced_coverage`
 
-### trace_detail
+Agent analytics reads are scoped by `fixed_params.org_id`. Agent pipes must not use
+`fixed_params.api_keys`, Collector Credential IDs, or local collector identity as the tenant filter.
 
-Single trace fetch returning all spans for a given `TraceId`.
+## Write Paths
 
-## LLM Usage Rollups
+### Proxy Consumer
 
-We maintain a request-level fact table and time-bucketed rollups for high-volume token and cost analytics:
+`apps/proxy-consumer` writes `otel_trace_spans` through the shared Tinybird client after `TraceBatcher`
+flushes accumulated spans. Its Worker token only needs append access to the configured trace
+datasource.
 
-- `llm_request_facts` stores one row per proxy request span with extracted token and cost metrics.
-- `llm_usage_hourly`, `llm_usage_daily`, `llm_usage_monthly` store hourly/daily/monthly rollups using `AggregatingMergeTree`.
+### Agent Consumer
 
-Pipes used by the dashboard:
+`apps/agent-consumer` drains `agent-ingest-*`, prices message facts, dedupes through
+`AGENT_FACT_BATCHER`, and writes rows to the base `agent_*` fact datasources. Materialized views build
+session, usage, tool, and repository read models.
 
-- `llm_usage_summary` totals for a time range (requests, tokens by type, total cost).
-- `llm_usage_timeseries` time series for charts (auto-selects hourly/daily/monthly rollups).
-- `llm_usage_by_model` and `llm_usage_by_provider` for breakdowns.
-
-### Backfill Strategy
-
-To backfill historical data without double-counting:
-
-1. Deploy the new datasources and materialized view pipes.
-2. Choose a cutover timestamp (typically now minus ~1 hour to cover queue delay).
-3. Run the helper script to populate only historical data before the cutover:
-
-```bash
-./scripts/backfill-llm-usage.sh 2026-01-25T00:00:00Z
-```
-
-4. Validate counts by comparing `llm_usage_summary` against `traces_summary` for the same range.
+The collector does not write Tinybird directly and never receives a Tinybird token.
 
 ## JWT Authentication
 
-Frontend clients authenticate to Tinybird using short-lived JWTs generated by Convex. See `packages/convex/tinybird.ts`.
+Frontend and MCP reads use short-lived JWTs generated by Convex in
+`packages/convex/integrations/tinybird.ts`.
 
-**Token generation flow:**
+Token flow:
 
-1. Frontend calls Convex action `api.tinybird.generateToken`
-2. Convex fetches user's API keys and creates scoped JWT
-3. JWT includes `fixed_params.api_keys` for row-level security
-4. Frontend calls Tinybird API directly with JWT
+1. The caller asks Convex for a token for a specific pipe.
+2. Convex resolves the authenticated user's organization and API keys.
+3. Convex signs a Tinybird JWT with an explicit scope for the requested pipe.
+4. Convex stamps fixed parameters onto every scope:
+   - `api_keys` and `retention_days` for LLM trace/usage pipes
+   - `org_id` for agent pipes
+5. The caller invokes Tinybird directly with the short-lived JWT.
 
-```typescript
-const payload = {
-  workspace_id: process.env.TINYBIRD_WORKSPACE_ID,
-  name: `convex_jwt_${Date.now()}`,
-  scopes: [
-    {
-      type: 'PIPES:READ',
-      resource: 'traces_summary',
-      fixed_params: { api_keys: 'key1,key2,key3' },
-    },
-  ],
-};
+Security properties:
 
-const token = await new SignJWT(payload)
-  .setProtectedHeader({ alg: 'HS256' })
-  .setExpirationTime(Math.floor(Date.now() / 1000) + 600)
-  .sign(secret);
-```
-
-**Security properties:**
-
-- 10-minute TTL (configurable)
-- Scopes limit access to specific pipes
-- `fixed_params` enforces API key filtering at Tinybird layer
-- Admin token never exposed to frontend
-
-## Data Ingestion
-
-The consumer worker sends traces to Tinybird via the Events API. See `apps/proxy-consumer/src/tinybird.ts`.
-
-```typescript
-const url = `${host}/v0/events?name=${datasource}`;
-const body = traces.map((t) => JSON.stringify(t)).join('\n');
-
-await fetch(url, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${tinybirdToken}`,
-  },
-  body,
-});
-```
-
-Ingestion uses exponential backoff (1s, 2s, 4s) with jitter for resilience.
+- the Tinybird admin token stays only in Convex
+- append tokens stay only in consumer Workers
+- JWTs expire quickly
+- sentinels are used for empty key/org states instead of omitting fixed params
+- agent analytics cannot be read through API-key filters
 
 ## Local Development
 
-```bash
-# Start local Tinybird environment
-tb local start
-
-# Enable auto-reload during development
-tb dev
-
-# Check local datasource
-tb datasource data otel_trace_spans --limit 10
-```
-
-Create `apps/proxy-consumer/.dev.vars`:
+The local scripts own Tinybird Local setup:
 
 ```bash
-TINYBIRD_HOST=http://localhost:7181
-TINYBIRD_TOKEN=<token from tb local status>
-TINYBIRD_DATASOURCE=otel_trace_spans
+scripts/dev/start.sh
+tb build
+tb test run
 ```
+
+`scripts/dev/start.sh` discovers or creates the local Tinybird workspace token and writes ignored
+local runtime files. `scripts/dev/verify.sh` runs `tb build` and `tb test run` unless
+`TRACE_FLOW_SKIP_TINYBIRD=1` is set.
+
+## Production Deployment
+
+`.github/workflows/deploy.yml` deploys Tinybird schema before consumer Workers:
+
+1. CI validates the local Tinybird project.
+2. `deploy-tinybird-schema` runs `scripts/deploy-agent-tinybird.sh` against `trace_flow_prod`.
+3. `deploy-proxy-consumer` and `deploy-agent-consumer` depend on the schema deploy.
+
+This ordering prevents consumers from writing a row shape the live workspace cannot accept.
+
+Destructive cleanup of legacy Tinybird resources is a separate explicit operation. Do not use
+destructive deploy flags in the normal production workflow.
 
 ## Quarantine
 
-Rows that don't match the datasource schema are automatically sent to `otel_traces_quarantine`. Monitor this after deployments:
+Every datasource has a quarantine table. Treat quarantine rows as schema or contract failures, not
+normal backpressure.
+
+Check after schema or consumer changes:
 
 ```bash
-tb datasource data otel_traces_quarantine --limit 10
+tb datasource data <datasource>_quarantine --limit 10
 ```
 
-Common causes: missing required fields, type mismatches, malformed JSON in attribute blobs.
+For production agent pipeline checks and smoke-test rules, use
+`docs/guides/agent-conversation-analytics/runbook.md`.

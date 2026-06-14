@@ -1,10 +1,10 @@
-# Consumer Worker
+# Proxy Consumer Worker
 
-The Consumer Worker processes queue messages from the proxy, transforms them into OpenTelemetry traces, and sends them to Tinybird for storage. It uses Durable Objects to batch writes, reducing the number of API calls to Tinybird.
+The Proxy Consumer Worker processes queue messages from the proxy, transforms them into OpenTelemetry traces, and sends them to Tinybird for storage. It uses Durable Objects to batch writes, reducing the number of API calls to Tinybird.
 
 ## What It Does
 
-The consumer receives batches of queue messages, extracts or builds trace data, shards messages by API key, and sends them to TraceBatcher Durable Objects. These Durable Objects accumulate traces and flush them to Tinybird in optimized batches.
+The proxy consumer receives batches of queue messages, extracts or builds trace data, shards messages by API key, and sends them to TraceBatcher Durable Objects. These Durable Objects accumulate traces and flush them to Tinybird in optimized batches.
 
 ## Queue Processing
 

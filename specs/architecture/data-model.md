@@ -169,6 +169,46 @@ Span events capture significant moments within a span:
 | `output.thinking`            | Reasoning content            |
 | `output.tool_use`            | Tool call generated          |
 
+## Tinybird (Agent Analytics Storage)
+
+Agent Conversation Analytics uses separate typed datasources. Agent conversations are not proxied LLM requests, so they are not forced through `otel_trace_spans`.
+
+### Base Fact Tables
+
+The agent consumer writes five base fact tables:
+
+| Datasource                        | Grain                                           | Purpose                                                               |
+| --------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------- |
+| `agent_message_facts`             | one agent message or model-call turn            | Tokens, model labels, coverage, estimated cost                        |
+| `agent_tool_event_facts`          | one reconciled tool invocation                  | Tool names, command families, status, duration, redacted excerpts     |
+| `agent_file_event_facts`          | one repo-relative file touch                    | File attention and hotspots without absolute local paths              |
+| `agent_capability_snapshot_facts` | one conversation-visible capability observation | Privacy-safe counts and hashes for later context-surface analysis     |
+| `agent_pull_request_facts`        | one canonical Pull Request link observation     | Passive PR attribution evidence without local GitHub or provider auth |
+
+The ingest worker stamps `OrgId`, `UserId`, `collector_id`, stable `session_pk`, row `*_pk`, and `repo_fingerprint` before enqueueing. The collector sends source-visible IDs and parsed facts only; it never sends trusted tenancy, final primary keys, or cost.
+
+### Agent Serving Tables
+
+Derived tables keep dashboard and MCP reads bounded:
+
+| Datasource                           | Grain                                | Purpose                                           |
+| ------------------------------------ | ------------------------------------ | ------------------------------------------------- |
+| `agent_session_summaries`            | one Agent Session                    | Session outliers, cost totals, duration, coverage |
+| `agent_usage_hourly` / `_daily`      | time bucket by org/source/repo/model | Cost, token, cache, message, and session trends   |
+| `agent_tool_usage_hourly` / `_daily` | time bucket by org/source/repo/tool  | Tool mix and failure-rate trends                  |
+| `agent_repositories`                 | one normalized repo identity         | Repo lookup and filter support                    |
+
+ADR 0019 adds the next derived signal layer (`agent_session_signals`, file-attention signals, repo rollups, and daily baselines). Product endpoints should read bounded serving models instead of broad raw fact scans.
+
+### Agent Schema Decisions
+
+- Agent fact tables use stable source-derived identities so duplicate collector uploads do not inflate counts.
+- `AGENT_FACT_BATCHER` keeps a Durable Object SQLite ledger keyed by `(OrgId, fact type, fact id)`. Exact duplicates are skipped; same-key changed facts become repair signals.
+- Numeric token and cache columns are non-null. Missing source data is represented by `token_coverage` and `cache_coverage`.
+- `cost_usd` is the only nullable metric column because pricing can be missing or coverage can be insufficient.
+- File paths are repo-relative or coarse categories such as `outside_repo`; no stored path should contain a home directory or username.
+- Raw transcript bundles are deferred in the current implementation. The wire contract has optional slots for them, but collector sync omits them until the R2 replay path ships.
+
 ## Convex (User/Config Storage)
 
 Convex provides real-time backend-as-a-service with strong consistency and reactive queries.
@@ -183,6 +223,9 @@ export default defineSchema({
   apiKeys: defineTable({ ... }),
   modelPricing: defineTable({ ... }),
   alerts: defineTable({ ... }),
+  collectorCredentials: defineTable({ ... }),
+  agentSessionOwners: defineTable({ ... }),
+  collectorCompatibilityPolicy: defineTable({ ... }),
   mcpSessions: defineTable({ ... }),
   mcpRefreshTokens: defineTable({ ... }),
   mcpClients: defineTable({ ... }),
@@ -240,7 +283,7 @@ modelPricing: defineTable({
   .index('by_provider_model', ['provider', 'model']);
 ```
 
-Pricing data is used by the consumer worker to calculate costs. Sources:
+Pricing data is used by the Proxy Consumer and Agent Consumer to calculate costs. Sources:
 
 - **manual**: Admin-entered pricing
 - **openrouter**: Auto-fetched from OpenRouter API
@@ -323,6 +366,39 @@ const scopesWithApiKeys = args.scopes.map((scope) => ({
 
 The sentinel value `__NO_KEYS__` prevents matching empty strings when a user has no API keys.
 
+Agent pipes also receive `org_id` as a fixed parameter. Agent rows are scoped by organization rather than by user-facing API key because Collector Credentials are not API keys and never appear in API-key filters.
+
+### Collector Credentials And Agent Ownership
+
+Collector Credentials are hidden credentials for the CLI/Desktop collector. They are separate from user-facing API keys:
+
+```typescript
+collectorCredentials: defineTable({
+  hashedSecret: v.string(),
+  orgId: v.id('organizations'),
+  userId: v.id('users'),
+  collectorId: v.string(),
+  status: v.union(v.literal('active'), v.literal('revoked')),
+  expiresAt: v.number(),
+});
+```
+
+Convex syncs active credential hashes to the `COLLECTOR_CREDS` KV namespace for Agent Ingest lookup. The plaintext secret is returned once at mint time and lives in the collector's credential store.
+
+Agent Session ownership is claimed separately:
+
+```typescript
+agentSessionOwners: defineTable({
+  orgId: v.id('organizations'),
+  sessionPk: v.string(),
+  userId: v.id('users'),
+  collectorId: v.string(),
+  claimedAt: v.number(),
+}).index('by_org_session', ['orgId', 'sessionPk']);
+```
+
+This keeps session identity stable across credential rotation while preventing the same `OrgId + session_pk` from being silently overwritten by another user.
+
 ## Query Patterns
 
 ### Time-Range Aggregation (Tinybird)
@@ -363,6 +439,18 @@ await ctx.db.insert('apiKeys', {
 });
 ```
 
+### Agent Sessions (Tinybird)
+
+```sql
+SELECT *
+FROM agent_session_summaries
+WHERE OrgId = {org_id}
+ORDER BY LastEventAt DESC
+LIMIT 100
+```
+
+Agent dashboard and MCP surfaces should prefer serving tables and bounded pipes over broad scans of base facts. Raw `agent_*_facts` reads are for diagnostics and derivation, not the default product contract.
+
 ## Data Lifecycle
 
 ### Trace Data
@@ -383,6 +471,20 @@ await ctx.db.insert('apiKeys', {
 2. **Sync**: Convex action writes to Cloudflare KV
 3. **Expiration**: Checked at proxy validation time
 4. **Deletion**: User revokes; Convex action removes from KV
+
+### Agent Facts
+
+1. **Creation**: Agent Consumer inserts via Tinybird Events API after `AGENT_FACT_BATCHER` dedupe
+2. **Retention**: Base facts and serving aggregates follow the one-year agent analytics retention model
+3. **Duplication**: Same-key same-content facts are skipped before Tinybird
+4. **Repair**: Same-key changed-content facts are recorded as repair signals for explicit rebuild paths
+
+### Collector Credentials
+
+1. **Creation**: Convex mints a hidden Collector Credential for CLI/Desktop
+2. **Sync**: Convex syncs the hashed secret to `COLLECTOR_CREDS` KV
+3. **Use**: Agent Ingest authenticates the raw secret against the hash
+4. **Revocation**: Convex marks the credential revoked and removes it from KV
 
 ## Schema Evolution
 

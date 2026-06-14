@@ -97,7 +97,8 @@ Agents should prefer local validation before asking for cloud resources:
 2. Make the code change.
 3. Run the narrowest relevant tests.
 4. Run `scripts/dev/smoke.sh` when the change touches runtime wiring, Worker bindings, queues, or
-   Tinybird ingestion.
+   Tinybird ingestion. This smoke covers the local proxy/OTLP path; production agent-ingest smoke is
+   `scripts/agent-ingest-smoke.sh` and must follow `docs/guides/agent-conversation-analytics/runbook.md`.
 5. Run `scripts/dev/verify.sh` before handing work back.
 
 Do not run deploy commands from this environment. PR previews and production deploys are separate

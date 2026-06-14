@@ -2,23 +2,27 @@
 
 The menu-bar Collector (TRA-115). A macOS Tauri v2 app that runs the same production ingest path as
 the `trace-flow` CLI: sign in via the browser device flow, store a Collector Credential in the OS
-keychain, and sync local Claude/Codex transcripts to production ingest — visible in `/app/agents`.
+keychain, and sync local Claude/Codex transcripts to production ingest, visible in `/app/agents`.
+
+The endpoint path exists, but Agent Conversation Analytics is still launch-gated by
+`docs/guides/agent-conversation-analytics/ROADMAP.md`. Treat desktop sync as under verification until
+the production smoke, dashboard truth states, signed release path, and observability gates are green.
 
 It links the shared **`collector-embedder`** crate (login, keychain, connection state, source
 detection, the sync drive loop, prod endpoint defaults), so the CLI and the desktop are one code path.
 
 ## Architecture
 
-- **Tray menu** — status, per-source file counts, Sync now / Pause, autostart, open dashboard/logs.
-- **First-run window** (`ui/`, static HTML + the global Tauri bridge) — source detection, the
+- **Tray menu** - status, per-source file counts, Sync now / Pause, autostart, open dashboard/logs.
+- **First-run window** (`ui/`, static HTML + the global Tauri bridge) - source detection, the
   raw-upload opt-in (**off by default**), and the explicit **Start syncing** egress gate.
-- **`src-tauri/src/engine.rs`** — the background sync loop. `collector-sync` is deliberately
+- **`src-tauri/src/engine.rs`** - the background sync loop. `collector-sync` is deliberately
   single-task and **not `Send`** (its cursor connection + upload concurrency live on one task), so each
-  cycle runs on a dedicated blocking thread with a current-thread runtime — exactly like the CLI's
+  cycle runs on a dedicated blocking thread with a current-thread runtime, exactly like the CLI's
   `block_on`. Only the `Send` outcome crosses back to the command loop.
-- **First-egress gate** — the engine starts **paused**. Nothing is read for upload or POSTed until the
+- **First-egress gate** - the engine starts **paused**. Nothing is read for upload or POSTed until the
   user clicks _Start syncing_. Source detection (file counts) is read-only and runs without resuming.
-- **Credential storage** — the OS keychain (via `collector-embedder::keychain`, service
+- **Credential storage** - the OS keychain (via `collector-embedder::keychain`, service
   `trace-flow-collector`). Never argv, config, or logs.
 
 ## Develop
