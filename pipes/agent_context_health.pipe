@@ -1,0 +1,268 @@
+DESCRIPTION >
+    Directional context-floor and attention-pressure metrics for agent conversations.
+    Reads the incremental context-token serving table only; raw transcript text and
+    raw message facts are not on the request path.
+
+NODE scoped_call_buckets
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        end_ms - start_ms AS span_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt,
+        greatest(1, least({{ Int64(attention_threshold_tokens, 140000) }}, 2000000)) AS attention_threshold_tokens
+    SELECT
+        if(BucketStart >= start_dt AND BucketStart < end_dt, 'current', 'prior') AS period,
+        multiIf(
+            {{ String(dimension, 'none') }} = 'source', toString(source),
+            {{ String(dimension, 'none') }} = 'model', toString(model),
+            {{ String(dimension, 'none') }} = 'repo', toString(repo_fingerprint),
+            ''
+        ) AS group_value,
+        attention_threshold_tokens,
+        session_pk,
+        context_tokens,
+        minMerge(FirstTurnIndex) AS first_turn_index,
+        sum(finalizeAggregation(CallCount)) AS call_count,
+        quantileExactMergeState(0.5)(ContextP50) AS context_p50_state,
+        quantileExactMergeState(0.9)(ContextP90) AS context_p90_state,
+        quantileExactMergeState(0.95)(ContextP95) AS context_p95_state,
+        sum(finalizeAggregation(OutputTokens)) AS output_tokens,
+        sum(finalizeAggregation(CostUsd)) AS cost_usd
+    FROM agent_context_call_buckets_hourly
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= prior_start_dt
+        AND BucketStart < end_dt
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+    GROUP BY period, group_value, attention_threshold_tokens, session_pk, context_tokens
+
+NODE call_rollups
+SQL >
+    SELECT
+        period,
+        group_value,
+        attention_threshold_tokens,
+        sum(call_count) AS model_call_count,
+        round(quantileExactMerge(0.5)(context_p50_state), 0) AS context_p50,
+        round(quantileExactMerge(0.9)(context_p90_state), 0) AS context_p90,
+        round(quantileExactMerge(0.95)(context_p95_state), 0) AS context_p95,
+        max(context_tokens) AS context_max,
+        sumIf(call_count, context_tokens > attention_threshold_tokens) AS calls_over_threshold,
+        if(
+            model_call_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(calls_over_threshold / model_call_count, 4)
+        ) AS pct_calls_over_threshold,
+        sum(toUInt64(greatest(toInt64(context_tokens) - attention_threshold_tokens, 0)) * call_count) AS context_overage_tokens,
+        round(sumIf(cost_usd, context_tokens > attention_threshold_tokens), 6) AS cost_while_over_threshold,
+        sumIf(output_tokens, context_tokens > attention_threshold_tokens) AS output_tokens_while_over_threshold
+    FROM scoped_call_buckets
+    GROUP BY period, group_value, attention_threshold_tokens
+
+NODE session_rollups
+SQL >
+    SELECT
+        period,
+        group_value,
+        attention_threshold_tokens,
+        session_pk,
+        argMin(context_tokens, first_turn_index) AS first_call_context_tokens,
+        sumIf(call_count, context_tokens > attention_threshold_tokens) AS calls_over_threshold
+    FROM scoped_call_buckets
+    GROUP BY period, group_value, attention_threshold_tokens, session_pk
+
+NODE session_aggregate
+SQL >
+    SELECT
+        period,
+        group_value,
+        attention_threshold_tokens,
+        count() AS session_count,
+        round(quantileExact(0.5)(first_call_context_tokens), 0) AS first_call_context_p50,
+        countIf(calls_over_threshold > 0) AS sessions_over_threshold,
+        if(
+            session_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(sessions_over_threshold / session_count, 4)
+        ) AS pct_sessions_over_threshold,
+        countIf(first_call_context_tokens >= 25000) AS bloated_start_25k_sessions,
+        if(
+            session_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(bloated_start_25k_sessions / session_count, 4)
+        ) AS pct_bloated_start_25k,
+        countIf(first_call_context_tokens >= 50000) AS bloated_start_50k_sessions,
+        if(
+            session_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(bloated_start_50k_sessions / session_count, 4)
+        ) AS pct_bloated_start_50k,
+        countIf(first_call_context_tokens >= 100000) AS bloated_start_100k_sessions,
+        if(
+            session_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(bloated_start_100k_sessions / session_count, 4)
+        ) AS pct_bloated_start_100k
+    FROM session_rollups
+    GROUP BY period, group_value, attention_threshold_tokens
+
+NODE period_rollups
+SQL >
+    SELECT
+        coalesce(c.period, s.period) AS period,
+        coalesce(c.group_value, s.group_value) AS group_value,
+        ifNull(c.attention_threshold_tokens, s.attention_threshold_tokens) AS attention_threshold_tokens,
+        ifNull(c.model_call_count, 0) AS model_call_count,
+        ifNull(s.session_count, 0) AS session_count,
+        ifNull(s.first_call_context_p50, 0) AS first_call_context_p50,
+        ifNull(c.context_p50, 0) AS context_p50,
+        ifNull(c.context_p90, 0) AS context_p90,
+        ifNull(c.context_p95, 0) AS context_p95,
+        ifNull(c.context_max, 0) AS context_max,
+        ifNull(c.calls_over_threshold, 0) AS calls_over_threshold,
+        ifNull(c.pct_calls_over_threshold, 0.) AS pct_calls_over_threshold,
+        ifNull(s.sessions_over_threshold, 0) AS sessions_over_threshold,
+        ifNull(s.pct_sessions_over_threshold, 0.) AS pct_sessions_over_threshold,
+        ifNull(c.context_overage_tokens, 0) AS context_overage_tokens,
+        ifNull(c.cost_while_over_threshold, 0.) AS cost_while_over_threshold,
+        ifNull(c.output_tokens_while_over_threshold, 0) AS output_tokens_while_over_threshold,
+        ifNull(s.bloated_start_25k_sessions, 0) AS bloated_start_25k_sessions,
+        ifNull(s.pct_bloated_start_25k, 0.) AS pct_bloated_start_25k,
+        ifNull(s.bloated_start_50k_sessions, 0) AS bloated_start_50k_sessions,
+        ifNull(s.pct_bloated_start_50k, 0.) AS pct_bloated_start_50k,
+        ifNull(s.bloated_start_100k_sessions, 0) AS bloated_start_100k_sessions,
+        ifNull(s.pct_bloated_start_100k, 0.) AS pct_bloated_start_100k
+    FROM call_rollups AS c
+    FULL OUTER JOIN session_aggregate AS s
+        ON c.period = s.period
+        AND c.group_value = s.group_value
+        AND c.attention_threshold_tokens = s.attention_threshold_tokens
+    SETTINGS join_use_nulls = 1
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        coalesce(c.group_value, p.group_value) AS group_value,
+        ifNull(c.attention_threshold_tokens, p.attention_threshold_tokens) AS attention_threshold_tokens,
+        ifNull(c.model_call_count, 0) AS model_call_count,
+        ifNull(p.model_call_count, 0) AS prior_model_call_count,
+        ifNull(c.session_count, 0) AS session_count,
+        ifNull(p.session_count, 0) AS prior_session_count,
+        ifNull(c.first_call_context_p50, 0) AS first_call_context_p50,
+        ifNull(p.first_call_context_p50, 0) AS prior_first_call_context_p50,
+        ifNull(c.context_p50, 0) AS context_p50,
+        ifNull(p.context_p50, 0) AS prior_context_p50,
+        ifNull(c.context_p90, 0) AS context_p90,
+        ifNull(p.context_p90, 0) AS prior_context_p90,
+        ifNull(c.context_p95, 0) AS context_p95,
+        ifNull(p.context_p95, 0) AS prior_context_p95,
+        ifNull(c.context_max, 0) AS context_max,
+        ifNull(p.context_max, 0) AS prior_context_max,
+        ifNull(c.calls_over_threshold, 0) AS calls_over_threshold,
+        ifNull(p.calls_over_threshold, 0) AS prior_calls_over_threshold,
+        ifNull(c.pct_calls_over_threshold, 0.) AS pct_calls_over_threshold,
+        ifNull(p.pct_calls_over_threshold, 0.) AS prior_pct_calls_over_threshold,
+        ifNull(c.sessions_over_threshold, 0) AS sessions_over_threshold,
+        ifNull(p.sessions_over_threshold, 0) AS prior_sessions_over_threshold,
+        ifNull(c.pct_sessions_over_threshold, 0.) AS pct_sessions_over_threshold,
+        ifNull(p.pct_sessions_over_threshold, 0.) AS prior_pct_sessions_over_threshold,
+        ifNull(c.context_overage_tokens, 0) AS context_overage_tokens,
+        ifNull(p.context_overage_tokens, 0) AS prior_context_overage_tokens,
+        round(ifNull(c.cost_while_over_threshold, 0.), 6) AS cost_while_over_threshold,
+        round(ifNull(p.cost_while_over_threshold, 0.), 6) AS prior_cost_while_over_threshold,
+        ifNull(c.output_tokens_while_over_threshold, 0) AS output_tokens_while_over_threshold,
+        ifNull(p.output_tokens_while_over_threshold, 0) AS prior_output_tokens_while_over_threshold,
+        ifNull(c.bloated_start_25k_sessions, 0) AS bloated_start_25k_sessions,
+        ifNull(p.bloated_start_25k_sessions, 0) AS prior_bloated_start_25k_sessions,
+        ifNull(c.pct_bloated_start_25k, 0.) AS pct_bloated_start_25k,
+        ifNull(p.pct_bloated_start_25k, 0.) AS prior_pct_bloated_start_25k,
+        ifNull(c.bloated_start_50k_sessions, 0) AS bloated_start_50k_sessions,
+        ifNull(p.bloated_start_50k_sessions, 0) AS prior_bloated_start_50k_sessions,
+        ifNull(c.pct_bloated_start_50k, 0.) AS pct_bloated_start_50k,
+        ifNull(p.pct_bloated_start_50k, 0.) AS prior_pct_bloated_start_50k,
+        ifNull(c.bloated_start_100k_sessions, 0) AS bloated_start_100k_sessions,
+        ifNull(p.bloated_start_100k_sessions, 0) AS prior_bloated_start_100k_sessions,
+        ifNull(c.pct_bloated_start_100k, 0.) AS pct_bloated_start_100k,
+        ifNull(p.pct_bloated_start_100k, 0.) AS prior_pct_bloated_start_100k
+    FROM (
+        SELECT
+            group_value,
+            attention_threshold_tokens,
+            model_call_count,
+            session_count,
+            first_call_context_p50,
+            context_p50,
+            context_p90,
+            context_p95,
+            context_max,
+            calls_over_threshold,
+            pct_calls_over_threshold,
+            sessions_over_threshold,
+            pct_sessions_over_threshold,
+            context_overage_tokens,
+            cost_while_over_threshold,
+            output_tokens_while_over_threshold,
+            bloated_start_25k_sessions,
+            pct_bloated_start_25k,
+            bloated_start_50k_sessions,
+            pct_bloated_start_50k,
+            bloated_start_100k_sessions,
+            pct_bloated_start_100k
+        FROM period_rollups
+        WHERE period = 'current'
+    ) AS c
+    FULL OUTER JOIN (
+        SELECT
+            group_value,
+            attention_threshold_tokens,
+            model_call_count,
+            session_count,
+            first_call_context_p50,
+            context_p50,
+            context_p90,
+            context_p95,
+            context_max,
+            calls_over_threshold,
+            pct_calls_over_threshold,
+            sessions_over_threshold,
+            pct_sessions_over_threshold,
+            context_overage_tokens,
+            cost_while_over_threshold,
+            output_tokens_while_over_threshold,
+            bloated_start_25k_sessions,
+            pct_bloated_start_25k,
+            bloated_start_50k_sessions,
+            pct_bloated_start_50k,
+            bloated_start_100k_sessions,
+            pct_bloated_start_100k
+        FROM period_rollups
+        WHERE period = 'prior'
+    ) AS p
+        ON c.group_value = p.group_value
+    ORDER BY
+        ifNull(c.context_overage_tokens, 0) DESC,
+        ifNull(c.pct_calls_over_threshold, 0.) DESC,
+        ifNull(c.model_call_count, 0) DESC,
+        group_value ASC
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
+    OFFSET {{ Int32(offset, 0) }}
+    SETTINGS join_use_nulls = 1
+
+TYPE ENDPOINT

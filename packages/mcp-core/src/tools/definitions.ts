@@ -410,13 +410,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             'summary',
             'timeseries',
             'breakdown',
-            'sessions',
+            'context_health',
             'tool_failures',
             'tool_deltas',
             'projects',
           ],
           description:
-            'Analytics view to query. summary is a KPI row; timeseries returns buckets; breakdown ranks source/model/repo; sessions lists sessions; projects lists repo fingerprints.',
+            'Analytics view to query. summary is a KPI row; timeseries returns buckets; breakdown ranks source/model/repo; context_health returns context pressure aggregates; projects lists repo fingerprints.',
         },
         hours: hoursProperty(DEFAULT_ANALYTICS_HOURS, MAX_ANALYTICS_HOURS),
         start_time: {
@@ -458,10 +458,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           enum: ['cost_usd', 'total_tokens', 'message_count', 'session_count'],
           description: 'For view="breakdown", metric to rank by.',
         },
-        sort: {
-          type: 'string',
-          enum: ['recent', 'cost', 'files', 'duration', 'messages'],
-          description: 'For view="sessions", descending sort key.',
+        attention_threshold_tokens: {
+          type: 'number',
+          description:
+            'For view="context_health", context-token threshold for attention pressure. Defaults to 140000.',
         },
         min_events: {
           type: 'number',

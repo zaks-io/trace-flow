@@ -34,6 +34,7 @@
     "tinybird:perf": "bash scripts/tinybird-performance-report.sh",
     "tinybird:parity": "bash scripts/tinybird-parity-report.sh",
     "tinybird:backfill": "bash scripts/tinybird-backfill-clean-facts.sh",
+    "tinybird:backfill:context-health": "bash scripts/tinybird-backfill-agent-context-health.sh",
     "check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\" && turbo run lint type-check test build --summarize",
     "ci:check": "bash scripts/ci-check.sh",
     "duplicates:check": "jscpd --config .jscpd.json apps packages scripts",

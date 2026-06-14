@@ -71,6 +71,55 @@ export interface AgentSummaryRow {
   prior_session_count: number;
 }
 
+/** One row from `pipes/agent_context_health.pipe`. `group_value` is empty for the aggregate row. */
+export interface AgentContextHealthRow {
+  group_value: string;
+  attention_threshold_tokens: number;
+  model_call_count: number;
+  prior_model_call_count: number;
+  session_count: number;
+  prior_session_count: number;
+  first_call_context_p50: number;
+  prior_first_call_context_p50: number;
+  context_p50: number;
+  prior_context_p50: number;
+  context_p90: number;
+  prior_context_p90: number;
+  context_p95: number;
+  prior_context_p95: number;
+  context_max: number;
+  prior_context_max: number;
+  calls_over_threshold: number;
+  prior_calls_over_threshold: number;
+  pct_calls_over_threshold: number;
+  prior_pct_calls_over_threshold: number;
+  sessions_over_threshold: number;
+  prior_sessions_over_threshold: number;
+  pct_sessions_over_threshold: number;
+  prior_pct_sessions_over_threshold: number;
+  context_overage_tokens: number;
+  prior_context_overage_tokens: number;
+  cost_while_over_threshold: number;
+  prior_cost_while_over_threshold: number;
+  output_tokens_while_over_threshold: number;
+  prior_output_tokens_while_over_threshold: number;
+  bloated_start_25k_sessions: number;
+  prior_bloated_start_25k_sessions: number;
+  pct_bloated_start_25k: number;
+  prior_pct_bloated_start_25k: number;
+  bloated_start_50k_sessions: number;
+  prior_bloated_start_50k_sessions: number;
+  pct_bloated_start_50k: number;
+  prior_pct_bloated_start_50k: number;
+  bloated_start_100k_sessions: number;
+  prior_bloated_start_100k_sessions: number;
+  pct_bloated_start_100k: number;
+  prior_pct_bloated_start_100k: number;
+}
+
+export const AGENT_CONTEXT_BREAKDOWN_DIMENSIONS = ['source', 'model', 'repo'] as const;
+export type AgentContextBreakdownDimension = (typeof AGENT_CONTEXT_BREAKDOWN_DIMENSIONS)[number];
+
 /** One bucketed row from `pipes/agent_usage_timeseries.pipe`. */
 export interface AgentTimeseriesRow {
   /** Bucket start as a ClickHouse DateTime string (hourly or daily granularity). */

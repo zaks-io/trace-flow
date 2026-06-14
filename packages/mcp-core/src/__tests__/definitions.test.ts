@@ -443,7 +443,7 @@ describe('query_agent_analytics tool definition', () => {
       'summary',
       'timeseries',
       'breakdown',
-      'sessions',
+      'context_health',
       'tool_failures',
       'tool_deltas',
       'projects',
@@ -457,7 +457,8 @@ describe('query_agent_analytics tool definition', () => {
     expect(props.end_time?.type).toBe('string');
     expect(props.group_by?.enum).toContain('repo');
     expect(props.dimension?.enum).toContain('model');
-    expect(props.sort?.enum).toContain('cost');
+    expect(props.sort).toBeUndefined();
+    expect(props.attention_threshold_tokens?.type).toBe('number');
     expect(props.limit?.type).toBe('number');
     expect(props.limit?.description).toContain('default 25');
     expect(props.limit?.description).toContain('max 100');

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Bot, DollarSign, Hash, MessageSquare, Wrench, X } from 'lucide-react';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { TIME_RANGES } from '@/components/usage/types';
@@ -16,6 +17,7 @@ import {
   AGENT_GRANULARITIES,
   AGENT_GRANULARITY_LABEL,
   type AgentChartStyle,
+  type AgentContextBreakdownDimension,
   type AgentGroupBy,
   type AgentMetric,
 } from './types';
@@ -23,10 +25,12 @@ import type { AgentBreakdownDimension } from './types';
 import { MultiFilterDropdown } from './MultiFilterDropdown';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AgentKpiCards } from './AgentKpiCards';
+import { AgentContextHealthPanel } from './AgentContextHealthPanel';
 import { AgentBreakdownPanels } from './AgentBreakdownPanels';
 import { FailureLeaderboardTable } from './FailureLeaderboardTable';
 import { ToolDeltaTable } from './ToolDeltaTable';
 import { AgentSessionsTable } from './AgentSessionsTable';
+import { resolveAttentionThreshold } from './contextHealth';
 
 const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string }>> = {
   cost: DollarSign,
@@ -37,6 +41,7 @@ const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string 
 };
 
 export function AgentAnalytics() {
+  const searchParams = useSearchParams();
   const {
     timeRange,
     setTimeRange,
@@ -54,12 +59,18 @@ export function AgentAnalytics() {
     clearFilters,
     filterParams,
   } = useAgentFilters();
-  const { timeseries, summary, failures, deltas, isLoading, hasError, isEmpty } = useAgentData({
-    filterParams,
-    groupBy,
-    granularity,
-    models,
-  });
+  const attentionThresholdTokens = useMemo(
+    () => resolveAttentionThreshold(searchParams.get('attention_threshold_tokens')),
+    [searchParams],
+  );
+  const { timeseries, summary, contextHealth, failures, deltas, isLoading, hasError, isEmpty } =
+    useAgentData({
+      filterParams,
+      groupBy,
+      granularity,
+      models,
+      attentionThresholdTokens,
+    });
   const [metric, setMetric] = useState<AgentMetric>('cost');
   const [chartStyle, setChartStyle] = useState<AgentChartStyle>('stacked');
 
@@ -122,6 +133,13 @@ export function AgentAnalytics() {
   const breakdownSelected = (dimension: AgentBreakdownDimension) =>
     dimension === 'source' ? sources : dimension === 'model' ? models : repos;
   const breakdownToggle = (dimension: AgentBreakdownDimension, value: string) => {
+    if (dimension === 'source') toggleSource(value);
+    else if (dimension === 'model') toggleModel(value);
+    else toggleRepo(value);
+  };
+  const contextSelected = (dimension: AgentContextBreakdownDimension) =>
+    dimension === 'source' ? sources : dimension === 'model' ? models : repos;
+  const contextToggle = (dimension: AgentContextBreakdownDimension, value: string) => {
     if (dimension === 'source') toggleSource(value);
     else if (dimension === 'model') toggleModel(value);
     else toggleRepo(value);
@@ -212,6 +230,16 @@ export function AgentAnalytics() {
       ) : (
         <div className="space-y-8">
           {summary && <AgentKpiCards summary={summary} />}
+
+          <AgentContextHealthPanel
+            row={contextHealth}
+            filterParams={filterParams}
+            models={models}
+            attentionThresholdTokens={attentionThresholdTokens}
+            labelFor={labelFor}
+            selectedFor={contextSelected}
+            onToggle={contextToggle}
+          />
 
           <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

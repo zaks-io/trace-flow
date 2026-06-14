@@ -88,6 +88,8 @@ describe('queryAgentAnalytics', () => {
     const payload = JSON.parse(result.content[0]!.text!);
 
     expect(payload.views.summary).toContain('KPI');
+    expect(payload.views.context_health).toContain('context');
+    expect(payload.views.sessions).toBeUndefined();
     expect(payload.filters.sources.allowed_values).toContain('codex');
     expect(payload.view_parameters.timeseries.group_by).toContain('repo');
     expect(payload.discovered_values.sources[0].value).toBe('codex');
@@ -245,6 +247,55 @@ describe('queryAgentAnalytics', () => {
     expect(call).toContain('offset=0');
   });
 
+  it('queries context health with threshold and breakdown controls', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        data: [
+          {
+            group_value: 'repo_123',
+            attention_threshold_tokens: 100000,
+            model_call_count: 12,
+            context_overage_tokens: 42000,
+          },
+        ],
+      }),
+    );
+
+    const result = await queryAgentAnalytics(
+      mockCtx,
+      [],
+      {
+        view: 'context_health',
+        dimension: 'repo',
+        attention_threshold_tokens: 100000,
+        filters: { models: ['gpt-5.5'], repo_fingerprints: ['repo_123'] },
+        limit: 10,
+      },
+      30,
+    );
+    const payload = JSON.parse(result.content[0]!.text!);
+
+    expect(payload.view).toBe('context_health');
+    expect(payload.data[0]).toMatchObject({
+      group_value: 'repo_123',
+      attention_threshold_tokens: 100000,
+      context_overage_tokens: 42000,
+    });
+    expect(mockCtx.mintToken).toHaveBeenCalledWith(
+      [{ type: 'PIPES:READ', resource: 'agent_context_health' }],
+      [],
+      30,
+    );
+
+    const call = fetchSpy.mock.calls[0]![0] as string;
+    expect(call).toContain('/v0/pipes/agent_context_health.json');
+    expect(call).toContain('dimension=repo');
+    expect(call).toContain('attention_threshold_tokens=100000');
+    expect(call).toContain('models=gpt-5.5');
+    expect(call).toContain('repos=repo_123');
+    expect(call).toContain('limit=10');
+  });
+
   it('passes limit and offset for paged project rows', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({
@@ -381,5 +432,13 @@ describe('queryAgentAnalytics', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('view must be one of');
+  });
+
+  it('does not expose generic session browsing through MCP', async () => {
+    const result = await queryAgentAnalytics(mockCtx, [], { view: 'sessions' }, 7);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('context_health');
+    expect(result.content[0]!.text).not.toContain('sessions');
   });
 });

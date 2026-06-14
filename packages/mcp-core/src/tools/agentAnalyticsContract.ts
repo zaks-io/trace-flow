@@ -8,12 +8,14 @@ const DEFAULT_AGENT_TIMESERIES_LIMIT = 50;
 const MAX_AGENT_TIMESERIES_LIMIT = 50;
 const DEFAULT_AGENT_DISCOVERY_LIMIT = 25;
 const MAX_AGENT_DISCOVERY_LIMIT = 50;
+const DEFAULT_ATTENTION_THRESHOLD_TOKENS = 140_000;
+const MAX_ATTENTION_THRESHOLD_TOKENS = 2_000_000;
 
 export const AGENT_VIEWS = {
   summary: 'agent_usage_summary',
   timeseries: 'agent_usage_timeseries',
   breakdown: 'agent_usage_breakdown',
-  sessions: 'agent_sessions_browser',
+  context_health: 'agent_context_health',
   tool_failures: 'agent_failure_leaderboard',
   tool_deltas: 'agent_tool_period_delta',
   projects: 'agent_repo_directory',
@@ -28,7 +30,6 @@ const BREAKDOWN_ORDER_VALUES = [
   'message_count',
   'session_count',
 ] as const;
-const SESSION_SORT_VALUES = ['recent', 'cost', 'files', 'duration', 'messages'] as const;
 const SOURCE_VALUES = ['claude', 'codex', 'cursor'] as const;
 
 type AgentView = keyof typeof AGENT_VIEWS;
@@ -59,7 +60,7 @@ export interface AgentAnalyticsParams {
   granularity?: string;
   dimension?: string;
   order_by?: string;
-  sort?: string;
+  attention_threshold_tokens?: number;
   min_events?: number;
   limit?: number;
   offset?: number;
@@ -106,6 +107,10 @@ function nonNegativeNumber(value: number | undefined): number {
   const candidate = value ?? 0;
   const finite = Number.isFinite(candidate) ? candidate : 0;
   return Math.max(0, Math.floor(finite));
+}
+
+function attentionThreshold(value: number | undefined): number {
+  return clampNumber(value, DEFAULT_ATTENTION_THRESHOLD_TOKENS, MAX_ATTENTION_THRESHOLD_TOKENS);
 }
 
 function parseTimeParam(
@@ -202,8 +207,9 @@ export function buildPipeParams(
     pipeParams.dimension = enumParam(params.dimension, BREAKDOWN_DIMENSIONS, 'source');
     pipeParams.order_by = enumParam(params.order_by, BREAKDOWN_ORDER_VALUES, 'cost_usd');
   }
-  if (view === 'sessions') {
-    pipeParams.sort = enumParam(params.sort, SESSION_SORT_VALUES, 'recent');
+  if (view === 'context_health') {
+    pipeParams.dimension = enumParam(params.dimension, ['none', ...BREAKDOWN_DIMENSIONS], 'none');
+    pipeParams.attention_threshold_tokens = attentionThreshold(params.attention_threshold_tokens);
   }
   if (view === 'tool_failures') {
     pipeParams.min_events = clampNumber(params.min_events, 10, 10_000);
@@ -232,7 +238,8 @@ export function buildStaticContract(window: AgentWindow) {
       summary: 'KPI row for cost, tokens, messages, sessions, and priced coverage.',
       timeseries: 'Bucketed usage and tool-event metrics.',
       breakdown: 'Ranked usage by source, model, or repo.',
-      sessions: 'Agent session rows, sortable by recency, cost, files, duration, or messages.',
+      context_health:
+        'Bounded context-floor and attention-pressure aggregates by source, model, or repo.',
       tool_failures: 'Tool failure leaderboard.',
       tool_deltas: 'Period-over-period tool usage movement.',
       projects: 'Repo/project fingerprints for filtering.',
@@ -255,8 +262,12 @@ export function buildStaticContract(window: AgentWindow) {
     view_parameters: {
       timeseries: { group_by: [...GROUP_BY_VALUES], granularity: [...GRANULARITY_VALUES] },
       breakdown: { dimension: [...BREAKDOWN_DIMENSIONS], order_by: [...BREAKDOWN_ORDER_VALUES] },
-      sessions: {
-        sort: [...SESSION_SORT_VALUES],
+      context_health: {
+        dimension: ['none', ...BREAKDOWN_DIMENSIONS],
+        attention_threshold_tokens: {
+          default: DEFAULT_ATTENTION_THRESHOLD_TOKENS,
+          max: MAX_ATTENTION_THRESHOLD_TOKENS,
+        },
         limit: `1-${MAX_AGENT_LIMIT}`,
         offset: 'zero-based row offset',
       },
