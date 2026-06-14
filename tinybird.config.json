@@ -1,4 +1,4 @@
 {
   "dev_mode": "local",
-  "include": ["datasources", "materializations", "pipes", "tests"]
+  "include": ["datasources", "materializations", "pipes", "copies", "tests"]
 }

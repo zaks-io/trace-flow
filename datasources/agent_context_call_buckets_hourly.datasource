@@ -1,0 +1,25 @@
+DESCRIPTION >
+    Hourly context-token distribution for Agent assistant calls. This serving table
+    keeps context-health endpoints off raw message facts while preserving exact
+    custom threshold math.
+
+SCHEMA >
+    `BucketStart` DateTime,
+    `OrgId` String,
+    `source` LowCardinality(String),
+    `model` LowCardinality(String),
+    `repo_fingerprint` String,
+    `session_pk` String,
+    `context_tokens` UInt64,
+    `CallCount` AggregateFunction(count),
+    `ContextP50` AggregateFunction(quantileExact(0.5), UInt64),
+    `ContextP90` AggregateFunction(quantileExact(0.9), UInt64),
+    `ContextP95` AggregateFunction(quantileExact(0.95), UInt64),
+    `FirstTurnIndex` AggregateFunction(min, UInt32),
+    `OutputTokens` AggregateFunction(sum, UInt64),
+    `CostUsd` AggregateFunction(sum, Float64)
+
+ENGINE "AggregatingMergeTree"
+ENGINE_SORTING_KEY "OrgId, BucketStart, source, model, repo_fingerprint, session_pk, context_tokens"
+ENGINE_PARTITION_KEY "toYYYYMM(BucketStart)"
+ENGINE_TTL "BucketStart + toIntervalYear(1)"

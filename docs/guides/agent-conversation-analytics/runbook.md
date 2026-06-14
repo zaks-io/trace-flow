@@ -177,6 +177,20 @@ Deploy schema changes through the normal PR/merge Tinybird path. For a repair or
 bounded, explicitly approved Tinybird branch/cloud-dev operation first, then promote through CI. Any
 repo-backed repair pipe must live under `copies/`, be unscheduled, and use a `repair_*` name.
 
+Context-health uses `agent_context_call_buckets_hourly`, an incremental serving table maintained from
+`agent_message_facts`. When introducing that table into a workspace that already has message facts,
+run the one-shot repair before treating `/app/agents` context health as current:
+
+```sh
+TINYBIRD_CONTEXT_HEALTH_BACKFILL_APPROVED=trace_flow_prod_YYYYMMDD \
+  TB_TARGET_WORKSPACE=trace_flow_prod \
+  bun run tinybird:backfill:context-health
+```
+
+The repair replaces only `agent_context_call_buckets_hourly` from clean message facts and then checks
+call count, session count, context tokens, output tokens, and estimated cost parity. If parity fails,
+pause agent ingestion and rerun the repair.
+
 Verify before calling the rollout healthy:
 
 - canonical datasources have expected row counts and bucket bounds.

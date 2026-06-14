@@ -1,0 +1,29 @@
+DESCRIPTION >
+    One-shot repair copy for the Agent context-health serving table.
+    Run manually after introducing the table, or after an operator-approved repair.
+
+NODE rollup
+SQL >
+    SELECT
+        toStartOfHour(toDateTime(EventAt)) AS BucketStart,
+        OrgId,
+        source,
+        model,
+        repo_fingerprint,
+        session_pk,
+        toUInt64(input_tokens) + toUInt64(cache_read_tokens) + toUInt64(cache_creation_tokens) AS context_tokens,
+        countState() AS CallCount,
+        quantileExactState(0.5)(context_tokens) AS ContextP50,
+        quantileExactState(0.9)(context_tokens) AS ContextP90,
+        quantileExactState(0.95)(context_tokens) AS ContextP95,
+        minState(turn_index) AS FirstTurnIndex,
+        sumState(toUInt64(output_tokens)) AS OutputTokens,
+        sumState(ifNull(cost_usd, 0.)) AS CostUsd
+    FROM agent_message_facts
+    WHERE role = 'assistant'
+        AND token_coverage != 'missing'
+    GROUP BY BucketStart, OrgId, source, model, repo_fingerprint, session_pk, context_tokens
+
+TYPE COPY
+TARGET_DATASOURCE agent_context_call_buckets_hourly
+COPY_MODE replace

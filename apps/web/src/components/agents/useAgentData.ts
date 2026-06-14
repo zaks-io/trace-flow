@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
 import type {
+  AgentContextHealthRow,
   AgentGranularity,
   AgentGroupBy,
   AgentSummaryRow,
@@ -9,6 +10,7 @@ import type {
   FailureLeaderboardRow,
   ToolDeltaRow,
 } from './types';
+import { buildContextHealthParams } from './contextHealth';
 
 type UseAgentDataParams = {
   filterParams: Record<string, string | number>;
@@ -16,15 +18,21 @@ type UseAgentDataParams = {
   groupBy: AgentGroupBy;
   /** Bucket size; passed only to the time-series (other surfaces are window totals). */
   granularity: AgentGranularity;
-  /** Model IN-list; scopes the usage surfaces (time-series + summary) only — tool/session
-   * pipes have no model dimension. */
+  /** Model IN-list; scopes message-grain usage/context surfaces only. */
   models: string[];
+  attentionThresholdTokens: number;
 };
 
-export function useAgentData({ filterParams, groupBy, granularity, models }: UseAgentDataParams) {
+export function useAgentData({
+  filterParams,
+  groupBy,
+  granularity,
+  models,
+  attentionThresholdTokens,
+}: UseAgentDataParams) {
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', []);
 
-  // Tool events / sessions have no model, so models scopes only the usage surfaces.
+  // Tool events / sessions have no model, so models scopes only message-grain surfaces.
   const usageParams = useMemo(
     () => (models.length > 0 ? { ...filterParams, models: models.join(',') } : filterParams),
     [filterParams, models],
@@ -48,6 +56,16 @@ export function useAgentData({ filterParams, groupBy, granularity, models }: Use
     params: usageParams,
   });
 
+  const contextQuery = useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>({
+    pipe: 'agent_context_health',
+    params: buildContextHealthParams({
+      filterParams,
+      models,
+      attentionThresholdTokens,
+      limit: 1,
+    }),
+  });
+
   const failuresQuery = useTinybirdQuery<TinybirdResponse<FailureLeaderboardRow>>({
     pipe: 'agent_failure_leaderboard',
     params: { ...filterParams, limit: 100 },
@@ -59,6 +77,7 @@ export function useAgentData({ filterParams, groupBy, granularity, models }: Use
   });
 
   const summary = summaryQuery.data?.data?.[0] ?? null;
+  const contextHealth = contextQuery.data?.data?.[0] ?? null;
   const timeseries = useMemo(() => timeseriesQuery.data?.data ?? [], [timeseriesQuery.data]);
   const failures = useMemo(() => failuresQuery.data?.data ?? [], [failuresQuery.data]);
   const deltas = useMemo(() => deltaQuery.data?.data ?? [], [deltaQuery.data]);
@@ -66,11 +85,16 @@ export function useAgentData({ filterParams, groupBy, granularity, models }: Use
   const isLoading =
     timeseriesQuery.isLoading ||
     summaryQuery.isLoading ||
+    contextQuery.isLoading ||
     failuresQuery.isLoading ||
     deltaQuery.isLoading;
 
   const hasError =
-    timeseriesQuery.error ?? summaryQuery.error ?? failuresQuery.error ?? deltaQuery.error;
+    timeseriesQuery.error ??
+    summaryQuery.error ??
+    contextQuery.error ??
+    failuresQuery.error ??
+    deltaQuery.error;
 
   // The summary aggregates billable (assistant) turns over the window, so no billable
   // turns and no sessions is the "no agent activity" signal. A loaded summary response
@@ -88,6 +112,7 @@ export function useAgentData({ filterParams, groupBy, granularity, models }: Use
   return {
     timeseries,
     summary,
+    contextHealth,
     failures,
     deltas,
     isLoading,
