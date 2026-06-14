@@ -61,13 +61,14 @@ function row(overrides: Partial<AgentContextHealthRow> = {}): AgentContextHealth
 
 function queryResult(
   rows: AgentContextHealthRow[] | null,
-  isLoading = false,
+  options: { isLoading?: boolean; error?: Error | null } = {},
 ): ReturnType<typeof useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>> {
+  const isLoading = options.isLoading ?? false;
   return {
     data: rows ? { data: rows } : null,
     isLoading,
     isFetching: isLoading,
-    error: null,
+    error: options.error ?? null,
     refetch: vi.fn(),
     dataUpdatedAt: 0,
   } as ReturnType<typeof useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>>;
@@ -101,11 +102,22 @@ describe('AgentContextHealthPanel', () => {
   });
 
   it('renders loading breakdowns without flashing the empty breakdown state', () => {
-    mockUseTinybirdQuery.mockReturnValue(queryResult(null, true));
+    mockUseTinybirdQuery.mockReturnValue(queryResult(null, { isLoading: true }));
 
     const html = renderPanel(row());
 
     expect(html.match(/Loading context data/g)).toHaveLength(3);
+    expect(html).not.toContain('No measured context data</p>');
+  });
+
+  it('renders breakdown query failures distinctly from empty data', () => {
+    mockUseTinybirdQuery.mockReturnValue(
+      queryResult(null, { error: new Error('Tinybird unavailable') }),
+    );
+
+    const html = renderPanel(row());
+
+    expect(html.match(/Could not load context breakdown/g)).toHaveLength(3);
     expect(html).not.toContain('No measured context data</p>');
   });
 

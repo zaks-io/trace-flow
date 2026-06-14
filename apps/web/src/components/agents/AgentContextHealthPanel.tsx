@@ -90,6 +90,8 @@ function ContextBreakdownPanel({
       </div>
       {query.isLoading && !query.data ? (
         <p className="text-sm text-muted-foreground">Loading context data...</p>
+      ) : query.error ? (
+        <p className="text-sm text-destructive">Could not load context breakdown</p>
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No measured context data</p>
       ) : (
