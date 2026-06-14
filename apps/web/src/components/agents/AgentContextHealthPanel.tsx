@@ -88,7 +88,9 @@ function ContextBreakdownPanel({
         <h3 className="text-sm font-medium text-foreground">{DIMENSION_TITLE[dimension]}</h3>
         <span className="text-xs text-muted-foreground">by overage</span>
       </div>
-      {rows.length === 0 ? (
+      {query.isLoading && !query.data ? (
+        <p className="text-sm text-muted-foreground">Loading context data...</p>
+      ) : rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">No measured context data</p>
       ) : (
         <div className="space-y-1.5">
