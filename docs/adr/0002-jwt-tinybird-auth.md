@@ -68,8 +68,9 @@ WHERE), not `fixed_params`, so a caller could otherwise read raw datasources acr
 
 The allowlist is **not** every file in `pipes/` — helper/materialization pipes (e.g.
 `agent_priced_usage`, no `TYPE ENDPOINT`) are excluded even when shipped. Every mintable pipe must
-be `TYPE ENDPOINT` and filter on `api_keys` or `org_id` via JWT `fixed_params` (validated in
-`tests/tinybird-jwt-allowlist.test.ts`). Update `tinybirdScopes.ts` when adding a new user-facing
+be `TYPE ENDPOINT` and filter on `api_keys` or `org_id` via JWT `fixed_params` (validated by
+`scripts/verify-tinybird-jwt-allowlist.ts`, smoke-tested from `tests/tinybird-jwt-allowlist.test.ts`).
+Update `tinybirdScopes.ts` when adding a new user-facing
 endpoint the dashboard or MCP will query via JWT.
 
 ## Row-Level Security with fixed_params
