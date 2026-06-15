@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Bot, DollarSign, Hash, MessageSquare, Wrench, X } from 'lucide-react';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { TIME_RANGES } from '@/components/usage/types';
+import { cn } from '@/lib/utils';
 import { useAgentFilters } from './useAgentFilters';
 import { useAgentData } from './useAgentData';
 import { useRepoDirectory } from '@/hooks/useRepoDirectory';
@@ -25,12 +26,18 @@ import type { AgentBreakdownDimension } from './types';
 import { MultiFilterDropdown } from './MultiFilterDropdown';
 import { AgentUsageChart } from './AgentUsageChart';
 import { AgentKpiCards } from './AgentKpiCards';
+import { AgentBurnRatePanel } from './AgentBurnRatePanel';
 import { AgentContextHealthPanel } from './AgentContextHealthPanel';
 import { AgentBreakdownPanels } from './AgentBreakdownPanels';
 import { FailureLeaderboardTable } from './FailureLeaderboardTable';
 import { ToolDeltaTable } from './ToolDeltaTable';
 import { AgentSessionsTable } from './AgentSessionsTable';
 import { resolveAttentionThreshold } from './contextHealth';
+import {
+  hasLoadedAgentData,
+  hasLoadedAgentDetailData,
+  shouldShowAgentEmptyState,
+} from './agentAnalyticsState';
 
 const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string }>> = {
   cost: DollarSign,
@@ -63,14 +70,26 @@ export function AgentAnalytics() {
     () => resolveAttentionThreshold(searchParams.get('attention_threshold_tokens')),
     [searchParams],
   );
-  const { timeseries, summary, contextHealth, failures, deltas, isLoading, hasError, isEmpty } =
-    useAgentData({
-      filterParams,
-      groupBy,
-      granularity,
-      models,
-      attentionThresholdTokens,
-    });
+  const {
+    timeseries,
+    burnSeries,
+    priorBurnSeries,
+    summary,
+    contextHealth,
+    failures,
+    deltas,
+    isLoading,
+    hasError,
+    failedSurfaces,
+    isEmpty,
+    timezone,
+  } = useAgentData({
+    filterParams,
+    groupBy,
+    granularity,
+    models,
+    attentionThresholdTokens,
+  });
   const [metric, setMetric] = useState<AgentMetric>('cost');
   const [chartStyle, setChartStyle] = useState<AgentChartStyle>('stacked');
 
@@ -146,6 +165,31 @@ export function AgentAnalytics() {
   };
 
   const MetricIcon = METRIC_ICON[metric];
+  const calendarDays = Math.max(
+    1,
+    (Number(filterParams.end_time_ms) - Number(filterParams.start_time_ms)) / (24 * 60 * 60 * 1000),
+  );
+  const hasAnyLoadedData = hasLoadedAgentData({
+    summary,
+    timeseries,
+    contextHealth,
+    failures,
+    deltas,
+  });
+  const hasLoadedDetailData = hasLoadedAgentDetailData({
+    timeseries,
+    contextHealth,
+    failures,
+    deltas,
+  });
+  const shouldShowEmptyState = shouldShowAgentEmptyState({
+    isEmpty,
+    hasError,
+    hasLoadedData: hasAnyLoadedData,
+    hasLoadedDetailData,
+  });
+  const failedSurfaceLabels =
+    failedSurfaces.map((failure) => failure.label).join(', ') || 'one or more analytics sections';
 
   return (
     <div className="animate-fade-in">
@@ -208,8 +252,17 @@ export function AgentAnalytics() {
       </PageToolbar>
 
       {hasError && (
-        <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-          Failed to load agent analytics. Please try refreshing.
+        <div
+          className={cn(
+            'mb-6 rounded-lg border p-4 text-sm',
+            hasAnyLoadedData
+              ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+              : 'border-red-500/30 bg-red-500/10 text-red-400',
+          )}
+        >
+          {hasAnyLoadedData
+            ? `Could not load: ${failedSurfaceLabels}. Loaded sections are still shown.`
+            : 'Failed to load agent analytics. Please try refreshing.'}
         </div>
       )}
 
@@ -218,7 +271,7 @@ export function AgentAnalytics() {
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           Loading agent analytics...
         </div>
-      ) : hasError ? null : isEmpty ? (
+      ) : hasError && !hasAnyLoadedData ? null : shouldShowEmptyState ? (
         <div className="flex flex-col items-center gap-2 rounded-xl bg-card/40 py-16 text-center">
           <Bot className="h-10 w-10 text-muted-foreground/40" />
           <p className="text-sm font-medium text-foreground">No agent activity yet</p>
@@ -231,8 +284,32 @@ export function AgentAnalytics() {
         <div className="space-y-8">
           {summary && <AgentKpiCards summary={summary} />}
 
+          <AgentBurnRatePanel
+            summary={summary}
+            currentRows={burnSeries}
+            priorRows={priorBurnSeries}
+            currentError={
+              failedSurfaces.find((failure) => failure.id === 'burnSeries')?.error ?? null
+            }
+            priorError={
+              failedSurfaces.find((failure) => failure.id === 'priorBurnSeries')?.error ?? null
+            }
+            filterParams={filterParams}
+            timezone={timezone}
+          />
+
+          <AgentBreakdownPanels
+            filterParams={filterParams}
+            metric={metric}
+            labelFor={labelFor}
+            selectedFor={breakdownSelected}
+            onToggle={breakdownToggle}
+            calendarDays={calendarDays}
+          />
+
           <AgentContextHealthPanel
             row={contextHealth}
+            error={failedSurfaces.find((failure) => failure.id === 'context')?.error ?? null}
             filterParams={filterParams}
             models={models}
             attentionThresholdTokens={attentionThresholdTokens}
@@ -348,14 +425,6 @@ export function AgentAnalytics() {
               labelFor={labelFor}
             />
           </div>
-
-          <AgentBreakdownPanels
-            filterParams={filterParams}
-            metric={metric}
-            labelFor={labelFor}
-            selectedFor={breakdownSelected}
-            onToggle={breakdownToggle}
-          />
 
           <AgentSessionsTable filterParams={filterParams} repoLabelMap={repoLabelMap} />
 

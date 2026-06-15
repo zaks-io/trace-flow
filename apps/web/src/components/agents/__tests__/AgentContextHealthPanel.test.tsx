@@ -74,10 +74,11 @@ function queryResult(
   } as ReturnType<typeof useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>>;
 }
 
-function renderPanel(rowValue: AgentContextHealthRow | null): string {
+function renderPanel(rowValue: AgentContextHealthRow | null, error: Error | null = null): string {
   return renderToStaticMarkup(
     <AgentContextHealthPanel
       row={rowValue}
+      error={error}
       filterParams={{ start_time_ms: 1, end_time_ms: 2 }}
       models={[]}
       attentionThresholdTokens={140_000}
@@ -96,8 +97,23 @@ describe('AgentContextHealthPanel', () => {
   it('renders an explicit empty state when the aggregate row is absent', () => {
     const html = renderPanel(null);
 
-    expect(html).toContain('No measured context data for this range.');
-    expect(html).toContain('0 measured calls');
+    expect(html).toContain('How large do conversations start?');
+    expect(html).toContain('How often do conversations cross 140,000?');
+    expect(html).toContain('How long do they stay above 140,000?');
+    expect(html).toContain('What did requests above 140,000 cost?');
+    expect(html).toContain('No measured conversation-size data for this range.');
+    expect(html).toContain('0 model requests measured');
+    expect(mockUseTinybirdQuery).not.toHaveBeenCalled();
+  });
+
+  it('renders a failed aggregate state distinctly from empty data', () => {
+    const html = renderPanel(null, new Error('Tinybird unavailable'));
+
+    expect(html).toContain('How large do conversations start?');
+    expect(html).toContain('Could not load');
+    expect(html).toContain('Requests over 140,000 were not loaded');
+    expect(html).toContain('Could not load conversation-size data for this range.');
+    expect(html).not.toContain('No measured conversation-size data for this range.');
     expect(mockUseTinybirdQuery).not.toHaveBeenCalled();
   });
 
@@ -123,20 +139,32 @@ describe('AgentContextHealthPanel', () => {
 
   it('renders normal aggregate metrics and populated breakdown rows', () => {
     mockUseTinybirdQuery.mockReturnValue(
-      queryResult([row({ group_value: 'codex', context_overage_tokens: 0 })]),
+      queryResult([
+        row({
+          group_value: 'codex',
+          calls_over_threshold: 1,
+          pct_calls_over_threshold: 0.1,
+          context_overage_tokens: 10_000,
+        }),
+      ]),
     );
 
     const html = renderPanel(row());
 
-    expect(html).toContain('Startup Floor');
+    expect(html).toContain('Conversation Size');
+    expect(html).toContain('Large-conversation threshold: 140,000');
+    expect(html).toContain('How large do conversations start?');
     expect(html).toContain('50.0K tokens');
-    expect(html).toContain('Attention Pressure');
-    expect(html).toContain('0.0% calls');
+    expect(html).toContain('How often do conversations cross 140,000?');
+    expect(html).toContain('0 / 2 conversations');
+    expect(html).toContain('Are new conversations starting bloated?');
+    expect(html).toContain('Start size &gt;= 25K');
     expect(html).toContain('By Source');
     expect(html).toContain('codex');
+    expect(html).toContain('1 / 10 model requests over 140,000');
   });
 
-  it('renders pressured metrics and overage burden', () => {
+  it('renders over-threshold metrics and cost', () => {
     mockUseTinybirdQuery.mockReturnValue(
       queryResult([
         row({
@@ -158,9 +186,32 @@ describe('AgentContextHealthPanel', () => {
       }),
     );
 
-    expect(html).toContain('50% calls');
+    expect(html).toContain('2 / 3 conversations');
+    expect(html).toContain('5 / 10 model requests over 140,000');
     expect(html).toContain('250.0K tokens');
     expect(html).toContain('$12.34');
     expect(html).toContain('repo:repo-1');
+  });
+
+  it('requests at most 10 breakdown rows per dimension', () => {
+    mockUseTinybirdQuery.mockReturnValue(queryResult([]));
+
+    renderPanel(row());
+
+    expect(mockUseTinybirdQuery).toHaveBeenCalledTimes(3);
+    for (const call of mockUseTinybirdQuery.mock.calls) {
+      expect(call[0].params).toMatchObject({ limit: 10 });
+    }
+  });
+
+  it('hides zero-over-threshold breakdown rows', () => {
+    mockUseTinybirdQuery.mockReturnValue(
+      queryResult([row({ group_value: 'claude', context_overage_tokens: 0 })]),
+    );
+
+    const html = renderPanel(row());
+
+    expect(html).not.toContain('claude');
+    expect(html).toContain('No model requests over 140,000 tokens sent before the reply');
   });
 });

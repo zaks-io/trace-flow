@@ -1,5 +1,5 @@
 DESCRIPTION >
-    Directional context-floor and attention-pressure metrics for agent conversations.
+    Conversation start-size and over-threshold context metrics for agent conversations.
     Reads the incremental context-token serving table only; raw transcript text and
     raw message facts are not on the request path.
 
