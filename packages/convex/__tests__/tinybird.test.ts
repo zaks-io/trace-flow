@@ -1,5 +1,7 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { joinSanitizedApiKeys, sanitizeApiKeys, UUID_PATTERN } from '../integrations/tinybird';
 import {
@@ -7,6 +9,14 @@ import {
   assertMintableTinybirdScopes,
   TINYBIRD_PIPES_READ_SCOPE,
 } from '../integrations/tinybirdScopes';
+
+function listShippedPipes(): string[] {
+  const pipesDir = join(__dirname, '../../../pipes');
+  return readdirSync(pipesDir)
+    .filter((name) => name.endsWith('.pipe'))
+    .map((name) => name.slice(0, -'.pipe'.length))
+    .sort();
+}
 
 describe('tinybird API key sanitization', () => {
   describe('UUID_PATTERN', () => {
@@ -120,6 +130,14 @@ describe('tinybird API key sanitization', () => {
       ).not.toThrow();
     });
 
+    it('accepts PIPES:READ on agent_context_health (dashboard + MCP)', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([
+          { type: TINYBIRD_PIPES_READ_SCOPE, resource: 'agent_context_health' },
+        ]),
+      ).not.toThrow();
+    });
+
     it('rejects DATASOURCES:READ scopes', () => {
       expect(() =>
         assertMintableTinybirdScopes([{ type: 'DATASOURCES:READ', resource: 'otel_traces' }]),
@@ -144,48 +162,11 @@ describe('tinybird API key sanitization', () => {
       expect(() => assertMintableTinybirdScopes([])).toThrow(/at least one/i);
     });
 
-    it('allowlist includes every pipe shipped in pipes/', () => {
-      const shippedPipes = [
-        'agent_failure_leaderboard',
-        'agent_priced_coverage',
-        'agent_priced_usage',
-        'agent_repo_directory',
-        'agent_sessions_browser',
-        'agent_tool_period_delta',
-        'agent_usage_breakdown',
-        'agent_usage_summary',
-        'agent_usage_timeseries',
-        'filter_options',
-        'llm_cost_forecast',
-        'llm_cost_hourly_spike',
-        'llm_request_stats',
-        'llm_usage_by_api_key',
-        'llm_usage_by_model',
-        'llm_usage_by_provider',
-        'llm_usage_summary',
-        'llm_usage_timeseries',
-        'mcp_trace_by_model',
-        'mcp_trace_by_provider',
-        'mcp_trace_detail',
-        'mcp_trace_events',
-        'mcp_trace_summaries',
-        'mcp_trace_summary',
-        'mcp_traces_list',
-        'operation_user_breakdown',
-        'operations_filter_options',
-        'operations_leaderboard',
-        'trace_capture_lag',
-        'trace_detail',
-        'traces_for_alerts',
-        'traces_grouped',
-        'traces_list',
-        'traces_models',
-        'traces_providers',
-        'traces_summary',
-      ];
-      for (const pipe of shippedPipes) {
-        expect(ALLOWED_TINYBIRD_PIPE_RESOURCES.has(pipe)).toBe(true);
-      }
+    it('allowlist matches pipes/*.pipe inventory (no drift)', () => {
+      const shippedPipes = listShippedPipes();
+      const allowlistedPipes = [...ALLOWED_TINYBIRD_PIPE_RESOURCES].sort();
+
+      expect(allowlistedPipes).toEqual(shippedPipes);
     });
   });
 

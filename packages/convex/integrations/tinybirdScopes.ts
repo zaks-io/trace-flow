@@ -7,6 +7,7 @@ export const TINYBIRD_PIPES_READ_SCOPE = 'PIPES:READ' as const;
 
 /** Pipes shipped in `pipes/` and used by the dashboard, MCP, or internal alerts. */
 export const ALLOWED_TINYBIRD_PIPE_RESOURCES = new Set([
+  'agent_context_health',
   'agent_failure_leaderboard',
   'agent_priced_coverage',
   'agent_priced_usage',
