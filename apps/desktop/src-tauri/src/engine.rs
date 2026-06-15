@@ -198,11 +198,23 @@ async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool 
 
     let reached_ingest = match outcome {
         Ok(outcome) => {
-            tracing::info!(
-                advanced = outcome.advanced,
-                failed = outcome.failed,
-                "sync cycle finished"
-            );
+            let first_error = outcome.first_error.as_deref().unwrap_or("");
+            let setup_error = outcome.setup_error.as_deref().unwrap_or("");
+            if outcome.first_error.is_some() || outcome.setup_error.is_some() {
+                tracing::warn!(
+                    advanced = outcome.advanced,
+                    failed = outcome.failed,
+                    first_error = %first_error,
+                    setup_error = %setup_error,
+                    "sync cycle failed"
+                );
+            } else {
+                tracing::info!(
+                    advanced = outcome.advanced,
+                    failed = outcome.failed,
+                    "sync cycle finished"
+                );
+            }
             // A setup failure (bad client/cursor DB) means the pass never reached ingest; otherwise the
             // cycle ran and advanced cursors for whatever it processed, so the backfill window is done.
             let ok = outcome.setup_error.is_none();

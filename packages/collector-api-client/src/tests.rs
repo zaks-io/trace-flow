@@ -211,7 +211,7 @@ async fn sends_gzip_encoded_body() {
     handle.abort();
 }
 
-// --- verify assertion 3a: retry only on policy_unavailable, then 202 succeeds ---
+// --- verify assertion 3a: retry transient failures, then 202 succeeds ---
 
 #[tokio::test]
 async fn retries_policy_unavailable_then_succeeds() {
@@ -247,6 +247,66 @@ async fn retries_policy_unavailable_then_succeeds() {
     );
 
     handle.abort();
+}
+
+#[tokio::test]
+async fn retries_transport_send_failure_then_succeeds() {
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{addr}");
+    let server = tokio::spawn({
+        let call_count = Arc::clone(&call_count);
+        async move {
+            for _ in 0..2usize {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let n = call_count.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    drop(stream);
+                    continue;
+                }
+
+                let mut request = Vec::with_capacity(8192);
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut chunk).await.unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    if request_complete(&request) {
+                        break;
+                    }
+                }
+                stream
+                    .write_all(
+                        raw_response(
+                            202,
+                            "Accepted",
+                            r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                stream.shutdown().await.unwrap();
+                break;
+            }
+        }
+    });
+
+    let client = test_client(base_url, 1);
+    let result = client.ingest(&minimal_envelope(), None).await.unwrap();
+    assert_eq!(result.sessions, 1);
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        2,
+        "expected dropped first send to be retried"
+    );
+
+    server.abort();
 }
 
 // --- verify assertion 3b: 503 enqueue_failed is terminal (no retry) ---

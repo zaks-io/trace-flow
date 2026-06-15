@@ -75,10 +75,10 @@ impl CollectorApiClient {
 
     /// POST an `AgentIngestEnvelope` to `POST /v1/ingest`.
     ///
-    /// Retries ONLY on `503 {error:"policy_unavailable"}` — a transient control-plane miss where
-    /// the ingest worker has not yet loaded its compatibility policy. Every other failure (including
-    /// other 503 variants) is terminal for this call; the 3b sync loop decides whether to re-send
-    /// the batch on the next cycle.
+    /// Retries transport send failures and `503 {error:"policy_unavailable"}` — transient cases
+    /// where another request attempt can succeed without changing the envelope. Every other HTTP
+    /// response failure is terminal for this call; the sync loop decides whether to re-send the batch
+    /// on the next cycle.
     pub async fn ingest(
         &self,
         envelope: &AgentIngestEnvelope,
@@ -117,6 +117,12 @@ impl CollectorApiClient {
             let response = match result {
                 Ok(r) => r,
                 Err(err) => {
+                    if attempt < self.config.retry.max_retries {
+                        backoff_delay(attempt, &self.config.retry, cancel)
+                            .await
+                            .map_err(IngestError::Transport)?;
+                        continue;
+                    }
                     return Err(IngestError::Transport(anyhow!("http send failed: {err}")));
                 }
             };
