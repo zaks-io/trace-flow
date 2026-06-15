@@ -137,9 +137,9 @@ pub struct SyncTuning {
 impl Default for SyncTuning {
     fn default() -> Self {
         Self {
-            max_sessions_per_batch: 200,
-            max_batch_bytes: 4 * 1024 * 1024,
-            max_concurrent_uploads: 8,
+            max_sessions_per_batch: 25,
+            max_batch_bytes: 1024 * 1024,
+            max_concurrent_uploads: 4,
         }
     }
 }
@@ -344,7 +344,7 @@ impl<'a, M: FnMut() -> String> BatchPreparer<'a, M> {
         while let Some(unit) = self.units.get(self.next_unit) {
             let facts = session_facts(self.meta.source, &unit.records, &unit.ctx);
             let (facts, fact_cursors) = store.filter_unsent_facts(self.meta.source, facts)?;
-            let facts_bytes = estimate_facts_bytes(&facts);
+            let facts_bytes = serialized_facts_bytes(&facts);
 
             // If adding this unit would overflow the open (non-empty) batch, close and return it now —
             // WITHOUT consuming `unit`, so it starts the next batch. Never split a single session.
@@ -389,20 +389,13 @@ fn merge_facts(into: &mut AgentIngestFacts, mut from: AgentIngestFacts) {
     into.pull_request_links.append(&mut from.pull_request_links);
 }
 
-/// A cheap upper-ish estimate of an envelope's pre-gzip JSON size: the fact counts times a per-row
-/// constant. Exact serialization per session would dominate assembly cost for a backfill; the byte cap
-/// is a soft guard against pathologically large batches, not an exact limit, so an estimate is right.
-fn estimate_facts_bytes(facts: &AgentIngestFacts) -> usize {
-    const PER_MESSAGE: usize = 512;
-    const PER_TOOL_EVENT: usize = 256;
-    const PER_FILE_EVENT: usize = 192;
-    const PER_CAP_SNAPSHOT: usize = 256;
-    const PER_PR_LINK: usize = 128;
-    facts.messages.len() * PER_MESSAGE
-        + facts.tool_events.len() * PER_TOOL_EVENT
-        + facts.file_events.len() * PER_FILE_EVENT
-        + facts.capability_snapshots.len() * PER_CAP_SNAPSHOT
-        + facts.pull_request_links.len() * PER_PR_LINK
+/// Measure serialized fact bytes before merging into an envelope. This intentionally overcounts some
+/// object-key overhead across sessions, which is safer than undercounting and repeatedly building
+/// request bodies the Worker or network path cannot drain.
+fn serialized_facts_bytes(facts: &AgentIngestFacts) -> usize {
+    serde_json::to_vec(facts)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX / 2)
 }
 
 #[cfg(test)]
@@ -480,7 +473,7 @@ mod tests {
 
     fn message_unit(path: &str, model: &str) -> SyncUnit {
         let mut ctx = SessionContext {
-            vendor_session_id: "vs1".to_string(),
+            vendor_session_id: path.to_string(),
             vendor_started_at: Some(1_778_964_000_000),
             ..SessionContext::default()
         };
@@ -878,7 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_batching_merges_many_sessions_into_one_post_and_advances_all_cursors() {
-        // Three sessions, default tuning (200/batch) → one envelope, one POST, all three cursors
+        // Three sessions, default tuning → one envelope, one POST, all three cursors
         // advanced on the single 2xx. This is the throughput win: N sessions are not N round-trips.
         let client = MockClient::new([ok()]);
         let store = CursorStore::open_in_memory("org").unwrap();
@@ -900,6 +893,41 @@ mod tests {
         for p in ["/a.jsonl", "/b.jsonl", "/c.jsonl"] {
             assert!(store.get(AgentSource::Claude, p).unwrap().is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn batching_uses_serialized_fact_size_to_split_large_sessions() {
+        let client = MockClient::new([ok(), ok()]);
+        let store = CursorStore::open_in_memory("org").unwrap();
+        let mut orch = syncing_orchestrator();
+        let mut mint = counter();
+        let large_model = "m".repeat(3_000);
+
+        let units = [
+            message_unit("/a.jsonl", &large_model),
+            message_unit("/b.jsonl", &large_model),
+        ];
+        let tuning = SyncTuning {
+            max_sessions_per_batch: 200,
+            max_batch_bytes: 2_000,
+            max_concurrent_uploads: 2,
+        };
+        let (report, _) = run_sync_cycle_tuned(
+            &client,
+            &store,
+            &mut orch,
+            &meta(),
+            &units,
+            &mut mint,
+            None,
+            tuning,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(client.calls.get(), 2, "large serialized facts split");
+        assert_eq!(report.advanced, 2);
+        assert_eq!(report.failed, 0);
     }
 
     #[tokio::test]
