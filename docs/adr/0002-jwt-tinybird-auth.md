@@ -62,11 +62,15 @@ const payload = {
 ### Scope allowlist (TRA-128)
 
 `generateToken` and `generateTokenInternal` reject any scope that is not `PIPES:READ` on a
-known pipe from `pipes/`. This blocks `DATASOURCES:*` and `SQL:*` scopes: those permission
-types enforce row security via Tinybird JWT `filter` (SQL WHERE), not `fixed_params`, so a
-caller could otherwise read raw datasources across tenants. Pipe resources are allowlisted in
-`packages/convex/integrations/tinybirdScopes.ts` and must be updated when shipping a new pipe
-that the dashboard or MCP will query via JWT.
+dashboard/MCP-callable pipe from `ALLOWED_TINYBIRD_PIPE_RESOURCES`. This blocks `DATASOURCES:*`
+and `SQL:*` scopes: those permission types enforce row security via Tinybird JWT `filter` (SQL
+WHERE), not `fixed_params`, so a caller could otherwise read raw datasources across tenants.
+
+The allowlist is **not** every file in `pipes/` — helper/materialization pipes (e.g.
+`agent_priced_usage`, no `TYPE ENDPOINT`) are excluded even when shipped. Every mintable pipe must
+be `TYPE ENDPOINT` and filter on `api_keys` or `org_id` via JWT `fixed_params` (validated in
+`tinybirdMintablePipes.ts` tests). Update `tinybirdScopes.ts` when adding a new user-facing
+endpoint the dashboard or MCP will query via JWT.
 
 ## Row-Level Security with fixed_params
 
