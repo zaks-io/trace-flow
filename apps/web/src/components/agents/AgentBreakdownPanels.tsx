@@ -1,12 +1,15 @@
 'use client';
 
 import { useMemo } from 'react';
+import { Layers } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { TinybirdResponse } from '@/components/usage/types';
 import { OTHER_GROUP, OTHER_LABEL } from './pivot';
 import { rankBreakdown } from './breakdown';
+import { AgentSection } from './AgentSection';
+import { AGENT_METRIC_LABEL } from './types';
 import {
   AGENT_BREAKDOWN_DIMENSIONS,
   AGENT_BREAKDOWN_METRIC_KEY,
@@ -68,7 +71,7 @@ function AgentBreakdownPanel({
   const rateLabel = (v: number) => `${format(v / Math.max(1, calendarDays))}/day`;
 
   return (
-    <div className="rounded-xl bg-card/40 p-6">
+    <div className="min-w-0">
       <div className="mb-3 flex items-baseline justify-between">
         <h3 className="text-sm font-medium text-foreground">{DIMENSION_TITLE[dimension]}</h3>
         <span className="text-xs text-muted-foreground">
@@ -136,14 +139,16 @@ export function AgentBreakdownPanels({
   calendarDays: number;
 }) {
   return (
-    <div>
-      <div className="mb-3">
-        <h2 className="text-base font-medium text-foreground">Where is the burn coming from?</h2>
-        <p className="text-xs text-muted-foreground">
-          Ranked by the selected metric; rows show total for the window and average per calendar
-          day.
-        </p>
-      </div>
+    <AgentSection
+      icon={Layers}
+      title={`${AGENT_METRIC_LABEL[metric]} drivers`}
+      subtitle="Ranked by the selected metric; rows show the window total and average per calendar day."
+      count={3}
+      countLabel="dimensions"
+      collapsible
+      defaultOpen={false}
+      storageKey="usage-drivers"
+    >
       <div className="grid gap-6 lg:grid-cols-3">
         {AGENT_BREAKDOWN_DIMENSIONS.map((dimension) => (
           <AgentBreakdownPanel
@@ -158,6 +163,6 @@ export function AgentBreakdownPanels({
           />
         ))}
       </div>
-    </div>
+    </AgentSection>
   );
 }

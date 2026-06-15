@@ -1,12 +1,14 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Gauge } from 'lucide-react';
+import { ChevronDown, Gauge } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { TinybirdResponse } from '@/components/usage/types';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { AgentSection, AgentTableEmpty } from './AgentSection';
+import { useSectionOpen } from './useSectionOpen';
 import { buildContextHealthParams, contextHealthBand, formatContextTokens } from './contextHealth';
 import {
   AGENT_CONTEXT_BREAKDOWN_DIMENSIONS,
@@ -93,9 +95,7 @@ function FirstCallStartStats({ row }: { row: AgentContextHealthRow }) {
   return (
     <div>
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-sm font-medium text-foreground">
-          Are new conversations starting bloated?
-        </h3>
+        <h3 className="text-sm font-medium text-foreground">Conversation start sizes</h3>
         <span className="text-xs text-muted-foreground">
           first model request in each conversation
         </span>
@@ -127,6 +127,33 @@ function FirstCallStartStats({ row }: { row: AgentContextHealthRow }) {
         />
       </div>
     </div>
+  );
+}
+
+function CollapsibleSubsection({
+  title,
+  subtitle,
+  storageKey,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  storageKey: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useSectionOpen(storageKey, false);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="group/sub">
+      <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left">
+        <div className="flex items-center gap-2">
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground transition-transform group-data-[state=closed]/sub:-rotate-90" />
+          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        </div>
+        <span className="text-xs text-muted-foreground">{subtitle}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-3">{children}</CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -238,6 +265,39 @@ function ContextBreakdownPanel({
   );
 }
 
+export function ContextBreakdownGrid({
+  filterParams,
+  models,
+  attentionThresholdTokens,
+  labelFor,
+  selectedFor,
+  onToggle,
+}: {
+  filterParams: Record<string, string | number>;
+  models: string[];
+  attentionThresholdTokens: number;
+  labelFor: (value: string) => string;
+  selectedFor: (dimension: AgentContextBreakdownDimension) => string[];
+  onToggle: (dimension: AgentContextBreakdownDimension, value: string) => void;
+}) {
+  return (
+    <div className="grid gap-6 lg:grid-cols-3">
+      {AGENT_CONTEXT_BREAKDOWN_DIMENSIONS.map((dimension) => (
+        <ContextBreakdownPanel
+          key={dimension}
+          dimension={dimension}
+          filterParams={filterParams}
+          models={models}
+          attentionThresholdTokens={attentionThresholdTokens}
+          labelFor={labelFor}
+          selected={selectedFor(dimension)}
+          onToggle={(value) => onToggle(dimension, value)}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function AgentContextHealthPanel({
   row,
   error,
@@ -278,7 +338,7 @@ export function AgentContextHealthPanel({
         <div className="space-y-4">
           <div className="grid gap-x-8 gap-y-3 border-y border-border py-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCell
-              label="How large do conversations start?"
+              label="Typical conversation start size"
               value={emptyValue}
               detail={
                 error
@@ -289,7 +349,7 @@ export function AgentContextHealthPanel({
               title="Median tokens sent to the model on the first measured request in each conversation."
             />
             <MetricCell
-              label={`How often do conversations cross ${threshold}?`}
+              label={`Conversations crossing ${threshold}`}
               value={emptyValue}
               detail={
                 error
@@ -300,7 +360,7 @@ export function AgentContextHealthPanel({
               title={`Conversations and model requests above ${threshold} tokens sent before the reply.`}
             />
             <MetricCell
-              label={`How long do they stay above ${threshold}?`}
+              label={`Time spent above ${threshold}`}
               value={emptyValue}
               detail={
                 error
@@ -311,7 +371,7 @@ export function AgentContextHealthPanel({
               title="Average model requests above the threshold for conversations that crossed it."
             />
             <MetricCell
-              label={`What did requests above ${threshold} cost?`}
+              label={`Cost above ${threshold}`}
               value={emptyValue}
               detail={
                 error
@@ -334,7 +394,7 @@ export function AgentContextHealthPanel({
         <div className="space-y-6">
           <div className="grid gap-x-8 gap-y-3 border-y border-border py-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCell
-              label="How large do conversations start?"
+              label="Typical conversation start size"
               value={formatContextTokens(row.first_call_context_p50)}
               detail={`${formatNumber(row.session_count)} conversations, first model request only`}
               prior={`${formatContextTokens(row.prior_first_call_context_p50)} (${formatNumber(
@@ -343,7 +403,7 @@ export function AgentContextHealthPanel({
               title="Median tokens sent to the model on the first measured request in each conversation."
             />
             <MetricCell
-              label={`How often do conversations cross ${threshold}?`}
+              label={`Conversations crossing ${threshold}`}
               value={`${formatNumber(row.sessions_over_threshold)} / ${formatNumber(
                 row.session_count,
               )} conversations`}
@@ -356,14 +416,14 @@ export function AgentContextHealthPanel({
               title={`Conversations and model requests above ${threshold} tokens sent before the reply.`}
             />
             <MetricCell
-              label={`How long do they stay above ${threshold}?`}
+              label={`Time spent above ${threshold}`}
               value={`${formatNumber(overThresholdRequestsPerConversation)} requests / crossed conversation`}
               detail={`${formatContextTokens(row.context_overage_tokens)} total tokens above ${threshold}`}
               prior={`${formatContextTokens(row.prior_context_overage_tokens)} above threshold`}
               title="Average model requests above the threshold for conversations that crossed it."
             />
             <MetricCell
-              label={`What did requests above ${threshold} cost?`}
+              label={`Cost above ${threshold}`}
               value={formatCurrency(row.cost_while_over_threshold)}
               detail={`${formatContextTokens(
                 row.output_tokens_while_over_threshold,
@@ -375,20 +435,20 @@ export function AgentContextHealthPanel({
 
           <FirstCallStartStats row={row} />
 
-          <div className="grid gap-6 lg:grid-cols-3">
-            {AGENT_CONTEXT_BREAKDOWN_DIMENSIONS.map((dimension) => (
-              <ContextBreakdownPanel
-                key={dimension}
-                dimension={dimension}
-                filterParams={filterParams}
-                models={models}
-                attentionThresholdTokens={attentionThresholdTokens}
-                labelFor={labelFor}
-                selected={selectedFor(dimension)}
-                onToggle={(value) => onToggle(dimension, value)}
-              />
-            ))}
-          </div>
+          <CollapsibleSubsection
+            title="Where large conversations come from"
+            subtitle={`tokens above ${threshold}, by source / model / repo`}
+            storageKey="context-breakdowns"
+          >
+            <ContextBreakdownGrid
+              filterParams={filterParams}
+              models={models}
+              attentionThresholdTokens={attentionThresholdTokens}
+              labelFor={labelFor}
+              selectedFor={selectedFor}
+              onToggle={onToggle}
+            />
+          </CollapsibleSubsection>
         </div>
       )}
     </AgentSection>

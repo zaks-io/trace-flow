@@ -13,21 +13,19 @@ function formatSignedPercent(value: number | null): string {
 }
 
 function MetricAnswer({
-  question,
+  label,
   value,
   detail,
   comparison,
 }: {
-  question: string;
+  label: string;
   value: string;
   detail: string;
   comparison?: string;
 }) {
   return (
     <div className="min-w-0 py-2">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        {question}
-      </p>
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="mt-1 break-words font-mono text-lg font-semibold leading-tight tabular-nums text-foreground">
         {value}
       </p>
@@ -88,22 +86,22 @@ export function AgentBurnRatePanel({
       >
         <div className="grid gap-x-8 gap-y-3 border-y border-border py-3 sm:grid-cols-2 lg:grid-cols-4">
           <MetricAnswer
-            question="How fast am I spending?"
+            label="Daily spend"
             value="Could not load"
             detail="Daily usage buckets are required for active-day cost."
           />
           <MetricAnswer
-            question="How many tokens am I using?"
+            label="Daily tokens"
             value="Could not load"
             detail="Daily usage buckets are required for active-day tokens."
           />
           <MetricAnswer
-            question="Is this higher than normal?"
+            label="Pace vs prior"
             value="Could not load"
             detail="Prior comparison needs loaded daily usage buckets."
           />
           <MetricAnswer
-            question="What should I expect?"
+            label="Projected 30-day cost"
             value={formatCurrency(summary.estimated_cost_usd)}
             detail="window total loaded; daily projection is unavailable"
           />
@@ -111,17 +109,17 @@ export function AgentBurnRatePanel({
 
         <div className="grid gap-x-8 gap-y-3 pt-3 sm:grid-cols-3">
           <MetricAnswer
-            question="Are quiet days skewing this?"
+            label="Quiet days"
             value="Could not load"
             detail="Quiet-day math needs daily usage buckets."
           />
           <MetricAnswer
-            question="What about weekdays?"
+            label="Weekday spend"
             value="Could not load"
             detail="Weekday math needs daily usage buckets."
           />
           <MetricAnswer
-            question="How fast am I moving?"
+            label="Sessions per active day"
             value="Could not load"
             detail={`${formatNumber(summary.session_count)} conversations loaded for the window`}
           />
@@ -160,25 +158,25 @@ export function AgentBurnRatePanel({
     >
       <div className="grid gap-x-8 gap-y-3 border-y border-border py-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricAnswer
-          question="How fast am I spending?"
+          label="Daily spend"
           value={`${formatCurrency(stats.costPerActiveDay)} / active day`}
           detail={`${formatCurrency(stats.costPerCalendarDay)} / calendar day`}
           comparison={priorCostComparison}
         />
         <MetricAnswer
-          question="How many tokens am I using?"
+          label="Daily tokens"
           value={`${formatNumber(stats.tokensPerActiveDay)} tokens / active day`}
           detail={`${formatNumber(stats.messagesPerActiveDay)} assistant calls / active day`}
           comparison={priorTokenComparison}
         />
         <MetricAnswer
-          question="Is this higher than normal?"
+          label="Pace vs prior"
           value={costDelta}
           detail="cost per active day vs previous equal window"
           comparison={tokenDelta}
         />
         <MetricAnswer
-          question="What should I expect?"
+          label="Projected 30-day cost"
           value={formatCurrency(stats.projectedThirtyDayCost)}
           detail="projected 30-day cost at current calendar-day pace"
           comparison={projectedComparison}
@@ -187,12 +185,12 @@ export function AgentBurnRatePanel({
 
       <div className="grid gap-x-8 gap-y-3 pt-3 sm:grid-cols-3">
         <MetricAnswer
-          question="Are quiet days skewing this?"
+          label="Quiet days"
           value={`${formatNumber(stats.quietDays)} quiet days excluded`}
           detail={`Active-day averages use ${formatNumber(stats.activeDays)} days with usage`}
         />
         <MetricAnswer
-          question="What about weekdays?"
+          label="Weekday spend"
           value={
             stats.weekdayActiveDays > 0
               ? `${formatCurrency(stats.costPerWeekdayActiveDay)} / active weekday`
@@ -205,7 +203,7 @@ export function AgentBurnRatePanel({
           }
         />
         <MetricAnswer
-          question="How fast am I moving?"
+          label="Sessions per active day"
           value={`${formatNumber(stats.sessionsPerActiveDay)} conversations / active day`}
           detail={`${formatNumber(summary.session_count)} conversations in this window`}
         />

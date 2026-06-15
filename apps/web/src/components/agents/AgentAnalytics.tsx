@@ -2,50 +2,27 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Bot, DollarSign, Hash, MessageSquare, Wrench, X } from 'lucide-react';
+import { Bot, X } from 'lucide-react';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { TIME_RANGES } from '@/components/usage/types';
 import { cn } from '@/lib/utils';
+import { useRepoDirectory } from '@/hooks/useRepoDirectory';
 import { useAgentFilters } from './useAgentFilters';
 import { useAgentData } from './useAgentData';
-import { useRepoDirectory } from '@/hooks/useRepoDirectory';
 import {
   AGENT_SOURCES,
-  AGENT_METRICS,
-  AGENT_METRIC_LABEL,
-  AGENT_GROUP_BY,
-  AGENT_GROUP_BY_LABEL,
-  AGENT_GRANULARITIES,
-  AGENT_GRANULARITY_LABEL,
-  type AgentChartStyle,
+  type AgentBreakdownDimension,
   type AgentContextBreakdownDimension,
-  type AgentGroupBy,
-  type AgentMetric,
 } from './types';
-import type { AgentBreakdownDimension } from './types';
 import { MultiFilterDropdown } from './MultiFilterDropdown';
-import { AgentUsageChart } from './AgentUsageChart';
-import { AgentKpiCards } from './AgentKpiCards';
-import { AgentBurnRatePanel } from './AgentBurnRatePanel';
-import { AgentContextHealthPanel } from './AgentContextHealthPanel';
-import { AgentBreakdownPanels } from './AgentBreakdownPanels';
-import { FailureLeaderboardTable } from './FailureLeaderboardTable';
-import { ToolDeltaTable } from './ToolDeltaTable';
-import { AgentSessionsTable } from './AgentSessionsTable';
+import { AgentOverview } from './AgentOverview';
+import { AgentTabs } from './AgentTabs';
 import { resolveAttentionThreshold } from './contextHealth';
 import {
   hasLoadedAgentData,
   hasLoadedAgentDetailData,
   shouldShowAgentEmptyState,
 } from './agentAnalyticsState';
-
-const METRIC_ICON: Record<AgentMetric, React.ComponentType<{ className?: string }>> = {
-  cost: DollarSign,
-  tokens: Hash,
-  messages: MessageSquare,
-  sessions: Bot,
-  'tool-events': Wrench,
-};
 
 export function AgentAnalytics() {
   const searchParams = useSearchParams();
@@ -90,8 +67,6 @@ export function AgentAnalytics() {
     models,
     attentionThresholdTokens,
   });
-  const [metric, setMetric] = useState<AgentMetric>('cost');
-  const [chartStyle, setChartStyle] = useState<AgentChartStyle>('stacked');
 
   // Resolve repo_fingerprint -> display name. Loaded whenever there is data to show, since
   // the session table renders repo names even when not grouping/filtering by repo.
@@ -133,14 +108,6 @@ export function AgentAnalytics() {
     return [...set];
   }, [seenModels, models]);
 
-  // Tool Events carry no model, so Model grouping is unavailable for that metric.
-  const isGroupDisabled = (g: AgentGroupBy) => g === 'model' && metric === 'tool-events';
-
-  const selectMetric = (m: AgentMetric) => {
-    setMetric(m);
-    if (m === 'tool-events' && groupBy === 'model') setGroupBy('none');
-  };
-
   // Click a series/legend entry to toggle that value into the active dimension's filter.
   const onGroupClick = (value: string) => {
     if (groupBy === 'source') toggleSource(value);
@@ -148,23 +115,19 @@ export function AgentAnalytics() {
     else if (groupBy === 'repo') toggleRepo(value);
   };
 
-  // Breakdown panels cross-filter the page: a row click toggles its dimension's filter.
-  const breakdownSelected = (dimension: AgentBreakdownDimension) =>
-    dimension === 'source' ? sources : dimension === 'model' ? models : repos;
-  const breakdownToggle = (dimension: AgentBreakdownDimension, value: string) => {
-    if (dimension === 'source') toggleSource(value);
-    else if (dimension === 'model') toggleModel(value);
-    else toggleRepo(value);
-  };
-  const contextSelected = (dimension: AgentContextBreakdownDimension) =>
-    dimension === 'source' ? sources : dimension === 'model' ? models : repos;
-  const contextToggle = (dimension: AgentContextBreakdownDimension, value: string) => {
+  // Breakdown/context panels cross-filter the page: a row or segment click toggles its filter.
+  const dimensionSelected = (
+    dimension: AgentBreakdownDimension | AgentContextBreakdownDimension,
+  ) => (dimension === 'source' ? sources : dimension === 'model' ? models : repos);
+  const dimensionToggle = (
+    dimension: AgentBreakdownDimension | AgentContextBreakdownDimension,
+    value: string,
+  ) => {
     if (dimension === 'source') toggleSource(value);
     else if (dimension === 'model') toggleModel(value);
     else toggleRepo(value);
   };
 
-  const MetricIcon = METRIC_ICON[metric];
   const calendarDays = Math.max(
     1,
     (Number(filterParams.end_time_ms) - Number(filterParams.start_time_ms)) / (24 * 60 * 60 * 1000),
@@ -176,20 +139,16 @@ export function AgentAnalytics() {
     failures,
     deltas,
   });
-  const hasLoadedDetailData = hasLoadedAgentDetailData({
-    timeseries,
-    contextHealth,
-    failures,
-    deltas,
-  });
   const shouldShowEmptyState = shouldShowAgentEmptyState({
     isEmpty,
     hasError,
     hasLoadedData: hasAnyLoadedData,
-    hasLoadedDetailData,
+    hasLoadedDetailData: hasLoadedAgentDetailData({ timeseries, contextHealth, failures, deltas }),
   });
   const failedSurfaceLabels =
     failedSurfaces.map((failure) => failure.label).join(', ') || 'one or more analytics sections';
+  const errorFor = (id: string) =>
+    failedSurfaces.find((failure) => failure.id === id)?.error ?? null;
 
   return (
     <div className="animate-fade-in">
@@ -281,158 +240,51 @@ export function AgentAnalytics() {
           </p>
         </div>
       ) : (
-        <div className="space-y-8">
-          {summary && <AgentKpiCards summary={summary} />}
+        <div className="space-y-6">
+          {summary && (
+            <AgentOverview
+              summary={summary}
+              burnSeries={burnSeries}
+              priorBurnSeries={priorBurnSeries}
+              contextHealth={contextHealth}
+              failures={failures}
+              attentionThresholdTokens={attentionThresholdTokens}
+              filterParams={filterParams}
+              timezone={timezone}
+              labelFor={labelFor}
+              selectedFor={dimensionSelected}
+              onToggle={dimensionToggle}
+            />
+          )}
 
-          <AgentBurnRatePanel
+          <AgentTabs
             summary={summary}
-            currentRows={burnSeries}
-            priorRows={priorBurnSeries}
-            currentError={
-              failedSurfaces.find((failure) => failure.id === 'burnSeries')?.error ?? null
-            }
-            priorError={
-              failedSurfaces.find((failure) => failure.id === 'priorBurnSeries')?.error ?? null
-            }
+            timeseries={timeseries}
+            burnSeries={burnSeries}
+            priorBurnSeries={priorBurnSeries}
+            contextHealth={contextHealth}
+            failures={failures}
+            deltas={deltas}
+            burnCurrentError={errorFor('burnSeries')}
+            burnPriorError={errorFor('priorBurnSeries')}
+            contextError={errorFor('context')}
             filterParams={filterParams}
             timezone={timezone}
-          />
-
-          <AgentBreakdownPanels
-            filterParams={filterParams}
-            metric={metric}
-            labelFor={labelFor}
-            selectedFor={breakdownSelected}
-            onToggle={breakdownToggle}
-            calendarDays={calendarDays}
-          />
-
-          <AgentContextHealthPanel
-            row={contextHealth}
-            error={failedSurfaces.find((failure) => failure.id === 'context')?.error ?? null}
-            filterParams={filterParams}
-            models={models}
             attentionThresholdTokens={attentionThresholdTokens}
+            models={models}
+            calendarDays={calendarDays}
+            groupBy={groupBy}
+            onGroupByChange={setGroupBy}
+            granularity={granularity}
+            onGranularityChange={setGranularity}
+            onGroupClick={onGroupClick}
             labelFor={labelFor}
-            selectedFor={contextSelected}
-            onToggle={contextToggle}
+            repoLabelMap={repoLabelMap}
+            breakdownSelected={dimensionSelected}
+            breakdownToggle={dimensionToggle}
+            contextSelected={dimensionSelected}
+            contextToggle={dimensionToggle}
           />
-
-          <div className="rounded-xl bg-card/40 p-6">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <MetricIcon className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-base font-medium text-foreground">
-                  {AGENT_METRIC_LABEL[metric]} Over Time
-                </h2>
-                {metric === 'cost' && (
-                  <span
-                    className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                    title="Agent Session Authoring Cost is an API-equivalent estimate, not provider spend. Some sources (notably Cursor) report only partial economics."
-                  >
-                    Estimated
-                  </span>
-                )}
-              </div>
-              <div className="flex rounded-lg border border-border bg-background">
-                {AGENT_METRICS.map((m) => (
-                  <button
-                    type="button"
-                    key={m}
-                    onClick={() => selectMetric(m)}
-                    className={`px-3 py-1 text-xs font-medium transition-colors ${
-                      metric === m
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    {AGENT_METRIC_LABEL[m]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Group by</span>
-                <div className="flex rounded-lg border border-border bg-background">
-                  {AGENT_GROUP_BY.map((g) => (
-                    <button
-                      type="button"
-                      key={g}
-                      disabled={isGroupDisabled(g)}
-                      onClick={() => setGroupBy(g)}
-                      title={
-                        isGroupDisabled(g) ? 'Tool events are not attributed to a model' : undefined
-                      }
-                      className={`px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                        groupBy === g
-                          ? 'bg-primary/10 text-primary'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {AGENT_GROUP_BY_LABEL[g]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Bucket</span>
-                  <div className="flex rounded-lg border border-border bg-background">
-                    {AGENT_GRANULARITIES.map((g) => (
-                      <button
-                        type="button"
-                        key={g}
-                        onClick={() => setGranularity(g)}
-                        className={`px-3 py-1 text-xs font-medium transition-colors ${
-                          granularity === g
-                            ? 'bg-primary/10 text-primary'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        {AGENT_GRANULARITY_LABEL[g]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex rounded-lg border border-border bg-background">
-                  {(['stacked', 'line'] as AgentChartStyle[]).map((s) => (
-                    <button
-                      type="button"
-                      key={s}
-                      onClick={() => setChartStyle(s)}
-                      className={`px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                        chartStyle === s
-                          ? 'bg-primary/10 text-primary'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <AgentUsageChart
-              data={timeseries}
-              metric={metric}
-              groupBy={groupBy}
-              granularity={granularity}
-              chartStyle={chartStyle}
-              onGroupClick={onGroupClick}
-              labelFor={labelFor}
-            />
-          </div>
-
-          <AgentSessionsTable filterParams={filterParams} repoLabelMap={repoLabelMap} />
-
-          <div className="space-y-4">
-            <h2 className="text-base font-medium text-foreground">Tool reliability</h2>
-            <FailureLeaderboardTable data={failures} />
-            <ToolDeltaTable data={deltas} />
-          </div>
         </div>
       )}
     </div>

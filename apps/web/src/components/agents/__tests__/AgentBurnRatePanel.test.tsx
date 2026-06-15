@@ -39,7 +39,7 @@ const summary: AgentSummaryRow = {
 };
 
 describe('AgentBurnRatePanel', () => {
-  it('renders the original burn-rate questions directly', () => {
+  it('renders the burn-rate cells with fact labels', () => {
     const html = renderToStaticMarkup(
       <AgentBurnRatePanel
         summary={summary}
@@ -56,13 +56,13 @@ describe('AgentBurnRatePanel', () => {
     );
 
     expect(html).toContain('Burn Rate');
-    expect(html).toContain('How fast am I spending?');
-    expect(html).toContain('How many tokens am I using?');
-    expect(html).toContain('Is this higher than normal?');
-    expect(html).toContain('What should I expect?');
-    expect(html).toContain('Are quiet days skewing this?');
-    expect(html).toContain('What about weekdays?');
-    expect(html).toContain('How fast am I moving?');
+    expect(html).toContain('Daily spend');
+    expect(html).toContain('Daily tokens');
+    expect(html).toContain('Pace vs prior');
+    expect(html).toContain('Projected 30-day cost');
+    expect(html).toContain('Quiet days');
+    expect(html).toContain('Weekday spend');
+    expect(html).toContain('Sessions per active day');
   });
 
   it('does not invent active-day rates when current daily buckets fail', () => {
@@ -79,7 +79,7 @@ describe('AgentBurnRatePanel', () => {
       />,
     );
 
-    expect(html).toContain('How fast am I spending?');
+    expect(html).toContain('Daily spend');
     expect(html).toContain('Could not load');
     expect(html).toContain('Daily usage buckets are required for active-day cost.');
     expect(html).toContain('Quiet-day math needs daily usage buckets.');
@@ -99,7 +99,7 @@ describe('AgentBurnRatePanel', () => {
       />,
     );
 
-    expect(html).toContain('How fast am I spending?');
+    expect(html).toContain('Daily spend');
     expect(html).toContain('Could not load');
     expect(html).toContain('Daily usage buckets are required for active-day cost.');
     expect(html).toContain('window total loaded; daily projection is unavailable');

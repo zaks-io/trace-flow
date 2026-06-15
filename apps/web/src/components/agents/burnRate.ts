@@ -12,7 +12,7 @@ interface DayTotals {
   isWeekday: boolean;
 }
 
-interface BurnRateStats {
+export interface BurnRateStats {
   calendarDays: number;
   activeDays: number;
   quietDays: number;
