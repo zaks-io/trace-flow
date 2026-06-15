@@ -9,6 +9,7 @@ import { BentoCell } from './BentoCell';
 import { ConversationSizeHistogram } from './ConversationSizeHistogram';
 import { CostProjectionHero } from './CostProjectionHero';
 import { ContextDistributionCell } from './ContextDistributionCell';
+import { CostByDepthCell } from './CostByDepthCell';
 import { SpendConcentrationDetail } from './SpendConcentrationDetail';
 import { StatTile } from './StatTile';
 import { VelocityBar } from './VelocityBar';
@@ -19,6 +20,7 @@ import { generatedTokenShare } from './agentSessionSizes';
 import { AGENT_GROUP_BY, AGENT_GROUP_BY_LABEL, type AgentGroupBy } from './types';
 import type {
   AgentContextHealthRow,
+  AgentCostByDepthRow,
   AgentCostDistributionRow,
   AgentNotableChangeRow,
   AgentSessionRow,
@@ -39,6 +41,7 @@ export function AgentBentoGrid({
   groupBy,
   onGroupByChange,
   costDistribution,
+  costByDepth,
   topSessions,
   topSessionsLoading,
   onSpendDetailToggle,
@@ -61,6 +64,8 @@ export function AgentBentoGrid({
   groupBy: AgentGroupBy;
   onGroupByChange: (next: AgentGroupBy) => void;
   costDistribution: AgentCostDistributionRow | null;
+  /** Per-turn cost/context by conversation depth; one row per depth, always fetched. */
+  costByDepth: AgentCostByDepthRow[];
   /** Priciest conversations behind the spend curve; fetched only while that cell is expanded. */
   topSessions: AgentSessionRow[];
   topSessionsLoading: boolean;
@@ -209,7 +214,12 @@ export function AgentBentoGrid({
         <ContextDistributionCell row={contextHealth} windowDays={windowDays} />
       </div>
 
-      {/* Row 3 — Q5 where spend concentrates */}
+      {/* Row 3 — Q4b how per-turn cost & context grow as a conversation deepens */}
+      <div className="lg:col-span-6 xl:col-span-12">
+        <CostByDepthCell rows={costByDepth} windowDays={windowDays} />
+      </div>
+
+      {/* Row 4 — Q5 where spend concentrates */}
       <div className="lg:col-span-6 xl:col-span-12">
         <VelocityBar
           row={costDistribution}
@@ -226,7 +236,7 @@ export function AgentBentoGrid({
         />
       </div>
 
-      {/* Row 4 — Q6 notable changes, always present */}
+      {/* Row 5 — Q6 notable changes, always present */}
       <div className="lg:col-span-6 xl:col-span-12">
         <AnomalyStrip
           signals={signals}

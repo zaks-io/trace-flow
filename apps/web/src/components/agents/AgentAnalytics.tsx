@@ -50,6 +50,7 @@ export function AgentAnalytics() {
     priorBurnSeries,
     summary,
     costDistribution,
+    costByDepth,
     topSessions,
     topSessionsLoading,
     notableTotal,
@@ -230,6 +231,7 @@ export function AgentAnalytics() {
           groupBy={groupBy}
           onGroupByChange={setGroupBy}
           costDistribution={costDistribution}
+          costByDepth={costByDepth}
           topSessions={topSessions}
           topSessionsLoading={topSessionsLoading}
           onSpendDetailToggle={setSpendDetailOpen}

@@ -1,0 +1,155 @@
+DESCRIPTION >
+    How per-turn cost and context behave as a conversation gets deeper. Reads billable
+    (assistant) turns from agent_message_facts, groups them by turn_index (the stored,
+    0-indexed chronological position of a turn within its conversation), and at each depth
+    reports the median plus a p25–p75 band and a p95 envelope of (a) per-turn cost and
+    (b) per-turn context size (input + cache read + cache write). This is a population view:
+    every turn at a given depth across EVERY conversation contributes, so no single
+    conversation is singled out and there is no chosen "deep vs shallow" cutoff.
+
+    The headline is a log–log elasticity: a closed-form OLS slope of ln(median cost) on
+    ln(depth) across the depths that carry enough turns to be meaningful. It answers the
+    "slope tells me two things" question with one unitless number:
+      ~0  -> flat: per-turn cost does not grow with depth (a few large reads, not bloat)
+      ~1  -> linear: each doubling of depth doubles per-turn cost (history re-paid every turn)
+      >1  -> accelerating: cost grows faster than depth (the runaway / loop signal)
+    cost_elasticity is exp-readable as "each doubling of depth multiplies per-turn cost by
+    2^cost_elasticity". context_elasticity is the same fit on context size (the upstream cause).
+
+    Nothing here is a magic cutpoint: depth values are raw stored turn_index; the band/envelope
+    are exact quantiles; the elasticity is fit by the regression, not chosen. The only knob is
+    min_depth_samples — turns at a depth observed in fewer than this many conversations are too
+    thin to quantile or fit, so they are excluded from the FIT (not the series) and the series
+    carries sample_count so the UI can fade the thin right tail honestly.
+
+NODE turns
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt
+    -- Main-thread turns only. A Claude sub-agent transcript is a separate file that the sync
+    -- layer links to the PARENT session_pk (session_pk = hash(source, vendor_session_id), which
+    -- ignores agent_id), but its turn_index restarts at 0. So a sub-agent turn and a main-thread
+    -- turn can share (session_pk, turn_index): grouping by turn_index would then double-count and
+    -- overstate sample_count, and a nested side-quest's depth is not the conversation's depth.
+    -- agent_depth = 0 AND is_sidechain = 0 keeps one monotonic turn_index per session_pk, so
+    -- (session_pk, turn_index) is unique and sample_count = count() = conversations at that depth.
+    SELECT
+        turn_index,
+        cost_usd,
+        toFloat64(input_tokens + cache_read_tokens + cache_creation_tokens) AS context_tokens,
+        session_pk
+    FROM agent_message_facts
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND role = 'assistant'
+        AND agent_depth = 0
+        AND is_sidechain = 0
+        AND EventAt >= start_dt
+        AND EventAt < end_dt
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+
+NODE by_depth
+SQL >
+    -- One row per conversation depth. Cost quantiles use only priced turns (cost_usd is
+    -- non-null), so an unpriced turn neither inflates nor zeroes the cost band; context
+    -- quantiles use every assistant turn. sample_count is the number of conversations that
+    -- reached this depth (= turns at this depth, one per session), so the UI can fade the tail.
+    SELECT
+        turn_index AS depth,
+        count() AS sample_count,
+        countIf(cost_usd IS NOT NULL) AS priced_sample_count,
+        round(quantileExactIf(0.25)(assumeNotNull(cost_usd), cost_usd IS NOT NULL), 6) AS cost_p25,
+        round(quantileExactIf(0.5)(assumeNotNull(cost_usd), cost_usd IS NOT NULL), 6) AS cost_p50,
+        round(quantileExactIf(0.75)(assumeNotNull(cost_usd), cost_usd IS NOT NULL), 6) AS cost_p75,
+        round(quantileExactIf(0.95)(assumeNotNull(cost_usd), cost_usd IS NOT NULL), 6) AS cost_p95,
+        round(quantileExact(0.25)(context_tokens), 0) AS context_p25,
+        round(quantileExact(0.5)(context_tokens), 0) AS context_p50,
+        round(quantileExact(0.75)(context_tokens), 0) AS context_p75,
+        round(quantileExact(0.95)(context_tokens), 0) AS context_p95
+    FROM turns
+    GROUP BY turn_index
+
+NODE fit
+SQL >
+    %
+    -- Closed-form OLS slope of ln(median) on ln(depth+1) over the depths that carry enough
+    -- conversations to be a stable quantile. depth+1 keeps depth 0 in the fit (ln(1)=0).
+    -- Cost fit uses depths with a positive median priced cost; context fit uses positive median
+    -- context. simpleLinearRegression returns (slope, intercept); .1 is the slope, which IS the
+    -- elasticity — derived, not chosen. With fewer than 2 fit points there is no line to fit, so
+    -- the slope is 0 (flat: the honest default when there is no trend to estimate).
+    SELECT
+        if(length(cost_x) >= 2, arrayReduce('simpleLinearRegression', cost_x, cost_y).1, 0.) AS cost_elasticity,
+        if(length(ctx_x) >= 2, arrayReduce('simpleLinearRegression', ctx_x, ctx_y).1, 0.) AS context_elasticity,
+        length(cost_x) AS cost_fit_points,
+        length(ctx_x) AS context_fit_points
+    FROM (
+        SELECT
+            groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_x,
+            groupArrayIf(log(cost_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_y,
+            groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_x,
+            groupArrayIf(log(context_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_y
+        FROM by_depth
+    )
+
+NODE tail
+SQL >
+    %
+    -- Window-level honesty about the thin deep tail. A depth observed in fewer than
+    -- min_depth_samples conversations is too sparse to quantile or fit, so the endpoint marks it
+    -- not-well_sampled and the client drops it from the chart (keeping the curve where there is a
+    -- real population). These scalars let the footnote state exactly what was set aside, and they
+    -- are self-scaling: a dataset of only shallow conversations clips early, a genuinely deep one
+    -- extends. observed_max_depth is the true deepest turn (reported even though it is not charted).
+    SELECT
+        maxIf(depth, sample_count >= {{ Int64(min_depth_samples, 5) }}) AS charted_max_depth,
+        max(depth) AS observed_max_depth,
+        countIf(sample_count < {{ Int64(min_depth_samples, 5) }}) AS pooled_depth_count,
+        sumIf(sample_count, sample_count < {{ Int64(min_depth_samples, 5) }}) AS pooled_turn_count
+    FROM by_depth
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        d.depth AS depth,
+        d.sample_count AS sample_count,
+        d.priced_sample_count AS priced_sample_count,
+        d.sample_count >= {{ Int64(min_depth_samples, 5) }} AS well_sampled,
+        d.cost_p25 AS cost_p25,
+        d.cost_p50 AS cost_p50,
+        d.cost_p75 AS cost_p75,
+        d.cost_p95 AS cost_p95,
+        d.context_p25 AS context_p25,
+        d.context_p50 AS context_p50,
+        d.context_p75 AS context_p75,
+        d.context_p95 AS context_p95,
+        round(f.cost_elasticity, 4) AS cost_elasticity,
+        round(f.context_elasticity, 4) AS context_elasticity,
+        f.cost_fit_points AS cost_fit_points,
+        f.context_fit_points AS context_fit_points,
+        t.charted_max_depth AS charted_max_depth,
+        t.observed_max_depth AS observed_max_depth,
+        t.pooled_depth_count AS pooled_depth_count,
+        t.pooled_turn_count AS pooled_turn_count
+    FROM by_depth AS d
+    CROSS JOIN fit AS f
+    CROSS JOIN tail AS t
+    ORDER BY d.depth
+
+TYPE ENDPOINT

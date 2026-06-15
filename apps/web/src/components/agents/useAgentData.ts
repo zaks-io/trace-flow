@@ -3,6 +3,7 @@ import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
 import type {
   AgentContextHealthRow,
+  AgentCostByDepthRow,
   AgentCostDistributionRow,
   AgentGranularity,
   AgentGroupBy,
@@ -114,6 +115,13 @@ export function useAgentData({
     params: usageParams,
   });
 
+  // Per-turn cost/context as conversations deepen (population view over turn_index). Model-scoped
+  // like the other message-grain surfaces; one row per depth, fetched for every window.
+  const costByDepthQuery = useTinybirdQuery<TinybirdResponse<AgentCostByDepthRow>>({
+    pipe: 'agent_cost_by_depth',
+    params: usageParams,
+  });
+
   // Priciest conversations behind the spend-concentration curve. The browser pipe has no model
   // param, so it scopes by the source/window filters only; fetched only while the cell is open.
   const topSessionsParams = useMemo(
@@ -165,6 +173,7 @@ export function useAgentData({
 
   const summary = getFreshFirstRow(summaryQuery);
   const costDistribution = getFreshFirstRow(costDistributionQuery);
+  const costByDepth = getFreshRows(costByDepthQuery);
   const topSessions = getFreshRows(topSessionsQuery);
   const notableTotal = getFreshFirstRow(notableTotalQuery);
   const notableByRepo = getFreshRows(notableByRepoQuery);
@@ -181,6 +190,7 @@ export function useAgentData({
     priorBurnSeriesQuery.isLoading ||
     summaryQuery.isLoading ||
     costDistributionQuery.isLoading ||
+    costByDepthQuery.isLoading ||
     notableTotalQuery.isLoading ||
     notableByRepoQuery.isLoading ||
     contextQuery.isLoading ||
@@ -193,6 +203,7 @@ export function useAgentData({
     priorBurnSeriesQuery.error ??
     summaryQuery.error ??
     costDistributionQuery.error ??
+    costByDepthQuery.error ??
     notableTotalQuery.error ??
     notableByRepoQuery.error ??
     contextQuery.error ??
@@ -205,6 +216,11 @@ export function useAgentData({
       id: 'costDistribution',
       label: 'cost-per-conversation distribution',
       error: costDistributionQuery.error,
+    },
+    {
+      id: 'costByDepth',
+      label: 'cost as conversations deepen',
+      error: costByDepthQuery.error,
     },
     { id: 'notableTotal', label: 'notable changes (total)', error: notableTotalQuery.error },
     { id: 'notableByRepo', label: 'notable changes (by repo)', error: notableByRepoQuery.error },
@@ -242,6 +258,7 @@ export function useAgentData({
     priorBurnSeries,
     summary,
     costDistribution,
+    costByDepth,
     topSessions,
     topSessionsLoading: topSessionsQuery.isLoading,
     notableTotal,

@@ -360,6 +360,60 @@ export interface AgentSessionRow {
 }
 
 /**
+ * One depth row from `pipes/agent_cost_by_depth.pipe` — how per-turn cost and context behave as a
+ * conversation deepens. `depth` is the raw, 0-indexed `turn_index` (no binning, no chosen cutoff).
+ * At each depth, every assistant turn at that position across EVERY conversation contributes, so the
+ * bands are a population view, not a single conversation. The `*_elasticity` and `*_fit_points`
+ * scalars are identical on every row (the same window-level fit), repeated for a flat row shape.
+ */
+export interface AgentCostByDepthRow {
+  /** Raw conversation depth = turn_index (0-indexed chronological turn position). */
+  depth: number;
+  /** Conversations that reached this depth (main-thread turns only; sub-agent/sidechain excluded). */
+  sample_count: number;
+  /** Turns at this depth with a non-null cost (drives the cost band; context uses all turns). */
+  priced_sample_count: number;
+  /**
+   * 1 when this depth has >= min_depth_samples conversations — enough to quantile and to enter the
+   * fit. The chart plots only well-sampled depths so a sparse deep tail (1-2 conversations) can't
+   * bury the trend. Self-scaling: shallow-only data clips early, genuinely deep data extends.
+   */
+  well_sampled: number;
+  /** Per-turn COST band at this depth: p25–p75 is the body, p95 the envelope. */
+  cost_p25: number;
+  cost_p50: number;
+  cost_p75: number;
+  cost_p95: number;
+  /** Per-turn CONTEXT band at this depth (input + cache read + cache write tokens). */
+  context_p25: number;
+  context_p50: number;
+  context_p75: number;
+  context_p95: number;
+  /**
+   * Log-log OLS slope of median per-turn cost on ln(depth+1) over depths with enough samples.
+   * ~0 flat (a few large reads), ~1 linear bloat (history re-paid each turn), >1 accelerating
+   * (the runaway/loop signal). Reads as "each doubling of depth multiplies per-turn cost by
+   * 2^cost_elasticity". Derived by the fit, not a chosen threshold.
+   */
+  cost_elasticity: number;
+  /** Same fit on context size (the upstream cause of the cost slope). */
+  context_elasticity: number;
+  /** Depths that entered the cost / context fit; <2 means no trend was estimable (slope = 0). */
+  cost_fit_points: number;
+  context_fit_points: number;
+  /**
+   * Window-level tail honesty (identical on every row). `charted_max_depth` is the deepest
+   * well-sampled depth (the chart's x-extent); `observed_max_depth` is the true deepest turn seen
+   * (reported even though it is not charted). `pooled_depth_count` / `pooled_turn_count` are how
+   * many depths and turns fell below the threshold and were set aside, for an honest footnote.
+   */
+  charted_max_depth: number;
+  observed_max_depth: number;
+  pooled_depth_count: number;
+  pooled_turn_count: number;
+}
+
+/**
  * One row from `pipes/agent_notable_changes.pipe` — honest period-over-period movement.
  * `group_value` is '' for the org-wide total; otherwise the source/model/repo value for the
  * requested `dimension`. Reports facts (deltas + daily pace vs a trailing-28d baseline), not
