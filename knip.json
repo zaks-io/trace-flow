@@ -9,7 +9,7 @@
     "tests/tinybird-jwt-allowlist.test.ts"
   ],
   "ignoreBinaries": ["wrangler", "tb"],
-  "ignoreDependencies": ["cloudflare"],
+  "ignoreDependencies": ["cloudflare", "@tinybirdco/sdk"],
   "workspaces": {
     "packages/convex": {
       "entry": ["**/*.ts"],
