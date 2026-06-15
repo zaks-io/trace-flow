@@ -16,6 +16,7 @@ import { resolveAttentionThreshold } from './contextHealth';
 import {
   hasLoadedAgentData,
   hasLoadedAgentDetailData,
+  resolveAgentMainView,
   shouldShowAgentEmptyState,
 } from './agentAnalyticsState';
 
@@ -132,6 +133,18 @@ export function AgentAnalytics() {
   });
   const failedSurfaceLabels =
     failedSurfaces.map((failure) => failure.label).join(', ') || 'one or more analytics sections';
+  // A summary FAILURE leaves `summary` null without meaning the workspace is empty. The bento grid
+  // needs a non-null summary, so it still can't render — but the empty state would lie ("No agent
+  // activity yet") when other surfaces loaded and the toolbar already explains the summary failure.
+  const summaryFailed = failedSurfaces.some((failure) => failure.id === 'summary');
+  const mainView = resolveAgentMainView({
+    isLoading,
+    hasError: Boolean(hasError),
+    hasAnyLoadedData,
+    shouldShowEmptyState,
+    hasSummary: Boolean(summary),
+    summaryFailed,
+  });
 
   return (
     <div className="animate-fade-in">
@@ -208,12 +221,12 @@ export function AgentAnalytics() {
         </div>
       )}
 
-      {isLoading ? (
+      {mainView === 'loading' ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           Loading agent analytics...
         </div>
-      ) : hasError && !hasAnyLoadedData ? null : shouldShowEmptyState || !summary ? (
+      ) : mainView === 'error' ? null : mainView === 'empty' || !summary ? (
         <div className="flex flex-col items-center gap-2 rounded-xl bg-card/40 py-16 text-center">
           <Bot className="h-10 w-10 text-muted-foreground/40" />
           <p className="text-sm font-medium text-foreground">No agent activity yet</p>
