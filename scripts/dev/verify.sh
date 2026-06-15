@@ -13,6 +13,7 @@ fi
 if [[ "${TRACE_FLOW_SKIP_TINYBIRD:-0}" != "1" ]]; then
   require_command tb
   log "validating Tinybird project"
+  export_tinybird_sdk_env
   TB_VERSION_WARNING=0 tb build
   TB_VERSION_WARNING=0 tb test run
 fi

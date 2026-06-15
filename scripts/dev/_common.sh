@@ -104,3 +104,26 @@ json_expr() {
     fail "node or bun is required to parse JSON"
   fi
 }
+
+# tb 4.6+ routes `tb build` through @tinybirdco/sdk, which reads token/baseUrl from
+# tinybird.config.json env interpolation.
+export_tinybird_sdk_env() {
+  if [[ -f "$TRACE_FLOW_ROOT/.tinyb" ]]; then
+    if [[ -z "${TB_TOKEN:-}" ]]; then
+      export TB_TOKEN
+      TB_TOKEN="$(jq -r '.token' "$TRACE_FLOW_ROOT/.tinyb")"
+    fi
+    if [[ -z "${TINYBIRD_URL:-}" ]]; then
+      export TINYBIRD_URL
+      TINYBIRD_URL="$(jq -r '.host' "$TRACE_FLOW_ROOT/.tinyb")"
+    fi
+  fi
+
+  if [[ -z "${TB_TOKEN:-}" && -n "${TB_LOCAL_WORKSPACE_TOKEN:-}" ]]; then
+    export TB_TOKEN="$TB_LOCAL_WORKSPACE_TOKEN"
+  fi
+
+  if [[ -z "${TINYBIRD_URL:-}" ]]; then
+    export TINYBIRD_URL="${TB_HOST:-$TRACE_FLOW_TINYBIRD_HOST}"
+  fi
+}

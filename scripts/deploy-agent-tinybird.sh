@@ -241,6 +241,10 @@ if [[ -z "${TB_TOKEN:-}" && -f "$ROOT_DIR/.tinyb" ]]; then
   fi
 fi
 
+if [[ -z "${TINYBIRD_URL:-}" ]]; then
+  export TINYBIRD_URL="${TB_HOST:-http://localhost:7181}"
+fi
+
 # `tb build` validates offline but honours dev_mode=local in tinybird.config.json, so it needs a
 # running Tinybird Local container. CI's PR gate provides one (ci.yml `tinybird-local` service) and
 # runs the offline build there. The prod deploy job has no container — and doesn't need one: the

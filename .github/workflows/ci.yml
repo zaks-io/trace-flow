@@ -182,14 +182,29 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - name: Install Tinybird CLI
         run: |
           curl -fsSL https://tinybird.co | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # Offline against the Local service container: schema build + fixture/output tests. No token.
+      # Offline against the Local service container: schema build + fixture/output tests.
       - name: Build and test against Tinybird Local
         run: |
+          export TINYBIRD_URL="http://localhost:7181"
+          export TB_TOKEN="$(curl -fsSL "$TINYBIRD_URL/tokens" | jq -r '.workspace_admin_token')"
+          [[ -n "$TB_TOKEN" && "$TB_TOKEN" != "null" ]] || {
+            echo "Failed to fetch Tinybird Local workspace token from $TINYBIRD_URL/tokens" >&2
+            exit 1
+          }
           bash scripts/verify-tinybird-cost-contract.sh
           TB_TARGET_WORKSPACE=trace_flow_prod \
             TINYBIRD_DEPLOY_PHASE=switch \

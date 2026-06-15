@@ -116,6 +116,7 @@ start_tinybird_local() {
 
   if [[ "${TRACE_FLOW_SKIP_TB_BUILD:-0}" != "1" ]]; then
     log "building Tinybird project against local Tinybird"
+    export_tinybird_sdk_env
     TB_VERSION_WARNING=0 tb build
   fi
 }

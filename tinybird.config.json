@@ -1,4 +1,7 @@
 {
   "dev_mode": "local",
-  "include": ["datasources", "materializations", "pipes", "copies", "tests"]
+  "devMode": "local",
+  "include": ["datasources", "materializations", "pipes", "copies", "tests"],
+  "token": "${TB_TOKEN}",
+  "baseUrl": "${TINYBIRD_URL}"
 }

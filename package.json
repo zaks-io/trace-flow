@@ -29,7 +29,7 @@
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
     "test:coverage": "turbo run test:coverage",
-    "test:tinybird": "bash scripts/verify-tinybird-cost-contract.sh && tb --local build && tb --local test run",
+    "test:tinybird": "bash scripts/tinybird-local-test.sh",
     "tinybird:contract": "bash scripts/verify-tinybird-cost-contract.sh",
     "tinybird:perf": "bash scripts/tinybird-performance-report.sh",
     "tinybird:parity": "bash scripts/tinybird-parity-report.sh",
@@ -50,6 +50,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260511.1",
     "@eslint/js": "^9.39.4",
+    "@tinybirdco/sdk": "^0.0.77",
     "@types/node": "^24.12.2",
     "convex": "^1.38.0",
     "eslint": "^9.39.4",
