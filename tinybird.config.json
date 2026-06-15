@@ -1,7 +1,13 @@
 {
   "dev_mode": "local",
   "devMode": "local",
-  "include": ["datasources", "materializations", "pipes", "copies", "tests"],
+  "include": [
+    "datasources/**/*.datasource",
+    "materializations/**/*.pipe",
+    "pipes/**/*.pipe",
+    "copies/**/*.pipe",
+    "tests/**/*.yaml"
+  ],
   "token": "${TB_TOKEN}",
   "baseUrl": "${TINYBIRD_URL}"
 }
