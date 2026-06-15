@@ -5,6 +5,7 @@ export default defineConfig({
     reporters: ['dot'],
     globals: true,
     environment: 'node',
+    include: ['**/__tests__/**/*.test.ts', '../../tests/tinybird-jwt-allowlist.test.ts'],
     env: {
       TINYBIRD_ADMIN_TOKEN: 'test-admin-token',
       TINYBIRD_WORKSPACE_ID: 'test-workspace-id',

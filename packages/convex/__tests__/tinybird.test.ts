@@ -1,24 +1,11 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { joinSanitizedApiKeys, sanitizeApiKeys, UUID_PATTERN } from '../integrations/tinybird';
 import {
-  ALLOWED_TINYBIRD_PIPE_RESOURCES,
   assertMintableTinybirdScopes,
   TINYBIRD_PIPES_READ_SCOPE,
 } from '../integrations/tinybirdScopes';
-import { assertRowSecuredEndpointPipe } from './tinybirdPipeValidation';
-
-const PIPES_DIR = join(__dirname, '../../../pipes');
-
-function listShippedPipes(): string[] {
-  return readdirSync(PIPES_DIR)
-    .filter((name) => name.endsWith('.pipe'))
-    .map((name) => name.slice(0, -'.pipe'.length))
-    .sort();
-}
 
 describe('tinybird API key sanitization', () => {
   describe('UUID_PATTERN', () => {
@@ -178,29 +165,6 @@ describe('tinybird API key sanitization', () => {
 
     it('rejects empty scope lists', () => {
       expect(() => assertMintableTinybirdScopes([])).toThrow(/at least one/i);
-    });
-
-    it('every JWT-mintable pipe is TYPE ENDPOINT with api_keys or org_id filter', () => {
-      for (const pipe of ALLOWED_TINYBIRD_PIPE_RESOURCES) {
-        expect(() => assertRowSecuredEndpointPipe(pipe, PIPES_DIR)).not.toThrow();
-      }
-    });
-
-    it('shipped helper pipes are not JWT-mintable', () => {
-      expect(ALLOWED_TINYBIRD_PIPE_RESOURCES.has('agent_priced_usage')).toBe(false);
-      expect(() => assertRowSecuredEndpointPipe('agent_priced_usage', PIPES_DIR)).toThrow(
-        /TYPE ENDPOINT/i,
-      );
-    });
-
-    it('shipped pipes inventory is larger than the JWT allowlist', () => {
-      const shippedPipes = listShippedPipes();
-      const allowlistedPipes = [...ALLOWED_TINYBIRD_PIPE_RESOURCES].sort();
-
-      expect(shippedPipes.length).toBeGreaterThan(allowlistedPipes.length);
-      for (const pipe of allowlistedPipes) {
-        expect(shippedPipes).toContain(pipe);
-      }
     });
   });
 
