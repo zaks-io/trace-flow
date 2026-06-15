@@ -5,7 +5,8 @@
     ".agents/skills/**",
     ".claude/skills/**",
     ".claude/.agents/skills/**",
-    "apps/desktop/ui/**"
+    "apps/desktop/ui/**",
+    "tests/tinybird-jwt-allowlist.test.ts"
   ],
   "ignoreBinaries": ["wrangler", "tb"],
   "ignoreDependencies": ["cloudflare"],
