@@ -62,8 +62,8 @@ fi
 if [[ -d copies ]]; then
   if [[ ! -f tinybird.config.json ]]; then
     fail "copies/ exists but tinybird.config.json is missing"
-  elif ! jq -e '.include | index("copies")' tinybird.config.json >/dev/null; then
-    fail 'copies/ exists but tinybird.config.json does not include "copies"'
+  elif ! jq -e '[.include[]? | select(. == "copies" or startswith("copies/"))] | length > 0' tinybird.config.json >/dev/null; then
+    fail 'copies/ exists but tinybird.config.json does not include copies (directory or glob under copies/)'
   fi
 fi
 
