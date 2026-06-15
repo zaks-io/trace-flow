@@ -123,6 +123,7 @@ Inspect files that exist:
 - project status, roadmap, specs, ADRs, runbooks, and existing `docs/agents/*`
 - existing agent label docs, such as `docs/agents/triage-labels.md`
 - code host branch, default branch, PR, preview, and deploy workflows
+- root `.coderabbit.yaml` when present, especially `reviews.auto_review`
 - issue tracker provider, provider location, projects or boards, statuses,
   labels, issue templates, and existing issue examples by querying tracker tools
   when available
@@ -149,8 +150,9 @@ Record:
   excludes the configured done state, priority policy, dependency policy,
   dependency graph mechanism, file footprint convention, issue body contract,
   agent-suitability policy for work types and risk,
-  Issue Triage verified-state reconciliation authority, requested intake-to-ready
-  authority, and which workflow role owns active status transitions
+  Issue Triage verified-state reconciliation authority, requested ready-state
+  promotion authority, explicit Linear Backlog promotion gate, and which workflow
+  role owns active status transitions
 - tracker tool query contract: exact provider IDs, query-safe names, status
   field names, relationship or blocker fields, pagination shape if relevant, and
   one read-only verification query or tool call that returned the expected scope
@@ -167,8 +169,10 @@ Record:
   timeout, attempt cap before the thrash circuit breaker, required checks that
   define green for the integrate gate, auto-merge risk tiers, merge method,
   post-merge preparation and check, auto-Done integration behavior,
-  single-ticket one-off mutation policy, verified-ready backlog policy,
-  completely-blocked stop policy, friction-log ticket ID, and delivery metrics
+  single-ticket one-off mutation policy, verified-ready ticket-set policy,
+  completely-blocked stop policy, friction intake provider, location, mode,
+  visibility, agent create authority, review cadence, cleanup policy, and
+  delivery metrics
 - runtime loop and automation terminology for each supported adapter: Claude Code
   `/loop`, schedule, or wake-up timer; Codex automations, either cron
   automations or heartbeat automations; and which mechanism owns recurring
@@ -193,14 +197,17 @@ Record:
 - automation roles: To Issues, Issue Triage, Agent Orchestrator, Agent Review,
   Create PR, and Agent Implement, including To Issues spec-to-slice creation and
   the dependency graph, Issue Triage current-ticket readiness repair,
-  verified-state reconciliation, requested intake promotion, Orchestrator-owned
-  active tracker transitions, the orchestrator integrate gate and friction log,
+  verified-state reconciliation, requested ready-state promotion, Orchestrator-owned
+  active tracker transitions, the orchestrator integrate gate and friction intake,
   clean-context review delegation, and the implementation pipeline
-- review gates: code review, Agent Review, CodeRabbit escalation,
-  required CI, preview checks
+- review gates: code review, Agent Review, CodeRabbit escalation, root
+  CodeRabbit auto-review mode, required CI, preview checks
 - environment safety: local, development, preview, and production capabilities;
   production deploy path; preview deploy path; credential rules; allowed hosted
   checks; and explicit approval requirements
+- instruction trust boundaries: trusted policy sources, untrusted work context,
+  and what to do when tracker, PR, log, worker, or external-doc text tries to
+  override workflow policy
 - handoff shape for implementation, review, queue, and PR creation
 - unknowns that still require human input
 
