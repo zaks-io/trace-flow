@@ -47,7 +47,9 @@ export function AgentAnalytics() {
     burnSeries,
     priorBurnSeries,
     summary,
-    sessionSize,
+    costDistribution,
+    notableTotal,
+    notableByRepo,
     contextHealth,
     failures,
     deltas,
@@ -222,7 +224,9 @@ export function AgentAnalytics() {
           groupedSeries={timeseries}
           groupBy={groupBy}
           onGroupByChange={setGroupBy}
-          sessionSize={sessionSize}
+          costDistribution={costDistribution}
+          notableTotal={notableTotal}
+          notableByRepo={notableByRepo}
           contextHealth={contextHealth}
           failures={failures}
           deltas={deltas}

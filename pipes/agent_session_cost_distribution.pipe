@@ -1,0 +1,202 @@
+DESCRIPTION >
+    Per-conversation cost and token distribution for agent conversations. Each conversation
+    is one data point; the endpoint reports the spend skew (how concentrated cost is in a few
+    conversations), cost-per-conversation percentiles, and a parallel token distribution so the
+    UI can toggle the axis between cost (default) and tokens. Message counts are deliberately
+    NOT a headline unit. Reads the incremental session serving table only and merges aggregate
+    states by (OrgId, session_pk) with no FINAL on the hot path (mirrors agent_sessions_browser).
+
+NODE sessions
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        end_ms - start_ms AS span_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt
+    SELECT
+        if(last_event_at >= start_dt AND last_event_at < end_dt, 'current', 'prior') AS period,
+        message_count,
+        cache_inclusive_tokens,
+        generated_tokens,
+        cost_usd
+    FROM (
+        SELECT
+            session_pk,
+            argMaxMerge(source) AS source,
+            argMaxMerge(model) AS model,
+            argMaxMerge(repo_fingerprint) AS repo_fingerprint,
+            sumMerge(MessageCount) AS message_count,
+            sumMerge(InputTokens) AS input_tokens,
+            sumMerge(OutputTokens) AS output_tokens,
+            sumMerge(CacheReadTokens) AS cache_read_tokens,
+            sumMerge(CacheCreationTokens) AS cache_creation_tokens,
+            sumMerge(ReasoningTokens) AS reasoning_tokens,
+            input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens AS cache_inclusive_tokens,
+            input_tokens + output_tokens + reasoning_tokens AS generated_tokens,
+            round(sumMerge(CostUsd), 6) AS cost_usd,
+            maxMerge(LastEventAt) AS last_event_at
+        FROM agent_session_summaries
+        WHERE OrgId = {{ String(org_id, '') }}
+        GROUP BY session_pk
+    )
+    WHERE message_count > 0
+        AND last_event_at >= prior_start_dt
+        AND last_event_at < end_dt
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+
+NODE distribution
+SQL >
+    SELECT
+        period,
+        count() AS session_count,
+        sum(generated_tokens) AS total_generated_tokens,
+        sum(cache_inclusive_tokens) AS total_cache_inclusive_tokens,
+        round(sum(cost_usd), 6) AS total_cost_usd,
+
+        round(quantileExact(0.5)(cost_usd), 6) AS cost_p50,
+        round(quantileExact(0.9)(cost_usd), 6) AS cost_p90,
+        round(quantileExact(0.95)(cost_usd), 6) AS cost_p95,
+        round(max(cost_usd), 6) AS cost_max,
+
+        round(quantileExact(0.5)(generated_tokens), 0) AS generated_tokens_p50,
+        round(quantileExact(0.9)(generated_tokens), 0) AS generated_tokens_p90,
+        round(quantileExact(0.95)(generated_tokens), 0) AS generated_tokens_p95,
+        max(generated_tokens) AS generated_tokens_max,
+
+        round(quantileExact(0.5)(cache_inclusive_tokens), 0) AS cache_inclusive_tokens_p50,
+        round(quantileExact(0.9)(cache_inclusive_tokens), 0) AS cache_inclusive_tokens_p90,
+        round(quantileExact(0.95)(cache_inclusive_tokens), 0) AS cache_inclusive_tokens_p95,
+        max(cache_inclusive_tokens) AS cache_inclusive_tokens_max,
+
+        -- Cost-magnitude bands (the default axis). Boundaries in USD.
+        countIf(cost_usd < 0.10) AS cost_bin_under_10c,
+        countIf(cost_usd >= 0.10 AND cost_usd < 1.0) AS cost_bin_10c_1,
+        countIf(cost_usd >= 1.0 AND cost_usd < 5.0) AS cost_bin_1_5,
+        countIf(cost_usd >= 5.0 AND cost_usd < 20.0) AS cost_bin_5_20,
+        countIf(cost_usd >= 20.0) AS cost_bin_20_plus,
+        round(sumIf(cost_usd, cost_usd < 0.10), 6) AS cost_sum_under_10c,
+        round(sumIf(cost_usd, cost_usd >= 0.10 AND cost_usd < 1.0), 6) AS cost_sum_10c_1,
+        round(sumIf(cost_usd, cost_usd >= 1.0 AND cost_usd < 5.0), 6) AS cost_sum_1_5,
+        round(sumIf(cost_usd, cost_usd >= 5.0 AND cost_usd < 20.0), 6) AS cost_sum_5_20,
+        round(sumIf(cost_usd, cost_usd >= 20.0), 6) AS cost_sum_20_plus,
+
+        -- Generated-token bands (the toggle axis).
+        countIf(generated_tokens < 10000) AS token_bin_under_10k,
+        countIf(generated_tokens >= 10000 AND generated_tokens < 50000) AS token_bin_10k_50k,
+        countIf(generated_tokens >= 50000 AND generated_tokens < 200000) AS token_bin_50k_200k,
+        countIf(generated_tokens >= 200000 AND generated_tokens < 1000000) AS token_bin_200k_1m,
+        countIf(generated_tokens >= 1000000) AS token_bin_1m_plus,
+        sumIf(generated_tokens, generated_tokens < 10000) AS token_sum_under_10k,
+        sumIf(generated_tokens, generated_tokens >= 10000 AND generated_tokens < 50000) AS token_sum_10k_50k,
+        sumIf(generated_tokens, generated_tokens >= 50000 AND generated_tokens < 200000) AS token_sum_50k_200k,
+        sumIf(generated_tokens, generated_tokens >= 200000 AND generated_tokens < 1000000) AS token_sum_200k_1m,
+        sumIf(generated_tokens, generated_tokens >= 1000000) AS token_sum_1m_plus
+    FROM sessions
+    GROUP BY period
+
+NODE ranked
+SQL >
+    SELECT
+        period,
+        cost_usd,
+        row_number() OVER (PARTITION BY period ORDER BY cost_usd DESC) AS cost_rank
+    FROM sessions
+
+NODE concentration
+SQL >
+    SELECT
+        r.period AS period,
+        d.session_count AS session_count,
+        d.total_cost_usd AS total_cost_usd,
+        round(sumIf(r.cost_usd, r.cost_rank <= greatest(1, toUInt64(ceil(d.session_count * 0.1)))), 6) AS top_10pct_cost_usd,
+        sumIf(1, r.cost_rank <= greatest(1, toUInt64(ceil(d.session_count * 0.1)))) AS top_10pct_session_count
+    FROM ranked AS r
+    INNER JOIN distribution AS d ON r.period = d.period
+    GROUP BY r.period, d.session_count, d.total_cost_usd
+
+NODE endpoint
+SQL >
+    SELECT
+        ifNull(c.session_count, 0) AS session_count,
+        ifNull(p.session_count, 0) AS prior_session_count,
+        ifNull(c.total_generated_tokens, 0) AS total_generated_tokens,
+        ifNull(p.total_generated_tokens, 0) AS prior_total_generated_tokens,
+        ifNull(c.total_cache_inclusive_tokens, 0) AS total_cache_inclusive_tokens,
+        ifNull(p.total_cache_inclusive_tokens, 0) AS prior_total_cache_inclusive_tokens,
+        round(ifNull(c.total_cost_usd, 0.), 6) AS total_cost_usd,
+        round(ifNull(p.total_cost_usd, 0.), 6) AS prior_total_cost_usd,
+
+        round(ifNull(c.cost_p50, 0.), 6) AS cost_p50,
+        round(ifNull(p.cost_p50, 0.), 6) AS prior_cost_p50,
+        round(ifNull(c.cost_p90, 0.), 6) AS cost_p90,
+        round(ifNull(p.cost_p90, 0.), 6) AS prior_cost_p90,
+        round(ifNull(c.cost_p95, 0.), 6) AS cost_p95,
+        round(ifNull(p.cost_p95, 0.), 6) AS prior_cost_p95,
+        round(ifNull(c.cost_max, 0.), 6) AS cost_max,
+        round(ifNull(p.cost_max, 0.), 6) AS prior_cost_max,
+
+        ifNull(c.generated_tokens_p50, 0) AS generated_tokens_p50,
+        ifNull(p.generated_tokens_p50, 0) AS prior_generated_tokens_p50,
+        ifNull(c.generated_tokens_p90, 0) AS generated_tokens_p90,
+        ifNull(p.generated_tokens_p90, 0) AS prior_generated_tokens_p90,
+        ifNull(c.generated_tokens_p95, 0) AS generated_tokens_p95,
+        ifNull(p.generated_tokens_p95, 0) AS prior_generated_tokens_p95,
+        ifNull(c.generated_tokens_max, 0) AS generated_tokens_max,
+        ifNull(p.generated_tokens_max, 0) AS prior_generated_tokens_max,
+
+        ifNull(c.cache_inclusive_tokens_p50, 0) AS cache_inclusive_tokens_p50,
+        ifNull(p.cache_inclusive_tokens_p50, 0) AS prior_cache_inclusive_tokens_p50,
+        ifNull(c.cache_inclusive_tokens_p90, 0) AS cache_inclusive_tokens_p90,
+        ifNull(p.cache_inclusive_tokens_p90, 0) AS prior_cache_inclusive_tokens_p90,
+        ifNull(c.cache_inclusive_tokens_p95, 0) AS cache_inclusive_tokens_p95,
+        ifNull(p.cache_inclusive_tokens_p95, 0) AS prior_cache_inclusive_tokens_p95,
+        ifNull(c.cache_inclusive_tokens_max, 0) AS cache_inclusive_tokens_max,
+        ifNull(p.cache_inclusive_tokens_max, 0) AS prior_cache_inclusive_tokens_max,
+
+        ifNull(c.cost_bin_under_10c, 0) AS cost_bin_under_10c,
+        ifNull(c.cost_bin_10c_1, 0) AS cost_bin_10c_1,
+        ifNull(c.cost_bin_1_5, 0) AS cost_bin_1_5,
+        ifNull(c.cost_bin_5_20, 0) AS cost_bin_5_20,
+        ifNull(c.cost_bin_20_plus, 0) AS cost_bin_20_plus,
+        round(ifNull(c.cost_sum_under_10c, 0.), 6) AS cost_sum_under_10c,
+        round(ifNull(c.cost_sum_10c_1, 0.), 6) AS cost_sum_10c_1,
+        round(ifNull(c.cost_sum_1_5, 0.), 6) AS cost_sum_1_5,
+        round(ifNull(c.cost_sum_5_20, 0.), 6) AS cost_sum_5_20,
+        round(ifNull(c.cost_sum_20_plus, 0.), 6) AS cost_sum_20_plus,
+
+        ifNull(c.token_bin_under_10k, 0) AS token_bin_under_10k,
+        ifNull(c.token_bin_10k_50k, 0) AS token_bin_10k_50k,
+        ifNull(c.token_bin_50k_200k, 0) AS token_bin_50k_200k,
+        ifNull(c.token_bin_200k_1m, 0) AS token_bin_200k_1m,
+        ifNull(c.token_bin_1m_plus, 0) AS token_bin_1m_plus,
+        ifNull(c.token_sum_under_10k, 0) AS token_sum_under_10k,
+        ifNull(c.token_sum_10k_50k, 0) AS token_sum_10k_50k,
+        ifNull(c.token_sum_50k_200k, 0) AS token_sum_50k_200k,
+        ifNull(c.token_sum_200k_1m, 0) AS token_sum_200k_1m,
+        ifNull(c.token_sum_1m_plus, 0) AS token_sum_1m_plus,
+
+        round(ifNull(cc.top_10pct_cost_usd, 0.), 6) AS top_10pct_cost_usd,
+        ifNull(cc.top_10pct_session_count, 0) AS top_10pct_session_count
+    FROM (SELECT * FROM distribution WHERE period = 'current') AS c
+    FULL OUTER JOIN (SELECT * FROM distribution WHERE period = 'prior') AS p
+        ON 1 = 1
+    LEFT JOIN (SELECT * FROM concentration WHERE period = 'current') AS cc
+        ON 1 = 1
+    SETTINGS join_use_nulls = 1
+
+TYPE ENDPOINT

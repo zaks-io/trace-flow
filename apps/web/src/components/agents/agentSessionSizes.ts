@@ -1,115 +1,133 @@
-import type { AgentSessionSizeRow } from './types';
+import { formatCurrency, formatNumber } from '@/lib/format';
+import type { AgentCostDistributionRow } from './types';
 
 /**
- * Pure derivations over the agent_session_size_distribution row. Keeps the bento cells
- * presentational: bins/bands and the throughput verdict are computed and unit-tested here,
- * not inside JSX. Terminology is standard (messages/tokens per session, throughput), never
- * an invented aggregate.
+ * Pure derivations over the agent_session_cost_distribution row. Conversations are measured in
+ * COST and TOKENS only — message counts are deliberately not a distribution axis here, because
+ * they hide the spend that actually matters. Cost is the default axis; tokens are a toggle.
+ * Keeps the bento cells presentational: histogram bins, percentiles, and the skew summary are
+ * computed and unit-tested here, not inside JSX.
  */
 
-/** One conversation-size histogram bar (by message count), current vs prior window. */
-interface SizeHistogramBin {
-  /** Fixed bucket label, e.g. "1–2" or "51+". */
+/** The two axes a conversation distribution can be measured on. Cost is the default. */
+export type DistributionAxis = 'cost' | 'tokens';
+
+/** One histogram bar: a magnitude band with its conversation count and total spend/tokens. */
+interface DistributionBin {
+  /** Fixed bucket label, e.g. "$0.10–1" or "10k–50k". */
   label: string;
-  current: number;
-  prior: number;
+  /** Number of conversations that fell in this band (current window). */
+  count: number;
+  /** Total cost (USD) or generated tokens within the band — where the magnitude concentrates. */
+  total: number;
 }
 
-/** A small/medium/large band with its share of conversations and estimated cost. */
-export interface SizeBand {
-  key: 'small' | 'medium' | 'large';
-  label: string;
-  /** Inclusive message-count range, for the legend (e.g. "≤5 msgs"). */
-  range: string;
-  sessions: number;
-  priorSessions: number;
-  costUsd: number;
-  /** Share of current-window conversations 0–1; 0 when there are no sessions. */
-  share: number;
+/** Per-conversation percentiles for the active axis, plus the prior-window p50 for comparison. */
+interface DistributionPercentiles {
+  p50: number;
+  p90: number;
+  p95: number;
+  max: number;
+  priorP50: number;
 }
 
-type ThroughputVerdict = 'many-small' | 'mixed' | 'few-big' | 'none';
+/** The headline skew fact: how concentrated spend is in the priciest conversations. */
+interface SkewSummary {
+  /** Count of conversations in the priciest 10%. */
+  topCount: number;
+  /** Total spend carried by that top 10% (USD). */
+  topCostUsd: number;
+  /** Share of total spend carried by the top 10%, 0–1. 0 when there is no spend. */
+  topCostShare: number;
+  /** p95 ÷ p50 of per-conversation cost; how stretched the tail is. 0 when p50 is 0. */
+  p95OverP50: number;
+}
 
-export const THROUGHPUT_VERDICT_LABEL: Record<ThroughputVerdict, string> = {
-  'many-small': 'Many small',
-  mixed: 'Mixed',
-  'few-big': 'Few big',
-  none: 'No conversations',
+const AXIS_LABEL: Record<DistributionAxis, string> = {
+  cost: 'Cost',
+  tokens: 'Tokens generated',
 };
 
-export function buildSizeHistogram(row: AgentSessionSizeRow): SizeHistogramBin[] {
-  return [
-    { label: '1–2', current: row.bin_1_2, prior: row.prior_bin_1_2 },
-    { label: '3–5', current: row.bin_3_5, prior: row.prior_bin_3_5 },
-    { label: '6–10', current: row.bin_6_10, prior: row.prior_bin_6_10 },
-    { label: '11–25', current: row.bin_11_25, prior: row.prior_bin_11_25 },
-    { label: '26–50', current: row.bin_26_50, prior: row.prior_bin_26_50 },
-    { label: '51+', current: row.bin_51_plus, prior: row.prior_bin_51_plus },
-  ];
+export function axisLabel(axis: DistributionAxis): string {
+  return AXIS_LABEL[axis];
 }
 
-export function buildSizeBands(row: AgentSessionSizeRow): SizeBand[] {
-  const total = row.session_count;
-  const share = (n: number) => (total > 0 ? n / total : 0);
-  return [
-    {
-      key: 'small',
-      label: 'Small',
-      range: '≤5 msgs',
-      sessions: row.small_sessions,
-      priorSessions: row.prior_small_sessions,
-      costUsd: row.small_cost_usd,
-      share: share(row.small_sessions),
-    },
-    {
-      key: 'medium',
-      label: 'Medium',
-      range: '6–25 msgs',
-      sessions: row.medium_sessions,
-      priorSessions: row.prior_medium_sessions,
-      costUsd: row.medium_cost_usd,
-      share: share(row.medium_sessions),
-    },
-    {
-      key: 'large',
-      label: 'Large',
-      range: '≥26 msgs',
-      sessions: row.large_sessions,
-      priorSessions: row.prior_large_sessions,
-      costUsd: row.large_cost_usd,
-      share: share(row.large_sessions),
-    },
-  ];
+/** Format a value on the active axis: currency for cost, plain count for tokens. */
+export function formatAxisValue(axis: DistributionAxis, value: number): string {
+  return axis === 'cost' ? formatCurrency(value) : formatNumber(value);
 }
 
 /**
- * Classify the conversation mix into a plain verdict. "Many small" when small conversations
- * dominate (majority share) and large ones are rare; "Few big" when large conversations carry
- * the work (share or cost majority); otherwise "Mixed". Driven by shares, not magic copy.
+ * The conversation-magnitude histogram for the active axis. Cost bands are spend tiers
+ * (<$0.10 … $20+); token bands are generated-token tiers (<10k … 1M+). Each bar carries both
+ * the conversation count and the total magnitude so the cell can show count or summed spend.
  */
-export function throughputVerdict(row: AgentSessionSizeRow): ThroughputVerdict {
-  const total = row.session_count;
-  if (total === 0) return 'none';
-  const smallShare = row.small_sessions / total;
-  const largeShare = row.large_sessions / total;
-  const totalCost = row.small_cost_usd + row.medium_cost_usd + row.large_cost_usd;
-  const largeCostShare = totalCost > 0 ? row.large_cost_usd / totalCost : 0;
-
-  if (largeShare >= 0.5 || largeCostShare >= 0.6) return 'few-big';
-  if (smallShare >= 0.5 && largeShare < 0.15) return 'many-small';
-  return 'mixed';
+export function buildDistributionBins(
+  row: AgentCostDistributionRow,
+  axis: DistributionAxis,
+): DistributionBin[] {
+  if (axis === 'cost') {
+    return [
+      { label: '<$0.10', count: row.cost_bin_under_10c, total: row.cost_sum_under_10c },
+      { label: '$0.10–1', count: row.cost_bin_10c_1, total: row.cost_sum_10c_1 },
+      { label: '$1–5', count: row.cost_bin_1_5, total: row.cost_sum_1_5 },
+      { label: '$5–20', count: row.cost_bin_5_20, total: row.cost_sum_5_20 },
+      { label: '$20+', count: row.cost_bin_20_plus, total: row.cost_sum_20_plus },
+    ];
+  }
+  return [
+    { label: '<10k', count: row.token_bin_under_10k, total: row.token_sum_under_10k },
+    { label: '10k–50k', count: row.token_bin_10k_50k, total: row.token_sum_10k_50k },
+    { label: '50k–200k', count: row.token_bin_50k_200k, total: row.token_sum_50k_200k },
+    { label: '200k–1M', count: row.token_bin_200k_1m, total: row.token_sum_200k_1m },
+    { label: '1M+', count: row.token_bin_1m_plus, total: row.token_sum_1m_plus },
+  ];
 }
 
-/** Median messages per session, the single-number throughput summary. */
-export function medianMessagesPerSession(row: AgentSessionSizeRow): number {
-  return row.messages_p50;
+/** Per-conversation percentiles for the active axis. Tokens use the generated (real-work) axis. */
+export function buildPercentiles(
+  row: AgentCostDistributionRow,
+  axis: DistributionAxis,
+): DistributionPercentiles {
+  if (axis === 'cost') {
+    return {
+      p50: row.cost_p50,
+      p90: row.cost_p90,
+      p95: row.cost_p95,
+      max: row.cost_max,
+      priorP50: row.prior_cost_p50,
+    };
+  }
+  return {
+    p50: row.generated_tokens_p50,
+    p90: row.generated_tokens_p90,
+    p95: row.generated_tokens_p95,
+    max: row.generated_tokens_max,
+    priorP50: row.prior_generated_tokens_p50,
+  };
+}
+
+/**
+ * The spend-skew summary. The point the user cares about: a few conversations carry most of
+ * the cost. Reports the top-10% concentration (count + spend + share) and the p95/p50 stretch.
+ */
+export function buildSkewSummary(row: AgentCostDistributionRow): SkewSummary {
+  const topCostShare =
+    row.total_cost_usd > 0 ? Math.min(1, row.top_10pct_cost_usd / row.total_cost_usd) : 0;
+  const p95OverP50 = row.cost_p50 > 0 ? row.cost_p95 / row.cost_p50 : 0;
+  return {
+    topCount: row.top_10pct_session_count,
+    topCostUsd: row.top_10pct_cost_usd,
+    topCostShare,
+    p95OverP50,
+  };
 }
 
 /**
  * Share of tokens-processed that is genuinely generated (input+output+reasoning) rather than
  * cache-read replay; 0–1. Surfaces how much of the headline token count is cache replay.
  */
-export function generatedTokenShare(row: AgentSessionSizeRow): number {
+export function generatedTokenShare(row: AgentCostDistributionRow): number {
   const processed = row.total_cache_inclusive_tokens;
   if (processed <= 0) return 0;
   return Math.min(1, row.total_generated_tokens / processed);

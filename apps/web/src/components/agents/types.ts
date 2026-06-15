@@ -73,6 +73,9 @@ export interface AgentContextHealthRow {
   prior_session_count: number;
   first_call_context_p50: number;
   prior_first_call_context_p50: number;
+  /** Per-TURN context percentiles (true weighted quantiles), NOT per-conversation. */
+  context_p10: number;
+  prior_context_p10: number;
   context_p50: number;
   prior_context_p50: number;
   context_p90: number;
@@ -81,6 +84,7 @@ export interface AgentContextHealthRow {
   prior_context_p95: number;
   context_max: number;
   prior_context_max: number;
+  /** Count of individual turns whose context exceeded the threshold (the 140K signal). */
   calls_over_threshold: number;
   prior_calls_over_threshold: number;
   pct_calls_over_threshold: number;
@@ -95,18 +99,10 @@ export interface AgentContextHealthRow {
   prior_cost_while_over_threshold: number;
   output_tokens_while_over_threshold: number;
   prior_output_tokens_while_over_threshold: number;
-  bloated_start_25k_sessions: number;
-  prior_bloated_start_25k_sessions: number;
-  pct_bloated_start_25k: number;
-  prior_pct_bloated_start_25k: number;
-  bloated_start_50k_sessions: number;
-  prior_bloated_start_50k_sessions: number;
-  pct_bloated_start_50k: number;
-  prior_pct_bloated_start_50k: number;
-  bloated_start_100k_sessions: number;
-  prior_bloated_start_100k_sessions: number;
-  pct_bloated_start_100k: number;
-  prior_pct_bloated_start_100k: number;
+  /** The single conversation whose worst turn carried the most context (current window only). */
+  worst_session_pk: string;
+  worst_session_context_max: number;
+  worst_session_calls_over_threshold: number;
 }
 
 export const AGENT_CONTEXT_BREAKDOWN_DIMENSIONS = ['source', 'model', 'repo'] as const;
@@ -245,62 +241,102 @@ export interface ToolDeltaRow {
 }
 
 /**
- * Single-row output of `pipes/agent_session_size_distribution.pipe` — the per-session
- * messages/tokens distribution for the current window plus the prior equal-length window.
- * The pipe emits no row when both windows are empty (no sessions), so callers treat a
- * missing row as no-data.
+ * Single-row output of `pipes/agent_session_cost_distribution.pipe` — the per-conversation
+ * COST and TOKEN distribution for the current window plus the prior equal-length window.
+ * Messages are deliberately NOT a distribution axis here: cost and tokens are the only units
+ * that matter. The pipe emits no row when both windows are empty (no sessions), so callers
+ * treat a missing row as no-data.
  */
-export interface AgentSessionSizeRow {
+export interface AgentCostDistributionRow {
   session_count: number;
   prior_session_count: number;
-  /** Median messages per session; p90/p95 expose the heavy tail. */
-  messages_p50: number;
-  prior_messages_p50: number;
-  messages_p90: number;
-  prior_messages_p90: number;
-  messages_p95: number;
-  prior_messages_p95: number;
-  messages_max: number;
-  prior_messages_max: number;
-  /** Cache-inclusive tokens per session (input+output+cache+reasoning) — tokens processed. */
-  tokens_p50: number;
-  prior_tokens_p50: number;
-  tokens_p90: number;
-  prior_tokens_p90: number;
-  tokens_p95: number;
-  prior_tokens_p95: number;
-  tokens_max: number;
-  prior_tokens_max: number;
-  total_messages: number;
-  prior_total_messages: number;
-  /** input+output+reasoning, excludes cache-read — tokens generated. */
+  /** input+output+reasoning, excludes cache-read — tokens generated (the real work). */
   total_generated_tokens: number;
   prior_total_generated_tokens: number;
+  /** +cache_read+cache_creation — tokens processed (mostly cache replay). */
   total_cache_inclusive_tokens: number;
   prior_total_cache_inclusive_tokens: number;
   total_cost_usd: number;
   prior_total_cost_usd: number;
-  /** Conversation-size histogram by message count (current window). */
-  bin_1_2: number;
-  prior_bin_1_2: number;
-  bin_3_5: number;
-  prior_bin_3_5: number;
-  bin_6_10: number;
-  prior_bin_6_10: number;
-  bin_11_25: number;
-  prior_bin_11_25: number;
-  bin_26_50: number;
-  prior_bin_26_50: number;
-  bin_51_plus: number;
-  prior_bin_51_plus: number;
-  /** Size bands: small ≤5, medium 6–25, large ≥26 messages. */
-  small_sessions: number;
-  prior_small_sessions: number;
-  medium_sessions: number;
-  prior_medium_sessions: number;
-  large_sessions: number;
-  prior_large_sessions: number;
-  small_cost_usd: number;
-  medium_cost_usd: number;
-  large_cost_usd: number;
+  /** Per-conversation cost percentiles. The gap p50→p95 is the spend skew. */
+  cost_p50: number;
+  prior_cost_p50: number;
+  cost_p90: number;
+  prior_cost_p90: number;
+  cost_p95: number;
+  prior_cost_p95: number;
+  cost_max: number;
+  prior_cost_max: number;
+  /** Per-conversation generated-token percentiles (default token axis). */
+  generated_tokens_p50: number;
+  prior_generated_tokens_p50: number;
+  generated_tokens_p90: number;
+  prior_generated_tokens_p90: number;
+  generated_tokens_p95: number;
+  prior_generated_tokens_p95: number;
+  generated_tokens_max: number;
+  prior_generated_tokens_max: number;
+  /** Per-conversation cache-inclusive-token percentiles (tokens processed). */
+  cache_inclusive_tokens_p50: number;
+  prior_cache_inclusive_tokens_p50: number;
+  cache_inclusive_tokens_p90: number;
+  prior_cache_inclusive_tokens_p90: number;
+  cache_inclusive_tokens_p95: number;
+  prior_cache_inclusive_tokens_p95: number;
+  cache_inclusive_tokens_max: number;
+  prior_cache_inclusive_tokens_max: number;
+  /** Cost-magnitude histogram: conversation counts per spend band (current window). */
+  cost_bin_under_10c: number;
+  cost_bin_10c_1: number;
+  cost_bin_1_5: number;
+  cost_bin_5_20: number;
+  cost_bin_20_plus: number;
+  /** Total spend within each cost band — shows where the dollars concentrate. */
+  cost_sum_under_10c: number;
+  cost_sum_10c_1: number;
+  cost_sum_1_5: number;
+  cost_sum_5_20: number;
+  cost_sum_20_plus: number;
+  /** Generated-token histogram: conversation counts per token band (current window). */
+  token_bin_under_10k: number;
+  token_bin_10k_50k: number;
+  token_bin_50k_200k: number;
+  token_bin_200k_1m: number;
+  token_bin_1m_plus: number;
+  token_sum_under_10k: number;
+  token_sum_10k_50k: number;
+  token_sum_50k_200k: number;
+  token_sum_200k_1m: number;
+  token_sum_1m_plus: number;
+  /** Concentration: spend + count of the priciest 10% of conversations (the skew headline). */
+  top_10pct_cost_usd: number;
+  top_10pct_session_count: number;
 }
+
+/**
+ * One row from `pipes/agent_notable_changes.pipe` — honest period-over-period movement.
+ * `group_value` is '' for the org-wide total; otherwise the source/model/repo value for the
+ * requested `dimension`. Reports facts (deltas + daily pace vs a trailing-28d baseline), not
+ * a statistical anomaly model — never labeled an "anomaly".
+ */
+export interface AgentNotableChangeRow {
+  group_value: string;
+  window_days: number;
+  current_cost_usd: number;
+  prior_cost_usd: number;
+  cost_delta_usd: number;
+  /** current_cost / window_days — the window's own daily pace. */
+  current_daily_cost_usd: number;
+  /** Trailing-28d total / 28 fixed days (idle days count as zero) — the longer-window norm. */
+  baseline_daily_cost_usd: number;
+  daily_cost_vs_baseline_usd: number;
+  current_generated_tokens: number;
+  prior_generated_tokens: number;
+  generated_tokens_delta: number;
+  /** Days in the trailing-28d baseline that had any spend; context for the baseline average. */
+  baseline_active_days: number;
+}
+
+/** Dimensions the notable-changes pipe can rank movers by. */
+export const AGENT_NOTABLE_CHANGE_DIMENSIONS = ['source', 'model', 'repo'] as const;
+export type AgentNotableChangeDimension = (typeof AGENT_NOTABLE_CHANGE_DIMENSIONS)[number];

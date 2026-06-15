@@ -31,9 +31,6 @@ SQL >
         context_tokens,
         minMerge(FirstTurnIndex) AS first_turn_index,
         sum(finalizeAggregation(CallCount)) AS call_count,
-        quantileExactMergeState(0.5)(ContextP50) AS context_p50_state,
-        quantileExactMergeState(0.9)(ContextP90) AS context_p90_state,
-        quantileExactMergeState(0.95)(ContextP95) AS context_p95_state,
         sum(finalizeAggregation(OutputTokens)) AS output_tokens,
         sum(finalizeAggregation(CostUsd)) AS cost_usd
     FROM agent_context_call_buckets_hourly
@@ -58,9 +55,10 @@ SQL >
         group_value,
         attention_threshold_tokens,
         sum(call_count) AS model_call_count,
-        round(quantileExactMerge(0.5)(context_p50_state), 0) AS context_p50,
-        round(quantileExactMerge(0.9)(context_p90_state), 0) AS context_p90,
-        round(quantileExactMerge(0.95)(context_p95_state), 0) AS context_p95,
+        round(quantileExactWeighted(0.1)(context_tokens, call_count), 0) AS context_p10,
+        round(quantileExactWeighted(0.5)(context_tokens, call_count), 0) AS context_p50,
+        round(quantileExactWeighted(0.9)(context_tokens, call_count), 0) AS context_p90,
+        round(quantileExactWeighted(0.95)(context_tokens, call_count), 0) AS context_p95,
         max(context_tokens) AS context_max,
         sumIf(call_count, context_tokens > attention_threshold_tokens) AS calls_over_threshold,
         if(
@@ -82,6 +80,7 @@ SQL >
         attention_threshold_tokens,
         session_pk,
         argMin(context_tokens, first_turn_index) AS first_call_context_tokens,
+        max(context_tokens) AS session_context_max,
         sumIf(call_count, context_tokens > attention_threshold_tokens) AS calls_over_threshold
     FROM scoped_call_buckets
     GROUP BY period, group_value, attention_threshold_tokens, session_pk
@@ -100,24 +99,9 @@ SQL >
             CAST(NULL, 'Nullable(Float64)'),
             round(sessions_over_threshold / session_count, 4)
         ) AS pct_sessions_over_threshold,
-        countIf(first_call_context_tokens >= 25000) AS bloated_start_25k_sessions,
-        if(
-            session_count = 0,
-            CAST(NULL, 'Nullable(Float64)'),
-            round(bloated_start_25k_sessions / session_count, 4)
-        ) AS pct_bloated_start_25k,
-        countIf(first_call_context_tokens >= 50000) AS bloated_start_50k_sessions,
-        if(
-            session_count = 0,
-            CAST(NULL, 'Nullable(Float64)'),
-            round(bloated_start_50k_sessions / session_count, 4)
-        ) AS pct_bloated_start_50k,
-        countIf(first_call_context_tokens >= 100000) AS bloated_start_100k_sessions,
-        if(
-            session_count = 0,
-            CAST(NULL, 'Nullable(Float64)'),
-            round(bloated_start_100k_sessions / session_count, 4)
-        ) AS pct_bloated_start_100k
+        argMax(session_pk, (session_context_max, session_pk)) AS worst_session_pk,
+        max(session_context_max) AS worst_session_context_max,
+        argMax(calls_over_threshold, (session_context_max, session_pk)) AS worst_session_calls_over_threshold
     FROM session_rollups
     GROUP BY period, group_value, attention_threshold_tokens
 
@@ -130,6 +114,7 @@ SQL >
         ifNull(c.model_call_count, 0) AS model_call_count,
         ifNull(s.session_count, 0) AS session_count,
         ifNull(s.first_call_context_p50, 0) AS first_call_context_p50,
+        ifNull(c.context_p10, 0) AS context_p10,
         ifNull(c.context_p50, 0) AS context_p50,
         ifNull(c.context_p90, 0) AS context_p90,
         ifNull(c.context_p95, 0) AS context_p95,
@@ -141,12 +126,9 @@ SQL >
         ifNull(c.context_overage_tokens, 0) AS context_overage_tokens,
         ifNull(c.cost_while_over_threshold, 0.) AS cost_while_over_threshold,
         ifNull(c.output_tokens_while_over_threshold, 0) AS output_tokens_while_over_threshold,
-        ifNull(s.bloated_start_25k_sessions, 0) AS bloated_start_25k_sessions,
-        ifNull(s.pct_bloated_start_25k, 0.) AS pct_bloated_start_25k,
-        ifNull(s.bloated_start_50k_sessions, 0) AS bloated_start_50k_sessions,
-        ifNull(s.pct_bloated_start_50k, 0.) AS pct_bloated_start_50k,
-        ifNull(s.bloated_start_100k_sessions, 0) AS bloated_start_100k_sessions,
-        ifNull(s.pct_bloated_start_100k, 0.) AS pct_bloated_start_100k
+        ifNull(s.worst_session_pk, '') AS worst_session_pk,
+        ifNull(s.worst_session_context_max, 0) AS worst_session_context_max,
+        ifNull(s.worst_session_calls_over_threshold, 0) AS worst_session_calls_over_threshold
     FROM call_rollups AS c
     FULL OUTER JOIN session_aggregate AS s
         ON c.period = s.period
@@ -166,6 +148,8 @@ SQL >
         ifNull(p.session_count, 0) AS prior_session_count,
         ifNull(c.first_call_context_p50, 0) AS first_call_context_p50,
         ifNull(p.first_call_context_p50, 0) AS prior_first_call_context_p50,
+        ifNull(c.context_p10, 0) AS context_p10,
+        ifNull(p.context_p10, 0) AS prior_context_p10,
         ifNull(c.context_p50, 0) AS context_p50,
         ifNull(p.context_p50, 0) AS prior_context_p50,
         ifNull(c.context_p90, 0) AS context_p90,
@@ -188,18 +172,9 @@ SQL >
         round(ifNull(p.cost_while_over_threshold, 0.), 6) AS prior_cost_while_over_threshold,
         ifNull(c.output_tokens_while_over_threshold, 0) AS output_tokens_while_over_threshold,
         ifNull(p.output_tokens_while_over_threshold, 0) AS prior_output_tokens_while_over_threshold,
-        ifNull(c.bloated_start_25k_sessions, 0) AS bloated_start_25k_sessions,
-        ifNull(p.bloated_start_25k_sessions, 0) AS prior_bloated_start_25k_sessions,
-        ifNull(c.pct_bloated_start_25k, 0.) AS pct_bloated_start_25k,
-        ifNull(p.pct_bloated_start_25k, 0.) AS prior_pct_bloated_start_25k,
-        ifNull(c.bloated_start_50k_sessions, 0) AS bloated_start_50k_sessions,
-        ifNull(p.bloated_start_50k_sessions, 0) AS prior_bloated_start_50k_sessions,
-        ifNull(c.pct_bloated_start_50k, 0.) AS pct_bloated_start_50k,
-        ifNull(p.pct_bloated_start_50k, 0.) AS prior_pct_bloated_start_50k,
-        ifNull(c.bloated_start_100k_sessions, 0) AS bloated_start_100k_sessions,
-        ifNull(p.bloated_start_100k_sessions, 0) AS prior_bloated_start_100k_sessions,
-        ifNull(c.pct_bloated_start_100k, 0.) AS pct_bloated_start_100k,
-        ifNull(p.pct_bloated_start_100k, 0.) AS prior_pct_bloated_start_100k
+        ifNull(c.worst_session_pk, '') AS worst_session_pk,
+        ifNull(c.worst_session_context_max, 0) AS worst_session_context_max,
+        ifNull(c.worst_session_calls_over_threshold, 0) AS worst_session_calls_over_threshold
     FROM (
         SELECT
             group_value,
@@ -207,6 +182,7 @@ SQL >
             model_call_count,
             session_count,
             first_call_context_p50,
+            context_p10,
             context_p50,
             context_p90,
             context_p95,
@@ -218,12 +194,9 @@ SQL >
             context_overage_tokens,
             cost_while_over_threshold,
             output_tokens_while_over_threshold,
-            bloated_start_25k_sessions,
-            pct_bloated_start_25k,
-            bloated_start_50k_sessions,
-            pct_bloated_start_50k,
-            bloated_start_100k_sessions,
-            pct_bloated_start_100k
+            worst_session_pk,
+            worst_session_context_max,
+            worst_session_calls_over_threshold
         FROM period_rollups
         WHERE period = 'current'
     ) AS c
@@ -234,6 +207,7 @@ SQL >
             model_call_count,
             session_count,
             first_call_context_p50,
+            context_p10,
             context_p50,
             context_p90,
             context_p95,
@@ -245,12 +219,9 @@ SQL >
             context_overage_tokens,
             cost_while_over_threshold,
             output_tokens_while_over_threshold,
-            bloated_start_25k_sessions,
-            pct_bloated_start_25k,
-            bloated_start_50k_sessions,
-            pct_bloated_start_50k,
-            bloated_start_100k_sessions,
-            pct_bloated_start_100k
+            worst_session_pk,
+            worst_session_context_max,
+            worst_session_calls_over_threshold
         FROM period_rollups
         WHERE period = 'prior'
     ) AS p

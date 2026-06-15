@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { buildAttentionSignals } from '../buildAttentionSignals';
-import type { AgentContextHealthRow, AgentSummaryRow, FailureLeaderboardRow } from '../types';
+import type {
+  AgentContextHealthRow,
+  AgentNotableChangeRow,
+  AgentSummaryRow,
+  FailureLeaderboardRow,
+} from '../types';
 
 function summary(overrides: Partial<AgentSummaryRow> = {}): AgentSummaryRow {
   return {
@@ -28,6 +33,8 @@ function contextRow(overrides: Partial<AgentContextHealthRow> = {}): AgentContex
     prior_session_count: 10,
     first_call_context_p50: 10_000,
     prior_first_call_context_p50: 10_000,
+    context_p10: 5_000,
+    prior_context_p10: 5_000,
     context_p50: 20_000,
     prior_context_p50: 20_000,
     context_p90: 30_000,
@@ -50,18 +57,27 @@ function contextRow(overrides: Partial<AgentContextHealthRow> = {}): AgentContex
     prior_cost_while_over_threshold: 0,
     output_tokens_while_over_threshold: 0,
     prior_output_tokens_while_over_threshold: 0,
-    bloated_start_25k_sessions: 0,
-    prior_bloated_start_25k_sessions: 0,
-    pct_bloated_start_25k: 0,
-    prior_pct_bloated_start_25k: 0,
-    bloated_start_50k_sessions: 0,
-    prior_bloated_start_50k_sessions: 0,
-    pct_bloated_start_50k: 0,
-    prior_pct_bloated_start_50k: 0,
-    bloated_start_100k_sessions: 0,
-    prior_bloated_start_100k_sessions: 0,
-    pct_bloated_start_100k: 0,
-    prior_pct_bloated_start_100k: 0,
+    worst_session_pk: '',
+    worst_session_context_max: 0,
+    worst_session_calls_over_threshold: 0,
+    ...overrides,
+  };
+}
+
+function notable(overrides: Partial<AgentNotableChangeRow> = {}): AgentNotableChangeRow {
+  return {
+    group_value: '',
+    window_days: 7,
+    current_cost_usd: 70,
+    prior_cost_usd: 70,
+    cost_delta_usd: 0,
+    current_daily_cost_usd: 10,
+    baseline_daily_cost_usd: 10,
+    daily_cost_vs_baseline_usd: 0,
+    current_generated_tokens: 100_000,
+    prior_generated_tokens: 100_000,
+    generated_tokens_delta: 0,
+    baseline_active_days: 14,
     ...overrides,
   };
 }
@@ -82,9 +98,9 @@ function failure(overrides: Partial<FailureLeaderboardRow> = {}): FailureLeaderb
 const baseArgs = {
   summary: summary(),
   contextHealth: contextRow(),
+  notableTotal: notable(),
   failures: [] as FailureLeaderboardRow[],
   attentionThresholdTokens: 140_000,
-  paceDeltaRatio: 0,
 };
 
 describe('buildAttentionSignals', () => {
@@ -92,53 +108,65 @@ describe('buildAttentionSignals', () => {
     expect(buildAttentionSignals(baseArgs)).toEqual([]);
   });
 
-  it('flags a cost spike as critical and sorts it first', () => {
+  it('flags spend pace running above the trailing-28d daily average', () => {
     const signals = buildAttentionSignals({
       ...baseArgs,
-      summary: summary({ estimated_cost_usd: 200, prior_cost_usd: 100 }),
-      // also trip a warn signal to verify ordering
-      paceDeltaRatio: 0.5,
+      notableTotal: notable({
+        current_daily_cost_usd: 20,
+        baseline_daily_cost_usd: 10,
+        daily_cost_vs_baseline_usd: 10,
+      }),
     });
-    expect(signals[0].id).toBe('cost-spike');
-    expect(signals[0].severity).toBe('critical');
-    expect(signals.some((s) => s.id === 'pace-up')).toBe(true);
-    expect(signals[0].label).toContain('100%');
+    const pace = signals.find((s) => s.id === 'pace-vs-baseline');
+    expect(pace).toBeDefined();
+    expect(pace?.detail).toContain('28-day average');
   });
 
-  it('does not flag cost when the increase is under the threshold', () => {
+  it('does not flag pace when above the prior period but within the baseline ratio', () => {
     const signals = buildAttentionSignals({
       ...baseArgs,
-      summary: summary({ estimated_cost_usd: 120, prior_cost_usd: 100 }),
+      notableTotal: notable({
+        current_daily_cost_usd: 12,
+        baseline_daily_cost_usd: 10,
+        daily_cost_vs_baseline_usd: 2,
+      }),
     });
-    expect(signals.find((s) => s.id === 'cost-spike')).toBeUndefined();
+    expect(signals.some((s) => s.id === 'pace-vs-baseline')).toBe(false);
   });
 
-  it('flags rising context bloat only when current exceeds prior', () => {
+  it('does not flag pace when the absolute daily gap is tiny', () => {
+    const signals = buildAttentionSignals({
+      ...baseArgs,
+      notableTotal: notable({
+        current_daily_cost_usd: 0.6,
+        baseline_daily_cost_usd: 0.2,
+        daily_cost_vs_baseline_usd: 0.4,
+      }),
+    });
+    expect(signals.some((s) => s.id === 'pace-vs-baseline')).toBe(false);
+  });
+
+  it('flags rising per-turn context pressure only when current exceeds prior', () => {
     const rising = buildAttentionSignals({
       ...baseArgs,
       contextHealth: contextRow({
-        pct_sessions_over_threshold: 0.3,
-        prior_pct_sessions_over_threshold: 0.1,
+        calls_over_threshold: 30,
+        pct_calls_over_threshold: 0.3,
+        prior_pct_calls_over_threshold: 0.1,
       }),
     });
-    expect(rising.some((s) => s.id === 'context-bloat')).toBe(true);
+    const signal = rising.find((s) => s.id === 'context-pressure');
+    expect(signal).toBeDefined();
+    expect(signal?.label).toContain('30 turns');
 
     const falling = buildAttentionSignals({
       ...baseArgs,
       contextHealth: contextRow({
-        pct_sessions_over_threshold: 0.3,
-        prior_pct_sessions_over_threshold: 0.4,
+        pct_calls_over_threshold: 0.3,
+        prior_pct_calls_over_threshold: 0.4,
       }),
     });
-    expect(falling.some((s) => s.id === 'context-bloat')).toBe(false);
-  });
-
-  it('flags bloated starts above the 50K threshold ratio', () => {
-    const signals = buildAttentionSignals({
-      ...baseArgs,
-      contextHealth: contextRow({ pct_bloated_start_50k: 0.4 }),
-    });
-    expect(signals.some((s) => s.id === 'bloated-starts')).toBe(true);
+    expect(falling.some((s) => s.id === 'context-pressure')).toBe(false);
   });
 
   it('flags the worst failing tool and counts the rest', () => {
@@ -163,8 +191,8 @@ describe('buildAttentionSignals', () => {
     expect(signals.some((s) => s.id === 'low-coverage')).toBe(true);
   });
 
-  it('skips the pace signal when daily buckets were unavailable', () => {
-    const signals = buildAttentionSignals({ ...baseArgs, paceDeltaRatio: null });
-    expect(signals.some((s) => s.id === 'pace-up')).toBe(false);
+  it('skips the pace signal when notable-changes data is unavailable', () => {
+    const signals = buildAttentionSignals({ ...baseArgs, notableTotal: null });
+    expect(signals.some((s) => s.id === 'pace-vs-baseline')).toBe(false);
   });
 });

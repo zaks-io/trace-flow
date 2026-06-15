@@ -18,14 +18,15 @@ import { generatedTokenShare } from './agentSessionSizes';
 import { AGENT_GROUP_BY, AGENT_GROUP_BY_LABEL, type AgentGroupBy } from './types';
 import type {
   AgentContextHealthRow,
-  AgentSessionSizeRow,
+  AgentCostDistributionRow,
+  AgentNotableChangeRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
   ToolDeltaRow,
 } from './types';
 
-/** Only one drill-down is open at a time, except the always-present anomaly strip. */
+/** Only one drill-down is open at a time, except the always-present notable-changes strip. */
 type ExpandableCell = 'hero' | 'conversationSize';
 
 export function AgentBentoGrid({
@@ -35,7 +36,9 @@ export function AgentBentoGrid({
   groupedSeries,
   groupBy,
   onGroupByChange,
-  sessionSize,
+  costDistribution,
+  notableTotal,
+  notableByRepo,
   contextHealth,
   failures,
   deltas,
@@ -52,7 +55,9 @@ export function AgentBentoGrid({
   groupedSeries: AgentTimeseriesRow[];
   groupBy: AgentGroupBy;
   onGroupByChange: (next: AgentGroupBy) => void;
-  sessionSize: AgentSessionSizeRow | null;
+  costDistribution: AgentCostDistributionRow | null;
+  notableTotal: AgentNotableChangeRow | null;
+  notableByRepo: AgentNotableChangeRow[];
   contextHealth: AgentContextHealthRow | null;
   failures: FailureLeaderboardRow[];
   deltas: ToolDeltaRow[];
@@ -94,16 +99,16 @@ export function AgentBentoGrid({
       buildAttentionSignals({
         summary,
         contextHealth,
+        notableTotal,
         failures,
         attentionThresholdTokens,
-        paceDeltaRatio: stats?.costPerActiveDayDeltaPct ?? null,
       }),
-    [summary, contextHealth, failures, attentionThresholdTokens, stats],
+    [summary, contextHealth, notableTotal, failures, attentionThresholdTokens],
   );
 
   const tokensDelta = computeDelta(summary.total_tokens, summary.prior_total_tokens);
   const sessionsDelta = computeDelta(summary.session_count, summary.prior_session_count);
-  const generatedShare = sessionSize ? generatedTokenShare(sessionSize) : null;
+  const generatedShare = costDistribution ? generatedTokenShare(costDistribution) : null;
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-6 xl:grid-cols-12">
@@ -179,10 +184,10 @@ export function AgentBentoGrid({
         />
       </div>
 
-      {/* Row 2 — Q4 conversation size + Q3 initial context */}
+      {/* Row 2 — Q4 cost-per-conversation distribution + Q3 turns over the context line */}
       <div className="lg:col-span-6 xl:col-span-6">
         <ConversationSizeHistogram
-          row={sessionSize}
+          row={costDistribution}
           windowDays={windowDays}
           expanded={expanded === 'conversationSize'}
           onToggleExpand={() => toggle('conversationSize')}
@@ -192,18 +197,21 @@ export function AgentBentoGrid({
         <InitialContextCell row={contextHealth} windowDays={windowDays} />
       </div>
 
-      {/* Row 3 — Q5 throughput */}
+      {/* Row 3 — Q5 where spend concentrates */}
       <div className="lg:col-span-6 xl:col-span-12">
-        <VelocityBar row={sessionSize} windowDays={windowDays} />
+        <VelocityBar row={costDistribution} windowDays={windowDays} />
       </div>
 
-      {/* Row 4 — Q6 anomalies, always present */}
+      {/* Row 4 — Q6 notable changes, always present */}
       <div className="lg:col-span-6 xl:col-span-12">
         <AnomalyStrip
           signals={signals}
+          notableTotal={notableTotal}
+          notableByRepo={notableByRepo}
           deltas={deltas}
           failures={failures}
           windowDays={windowDays}
+          labelFor={labelFor}
           expanded={anomalyOpen}
           onToggleExpand={() => setAnomalyOpen((open) => !open)}
         />

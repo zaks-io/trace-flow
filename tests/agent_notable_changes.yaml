@@ -1,0 +1,22 @@
+# Fixtures: fixtures/agent_message_facts.ndjson (org_context), rolled into agent_usage_daily.
+# Selected window [2026-05-20, 2026-05-21) = 1 day. Prior equal window [2026-05-19, 2026-05-20).
+# Trailing baseline = 28 days before the window start [2026-04-22, 2026-05-20); the only fixture
+# day in it is 2026-05-19 (ctx_prior), so baseline_cost = prior_cost and baseline_active_days = 1.
+# Current-day org cost: ctx1=6.0, ctx2=1.2, ctx3=1.5 -> 8.7. Prior-day cost: ctx_prior=2.0.
+# Generated tokens = input+output+reasoning (NO cache read). Current=583700, prior=232000.
+# This pipe reports facts, not anomalies: deltas + current daily pace vs the 28d daily average.
+
+- name: notable_changes_org_total
+  description: org-wide window total with prior-equal-period deltas and a trailing-28d daily baseline
+  expected_http_status: 200
+  parameters: org_id=org_context&start_time_ms=1779235200000&end_time_ms=1779321600000
+  expected_result: |
+    {"group_value":"","window_days":1,"current_cost_usd":8.7,"prior_cost_usd":2,"cost_delta_usd":6.7,"current_daily_cost_usd":8.7,"baseline_daily_cost_usd":0.071429,"daily_cost_vs_baseline_usd":8.628571,"current_generated_tokens":583700,"prior_generated_tokens":232000,"generated_tokens_delta":351700,"baseline_active_days":1}
+
+- name: notable_changes_by_source
+  description: dimension=source ranks movers by absolute cost delta
+  expected_http_status: 200
+  parameters: org_id=org_context&start_time_ms=1779235200000&end_time_ms=1779321600000&dimension=source
+  expected_result: |
+    {"group_value":"codex","window_days":1,"current_cost_usd":7.2,"prior_cost_usd":2,"cost_delta_usd":5.2,"current_daily_cost_usd":7.2,"baseline_daily_cost_usd":0.071429,"daily_cost_vs_baseline_usd":7.128571,"current_generated_tokens":437200,"prior_generated_tokens":232000,"generated_tokens_delta":205200,"baseline_active_days":1}
+    {"group_value":"claude","window_days":1,"current_cost_usd":1.5,"prior_cost_usd":0,"cost_delta_usd":1.5,"current_daily_cost_usd":1.5,"baseline_daily_cost_usd":0,"daily_cost_vs_baseline_usd":1.5,"current_generated_tokens":146500,"prior_generated_tokens":0,"generated_tokens_delta":146500,"baseline_active_days":0}

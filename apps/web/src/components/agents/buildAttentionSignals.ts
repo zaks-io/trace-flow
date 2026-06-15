@@ -1,6 +1,10 @@
-import { formatNumber, formatPercent } from '@/lib/format';
-import { computeDelta } from './delta';
-import type { AgentContextHealthRow, AgentSummaryRow, FailureLeaderboardRow } from './types';
+import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
+import type {
+  AgentContextHealthRow,
+  AgentNotableChangeRow,
+  AgentSummaryRow,
+  FailureLeaderboardRow,
+} from './types';
 
 export type AttentionSeverity = 'critical' | 'warn';
 
@@ -11,12 +15,16 @@ export interface AttentionSignal {
   detail: string;
 }
 
-/** Thresholds for raising an attention signal. Tuned conservatively; adjust as data informs. */
+/**
+ * Thresholds for raising a signal. These gate facts worth surfacing; the copy never claims a
+ * value is "unusual" or an "anomaly" — it states the fact and lets the reader judge.
+ */
 const ATTENTION_THRESHOLDS = {
-  costSpikePct: 30,
-  paceUpRatio: 0.25,
+  /** Current daily pace must beat the trailing-28d daily average by this multiple to surface. */
+  paceVsBaselineRatio: 1.5,
+  /** ...and exceed this absolute daily dollar gap, so tiny baselines don't trip it. */
+  paceVsBaselineMinUsd: 1,
   contextCrossRatio: 0.2,
-  bloatedStartRatio: 0.25,
   toolFailureRate: 0.25,
   coverageFloor: 0.6,
 } as const;
@@ -29,73 +37,61 @@ function pct(ratio: number): string {
  * Derive the "what should I worry about" signals from data already fetched for the page —
  * no extra queries. Returns critical-first; an empty array means nothing crossed a threshold.
  *
- * `paceDeltaRatio` is the cost-per-active-day change as a raw ratio (from buildBurnRateStats);
- * null when daily buckets were unavailable, in which case the pace signal is skipped.
+ * The spend-pace signal compares the window's daily pace against a trailing-28-day daily
+ * average (from `agent_notable_changes`), NOT a single prior equal-length window — a longer
+ * norm, so a busy day after a quiet one isn't mislabeled. Context pressure is counted at the
+ * per-turn grain (turns over the threshold), not whole conversations.
  */
 export function buildAttentionSignals({
   summary,
   contextHealth,
+  notableTotal,
   failures,
   attentionThresholdTokens,
-  paceDeltaRatio,
 }: {
   summary: AgentSummaryRow | null;
   contextHealth: AgentContextHealthRow | null;
+  notableTotal: AgentNotableChangeRow | null;
   failures: FailureLeaderboardRow[];
   attentionThresholdTokens: number;
-  paceDeltaRatio: number | null;
 }): AttentionSignal[] {
   const signals: AttentionSignal[] = [];
   const threshold = formatNumber(attentionThresholdTokens);
 
-  if (summary) {
-    const costDelta = computeDelta(summary.estimated_cost_usd, summary.prior_cost_usd);
-    if (costDelta !== null && costDelta > ATTENTION_THRESHOLDS.costSpikePct) {
-      signals.push({
-        id: 'cost-spike',
-        severity: 'critical',
-        label: `Cost up ${costDelta.toFixed(0)}%`,
-        detail: 'Estimated cost rose sharply versus the previous equal-length window.',
-      });
-    }
-
-    if (summary.coverage_pct != null && summary.coverage_pct < ATTENTION_THRESHOLDS.coverageFloor) {
-      signals.push({
-        id: 'low-coverage',
-        severity: 'warn',
-        label: `Only ${pct(summary.coverage_pct)} of turns priced`,
-        detail: 'Cost is a lower bound — many billable turns are unpriced for this range.',
-      });
-    }
-  }
-
-  if (paceDeltaRatio !== null && paceDeltaRatio > ATTENTION_THRESHOLDS.paceUpRatio) {
+  if (summary?.coverage_pct != null && summary.coverage_pct < ATTENTION_THRESHOLDS.coverageFloor) {
     signals.push({
-      id: 'pace-up',
+      id: 'low-coverage',
       severity: 'warn',
-      label: `Daily spend pace up ${(paceDeltaRatio * 100).toFixed(0)}%`,
-      detail: 'Cost per active day is running above the previous window.',
+      label: `Only ${pct(summary.coverage_pct)} of turns priced`,
+      detail: 'Cost is a lower bound — many billable turns are unpriced for this range.',
     });
   }
 
-  if (contextHealth) {
-    const crossing = contextHealth.pct_sessions_over_threshold;
-    const priorCrossing = contextHealth.prior_pct_sessions_over_threshold;
-    if (crossing > ATTENTION_THRESHOLDS.contextCrossRatio && crossing > priorCrossing) {
+  if (notableTotal) {
+    const { current_daily_cost_usd, baseline_daily_cost_usd, daily_cost_vs_baseline_usd } =
+      notableTotal;
+    const exceedsRatio =
+      baseline_daily_cost_usd > 0 &&
+      current_daily_cost_usd >= baseline_daily_cost_usd * ATTENTION_THRESHOLDS.paceVsBaselineRatio;
+    if (exceedsRatio && daily_cost_vs_baseline_usd >= ATTENTION_THRESHOLDS.paceVsBaselineMinUsd) {
       signals.push({
-        id: 'context-bloat',
+        id: 'pace-vs-baseline',
         severity: 'warn',
-        label: `${pct(crossing)} of conversations cross ${threshold} tokens`,
-        detail: `Up from ${pct(priorCrossing)} in the previous window — context is growing.`,
+        label: `Daily spend ${formatCurrency(current_daily_cost_usd)}/day, above the 28-day average`,
+        detail: `Trailing 28-day average is ${formatCurrency(baseline_daily_cost_usd)}/day (${formatNumber(notableTotal.baseline_active_days)} active days).`,
       });
     }
+  }
 
-    if (contextHealth.pct_bloated_start_50k > ATTENTION_THRESHOLDS.bloatedStartRatio) {
+  if (contextHealth) {
+    const crossing = contextHealth.pct_calls_over_threshold;
+    const priorCrossing = contextHealth.prior_pct_calls_over_threshold;
+    if (crossing > ATTENTION_THRESHOLDS.contextCrossRatio && crossing > priorCrossing) {
       signals.push({
-        id: 'bloated-starts',
+        id: 'context-pressure',
         severity: 'warn',
-        label: `${pct(contextHealth.pct_bloated_start_50k)} of conversations start above 50K tokens`,
-        detail: 'New conversations begin large, before any work is done.',
+        label: `${formatNumber(contextHealth.calls_over_threshold)} turns over ${threshold} tokens (${pct(crossing)})`,
+        detail: `Up from ${pct(priorCrossing)} of turns in the previous window.`,
       });
     }
   }

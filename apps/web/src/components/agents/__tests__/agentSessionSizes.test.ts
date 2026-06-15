@@ -1,159 +1,171 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildSizeBands,
-  buildSizeHistogram,
+  axisLabel,
+  buildDistributionBins,
+  buildPercentiles,
+  buildSkewSummary,
+  formatAxisValue,
   generatedTokenShare,
-  medianMessagesPerSession,
-  throughputVerdict,
 } from '../agentSessionSizes';
-import type { AgentSessionSizeRow } from '../types';
+import type { AgentCostDistributionRow } from '../types';
 
-function makeRow(overrides: Partial<AgentSessionSizeRow> = {}): AgentSessionSizeRow {
+function makeRow(overrides: Partial<AgentCostDistributionRow> = {}): AgentCostDistributionRow {
   const zero = {
     session_count: 0,
     prior_session_count: 0,
-    messages_p50: 0,
-    prior_messages_p50: 0,
-    messages_p90: 0,
-    prior_messages_p90: 0,
-    messages_p95: 0,
-    prior_messages_p95: 0,
-    messages_max: 0,
-    prior_messages_max: 0,
-    tokens_p50: 0,
-    prior_tokens_p50: 0,
-    tokens_p90: 0,
-    prior_tokens_p90: 0,
-    tokens_p95: 0,
-    prior_tokens_p95: 0,
-    tokens_max: 0,
-    prior_tokens_max: 0,
-    total_messages: 0,
-    prior_total_messages: 0,
     total_generated_tokens: 0,
     prior_total_generated_tokens: 0,
     total_cache_inclusive_tokens: 0,
     prior_total_cache_inclusive_tokens: 0,
     total_cost_usd: 0,
     prior_total_cost_usd: 0,
-    bin_1_2: 0,
-    prior_bin_1_2: 0,
-    bin_3_5: 0,
-    prior_bin_3_5: 0,
-    bin_6_10: 0,
-    prior_bin_6_10: 0,
-    bin_11_25: 0,
-    prior_bin_11_25: 0,
-    bin_26_50: 0,
-    prior_bin_26_50: 0,
-    bin_51_plus: 0,
-    prior_bin_51_plus: 0,
-    small_sessions: 0,
-    prior_small_sessions: 0,
-    medium_sessions: 0,
-    prior_medium_sessions: 0,
-    large_sessions: 0,
-    prior_large_sessions: 0,
-    small_cost_usd: 0,
-    medium_cost_usd: 0,
-    large_cost_usd: 0,
-  } satisfies AgentSessionSizeRow;
+    cost_p50: 0,
+    prior_cost_p50: 0,
+    cost_p90: 0,
+    prior_cost_p90: 0,
+    cost_p95: 0,
+    prior_cost_p95: 0,
+    cost_max: 0,
+    prior_cost_max: 0,
+    generated_tokens_p50: 0,
+    prior_generated_tokens_p50: 0,
+    generated_tokens_p90: 0,
+    prior_generated_tokens_p90: 0,
+    generated_tokens_p95: 0,
+    prior_generated_tokens_p95: 0,
+    generated_tokens_max: 0,
+    prior_generated_tokens_max: 0,
+    cache_inclusive_tokens_p50: 0,
+    prior_cache_inclusive_tokens_p50: 0,
+    cache_inclusive_tokens_p90: 0,
+    prior_cache_inclusive_tokens_p90: 0,
+    cache_inclusive_tokens_p95: 0,
+    prior_cache_inclusive_tokens_p95: 0,
+    cache_inclusive_tokens_max: 0,
+    prior_cache_inclusive_tokens_max: 0,
+    cost_bin_under_10c: 0,
+    cost_bin_10c_1: 0,
+    cost_bin_1_5: 0,
+    cost_bin_5_20: 0,
+    cost_bin_20_plus: 0,
+    cost_sum_under_10c: 0,
+    cost_sum_10c_1: 0,
+    cost_sum_1_5: 0,
+    cost_sum_5_20: 0,
+    cost_sum_20_plus: 0,
+    token_bin_under_10k: 0,
+    token_bin_10k_50k: 0,
+    token_bin_50k_200k: 0,
+    token_bin_200k_1m: 0,
+    token_bin_1m_plus: 0,
+    token_sum_under_10k: 0,
+    token_sum_10k_50k: 0,
+    token_sum_50k_200k: 0,
+    token_sum_200k_1m: 0,
+    token_sum_1m_plus: 0,
+    top_10pct_cost_usd: 0,
+    top_10pct_session_count: 0,
+  } satisfies AgentCostDistributionRow;
   return { ...zero, ...overrides };
 }
 
-describe('buildSizeHistogram', () => {
-  it('maps every fixed bin in order with current + prior counts', () => {
-    const bins = buildSizeHistogram(
-      makeRow({ bin_1_2: 5, prior_bin_1_2: 2, bin_51_plus: 1, prior_bin_51_plus: 0 }),
+describe('buildDistributionBins', () => {
+  it('maps the five cost bands in order with counts and summed spend', () => {
+    const bins = buildDistributionBins(
+      makeRow({
+        cost_bin_under_10c: 3,
+        cost_sum_under_10c: 0.15,
+        cost_bin_10c_1: 2,
+        cost_sum_10c_1: 0.9,
+        cost_bin_1_5: 1,
+        cost_sum_1_5: 4,
+        cost_bin_20_plus: 1,
+        cost_sum_20_plus: 50,
+      }),
+      'cost',
     );
-    expect(bins.map((b) => b.label)).toEqual(['1–2', '3–5', '6–10', '11–25', '26–50', '51+']);
-    expect(bins[0]).toEqual({ label: '1–2', current: 5, prior: 2 });
-    expect(bins[5]).toEqual({ label: '51+', current: 1, prior: 0 });
+    expect(bins.map((b) => b.label)).toEqual(['<$0.10', '$0.10–1', '$1–5', '$5–20', '$20+']);
+    expect(bins[0]).toEqual({ label: '<$0.10', count: 3, total: 0.15 });
+    expect(bins[4]).toEqual({ label: '$20+', count: 1, total: 50 });
+  });
+
+  it('maps the five generated-token bands in order on the token axis', () => {
+    const bins = buildDistributionBins(
+      makeRow({ token_bin_under_10k: 4, token_sum_under_10k: 12000, token_bin_1m_plus: 1 }),
+      'tokens',
+    );
+    expect(bins.map((b) => b.label)).toEqual(['<10k', '10k–50k', '50k–200k', '200k–1M', '1M+']);
+    expect(bins[0]).toEqual({ label: '<10k', count: 4, total: 12000 });
   });
 });
 
-describe('buildSizeBands', () => {
-  it('computes per-band shares against the session total', () => {
-    const bands = buildSizeBands(
+describe('buildPercentiles', () => {
+  it('reads cost percentiles plus the prior-window p50 on the cost axis', () => {
+    const p = buildPercentiles(
+      makeRow({ cost_p50: 0.8, cost_p90: 4, cost_p95: 5, cost_max: 12, prior_cost_p50: 0.5 }),
+      'cost',
+    );
+    expect(p).toEqual({ p50: 0.8, p90: 4, p95: 5, max: 12, priorP50: 0.5 });
+  });
+
+  it('reads generated-token percentiles on the token axis', () => {
+    const p = buildPercentiles(
       makeRow({
-        session_count: 10,
-        small_sessions: 6,
-        medium_sessions: 3,
-        large_sessions: 1,
-        small_cost_usd: 1,
-        medium_cost_usd: 2,
-        large_cost_usd: 7,
+        generated_tokens_p50: 5000,
+        generated_tokens_p95: 90000,
+        generated_tokens_max: 200000,
+        prior_generated_tokens_p50: 4000,
+      }),
+      'tokens',
+    );
+    expect(p).toMatchObject({ p50: 5000, p95: 90000, max: 200000, priorP50: 4000 });
+  });
+});
+
+describe('buildSkewSummary', () => {
+  it('reports the top-10% concentration and the p95/p50 stretch', () => {
+    const skew = buildSkewSummary(
+      makeRow({
+        total_cost_usd: 100,
+        top_10pct_cost_usd: 70,
+        top_10pct_session_count: 2,
+        cost_p50: 0.8,
+        cost_p95: 8,
       }),
     );
-    expect(bands.map((b) => b.share)).toEqual([0.6, 0.3, 0.1]);
-    expect(bands[2]).toMatchObject({ key: 'large', sessions: 1, costUsd: 7 });
+    expect(skew.topCount).toBe(2);
+    expect(skew.topCostUsd).toBe(70);
+    expect(skew.topCostShare).toBeCloseTo(0.7);
+    expect(skew.p95OverP50).toBeCloseTo(10);
   });
 
-  it('returns zero shares (not NaN) when there are no sessions', () => {
-    const bands = buildSizeBands(makeRow());
-    expect(bands.every((b) => b.share === 0)).toBe(true);
-  });
-});
-
-describe('throughputVerdict', () => {
-  it('is "none" with no conversations', () => {
-    expect(throughputVerdict(makeRow())).toBe('none');
+  it('is all-zero shares (not NaN) when there is no spend', () => {
+    const skew = buildSkewSummary(makeRow());
+    expect(skew.topCostShare).toBe(0);
+    expect(skew.p95OverP50).toBe(0);
   });
 
-  it('is "many-small" when small dominates and large is rare', () => {
-    const row = makeRow({ session_count: 10, small_sessions: 8, medium_sessions: 2 });
-    expect(throughputVerdict(row)).toBe('many-small');
-  });
-
-  it('is "few-big" when large conversations are the majority', () => {
-    const row = makeRow({
-      session_count: 10,
-      small_sessions: 2,
-      medium_sessions: 2,
-      large_sessions: 6,
-    });
-    expect(throughputVerdict(row)).toBe('few-big');
-  });
-
-  it('is "few-big" when large conversations carry the cost even if not the count', () => {
-    const row = makeRow({
-      session_count: 10,
-      small_sessions: 7,
-      medium_sessions: 2,
-      large_sessions: 1,
-      small_cost_usd: 1,
-      medium_cost_usd: 1,
-      large_cost_usd: 8,
-    });
-    expect(throughputVerdict(row)).toBe('few-big');
-  });
-
-  it('is "mixed" when no band dominates', () => {
-    const row = makeRow({
-      session_count: 10,
-      small_sessions: 4,
-      medium_sessions: 4,
-      large_sessions: 2,
-      small_cost_usd: 3,
-      medium_cost_usd: 3,
-      large_cost_usd: 4,
-    });
-    expect(throughputVerdict(row)).toBe('mixed');
+  it('clamps the top-10% share to 1 if concentration rounding overshoots total', () => {
+    const skew = buildSkewSummary(makeRow({ total_cost_usd: 10, top_10pct_cost_usd: 12 }));
+    expect(skew.topCostShare).toBe(1);
   });
 });
 
-describe('medianMessagesPerSession', () => {
-  it('returns the p50 message count', () => {
-    expect(medianMessagesPerSession(makeRow({ messages_p50: 7 }))).toBe(7);
+describe('formatAxisValue / axisLabel', () => {
+  it('formats cost as currency and tokens as a plain count', () => {
+    expect(formatAxisValue('cost', 4.2)).toBe('$4.20');
+    expect(formatAxisValue('tokens', 12000)).toBe('12.0K');
+  });
+
+  it('labels the axes with standard terms', () => {
+    expect(axisLabel('cost')).toBe('Cost');
+    expect(axisLabel('tokens')).toBe('Tokens generated');
   });
 });
 
 describe('generatedTokenShare', () => {
   it('is the generated fraction of tokens processed', () => {
-    const row = makeRow({
-      total_cache_inclusive_tokens: 1000,
-      total_generated_tokens: 250,
-    });
+    const row = makeRow({ total_cache_inclusive_tokens: 1000, total_generated_tokens: 250 });
     expect(generatedTokenShare(row)).toBe(0.25);
   });
 

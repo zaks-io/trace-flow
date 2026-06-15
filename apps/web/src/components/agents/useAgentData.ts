@@ -3,9 +3,11 @@ import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
 import type {
   AgentContextHealthRow,
+  AgentCostDistributionRow,
   AgentGranularity,
   AgentGroupBy,
-  AgentSessionSizeRow,
+  AgentNotableChangeDimension,
+  AgentNotableChangeRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
@@ -100,9 +102,25 @@ export function useAgentData({
     params: usageParams,
   });
 
-  const sessionSizeQuery = useTinybirdQuery<TinybirdResponse<AgentSessionSizeRow>>({
-    pipe: 'agent_session_size_distribution',
+  const costDistributionQuery = useTinybirdQuery<TinybirdResponse<AgentCostDistributionRow>>({
+    pipe: 'agent_session_cost_distribution',
     params: usageParams,
+  });
+
+  // Repos are the actionable mover unit; the dimension='' total row carries the org baseline.
+  const notableByRepoParams = useMemo(
+    () => ({ ...usageParams, dimension: 'repo' satisfies AgentNotableChangeDimension, limit: 50 }),
+    [usageParams],
+  );
+
+  const notableTotalQuery = useTinybirdQuery<TinybirdResponse<AgentNotableChangeRow>>({
+    pipe: 'agent_notable_changes',
+    params: usageParams,
+  });
+
+  const notableByRepoQuery = useTinybirdQuery<TinybirdResponse<AgentNotableChangeRow>>({
+    pipe: 'agent_notable_changes',
+    params: notableByRepoParams,
   });
 
   const contextQuery = useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>({
@@ -126,7 +144,9 @@ export function useAgentData({
   });
 
   const summary = getFreshFirstRow(summaryQuery);
-  const sessionSize = getFreshFirstRow(sessionSizeQuery);
+  const costDistribution = getFreshFirstRow(costDistributionQuery);
+  const notableTotal = getFreshFirstRow(notableTotalQuery);
+  const notableByRepo = getFreshRows(notableByRepoQuery);
   const contextHealth = getFreshFirstRow(contextQuery);
   const timeseries = getFreshRows(timeseriesQuery);
   const burnSeries = getFreshRows(burnSeriesQuery);
@@ -139,7 +159,9 @@ export function useAgentData({
     burnSeriesQuery.isLoading ||
     priorBurnSeriesQuery.isLoading ||
     summaryQuery.isLoading ||
-    sessionSizeQuery.isLoading ||
+    costDistributionQuery.isLoading ||
+    notableTotalQuery.isLoading ||
+    notableByRepoQuery.isLoading ||
     contextQuery.isLoading ||
     failuresQuery.isLoading ||
     deltaQuery.isLoading;
@@ -149,21 +171,29 @@ export function useAgentData({
     burnSeriesQuery.error ??
     priorBurnSeriesQuery.error ??
     summaryQuery.error ??
-    sessionSizeQuery.error ??
+    costDistributionQuery.error ??
+    notableTotalQuery.error ??
+    notableByRepoQuery.error ??
     contextQuery.error ??
     failuresQuery.error ??
     deltaQuery.error;
   const failureCandidates: Array<{ id: string; label: string; error: Error | null }> = [
     { id: 'summary', label: 'summary cards', error: summaryQuery.error },
     { id: 'timeseries', label: 'chart', error: timeseriesQuery.error },
-    { id: 'sessionSize', label: 'conversation size distribution', error: sessionSizeQuery.error },
+    {
+      id: 'costDistribution',
+      label: 'cost-per-conversation distribution',
+      error: costDistributionQuery.error,
+    },
+    { id: 'notableTotal', label: 'notable changes (total)', error: notableTotalQuery.error },
+    { id: 'notableByRepo', label: 'notable changes (by repo)', error: notableByRepoQuery.error },
     { id: 'burnSeries', label: 'burn rate', error: burnSeriesQuery.error },
     {
       id: 'priorBurnSeries',
       label: 'prior burn-rate comparison',
       error: priorBurnSeriesQuery.error,
     },
-    { id: 'context', label: 'conversation size', error: contextQuery.error },
+    { id: 'context', label: 'context health', error: contextQuery.error },
     { id: 'failures', label: 'tool failure leaderboard', error: failuresQuery.error },
     { id: 'deltas', label: 'tool period-over-period comparison', error: deltaQuery.error },
   ];
@@ -189,7 +219,9 @@ export function useAgentData({
     burnSeries,
     priorBurnSeries,
     summary,
-    sessionSize,
+    costDistribution,
+    notableTotal,
+    notableByRepo,
     contextHealth,
     failures,
     deltas,
