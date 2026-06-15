@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { formatNumber } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { AgentUsageChart } from './AgentUsageChart';
-import { AnomalyStrip } from './AnomalyStrip';
+import { NotableChangesStrip } from './NotableChangesStrip';
 import { BentoCell } from './BentoCell';
 import { ConversationSizeHistogram } from './ConversationSizeHistogram';
 import { CostProjectionHero } from './CostProjectionHero';
@@ -83,7 +83,7 @@ export function AgentBentoGrid({
   labelFor: (value: string) => string;
 }) {
   const [expanded, setExpanded] = useState<ExpandableCell | null>(null);
-  const [anomalyOpen, setAnomalyOpen] = useState(false);
+  const [notableOpen, setNotableOpen] = useState(false);
   // The hero drill-down re-groups cost by source/model/repo, which only the fetch can do
   // (the resting series is ungrouped). Default to 'source' on open; reset on collapse so
   // the grouped query only runs while the drill-down is visible.
@@ -238,7 +238,7 @@ export function AgentBentoGrid({
 
       {/* Row 5 — Q6 notable changes, always present */}
       <div className="lg:col-span-6 xl:col-span-12">
-        <AnomalyStrip
+        <NotableChangesStrip
           signals={signals}
           notableTotal={notableTotal}
           notableByRepo={notableByRepo}
@@ -246,8 +246,8 @@ export function AgentBentoGrid({
           failures={failures}
           windowDays={windowDays}
           labelFor={labelFor}
-          expanded={anomalyOpen}
-          onToggleExpand={() => setAnomalyOpen((open) => !open)}
+          expanded={notableOpen}
+          onToggleExpand={() => setNotableOpen((open) => !open)}
         />
       </div>
     </div>

@@ -26,7 +26,7 @@ const SEVERITY_DOT: Record<AttentionSeverity, string> = {
  * Expand for the per-repo cost movers (vs the trailing-28-day daily baseline) plus the tool
  * usage and failure detail.
  */
-export function AnomalyStrip({
+export function NotableChangesStrip({
   signals,
   notableTotal,
   notableByRepo,
