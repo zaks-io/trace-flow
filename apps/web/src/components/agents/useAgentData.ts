@@ -11,6 +11,7 @@ import type {
   ToolDeltaRow,
 } from './types';
 import { buildContextHealthParams } from './contextHealth';
+import { buildPriorWindowParams } from './burnRate';
 
 type UseAgentDataParams = {
   filterParams: Record<string, string | number>;
@@ -22,6 +23,28 @@ type UseAgentDataParams = {
   models: string[];
   attentionThresholdTokens: number;
 };
+
+type AgentDataFailure = {
+  id: string;
+  label: string;
+  error: Error;
+};
+
+const EMPTY_ROWS: never[] = [];
+
+type TinybirdQuerySnapshot<T> = {
+  data: TinybirdResponse<T> | null;
+  error: Error | null;
+};
+
+export function getFreshRows<T>(query: TinybirdQuerySnapshot<T>): T[] {
+  if (query.error) return EMPTY_ROWS;
+  return query.data?.data ?? EMPTY_ROWS;
+}
+
+export function getFreshFirstRow<T>(query: TinybirdQuerySnapshot<T>): T | null {
+  return getFreshRows(query)[0] ?? null;
+}
 
 export function useAgentData({
   filterParams,
@@ -46,9 +69,29 @@ export function useAgentData({
     return params;
   }, [usageParams, groupBy, granularity, timezone]);
 
+  const burnSeriesParams = useMemo(
+    () => ({ ...usageParams, granularity: 'day', timezone }),
+    [usageParams, timezone],
+  );
+
+  const priorBurnSeriesParams = useMemo(
+    () => ({ ...buildPriorWindowParams(usageParams), granularity: 'day', timezone }),
+    [usageParams, timezone],
+  );
+
   const timeseriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
     pipe: 'agent_usage_timeseries',
     params: timeseriesParams,
+  });
+
+  const burnSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+    pipe: 'agent_usage_timeseries',
+    params: burnSeriesParams,
+  });
+
+  const priorBurnSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+    pipe: 'agent_usage_timeseries',
+    params: priorBurnSeriesParams,
   });
 
   const summaryQuery = useTinybirdQuery<TinybirdResponse<AgentSummaryRow>>({
@@ -76,14 +119,18 @@ export function useAgentData({
     params: { ...filterParams, limit: 100 },
   });
 
-  const summary = summaryQuery.data?.data?.[0] ?? null;
-  const contextHealth = contextQuery.data?.data?.[0] ?? null;
-  const timeseries = useMemo(() => timeseriesQuery.data?.data ?? [], [timeseriesQuery.data]);
-  const failures = useMemo(() => failuresQuery.data?.data ?? [], [failuresQuery.data]);
-  const deltas = useMemo(() => deltaQuery.data?.data ?? [], [deltaQuery.data]);
+  const summary = getFreshFirstRow(summaryQuery);
+  const contextHealth = getFreshFirstRow(contextQuery);
+  const timeseries = getFreshRows(timeseriesQuery);
+  const burnSeries = getFreshRows(burnSeriesQuery);
+  const priorBurnSeries = getFreshRows(priorBurnSeriesQuery);
+  const failures = getFreshRows(failuresQuery);
+  const deltas = getFreshRows(deltaQuery);
 
   const isLoading =
     timeseriesQuery.isLoading ||
+    burnSeriesQuery.isLoading ||
+    priorBurnSeriesQuery.isLoading ||
     summaryQuery.isLoading ||
     contextQuery.isLoading ||
     failuresQuery.isLoading ||
@@ -91,10 +138,28 @@ export function useAgentData({
 
   const hasError =
     timeseriesQuery.error ??
+    burnSeriesQuery.error ??
+    priorBurnSeriesQuery.error ??
     summaryQuery.error ??
     contextQuery.error ??
     failuresQuery.error ??
     deltaQuery.error;
+  const failureCandidates: Array<{ id: string; label: string; error: Error | null }> = [
+    { id: 'summary', label: 'summary cards', error: summaryQuery.error },
+    { id: 'timeseries', label: 'chart', error: timeseriesQuery.error },
+    { id: 'burnSeries', label: 'burn rate', error: burnSeriesQuery.error },
+    {
+      id: 'priorBurnSeries',
+      label: 'prior burn-rate comparison',
+      error: priorBurnSeriesQuery.error,
+    },
+    { id: 'context', label: 'conversation size', error: contextQuery.error },
+    { id: 'failures', label: 'tool failure leaderboard', error: failuresQuery.error },
+    { id: 'deltas', label: 'tool period-over-period comparison', error: deltaQuery.error },
+  ];
+  const failedSurfaces: AgentDataFailure[] = failureCandidates.filter(
+    (failure): failure is AgentDataFailure => failure.error instanceof Error,
+  );
 
   // The summary aggregates billable (assistant) turns over the window, so no billable
   // turns and no sessions is the "no agent activity" signal. A loaded summary response
@@ -111,13 +176,17 @@ export function useAgentData({
 
   return {
     timeseries,
+    burnSeries,
+    priorBurnSeries,
     summary,
     contextHealth,
     failures,
     deltas,
     isLoading,
     hasError,
+    failedSurfaces,
     isEmpty,
     isPartial,
+    timezone,
   };
 }

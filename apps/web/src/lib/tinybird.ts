@@ -12,6 +12,8 @@ interface TokenEntry {
 
 // Module-level cache keyed by pipe name — survives across renders/components
 const tokenCache = new Map<string, TokenEntry>();
+const tokenRequests = new Map<string, Promise<string>>();
+let tokenCacheEpoch = 0;
 
 const TOKEN_TTL_MS = 9 * 60 * 1000; // 9 min (tokens expire at 10 min)
 
@@ -44,17 +46,34 @@ async function getToken(
     return cached.token;
   }
 
-  const result = await generateToken({
+  const pending = tokenRequests.get(pipe);
+  if (pending) {
+    return pending;
+  }
+
+  const requestEpoch = tokenCacheEpoch;
+  const request = generateToken({
     scopes: [{ type: 'PIPES:READ', resource: pipe }],
     ttl,
-  });
+  })
+    .then((result) => {
+      if (requestEpoch === tokenCacheEpoch) {
+        tokenCache.set(pipe, {
+          token: result.token,
+          expiresAt: Date.now() + TOKEN_TTL_MS,
+        });
+      }
 
-  tokenCache.set(pipe, {
-    token: result.token,
-    expiresAt: Date.now() + TOKEN_TTL_MS,
-  });
+      return result.token;
+    })
+    .finally(() => {
+      if (tokenRequests.get(pipe) === request) {
+        tokenRequests.delete(pipe);
+      }
+    });
 
-  return result.token;
+  tokenRequests.set(pipe, request);
+  return request;
 }
 
 function evictToken(pipe: string) {
@@ -62,7 +81,9 @@ function evictToken(pipe: string) {
 }
 
 export function clearTokenCache() {
+  tokenCacheEpoch++;
   tokenCache.clear();
+  tokenRequests.clear();
 }
 
 function baseUrl(): string {

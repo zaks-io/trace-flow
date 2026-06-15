@@ -22,7 +22,7 @@ export function FailureLeaderboardTable({ data }: { data: FailureLeaderboardRow[
       countLabel="tools"
     >
       {data.length === 0 ? (
-        <AgentTableEmpty message="No tool activity above the display floor for this range." />
+        <AgentTableEmpty message="No tool activity above the display threshold for this range." />
       ) : (
         <div className="overflow-auto">
           <table className="w-full text-sm">
