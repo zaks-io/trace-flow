@@ -1,0 +1,148 @@
+DESCRIPTION >
+    Per-session size distribution for agent conversations: how many messages and how many
+    tokens each conversation runs, bucketed into a histogram and small/medium/large bands,
+    with median + tail percentiles. Current selected window vs the previous equal-length
+    window. Reads the incremental session serving table only and merges aggregate states by
+    (OrgId, session_pk) with no FINAL on the hot path (mirrors agent_sessions_browser).
+
+NODE sessions
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        end_ms - start_ms AS span_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt
+    SELECT
+        if(last_event_at >= start_dt AND last_event_at < end_dt, 'current', 'prior') AS period,
+        message_count,
+        cache_inclusive_tokens,
+        generated_tokens,
+        cost_usd
+    FROM (
+        SELECT
+            session_pk,
+            argMaxMerge(source) AS source,
+            argMaxMerge(model) AS model,
+            argMaxMerge(repo_fingerprint) AS repo_fingerprint,
+            sumMerge(MessageCount) AS message_count,
+            sumMerge(InputTokens) AS input_tokens,
+            sumMerge(OutputTokens) AS output_tokens,
+            sumMerge(CacheReadTokens) AS cache_read_tokens,
+            sumMerge(CacheCreationTokens) AS cache_creation_tokens,
+            sumMerge(ReasoningTokens) AS reasoning_tokens,
+            input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens AS cache_inclusive_tokens,
+            input_tokens + output_tokens + reasoning_tokens AS generated_tokens,
+            round(sumMerge(CostUsd), 6) AS cost_usd,
+            maxMerge(LastEventAt) AS last_event_at
+        FROM agent_session_summaries
+        WHERE OrgId = {{ String(org_id, '') }}
+        GROUP BY session_pk
+    )
+    WHERE message_count > 0
+        AND last_event_at >= prior_start_dt
+        AND last_event_at < end_dt
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+
+NODE distribution
+SQL >
+    SELECT
+        period,
+        count() AS session_count,
+        round(quantileExact(0.5)(message_count), 0) AS messages_p50,
+        round(quantileExact(0.9)(message_count), 0) AS messages_p90,
+        round(quantileExact(0.95)(message_count), 0) AS messages_p95,
+        max(message_count) AS messages_max,
+        round(quantileExact(0.5)(cache_inclusive_tokens), 0) AS tokens_p50,
+        round(quantileExact(0.9)(cache_inclusive_tokens), 0) AS tokens_p90,
+        round(quantileExact(0.95)(cache_inclusive_tokens), 0) AS tokens_p95,
+        max(cache_inclusive_tokens) AS tokens_max,
+        sum(message_count) AS total_messages,
+        sum(generated_tokens) AS total_generated_tokens,
+        sum(cache_inclusive_tokens) AS total_cache_inclusive_tokens,
+        round(sum(cost_usd), 6) AS total_cost_usd,
+        countIf(message_count <= 2) AS bin_1_2,
+        countIf(message_count >= 3 AND message_count <= 5) AS bin_3_5,
+        countIf(message_count >= 6 AND message_count <= 10) AS bin_6_10,
+        countIf(message_count >= 11 AND message_count <= 25) AS bin_11_25,
+        countIf(message_count >= 26 AND message_count <= 50) AS bin_26_50,
+        countIf(message_count >= 51) AS bin_51_plus,
+        countIf(message_count <= 5) AS small_sessions,
+        countIf(message_count >= 6 AND message_count <= 25) AS medium_sessions,
+        countIf(message_count >= 26) AS large_sessions,
+        round(sumIf(cost_usd, message_count <= 5), 6) AS small_cost_usd,
+        round(sumIf(cost_usd, message_count >= 6 AND message_count <= 25), 6) AS medium_cost_usd,
+        round(sumIf(cost_usd, message_count >= 26), 6) AS large_cost_usd
+    FROM sessions
+    GROUP BY period
+
+NODE endpoint
+SQL >
+    SELECT
+        ifNull(c.session_count, 0) AS session_count,
+        ifNull(p.session_count, 0) AS prior_session_count,
+        ifNull(c.messages_p50, 0) AS messages_p50,
+        ifNull(p.messages_p50, 0) AS prior_messages_p50,
+        ifNull(c.messages_p90, 0) AS messages_p90,
+        ifNull(p.messages_p90, 0) AS prior_messages_p90,
+        ifNull(c.messages_p95, 0) AS messages_p95,
+        ifNull(p.messages_p95, 0) AS prior_messages_p95,
+        ifNull(c.messages_max, 0) AS messages_max,
+        ifNull(p.messages_max, 0) AS prior_messages_max,
+        ifNull(c.tokens_p50, 0) AS tokens_p50,
+        ifNull(p.tokens_p50, 0) AS prior_tokens_p50,
+        ifNull(c.tokens_p90, 0) AS tokens_p90,
+        ifNull(p.tokens_p90, 0) AS prior_tokens_p90,
+        ifNull(c.tokens_p95, 0) AS tokens_p95,
+        ifNull(p.tokens_p95, 0) AS prior_tokens_p95,
+        ifNull(c.tokens_max, 0) AS tokens_max,
+        ifNull(p.tokens_max, 0) AS prior_tokens_max,
+        ifNull(c.total_messages, 0) AS total_messages,
+        ifNull(p.total_messages, 0) AS prior_total_messages,
+        ifNull(c.total_generated_tokens, 0) AS total_generated_tokens,
+        ifNull(p.total_generated_tokens, 0) AS prior_total_generated_tokens,
+        ifNull(c.total_cache_inclusive_tokens, 0) AS total_cache_inclusive_tokens,
+        ifNull(p.total_cache_inclusive_tokens, 0) AS prior_total_cache_inclusive_tokens,
+        round(ifNull(c.total_cost_usd, 0.), 6) AS total_cost_usd,
+        round(ifNull(p.total_cost_usd, 0.), 6) AS prior_total_cost_usd,
+        ifNull(c.bin_1_2, 0) AS bin_1_2,
+        ifNull(p.bin_1_2, 0) AS prior_bin_1_2,
+        ifNull(c.bin_3_5, 0) AS bin_3_5,
+        ifNull(p.bin_3_5, 0) AS prior_bin_3_5,
+        ifNull(c.bin_6_10, 0) AS bin_6_10,
+        ifNull(p.bin_6_10, 0) AS prior_bin_6_10,
+        ifNull(c.bin_11_25, 0) AS bin_11_25,
+        ifNull(p.bin_11_25, 0) AS prior_bin_11_25,
+        ifNull(c.bin_26_50, 0) AS bin_26_50,
+        ifNull(p.bin_26_50, 0) AS prior_bin_26_50,
+        ifNull(c.bin_51_plus, 0) AS bin_51_plus,
+        ifNull(p.bin_51_plus, 0) AS prior_bin_51_plus,
+        ifNull(c.small_sessions, 0) AS small_sessions,
+        ifNull(p.small_sessions, 0) AS prior_small_sessions,
+        ifNull(c.medium_sessions, 0) AS medium_sessions,
+        ifNull(p.medium_sessions, 0) AS prior_medium_sessions,
+        ifNull(c.large_sessions, 0) AS large_sessions,
+        ifNull(p.large_sessions, 0) AS prior_large_sessions,
+        round(ifNull(c.small_cost_usd, 0.), 6) AS small_cost_usd,
+        round(ifNull(c.medium_cost_usd, 0.), 6) AS medium_cost_usd,
+        round(ifNull(c.large_cost_usd, 0.), 6) AS large_cost_usd
+    FROM (SELECT * FROM distribution WHERE period = 'current') AS c
+    FULL OUTER JOIN (SELECT * FROM distribution WHERE period = 'prior') AS p
+        ON 1 = 1
+    SETTINGS join_use_nulls = 1
+
+TYPE ENDPOINT

@@ -1,0 +1,241 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { formatNumber } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { AgentUsageChart } from './AgentUsageChart';
+import { AnomalyStrip } from './AnomalyStrip';
+import { BentoCell } from './BentoCell';
+import { ConversationSizeHistogram } from './ConversationSizeHistogram';
+import { CostProjectionHero } from './CostProjectionHero';
+import { InitialContextCell } from './InitialContextCell';
+import { StatTile } from './StatTile';
+import { VelocityBar } from './VelocityBar';
+import { buildAttentionSignals } from './buildAttentionSignals';
+import { buildBurnRateStats, hasUsableBurnRateBuckets, type BurnRateStats } from './burnRate';
+import { computeDelta } from './delta';
+import { generatedTokenShare } from './agentSessionSizes';
+import { AGENT_GROUP_BY, AGENT_GROUP_BY_LABEL, type AgentGroupBy } from './types';
+import type {
+  AgentContextHealthRow,
+  AgentSessionSizeRow,
+  AgentSummaryRow,
+  AgentTimeseriesRow,
+  FailureLeaderboardRow,
+  ToolDeltaRow,
+} from './types';
+
+/** Only one drill-down is open at a time, except the always-present anomaly strip. */
+type ExpandableCell = 'hero' | 'conversationSize';
+
+export function AgentBentoGrid({
+  summary,
+  burnSeries,
+  priorBurnSeries,
+  groupedSeries,
+  groupBy,
+  onGroupByChange,
+  sessionSize,
+  contextHealth,
+  failures,
+  deltas,
+  filterParams,
+  timezone,
+  attentionThresholdTokens,
+  windowDays,
+  labelFor,
+}: {
+  summary: AgentSummaryRow;
+  burnSeries: AgentTimeseriesRow[];
+  priorBurnSeries: AgentTimeseriesRow[];
+  /** Time-series fetched with the active `groupBy`; powers the hero drill-down split. */
+  groupedSeries: AgentTimeseriesRow[];
+  groupBy: AgentGroupBy;
+  onGroupByChange: (next: AgentGroupBy) => void;
+  sessionSize: AgentSessionSizeRow | null;
+  contextHealth: AgentContextHealthRow | null;
+  failures: FailureLeaderboardRow[];
+  deltas: ToolDeltaRow[];
+  filterParams: Record<string, string | number>;
+  timezone: string;
+  attentionThresholdTokens: number;
+  windowDays: number;
+  labelFor: (value: string) => string;
+}) {
+  const [expanded, setExpanded] = useState<ExpandableCell | null>(null);
+  const [anomalyOpen, setAnomalyOpen] = useState(false);
+  // The hero drill-down re-groups cost by source/model/repo, which only the fetch can do
+  // (the resting series is ungrouped). Default to 'source' on open; reset on collapse so
+  // the grouped query only runs while the drill-down is visible.
+  const heroGroupBy: AgentGroupBy = groupBy === 'none' ? 'source' : groupBy;
+  // Single place that keeps `groupBy` in sync with which cell is open: the grouped fetch
+  // must run only while the hero is the expanded cell. Opening any other cell (or closing
+  // the hero) resets groupBy to 'none' so an invisible grouped query never lingers.
+  const setExpandedCell = (next: ExpandableCell | null) => {
+    setExpanded(next);
+    onGroupByChange(next === 'hero' ? heroGroupBy : 'none');
+  };
+  const toggle = (cell: ExpandableCell) => setExpandedCell(expanded === cell ? null : cell);
+  const toggleHero = () => toggle('hero');
+
+  const stats: BurnRateStats | null = useMemo(() => {
+    if (!hasUsableBurnRateBuckets(burnSeries, timezone)) return null;
+    return buildBurnRateStats({
+      summary,
+      currentRows: burnSeries,
+      priorRows: priorBurnSeries,
+      filterParams,
+      timezone,
+    });
+  }, [summary, burnSeries, priorBurnSeries, filterParams, timezone]);
+
+  const signals = useMemo(
+    () =>
+      buildAttentionSignals({
+        summary,
+        contextHealth,
+        failures,
+        attentionThresholdTokens,
+        paceDeltaRatio: stats?.costPerActiveDayDeltaPct ?? null,
+      }),
+    [summary, contextHealth, failures, attentionThresholdTokens, stats],
+  );
+
+  const tokensDelta = computeDelta(summary.total_tokens, summary.prior_total_tokens);
+  const sessionsDelta = computeDelta(summary.session_count, summary.prior_session_count);
+  const generatedShare = sessionSize ? generatedTokenShare(sessionSize) : null;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-6 xl:grid-cols-12">
+      {/* Row 1 — Q1 cost + projection hero (Q2 cost delta fused) + 3 Q2 tiles */}
+      <BentoCell
+        title="Cost over time"
+        hint="estimated daily cost and a 30-day projection"
+        className="lg:col-span-6 xl:col-span-8"
+        expandable
+        expanded={expanded === 'hero'}
+        onToggleExpand={toggleHero}
+        toolbar={
+          expanded === 'hero' ? (
+            <GroupByToggle value={heroGroupBy} onChange={onGroupByChange} />
+          ) : undefined
+        }
+        caveat="Projection is a naive linear run-rate (no model). The band spans calendar-day to active-day pace."
+        expandedContent={
+          <div>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Estimated cost over time, grouped by {AGENT_GROUP_BY_LABEL[heroGroupBy].toLowerCase()}
+              .
+            </p>
+            <AgentUsageChart
+              data={groupedSeries}
+              metric="cost"
+              groupBy={heroGroupBy}
+              granularity="day"
+              chartStyle="stacked"
+              labelFor={labelFor}
+            />
+          </div>
+        }
+      >
+        <CostProjectionHero
+          summary={summary}
+          burnSeries={burnSeries}
+          stats={stats}
+          windowDays={windowDays}
+        />
+      </BentoCell>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:col-span-6 lg:grid-cols-1 xl:col-span-4">
+        <StatTile
+          label="Tokens processed"
+          value={formatNumber(summary.total_tokens)}
+          sub={
+            generatedShare != null
+              ? `${Math.round(generatedShare * 100)}% generated, rest is cache read`
+              : 'input + output + cache read + cache write'
+          }
+          delta={tokensDelta}
+          invertDelta
+        />
+        <StatTile
+          label="Conversations"
+          value={formatNumber(summary.session_count)}
+          sub={
+            stats
+              ? `${formatNumber(Math.round(stats.sessionsPerActiveDay * 10) / 10)} / active day`
+              : undefined
+          }
+          delta={sessionsDelta}
+        />
+        <StatTile
+          label="Active days"
+          value={stats ? formatNumber(stats.activeDays) : '—'}
+          sub={
+            stats
+              ? `of ${formatNumber(Math.round(stats.calendarDays))} in range`
+              : 'needs daily buckets'
+          }
+        />
+      </div>
+
+      {/* Row 2 — Q4 conversation size + Q3 initial context */}
+      <div className="lg:col-span-6 xl:col-span-6">
+        <ConversationSizeHistogram
+          row={sessionSize}
+          windowDays={windowDays}
+          expanded={expanded === 'conversationSize'}
+          onToggleExpand={() => toggle('conversationSize')}
+        />
+      </div>
+      <div className="lg:col-span-6 xl:col-span-6">
+        <InitialContextCell row={contextHealth} windowDays={windowDays} />
+      </div>
+
+      {/* Row 3 — Q5 throughput */}
+      <div className="lg:col-span-6 xl:col-span-12">
+        <VelocityBar row={sessionSize} windowDays={windowDays} />
+      </div>
+
+      {/* Row 4 — Q6 anomalies, always present */}
+      <div className="lg:col-span-6 xl:col-span-12">
+        <AnomalyStrip
+          signals={signals}
+          deltas={deltas}
+          failures={failures}
+          windowDays={windowDays}
+          expanded={anomalyOpen}
+          onToggleExpand={() => setAnomalyOpen((open) => !open)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function GroupByToggle({
+  value,
+  onChange,
+}: {
+  value: AgentGroupBy;
+  onChange: (next: AgentGroupBy) => void;
+}) {
+  return (
+    <div className="flex rounded-lg border border-border/60">
+      {AGENT_GROUP_BY.filter((g) => g !== 'none').map((option) => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => onChange(option)}
+          className={cn(
+            'px-2 py-1 text-[11px] font-medium transition-colors first:rounded-l-lg last:rounded-r-lg',
+            value === option
+              ? 'bg-primary/10 text-primary'
+              : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {AGENT_GROUP_BY_LABEL[option]}
+        </button>
+      ))}
+    </div>
+  );
+}

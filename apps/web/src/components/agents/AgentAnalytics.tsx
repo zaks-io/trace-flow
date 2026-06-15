@@ -9,20 +9,17 @@ import { cn } from '@/lib/utils';
 import { useRepoDirectory } from '@/hooks/useRepoDirectory';
 import { useAgentFilters } from './useAgentFilters';
 import { useAgentData } from './useAgentData';
-import {
-  AGENT_SOURCES,
-  type AgentBreakdownDimension,
-  type AgentContextBreakdownDimension,
-} from './types';
+import { AGENT_SOURCES } from './types';
 import { MultiFilterDropdown } from './MultiFilterDropdown';
-import { AgentOverview } from './AgentOverview';
-import { AgentTabs } from './AgentTabs';
+import { AgentBentoGrid } from './AgentBentoGrid';
 import { resolveAttentionThreshold } from './contextHealth';
 import {
   hasLoadedAgentData,
   hasLoadedAgentDetailData,
   shouldShowAgentEmptyState,
 } from './agentAnalyticsState';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function AgentAnalytics() {
   const searchParams = useSearchParams();
@@ -37,8 +34,6 @@ export function AgentAnalytics() {
     toggleRepo,
     groupBy,
     setGroupBy,
-    granularity,
-    setGranularity,
     hasFilters,
     clearFilters,
     filterParams,
@@ -52,6 +47,7 @@ export function AgentAnalytics() {
     burnSeries,
     priorBurnSeries,
     summary,
+    sessionSize,
     contextHealth,
     failures,
     deltas,
@@ -63,13 +59,12 @@ export function AgentAnalytics() {
   } = useAgentData({
     filterParams,
     groupBy,
-    granularity,
+    granularity: 'auto',
     models,
     attentionThresholdTokens,
   });
 
-  // Resolve repo_fingerprint -> display name. Loaded whenever there is data to show, since
-  // the session table renders repo names even when not grouping/filtering by repo.
+  // Resolve repo_fingerprint -> display name; loaded whenever there is data to show.
   const windowParams = useMemo(
     () => ({ start_time_ms: filterParams.start_time_ms, end_time_ms: filterParams.end_time_ms }),
     [filterParams.start_time_ms, filterParams.end_time_ms],
@@ -87,6 +82,8 @@ export function AgentAnalytics() {
 
   // Model is high-cardinality and only appears in the data once grouped by model, so
   // accumulate the values seen across group-by-model fetches to populate the filter.
+  // Guard on groupBy: the hero drill-down also groups by source/repo, whose group_values
+  // are NOT models and would otherwise poison the Model filter list.
   const [seenModels, setSeenModels] = useState<string[]>([]);
   useEffect(() => {
     if (groupBy !== 'model') return;
@@ -101,36 +98,16 @@ export function AgentAnalytics() {
       }
       return changed ? [...set] : prev;
     });
-  }, [groupBy, timeseries]);
+  }, [timeseries, groupBy]);
   const modelOptions = useMemo(() => {
     const set = new Set(seenModels);
     for (const m of models) set.add(m);
     return [...set];
   }, [seenModels, models]);
 
-  // Click a series/legend entry to toggle that value into the active dimension's filter.
-  const onGroupClick = (value: string) => {
-    if (groupBy === 'source') toggleSource(value);
-    else if (groupBy === 'model') toggleModel(value);
-    else if (groupBy === 'repo') toggleRepo(value);
-  };
-
-  // Breakdown/context panels cross-filter the page: a row or segment click toggles its filter.
-  const dimensionSelected = (
-    dimension: AgentBreakdownDimension | AgentContextBreakdownDimension,
-  ) => (dimension === 'source' ? sources : dimension === 'model' ? models : repos);
-  const dimensionToggle = (
-    dimension: AgentBreakdownDimension | AgentContextBreakdownDimension,
-    value: string,
-  ) => {
-    if (dimension === 'source') toggleSource(value);
-    else if (dimension === 'model') toggleModel(value);
-    else toggleRepo(value);
-  };
-
-  const calendarDays = Math.max(
+  const windowDays = Math.max(
     1,
-    (Number(filterParams.end_time_ms) - Number(filterParams.start_time_ms)) / (24 * 60 * 60 * 1000),
+    Math.round((Number(filterParams.end_time_ms) - Number(filterParams.start_time_ms)) / DAY_MS),
   );
   const hasAnyLoadedData = hasLoadedAgentData({
     summary,
@@ -147,8 +124,6 @@ export function AgentAnalytics() {
   });
   const failedSurfaceLabels =
     failedSurfaces.map((failure) => failure.label).join(', ') || 'one or more analytics sections';
-  const errorFor = (id: string) =>
-    failedSurfaces.find((failure) => failure.id === id)?.error ?? null;
 
   return (
     <div className="animate-fade-in">
@@ -230,7 +205,7 @@ export function AgentAnalytics() {
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           Loading agent analytics...
         </div>
-      ) : hasError && !hasAnyLoadedData ? null : shouldShowEmptyState ? (
+      ) : hasError && !hasAnyLoadedData ? null : shouldShowEmptyState || !summary ? (
         <div className="flex flex-col items-center gap-2 rounded-xl bg-card/40 py-16 text-center">
           <Bot className="h-10 w-10 text-muted-foreground/40" />
           <p className="text-sm font-medium text-foreground">No agent activity yet</p>
@@ -240,52 +215,23 @@ export function AgentAnalytics() {
           </p>
         </div>
       ) : (
-        <div className="space-y-6">
-          {summary && (
-            <AgentOverview
-              summary={summary}
-              burnSeries={burnSeries}
-              priorBurnSeries={priorBurnSeries}
-              contextHealth={contextHealth}
-              failures={failures}
-              attentionThresholdTokens={attentionThresholdTokens}
-              filterParams={filterParams}
-              timezone={timezone}
-              labelFor={labelFor}
-              selectedFor={dimensionSelected}
-              onToggle={dimensionToggle}
-            />
-          )}
-
-          <AgentTabs
-            summary={summary}
-            timeseries={timeseries}
-            burnSeries={burnSeries}
-            priorBurnSeries={priorBurnSeries}
-            contextHealth={contextHealth}
-            failures={failures}
-            deltas={deltas}
-            burnCurrentError={errorFor('burnSeries')}
-            burnPriorError={errorFor('priorBurnSeries')}
-            contextError={errorFor('context')}
-            filterParams={filterParams}
-            timezone={timezone}
-            attentionThresholdTokens={attentionThresholdTokens}
-            models={models}
-            calendarDays={calendarDays}
-            groupBy={groupBy}
-            onGroupByChange={setGroupBy}
-            granularity={granularity}
-            onGranularityChange={setGranularity}
-            onGroupClick={onGroupClick}
-            labelFor={labelFor}
-            repoLabelMap={repoLabelMap}
-            breakdownSelected={dimensionSelected}
-            breakdownToggle={dimensionToggle}
-            contextSelected={dimensionSelected}
-            contextToggle={dimensionToggle}
-          />
-        </div>
+        <AgentBentoGrid
+          summary={summary}
+          burnSeries={burnSeries}
+          priorBurnSeries={priorBurnSeries}
+          groupedSeries={timeseries}
+          groupBy={groupBy}
+          onGroupByChange={setGroupBy}
+          sessionSize={sessionSize}
+          contextHealth={contextHealth}
+          failures={failures}
+          deltas={deltas}
+          filterParams={filterParams}
+          timezone={timezone}
+          attentionThresholdTokens={attentionThresholdTokens}
+          windowDays={windowDays}
+          labelFor={labelFor}
+        />
       )}
     </div>
   );

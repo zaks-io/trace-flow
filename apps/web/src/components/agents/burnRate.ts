@@ -1,7 +1,6 @@
 import { parseTinybirdDate } from '@/lib/format';
 import type { AgentSummaryRow, AgentTimeseriesRow } from './types';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS = 30;
 
 interface DayTotals {
@@ -30,10 +29,6 @@ export interface BurnRateStats {
   tokenPerActiveDayDeltaPct: number | null;
   projectedThirtyDayCost: number;
   priorProjectedThirtyDayCost: number;
-}
-
-function safeDays(value: number): number {
-  return Math.max(1, value);
 }
 
 function makeDayFormatter(timeZone: string): Intl.DateTimeFormat {
@@ -101,6 +96,24 @@ function aggregateDays(rows: AgentTimeseriesRow[], timezone: string): DayTotals[
   return [...days.values()];
 }
 
+/**
+ * Count the local calendar days the [start, end) window touches, keyed the same way as
+ * `aggregateDays`. The timeseries buckets are UTC-aligned, so a viewer behind UTC sees the
+ * first bucket land on the previous local day — counting active days in local time against a
+ * UTC `(end - start) / day` span produced "32 of 31 in range". Both must count local days.
+ */
+function calendarDaysInWindow(startMs: number, endMs: number, timezone: string): number {
+  if (!(endMs > startMs)) return 1;
+  const formatter = makeDayFormatter(timezone);
+  const keys = new Set<string>();
+  // Walk the window in 1h steps so DST-shortened/lengthened days still resolve to one key each.
+  for (let t = startMs; t < endMs; t += 60 * 60 * 1000) {
+    keys.add(dayKey(new Date(t).toISOString(), formatter));
+  }
+  keys.add(dayKey(new Date(endMs - 1).toISOString(), formatter));
+  return Math.max(1, keys.size);
+}
+
 function rate(total: number, days: number): number {
   return days > 0 ? total / days : 0;
 }
@@ -142,7 +155,7 @@ export function buildBurnRateStats({
 }): BurnRateStats {
   const start = Number(filterParams.start_time_ms ?? 0);
   const end = Number(filterParams.end_time_ms ?? start);
-  const calendarDays = safeDays((end - start) / DAY_MS);
+  const calendarDays = calendarDaysInWindow(start, end, timezone);
 
   const currentDays = aggregateDays(currentRows, timezone);
   const priorDays = aggregateDays(priorRows, timezone);

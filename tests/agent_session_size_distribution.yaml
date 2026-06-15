@@ -1,0 +1,23 @@
+# Fixtures: fixtures/agent_message_facts.ndjson (org_test), materialized into
+# agent_session_summaries. Assistant messages per session in window [2026-05-20, 2026-05-21):
+#   s1: 3 messages, cost 4.0, 0 tokens, last_event 09:00
+#   s2: 1 message,  cost 0.1, 0 tokens, last_event 10:00
+#   s3: 2 messages, cost 0.8, 0 tokens, last_event 08:30 (one of two messages is unpriced -> 0)
+# Message-count set = {1,2,3}: quantileExact(0.5)=2, p90=p95=max=3. Token percentiles all 0.
+# No sessions in the prior window [2026-05-19, 2026-05-20) -> all prior_* columns are 0.
+# When BOTH windows are empty the FULL OUTER JOIN ON 1=1 yields no rows (not a zero row);
+# the client treats a missing row as no-data, matching agent_sessions_browser.
+# retention_days=20000 neutralizes the now()-relative tier floor (production passes 7..365).
+
+- name: size_distribution_current_window_only
+  description: per-session message percentiles, histogram bins, and size bands for the current window; prior window is empty
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000
+  expected_result: |
+    {"session_count":3,"prior_session_count":0,"messages_p50":2,"prior_messages_p50":0,"messages_p90":3,"prior_messages_p90":0,"messages_p95":3,"prior_messages_p95":0,"messages_max":3,"prior_messages_max":0,"tokens_p50":0,"prior_tokens_p50":0,"tokens_p90":0,"prior_tokens_p90":0,"tokens_p95":0,"prior_tokens_p95":0,"tokens_max":0,"prior_tokens_max":0,"total_messages":6,"prior_total_messages":0,"total_generated_tokens":0,"prior_total_generated_tokens":0,"total_cache_inclusive_tokens":0,"prior_total_cache_inclusive_tokens":0,"total_cost_usd":4.9,"prior_total_cost_usd":0,"bin_1_2":2,"prior_bin_1_2":0,"bin_3_5":1,"prior_bin_3_5":0,"bin_6_10":0,"prior_bin_6_10":0,"bin_11_25":0,"prior_bin_11_25":0,"bin_26_50":0,"prior_bin_26_50":0,"bin_51_plus":0,"prior_bin_51_plus":0,"small_sessions":3,"prior_small_sessions":0,"medium_sessions":0,"prior_medium_sessions":0,"large_sessions":0,"prior_large_sessions":0,"small_cost_usd":4.9,"medium_cost_usd":0,"large_cost_usd":0}
+
+- name: size_distribution_respects_source_filter
+  description: sources=codex isolates a source with no org_test sessions; both windows empty -> no rows (the client renders this as no-data, like agent_sessions_browser)
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sources=codex
+  expected_result: ''

@@ -46,17 +46,9 @@ export type AgentChartStyle = 'stacked' | 'line';
  */
 export type AgentGranularity = 'auto' | 'hour' | 'day';
 
-export const AGENT_GRANULARITIES: AgentGranularity[] = ['auto', 'hour', 'day'];
-
-export const AGENT_GRANULARITY_LABEL: Record<AgentGranularity, string> = {
-  auto: 'Auto',
-  hour: 'Hourly',
-  day: 'Daily',
-};
-
 /** Single-row output of `pipes/agent_usage_summary.pipe` — current window + prior period. */
 export interface AgentSummaryRow {
-  /** Estimated Agent Session Authoring Cost for the window; sums priced rows only. */
+  /** Estimated cost (lower bound) for the window; sums priced turns only. */
   estimated_cost_usd: number;
   total_tokens: number;
   /** Billable (assistant) message count. */
@@ -134,7 +126,7 @@ export interface AgentTimeseriesRow {
   cache_creation_tokens: number;
   reasoning_tokens: number;
   total_tokens: number;
-  /** Estimated Agent Session Authoring Cost; sums priced rows only. */
+  /** Estimated cost (lower bound); sums priced turns only. */
   cost_usd: number;
   priced_message_count: number;
   tool_event_count: number;
@@ -204,14 +196,6 @@ export const AGENT_METRIC_VALUE_KIND: Record<AgentMetric, 'currency' | 'count'> 
   'tool-events': 'count',
 };
 
-export const AGENT_METRIC_LABEL: Record<AgentMetric, string> = {
-  cost: 'Cost',
-  tokens: 'Tokens',
-  messages: 'Messages',
-  sessions: 'Sessions',
-  'tool-events': 'Tool Events',
-};
-
 /**
  * The single AgentTimeseriesRow scalar each metric collapses to when grouped by a
  * dimension (the chart then stacks that scalar by group value instead of by component).
@@ -236,51 +220,6 @@ export const AGENT_GROUP_COLORS = [
   'var(--color-chart-8)',
 ] as const;
 
-/** One row from `pipes/agent_usage_breakdown.pipe` (ranked aggregates by a dimension). */
-export interface AgentBreakdownRow {
-  group_value: string;
-  message_count: number;
-  session_count: number;
-  total_tokens: number;
-  cost_usd: number;
-}
-
-/**
- * The AgentBreakdownRow column each metric ranks/displays by. The breakdown has no tool
- * grain, so the tool-events metric falls back to message_count.
- */
-export const AGENT_BREAKDOWN_METRIC_KEY: Record<AgentMetric, keyof AgentBreakdownRow> = {
-  cost: 'cost_usd',
-  tokens: 'total_tokens',
-  messages: 'message_count',
-  sessions: 'session_count',
-  'tool-events': 'message_count',
-};
-
-/** The group-by dimensions that get a breakdown panel (None has no breakdown). */
-export const AGENT_BREAKDOWN_DIMENSIONS = ['source', 'model', 'repo'] as const;
-export type AgentBreakdownDimension = (typeof AGENT_BREAKDOWN_DIMENSIONS)[number];
-
-/** Sort key for the browsable Agent Session table (all descending). */
-export type AgentSessionSort = 'recent' | 'cost' | 'files' | 'duration' | 'messages';
-
-export const AGENT_SESSION_PAGE_SIZE = 25;
-
-/** One row from `pipes/agent_sessions_browser.pipe`. */
-export interface AgentSessionRow {
-  session_pk: string;
-  source: string;
-  model: string;
-  repo_fingerprint: string;
-  message_count: number;
-  file_event_count: number;
-  unique_file_count: number;
-  /** Estimated cost; null when every message in the session is unpriced. */
-  cost_usd: number | null;
-  duration_ms: number;
-  last_event_ms: number;
-}
-
 /** Output of `pipes/agent_failure_leaderboard.pipe`. */
 export interface FailureLeaderboardRow {
   tool_name: string;
@@ -303,4 +242,65 @@ export interface ToolDeltaRow {
   current_failures: number;
   prior_failures: number;
   failure_delta: number;
+}
+
+/**
+ * Single-row output of `pipes/agent_session_size_distribution.pipe` — the per-session
+ * messages/tokens distribution for the current window plus the prior equal-length window.
+ * The pipe emits no row when both windows are empty (no sessions), so callers treat a
+ * missing row as no-data.
+ */
+export interface AgentSessionSizeRow {
+  session_count: number;
+  prior_session_count: number;
+  /** Median messages per session; p90/p95 expose the heavy tail. */
+  messages_p50: number;
+  prior_messages_p50: number;
+  messages_p90: number;
+  prior_messages_p90: number;
+  messages_p95: number;
+  prior_messages_p95: number;
+  messages_max: number;
+  prior_messages_max: number;
+  /** Cache-inclusive tokens per session (input+output+cache+reasoning) — tokens processed. */
+  tokens_p50: number;
+  prior_tokens_p50: number;
+  tokens_p90: number;
+  prior_tokens_p90: number;
+  tokens_p95: number;
+  prior_tokens_p95: number;
+  tokens_max: number;
+  prior_tokens_max: number;
+  total_messages: number;
+  prior_total_messages: number;
+  /** input+output+reasoning, excludes cache-read — tokens generated. */
+  total_generated_tokens: number;
+  prior_total_generated_tokens: number;
+  total_cache_inclusive_tokens: number;
+  prior_total_cache_inclusive_tokens: number;
+  total_cost_usd: number;
+  prior_total_cost_usd: number;
+  /** Conversation-size histogram by message count (current window). */
+  bin_1_2: number;
+  prior_bin_1_2: number;
+  bin_3_5: number;
+  prior_bin_3_5: number;
+  bin_6_10: number;
+  prior_bin_6_10: number;
+  bin_11_25: number;
+  prior_bin_11_25: number;
+  bin_26_50: number;
+  prior_bin_26_50: number;
+  bin_51_plus: number;
+  prior_bin_51_plus: number;
+  /** Size bands: small ≤5, medium 6–25, large ≥26 messages. */
+  small_sessions: number;
+  prior_small_sessions: number;
+  medium_sessions: number;
+  prior_medium_sessions: number;
+  large_sessions: number;
+  prior_large_sessions: number;
+  small_cost_usd: number;
+  medium_cost_usd: number;
+  large_cost_usd: number;
 }

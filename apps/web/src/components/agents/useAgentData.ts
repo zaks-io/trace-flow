@@ -5,6 +5,7 @@ import type {
   AgentContextHealthRow,
   AgentGranularity,
   AgentGroupBy,
+  AgentSessionSizeRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
@@ -99,6 +100,11 @@ export function useAgentData({
     params: usageParams,
   });
 
+  const sessionSizeQuery = useTinybirdQuery<TinybirdResponse<AgentSessionSizeRow>>({
+    pipe: 'agent_session_size_distribution',
+    params: usageParams,
+  });
+
   const contextQuery = useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>({
     pipe: 'agent_context_health',
     params: buildContextHealthParams({
@@ -120,6 +126,7 @@ export function useAgentData({
   });
 
   const summary = getFreshFirstRow(summaryQuery);
+  const sessionSize = getFreshFirstRow(sessionSizeQuery);
   const contextHealth = getFreshFirstRow(contextQuery);
   const timeseries = getFreshRows(timeseriesQuery);
   const burnSeries = getFreshRows(burnSeriesQuery);
@@ -132,6 +139,7 @@ export function useAgentData({
     burnSeriesQuery.isLoading ||
     priorBurnSeriesQuery.isLoading ||
     summaryQuery.isLoading ||
+    sessionSizeQuery.isLoading ||
     contextQuery.isLoading ||
     failuresQuery.isLoading ||
     deltaQuery.isLoading;
@@ -141,12 +149,14 @@ export function useAgentData({
     burnSeriesQuery.error ??
     priorBurnSeriesQuery.error ??
     summaryQuery.error ??
+    sessionSizeQuery.error ??
     contextQuery.error ??
     failuresQuery.error ??
     deltaQuery.error;
   const failureCandidates: Array<{ id: string; label: string; error: Error | null }> = [
     { id: 'summary', label: 'summary cards', error: summaryQuery.error },
     { id: 'timeseries', label: 'chart', error: timeseriesQuery.error },
+    { id: 'sessionSize', label: 'conversation size distribution', error: sessionSizeQuery.error },
     { id: 'burnSeries', label: 'burn rate', error: burnSeriesQuery.error },
     {
       id: 'priorBurnSeries',
@@ -179,6 +189,7 @@ export function useAgentData({
     burnSeries,
     priorBurnSeries,
     summary,
+    sessionSize,
     contextHealth,
     failures,
     deltas,
