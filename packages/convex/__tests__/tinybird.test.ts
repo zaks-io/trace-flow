@@ -9,10 +9,12 @@ import {
   assertMintableTinybirdScopes,
   TINYBIRD_PIPES_READ_SCOPE,
 } from '../integrations/tinybirdScopes';
+import { assertRowSecuredEndpointPipe } from '../integrations/tinybirdMintablePipes';
+
+const PIPES_DIR = join(__dirname, '../../../pipes');
 
 function listShippedPipes(): string[] {
-  const pipesDir = join(__dirname, '../../../pipes');
-  return readdirSync(pipesDir)
+  return readdirSync(PIPES_DIR)
     .filter((name) => name.endsWith('.pipe'))
     .map((name) => name.slice(0, -'.pipe'.length))
     .sort();
@@ -158,15 +160,47 @@ describe('tinybird API key sanitization', () => {
       ).toThrow(/pipe not allowed/i);
     });
 
+    it('rejects PIPES:READ on helper pipes without row security (agent_priced_usage)', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([
+          { type: TINYBIRD_PIPES_READ_SCOPE, resource: 'agent_priced_usage' },
+        ]),
+      ).toThrow(/pipe not allowed/i);
+    });
+
+    it('rejects PIPES:READ on row-secured endpoints not exposed to dashboard/MCP', () => {
+      expect(() =>
+        assertMintableTinybirdScopes([
+          { type: TINYBIRD_PIPES_READ_SCOPE, resource: 'agent_priced_coverage' },
+        ]),
+      ).toThrow(/pipe not allowed/i);
+    });
+
     it('rejects empty scope lists', () => {
       expect(() => assertMintableTinybirdScopes([])).toThrow(/at least one/i);
     });
 
-    it('allowlist matches pipes/*.pipe inventory (no drift)', () => {
+    it('every JWT-mintable pipe is TYPE ENDPOINT with api_keys or org_id filter', () => {
+      for (const pipe of ALLOWED_TINYBIRD_PIPE_RESOURCES) {
+        expect(() => assertRowSecuredEndpointPipe(pipe, PIPES_DIR)).not.toThrow();
+      }
+    });
+
+    it('shipped helper pipes are not JWT-mintable', () => {
+      expect(ALLOWED_TINYBIRD_PIPE_RESOURCES.has('agent_priced_usage')).toBe(false);
+      expect(() => assertRowSecuredEndpointPipe('agent_priced_usage', PIPES_DIR)).toThrow(
+        /TYPE ENDPOINT/i,
+      );
+    });
+
+    it('shipped pipes inventory is larger than the JWT allowlist', () => {
       const shippedPipes = listShippedPipes();
       const allowlistedPipes = [...ALLOWED_TINYBIRD_PIPE_RESOURCES].sort();
 
-      expect(allowlistedPipes).toEqual(shippedPipes);
+      expect(shippedPipes.length).toBeGreaterThan(allowlistedPipes.length);
+      for (const pipe of allowlistedPipes) {
+        expect(shippedPipes).toContain(pipe);
+      }
     });
   });
 
