@@ -1,0 +1,85 @@
+DESCRIPTION >
+    Honest period-over-period movement for agent spend and generated tokens, plus a
+    trailing-28-day daily baseline so the selected window's daily pace is compared against a
+    longer norm rather than a single prior equal-length window. This is NOT a statistical
+    anomaly model: it reports facts (current vs prior-equal-period deltas, and current daily
+    pace vs the trailing-28d daily average). The endpoint is dimension-parameterized
+    (source | model | repo); a group_value='' total row carries the org-wide baseline.
+    Reads the daily usage rollup only.
+
+NODE scoped_daily
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        end_ms - start_ms AS span_ms,
+        greatest(1, intDiv(span_ms, 86400000)) AS window_days,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        fromUnixTimestamp64Milli(start_ms - span_ms) AS prior_start_dt,
+        fromUnixTimestamp64Milli(start_ms - 28 * 86400000) AS baseline_start_dt,
+        least(start_ms - span_ms, start_ms - 28 * 86400000) AS scan_start_ms,
+        fromUnixTimestamp64Milli(scan_start_ms) AS scan_start_dt
+    SELECT
+        multiIf(
+            {{ String(dimension, 'none') }} = 'source', toString(source),
+            {{ String(dimension, 'none') }} = 'model', toString(model),
+            {{ String(dimension, 'none') }} = 'repo', toString(repo_fingerprint),
+            ''
+        ) AS group_value,
+        window_days,
+        sumIf(finalizeAggregation(CostUsd), BucketStart >= start_dt AND BucketStart < end_dt) AS current_cost_usd,
+        sumIf(finalizeAggregation(CostUsd), BucketStart >= prior_start_dt AND BucketStart < start_dt) AS prior_cost_usd,
+        sumIf(finalizeAggregation(CostUsd), BucketStart >= baseline_start_dt AND BucketStart < start_dt) AS baseline_cost_usd,
+        sumIf(
+            finalizeAggregation(InputTokens) + finalizeAggregation(OutputTokens) + finalizeAggregation(ReasoningTokens),
+            BucketStart >= start_dt AND BucketStart < end_dt
+        ) AS current_generated_tokens,
+        sumIf(
+            finalizeAggregation(InputTokens) + finalizeAggregation(OutputTokens) + finalizeAggregation(ReasoningTokens),
+            BucketStart >= prior_start_dt AND BucketStart < start_dt
+        ) AS prior_generated_tokens,
+        uniqExactIf(toDate(BucketStart), BucketStart >= baseline_start_dt AND BucketStart < start_dt) AS baseline_active_days
+    FROM agent_usage_daily
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND BucketStart >= scan_start_dt
+        AND BucketStart < end_dt
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+    GROUP BY group_value, window_days
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        group_value,
+        window_days,
+        round(current_cost_usd, 6) AS current_cost_usd,
+        round(prior_cost_usd, 6) AS prior_cost_usd,
+        round(current_cost_usd - prior_cost_usd, 6) AS cost_delta_usd,
+        round(current_cost_usd / window_days, 6) AS current_daily_cost_usd,
+        round(baseline_cost_usd / 28, 6) AS baseline_daily_cost_usd,
+        round((current_cost_usd / window_days) - (baseline_cost_usd / 28), 6) AS daily_cost_vs_baseline_usd,
+        current_generated_tokens,
+        prior_generated_tokens,
+        toInt64(current_generated_tokens) - toInt64(prior_generated_tokens) AS generated_tokens_delta,
+        baseline_active_days
+    FROM scoped_daily
+    WHERE current_cost_usd > 0 OR prior_cost_usd > 0
+    ORDER BY abs(current_cost_usd - prior_cost_usd) DESC, group_value ASC
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 100))
+    OFFSET {{ Int32(offset, 0) }}
+
+TYPE ENDPOINT

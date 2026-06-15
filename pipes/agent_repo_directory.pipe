@@ -22,7 +22,6 @@ SQL >
     GROUP BY repo_fingerprint
     HAVING maxMerge(LastSeenAt) >= start_dt
         AND maxMerge(LastSeenAt) < end_dt
-        AND maxMerge(LastSeenAt) >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
     ORDER BY repo_fingerprint ASC
     {% if defined(limit) %}
     LIMIT greatest(1, least({{ Int32(limit) }}, 100))

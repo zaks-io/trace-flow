@@ -1,0 +1,47 @@
+# Fixtures: fixtures/agent_message_facts.ndjson (org_depth). Five identical 6-turn conversations
+# (d1..d5), all assistant turns in window [2026-05-20, 2026-05-21):
+#   at turn_index d (0..5): cost_usd = d+1, context = input+cache_read+cache_creation = 10000*(d+1).
+# So every depth has sample_count=5 (>= default min_depth_samples=5) and an exact median:
+#   cost_p* = d+1, context_p* = 10000*(d+1) (all five sessions tie, so p25=p50=p75=p95).
+# Elasticity is the OLS slope of ln(median) on ln(depth+1). Because cost = depth+1 exactly,
+# ln(cost) == ln(depth+1), so the cost slope is exactly 1.0. context = 10000*(depth+1), so
+# ln(context) = ln(10000) + ln(depth+1) -> slope on ln(depth+1) is also exactly 1.0. All six
+# depths clear min_depth_samples and have positive medians, so cost_fit_points = context_fit_points = 6.
+# A slope of 1.0 reads as "each doubling of depth doubles per-turn cost" — linear context bloat.
+# Every depth has sample_count=5 >= 5 so well_sampled=1 and none is pooled out: charted_max_depth=5,
+# observed_max_depth=5, pooled_depth_count=0, pooled_turn_count=0 (the same window scalars on each row).
+
+- name: cost_by_depth_linear_bloat_slope_is_one
+  description: per-depth cost/context bands plus a log-log elasticity of exactly 1.0 over five identical 6-turn conversations
+  expected_http_status: 200
+  parameters: org_id=org_depth&start_time_ms=1779235200000&end_time_ms=1779321600000
+  expected_result: |
+    {"depth":0,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":1,"cost_p50":1,"cost_p75":1,"cost_p95":1,"context_p25":10000,"context_p50":10000,"context_p75":10000,"context_p95":10000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":1,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":2,"cost_p50":2,"cost_p75":2,"cost_p95":2,"context_p25":20000,"context_p50":20000,"context_p75":20000,"context_p95":20000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":2,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":3,"cost_p50":3,"cost_p75":3,"cost_p95":3,"context_p25":30000,"context_p50":30000,"context_p75":30000,"context_p95":30000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":3,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":4,"cost_p50":4,"cost_p75":4,"cost_p95":4,"context_p25":40000,"context_p50":40000,"context_p75":40000,"context_p95":40000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":4,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":5,"cost_p50":5,"cost_p75":5,"cost_p95":5,"context_p25":50000,"context_p50":50000,"context_p75":50000,"context_p95":50000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":5,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":6,"cost_p50":6,"cost_p75":6,"cost_p95":6,"context_p25":60000,"context_p50":60000,"context_p75":60000,"context_p95":60000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+
+- name: cost_by_depth_source_filter_isolates_empty
+  description: sources=codex isolates a source with no org_depth turns -> no rows (the client renders this as no-data)
+  expected_http_status: 200
+  parameters: org_id=org_depth&start_time_ms=1779235200000&end_time_ms=1779321600000&sources=codex
+  expected_result: ''
+
+# Fixtures: fixtures/agent_message_facts.ndjson (org_subagent). One session sa1 with main-thread
+# assistant turns at depth 0 (cost 100) and depth 1 (cost 200). At the SAME (session_pk, turn_index)
+# there are sub-agent turns (agent_depth=1, cost 999) and a sidechain turn (is_sidechain=1, cost 888) —
+# a Claude sub-agent transcript shares the parent session_pk but restarts turn_index, so it collides.
+# The pipe filters agent_depth=0 AND is_sidechain=0, so only the two main-thread turns survive:
+# sample_count stays 1 per depth (no double-count), and no 999/888 cost leaks into the bands. Both
+# depths fall below min_depth_samples=5, so neither enters the fit -> elasticity 0, fit_points 0.
+# Both are also below the chart threshold: well_sampled=0, charted_max_depth=0 (no well-sampled depth),
+# observed_max_depth=1, and both depths/turns are pooled out (pooled_depth_count=2, pooled_turn_count=2).
+- name: cost_by_depth_excludes_subagent_and_sidechain_collisions
+  description: sub-agent (agent_depth>0) and sidechain turns sharing (session_pk, turn_index) are dropped, so sample_count is not inflated and their cost never leaks into the bands
+  expected_http_status: 200
+  parameters: org_id=org_subagent&start_time_ms=1779235200000&end_time_ms=1779321600000
+  expected_result: |
+    {"depth":0,"sample_count":1,"priced_sample_count":1,"min_depth_samples":5,"well_sampled":0,"cost_p25":100,"cost_p50":100,"cost_p75":100,"cost_p95":100,"context_p25":10000,"context_p50":10000,"context_p75":10000,"context_p95":10000,"cost_elasticity":0,"context_elasticity":0,"cost_fit_points":0,"context_fit_points":0,"charted_max_depth":0,"observed_max_depth":1,"pooled_depth_count":2,"pooled_turn_count":2}
+    {"depth":1,"sample_count":1,"priced_sample_count":1,"min_depth_samples":5,"well_sampled":0,"cost_p25":200,"cost_p50":200,"cost_p75":200,"cost_p95":200,"context_p25":20000,"context_p50":20000,"context_p75":20000,"context_p95":20000,"cost_elasticity":0,"context_elasticity":0,"cost_fit_points":0,"context_fit_points":0,"charted_max_depth":0,"observed_max_depth":1,"pooled_depth_count":2,"pooled_turn_count":2}

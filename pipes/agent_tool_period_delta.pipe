@@ -29,7 +29,6 @@ SQL >
     WHERE OrgId = {{ String(org_id, '') }}
         AND BucketStart >= prior_start_dt
         AND BucketStart < end_dt
-        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 14) }})
         {% if defined(sources) %}
         AND source IN splitByChar(',', {{ String(sources) }})
         {% end %}

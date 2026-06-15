@@ -3,8 +3,13 @@ import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import type { TinybirdResponse } from '@/components/usage/types';
 import type {
   AgentContextHealthRow,
+  AgentCostByDepthRow,
+  AgentCostDistributionRow,
   AgentGranularity,
   AgentGroupBy,
+  AgentNotableChangeDimension,
+  AgentNotableChangeRow,
+  AgentSessionRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
@@ -22,7 +27,12 @@ type UseAgentDataParams = {
   /** Model IN-list; scopes message-grain usage/context surfaces only. */
   models: string[];
   attentionThresholdTokens: number;
+  /** Gates the priciest-conversations fetch to the spend-concentration drill-down being open. */
+  spendDetailEnabled: boolean;
 };
+
+/** How many priciest conversations the spend drill-down fetches (raw facts, no aggregation). */
+const SPEND_DETAIL_LIMIT = 50;
 
 type AgentDataFailure = {
   id: string;
@@ -52,6 +62,7 @@ export function useAgentData({
   granularity,
   models,
   attentionThresholdTokens,
+  spendDetailEnabled,
 }: UseAgentDataParams) {
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', []);
 
@@ -99,6 +110,47 @@ export function useAgentData({
     params: usageParams,
   });
 
+  const costDistributionQuery = useTinybirdQuery<TinybirdResponse<AgentCostDistributionRow>>({
+    pipe: 'agent_session_cost_distribution',
+    params: usageParams,
+  });
+
+  // Per-turn cost/context as conversations deepen (population view over turn_index). Model-scoped
+  // like the other message-grain surfaces; one row per depth, fetched for every window.
+  const costByDepthQuery = useTinybirdQuery<TinybirdResponse<AgentCostByDepthRow>>({
+    pipe: 'agent_cost_by_depth',
+    params: usageParams,
+  });
+
+  // Priciest conversations behind the spend-concentration curve. The browser pipe has no model
+  // param, so it scopes by the source/window filters only; fetched only while the cell is open.
+  const topSessionsParams = useMemo(
+    () => ({ ...filterParams, sort: 'cost', limit: SPEND_DETAIL_LIMIT }),
+    [filterParams],
+  );
+
+  const topSessionsQuery = useTinybirdQuery<TinybirdResponse<AgentSessionRow>>({
+    pipe: 'agent_sessions_browser',
+    params: topSessionsParams,
+    enabled: spendDetailEnabled,
+  });
+
+  // Repos are the actionable mover unit; the dimension='' total row carries the org baseline.
+  const notableByRepoParams = useMemo(
+    () => ({ ...usageParams, dimension: 'repo' satisfies AgentNotableChangeDimension, limit: 50 }),
+    [usageParams],
+  );
+
+  const notableTotalQuery = useTinybirdQuery<TinybirdResponse<AgentNotableChangeRow>>({
+    pipe: 'agent_notable_changes',
+    params: usageParams,
+  });
+
+  const notableByRepoQuery = useTinybirdQuery<TinybirdResponse<AgentNotableChangeRow>>({
+    pipe: 'agent_notable_changes',
+    params: notableByRepoParams,
+  });
+
   const contextQuery = useTinybirdQuery<TinybirdResponse<AgentContextHealthRow>>({
     pipe: 'agent_context_health',
     params: buildContextHealthParams({
@@ -120,6 +172,11 @@ export function useAgentData({
   });
 
   const summary = getFreshFirstRow(summaryQuery);
+  const costDistribution = getFreshFirstRow(costDistributionQuery);
+  const costByDepth = getFreshRows(costByDepthQuery);
+  const topSessions = getFreshRows(topSessionsQuery);
+  const notableTotal = getFreshFirstRow(notableTotalQuery);
+  const notableByRepo = getFreshRows(notableByRepoQuery);
   const contextHealth = getFreshFirstRow(contextQuery);
   const timeseries = getFreshRows(timeseriesQuery);
   const burnSeries = getFreshRows(burnSeriesQuery);
@@ -132,6 +189,10 @@ export function useAgentData({
     burnSeriesQuery.isLoading ||
     priorBurnSeriesQuery.isLoading ||
     summaryQuery.isLoading ||
+    costDistributionQuery.isLoading ||
+    costByDepthQuery.isLoading ||
+    notableTotalQuery.isLoading ||
+    notableByRepoQuery.isLoading ||
     contextQuery.isLoading ||
     failuresQuery.isLoading ||
     deltaQuery.isLoading;
@@ -141,21 +202,38 @@ export function useAgentData({
     burnSeriesQuery.error ??
     priorBurnSeriesQuery.error ??
     summaryQuery.error ??
+    costDistributionQuery.error ??
+    costByDepthQuery.error ??
+    notableTotalQuery.error ??
+    notableByRepoQuery.error ??
     contextQuery.error ??
     failuresQuery.error ??
     deltaQuery.error;
   const failureCandidates: Array<{ id: string; label: string; error: Error | null }> = [
     { id: 'summary', label: 'summary cards', error: summaryQuery.error },
     { id: 'timeseries', label: 'chart', error: timeseriesQuery.error },
+    {
+      id: 'costDistribution',
+      label: 'cost-per-conversation distribution',
+      error: costDistributionQuery.error,
+    },
+    {
+      id: 'costByDepth',
+      label: 'cost as conversations deepen',
+      error: costByDepthQuery.error,
+    },
+    { id: 'notableTotal', label: 'notable changes (total)', error: notableTotalQuery.error },
+    { id: 'notableByRepo', label: 'notable changes (by repo)', error: notableByRepoQuery.error },
     { id: 'burnSeries', label: 'burn rate', error: burnSeriesQuery.error },
     {
       id: 'priorBurnSeries',
       label: 'prior burn-rate comparison',
       error: priorBurnSeriesQuery.error,
     },
-    { id: 'context', label: 'conversation size', error: contextQuery.error },
+    { id: 'context', label: 'context health', error: contextQuery.error },
     { id: 'failures', label: 'tool failure leaderboard', error: failuresQuery.error },
     { id: 'deltas', label: 'tool period-over-period comparison', error: deltaQuery.error },
+    { id: 'topSessions', label: 'priciest conversations', error: topSessionsQuery.error },
   ];
   const failedSurfaces: AgentDataFailure[] = failureCandidates.filter(
     (failure): failure is AgentDataFailure => failure.error instanceof Error,
@@ -179,6 +257,12 @@ export function useAgentData({
     burnSeries,
     priorBurnSeries,
     summary,
+    costDistribution,
+    costByDepth,
+    topSessions,
+    topSessionsLoading: topSessionsQuery.isLoading,
+    notableTotal,
+    notableByRepo,
     contextHealth,
     failures,
     deltas,

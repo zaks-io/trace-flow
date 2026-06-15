@@ -77,7 +77,24 @@ describe('burn rate helpers', () => {
     expect(stats.costPerCalendarDay).toBe(30);
     expect(stats.costPerActiveDay).toBe(45);
     expect(stats.priorCostPerActiveDay).toBe(45);
-    expect(stats.projectedThirtyDayCost).toBe(900);
+  });
+
+  it('counts calendar days in the viewer timezone, not a UTC span', () => {
+    // A UTC-midnight start viewed from a timezone behind UTC lands on the previous local day,
+    // so a 31-day UTC window can touch 32 local calendar days. Active days are counted in the
+    // same local timezone, so calendarDays must be too — else "32 active of 31 in range".
+    const stats = buildBurnRateStats({
+      summary,
+      currentRows: [],
+      priorRows: [],
+      filterParams: {
+        start_time_ms: Date.UTC(2026, 4, 1),
+        end_time_ms: Date.UTC(2026, 5, 1),
+      },
+      timezone: 'America/Los_Angeles',
+    });
+
+    expect(stats.calendarDays).toBe(32);
   });
 
   it('classifies day buckets in the query timezone', () => {

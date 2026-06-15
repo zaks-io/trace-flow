@@ -2,8 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   hasLoadedAgentData,
   hasLoadedAgentDetailData,
+  resolveAgentMainView,
   shouldShowAgentEmptyState,
 } from '../agentAnalyticsState';
+
+const baseView = {
+  isLoading: false,
+  hasError: false,
+  hasAnyLoadedData: false,
+  shouldShowEmptyState: false,
+  hasSummary: true,
+  summaryFailed: false,
+};
 
 const emptyState = {
   summary: null,
@@ -59,5 +69,53 @@ describe('agent analytics state', () => {
         hasLoadedDetailData: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe('resolveAgentMainView', () => {
+  it('shows loading first, before any other state', () => {
+    expect(
+      resolveAgentMainView({
+        ...baseView,
+        isLoading: true,
+        hasSummary: false,
+        summaryFailed: true,
+      }),
+    ).toBe('loading');
+  });
+
+  it('renders error-only when a total failure loaded nothing', () => {
+    expect(
+      resolveAgentMainView({
+        ...baseView,
+        hasError: true,
+        hasAnyLoadedData: false,
+        hasSummary: false,
+      }),
+    ).toBe('error');
+  });
+
+  it('does NOT show the empty state when the summary failed but other surfaces loaded', () => {
+    // Regression: a summary query error left `summary` null while detail data populated, and the
+    // page misrendered "No agent activity yet" instead of the failure banner.
+    expect(
+      resolveAgentMainView({
+        ...baseView,
+        hasError: true,
+        hasAnyLoadedData: true,
+        summaryFailed: true,
+        hasSummary: false,
+      }),
+    ).toBe('error');
+  });
+
+  it('shows the empty state for a genuinely empty workspace (summary loaded, no rows)', () => {
+    expect(
+      resolveAgentMainView({ ...baseView, shouldShowEmptyState: true, hasSummary: false }),
+    ).toBe('empty');
+  });
+
+  it('renders the grid when the summary loaded with data', () => {
+    expect(resolveAgentMainView({ ...baseView, hasAnyLoadedData: true })).toBe('grid');
   });
 });

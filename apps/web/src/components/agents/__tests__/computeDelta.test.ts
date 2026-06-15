@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeDelta } from '../delta';
 
-describe('KPI prior-period delta', () => {
+describe('computeDelta prior-period change', () => {
   it('computes percent change vs the prior period', () => {
     expect(computeDelta(150, 100)).toBe(50);
     expect(computeDelta(50, 100)).toBe(-50);
