@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Validates a shipped pipe file is a row-secured TYPE ENDPOINT suitable for JWT minting. */
+/** Test-only: validates a shipped pipe file is row-secured TYPE ENDPOINT. */
 export function assertRowSecuredEndpointPipe(pipeName: string, pipesDir: string): void {
   const pipePath = join(pipesDir, `${pipeName}.pipe`);
   const content = readFileSync(pipePath, 'utf8');

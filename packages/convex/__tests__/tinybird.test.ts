@@ -9,7 +9,7 @@ import {
   assertMintableTinybirdScopes,
   TINYBIRD_PIPES_READ_SCOPE,
 } from '../integrations/tinybirdScopes';
-import { assertRowSecuredEndpointPipe } from '../integrations/tinybirdMintablePipes';
+import { assertRowSecuredEndpointPipe } from './tinybirdPipeValidation';
 
 const PIPES_DIR = join(__dirname, '../../../pipes');
 
