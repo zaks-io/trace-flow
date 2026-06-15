@@ -4,7 +4,7 @@ DESCRIPTION >
     conversations), cost-per-conversation percentiles, and a parallel token distribution so the
     UI can toggle the axis between cost (default) and tokens. Message counts are deliberately
     NOT a headline unit. Reads the incremental session serving table only and merges aggregate
-    states by (OrgId, session_pk) with no FINAL on the hot path (mirrors agent_sessions_browser).
+    states by (OrgId, session_pk) via GROUP BY on the hot path (mirrors agent_sessions_browser).
 
 NODE sessions
 SQL >
