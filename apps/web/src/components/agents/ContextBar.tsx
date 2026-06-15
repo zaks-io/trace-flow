@@ -7,7 +7,6 @@ import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { TinybirdResponse } from '@/components/usage/types';
 import { rankBreakdown } from './breakdown';
-import { OTHER_GROUP, OTHER_LABEL } from './pivot';
 import {
   AGENT_BREAKDOWN_DIMENSIONS,
   AGENT_GROUP_COLORS,
@@ -40,8 +39,7 @@ const DIMENSION_LABEL: Record<AgentBreakdownDimension, string> = {
 
 const METRICS: ContextBarMetric[] = ['cost', 'tokens', 'messages', 'sessions'];
 
-/** Top-N segments before the tail collapses into "Other"; keeps the bar legible. */
-const SEGMENT_TOP_N = 6;
+const BREAKDOWN_LIMIT = 10;
 
 function ToggleGroup<T extends string>({
   options,
@@ -82,8 +80,7 @@ function ToggleGroup<T extends string>({
 
 /**
  * A horizontal stacked proportional bar showing where the selected metric comes from across
- * a dimension — the Overview's "where it breaks down" summary. Segments cross-filter the page
- * on click; the "Other" tail is an aggregate and is not filterable.
+ * a dimension for the Overview summary. Segments cross-filter the page.
  */
 export function ContextBar({
   filterParams,
@@ -105,12 +102,14 @@ export function ContextBar({
 
   const query = useTinybirdQuery<TinybirdResponse<AgentBreakdownRow>>({
     pipe: 'agent_usage_breakdown',
-    params: { ...filterParams, dimension, order_by: metricKey, limit: 10 },
+    params: { ...filterParams, dimension, order_by: metricKey, limit: BREAKDOWN_LIMIT },
   });
 
   const segments = useMemo(() => {
     const rows = query.data?.data ?? [];
-    return rankBreakdown(rows, metricKey, SEGMENT_TOP_N).filter((entry) => entry.amount > 0);
+    return rankBreakdown(rows, metricKey)
+      .slice(0, BREAKDOWN_LIMIT)
+      .filter((entry) => entry.amount > 0);
   }, [query.data, metricKey]);
 
   const total = segments.reduce((sum, entry) => sum + entry.amount, 0);
@@ -123,7 +122,8 @@ export function ContextBar({
         <div className="flex items-center gap-2">
           <Layers className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-base font-medium text-foreground">
-            {METRIC_LABEL[metric]} by {DIMENSION_LABEL[dimension].toLowerCase()}
+            Top {BREAKDOWN_LIMIT} {METRIC_LABEL[metric].toLowerCase()} by{' '}
+            {DIMENSION_LABEL[dimension].toLowerCase()}
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -156,24 +156,24 @@ export function ContextBar({
         <>
           <div className="flex h-3 w-full gap-px overflow-hidden rounded-md bg-muted/40">
             {segments.map((entry, i) => {
-              const isOther = entry.value === OTHER_GROUP;
-              const label = isOther ? OTHER_LABEL : labelFor(entry.value);
+              const label = labelFor(entry.value);
               const share = entry.amount / total;
               const isSelected = selected.includes(entry.value);
               return (
                 <button
                   type="button"
                   key={entry.value}
-                  disabled={isOther}
                   onClick={() => onToggle(dimension, entry.value)}
-                  title={`${label}: ${format(entry.amount)} (${formatPercent(share * 100)})`}
+                  title={`${label}: ${format(entry.amount)} (${formatPercent(
+                    share * 100,
+                  )} of visible top ${BREAKDOWN_LIMIT})`}
                   style={{
                     width: `${share * 100}%`,
                     backgroundColor: AGENT_GROUP_COLORS[i % AGENT_GROUP_COLORS.length],
                   }}
                   className={cn(
                     'h-full min-w-[2px] transition-all',
-                    isOther ? 'cursor-default opacity-60' : 'cursor-pointer hover:brightness-110',
+                    'cursor-pointer hover:brightness-110',
                     isSelected && 'ring-1 ring-inset ring-primary brightness-110',
                   )}
                 />
@@ -183,20 +183,17 @@ export function ContextBar({
 
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
             {segments.map((entry, i) => {
-              const isOther = entry.value === OTHER_GROUP;
-              const label = isOther ? OTHER_LABEL : labelFor(entry.value);
+              const label = labelFor(entry.value);
               const isSelected = selected.includes(entry.value);
               return (
                 <button
                   type="button"
                   key={entry.value}
-                  disabled={isOther}
                   onClick={() => onToggle(dimension, entry.value)}
-                  title={isOther ? 'Aggregated lower-ranked groups; not filterable' : label}
-                  className={cn(
-                    'flex items-center gap-1.5 text-xs',
-                    isOther ? 'cursor-default' : 'cursor-pointer hover:text-foreground',
-                  )}
+                  title={`${label}: ${format(entry.amount)} (${formatPercent(
+                    (entry.amount / total) * 100,
+                  )} of visible top ${BREAKDOWN_LIMIT})`}
+                  className="flex cursor-pointer items-center gap-1.5 text-xs hover:text-foreground"
                 >
                   <span
                     className="h-2 w-2 shrink-0 rounded-sm"
