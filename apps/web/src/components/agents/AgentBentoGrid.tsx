@@ -115,7 +115,7 @@ export function AgentBentoGrid({
       {/* Row 1 — Q1 cost + projection hero (Q2 cost delta fused) + 3 Q2 tiles */}
       <BentoCell
         title="Cost over time"
-        hint="estimated daily cost and a 30-day projection"
+        hint={`estimated daily cost and a ${windowDays}-day projection`}
         className="lg:col-span-6 xl:col-span-8"
         expandable
         expanded={expanded === 'hero'}

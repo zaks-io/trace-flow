@@ -77,7 +77,6 @@ describe('burn rate helpers', () => {
     expect(stats.costPerCalendarDay).toBe(30);
     expect(stats.costPerActiveDay).toBe(45);
     expect(stats.priorCostPerActiveDay).toBe(45);
-    expect(stats.projectedThirtyDayCost).toBe(900);
   });
 
   it('counts calendar days in the viewer timezone, not a UTC span', () => {

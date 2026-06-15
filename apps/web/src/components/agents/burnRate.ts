@@ -1,8 +1,6 @@
 import { parseTinybirdDate } from '@/lib/format';
 import type { AgentSummaryRow, AgentTimeseriesRow } from './types';
 
-const THIRTY_DAYS = 30;
-
 interface DayTotals {
   costUsd: number;
   tokens: number;
@@ -27,8 +25,6 @@ export interface BurnRateStats {
   priorTokensPerActiveDay: number;
   costPerActiveDayDeltaPct: number | null;
   tokenPerActiveDayDeltaPct: number | null;
-  projectedThirtyDayCost: number;
-  priorProjectedThirtyDayCost: number;
 }
 
 function makeDayFormatter(timeZone: string): Intl.DateTimeFormat {
@@ -189,7 +185,5 @@ export function buildBurnRateStats({
     priorTokensPerActiveDay,
     costPerActiveDayDeltaPct: deltaPct(costPerActiveDay, priorCostPerActiveDay),
     tokenPerActiveDayDeltaPct: deltaPct(tokensPerActiveDay, priorTokensPerActiveDay),
-    projectedThirtyDayCost: costPerCalendarDay * THIRTY_DAYS,
-    priorProjectedThirtyDayCost: priorCostPerCalendarDay * THIRTY_DAYS,
   };
 }

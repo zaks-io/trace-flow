@@ -10,7 +10,6 @@ import type { BurnRateStats } from './burnRate';
 import type { AgentSummaryRow, AgentTimeseriesRow } from './types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const PROJECTION_DAYS = 30;
 
 interface HeroPoint {
   day: number;
@@ -23,10 +22,14 @@ interface HeroPoint {
   bandHigh: number | null;
 }
 
-/** Cumulative daily cost up to the latest bucket, then a linear run-rate cone to 30 days. */
+/**
+ * Cumulative daily cost up to the latest bucket, then a linear run-rate cone projected
+ * `projectionDays` forward — the projection horizon matches the selected window.
+ */
 function buildSeries(
   burnSeries: AgentTimeseriesRow[],
   stats: BurnRateStats | null,
+  projectionDays: number,
 ): { points: HeroPoint[]; lastActualDay: number } {
   const byDay = new Map<string, number>();
   for (const row of burnSeries) {
@@ -59,7 +62,7 @@ function buildSeries(
   const perActiveDay = Math.max(perCalendarDay, stats.costPerActiveDay);
   const startCumulative = cumulative;
   const lastDate = parseTinybirdDate(`${days[lastActualDay]}T00:00:00Z`).getTime();
-  for (let step = 1; step <= PROJECTION_DAYS; step++) {
+  for (let step = 1; step <= projectionDays; step++) {
     const date = new Date(lastDate + step * DAY_MS).toISOString().slice(0, 10);
     points.push({
       day: lastActualDay + step,
@@ -90,13 +93,14 @@ export function CostProjectionHero({
   windowDays: number;
 }) {
   const { points, lastActualDay } = useMemo(
-    () => buildSeries(burnSeries, stats),
-    [burnSeries, stats],
+    () => buildSeries(burnSeries, stats, windowDays),
+    [burnSeries, stats, windowDays],
   );
 
   const costDelta = computeDelta(summary.estimated_cost_usd, summary.prior_cost_usd);
   const coverage = summary.coverage_pct == null ? null : formatPercent(summary.coverage_pct * 100);
-  const projected = stats?.projectedThirtyDayCost ?? null;
+  // Project the same horizon as the selected window at the calendar-day pace.
+  const projected = stats != null ? stats.costPerCalendarDay * windowDays : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -122,13 +126,13 @@ export function CostProjectionHero({
         </div>
         <div className="text-right">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Projected monthly cost
+            Projected next {windowDays} days
           </p>
           <p className="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
             {projected != null ? formatCurrency(projected) : '—'}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {projected != null ? 'naive run-rate, 30 days' : 'needs daily buckets'}
+            {projected != null ? `naive run-rate, next ${windowDays} days` : 'needs daily buckets'}
           </p>
         </div>
       </div>
