@@ -4,7 +4,7 @@ import type { AgentContextHealthRow } from './types';
 const CONTEXT_BIN_WIDTH = 100_000;
 export const CONTEXT_BIN_COUNT = 10;
 
-export interface ContextBin {
+interface ContextBin {
   /** Lower edge of the bin, in tokens. */
   start: number;
   /** Short axis label, e.g. "0", "100K", "900K+". */

@@ -42,12 +42,16 @@ export function AgentAnalytics() {
     () => resolveAttentionThreshold(searchParams.get('attention_threshold_tokens')),
     [searchParams],
   );
+  // The priciest-conversations fetch runs only while the spend-concentration cell is expanded.
+  const [spendDetailOpen, setSpendDetailOpen] = useState(false);
   const {
     timeseries,
     burnSeries,
     priorBurnSeries,
     summary,
     costDistribution,
+    topSessions,
+    topSessionsLoading,
     notableTotal,
     notableByRepo,
     contextHealth,
@@ -64,6 +68,7 @@ export function AgentAnalytics() {
     granularity: 'auto',
     models,
     attentionThresholdTokens,
+    spendDetailEnabled: spendDetailOpen,
   });
 
   // Resolve repo_fingerprint -> display name; loaded whenever there is data to show.
@@ -225,6 +230,9 @@ export function AgentAnalytics() {
           groupBy={groupBy}
           onGroupByChange={setGroupBy}
           costDistribution={costDistribution}
+          topSessions={topSessions}
+          topSessionsLoading={topSessionsLoading}
+          onSpendDetailToggle={setSpendDetailOpen}
           notableTotal={notableTotal}
           notableByRepo={notableByRepo}
           contextHealth={contextHealth}

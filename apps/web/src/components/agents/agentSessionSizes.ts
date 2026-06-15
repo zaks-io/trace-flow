@@ -43,6 +43,65 @@ interface SkewSummary {
   p95OverP50: number;
 }
 
+/** One plotted point on the concentration (Lorenz) curve. Both axes are cumulative shares 0–1. */
+export interface ConcentrationPoint {
+  /** Cumulative share of conversations, priciest-first. */
+  convPct: number;
+  /** Cumulative share of total spend at that conversation share. */
+  costPct: number;
+}
+
+/**
+ * The bin-free spend-concentration curve and its derived facts. Every number here comes from the
+ * sorted per-conversation cost array — no chosen dollar or percentile cutpoints. `points` plots
+ * cumulative spend share against cumulative conversation share (priciest-first), so the curve
+ * bows above the diagonal; the area of that bulge is the Gini coefficient.
+ */
+export interface ConcentrationCurve {
+  points: ConcentrationPoint[];
+  /** 0 = spend even across all conversations, 1 = all in one. */
+  gini: number;
+  /** Conversations whose combined spend reaches half the total (the "half is in N" fact). */
+  halfSpendCount: number;
+  /** Conversations in the priciest 10% (mirrors the skew headline as a curve point). */
+  topCount: number;
+  /** Share of total spend carried by that priciest 10%, 0–1. */
+  topCostShare: number;
+  totalCost: number;
+  sessionCount: number;
+}
+
+/**
+ * Reads the pipe's Lorenz arrays + derived scalars into a drawable curve. The pipe already sorts
+ * conversations priciest-first and guards the empty case (no row), but we re-clamp shares to 0–1
+ * and drop any malformed point so the chart never renders a non-monotonic or out-of-range curve.
+ */
+export function buildConcentrationCurve(row: AgentCostDistributionRow): ConcentrationCurve {
+  const convPcts = Array.isArray(row.lorenz_conv_pct) ? row.lorenz_conv_pct : [];
+  const costPcts = Array.isArray(row.lorenz_cost_pct) ? row.lorenz_cost_pct : [];
+  const clamp = (value: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
+
+  const points: ConcentrationPoint[] = [];
+  const pairCount = Math.min(convPcts.length, costPcts.length);
+  for (let i = 0; i < pairCount; i++) {
+    points.push({ convPct: clamp(convPcts[i]), costPct: clamp(costPcts[i]) });
+  }
+
+  const topCostShare =
+    row.total_cost_usd > 0 ? Math.min(1, row.top_10pct_cost_usd / row.total_cost_usd) : 0;
+
+  return {
+    points,
+    gini: clamp(row.gini),
+    halfSpendCount: row.half_spend_conv_count,
+    topCount: row.top_10pct_session_count,
+    topCostShare,
+    totalCost: row.total_cost_usd,
+    sessionCount: row.session_count,
+  };
+}
+
 const AXIS_LABEL: Record<DistributionAxis, string> = {
   cost: 'Cost',
   tokens: 'Tokens generated',

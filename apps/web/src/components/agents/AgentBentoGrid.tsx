@@ -9,6 +9,7 @@ import { BentoCell } from './BentoCell';
 import { ConversationSizeHistogram } from './ConversationSizeHistogram';
 import { CostProjectionHero } from './CostProjectionHero';
 import { ContextDistributionCell } from './ContextDistributionCell';
+import { SpendConcentrationDetail } from './SpendConcentrationDetail';
 import { StatTile } from './StatTile';
 import { VelocityBar } from './VelocityBar';
 import { buildAttentionSignals } from './buildAttentionSignals';
@@ -20,6 +21,7 @@ import type {
   AgentContextHealthRow,
   AgentCostDistributionRow,
   AgentNotableChangeRow,
+  AgentSessionRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
@@ -27,7 +29,7 @@ import type {
 } from './types';
 
 /** Only one drill-down is open at a time, except the always-present notable-changes strip. */
-type ExpandableCell = 'hero' | 'conversationSize';
+type ExpandableCell = 'hero' | 'conversationSize' | 'spendConcentration';
 
 export function AgentBentoGrid({
   summary,
@@ -37,6 +39,9 @@ export function AgentBentoGrid({
   groupBy,
   onGroupByChange,
   costDistribution,
+  topSessions,
+  topSessionsLoading,
+  onSpendDetailToggle,
   notableTotal,
   notableByRepo,
   contextHealth,
@@ -56,6 +61,11 @@ export function AgentBentoGrid({
   groupBy: AgentGroupBy;
   onGroupByChange: (next: AgentGroupBy) => void;
   costDistribution: AgentCostDistributionRow | null;
+  /** Priciest conversations behind the spend curve; fetched only while that cell is expanded. */
+  topSessions: AgentSessionRow[];
+  topSessionsLoading: boolean;
+  /** Lifts the spend-cell open state up so its drill-down fetch runs only while visible. */
+  onSpendDetailToggle: (open: boolean) => void;
   notableTotal: AgentNotableChangeRow | null;
   notableByRepo: AgentNotableChangeRow[];
   contextHealth: AgentContextHealthRow | null;
@@ -73,12 +83,14 @@ export function AgentBentoGrid({
   // (the resting series is ungrouped). Default to 'source' on open; reset on collapse so
   // the grouped query only runs while the drill-down is visible.
   const heroGroupBy: AgentGroupBy = groupBy === 'none' ? 'source' : groupBy;
-  // Single place that keeps `groupBy` in sync with which cell is open: the grouped fetch
-  // must run only while the hero is the expanded cell. Opening any other cell (or closing
-  // the hero) resets groupBy to 'none' so an invisible grouped query never lingers.
+  // Single place that keeps both expand-gated fetches in sync with which cell is open: the
+  // grouped time-series runs only while the hero is open, and the priciest-conversations fetch
+  // only while the spend cell is open. Opening any other cell tears both down so no invisible
+  // query lingers.
   const setExpandedCell = (next: ExpandableCell | null) => {
     setExpanded(next);
     onGroupByChange(next === 'hero' ? heroGroupBy : 'none');
+    onSpendDetailToggle(next === 'spendConcentration');
   };
   const toggle = (cell: ExpandableCell) => setExpandedCell(expanded === cell ? null : cell);
   const toggleHero = () => toggle('hero');
@@ -199,7 +211,19 @@ export function AgentBentoGrid({
 
       {/* Row 3 — Q5 where spend concentrates */}
       <div className="lg:col-span-6 xl:col-span-12">
-        <VelocityBar row={costDistribution} windowDays={windowDays} />
+        <VelocityBar
+          row={costDistribution}
+          windowDays={windowDays}
+          expanded={expanded === 'spendConcentration'}
+          onToggleExpand={() => toggle('spendConcentration')}
+          expandedContent={
+            <SpendConcentrationDetail
+              sessions={topSessions}
+              loading={topSessionsLoading}
+              labelFor={labelFor}
+            />
+          }
+        />
       </div>
 
       {/* Row 4 — Q6 notable changes, always present */}

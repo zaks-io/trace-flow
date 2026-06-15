@@ -325,6 +325,38 @@ export interface AgentCostDistributionRow {
   /** Concentration: spend + count of the priciest 10% of conversations (the skew headline). */
   top_10pct_cost_usd: number;
   top_10pct_session_count: number;
+  /**
+   * Bin-free concentration (Lorenz) curve over the current window's per-conversation costs.
+   * Every value below is derived from the sorted cost array — no chosen dollar or percentile
+   * cutpoints. The curve sorts conversations priciest-first, so it bows ABOVE the diagonal.
+   */
+  /** Gini coefficient 0–1: 0 = spend even across all conversations, 1 = all in one. */
+  gini: number;
+  /** Smallest conversation count whose cumulative cost reaches half of total spend. */
+  half_spend_conv_count: number;
+  /** Cumulative conversation share (0–1) at each plotted point, priciest-first. */
+  lorenz_conv_pct: number[];
+  /** Cumulative spend share (0–1) at each plotted point; pairs with lorenz_conv_pct. */
+  lorenz_cost_pct: number[];
+}
+
+/**
+ * One row from `pipes/agent_sessions_browser.pipe` — a single browsable conversation. Powers
+ * the spend-concentration drill-down (sort=cost). All facts are raw per-conversation values;
+ * `repo_fingerprint` resolves to a name via the repo directory, falling back to a short hash.
+ */
+export interface AgentSessionRow {
+  session_pk: string;
+  source: string;
+  model: string;
+  repo_fingerprint: string;
+  message_count: number;
+  file_event_count: number;
+  unique_file_count: number;
+  /** Estimated cost (lower bound) for the conversation. */
+  cost_usd: number;
+  duration_ms: number;
+  last_event_ms: number;
 }
 
 /**

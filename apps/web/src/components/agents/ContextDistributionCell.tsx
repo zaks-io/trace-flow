@@ -7,7 +7,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/
 import { BentoCell } from './BentoCell';
 import { computeDelta } from './delta';
 import { DeltaBadge } from './DeltaBadge';
-import { buildContextBins, type ContextBin } from './contextDistribution';
+import { buildContextBins } from './contextDistribution';
 import type { AgentContextHealthRow } from './types';
 
 const CHART_CONFIG = {
@@ -143,5 +143,3 @@ function Headline({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
-export type { ContextBin };

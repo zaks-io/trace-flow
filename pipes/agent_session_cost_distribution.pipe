@@ -129,6 +129,47 @@ SQL >
     INNER JOIN distribution AS d ON r.period = d.period
     GROUP BY r.period, d.session_count, d.total_cost_usd
 
+NODE curve
+SQL >
+    -- Bin-free concentration (Lorenz) shape for the CURRENT window. Everything here is derived
+    -- from the per-conversation cost array alone — no chosen dollar or percentile cutpoints.
+    -- costs_desc: conversation costs sorted priciest-first. cum: cumulative spend down that order.
+    -- The curve is (cumulative conversation share, cumulative spend share); Gini is the area
+    -- between it and the even-spend diagonal; half_spend_conv_count is the smallest number of
+    -- conversations that already carry half of total spend. P caps drawing resolution only.
+    WITH
+        100 AS P,
+        arraySort(x -> -x, groupArray(cost_usd)) AS costs_desc,
+        arraySort(groupArray(cost_usd)) AS costs_asc,
+        length(costs_desc) AS n,
+        arrayCumSum(costs_desc) AS cum,
+        if(n = 0, 0., cum[n]) AS total_cost,
+        least(n, P) AS num_points,
+        -- Even-stride sample ranks across 0..n, deduped, so the drawn curve never exceeds P+1 points
+        -- but always spans the full (0,0)->(1,1) range. When n <= P every rank is kept (round is the
+        -- identity); above P it thins by even stride. The exact half-spend rank is unioned in so the
+        -- labelled crossing point is precise, not interpolated.
+        if(
+            n = 0,
+            [0],
+            arraySort(
+                arrayDistinct(
+                    arrayConcat(
+                        arrayMap(k -> toUInt64(round(k * n / num_points)), range(0, num_points + 1)),
+                        [if(total_cost = 0, 0, arrayFirstIndex(s -> s >= total_cost / 2, cum))]
+                    )
+                )
+            )
+        ) AS sample_ranks
+    SELECT
+        'current' AS period,
+        if(n = 0, 0., greatest(0., least(1., 1. - 2. * arraySum(arrayMap((x, i) -> x * (n - i + 0.5), costs_asc, arrayEnumerate(costs_asc))) / (n * total_cost)))) AS gini,
+        if(total_cost = 0, toUInt64(0), toUInt64(arrayFirstIndex(s -> s >= total_cost / 2, cum))) AS half_spend_conv_count,
+        arrayMap(rk -> if(n = 0, 0., rk / n), sample_ranks) AS lorenz_conv_pct,
+        arrayMap(rk -> if(rk = 0 OR total_cost = 0, 0., cum[rk] / total_cost), sample_ranks) AS lorenz_cost_pct
+    FROM sessions
+    WHERE period = 'current'
+
 NODE endpoint
 SQL >
     SELECT
@@ -191,11 +232,18 @@ SQL >
         ifNull(c.token_sum_1m_plus, 0) AS token_sum_1m_plus,
 
         round(ifNull(cc.top_10pct_cost_usd, 0.), 6) AS top_10pct_cost_usd,
-        ifNull(cc.top_10pct_session_count, 0) AS top_10pct_session_count
+        ifNull(cc.top_10pct_session_count, 0) AS top_10pct_session_count,
+
+        round(ifNull(cv.gini, 0.), 4) AS gini,
+        ifNull(cv.half_spend_conv_count, 0) AS half_spend_conv_count,
+        ifNull(cv.lorenz_conv_pct, []) AS lorenz_conv_pct,
+        ifNull(cv.lorenz_cost_pct, []) AS lorenz_cost_pct
     FROM (SELECT * FROM distribution WHERE period = 'current') AS c
     FULL OUTER JOIN (SELECT * FROM distribution WHERE period = 'prior') AS p
         ON 1 = 1
     LEFT JOIN (SELECT * FROM concentration WHERE period = 'current') AS cc
+        ON 1 = 1
+    LEFT JOIN curve AS cv
         ON 1 = 1
     SETTINGS join_use_nulls = 1
 

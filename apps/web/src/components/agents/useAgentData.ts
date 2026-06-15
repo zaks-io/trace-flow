@@ -8,6 +8,7 @@ import type {
   AgentGroupBy,
   AgentNotableChangeDimension,
   AgentNotableChangeRow,
+  AgentSessionRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
   FailureLeaderboardRow,
@@ -25,7 +26,12 @@ type UseAgentDataParams = {
   /** Model IN-list; scopes message-grain usage/context surfaces only. */
   models: string[];
   attentionThresholdTokens: number;
+  /** Gates the priciest-conversations fetch to the spend-concentration drill-down being open. */
+  spendDetailEnabled: boolean;
 };
+
+/** How many priciest conversations the spend drill-down fetches (raw facts, no aggregation). */
+const SPEND_DETAIL_LIMIT = 50;
 
 type AgentDataFailure = {
   id: string;
@@ -55,6 +61,7 @@ export function useAgentData({
   granularity,
   models,
   attentionThresholdTokens,
+  spendDetailEnabled,
 }: UseAgentDataParams) {
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', []);
 
@@ -107,6 +114,19 @@ export function useAgentData({
     params: usageParams,
   });
 
+  // Priciest conversations behind the spend-concentration curve. The browser pipe has no model
+  // param, so it scopes by the source/window filters only; fetched only while the cell is open.
+  const topSessionsParams = useMemo(
+    () => ({ ...filterParams, sort: 'cost', limit: SPEND_DETAIL_LIMIT }),
+    [filterParams],
+  );
+
+  const topSessionsQuery = useTinybirdQuery<TinybirdResponse<AgentSessionRow>>({
+    pipe: 'agent_sessions_browser',
+    params: topSessionsParams,
+    enabled: spendDetailEnabled,
+  });
+
   // Repos are the actionable mover unit; the dimension='' total row carries the org baseline.
   const notableByRepoParams = useMemo(
     () => ({ ...usageParams, dimension: 'repo' satisfies AgentNotableChangeDimension, limit: 50 }),
@@ -145,6 +165,7 @@ export function useAgentData({
 
   const summary = getFreshFirstRow(summaryQuery);
   const costDistribution = getFreshFirstRow(costDistributionQuery);
+  const topSessions = getFreshRows(topSessionsQuery);
   const notableTotal = getFreshFirstRow(notableTotalQuery);
   const notableByRepo = getFreshRows(notableByRepoQuery);
   const contextHealth = getFreshFirstRow(contextQuery);
@@ -196,6 +217,7 @@ export function useAgentData({
     { id: 'context', label: 'context health', error: contextQuery.error },
     { id: 'failures', label: 'tool failure leaderboard', error: failuresQuery.error },
     { id: 'deltas', label: 'tool period-over-period comparison', error: deltaQuery.error },
+    { id: 'topSessions', label: 'priciest conversations', error: topSessionsQuery.error },
   ];
   const failedSurfaces: AgentDataFailure[] = failureCandidates.filter(
     (failure): failure is AgentDataFailure => failure.error instanceof Error,
@@ -220,6 +242,8 @@ export function useAgentData({
     priorBurnSeries,
     summary,
     costDistribution,
+    topSessions,
+    topSessionsLoading: topSessionsQuery.isLoading,
     notableTotal,
     notableByRepo,
     contextHealth,

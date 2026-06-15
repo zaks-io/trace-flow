@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   axisLabel,
+  buildConcentrationCurve,
   buildDistributionBins,
   buildPercentiles,
   buildSkewSummary,
@@ -65,6 +66,10 @@ function makeRow(overrides: Partial<AgentCostDistributionRow> = {}): AgentCostDi
     token_sum_1m_plus: 0,
     top_10pct_cost_usd: 0,
     top_10pct_session_count: 0,
+    gini: 0,
+    half_spend_conv_count: 0,
+    lorenz_conv_pct: [],
+    lorenz_cost_pct: [],
   } satisfies AgentCostDistributionRow;
   return { ...zero, ...overrides };
 }
@@ -148,6 +153,78 @@ describe('buildSkewSummary', () => {
   it('clamps the top-10% share to 1 if concentration rounding overshoots total', () => {
     const skew = buildSkewSummary(makeRow({ total_cost_usd: 10, top_10pct_cost_usd: 12 }));
     expect(skew.topCostShare).toBe(1);
+  });
+});
+
+describe('buildConcentrationCurve', () => {
+  // Mirrors the pipe fixture: costs {0.1, 0.8, 4.0}, total 4.9, gini 0.5306, half in 1 conversation.
+  const fixtureRow = makeRow({
+    session_count: 3,
+    total_cost_usd: 4.9,
+    top_10pct_cost_usd: 4,
+    top_10pct_session_count: 1,
+    gini: 0.5306,
+    half_spend_conv_count: 1,
+    lorenz_conv_pct: [0, 1 / 3, 2 / 3, 1],
+    lorenz_cost_pct: [0, 4 / 4.9, 4.8 / 4.9, 1],
+  });
+
+  it('reads the derived scalars straight from the row', () => {
+    const curve = buildConcentrationCurve(fixtureRow);
+    expect(curve.gini).toBeCloseTo(0.5306);
+    expect(curve.halfSpendCount).toBe(1);
+    expect(curve.topCount).toBe(1);
+    expect(curve.topCostShare).toBeCloseTo(4 / 4.9);
+    expect(curve.totalCost).toBe(4.9);
+    expect(curve.sessionCount).toBe(3);
+  });
+
+  it('plots a monotonic non-decreasing curve that ends at (1, 1)', () => {
+    const { points } = buildConcentrationCurve(fixtureRow);
+    expect(points[0]).toEqual({ convPct: 0, costPct: 0 });
+    expect(points[points.length - 1]).toEqual({ convPct: 1, costPct: 1 });
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i].convPct).toBeGreaterThanOrEqual(points[i - 1].convPct);
+      expect(points[i].costPct).toBeGreaterThanOrEqual(points[i - 1].costPct);
+    }
+  });
+
+  it('bows above the diagonal (priciest-first => spend share leads conversation share)', () => {
+    const { points } = buildConcentrationCurve(fixtureRow);
+    for (const p of points) {
+      expect(p.costPct).toBeGreaterThanOrEqual(p.convPct - 1e-9);
+    }
+  });
+
+  it('returns an empty curve and zeroed facts for a no-spend row', () => {
+    const curve = buildConcentrationCurve(makeRow());
+    expect(curve.points).toEqual([]);
+    expect(curve.gini).toBe(0);
+    expect(curve.halfSpendCount).toBe(0);
+    expect(curve.topCostShare).toBe(0);
+  });
+
+  it('clamps out-of-range or malformed share values into [0, 1]', () => {
+    const curve = buildConcentrationCurve(
+      makeRow({
+        gini: 1.4,
+        lorenz_conv_pct: [-0.2, 0.5, 1.3],
+        lorenz_cost_pct: [0, 1.1, Number.NaN],
+      }),
+    );
+    expect(curve.gini).toBe(1);
+    expect(curve.points).toEqual([
+      { convPct: 0, costPct: 0 },
+      { convPct: 0.5, costPct: 1 },
+      { convPct: 1, costPct: 0 },
+    ]);
+  });
+
+  it('drops the trailing point when the two share arrays disagree in length', () => {
+    const curve = buildConcentrationCurve(
+      makeRow({ lorenz_conv_pct: [0, 0.5, 1], lorenz_cost_pct: [0, 0.9] }),
+    );
+    expect(curve.points).toHaveLength(2);
   });
 });
 
