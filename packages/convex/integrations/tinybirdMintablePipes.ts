@@ -10,8 +10,7 @@ export function assertRowSecuredEndpointPipe(pipeName: string, pipesDir: string)
     throw new Error(`${pipeName} must be TYPE ENDPOINT to be JWT-mintable`);
   }
 
-  const hasRowSecurity =
-    content.includes('String(api_keys') || content.includes('String(org_id');
+  const hasRowSecurity = content.includes('String(api_keys') || content.includes('String(org_id');
   if (!hasRowSecurity) {
     throw new Error(`${pipeName} must filter on api_keys or org_id fixed_params`);
   }
