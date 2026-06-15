@@ -373,6 +373,8 @@ export interface AgentCostByDepthRow {
   sample_count: number;
   /** Turns at this depth with a non-null cost (drives the cost band; context uses all turns). */
   priced_sample_count: number;
+  /** The chart/fit sample threshold (identical on every row), surfaced so the footnote can name it. */
+  min_depth_samples: number;
   /**
    * 1 when this depth has >= min_depth_samples conversations — enough to quantile and to enter the
    * fit. The chart plots only well-sampled depths so a sparse deep tail (1-2 conversations) can't

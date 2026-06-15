@@ -27,6 +27,8 @@ interface DepthSeries {
   chartedMaxDepth: number;
   /** Deepest turn observed at all, charted or not — for the honest "deepest seen" footnote. */
   observedMaxDepth: number;
+  /** Sample threshold a depth must clear to be charted/fit — named in the footnote, not hidden. */
+  minDepthSamples: number;
   /** Depths set aside as too sparse to chart (below min_depth_samples), and the turns they held. */
   pooledDepthCount: number;
   pooledTurnCount: number;
@@ -70,6 +72,7 @@ export function buildDepthSeries(rows: AgentCostByDepthRow[]): DepthSeries | nul
     points,
     chartedMaxDepth: first.charted_max_depth,
     observedMaxDepth: first.observed_max_depth,
+    minDepthSamples: first.min_depth_samples,
     pooledDepthCount: first.pooled_depth_count,
     pooledTurnCount: first.pooled_turn_count,
     costElasticity: first.cost_elasticity,

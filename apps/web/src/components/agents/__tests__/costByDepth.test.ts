@@ -7,6 +7,7 @@ function makeRow(overrides: Partial<AgentCostByDepthRow> = {}): AgentCostByDepth
     depth: 0,
     sample_count: 5,
     priced_sample_count: 5,
+    min_depth_samples: 5,
     well_sampled: 1,
     cost_p25: 1,
     cost_p50: 1,

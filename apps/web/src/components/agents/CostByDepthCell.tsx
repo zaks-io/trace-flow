@@ -83,14 +83,15 @@ export function CostByDepthCell({
             <span className="font-mono font-semibold tabular-nums text-foreground">
               {formatNumber(series.chartedMaxDepth)}
             </span>{' '}
-            — the deepest turn with enough conversations to measure. The band is p25–p75 of each
-            turn; the faint line is p95.
+            — the deepest turn reached by at least {formatNumber(series.minDepthSamples)}{' '}
+            conversations. The band is p25–p75 of each turn; the faint line is p95.
             {series.pooledDepthCount > 0 && (
               <>
                 {' '}
                 {formatNumber(series.pooledTurnCount)} deeper{' '}
                 {series.pooledTurnCount === 1 ? 'turn' : 'turns'} (out to turn{' '}
-                {formatNumber(series.observedMaxDepth)}) were too sparse to chart.
+                {formatNumber(series.observedMaxDepth)}) were seen in fewer than{' '}
+                {formatNumber(series.minDepthSamples)} conversations — too sparse to chart.
               </>
             )}
           </p>

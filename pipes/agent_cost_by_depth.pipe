@@ -130,6 +130,7 @@ SQL >
         d.depth AS depth,
         d.sample_count AS sample_count,
         d.priced_sample_count AS priced_sample_count,
+        {{ Int64(min_depth_samples, 5) }} AS min_depth_samples,
         d.sample_count >= {{ Int64(min_depth_samples, 5) }} AS well_sampled,
         d.cost_p25 AS cost_p25,
         d.cost_p50 AS cost_p50,
