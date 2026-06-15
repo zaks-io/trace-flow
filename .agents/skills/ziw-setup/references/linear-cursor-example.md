@@ -42,7 +42,12 @@ Last updated: 2026-06-01
 - Read-only verification query: list_issues team:"Example" state:Todo
 - Status field names: status / statusType
 - Ready state: Todo
-- Intake states: Triage, Backlog
+- Intake states: Triage
+- Linear Backlog state: Backlog
+- Ready-state promotion source states: Triage, Backlog
+- Linear Backlog policy: not delegated to Cursor unless explicitly reviewed and
+  promoted to Todo; use for uncommitted, intentionally parked, or incorrectly
+  shaped work
 - Active states: In Progress, Blocked, In Review, Changes Requested, Ready to Merge
 - Done state: Done
 - Code-host issue sync policy: GitHub PR links and Linear tickets are synced when
@@ -57,8 +62,25 @@ Last updated: 2026-06-01
 - Risk labels: risk-normal, risk-security-sensitive, risk-schema, risk-cross-cutting
 - Review evidence labels: Code review passed
 - Type labels: Bug, Feature, Improvement, Tech Debt, Spike, Hotfix
+- Friction intake provider: Linear
+- Friction intake location: private team "Skills" project "Agent Friction"
+  (team id <team-uuid>, project id <project-uuid>)
+- Friction intake visibility: private/internal
+- Friction intake mode: ticket-per-finding
+- Friction intake default state: Inbox
+- Friction intake agent create authority: local and issue-assigned agents may
+  create friction tickets only in this private team/project
+- Friction intake close authority: nightly triage automation or human
+- Friction intake triage cadence: daily Codex automation
+- Friction intake cleanup policy: group duplicates, close non-actionable noise,
+  and link actionable recurring patterns to skill-improvement PRs
+- Friction intake redaction policy: metadata and IDs only; no secrets, private
+  logs, signed URLs, customer data, or diffs
 - Startable work criteria: kind-slice, Todo, ready-for-agent, remote-cursor,
   repo-route label, complete body, no active blockers, no active claim, no open PR
+- Dependency policy: use Linear blocker relationships; if issue A needs issue B
+  first, A is blocked by B and B blocks A. Keep blocked-but-ready slices in Todo,
+  not Linear Backlog.
 - Done cleanup: remove ready-for-agent when moving a ticket to Done
 
 ## Work Coordination
@@ -82,7 +104,7 @@ Last updated: 2026-06-01
 - Post-merge preparation: <install/build/generated-artifact refresh needed before
   local main checks, or none>
 - Post-merge check: <command/signal on main, or none>
-- Verified-ready backlog policy: repair routine label/status/route/review
+- Verified-ready ticket-set policy: repair routine label/status/route/review
   evidence mismatches and keep scoped ready tickets moving
 - Completely-blocked stop policy: stop the recurring orchestrator run for this
   scope and report blockers instead of waking forever
@@ -92,7 +114,9 @@ Last updated: 2026-06-01
 - Single-ticket one-off policy: a direct user request for one Linear issue grants
   authority to orchestrate only that issue through configured states, including
   Done when merge and verification evidence exists
-- Friction-log ticket: <parked Linear ticket id, out of the work queue>
+- Friction intake: private Linear Skills team/project, state Inbox, ticket-per-finding
+- Friction review automation: daily Codex automation reviews Inbox, dedupes or
+  closes noise, and opens a small PR for concrete skill improvements
 - Capacity metrics: open PRs, active previews, active delivery slots, and
   remaining headroom at start and end of orchestration runs
 
@@ -113,8 +137,15 @@ Last updated: 2026-06-01
 - Draft PR policy: Cursor opens a draft PR; orchestrator marks it ready-for-review
   after review is clean and required checks pass, then verifies non-draft
 - Ready-for-review owner: Agent Orchestrator
-- CodeRabbit: required for HIGH-risk diffs after local review is clean; skip for
-  LOW/MEDIUM unless the reviewer is uncertain or the user asks
+- CodeRabbit config source: root `.coderabbit.yaml`
+- CodeRabbit bot handle: @coderabbitai
+- CodeRabbit auto-review: enabled for non-draft PRs unless root config says
+  otherwise
+- CodeRabbit command policy: HIGH-risk diffs require CodeRabbit after local
+  review is clean; LOW/MEDIUM skip unless the reviewer is uncertain or the user
+  asks. Use top-level PR comments for `@coderabbitai review` or
+  `@coderabbitai full review`; add `@coderabbitai ignore` to the PR description
+  to skip optional auto-review when rate limits or credits matter.
 - Merge authority: see Work Coordination
 
 ## Environments
