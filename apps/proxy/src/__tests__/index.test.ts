@@ -602,9 +602,9 @@ describe('Proxy Worker Integration', () => {
       const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
       expect(newKey, 'expected a new R2 bodies object for this request').toBeTruthy();
 
-      const obj = await env.STORAGE.get(newKey!);
+      const obj = await env.STORAGE.get(newKey);
       expect(obj).not.toBeNull();
-      const stored = await decryptStoredBodiesObject(newKey!, obj!);
+      const stored = await decryptStoredBodiesObject(newKey, obj);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');
@@ -660,9 +660,9 @@ describe('Proxy Worker Integration', () => {
       const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
       expect(newKey, 'expected a new R2 bodies object for this request').toBeTruthy();
 
-      const obj = await env.STORAGE.get(newKey!);
+      const obj = await env.STORAGE.get(newKey);
       expect(obj).not.toBeNull();
-      const stored = await decryptStoredBodiesObject(newKey!, obj!);
+      const stored = await decryptStoredBodiesObject(newKey, obj);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');

@@ -210,7 +210,8 @@ jobs:
             fi
             sleep 2
           done
-          export TB_TOKEN="$(curl -fsSL "$TINYBIRD_URL/tokens" | jq -r '.workspace_admin_token')"
+          TB_TOKEN="$(curl -fsSL "$TINYBIRD_URL/tokens" | jq -r '.workspace_admin_token')"
+          export TB_TOKEN
           [[ -n "$TB_TOKEN" && "$TB_TOKEN" != "null" ]] || {
             echo "Failed to fetch Tinybird Local workspace token from $TINYBIRD_URL/tokens" >&2
             exit 1
