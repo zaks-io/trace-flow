@@ -200,6 +200,16 @@ jobs:
       - name: Build and test against Tinybird Local
         run: |
           export TINYBIRD_URL="http://localhost:7181"
+          for attempt in $(seq 1 60); do
+            if curl -fsSL "$TINYBIRD_URL/tokens" | jq -e '.workspace_admin_token | length > 0' >/dev/null; then
+              break
+            fi
+            if [[ "$attempt" -eq 60 ]]; then
+              echo "Tinybird Local did not become ready at $TINYBIRD_URL within 120s" >&2
+              exit 1
+            fi
+            sleep 2
+          done
           export TB_TOKEN="$(curl -fsSL "$TINYBIRD_URL/tokens" | jq -r '.workspace_admin_token')"
           [[ -n "$TB_TOKEN" && "$TB_TOKEN" != "null" ]] || {
             echo "Failed to fetch Tinybird Local workspace token from $TINYBIRD_URL/tokens" >&2
