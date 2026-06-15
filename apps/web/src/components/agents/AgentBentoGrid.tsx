@@ -8,7 +8,7 @@ import { AnomalyStrip } from './AnomalyStrip';
 import { BentoCell } from './BentoCell';
 import { ConversationSizeHistogram } from './ConversationSizeHistogram';
 import { CostProjectionHero } from './CostProjectionHero';
-import { InitialContextCell } from './InitialContextCell';
+import { ContextDistributionCell } from './ContextDistributionCell';
 import { StatTile } from './StatTile';
 import { VelocityBar } from './VelocityBar';
 import { buildAttentionSignals } from './buildAttentionSignals';
@@ -184,7 +184,7 @@ export function AgentBentoGrid({
         />
       </div>
 
-      {/* Row 2 — Q4 cost-per-conversation distribution + Q3 turns over the context line */}
+      {/* Row 2 — Q4 cost-per-conversation distribution + Q3 per-turn context distribution */}
       <div className="lg:col-span-6 xl:col-span-6">
         <ConversationSizeHistogram
           row={costDistribution}
@@ -194,7 +194,7 @@ export function AgentBentoGrid({
         />
       </div>
       <div className="lg:col-span-6 xl:col-span-6">
-        <InitialContextCell row={contextHealth} windowDays={windowDays} />
+        <ContextDistributionCell row={contextHealth} windowDays={windowDays} />
       </div>
 
       {/* Row 3 — Q5 where spend concentrates */}

@@ -103,6 +103,20 @@ export interface AgentContextHealthRow {
   worst_session_pk: string;
   worst_session_context_max: number;
   worst_session_calls_over_threshold: number;
+  /**
+   * Per-turn context histogram, 10 even 100K bins across the 0-1M ceiling (bin 9 = >=900K
+   * catch-all). Bins are axis buckets, not thresholds — no headline metric derives from them.
+   */
+  context_hist_bin_0: number;
+  context_hist_bin_1: number;
+  context_hist_bin_2: number;
+  context_hist_bin_3: number;
+  context_hist_bin_4: number;
+  context_hist_bin_5: number;
+  context_hist_bin_6: number;
+  context_hist_bin_7: number;
+  context_hist_bin_8: number;
+  context_hist_bin_9: number;
 }
 
 export const AGENT_CONTEXT_BREAKDOWN_DIMENSIONS = ['source', 'model', 'repo'] as const;

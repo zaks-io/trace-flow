@@ -60,6 +60,16 @@ function contextRow(overrides: Partial<AgentContextHealthRow> = {}): AgentContex
     worst_session_pk: '',
     worst_session_context_max: 0,
     worst_session_calls_over_threshold: 0,
+    context_hist_bin_0: 0,
+    context_hist_bin_1: 0,
+    context_hist_bin_2: 0,
+    context_hist_bin_3: 0,
+    context_hist_bin_4: 0,
+    context_hist_bin_5: 0,
+    context_hist_bin_6: 0,
+    context_hist_bin_7: 0,
+    context_hist_bin_8: 0,
+    context_hist_bin_9: 0,
     ...overrides,
   };
 }
