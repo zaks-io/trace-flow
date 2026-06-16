@@ -600,11 +600,11 @@ describe('Proxy Worker Integration', () => {
 
       const after = await env.STORAGE.list({ prefix: 'bodies/' });
       const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
-      expect(newKey, 'expected a new R2 bodies object for this request').toBeTruthy();
+      if (!newKey) throw new Error('expected a new R2 bodies object for this request');
 
-      const obj = await env.STORAGE.get(newKey!);
-      expect(obj).not.toBeNull();
-      const stored = await decryptStoredBodiesObject(newKey!, obj!);
+      const obj = await env.STORAGE.get(newKey);
+      if (!obj) throw new Error('expected the new R2 bodies object to exist');
+      const stored = await decryptStoredBodiesObject(newKey, obj);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');
@@ -658,11 +658,11 @@ describe('Proxy Worker Integration', () => {
 
       const after = await env.STORAGE.list({ prefix: 'bodies/' });
       const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
-      expect(newKey, 'expected a new R2 bodies object for this request').toBeTruthy();
+      if (!newKey) throw new Error('expected a new R2 bodies object for this request');
 
-      const obj = await env.STORAGE.get(newKey!);
-      expect(obj).not.toBeNull();
-      const stored = await decryptStoredBodiesObject(newKey!, obj!);
+      const obj = await env.STORAGE.get(newKey);
+      if (!obj) throw new Error('expected the new R2 bodies object to exist');
+      const stored = await decryptStoredBodiesObject(newKey, obj);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');

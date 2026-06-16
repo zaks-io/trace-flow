@@ -22,6 +22,8 @@ export default Sentry.withSentry(
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'prod',
     tracesSampleRate: env.SENTRY_ENVIRONMENT === 'development' ? 1.0 : 0.1,
+    sendDefaultPii: false,
+    enableLogs: true,
   }),
   {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

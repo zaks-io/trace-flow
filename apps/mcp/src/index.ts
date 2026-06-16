@@ -24,6 +24,7 @@ import {
 import { verifyAccessToken } from './auth';
 import { mintSessionToken, verifySessionToken } from './sessions';
 import { createWorkerBackend } from './backend';
+import { traceMcpInteraction } from './sentry';
 
 interface Env {
   CONNECT_BASE_URL: string;
@@ -249,8 +250,9 @@ app.post('/mcp', async (c) => {
   }
 
   if (isNotification(message)) {
-    // Stateless: notifications/initialized has no server state to advance.
-    return c.body(null, 204);
+    return traceMcpInteraction(message, c.req.header('Mcp-Session-Id'), undefined, () =>
+      c.body(null, 204),
+    );
   }
 
   if (!isRequest(message)) {
@@ -260,7 +262,10 @@ app.post('/mcp', async (c) => {
     );
   }
 
-  const response = await handleRequest(c.env, message, c.req.header('Mcp-Session-Id'), userId);
+  const sessionId = c.req.header('Mcp-Session-Id');
+  const response = await traceMcpInteraction(message, sessionId, undefined, () =>
+    handleRequest(c.env, message, sessionId, userId),
+  );
   if (response === null) return c.body(null, 204);
 
   const result = response.result as { sessionId?: string } | undefined;
@@ -320,6 +325,7 @@ async function handleRequest(
       'Session does not belong to this user.',
     );
   }
+  Sentry.getActiveSpan()?.setAttribute('mcp.protocol.version', session.protocolVersion);
 
   if (method === 'tools/list') {
     return handleToolsList(id);
@@ -383,7 +389,8 @@ export default Sentry.withSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 0.1,
+    tracesSampleRate: 1.0,
+    sendDefaultPii: false,
   }),
   app,
 );

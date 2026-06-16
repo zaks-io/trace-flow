@@ -1,5 +1,6 @@
 'use client';
 
+import * as Sentry from '@sentry/nextjs';
 import { useEffect } from 'react';
 import { AlertCircle, RotateCcw, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
+    Sentry.captureException(error);
     console.error('[app error boundary]', error);
   }, [error]);
 
