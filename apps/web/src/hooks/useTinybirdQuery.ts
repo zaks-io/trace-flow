@@ -8,7 +8,6 @@ import { fetchTinybirdPipe, tinybirdKeys } from '@/lib/tinybird';
 interface UseTinybirdQueryOptions<T> {
   pipe: string;
   params?: Record<string, string | number | boolean | undefined>;
-  ttl?: number;
   enabled?: boolean;
   pollInterval?: number;
   transform?: (data: unknown) => T;
@@ -17,9 +16,9 @@ interface UseTinybirdQueryOptions<T> {
 }
 
 export function useTinybirdQuery<T = unknown>(options: UseTinybirdQueryOptions<T>) {
-  const { pipe, params, ttl, enabled = true, pollInterval, transform, staleTime, gcTime } = options;
+  const { pipe, params, enabled = true, pollInterval, transform, staleTime, gcTime } = options;
 
-  const generateToken = useAction(api.integrations.tinybird.generateToken);
+  const generateWebReadToken = useAction(api.integrations.tinybird.generateWebReadToken);
 
   const query = useQuery({
     queryKey: tinybirdKeys.pipeWithParams(pipe, params as Record<string, unknown> | undefined),
@@ -27,9 +26,8 @@ export function useTinybirdQuery<T = unknown>(options: UseTinybirdQueryOptions<T
       fetchTinybirdPipe<T>({
         pipe,
         params,
-        ttl,
         transform,
-        generateToken,
+        generateWebReadToken,
       }),
     enabled,
     refetchInterval: pollInterval ?? false,

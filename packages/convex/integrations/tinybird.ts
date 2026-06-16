@@ -28,6 +28,35 @@ interface TinybirdScope {
   fixed_params?: Record<string, unknown>;
 }
 
+export const WEB_READ_TOKEN_TTL_SECONDS = 5 * 60;
+
+export const WEB_TINYBIRD_PIPES = [
+  'filter_options',
+  'traces_list',
+  'traces_grouped',
+  'traces_for_alerts',
+  'trace_detail',
+  'llm_usage_summary',
+  'llm_request_stats',
+  'llm_usage_timeseries',
+  'llm_usage_by_model',
+  'llm_usage_by_provider',
+  'operations_leaderboard',
+  'llm_usage_by_api_key',
+  'llm_cost_forecast',
+  'operation_user_breakdown',
+  'agent_usage_timeseries',
+  'agent_usage_summary',
+  'agent_session_cost_distribution',
+  'agent_cost_by_depth',
+  'agent_sessions_browser',
+  'agent_notable_changes',
+  'agent_context_health',
+  'agent_failure_leaderboard',
+  'agent_tool_period_delta',
+  'agent_repo_directory',
+] as const;
+
 // Sentinels keep a token scoped to nothing rather than matching empty strings,
 // so a keyless/orgless caller can never read another tenant's rows.
 const NO_KEYS_SENTINEL = '__NO_KEYS__';
@@ -37,8 +66,8 @@ const NO_ORG_SENTINEL = '__NO_ORG__';
  * Stamp the row-security fixed_params onto every scope. `api_keys` +
  * `retention_days` gate the `llm_request_facts` pipes; `org_id` gates the agent
  * pipes (which deliberately do NOT use `api_keys`). Both token-minting paths
- * (`generateToken` and the MCP `generateTokenInternal`) build their fixed_params
- * here so neither can silently issue a token missing `org_id`.
+ * (`generateWebReadToken` and the MCP `generateTokenInternal`) build their
+ * fixed_params here so neither can silently issue a token missing `org_id`.
  */
 export function withRowSecurityParams(
   scopes: TinybirdScope[],
@@ -55,24 +84,64 @@ export function withRowSecurityParams(
   }));
 }
 
-export const generateToken = action({
-  args: {
-    scopes: v.array(
-      v.object({
-        type: v.string(),
-        resource: v.string(),
-        fixed_params: v.optional(v.record(v.string(), v.any())),
-      }),
-    ),
-    ttl: v.optional(v.number()),
-    name: v.optional(v.string()),
-  },
+export function buildWebReadScopes(): TinybirdScope[] {
+  return WEB_TINYBIRD_PIPES.map((resource) => ({ type: 'PIPES:READ', resource }));
+}
+
+async function signTinybirdToken(
+  scopes: TinybirdScope[],
+  opts: { name: string; ttlSeconds: number },
+): Promise<{ token: string; expiresAt: number; name: string }> {
+  const expiresAt = Math.floor(Date.now() / 1000) + opts.ttlSeconds;
+  const payload = {
+    workspace_id: workspaceId,
+    name: opts.name,
+    scopes,
+  };
+
+  const secret = new TextEncoder().encode(adminToken);
+  const token = await new SignJWT(payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime(expiresAt)
+    .sign(secret);
+
+  return {
+    token,
+    expiresAt,
+    name: opts.name,
+  };
+}
+
+async function getUserRowSecurityParams(
+  ctx: ActionCtx,
+): Promise<{ apiKeyString: string; retentionDays: number; orgId: string }> {
+  const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery, {});
+
+  if (user) {
+    await rateLimiter.limit(ctx, 'generateTinybirdJwt', { key: user._id, throws: true });
+  }
+
+  const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
+  const subscription = user?.orgId
+    ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
+    : null;
+  const tier = subscription?.tier ?? 'hobby';
+
+  return {
+    apiKeyString,
+    retentionDays: RETENTION_DAYS[tier],
+    orgId: user?.orgId ?? '',
+  };
+}
+
+export const generateWebReadToken = action({
+  args: {},
   returns: v.object({
     token: v.string(),
     expiresAt: v.number(),
     name: v.string(),
   }),
-  handler: async (ctx, args) => {
+  handler: async (ctx) => {
     await requireAuthenticated(ctx);
 
     if (!adminToken) {
@@ -83,49 +152,12 @@ export const generateToken = action({
       throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
     }
 
-    // Fetch org-visible API keys (same scope as apiKeys.list / MCP listForUser)
-    const user = await ctx.runQuery(api.auth.users.getCurrentUserQuery, {});
+    const scopes = withRowSecurityParams(buildWebReadScopes(), await getUserRowSecurityParams(ctx));
 
-    if (user) {
-      await rateLimiter.limit(ctx, 'generateTinybirdJwt', { key: user._id, throws: true });
-    }
-
-    const apiKeyString = user ? await getApiKeyString(ctx, user._id) : '';
-
-    // Look up subscription tier to enforce retention-based filtering
-    const subscription = user?.orgId
-      ? await ctx.runQuery(internal.billing.subscriptions.getByOrgId, { orgId: user.orgId })
-      : null;
-    const tier = subscription?.tier ?? 'hobby';
-    const retentionDays = RETENTION_DAYS[tier];
-
-    const scopesWithApiKeys = withRowSecurityParams(args.scopes, {
-      apiKeyString,
-      retentionDays,
-      orgId: user?.orgId ?? '',
+    return signTinybirdToken(scopes, {
+      ttlSeconds: WEB_READ_TOKEN_TTL_SECONDS,
+      name: `web_read_jwt_${Date.now()}`,
     });
-
-    const ttlSeconds = args.ttl ?? 600;
-    const expirationTime = Math.floor(Date.now() / 1000) + ttlSeconds;
-    const tokenName = args.name ?? `convex_jwt_${Date.now()}`;
-
-    const payload = {
-      workspace_id: workspaceId,
-      name: tokenName,
-      scopes: scopesWithApiKeys,
-    };
-
-    const secret = new TextEncoder().encode(adminToken);
-    const token = await new SignJWT(payload)
-      .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime(expirationTime)
-      .sign(secret);
-
-    return {
-      token,
-      expiresAt: expirationTime,
-      name: tokenName,
-    };
   },
 });
 
@@ -162,8 +194,8 @@ export const generateTokenInternal = internalAction({
     // Validate API keys are UUIDs before inclusion in JWT (defense in depth)
     const validKeys = sanitizeApiKeys(args.apiKeys);
 
-    // Same fixed_param builder as generateToken — always emits org_id (sentinel
-    // when the caller has no org), so the MCP path can never issue an agent JWT
+    // Same fixed_param builder as the web token path: always emits org_id
+    // (sentinel when the caller has no org), so MCP cannot issue an agent JWT
     // that is unscoped on org_id.
     const scopesWithApiKeys = withRowSecurityParams(args.scopes, {
       apiKeyString: validKeys.join(','),
@@ -171,18 +203,11 @@ export const generateTokenInternal = internalAction({
       orgId: args.orgId ?? '',
     });
 
-    const ttlSeconds = args.ttl ?? 600;
-    const payload = {
-      workspace_id: workspaceId,
+    const result = await signTinybirdToken(scopesWithApiKeys, {
+      ttlSeconds: args.ttl ?? 600,
       name: `mcp_jwt_${Date.now()}`,
-      scopes: scopesWithApiKeys,
-    };
-
-    const secret = new TextEncoder().encode(adminToken);
-    return new SignJWT(payload)
-      .setProtectedHeader({ alg: 'HS256' })
-      .setExpirationTime(Math.floor(Date.now() / 1000) + ttlSeconds)
-      .sign(secret);
+    });
+    return result.token;
   },
 });
 

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchPipe } from '@trace-flow/tinybird-client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchPipe, TinybirdAuthError } from '@trace-flow/tinybird-client';
 import { clearTokenCache, fetchTinybirdPipe } from '../tinybird';
 
 vi.mock('@trace-flow/tinybird-client', () => ({
@@ -9,33 +9,80 @@ vi.mock('@trace-flow/tinybird-client', () => ({
 
 const mockFetchPipe = vi.mocked(fetchPipe);
 
+function tokenResult(token: string, expiresInMs = 60_000): { token: string; expiresAt: number } {
+  return {
+    token,
+    expiresAt: Math.floor((Date.now() + expiresInMs) / 1000),
+  };
+}
+
 describe('fetchTinybirdPipe', () => {
   beforeEach(() => {
     clearTokenCache();
+    mockFetchPipe.mockReset();
+    mockFetchPipe.mockResolvedValue([]);
     vi.clearAllMocks();
   });
 
-  it('coalesces concurrent token requests for the same pipe', async () => {
-    let resolveToken: (value: { token: string }) => void = () => {};
-    const tokenPromise = new Promise<{ token: string }>((resolve) => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('coalesces concurrent token requests for different pipes', async () => {
+    let resolveToken: (value: { token: string; expiresAt: number }) => void = () => {};
+    const tokenPromise = new Promise<{ token: string; expiresAt: number }>((resolve) => {
       resolveToken = resolve;
     });
-    const generateToken = vi.fn(() => tokenPromise);
+    const generateWebReadToken = vi.fn(() => tokenPromise);
 
     const first = fetchTinybirdPipe({
       pipe: 'agent_usage_timeseries',
       params: { start_time_ms: 1 },
-      generateToken,
+      generateWebReadToken,
+    });
+    const second = fetchTinybirdPipe({
+      pipe: 'agent_usage_summary',
+      params: { start_time_ms: 2 },
+      generateWebReadToken,
+    });
+
+    expect(generateWebReadToken).toHaveBeenCalledTimes(1);
+
+    resolveToken(tokenResult('shared-jwt'));
+    await Promise.all([first, second]);
+
+    expect(mockFetchPipe).toHaveBeenCalledTimes(2);
+    expect(mockFetchPipe).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ pipe: 'agent_usage_timeseries', token: 'shared-jwt' }),
+    );
+    expect(mockFetchPipe).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ pipe: 'agent_usage_summary', token: 'shared-jwt' }),
+    );
+  });
+
+  it('coalesces concurrent token requests for the same pipe', async () => {
+    let resolveToken: (value: { token: string; expiresAt: number }) => void = () => {};
+    const tokenPromise = new Promise<{ token: string; expiresAt: number }>((resolve) => {
+      resolveToken = resolve;
+    });
+    const generateWebReadToken = vi.fn(() => tokenPromise);
+
+    const first = fetchTinybirdPipe({
+      pipe: 'agent_usage_timeseries',
+      params: { start_time_ms: 1 },
+      generateWebReadToken,
     });
     const second = fetchTinybirdPipe({
       pipe: 'agent_usage_timeseries',
       params: { start_time_ms: 2 },
-      generateToken,
+      generateWebReadToken,
     });
 
-    expect(generateToken).toHaveBeenCalledTimes(1);
+    expect(generateWebReadToken).toHaveBeenCalledTimes(1);
 
-    resolveToken({ token: 'shared-jwt' });
+    resolveToken(tokenResult('shared-jwt'));
     await Promise.all([first, second]);
 
     expect(mockFetchPipe).toHaveBeenCalledTimes(2);
@@ -49,56 +96,131 @@ describe('fetchTinybirdPipe', () => {
     );
   });
 
+  it('reuses a cached token outside the refresh window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-16T00:00:00Z'));
+
+    const generateWebReadToken = vi.fn().mockResolvedValue(tokenResult('cached-jwt', 60_000));
+
+    await fetchTinybirdPipe({
+      pipe: 'agent_usage_timeseries',
+      generateWebReadToken,
+    });
+    await fetchTinybirdPipe({
+      pipe: 'llm_usage_summary',
+      generateWebReadToken,
+    });
+
+    expect(generateWebReadToken).toHaveBeenCalledTimes(1);
+    expect(mockFetchPipe).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ pipe: 'llm_usage_summary', token: 'cached-jwt' }),
+    );
+  });
+
+  it('mints a new token when the cached token is near expiry', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-16T00:00:00Z'));
+
+    const generateWebReadToken = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResult('first-jwt', 40_000))
+      .mockResolvedValueOnce(tokenResult('refreshed-jwt', 60_000));
+
+    await fetchTinybirdPipe({
+      pipe: 'agent_usage_timeseries',
+      generateWebReadToken,
+    });
+
+    vi.setSystemTime(new Date('2026-06-16T00:00:11Z'));
+
+    await fetchTinybirdPipe({
+      pipe: 'llm_usage_summary',
+      generateWebReadToken,
+    });
+
+    expect(generateWebReadToken).toHaveBeenCalledTimes(2);
+    expect(mockFetchPipe).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pipe: 'llm_usage_summary', token: 'refreshed-jwt' }),
+    );
+  });
+
+  it('clears the shared token and retries once on 403', async () => {
+    const generateWebReadToken = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResult('expired-jwt'))
+      .mockResolvedValueOnce(tokenResult('fresh-jwt'));
+
+    mockFetchPipe
+      .mockRejectedValueOnce(new TinybirdAuthError('expired'))
+      .mockResolvedValueOnce([{ ok: true }]);
+
+    await fetchTinybirdPipe({
+      pipe: 'agent_usage_summary',
+      generateWebReadToken,
+    });
+
+    expect(generateWebReadToken).toHaveBeenCalledTimes(2);
+    expect(mockFetchPipe).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ pipe: 'agent_usage_summary', token: 'expired-jwt' }),
+    );
+    expect(mockFetchPipe).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ pipe: 'agent_usage_summary', token: 'fresh-jwt' }),
+    );
+  });
+
   it('clears a failed in-flight token request so later calls can retry', async () => {
-    const generateToken = vi
+    const generateWebReadToken = vi
       .fn()
       .mockRejectedValueOnce(new Error('rate limited'))
-      .mockResolvedValueOnce({ token: 'retry-jwt' });
+      .mockResolvedValueOnce(tokenResult('retry-jwt'));
 
     await expect(
       fetchTinybirdPipe({
         pipe: 'agent_usage_summary',
-        generateToken,
+        generateWebReadToken,
       }),
     ).rejects.toThrow('rate limited');
 
     await fetchTinybirdPipe({
       pipe: 'agent_usage_summary',
-      generateToken,
+      generateWebReadToken,
     });
 
-    expect(generateToken).toHaveBeenCalledTimes(2);
+    expect(generateWebReadToken).toHaveBeenCalledTimes(2);
     expect(mockFetchPipe).toHaveBeenCalledWith(
       expect.objectContaining({ pipe: 'agent_usage_summary', token: 'retry-jwt' }),
     );
   });
 
   it('does not cache a token that resolves after the cache was cleared', async () => {
-    let resolveOldToken: (value: { token: string }) => void = () => {};
-    const oldTokenPromise = new Promise<{ token: string }>((resolve) => {
+    let resolveOldToken: (value: { token: string; expiresAt: number }) => void = () => {};
+    const oldTokenPromise = new Promise<{ token: string; expiresAt: number }>((resolve) => {
       resolveOldToken = resolve;
     });
-    const generateToken = vi
+    const generateWebReadToken = vi
       .fn()
       .mockReturnValueOnce(oldTokenPromise)
-      .mockResolvedValueOnce({ token: 'fresh-jwt' });
+      .mockResolvedValueOnce(tokenResult('fresh-jwt'));
 
     const first = fetchTinybirdPipe({
       pipe: 'agent_context_health',
-      generateToken,
+      generateWebReadToken,
     });
 
-    expect(generateToken).toHaveBeenCalledTimes(1);
+    expect(generateWebReadToken).toHaveBeenCalledTimes(1);
     clearTokenCache();
-    resolveOldToken({ token: 'old-jwt' });
+    resolveOldToken(tokenResult('old-jwt'));
     await first;
 
     await fetchTinybirdPipe({
       pipe: 'agent_context_health',
-      generateToken,
+      generateWebReadToken,
     });
 
-    expect(generateToken).toHaveBeenCalledTimes(2);
+    expect(generateWebReadToken).toHaveBeenCalledTimes(2);
     expect(mockFetchPipe).toHaveBeenLastCalledWith(
       expect.objectContaining({ pipe: 'agent_context_health', token: 'fresh-jwt' }),
     );

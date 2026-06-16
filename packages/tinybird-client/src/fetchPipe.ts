@@ -59,7 +59,7 @@ async function fetchOnce<T>(opts: FetchPipeOptions<T>): Promise<T[]> {
  * Bearer-token fetch against a Tinybird Pipe endpoint.
  *
  * Token minting is intentionally NOT handled here — admin secrets live in Convex.
- * Callers obtain a JWT (web via `useAction(api.integrations.tinybird.generateToken)`,
+ * Callers obtain a JWT (web via `useAction(api.integrations.tinybird.generateWebReadToken)`,
  * MCP via `ctx.runAction(internal.integrations.tinybird.generateTokenInternal)`),
  * then pass it in.
  *
