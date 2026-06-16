@@ -1,7 +1,80 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
 import { describe, it, expect } from 'vitest';
-import { joinSanitizedApiKeys, sanitizeApiKeys, UUID_PATTERN } from '../integrations/tinybird';
+import {
+  buildWebReadScopes,
+  joinSanitizedApiKeys,
+  sanitizeApiKeys,
+  UUID_PATTERN,
+  WEB_READ_TOKEN_TTL_SECONDS,
+  WEB_TINYBIRD_PIPES,
+  withRowSecurityParams,
+} from '../integrations/tinybird';
+
+const EXPECTED_WEB_PIPES = [
+  'filter_options',
+  'traces_list',
+  'traces_grouped',
+  'traces_for_alerts',
+  'trace_detail',
+  'llm_usage_summary',
+  'llm_request_stats',
+  'llm_usage_timeseries',
+  'llm_usage_by_model',
+  'llm_usage_by_provider',
+  'operations_leaderboard',
+  'llm_usage_by_api_key',
+  'llm_cost_forecast',
+  'operation_user_breakdown',
+  'agent_usage_timeseries',
+  'agent_usage_summary',
+  'agent_session_cost_distribution',
+  'agent_cost_by_depth',
+  'agent_sessions_browser',
+  'agent_notable_changes',
+  'agent_context_health',
+  'agent_failure_leaderboard',
+  'agent_tool_period_delta',
+  'agent_repo_directory',
+] as const;
+
+describe('Tinybird web read token scopes', () => {
+  it('uses a fixed five-minute web token TTL', () => {
+    expect(WEB_READ_TOKEN_TTL_SECONDS).toBe(300);
+  });
+
+  it('emits only allowlisted PIPES:READ scopes', () => {
+    expect(WEB_TINYBIRD_PIPES).toEqual(EXPECTED_WEB_PIPES);
+    expect(buildWebReadScopes()).toEqual(
+      EXPECTED_WEB_PIPES.map((resource) => ({ type: 'PIPES:READ', resource })),
+    );
+  });
+
+  it('does not accept caller-provided scopes for web token minting', () => {
+    const buildWithIgnoredArg = buildWebReadScopes as unknown as (scopes: unknown[]) => unknown;
+
+    expect(buildWithIgnoredArg([{ type: 'PIPES:READ', resource: 'not_allowlisted' }])).toEqual(
+      buildWebReadScopes(),
+    );
+  });
+
+  it('stamps identical row-security fixed params on every web scope', () => {
+    const scopes = withRowSecurityParams(buildWebReadScopes(), {
+      apiKeyString: 'key-a,key-b',
+      orgId: 'org_123',
+      retentionDays: 30,
+    });
+
+    expect(scopes).toHaveLength(EXPECTED_WEB_PIPES.length);
+    for (const scope of scopes) {
+      expect(scope.fixed_params).toEqual({
+        api_keys: 'key-a,key-b',
+        org_id: 'org_123',
+        retention_days: 30,
+      });
+    }
+  });
+});
 
 describe('tinybird API key sanitization', () => {
   describe('UUID_PATTERN', () => {

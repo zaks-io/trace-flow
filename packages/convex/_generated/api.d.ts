@@ -1113,18 +1113,10 @@ export declare const api: {
       >;
     };
     tinybird: {
-      generateToken: FunctionReference<
+      generateWebReadToken: FunctionReference<
         "action",
         "public",
-        {
-          name?: string;
-          scopes: Array<{
-            fixed_params?: Record<string, any>;
-            resource: string;
-            type: string;
-          }>;
-          ttl?: number;
-        },
+        {},
         { expiresAt: number; name: string; token: string }
       >;
     };

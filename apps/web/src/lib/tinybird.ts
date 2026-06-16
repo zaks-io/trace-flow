@@ -7,25 +7,21 @@ import {
 
 interface TokenEntry {
   token: string;
-  expiresAt: number;
+  expiresAtMs: number;
 }
 
-// Module-level cache keyed by pipe name — survives across renders/components
-const tokenCache = new Map<string, TokenEntry>();
-const tokenRequests = new Map<string, Promise<string>>();
+// Module-level cache survives across renders/components.
+let tokenCache: TokenEntry | null = null;
+let tokenRequest: Promise<string> | null = null;
 let tokenCacheEpoch = 0;
 
-const TOKEN_TTL_MS = 9 * 60 * 1000; // 9 min (tokens expire at 10 min)
+const TOKEN_REFRESH_WINDOW_MS = 30 * 1000;
 
-type GenerateTokenFn = (args: {
-  scopes: { type: string; resource: string }[];
-  ttl?: number;
-}) => Promise<{ token: string }>;
+type GenerateWebReadTokenFn = () => Promise<{ token: string; expiresAt: number }>;
 
 interface FetchTinybirdPipeOptions<T> {
   pipe: string;
   params?: Record<string, PipeParam>;
-  ttl?: number;
   /**
    * Receives the full Tinybird response wrapper (`{ data: rows }`) for backward
    * compatibility with existing call sites. Phase 2 of the spans deepening will
@@ -33,57 +29,55 @@ interface FetchTinybirdPipeOptions<T> {
    */
   transform?: (data: unknown) => T;
   schema?: FetchPipeOptions<unknown>['schema'];
-  generateToken: GenerateTokenFn;
+  generateWebReadToken: GenerateWebReadTokenFn;
 }
 
-async function getToken(
-  pipe: string,
-  generateToken: GenerateTokenFn,
-  ttl?: number,
-): Promise<string> {
-  const cached = tokenCache.get(pipe);
-  if (cached && cached.expiresAt > Date.now()) {
+function isUsableToken(entry: TokenEntry): boolean {
+  return entry.expiresAtMs - TOKEN_REFRESH_WINDOW_MS > Date.now();
+}
+
+async function getToken(generateWebReadToken: GenerateWebReadTokenFn): Promise<string> {
+  const cached = tokenCache;
+  if (cached && isUsableToken(cached)) {
     return cached.token;
   }
 
-  const pending = tokenRequests.get(pipe);
-  if (pending) {
-    return pending;
+  if (tokenRequest) {
+    return tokenRequest;
   }
 
   const requestEpoch = tokenCacheEpoch;
-  const request = generateToken({
-    scopes: [{ type: 'PIPES:READ', resource: pipe }],
-    ttl,
-  })
+  const request = generateWebReadToken()
     .then((result) => {
-      if (requestEpoch === tokenCacheEpoch) {
-        tokenCache.set(pipe, {
-          token: result.token,
-          expiresAt: Date.now() + TOKEN_TTL_MS,
-        });
+      const entry = {
+        token: result.token,
+        expiresAtMs: result.expiresAt * 1000,
+      };
+
+      if (requestEpoch === tokenCacheEpoch && isUsableToken(entry)) {
+        tokenCache = entry;
       }
 
       return result.token;
     })
     .finally(() => {
-      if (tokenRequests.get(pipe) === request) {
-        tokenRequests.delete(pipe);
+      if (tokenRequest === request) {
+        tokenRequest = null;
       }
     });
 
-  tokenRequests.set(pipe, request);
+  tokenRequest = request;
   return request;
 }
 
-function evictToken(pipe: string) {
-  tokenCache.delete(pipe);
+function evictToken() {
+  tokenCache = null;
 }
 
 export function clearTokenCache() {
   tokenCacheEpoch++;
-  tokenCache.clear();
-  tokenRequests.clear();
+  tokenCache = null;
+  tokenRequest = null;
 }
 
 function baseUrl(): string {
@@ -110,13 +104,13 @@ export async function fetchTinybirdPipe<T = unknown>(
   opts: FetchTinybirdPipeOptions<T>,
 ): Promise<T> {
   try {
-    const token = await getToken(opts.pipe, opts.generateToken, opts.ttl);
+    const token = await getToken(opts.generateWebReadToken);
     return await fetchOnce<T>(token, opts);
   } catch (err) {
     if (err instanceof TinybirdAuthError) {
       // Evict stale token and retry once
-      evictToken(opts.pipe);
-      const freshToken = await getToken(opts.pipe, opts.generateToken, opts.ttl);
+      evictToken();
+      const freshToken = await getToken(opts.generateWebReadToken);
       return await fetchOnce<T>(freshToken, opts);
     }
     throw err;

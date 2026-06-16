@@ -28,7 +28,6 @@ interface FilterOptionsResponse {
 export function useFilterOptions(): UseFilterOptionsResult {
   const { data, isLoading, error, refetch } = useTinybirdQuery<FilterOptionsResponse>({
     pipe: 'filter_options',
-    ttl: 600,
   });
 
   const options: FilterOptions = useMemo(() => {

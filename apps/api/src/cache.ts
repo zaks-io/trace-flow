@@ -11,7 +11,7 @@ export async function hashString(input: string): Promise<string> {
 
 export function buildCacheKey(
   pipe: string,
-  apiKeysHash: string,
+  accessHash: string,
   retentionDays: number,
   searchParams: URLSearchParams,
 ): string {
@@ -20,7 +20,7 @@ export function buildCacheKey(
     .sort(([a], [b]) => a.localeCompare(b));
   const sorted = new URLSearchParams(filtered).toString();
 
-  return `cache:v1:${pipe}:${apiKeysHash}:${retentionDays}:${sorted}`;
+  return `cache:v1:${pipe}:${accessHash}:${retentionDays}:${sorted}`;
 }
 
 export function computeTTL(pipe: string, searchParams: URLSearchParams): number {

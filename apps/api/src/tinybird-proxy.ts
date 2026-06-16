@@ -21,6 +21,15 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
     component: 'tinybird-proxy',
     operation: 'query_pipe',
   });
+
+  const url = new URL(c.req.url);
+  const segment = url.pathname.slice('/v0/pipes/'.length);
+  const pipe = segment.endsWith('.json') ? segment.slice(0, -5) : segment;
+
+  if (!VALID_PIPE_NAME.test(pipe)) {
+    return c.json({ error: 'Invalid pipe name' }, 400);
+  }
+
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return c.json({ error: 'Missing or invalid Authorization header' }, 401);
@@ -36,25 +45,17 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
   let cacheParams;
   try {
     const payload = await verifyTinybirdJWT(token, c.env.TINYBIRD_ADMIN_TOKEN);
-    cacheParams = extractCacheParams(payload);
+    cacheParams = extractCacheParams(payload, pipe);
   } catch {
     return c.json({ error: 'Invalid or expired token' }, 401);
   }
 
-  // Rate limit per JWT (api_keys identifies the org/user scope of the token)
-  const limitKey = (await hashString(cacheParams.apiKeys)) || 'anon';
+  const accessHash = await hashString(`${cacheParams.apiKeys}\0${cacheParams.orgId}`);
+  const limitKey = accessHash || 'anon';
   const limit = await c.env.PIPES_LIMITER.limit({ key: limitKey });
   if (!limit.success) {
     logger.warn('api.rate_limited', { route: 'pipes', keyClass: 'jwt' });
     return c.json({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
-  }
-
-  const url = new URL(c.req.url);
-  const segment = url.pathname.slice('/v0/pipes/'.length);
-  const pipe = segment.endsWith('.json') ? segment.slice(0, -5) : segment;
-
-  if (!VALID_PIPE_NAME.test(pipe)) {
-    return c.json({ error: 'Invalid pipe name' }, 400);
   }
 
   const ttl = computeTTL(pipe, url.searchParams);
@@ -75,8 +76,7 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
     });
   }
 
-  const apiKeysHash = await hashString(cacheParams.apiKeys);
-  const cacheKey = buildCacheKey(pipe, apiKeysHash, cacheParams.retentionDays, url.searchParams);
+  const cacheKey = buildCacheKey(pipe, accessHash, cacheParams.retentionDays, url.searchParams);
   const cacheUrl = new URL(`https://cache-internal/${cacheKey}`);
   const cacheRequest = new Request(cacheUrl.toString());
 

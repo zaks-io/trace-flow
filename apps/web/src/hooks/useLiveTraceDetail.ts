@@ -63,7 +63,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
   const isInitialFetchRef = useRef(true);
 
   const queryClient = useQueryClient();
-  const generateToken = useAction(api.integrations.tinybird.generateToken);
+  const generateWebReadToken = useAction(api.integrations.tinybird.generateWebReadToken);
   const prevTraceIdRef = useRef(traceId);
 
   const queryKey = useMemo(
@@ -100,7 +100,7 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
       const result = await fetchTinybirdPipe<TinybirdResponse>({
         pipe: PIPE_NAME,
         params,
-        generateToken,
+        generateWebReadToken,
         schema: TraceSpanRowSchema,
       });
 

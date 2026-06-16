@@ -21,7 +21,7 @@ describe('verifyTinybirdJWT', () => {
         {
           type: 'PIPES:READ',
           resource: 'traces_list',
-          fixed_params: { api_keys: 'key1,key2', retention_days: 7 },
+          fixed_params: { api_keys: 'key1,key2', org_id: 'org_123', retention_days: 7 },
         },
       ],
     };
@@ -64,15 +64,41 @@ describe('extractCacheParams', () => {
         {
           type: 'PIPES:READ',
           resource: 'traces_list',
-          fixed_params: { api_keys: 'key1,key2', retention_days: 30 },
+          fixed_params: { api_keys: 'key1,key2', org_id: 'org_123', retention_days: 30 },
         },
       ],
     };
 
-    const result = extractCacheParams(payload);
+    const result = extractCacheParams(payload, 'traces_list');
 
     expect(result).toEqual({
       apiKeys: 'key1,key2',
+      orgId: 'org_123',
+      retentionDays: 30,
+    });
+  });
+
+  it('should extract cache params from a matching multi-scope web token', () => {
+    const payload: TinybirdJWTPayload = {
+      workspace_id: 'ws_123',
+      name: 'web_read_jwt',
+      scopes: [
+        {
+          type: 'PIPES:READ',
+          resource: 'traces_list',
+          fixed_params: { api_keys: 'key1,key2', org_id: 'org_123', retention_days: 30 },
+        },
+        {
+          type: 'PIPES:READ',
+          resource: 'agent_usage_summary',
+          fixed_params: { api_keys: 'key1,key2', org_id: 'org_123', retention_days: 30 },
+        },
+      ],
+    };
+
+    expect(extractCacheParams(payload, 'agent_usage_summary')).toEqual({
+      apiKeys: 'key1,key2',
+      orgId: 'org_123',
       retentionDays: 30,
     });
   });
@@ -84,8 +110,19 @@ describe('extractCacheParams', () => {
       scopes: [{ type: 'PIPES:READ', resource: 'traces_list', fixed_params: {} }],
     };
 
-    const result = extractCacheParams(payload);
+    const result = extractCacheParams(payload, 'traces_list');
     expect(result.apiKeys).toBe('');
+  });
+
+  it('should default org_id to empty string when missing', () => {
+    const payload: TinybirdJWTPayload = {
+      workspace_id: 'ws_123',
+      name: 'test_token',
+      scopes: [{ type: 'PIPES:READ', resource: 'traces_list', fixed_params: {} }],
+    };
+
+    const result = extractCacheParams(payload, 'traces_list');
+    expect(result.orgId).toBe('');
   });
 
   it('should default retention_days to 0 when missing', () => {
@@ -95,7 +132,7 @@ describe('extractCacheParams', () => {
       scopes: [{ type: 'PIPES:READ', resource: 'traces_list' }],
     };
 
-    const result = extractCacheParams(payload);
+    const result = extractCacheParams(payload, 'traces_list');
     expect(result.retentionDays).toBe(0);
   });
 
@@ -106,7 +143,9 @@ describe('extractCacheParams', () => {
       scopes: [],
     };
 
-    expect(() => extractCacheParams(payload)).toThrow('JWT missing scopes');
+    expect(() => extractCacheParams(payload, 'traces_list')).toThrow(
+      'JWT missing PIPES:READ scopes',
+    );
   });
 
   it('should throw when scopes is undefined', () => {
@@ -115,6 +154,49 @@ describe('extractCacheParams', () => {
       name: 'test_token',
     } as unknown as TinybirdJWTPayload;
 
-    expect(() => extractCacheParams(payload)).toThrow('JWT missing scopes');
+    expect(() => extractCacheParams(payload, 'traces_list')).toThrow(
+      'JWT missing PIPES:READ scopes',
+    );
+  });
+
+  it('should reject a requested pipe missing from PIPES:READ scopes', () => {
+    const payload: TinybirdJWTPayload = {
+      workspace_id: 'ws_123',
+      name: 'test_token',
+      scopes: [
+        {
+          type: 'PIPES:READ',
+          resource: 'traces_list',
+          fixed_params: { api_keys: 'key1,key2', org_id: 'org_123', retention_days: 30 },
+        },
+      ],
+    };
+
+    expect(() => extractCacheParams(payload, 'agent_usage_summary')).toThrow(
+      'JWT missing PIPES:READ scope for requested pipe',
+    );
+  });
+
+  it('should reject mismatched fixed params across PIPES:READ scopes', () => {
+    const payload: TinybirdJWTPayload = {
+      workspace_id: 'ws_123',
+      name: 'test_token',
+      scopes: [
+        {
+          type: 'PIPES:READ',
+          resource: 'traces_list',
+          fixed_params: { api_keys: 'key1,key2', org_id: 'org_123', retention_days: 30 },
+        },
+        {
+          type: 'PIPES:READ',
+          resource: 'agent_usage_summary',
+          fixed_params: { api_keys: 'key1,key2', org_id: 'org_456', retention_days: 30 },
+        },
+      ],
+    };
+
+    expect(() => extractCacheParams(payload, 'traces_list')).toThrow(
+      'JWT PIPES:READ scopes have inconsistent fixed_params',
+    );
   });
 });
