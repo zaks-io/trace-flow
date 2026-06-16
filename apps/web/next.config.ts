@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { withSentryConfig } from '@sentry/nextjs';
 import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 import { generateDocsContent } from './scripts/generate-docs-content';
 
@@ -8,6 +9,8 @@ import { generateDocsContent } from './scripts/generate-docs-content';
 generateDocsContent();
 
 void initOpenNextCloudflareForDev();
+
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -28,4 +31,20 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  org: 'zaksio',
+  project: 'trace-flow',
+  authToken: sentryAuthToken,
+  silent: !process.env.CI,
+  telemetry: false,
+  sourcemaps: {
+    disable: !sentryAuthToken,
+    deleteSourcemapsAfterUpload: true,
+  },
+  widenClientFileUpload: true,
+  webpack: {
+    treeshake: {
+      removeDebugLogging: true,
+    },
+  },
+});

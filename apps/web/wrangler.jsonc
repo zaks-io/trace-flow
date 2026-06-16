@@ -30,6 +30,9 @@
     "development": {
       "name": "trace-flow-web-dev",
       "workers_dev": true,
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA",
+      },
       "vars": {
         "AXIOM_DATASET": "cloudflare",
         "SENTRY_ENVIRONMENT": "development",
@@ -42,9 +45,30 @@
         },
       ],
     },
+    "preview": {
+      "name": "trace-flow-web-preview",
+      "workers_dev": true,
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA",
+      },
+      "vars": {
+        "AXIOM_DATASET": "cloudflare",
+        "SENTRY_ENVIRONMENT": "preview",
+      },
+      "ratelimits": [
+        {
+          "name": "TOKEN_REFRESH_LIMITER",
+          "namespace_id": "2005",
+          "simple": { "limit": 30, "period": 60 },
+        },
+      ],
+    },
     "production": {
       "name": "trace-flow-web",
       "workers_dev": false,
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA",
+      },
       "vars": {
         "AXIOM_DATASET": "cloudflare",
         "SENTRY_ENVIRONMENT": "prod",

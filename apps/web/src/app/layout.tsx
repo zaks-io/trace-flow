@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import { Plus_Jakarta_Sans, Fira_Code } from 'next/font/google';
-import '@/instrumentation-client';
 import './globals.css';
 
 const jakarta = Plus_Jakarta_Sans({
