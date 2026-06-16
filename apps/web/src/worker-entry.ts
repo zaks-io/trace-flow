@@ -24,6 +24,9 @@ export default Sentry.withSentry(
     tracesSampleRate: env.SENTRY_ENVIRONMENT === 'development' ? 1.0 : 0.1,
     sendDefaultPii: false,
     enableLogs: true,
+    // OpenNext/Next already uses OpenTelemetry inside the same Worker bundle. Letting
+    // @sentry/cloudflare replace the global OTEL provider recurses in routingHandler.
+    skipOpenTelemetrySetup: true,
   }),
   {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
