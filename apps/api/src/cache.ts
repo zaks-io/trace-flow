@@ -16,7 +16,10 @@ export function buildCacheKey(
   searchParams: URLSearchParams,
 ): string {
   const filtered = [...searchParams.entries()]
-    .filter(([key]) => key !== 'token')
+    .filter(
+      ([key]) =>
+        key !== 'token' && key !== 'api_keys' && key !== 'org_id' && key !== 'retention_days',
+    )
     .sort(([a], [b]) => a.localeCompare(b));
   const sorted = new URLSearchParams(filtered).toString();
 
