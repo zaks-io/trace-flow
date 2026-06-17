@@ -110,12 +110,15 @@ describe('tinybirdProxy pipe authorization', () => {
     expect(res.headers.get('X-Cache')).toBe('MISS');
     expect(cache.match).toHaveBeenCalledTimes(1);
     expect(cache.put).toHaveBeenCalledTimes(1);
-    expect(upstreamFetch).toHaveBeenCalledWith(
-      'https://tinybird.test/v0/pipes/traces_list.json?start=100',
-      {
-        headers: { Authorization: 'Bearer token' },
-      },
-    );
+    const [upstreamUrl, upstreamInit] = upstreamFetch.mock.calls[0] as [string, RequestInit];
+    const forwardedUrl = new URL(upstreamUrl);
+    expect(forwardedUrl.origin).toBe('https://tinybird.test');
+    expect(forwardedUrl.pathname).toBe('/v0/pipes/traces_list.json');
+    expect(forwardedUrl.searchParams.get('start')).toBe('100');
+    expect(forwardedUrl.searchParams.get('api_keys')).toBe('key1,key2');
+    expect(forwardedUrl.searchParams.get('org_id')).toBe('org_123');
+    expect(forwardedUrl.searchParams.get('retention_days')).toBe('30');
+    expect(upstreamInit.headers).toEqual({ Authorization: 'Bearer admin-token' });
   });
 
   it('rejects a requested pipe missing from the JWT before cache lookup or Tinybird fetch', async () => {
@@ -193,6 +196,49 @@ describe('tinybirdProxy pipe authorization', () => {
     expect(res.status).toBe(200);
     expect(testEnv.PIPES_LIMITER.limit).toHaveBeenCalledWith({ key: accessHash });
     expect((cache.match.mock.calls[0][0] as Request).url).toContain(accessHash);
+  });
+
+  it('overrides client-supplied row-security params before querying Tinybird', async () => {
+    vi.stubGlobal('caches', {
+      default: {
+        match: vi.fn().mockResolvedValue(null),
+        put: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+    const upstreamFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', upstreamFetch);
+
+    const testEnv = env();
+    mockVerifiedPayload(
+      webPayload([
+        {
+          type: 'PIPES:READ',
+          resource: 'agent_usage_summary',
+          fixed_params: { api_keys: 'key1', org_id: 'org_123', retention_days: 30 },
+        },
+      ]),
+    );
+
+    const res = await createApp().fetch(
+      new Request(
+        'https://api.test/v0/pipes/agent_usage_summary.json?org_id=evil&retention_days=365',
+        {
+          headers: { Authorization: 'Bearer browser-jwt' },
+        },
+      ),
+      testEnv,
+      executionCtx(),
+    );
+
+    expect(res.status).toBe(200);
+    const [upstreamUrl, upstreamInit] = upstreamFetch.mock.calls[0] as [string, RequestInit];
+    const forwardedUrl = new URL(upstreamUrl);
+    expect(forwardedUrl.searchParams.get('api_keys')).toBe('key1');
+    expect(forwardedUrl.searchParams.get('org_id')).toBe('org_123');
+    expect(forwardedUrl.searchParams.get('retention_days')).toBe('30');
+    expect(upstreamInit.headers).toEqual({ Authorization: 'Bearer admin-token' });
   });
 
   it('rejects mismatched fixed params across PIPES:READ scopes before cache lookup', async () => {

@@ -9,6 +9,12 @@ interface TinybirdProxyEnv {
   PIPES_LIMITER: RateLimit;
 }
 
+interface CacheParams {
+  apiKeys: string;
+  orgId: string;
+  retentionDays: number;
+}
+
 const VALID_PIPE_NAME = /^[a-z_][a-z0-9_]*$/;
 
 export const tinybirdProxy = new Hono<{
@@ -62,7 +68,12 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
 
   // Bypass cache for live polling
   if (ttl === 0) {
-    const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
+    const tbResponse = await fetchFromTinybird(
+      c.env.TINYBIRD_API_URL,
+      url,
+      c.env.TINYBIRD_ADMIN_TOKEN,
+      cacheParams,
+    );
     if (!tbResponse.ok) {
       return handleUpstreamError(c, logger, tbResponse, pipe);
     }
@@ -89,7 +100,12 @@ tinybirdProxy.get('/v0/pipes/*', async (c) => {
     return response;
   }
 
-  const tbResponse = await fetchFromTinybird(c.env.TINYBIRD_API_URL, url, token);
+  const tbResponse = await fetchFromTinybird(
+    c.env.TINYBIRD_API_URL,
+    url,
+    c.env.TINYBIRD_ADMIN_TOKEN,
+    cacheParams,
+  );
   if (!tbResponse.ok) {
     return handleUpstreamError(c, logger, tbResponse, pipe);
   }
@@ -122,6 +138,8 @@ async function handleUpstreamError(
     status: tbResponse.status,
     pipe,
     detail,
+    tinybirdRequestId: tbResponse.headers.get('x-request-id') ?? undefined,
+    tinybirdRelease: tbResponse.headers.get('x-tb-r') ?? undefined,
   });
   const status = PASSTHROUGH_STATUSES.has(tbResponse.status)
     ? tbResponse.status
@@ -135,8 +153,12 @@ async function fetchFromTinybird(
   apiUrl: string,
   originalUrl: URL,
   token: string,
+  cacheParams: CacheParams,
 ): Promise<Response> {
   const tbUrl = new URL(`${apiUrl}${originalUrl.pathname}${originalUrl.search}`);
+  tbUrl.searchParams.set('api_keys', cacheParams.apiKeys);
+  tbUrl.searchParams.set('org_id', cacheParams.orgId);
+  tbUrl.searchParams.set('retention_days', String(cacheParams.retentionDays));
   return fetch(tbUrl.toString(), {
     headers: { Authorization: `Bearer ${token}` },
   });
