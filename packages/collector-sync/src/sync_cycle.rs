@@ -137,9 +137,9 @@ pub struct SyncTuning {
 impl Default for SyncTuning {
     fn default() -> Self {
         Self {
-            max_sessions_per_batch: 25,
-            max_batch_bytes: 1024 * 1024,
-            max_concurrent_uploads: 4,
+            max_sessions_per_batch: 10,
+            max_batch_bytes: 256 * 1024,
+            max_concurrent_uploads: 2,
         }
     }
 }
