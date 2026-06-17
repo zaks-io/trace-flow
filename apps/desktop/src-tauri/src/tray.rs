@@ -38,6 +38,7 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         // "Sync now": connect if needed, then authorize + run one incremental cycle. Routed through
         // the same smart path as the window's button so the tray never silently no-ops while paused.
         "action_sync" => connect_then(app, EngineCommand::SyncNow),
+        "action_reconnect" => reconnect(app),
         // "Start syncing" / "Pause syncing": when paused, connect if needed then backfill + watch;
         // when running, pause.
         "action_pause" => match current_sync(app) {
@@ -50,6 +51,17 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         "quit" => app.exit(0),
         other => tracing::debug!(menu_id = other, "unhandled menu event"),
     }
+}
+
+fn reconnect<R: Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let bus: tauri::State<'_, AppStateBus> = app.state();
+        let connector: tauri::State<'_, Connector> = app.state();
+        if let Err(err) = connector.reconnect(&bus).await {
+            tracing::error!(error = %err, "tray reconnect failed");
+        }
+    });
 }
 
 /// Drive a sync-authorizing command from the tray: connect if needed (via the shared [`Connector`]

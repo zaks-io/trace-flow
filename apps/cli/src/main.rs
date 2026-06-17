@@ -17,7 +17,7 @@
 //! - `TRACE_FLOW_INGEST_URL` — the ingest Worker base URL `sync` POSTs to.
 //! - `TRACE_FLOW_COLLECTOR_SECRET` — optional headless/CI override for the keychain credential.
 //!
-//! With none set, the binary targets production out of the box; an env var points it at Cloud-Dev or
+//! With none set, the binary targets production out of the box; an env var points it at deployed dev or
 //! a local Worker instead.
 
 use anyhow::{Context, Result};
@@ -118,7 +118,7 @@ async fn run() -> Result<()> {
 }
 
 fn cmd_login() -> Result<()> {
-    let conn = login::run(&defaults::convex_site_url())?;
+    let conn = login::run(&defaults::convex_site_url(), &defaults::ingest_url())?;
     println!("\nConnected to organization {}.", conn.org_id);
     println!("Credential stored in the OS keychain. Next: `trace-flow sync --since 7d`.");
     Ok(())
@@ -161,7 +161,7 @@ async fn cmd_sync(since: &str) -> Result<()> {
         )
     })?;
 
-    let ingest_url = defaults::ingest_url();
+    let ingest_url = conn.sync_ingest_url()?;
 
     let home = home_dir()?;
     println!("Syncing (since {since}) to {ingest_url} ...");
@@ -221,6 +221,10 @@ fn cmd_status() -> Result<()> {
     println!("Organization:  {}", conn.org_id);
     println!("Collector:     {}", conn.collector_id);
     println!("Convex:        {}", conn.convex_url);
+    let ingest_url = conn
+        .sync_ingest_url()
+        .unwrap_or_else(|_| "MISSING (run `trace-flow login`)".to_string());
+    println!("Ingest:        {ingest_url}");
     println!(
         "Credential:    {}",
         match (has_credential, expired) {

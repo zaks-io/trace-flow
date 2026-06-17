@@ -18,8 +18,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use collector_embedder::connection::Paths;
+use collector_embedder::keychain;
 use collector_embedder::sync::{self, Window};
-use collector_embedder::{defaults, keychain};
 use tokio::sync::mpsc;
 
 use crate::state::{AppStateBus, ConnectionState, SourceCounts, SyncStatus};
@@ -157,17 +157,54 @@ struct CycleOutcome {
 /// panic — so a caller (the first backfill) can tell a real pass from a no-op/abort and avoid marking
 /// a one-time backfill done when nothing landed.
 async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool {
-    let Some(org_id) = connected_org(bus) else {
-        tracing::warn!("sync skipped: not connected");
-        return false;
+    let conn = match Paths::resolve().and_then(|p| p.load_connection()) {
+        Ok(Some(conn)) => conn,
+        Ok(None) => {
+            tracing::warn!("sync skipped: not connected");
+            bus.update(|s| s.connection = ConnectionState::Disconnected);
+            return false;
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "sync skipped: connection read failed");
+            bus.update(|s| {
+                s.sync = SyncStatus::Error {
+                    message: "connection read failed - sign in again".to_string(),
+                }
+            });
+            return false;
+        }
     };
+
+    let ingest_url = match conn.sync_ingest_url() {
+        Ok(url) => url,
+        Err(err) => {
+            tracing::warn!(error = %err, "sync skipped: connection missing ingest URL");
+            bus.update(|s| {
+                s.connection = ConnectionState::Connected {
+                    org_id: conn.org_id.clone(),
+                };
+                s.sync = SyncStatus::Error {
+                    message: "connection missing ingest URL - sign in again".to_string(),
+                };
+            });
+            return false;
+        }
+    };
+
+    let org_id = conn.org_id.clone();
+    bus.update(|s| {
+        s.connection = ConnectionState::Connected {
+            org_id: org_id.clone(),
+        }
+    });
+
     let credential = match keychain::load(&org_id) {
         Ok(Some(secret)) => secret,
         Ok(None) => {
             tracing::warn!("sync skipped: no Collector Credential in keychain");
             bus.update(|s| {
                 s.sync = SyncStatus::Error {
-                    message: "no credential — sign in again".to_string(),
+                    message: "no credential - sign in again".to_string(),
                 }
             });
             return false;
@@ -176,7 +213,7 @@ async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool 
             tracing::error!(error = %err, "sync skipped: keychain read failed");
             bus.update(|s| {
                 s.sync = SyncStatus::Error {
-                    message: "keychain read failed — sign in again".to_string(),
+                    message: "keychain read failed - sign in again".to_string(),
                 }
             });
             return false;
@@ -192,7 +229,9 @@ async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool 
 
     let now_ms = now_ms();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        run_cycle_blocking(org_id, credential, home, window, raw_upload, now_ms)
+        run_cycle_blocking(
+            org_id, credential, ingest_url, home, window, raw_upload, now_ms,
+        )
     })
     .await;
 
@@ -251,6 +290,7 @@ async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool 
 fn run_cycle_blocking(
     org_id: String,
     credential: String,
+    ingest_url: String,
     home: std::path::PathBuf,
     window: Window,
     raw_upload: bool,
@@ -272,7 +312,7 @@ fn run_cycle_blocking(
     };
 
     let result = runtime.block_on(sync::run(sync::RunConfig {
-        ingest_url: defaults::ingest_url(),
+        ingest_url,
         credential,
         org_id: &org_id,
         home: &home,
@@ -345,13 +385,6 @@ pub fn refresh_sources(bus: &AppStateBus) {
         }
     }
     bus.update(|s| s.sources = counts);
-}
-
-fn connected_org(bus: &AppStateBus) -> Option<String> {
-    match bus.snapshot().connection {
-        ConnectionState::Connected { org_id } => Some(org_id),
-        ConnectionState::Disconnected => None,
-    }
 }
 
 fn dirs_home() -> Option<std::path::PathBuf> {

@@ -12,7 +12,8 @@
 
 use std::sync::Arc;
 
-use collector_embedder::{defaults, login};
+use collector_embedder::connection::Paths;
+use collector_embedder::{defaults, keychain, login};
 use tokio::sync::Mutex;
 
 use crate::engine;
@@ -47,6 +48,16 @@ impl Connector {
             return Ok(());
         }
 
+        self.login(bus, false).await
+    }
+
+    /// Force a fresh browser login, preserving cursor DBs. The old credential remains in place if the
+    /// new login fails, so a cancelled browser flow does not strand the existing connection.
+    pub async fn reconnect(&self, bus: &AppStateBus) -> Result<(), String> {
+        self.login(bus, true).await
+    }
+
+    async fn login(&self, bus: &AppStateBus, force: bool) -> Result<(), String> {
         // Don't queue a second login behind the first — a double-click should be a no-op, not a second
         // browser tab. `try_lock` fails iff a login is already running.
         let _guard = match self.in_flight.try_lock() {
@@ -55,15 +66,26 @@ impl Connector {
         };
 
         // Re-check under the guard: the first login may have completed between our check and the lock.
-        if crate::commands::is_connected() {
+        if !force && crate::commands::is_connected() {
             return Ok(());
         }
 
         let convex_site_url = defaults::convex_site_url();
-        let conn = tauri::async_runtime::spawn_blocking(move || login::run(&convex_site_url))
-            .await
-            .map_err(|err| format!("login task panicked: {err}"))?
-            .map_err(|err| format!("{err:#}"))?;
+        let ingest_url = defaults::ingest_url();
+        let old_org_id = Paths::resolve()
+            .ok()
+            .and_then(|paths| paths.load_connection().ok().flatten())
+            .map(|conn| conn.org_id);
+        let conn =
+            tauri::async_runtime::spawn_blocking(move || login::run(&convex_site_url, &ingest_url))
+                .await
+                .map_err(|err| format!("login task panicked: {err}"))?
+                .map_err(|err| format!("{err:#}"))?;
+        if let Some(old_org_id) = old_org_id.filter(|old| old != &conn.org_id) {
+            if let Err(err) = keychain::delete(&old_org_id) {
+                tracing::warn!(error = %err, org_id = %old_org_id, "failed to remove old Collector Credential");
+            }
+        }
         engine::refresh_connection(bus);
         tracing::info!(org_id = %conn.org_id, "connected");
         Ok(())

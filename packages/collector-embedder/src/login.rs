@@ -35,7 +35,7 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Run the full login flow against `convex_site_url` (the Convex *site* origin, e.g.
 /// `https://<deployment>.convex.site`). Stores the credential and connection on success and returns
 /// the bound [`Connection`] for the caller to report.
-pub fn run(convex_site_url: &str) -> Result<Connection> {
+pub fn run(convex_site_url: &str, ingest_url: &str) -> Result<Connection> {
     let server = Server::http("127.0.0.1:0").map_err(|e| anyhow!("bind loopback listener: {e}"))?;
     let port = server
         .server_addr()
@@ -68,6 +68,7 @@ pub fn run(convex_site_url: &str) -> Result<Connection> {
         org_id: result.org_id,
         collector_id: result.collector_id,
         convex_url: result.convex_url,
+        ingest_url: ingest_url.to_string(),
         expires_at: result.expires_at,
     };
     paths.save_connection(&conn)?;
