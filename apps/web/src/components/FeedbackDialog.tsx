@@ -13,7 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { MAX_MESSAGE_LENGTH } from '@convex/feedback';
+import { FEEDBACK_MAX_MESSAGE_LENGTH } from '@trace-flow/types';
 
 export function FeedbackDialog({
   open,
@@ -28,7 +28,7 @@ export function FeedbackDialog({
   const [error, setError] = useState('');
 
   const trimmedLength = message.trim().length;
-  const isOverLimit = trimmedLength > MAX_MESSAGE_LENGTH;
+  const isOverLimit = trimmedLength > FEEDBACK_MAX_MESSAGE_LENGTH;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -104,7 +104,7 @@ export function FeedbackDialog({
               <span
                 className={`tabular-nums ${isOverLimit ? 'text-destructive' : 'text-muted-foreground'}`}
               >
-                {trimmedLength.toLocaleString()} / {MAX_MESSAGE_LENGTH.toLocaleString()}
+                {trimmedLength.toLocaleString()} / {FEEDBACK_MAX_MESSAGE_LENGTH.toLocaleString()}
               </span>
             </div>
           </div>
