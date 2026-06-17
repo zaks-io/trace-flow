@@ -38,27 +38,28 @@ const PRODUCTION_ORIGINS = [
 ];
 
 const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
+const ALLOWED_BROWSER_HEADERS = ['Content-Type', 'Authorization', 'Baggage', 'Sentry-Trace'];
 
-const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+export const apiApp = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-app.use('*', async (c, next) => {
+apiApp.use('*', async (c, next) => {
   const isDev = c.env.SENTRY_ENVIRONMENT !== 'prod';
   const allowed = isDev ? [...PRODUCTION_ORIGINS, ...DEV_ORIGINS] : PRODUCTION_ORIGINS;
   const mw = cors({
     origin: (origin) => (allowed.includes(origin) ? origin : null),
     allowMethods: ['GET', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: ALLOWED_BROWSER_HEADERS,
   });
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   return mw(c, next);
 });
 
-app.use('*', async (c, next) => {
+apiApp.use('*', async (c, next) => {
   await next();
   applySecurityHeaders(c.res.headers);
 });
 
-app.use('*', async (c, next) => {
+apiApp.use('*', async (c, next) => {
   const logger = createWorkerLogger({
     service: 'api',
     request: c.req.raw,
@@ -79,11 +80,11 @@ app.use('*', async (c, next) => {
   c.executionCtx.waitUntil(logger.flush());
 });
 
-app.get('/healthz', (c) => c.json({ status: 'ok' }));
+apiApp.get('/healthz', (c) => c.json({ status: 'ok' }));
 
-app.route('/', tinybirdProxy);
+apiApp.route('/', tinybirdProxy);
 
-app.get('/bodies/:requestId', async (c) => {
+apiApp.get('/bodies/:requestId', async (c) => {
   const logger = c.get('logger');
   const authError = await validateAuth0JWT(c);
   if (authError) {
@@ -147,7 +148,7 @@ app.get('/bodies/:requestId', async (c) => {
   });
 });
 
-app.notFound((c) => c.json({ error: 'Not found' }, 404));
+apiApp.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 export default Sentry.withSentry(
   (env: Env) => ({
@@ -156,5 +157,5 @@ export default Sentry.withSentry(
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 0.1,
   }),
-  app,
+  apiApp,
 );
