@@ -9,13 +9,16 @@
 //! dir, alongside the SQLite cursor store. None of it is sensitive: an org id is not a credential, and
 //! the cursor DB holds local paths that never leave the machine.
 //!
-//! The ingest URL is resolved at sync time (production by default, overridable via env), not stored
-//! here — pointing the CLI at a different environment never rewrites saved connection state.
+//! Modern connection state stores the ingest URL minted alongside the Convex credential. Legacy
+//! connection files can infer it only for known prod/dev Convex URLs; unknown legacy state must
+//! reconnect so a credential is never silently sent to the wrong ingest endpoint.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::defaults;
 
 /// The directory env var (set in tests, or to relocate state). Falls back to the platform config dir.
 const STATE_DIR_ENV: &str = "TRACE_FLOW_STATE_DIR";
@@ -29,8 +32,27 @@ pub struct Connection {
     pub collector_id: String,
     /// The Convex deployment URL the credential was minted against (audit/UX only).
     pub convex_url: String,
+    /// The ingest Worker base URL that matches the credential's control-plane environment.
+    #[serde(default)]
+    pub ingest_url: String,
     /// Epoch-ms expiry of the Collector Credential, surfaced by `status`.
     pub expires_at: i64,
+}
+
+impl Connection {
+    pub fn sync_ingest_url(&self) -> Result<String> {
+        let explicit = self.ingest_url.trim();
+        if !explicit.is_empty() {
+            return Ok(explicit.to_string());
+        }
+        if let Some(url) = defaults::ingest_url_for_convex(&self.convex_url) {
+            return Ok(url.to_string());
+        }
+        anyhow::bail!(
+            "connection is missing an ingest URL for {}; reconnect to bind this collector to the correct ingest endpoint",
+            self.convex_url
+        )
+    }
 }
 
 /// The CLI's resolved local layout. All paths derive from one state dir so tests can sandbox it.
@@ -110,6 +132,12 @@ impl Paths {
         remove_if_present(&self.cursor_db(org_id))?;
         Ok(())
     }
+
+    /// Remove only the connection marker. Cursors are local replay state and should survive a
+    /// desktop reconnect so replacing a credential does not force a full backfill.
+    pub fn clear_connection_only(&self) -> Result<()> {
+        remove_if_present(&self.connection_file())
+    }
 }
 
 fn remove_if_present(path: &Path) -> Result<()> {
@@ -143,6 +171,7 @@ mod tests {
             org_id: "org_123".to_string(),
             collector_id: "col_abc".to_string(),
             convex_url: "https://example.convex.cloud".to_string(),
+            ingest_url: "https://collector.example.test".to_string(),
             expires_at: 1_900_000_000_000,
         }
     }
@@ -170,6 +199,46 @@ mod tests {
         assert!(!paths.cursor_db("org_123").exists());
         // Second call is a no-op, not an error.
         paths.clear_connection("org_123").unwrap();
+    }
+
+    #[test]
+    fn clear_connection_only_preserves_cursor_db() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().join("state"));
+        paths.ensure().unwrap();
+        paths.save_connection(&conn()).unwrap();
+        std::fs::write(paths.cursor_db("org_123"), b"db").unwrap();
+
+        paths.clear_connection_only().unwrap();
+        assert_eq!(paths.load_connection().unwrap(), None);
+        assert!(paths.cursor_db("org_123").exists());
+    }
+
+    #[test]
+    fn missing_ingest_url_is_inferred_from_known_convex_url() {
+        let conn = Connection {
+            org_id: "org_123".to_string(),
+            collector_id: "col_abc".to_string(),
+            convex_url: defaults::DEV_CONVEX_SITE_URL.to_string(),
+            ingest_url: String::new(),
+            expires_at: 1_900_000_000_000,
+        };
+        assert_eq!(conn.sync_ingest_url().unwrap(), defaults::DEV_INGEST_URL);
+    }
+
+    #[test]
+    fn missing_ingest_url_for_unknown_convex_url_requires_reconnect() {
+        let conn = Connection {
+            org_id: "org_123".to_string(),
+            collector_id: "col_abc".to_string(),
+            convex_url: "https://custom.example.convex.site".to_string(),
+            ingest_url: String::new(),
+            expires_at: 1_900_000_000_000,
+        };
+
+        let err = conn.sync_ingest_url().unwrap_err().to_string();
+        assert!(err.contains("missing an ingest URL"));
+        assert!(err.contains("reconnect"));
     }
 
     #[test]

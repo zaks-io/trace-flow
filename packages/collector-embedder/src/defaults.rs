@@ -3,8 +3,8 @@
 
 //! The production endpoints, baked in so a normal user never has to know or set a URL.
 //!
-//! Both URLs resolve the same way: an environment override wins (so a dev box, a smoke run, or
-//! Cloud-Dev can retarget by env alone), else the baked production default. This is the zero-config
+//! Both URLs resolve the same way: an environment override wins (so a local dev box, a smoke run, or
+//! deployed dev can retarget by env alone), else the baked production default. This is the zero-config
 //! path — `trace-flow login` and the desktop app reach production out of the box, and only an explicit
 //! env var points them elsewhere (TRA-120).
 //!
@@ -27,6 +27,12 @@ pub const PROD_INGEST_URL: &str = "https://collector.trace-flow.dev";
 /// Production Convex site origin (`/collector/authorize`, `/agent-ingest/compatibility-policy`).
 pub const PROD_CONVEX_SITE_URL: &str = "https://laudable-bison-427.convex.site";
 
+/// Deployed non-prod ingest Worker used by the hosted dev Convex deployment.
+pub const DEV_INGEST_URL: &str = "https://trace-flow-agent-ingest-dev.isaac-a46.workers.dev";
+
+/// Deployed non-prod Convex site origin used by the desktop/CLI dev flow.
+pub const DEV_CONVEX_SITE_URL: &str = "https://hardy-iguana-812.convex.site";
+
 /// The ingest Worker base URL: `$TRACE_FLOW_INGEST_URL` if set and non-empty, else production.
 pub fn ingest_url() -> String {
     resolve(INGEST_URL_ENV, PROD_INGEST_URL)
@@ -35,6 +41,15 @@ pub fn ingest_url() -> String {
 /// The Convex site origin: `$TRACE_FLOW_CONVEX_SITE_URL` if set and non-empty, else production.
 pub fn convex_site_url() -> String {
     resolve(CONVEX_SITE_URL_ENV, PROD_CONVEX_SITE_URL)
+}
+
+pub fn ingest_url_for_convex(convex_url: &str) -> Option<&'static str> {
+    let normalized = convex_url.trim_end_matches('/');
+    match normalized {
+        PROD_CONVEX_SITE_URL => Some(PROD_INGEST_URL),
+        DEV_CONVEX_SITE_URL => Some(DEV_INGEST_URL),
+        _ => None,
+    }
 }
 
 fn resolve(env_key: &str, baked: &str) -> String {

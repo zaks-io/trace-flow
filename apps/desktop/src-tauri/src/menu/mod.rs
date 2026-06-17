@@ -46,6 +46,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
     let src_codex = action("open_window", "Codex \u{00B7} \u{2014}").map_err(tauri_err)?;
 
     let action_open = action("open_window", "Open Trace Flow\u{2026}").map_err(tauri_err)?;
+    let action_reconnect = action("action_reconnect", "Reconnect\u{2026}").map_err(tauri_err)?;
     let action_sync = action("action_sync", "Sync now").map_err(tauri_err)?;
     let action_pause = action("action_pause", "Pause syncing").map_err(tauri_err)?;
 
@@ -66,6 +67,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
         .item(&src_codex)
         .item(&sep()?)
         .item(&action_open)
+        .item(&action_reconnect)
         .item(&action_sync)
         .item(&action_pause)
         .item(&sep()?)

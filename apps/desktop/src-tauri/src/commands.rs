@@ -111,7 +111,7 @@ pub async fn start_login(
     bus: State<'_, AppStateBus>,
     connector: State<'_, Connector>,
 ) -> Result<String, String> {
-    connector.ensure_connected(&bus).await?;
+    connector.reconnect(&bus).await?;
     connection_status(bus)
         .org_id
         .ok_or_else(|| "connected but no org id on disk".to_string())
@@ -166,7 +166,7 @@ pub fn disconnect(bus: State<'_, AppStateBus>) -> Result<(), String> {
     if let Some(conn) = paths.load_connection().map_err(|e| format!("{e:#}"))? {
         keychain::delete(&conn.org_id).map_err(|e| format!("{e:#}"))?;
         paths
-            .clear_connection(&conn.org_id)
+            .clear_connection_only()
             .map_err(|e| format!("{e:#}"))?;
     }
     engine::refresh_connection(&bus);
