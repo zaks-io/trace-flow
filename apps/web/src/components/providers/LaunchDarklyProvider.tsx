@@ -11,7 +11,11 @@ export function LaunchDarklyProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <LDProvider clientSideID={clientSideID} reactOptions={{ useCamelCaseFlagKeys: true }}>
+    <LDProvider
+      clientSideID={clientSideID}
+      timeout={5}
+      reactOptions={{ useCamelCaseFlagKeys: true }}
+    >
       {children}
     </LDProvider>
   );

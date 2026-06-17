@@ -54,7 +54,6 @@ function buildCsp(nonce: string, isDev: boolean, reportUri: string | null): stri
     "form-action 'self' https://auth0.zaks.io",
     "base-uri 'self'",
     "object-src 'none'",
-    'upgrade-insecure-requests',
   ];
 
   if (reportUri) directives.push(`report-uri ${reportUri}`);

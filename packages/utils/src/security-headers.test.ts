@@ -34,4 +34,10 @@ describe('applySecurityHeaders', () => {
       'max-age=63072000; includeSubDomains; preload',
     );
   });
+
+  it('only emits recognized Permissions-Policy features', () => {
+    expect(BASELINE_SECURITY_HEADERS['Permissions-Policy']).toBe(
+      'camera=(), microphone=(), geolocation=()',
+    );
+  });
 });

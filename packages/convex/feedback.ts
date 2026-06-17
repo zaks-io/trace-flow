@@ -1,9 +1,8 @@
 import { mutation } from './_generated/server';
 import { ConvexError, v } from 'convex/values';
+import { FEEDBACK_MAX_MESSAGE_LENGTH } from '@trace-flow/types';
 import { requireEnabledUser } from './auth/userHelpers';
 import { rateLimiter } from './rateLimits';
-
-export const MAX_MESSAGE_LENGTH = 3000;
 
 export const submit = mutation({
   args: {
@@ -21,8 +20,10 @@ export const submit = mutation({
     if (trimmed.length === 0) {
       throw new ConvexError('Feedback message cannot be empty');
     }
-    if (trimmed.length > MAX_MESSAGE_LENGTH) {
-      throw new ConvexError(`Feedback message cannot exceed ${MAX_MESSAGE_LENGTH} characters`);
+    if (trimmed.length > FEEDBACK_MAX_MESSAGE_LENGTH) {
+      throw new ConvexError(
+        `Feedback message cannot exceed ${FEEDBACK_MAX_MESSAGE_LENGTH} characters`,
+      );
     }
 
     await ctx.db.insert('feedback', {
