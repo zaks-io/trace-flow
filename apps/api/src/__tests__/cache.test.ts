@@ -39,6 +39,17 @@ describe('buildCacheKey', () => {
     expect(key).toBe('cache:v1:pipe:hash:7:a=1');
   });
 
+  it('should exclude row-security params from the query component', () => {
+    const params = new URLSearchParams({
+      api_keys: 'client-key',
+      org_id: 'client-org',
+      retention_days: '365',
+      start: '100',
+    });
+    const key = buildCacheKey('pipe', 'verified-access', 30, params);
+    expect(key).toBe('cache:v1:pipe:verified-access:30:start=100');
+  });
+
   it('should handle empty params', () => {
     const params = new URLSearchParams();
     const key = buildCacheKey('pipe', 'hash', 7, params);
