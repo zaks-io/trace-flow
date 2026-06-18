@@ -144,8 +144,8 @@ enum CallbackOutcome {
 /// `/callback` AND its `state` matches the nonce this login generated; anything else is `Ignore` so a
 /// stray or hostile local request cannot end (or hijack) the wait. `Err` only for a malformed URL.
 fn parse_callback(raw_url: &str, expected_state: &str) -> Result<CallbackOutcome> {
-    let url =
-        reqwest::Url::parse(&format!("http://127.0.0.1{raw_url}")).context("parse callback url")?;
+    let url = url::Url::parse(&format!("http://127.0.0.1{raw_url}"))
+        .context("parse callback url")?;
 
     if url.path() != "/callback" {
         return Ok(CallbackOutcome::Ignore);
