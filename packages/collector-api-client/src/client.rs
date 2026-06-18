@@ -67,9 +67,6 @@ impl CollectorApiClient {
         let client = Client::builder()
             // gzip(true) enables automatic response decompression only — not request compression.
             .gzip(true)
-            // Large upload bodies are more diagnosable over HTTP/1.1; h2 stream resets often collapse
-            // to a response-less send error before the Worker can log the request.
-            .http1_only()
             .timeout(config.timeout)
             .build()
             .context("build http client")?;
