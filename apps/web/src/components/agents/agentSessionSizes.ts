@@ -12,9 +12,9 @@ import type { AgentCostDistributionRow } from './types';
 /** The two axes a conversation distribution can be measured on. Cost is the default. */
 export type DistributionAxis = 'cost' | 'tokens';
 
-/** One histogram bar: a magnitude band with its conversation count and total spend/tokens. */
+/** One histogram bar: a data-derived (decile) band with its conversation count and total. */
 interface DistributionBin {
-  /** Fixed bucket label, e.g. "$0.10–1" or "10k–50k". */
+  /** Data-derived range label, e.g. "$0.80–4" or "12k–48k" (edges come from the quantiles). */
   label: string;
   /** Number of conversations that fell in this band (current window). */
   count: number;
@@ -117,30 +117,36 @@ export function formatAxisValue(axis: DistributionAxis, value: number): string {
 }
 
 /**
- * The conversation-magnitude histogram for the active axis. Cost bands are spend tiers
- * (<$0.10 … $20+); token bands are generated-token tiers (<10k … 1M+). Each bar carries both
- * the conversation count and the total magnitude so the cell can show count or summed spend.
+ * The conversation-magnitude histogram for the active axis. Buckets are EQUAL-FREQUENCY: their
+ * edges are the data's own deciles (computed in the pipe), so the expensive tail is resolved into
+ * several bars instead of one fixed `$20+` catch-all. Bar height is the SUMMED magnitude (where
+ * the money / tokens go); the conversation count rides along for the tooltip. Bucket count flexes
+ * (≤10) because degenerate deciles collapse upstream. The label is the data-derived `lo–hi` range.
  */
 export function buildDistributionBins(
   row: AgentCostDistributionRow,
   axis: DistributionAxis,
 ): DistributionBin[] {
-  if (axis === 'cost') {
-    return [
-      { label: '<$0.10', count: row.cost_bin_under_10c, total: row.cost_sum_under_10c },
-      { label: '$0.10–1', count: row.cost_bin_10c_1, total: row.cost_sum_10c_1 },
-      { label: '$1–5', count: row.cost_bin_1_5, total: row.cost_sum_1_5 },
-      { label: '$5–20', count: row.cost_bin_5_20, total: row.cost_sum_5_20 },
-      { label: '$20+', count: row.cost_bin_20_plus, total: row.cost_sum_20_plus },
-    ];
+  const lo = axis === 'cost' ? row.cost_bucket_lo : row.token_bucket_lo;
+  const hi = axis === 'cost' ? row.cost_bucket_hi : row.token_bucket_hi;
+  const count = axis === 'cost' ? row.cost_bucket_count : row.token_bucket_count;
+  const sum = axis === 'cost' ? row.cost_bucket_sum : row.token_bucket_sum;
+
+  const n = Math.min(lo.length, hi.length, count.length, sum.length);
+  const bins: DistributionBin[] = [];
+  for (let i = 0; i < n; i++) {
+    bins.push({
+      label: bucketLabel(axis, lo[i], hi[i]),
+      count: count[i],
+      total: sum[i],
+    });
   }
-  return [
-    { label: '<10k', count: row.token_bin_under_10k, total: row.token_sum_under_10k },
-    { label: '10k–50k', count: row.token_bin_10k_50k, total: row.token_sum_10k_50k },
-    { label: '50k–200k', count: row.token_bin_50k_200k, total: row.token_sum_50k_200k },
-    { label: '200k–1M', count: row.token_bin_200k_1m, total: row.token_sum_200k_1m },
-    { label: '1M+', count: row.token_bin_1m_plus, total: row.token_sum_1m_plus },
-  ];
+  return bins;
+}
+
+/** Data-derived range label for one bucket, e.g. "$0.80–4" or "12k–48k". */
+function bucketLabel(axis: DistributionAxis, lo: number, hi: number): string {
+  return `${formatAxisValue(axis, lo)}–${formatAxisValue(axis, hi)}`;
 }
 
 /** Per-conversation percentiles for the active axis. Tokens use the generated (real-work) axis. */

@@ -61,6 +61,18 @@ SQL >
 
 NODE distribution
 SQL >
+    -- Per-conversation distribution per period. Histogram buckets are EQUAL-FREQUENCY
+    -- (decile-edged), not fixed dollar tiers: edges come from the data's own quantiles so a
+    -- long, skewed tail (a few very pricey conversations) is resolved into several buckets
+    -- instead of one open-ended catch-all. quantileExact (not the sampling `quantile`) keeps
+    -- the edges exact and deterministic, matching the p50/p90/p95 already computed here.
+    --
+    -- `*_edges` is the distinct, ascending boundary list [min, q10..q90, max]; arrayDistinct
+    -- collapses degenerate deciles (e.g. many identical near-$0 costs), so there are AT MOST 10
+    -- buckets and never a zero-width/empty one. Bucket i spans (edges[i] .. edges[i+1]] with the
+    -- first bucket inclusive of the min. Count and summed magnitude are computed array-side over
+    -- the collected per-conversation values (`*_vals`) so the per-bucket aggregation stays single
+    -- pass. The client zips lo/hi/count/sum into bars and plots the SUM (where the money goes).
     SELECT
         period,
         count() AS session_count,
@@ -83,31 +95,70 @@ SQL >
         round(quantileExact(0.95)(cache_inclusive_tokens), 0) AS cache_inclusive_tokens_p95,
         max(cache_inclusive_tokens) AS cache_inclusive_tokens_max,
 
-        -- Cost-magnitude bands (the default axis). Boundaries in USD.
-        countIf(cost_usd < 0.10) AS cost_bin_under_10c,
-        countIf(cost_usd >= 0.10 AND cost_usd < 1.0) AS cost_bin_10c_1,
-        countIf(cost_usd >= 1.0 AND cost_usd < 5.0) AS cost_bin_1_5,
-        countIf(cost_usd >= 5.0 AND cost_usd < 20.0) AS cost_bin_5_20,
-        countIf(cost_usd >= 20.0) AS cost_bin_20_plus,
-        round(sumIf(cost_usd, cost_usd < 0.10), 6) AS cost_sum_under_10c,
-        round(sumIf(cost_usd, cost_usd >= 0.10 AND cost_usd < 1.0), 6) AS cost_sum_10c_1,
-        round(sumIf(cost_usd, cost_usd >= 1.0 AND cost_usd < 5.0), 6) AS cost_sum_1_5,
-        round(sumIf(cost_usd, cost_usd >= 5.0 AND cost_usd < 20.0), 6) AS cost_sum_5_20,
-        round(sumIf(cost_usd, cost_usd >= 20.0), 6) AS cost_sum_20_plus,
-
-        -- Generated-token bands (the toggle axis).
-        countIf(generated_tokens < 10000) AS token_bin_under_10k,
-        countIf(generated_tokens >= 10000 AND generated_tokens < 50000) AS token_bin_10k_50k,
-        countIf(generated_tokens >= 50000 AND generated_tokens < 200000) AS token_bin_50k_200k,
-        countIf(generated_tokens >= 200000 AND generated_tokens < 1000000) AS token_bin_200k_1m,
-        countIf(generated_tokens >= 1000000) AS token_bin_1m_plus,
-        sumIf(generated_tokens, generated_tokens < 10000) AS token_sum_under_10k,
-        sumIf(generated_tokens, generated_tokens >= 10000 AND generated_tokens < 50000) AS token_sum_10k_50k,
-        sumIf(generated_tokens, generated_tokens >= 50000 AND generated_tokens < 200000) AS token_sum_50k_200k,
-        sumIf(generated_tokens, generated_tokens >= 200000 AND generated_tokens < 1000000) AS token_sum_200k_1m,
-        sumIf(generated_tokens, generated_tokens >= 1000000) AS token_sum_1m_plus
+        -- Per-conversation values + decile edges; the `buckets` node turns these into bars.
+        -- arrayDistinct collapses degenerate deciles so there are AT MOST 10 edges and never a
+        -- zero-width bucket. Edges are [min, q10..q90, max], ascending.
+        arraySort(groupArray(cost_usd)) AS cost_vals,
+        arrayDistinct(
+            arrayConcat(
+                [arrayElement(cost_vals, 1)],
+                arrayMap(q -> round(q, 6), quantilesExact(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)(cost_usd)),
+                [arrayElement(cost_vals, length(cost_vals))]
+            )
+        ) AS cost_edges,
+        arraySort(groupArray(generated_tokens)) AS token_vals,
+        arrayDistinct(
+            arrayConcat(
+                [arrayElement(token_vals, 1)],
+                quantilesExact(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)(generated_tokens),
+                [arrayElement(token_vals, length(token_vals))]
+            )
+        ) AS token_edges
     FROM sessions
     GROUP BY period
+
+NODE buckets
+SQL >
+    -- Turn the per-conversation value arrays + decile edges into drawable bars. Bucket i spans
+    -- (edges[i] .. edges[i+1]] with the first bucket inclusive of the minimum. Count and summed
+    -- magnitude are derived array-side over the collected values — no extra scan. The client zips
+    -- lo/hi/count/sum into bars and plots the SUM (where the money goes), so equal-frequency
+    -- buckets still read as "which cost ranges hold the dollars".
+    SELECT
+        period,
+        arraySlice(cost_edges, 1, length(cost_edges) - 1) AS cost_bucket_lo,
+        arraySlice(cost_edges, 2, length(cost_edges) - 1) AS cost_bucket_hi,
+        arrayMap(
+            i -> toUInt64(length(arrayFilter(
+                v -> (i = 1 OR v > arrayElement(cost_edges, i)) AND v <= arrayElement(cost_edges, i + 1),
+                cost_vals
+            ))),
+            range(1, length(cost_edges))
+        ) AS cost_bucket_count,
+        arrayMap(
+            i -> round(arraySum(arrayFilter(
+                v -> (i = 1 OR v > arrayElement(cost_edges, i)) AND v <= arrayElement(cost_edges, i + 1),
+                cost_vals
+            )), 6),
+            range(1, length(cost_edges))
+        ) AS cost_bucket_sum,
+        arraySlice(token_edges, 1, length(token_edges) - 1) AS token_bucket_lo,
+        arraySlice(token_edges, 2, length(token_edges) - 1) AS token_bucket_hi,
+        arrayMap(
+            i -> toUInt64(length(arrayFilter(
+                v -> (i = 1 OR v > arrayElement(token_edges, i)) AND v <= arrayElement(token_edges, i + 1),
+                token_vals
+            ))),
+            range(1, length(token_edges))
+        ) AS token_bucket_count,
+        arrayMap(
+            i -> toUInt64(arraySum(arrayFilter(
+                v -> (i = 1 OR v > arrayElement(token_edges, i)) AND v <= arrayElement(token_edges, i + 1),
+                token_vals
+            ))),
+            range(1, length(token_edges))
+        ) AS token_bucket_sum
+    FROM distribution
 
 NODE ranked
 SQL >
@@ -209,27 +260,16 @@ SQL >
         ifNull(c.cache_inclusive_tokens_max, 0) AS cache_inclusive_tokens_max,
         ifNull(p.cache_inclusive_tokens_max, 0) AS prior_cache_inclusive_tokens_max,
 
-        ifNull(c.cost_bin_under_10c, 0) AS cost_bin_under_10c,
-        ifNull(c.cost_bin_10c_1, 0) AS cost_bin_10c_1,
-        ifNull(c.cost_bin_1_5, 0) AS cost_bin_1_5,
-        ifNull(c.cost_bin_5_20, 0) AS cost_bin_5_20,
-        ifNull(c.cost_bin_20_plus, 0) AS cost_bin_20_plus,
-        round(ifNull(c.cost_sum_under_10c, 0.), 6) AS cost_sum_under_10c,
-        round(ifNull(c.cost_sum_10c_1, 0.), 6) AS cost_sum_10c_1,
-        round(ifNull(c.cost_sum_1_5, 0.), 6) AS cost_sum_1_5,
-        round(ifNull(c.cost_sum_5_20, 0.), 6) AS cost_sum_5_20,
-        round(ifNull(c.cost_sum_20_plus, 0.), 6) AS cost_sum_20_plus,
-
-        ifNull(c.token_bin_under_10k, 0) AS token_bin_under_10k,
-        ifNull(c.token_bin_10k_50k, 0) AS token_bin_10k_50k,
-        ifNull(c.token_bin_50k_200k, 0) AS token_bin_50k_200k,
-        ifNull(c.token_bin_200k_1m, 0) AS token_bin_200k_1m,
-        ifNull(c.token_bin_1m_plus, 0) AS token_bin_1m_plus,
-        ifNull(c.token_sum_under_10k, 0) AS token_sum_under_10k,
-        ifNull(c.token_sum_10k_50k, 0) AS token_sum_10k_50k,
-        ifNull(c.token_sum_50k_200k, 0) AS token_sum_50k_200k,
-        ifNull(c.token_sum_200k_1m, 0) AS token_sum_200k_1m,
-        ifNull(c.token_sum_1m_plus, 0) AS token_sum_1m_plus,
+        -- Equal-frequency (decile-edged) histogram buckets for the CURRENT window only; the
+        -- prior window is not charted as a histogram. Empty window -> empty arrays.
+        ifNull(bk.cost_bucket_lo, []) AS cost_bucket_lo,
+        ifNull(bk.cost_bucket_hi, []) AS cost_bucket_hi,
+        ifNull(bk.cost_bucket_count, []) AS cost_bucket_count,
+        ifNull(bk.cost_bucket_sum, []) AS cost_bucket_sum,
+        ifNull(bk.token_bucket_lo, []) AS token_bucket_lo,
+        ifNull(bk.token_bucket_hi, []) AS token_bucket_hi,
+        ifNull(bk.token_bucket_count, []) AS token_bucket_count,
+        ifNull(bk.token_bucket_sum, []) AS token_bucket_sum,
 
         round(ifNull(cc.top_10pct_cost_usd, 0.), 6) AS top_10pct_cost_usd,
         ifNull(cc.top_10pct_session_count, 0) AS top_10pct_session_count,
@@ -244,6 +284,8 @@ SQL >
     LEFT JOIN (SELECT * FROM concentration WHERE period = 'current') AS cc
         ON 1 = 1
     LEFT JOIN curve AS cv
+        ON 1 = 1
+    LEFT JOIN (SELECT * FROM buckets WHERE period = 'current') AS bk
         ON 1 = 1
     SETTINGS join_use_nulls = 1
 

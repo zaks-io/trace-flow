@@ -44,26 +44,14 @@ function makeRow(overrides: Partial<AgentCostDistributionRow> = {}): AgentCostDi
     prior_cache_inclusive_tokens_p95: 0,
     cache_inclusive_tokens_max: 0,
     prior_cache_inclusive_tokens_max: 0,
-    cost_bin_under_10c: 0,
-    cost_bin_10c_1: 0,
-    cost_bin_1_5: 0,
-    cost_bin_5_20: 0,
-    cost_bin_20_plus: 0,
-    cost_sum_under_10c: 0,
-    cost_sum_10c_1: 0,
-    cost_sum_1_5: 0,
-    cost_sum_5_20: 0,
-    cost_sum_20_plus: 0,
-    token_bin_under_10k: 0,
-    token_bin_10k_50k: 0,
-    token_bin_50k_200k: 0,
-    token_bin_200k_1m: 0,
-    token_bin_1m_plus: 0,
-    token_sum_under_10k: 0,
-    token_sum_10k_50k: 0,
-    token_sum_50k_200k: 0,
-    token_sum_200k_1m: 0,
-    token_sum_1m_plus: 0,
+    cost_bucket_lo: [],
+    cost_bucket_hi: [],
+    cost_bucket_count: [],
+    cost_bucket_sum: [],
+    token_bucket_lo: [],
+    token_bucket_hi: [],
+    token_bucket_count: [],
+    token_bucket_sum: [],
     top_10pct_cost_usd: 0,
     top_10pct_session_count: 0,
     gini: 0,
@@ -75,32 +63,51 @@ function makeRow(overrides: Partial<AgentCostDistributionRow> = {}): AgentCostDi
 }
 
 describe('buildDistributionBins', () => {
-  it('maps the five cost bands in order with counts and summed spend', () => {
+  it('zips the cost decile arrays into bars with data-derived range labels and spend totals', () => {
     const bins = buildDistributionBins(
       makeRow({
-        cost_bin_under_10c: 3,
-        cost_sum_under_10c: 0.15,
-        cost_bin_10c_1: 2,
-        cost_sum_10c_1: 0.9,
-        cost_bin_1_5: 1,
-        cost_sum_1_5: 4,
-        cost_bin_20_plus: 1,
-        cost_sum_20_plus: 50,
+        cost_bucket_lo: [0.1, 0.8, 22],
+        cost_bucket_hi: [0.8, 22, 240],
+        cost_bucket_count: [2, 5, 1],
+        cost_bucket_sum: [0.9, 60, 240],
       }),
       'cost',
     );
-    expect(bins.map((b) => b.label)).toEqual(['<$0.10', '$0.10–1', '$1–5', '$5–20', '$20+']);
-    expect(bins[0]).toEqual({ label: '<$0.10', count: 3, total: 0.15 });
-    expect(bins[4]).toEqual({ label: '$20+', count: 1, total: 50 });
+    expect(bins.map((b) => b.label)).toEqual(['$0.100–$0.800', '$0.800–$22.00', '$22.00–$240.00']);
+    expect(bins[0]).toEqual({ label: '$0.100–$0.800', count: 2, total: 0.9 });
+    // Bar height is the SUMMED spend (where the money is), not the conversation count.
+    expect(bins[2]).toEqual({ label: '$22.00–$240.00', count: 1, total: 240 });
   });
 
-  it('maps the five generated-token bands in order on the token axis', () => {
+  it('zips the generated-token decile arrays on the token axis', () => {
     const bins = buildDistributionBins(
-      makeRow({ token_bin_under_10k: 4, token_sum_under_10k: 12000, token_bin_1m_plus: 1 }),
+      makeRow({
+        token_bucket_lo: [1000, 48000],
+        token_bucket_hi: [48000, 1200000],
+        token_bucket_count: [4, 1],
+        token_bucket_sum: [60000, 1200000],
+      }),
       'tokens',
     );
-    expect(bins.map((b) => b.label)).toEqual(['<10k', '10k–50k', '50k–200k', '200k–1M', '1M+']);
-    expect(bins[0]).toEqual({ label: '<10k', count: 4, total: 12000 });
+    expect(bins.map((b) => b.label)).toEqual(['1.0K–48.0K', '48.0K–1.2M']);
+    expect(bins[0]).toEqual({ label: '1.0K–48.0K', count: 4, total: 60000 });
+  });
+
+  it('returns no bars when the bucket arrays are empty (no spread / no conversations)', () => {
+    expect(buildDistributionBins(makeRow(), 'cost')).toEqual([]);
+  });
+
+  it('truncates to the shortest array if the parallel arrays ever disagree in length', () => {
+    const bins = buildDistributionBins(
+      makeRow({
+        cost_bucket_lo: [0.1, 0.8],
+        cost_bucket_hi: [0.8, 4],
+        cost_bucket_count: [2],
+        cost_bucket_sum: [0.9],
+      }),
+      'cost',
+    );
+    expect(bins).toHaveLength(1);
   });
 });
 

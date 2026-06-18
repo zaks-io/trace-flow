@@ -49,6 +49,7 @@ export function AgentAnalytics() {
     timeseries,
     burnSeries,
     priorBurnSeries,
+    repoSeries,
     summary,
     costDistribution,
     costByDepth,
@@ -241,6 +242,8 @@ export function AgentAnalytics() {
           burnSeries={burnSeries}
           priorBurnSeries={priorBurnSeries}
           groupedSeries={timeseries}
+          repoSeries={repoSeries}
+          onRepoToggle={toggleRepo}
           groupBy={groupBy}
           onGroupByChange={setGroupBy}
           costDistribution={costDistribution}

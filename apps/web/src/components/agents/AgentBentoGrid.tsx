@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from 'react';
 import { formatNumber } from '@/lib/format';
-import { cn } from '@/lib/utils';
 import { AgentUsageChart } from './AgentUsageChart';
 import { NotableChangesStrip } from './NotableChangesStrip';
 import { BentoCell } from './BentoCell';
@@ -10,8 +9,11 @@ import { ConversationSizeHistogram } from './ConversationSizeHistogram';
 import { CostProjectionHero } from './CostProjectionHero';
 import { ContextDistributionCell } from './ContextDistributionCell';
 import { CostByDepthCell } from './CostByDepthCell';
+import { DailyActiveUsage } from './DailyActiveUsage';
+import { SegmentedControl } from './SegmentedControl';
 import { SpendConcentrationDetail } from './SpendConcentrationDetail';
 import { StatTile } from './StatTile';
+import { UsageOverTimeCell } from './UsageOverTimeCell';
 import { VelocityBar } from './VelocityBar';
 import { buildAttentionSignals } from './buildAttentionSignals';
 import { buildBurnRateStats, hasUsableBurnRateBuckets, type BurnRateStats } from './burnRate';
@@ -38,6 +40,8 @@ export function AgentBentoGrid({
   burnSeries,
   priorBurnSeries,
   groupedSeries,
+  repoSeries,
+  onRepoToggle,
   groupBy,
   onGroupByChange,
   costDistribution,
@@ -61,6 +65,10 @@ export function AgentBentoGrid({
   priorBurnSeries: AgentTimeseriesRow[];
   /** Time-series fetched with the active `groupBy`; powers the hero drill-down split. */
   groupedSeries: AgentTimeseriesRow[];
+  /** Always-fetched repo-grouped daily series for the "Usage over time" cell. */
+  repoSeries: AgentTimeseriesRow[];
+  /** Toggle a repo into the active Repo filter (legend click-to-filter on the repo chart). */
+  onRepoToggle: (repoFingerprint: string) => void;
   groupBy: AgentGroupBy;
   onGroupByChange: (next: AgentGroupBy) => void;
   costDistribution: AgentCostDistributionRow | null;
@@ -201,6 +209,18 @@ export function AgentBentoGrid({
         />
       </div>
 
+      {/* Row 1b — usage over time by repo (always visible) + daily active rhythm */}
+      <div className="lg:col-span-6 xl:col-span-8">
+        <UsageOverTimeCell
+          repoSeries={repoSeries}
+          onRepoToggle={onRepoToggle}
+          labelFor={labelFor}
+        />
+      </div>
+      <div className="lg:col-span-6 xl:col-span-4">
+        <DailyActiveUsage burnSeries={burnSeries} stats={stats} />
+      </div>
+
       {/* Row 2 — Q4 cost-per-conversation distribution + Q3 per-turn context distribution */}
       <div className="lg:col-span-6 xl:col-span-6">
         <ConversationSizeHistogram
@@ -254,6 +274,11 @@ export function AgentBentoGrid({
   );
 }
 
+const GROUP_BY_OPTIONS = AGENT_GROUP_BY.filter((g) => g !== 'none').map((value) => ({
+  value,
+  label: AGENT_GROUP_BY_LABEL[value],
+}));
+
 function GroupByToggle({
   value,
   onChange,
@@ -262,22 +287,11 @@ function GroupByToggle({
   onChange: (next: AgentGroupBy) => void;
 }) {
   return (
-    <div className="flex rounded-lg border border-border/60">
-      {AGENT_GROUP_BY.filter((g) => g !== 'none').map((option) => (
-        <button
-          key={option}
-          type="button"
-          onClick={() => onChange(option)}
-          className={cn(
-            'px-2 py-1 text-[11px] font-medium transition-colors first:rounded-l-lg last:rounded-r-lg',
-            value === option
-              ? 'bg-primary/10 text-primary'
-              : 'text-muted-foreground hover:text-foreground',
-          )}
-        >
-          {AGENT_GROUP_BY_LABEL[option]}
-        </button>
-      ))}
-    </div>
+    <SegmentedControl
+      ariaLabel="Group by"
+      value={value}
+      options={GROUP_BY_OPTIONS}
+      onChange={onChange}
+    />
   );
 }

@@ -299,29 +299,23 @@ export interface AgentCostDistributionRow {
   prior_cache_inclusive_tokens_p95: number;
   cache_inclusive_tokens_max: number;
   prior_cache_inclusive_tokens_max: number;
-  /** Cost-magnitude histogram: conversation counts per spend band (current window). */
-  cost_bin_under_10c: number;
-  cost_bin_10c_1: number;
-  cost_bin_1_5: number;
-  cost_bin_5_20: number;
-  cost_bin_20_plus: number;
-  /** Total spend within each cost band — shows where the dollars concentrate. */
-  cost_sum_under_10c: number;
-  cost_sum_10c_1: number;
-  cost_sum_1_5: number;
-  cost_sum_5_20: number;
-  cost_sum_20_plus: number;
-  /** Generated-token histogram: conversation counts per token band (current window). */
-  token_bin_under_10k: number;
-  token_bin_10k_50k: number;
-  token_bin_50k_200k: number;
-  token_bin_200k_1m: number;
-  token_bin_1m_plus: number;
-  token_sum_under_10k: number;
-  token_sum_10k_50k: number;
-  token_sum_50k_200k: number;
-  token_sum_200k_1m: number;
-  token_sum_1m_plus: number;
+  /**
+   * Equal-frequency (decile-edged) cost histogram for the current window. Edges come from the
+   * data's own quantiles, so a skewed tail is resolved into several buckets instead of a fixed
+   * `$20+` catch-all. Parallel arrays: bucket i spans `cost_bucket_lo[i]`–`cost_bucket_hi[i]`,
+   * holding `cost_bucket_count[i]` conversations and `cost_bucket_sum[i]` total spend. Degenerate
+   * deciles (many identical values) collapse, so there are AT MOST 10 buckets and possibly fewer
+   * (empty when there is no spread, e.g. all-identical or no conversations).
+   */
+  cost_bucket_lo: number[];
+  cost_bucket_hi: number[];
+  cost_bucket_count: number[];
+  cost_bucket_sum: number[];
+  /** Decile-edged generated-token histogram (same shape as the cost buckets). */
+  token_bucket_lo: number[];
+  token_bucket_hi: number[];
+  token_bucket_count: number[];
+  token_bucket_sum: number[];
   /** Concentration: spend + count of the priciest 10% of conversations (the skew headline). */
   top_10pct_cost_usd: number;
   top_10pct_session_count: number;

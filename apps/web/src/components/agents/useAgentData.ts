@@ -85,6 +85,14 @@ export function useAgentData({
     [usageParams, timezone],
   );
 
+  // Repo-grouped daily series for the always-visible "Usage over time" cell. Kept separate
+  // from the expand-gated hero `groupBy` state (which also serves source/model) so this cell
+  // always has data without forcing the hero open.
+  const repoSeriesParams = useMemo(
+    () => ({ ...usageParams, group_by: 'repo', granularity: 'day', timezone }),
+    [usageParams, timezone],
+  );
+
   const priorBurnSeriesParams = useMemo(
     () => ({ ...buildPriorWindowParams(usageParams), granularity: 'day', timezone }),
     [usageParams, timezone],
@@ -103,6 +111,11 @@ export function useAgentData({
   const priorBurnSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
     pipe: 'agent_usage_timeseries',
     params: priorBurnSeriesParams,
+  });
+
+  const repoSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+    pipe: 'agent_usage_timeseries',
+    params: repoSeriesParams,
   });
 
   const summaryQuery = useTinybirdQuery<TinybirdResponse<AgentSummaryRow>>({
@@ -181,6 +194,7 @@ export function useAgentData({
   const timeseries = getFreshRows(timeseriesQuery);
   const burnSeries = getFreshRows(burnSeriesQuery);
   const priorBurnSeries = getFreshRows(priorBurnSeriesQuery);
+  const repoSeries = getFreshRows(repoSeriesQuery);
   const failures = getFreshRows(failuresQuery);
   const deltas = getFreshRows(deltaQuery);
 
@@ -188,6 +202,7 @@ export function useAgentData({
     timeseriesQuery.isLoading ||
     burnSeriesQuery.isLoading ||
     priorBurnSeriesQuery.isLoading ||
+    repoSeriesQuery.isLoading ||
     summaryQuery.isLoading ||
     costDistributionQuery.isLoading ||
     costByDepthQuery.isLoading ||
@@ -201,6 +216,7 @@ export function useAgentData({
     timeseriesQuery.error ??
     burnSeriesQuery.error ??
     priorBurnSeriesQuery.error ??
+    repoSeriesQuery.error ??
     summaryQuery.error ??
     costDistributionQuery.error ??
     costByDepthQuery.error ??
@@ -224,6 +240,7 @@ export function useAgentData({
     },
     { id: 'notableTotal', label: 'notable changes (total)', error: notableTotalQuery.error },
     { id: 'notableByRepo', label: 'notable changes (by repo)', error: notableByRepoQuery.error },
+    { id: 'repoSeries', label: 'usage by repo', error: repoSeriesQuery.error },
     { id: 'burnSeries', label: 'burn rate', error: burnSeriesQuery.error },
     {
       id: 'priorBurnSeries',
@@ -256,6 +273,7 @@ export function useAgentData({
     timeseries,
     burnSeries,
     priorBurnSeries,
+    repoSeries,
     summary,
     costDistribution,
     costByDepth,
