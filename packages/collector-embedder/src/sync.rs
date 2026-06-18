@@ -100,6 +100,17 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
 
     let store =
         CursorStore::open(crate_cursor_db(cfg.org_id)?, cfg.org_id).context("open cursor store")?;
+    store
+        .repair_legacy_cursors_without_fact_state()
+        .context("repair legacy cursor state")?;
+    let needs_replay_backfill = store
+        .needs_replay_backfill()
+        .context("read replay backfill marker")?;
+    let window = if needs_replay_backfill && matches!(cfg.window, Window::Incremental) {
+        Window::History(HistoryPreset::Last7Days)
+    } else {
+        cfg.window
+    };
 
     let cache = GitRemoteCache::new();
     let mut batch_seq: u64 = cfg.now_ms.max(0) as u64;
@@ -111,8 +122,17 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
 
     let mut reports = Vec::new();
     for source in ingestable_sources() {
-        let report = run_source(&client, &store, &cache, source, &cfg, &mut mint).await?;
+        let report = run_source(&client, &store, &cache, source, &cfg, window, &mut mint).await?;
         reports.push((source, report));
+    }
+    if needs_replay_backfill
+        && reports
+            .iter()
+            .all(|(_, report)| report.failed == 0 && !report.aborted_early)
+    {
+        store
+            .mark_replay_backfill_complete()
+            .context("mark replay backfill complete")?;
     }
     Ok(reports)
 }
@@ -130,10 +150,11 @@ async fn run_source(
     cache: &GitRemoteCache,
     source: AgentSource,
     cfg: &RunConfig<'_>,
+    window: Window,
     mint: &mut dyn FnMut() -> String,
 ) -> Result<SourceReport> {
     let mut report = SourceReport::default();
-    let window = cfg.window.import_window(cfg.now_ms);
+    let window = window.import_window(cfg.now_ms);
 
     // Two source shapes: JSONL sources (Claude, Codex) walk a `.jsonl` root and assemble per file; the
     // Cursor source reads its `state.vscdb` SQLite store and assembles per composer. Both produce the

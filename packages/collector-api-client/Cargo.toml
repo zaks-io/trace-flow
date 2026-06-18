@@ -7,6 +7,7 @@ description = "HTTP client for the Trace Flow agent Collector ingest worker."
 
 [dependencies]
 anyhow = "1"
+bytes = "1"
 collector-contracts = { path = "../collector-contracts" }
 flate2 = "1"
 reqwest = { version = "0.12", features = ["json", "gzip"] }

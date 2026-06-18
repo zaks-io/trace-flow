@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use tokio_util::sync::CancellationToken;
 
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 pub const DEFAULT_BASE_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);

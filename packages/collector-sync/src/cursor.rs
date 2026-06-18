@@ -78,7 +78,16 @@ CREATE TABLE IF NOT EXISTS fact_cursors (
     fact_identity TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     PRIMARY KEY (org_id, source, category, fact_identity)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS cursor_meta (
+    org_id TEXT NOT NULL,
+    key    TEXT NOT NULL,
+    value  TEXT NOT NULL,
+    PRIMARY KEY (org_id, key)
 ) WITHOUT ROWID;";
+
+const META_REPLAY_BACKFILL_NEEDED: &str = "replay_backfill_needed";
+const META_LEGACY_CURSOR_REPAIR_DONE: &str = "legacy_cursor_repair_done";
 
 /// How far one transcript file has been ingested. The four fields the discovery pass needs to decide
 /// whether a file is unchanged since the last successful upload.
@@ -159,6 +168,79 @@ impl CursorStore {
     fn init(conn: Connection, org_id: String) -> Result<Self, CursorStoreError> {
         conn.execute_batch(MIGRATION)?;
         Ok(Self { conn, org_id })
+    }
+
+    /// Repair legacy cursor DBs that have unit-level cursors but no fact-level send state. That shape
+    /// can falsely skip local files after reconnecting or upgrading, so clear the unit cursors and ask
+    /// the embedder to keep running the normal history window until a clean pass completes.
+    pub fn repair_legacy_cursors_without_fact_state(&self) -> Result<bool, CursorStoreError> {
+        if self
+            .get_meta(META_LEGACY_CURSOR_REPAIR_DONE)?
+            .as_deref()
+            .is_some_and(|value| value == "1")
+        {
+            return Ok(false);
+        }
+        if self.needs_replay_backfill()? {
+            return Ok(false);
+        }
+        let fact_count = self.count_rows("fact_cursors")?;
+        let unit_count = self.count_rows("file_cursors")? + self.count_rows("composer_cursors")?;
+        if fact_count > 0 || unit_count == 0 {
+            return Ok(false);
+        }
+
+        self.conn.execute(
+            "DELETE FROM file_cursors WHERE org_id = ?1",
+            params![self.org_id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM composer_cursors WHERE org_id = ?1",
+            params![self.org_id],
+        )?;
+        self.set_meta(META_REPLAY_BACKFILL_NEEDED, "1")?;
+        Ok(true)
+    }
+
+    pub fn needs_replay_backfill(&self) -> Result<bool, CursorStoreError> {
+        Ok(self
+            .get_meta(META_REPLAY_BACKFILL_NEEDED)?
+            .as_deref()
+            .is_some_and(|value| value == "1"))
+    }
+
+    pub fn mark_replay_backfill_complete(&self) -> Result<(), CursorStoreError> {
+        self.set_meta(META_LEGACY_CURSOR_REPAIR_DONE, "1")?;
+        self.conn.execute(
+            "DELETE FROM cursor_meta WHERE org_id = ?1 AND key = ?2",
+            params![self.org_id, META_REPLAY_BACKFILL_NEEDED],
+        )?;
+        Ok(())
+    }
+
+    fn count_rows(&self, table: &str) -> Result<i64, CursorStoreError> {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE org_id = ?1");
+        Ok(self
+            .conn
+            .query_row(&sql, params![self.org_id], |row| row.get(0))?)
+    }
+
+    fn get_meta(&self, key: &str) -> Result<Option<String>, CursorStoreError> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT value FROM cursor_meta WHERE org_id = ?1 AND key = ?2")?;
+        Ok(stmt
+            .query_row(params![self.org_id, key], |row| row.get(0))
+            .optional()?)
+    }
+
+    fn set_meta(&self, key: &str, value: &str) -> Result<(), CursorStoreError> {
+        self.conn.execute(
+            "INSERT INTO cursor_meta (org_id, key, value) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(org_id, key) DO UPDATE SET value = excluded.value",
+            params![self.org_id, key, value],
+        )?;
+        Ok(())
     }
 
     /// The cursor for one file, or `None` if it has never been ingested under this org + source.
@@ -750,5 +832,56 @@ mod tests {
             reopened.get(AgentSource::Claude, "/a.jsonl").unwrap(),
             Some(c)
         );
+    }
+
+    #[test]
+    fn repair_legacy_cursors_clears_unit_cursors_and_marks_replay() {
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        store
+            .advance(AgentSource::Claude, &cursor("/a.jsonl", 10))
+            .unwrap();
+        store
+            .advance_composer(AgentSource::Cursor, &composer("c-1", 2, 100))
+            .unwrap();
+
+        assert!(store.repair_legacy_cursors_without_fact_state().unwrap());
+        assert_eq!(store.list(AgentSource::Claude).unwrap(), vec![]);
+        assert_eq!(store.list_composers(AgentSource::Cursor).unwrap(), vec![]);
+        assert!(store.needs_replay_backfill().unwrap());
+
+        store
+            .advance(AgentSource::Claude, &cursor("/empty.jsonl", 20))
+            .unwrap();
+        assert!(!store.repair_legacy_cursors_without_fact_state().unwrap());
+        assert_eq!(store.list(AgentSource::Claude).unwrap().len(), 1);
+
+        store.mark_replay_backfill_complete().unwrap();
+        assert!(!store.needs_replay_backfill().unwrap());
+
+        store
+            .advance(AgentSource::Claude, &cursor("/empty-2.jsonl", 30))
+            .unwrap();
+        assert!(!store.repair_legacy_cursors_without_fact_state().unwrap());
+        assert_eq!(store.list(AgentSource::Claude).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn repair_legacy_cursors_keeps_unit_cursors_when_fact_state_exists() {
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        let c = cursor("/a.jsonl", 10);
+        store.advance(AgentSource::Claude, &c).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO fact_cursors \
+                    (org_id, source, category, fact_identity, content_hash) \
+                 VALUES ('org_1', 'claude', 'messages', 'm1', 'sha256:1')",
+                [],
+            )
+            .unwrap();
+
+        assert!(!store.repair_legacy_cursors_without_fact_state().unwrap());
+        assert_eq!(store.list(AgentSource::Claude).unwrap(), vec![c]);
+        assert!(!store.needs_replay_backfill().unwrap());
     }
 }

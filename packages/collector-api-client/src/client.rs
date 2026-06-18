@@ -2,10 +2,12 @@
 // Vendored and refactored from otto-api-client/src/lib.rs (~/src/otto, 2026-05-25).
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
+use std::error::Error as _;
 use std::io::Write as _;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use bytes::Bytes;
 use collector_contracts::AgentIngestEnvelope;
 use flate2::{write::GzEncoder, Compression};
 use reqwest::Client;
@@ -14,6 +16,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::{IngestError, IngestOk, IngestResult, UpgradeRequiredDetail};
 use crate::retry::{backoff_delay, RetryConfig, DEFAULT_TIMEOUT};
+
+/// Mirrors the Worker cap in `apps/agent-ingest/src/handler.ts`.
+const MAX_INGEST_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct CollectorApiClientConfig {
@@ -62,6 +67,9 @@ impl CollectorApiClient {
         let client = Client::builder()
             // gzip(true) enables automatic response decompression only — not request compression.
             .gzip(true)
+            // Large upload bodies are more diagnosable over HTTP/1.1; h2 stream resets often collapse
+            // to a response-less send error before the Worker can log the request.
+            .http1_only()
             .timeout(config.timeout)
             .build()
             .context("build http client")?;
@@ -86,6 +94,9 @@ impl CollectorApiClient {
     ) -> IngestResult {
         let url = format!("{}/v1/ingest", self.config.ingest_url.trim_end_matches('/'));
         let body = gzip_json(envelope).map_err(IngestError::Transport)?;
+        if body.json_bytes > MAX_INGEST_BYTES || body.gzip_bytes.len() > MAX_INGEST_BYTES {
+            return Err(IngestError::PayloadTooLarge);
+        }
 
         for attempt in 0..=self.config.retry.max_retries {
             if cancel.map(|t| t.is_cancelled()).unwrap_or(false) {
@@ -101,7 +112,7 @@ impl CollectorApiClient {
                 )
                 .header("Content-Type", "application/json")
                 .header("Content-Encoding", "gzip")
-                .body(body.clone());
+                .body(body.gzip_bytes.clone());
 
             let result = if let Some(token) = cancel {
                 tokio::select! {
@@ -123,7 +134,10 @@ impl CollectorApiClient {
                             .map_err(IngestError::Transport)?;
                         continue;
                     }
-                    return Err(IngestError::Transport(anyhow!("http send failed: {err}")));
+                    return Err(IngestError::Transport(anyhow!(
+                        "http send failed: {}",
+                        describe_send_error(&err)
+                    )));
                 }
             };
 
@@ -227,11 +241,47 @@ fn classify_response(status: u16, body: &str) -> ResponseClass {
 /// The ingest worker buffers the entire body before parsing, so we use the
 /// default compression level. `reqwest`'s `.gzip(true)` only decompresses
 /// responses — sending compressed request bodies requires manual encoding here.
-fn gzip_json<T: serde::Serialize>(value: &T) -> Result<Vec<u8>> {
+struct EncodedBody {
+    gzip_bytes: Bytes,
+    json_bytes: usize,
+}
+
+fn gzip_json<T: serde::Serialize>(value: &T) -> Result<EncodedBody> {
     let json = serde_json::to_vec(value).context("serialize envelope to JSON")?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(&json).context("gzip write")?;
-    encoder.finish().context("gzip finish")
+    let gzip_bytes = encoder.finish().context("gzip finish")?;
+    Ok(EncodedBody {
+        gzip_bytes: Bytes::from(gzip_bytes),
+        json_bytes: json.len(),
+    })
+}
+
+fn describe_send_error(err: &reqwest::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut flags = Vec::new();
+    if err.is_timeout() {
+        flags.push("timeout");
+    }
+    if err.is_connect() {
+        flags.push("connect");
+    }
+    if err.is_request() {
+        flags.push("request");
+    }
+    if err.is_body() {
+        flags.push("body");
+    }
+    if !flags.is_empty() {
+        parts.push(format!("kind={}", flags.join(",")));
+    }
+
+    let mut source = err.source();
+    while let Some(src) = source {
+        parts.push(format!("caused by: {src}"));
+        source = src.source();
+    }
+    parts.join("; ")
 }
 
 #[cfg(test)]
