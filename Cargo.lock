@@ -613,6 +613,7 @@ name = "collector-api-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "collector-contracts",
  "flate2",
  "reqwest 0.12.28",

@@ -181,6 +181,9 @@ impl CursorStore {
         {
             return Ok(false);
         }
+        if self.needs_replay_backfill()? {
+            return Ok(false);
+        }
         let fact_count = self.count_rows("fact_cursors")?;
         let unit_count = self.count_rows("file_cursors")? + self.count_rows("composer_cursors")?;
         if fact_count > 0 || unit_count == 0 {
@@ -846,14 +849,20 @@ mod tests {
         assert_eq!(store.list_composers(AgentSource::Cursor).unwrap(), vec![]);
         assert!(store.needs_replay_backfill().unwrap());
 
-        store.mark_replay_backfill_complete().unwrap();
-        assert!(!store.needs_replay_backfill().unwrap());
-
         store
             .advance(AgentSource::Claude, &cursor("/empty.jsonl", 20))
             .unwrap();
         assert!(!store.repair_legacy_cursors_without_fact_state().unwrap());
         assert_eq!(store.list(AgentSource::Claude).unwrap().len(), 1);
+
+        store.mark_replay_backfill_complete().unwrap();
+        assert!(!store.needs_replay_backfill().unwrap());
+
+        store
+            .advance(AgentSource::Claude, &cursor("/empty-2.jsonl", 30))
+            .unwrap();
+        assert!(!store.repair_legacy_cursors_without_fact_state().unwrap());
+        assert_eq!(store.list(AgentSource::Claude).unwrap().len(), 2);
     }
 
     #[test]

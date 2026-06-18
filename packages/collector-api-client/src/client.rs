@@ -7,6 +7,7 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use bytes::Bytes;
 use collector_contracts::AgentIngestEnvelope;
 use flate2::{write::GzEncoder, Compression};
 use reqwest::Client;
@@ -241,7 +242,7 @@ fn classify_response(status: u16, body: &str) -> ResponseClass {
 /// default compression level. `reqwest`'s `.gzip(true)` only decompresses
 /// responses — sending compressed request bodies requires manual encoding here.
 struct EncodedBody {
-    gzip_bytes: Vec<u8>,
+    gzip_bytes: Bytes,
     json_bytes: usize,
 }
 
@@ -251,7 +252,7 @@ fn gzip_json<T: serde::Serialize>(value: &T) -> Result<EncodedBody> {
     encoder.write_all(&json).context("gzip write")?;
     let gzip_bytes = encoder.finish().context("gzip finish")?;
     Ok(EncodedBody {
-        gzip_bytes,
+        gzip_bytes: Bytes::from(gzip_bytes),
         json_bytes: json.len(),
     })
 }

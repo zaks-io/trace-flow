@@ -229,12 +229,33 @@ async fn rejects_oversized_envelope_before_network() {
         gzip_base64: "x".repeat(MAX_INGEST_BYTES),
     }]);
 
-    let client = test_client("http://127.0.0.1:9".to_string(), 0);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let connection_count = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn({
+        let connection_count = Arc::clone(&connection_count);
+        async move {
+            loop {
+                let Ok((_stream, _)) = listener.accept().await else {
+                    break;
+                };
+                connection_count.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+
+    let client = test_client(format!("http://{addr}"), 0);
     let err = client.ingest(&envelope, None).await.unwrap_err();
     assert!(
         matches!(err, IngestError::PayloadTooLarge),
         "expected PayloadTooLarge, got: {err}"
     );
+    assert_eq!(
+        connection_count.load(Ordering::SeqCst),
+        0,
+        "oversized payload attempted a network connection"
+    );
+    server.abort();
 }
 
 // --- verify assertion 3a: retry transient failures, then 202 succeeds ---
