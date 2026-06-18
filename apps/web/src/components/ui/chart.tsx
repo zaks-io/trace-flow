@@ -116,8 +116,12 @@ function ChartTooltipContent({
     indicator?: 'line' | 'dot' | 'dashed';
     nameKey?: string;
     labelKey?: string;
-    /** Formats the numeric value while preserving default label + indicator rendering. Mutually exclusive with Recharts' `formatter`. */
-    valueFormatter?: (value: number) => string;
+    /**
+     * Formats the numeric value while preserving default label + indicator rendering. Mutually
+     * exclusive with Recharts' `formatter`. `name` is the series dataKey/name, so dual-axis
+     * charts can format each series in its own unit.
+     */
+    valueFormatter?: (value: number, name: string) => string;
   }) {
   const { config } = useChart();
 
@@ -211,7 +215,7 @@ function ChartTooltipContent({
                   {item.value != null && (
                     <span className="text-foreground font-mono font-medium tabular-nums">
                       {valueFormatter
-                        ? valueFormatter(Number(item.value))
+                        ? valueFormatter(Number(item.value), key)
                         : item.value.toLocaleString()}
                     </span>
                   )}

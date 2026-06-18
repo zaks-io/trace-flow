@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts';
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { ChartContainer, ChartTooltip } from '@/components/ui/chart';
 import { BentoCell } from './BentoCell';
 import {
   axisLabel,
@@ -17,14 +17,16 @@ import {
 import type { AgentCostDistributionRow } from './types';
 
 const CHART_CONFIG = {
-  count: { label: 'Conversations', color: 'var(--color-chart-1)' },
+  total: { label: 'Spend', color: 'var(--color-chart-1)' },
 };
 
 /**
- * Q4: where does the spend go? A histogram of conversations by COST (default) or generated
- * tokens (toggle) — never by message count, which hides the dollars. The headline is the
- * skew: a handful of conversations carry most of the cost. Per-conversation p50/p95 and the
- * top-10% concentration make that explicit.
+ * Q4: where does the spend go? An equal-frequency histogram of conversations by COST (default)
+ * or generated tokens (toggle). Bucket edges are the data's own deciles (computed in the pipe),
+ * so the expensive tail is resolved into several bars instead of a fixed `$20+` catch-all. Bar
+ * HEIGHT is the summed magnitude in that band — i.e. where the money / tokens actually go — so
+ * the tall bars on the right are the spend to investigate; the conversation count rides in the
+ * tooltip. Per-conversation p50/p95 and the top-10% concentration headline the skew.
  */
 export function ConversationSizeHistogram({
   row,
@@ -45,7 +47,7 @@ export function ConversationSizeHistogram({
   const skew = useMemo(() => (row ? buildSkewSummary(row) : null), [row]);
 
   const fmt = (v: number) => formatAxisValue(axis, v);
-  const maxCount = bins.reduce((m, b) => Math.max(m, b.count), 0);
+  const maxTotal = bins.reduce((m, b) => Math.max(m, b.total), 0);
 
   return (
     <BentoCell
@@ -75,33 +77,47 @@ export function ConversationSizeHistogram({
         <div className="flex h-full flex-col">
           <SkewHeadline axis={axis} percentiles={percentiles} skew={skew} windowDays={windowDays} />
 
-          <ChartContainer config={CHART_CONFIG} className="mt-3 !aspect-auto h-[140px] w-full">
-            <BarChart data={bins} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} tickMargin={6} />
-              <YAxis tick={{ fontSize: 10 }} width={28} allowDecimals={false} />
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    valueFormatter={(v) => `${formatNumber(Number(v))} conversations`}
-                  />
-                }
-              />
-              <Bar dataKey="count" radius={2}>
-                {bins.map((entry, i) => (
-                  <Cell
-                    key={entry.label}
-                    fill="var(--color-chart-1)"
-                    fillOpacity={maxCount > 0 ? 0.35 + 0.65 * (entry.count / maxCount) : 0.5}
-                    // Last band is the costly tail — flag it so the eye lands there.
-                    stroke={
-                      i === bins.length - 1 && entry.count > 0 ? 'var(--color-chart-1)' : undefined
-                    }
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ChartContainer>
+          {bins.length === 0 ? (
+            <p className="flex h-[160px] items-center text-sm text-muted-foreground">
+              Not enough spread to bucket {axis === 'cost' ? 'spend' : 'tokens'} here.
+            </p>
+          ) : (
+            <ChartContainer config={CHART_CONFIG} className="mt-3 !aspect-auto h-[160px] w-full">
+              <BarChart data={bins} margin={{ top: 4, right: 8, bottom: 16, left: 0 }}>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  vertical={false}
+                  stroke="var(--color-border)"
+                />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 9 }}
+                  tickMargin={6}
+                  angle={-30}
+                  textAnchor="end"
+                  interval={0}
+                  height={36}
+                />
+                <YAxis tick={{ fontSize: 10 }} width={52} tickFormatter={fmt} />
+                <ChartTooltip content={<BucketTooltip axis={axis} />} />
+                <Bar dataKey="total" radius={2}>
+                  {bins.map((entry, i) => (
+                    <Cell
+                      key={entry.label}
+                      fill="var(--color-chart-1)"
+                      fillOpacity={maxTotal > 0 ? 0.35 + 0.65 * (entry.total / maxTotal) : 0.5}
+                      // Last band is the costly tail — flag it so the eye lands there.
+                      stroke={
+                        i === bins.length - 1 && entry.total > 0
+                          ? 'var(--color-chart-1)'
+                          : undefined
+                      }
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ChartContainer>
+          )}
         </div>
       ) : (
         <p className="flex h-[180px] items-center text-sm text-muted-foreground">
@@ -109,6 +125,43 @@ export function ConversationSizeHistogram({
         </p>
       )}
     </BentoCell>
+  );
+}
+
+/**
+ * Tooltip for one decile bucket: its data-derived range, the summed magnitude (the bar height —
+ * spend or tokens), and the conversation count that produced it. The count is context here, not
+ * the headline: equal-frequency buckets hold roughly the same count by construction, so the story
+ * is in the summed magnitude.
+ */
+function BucketTooltip({
+  axis,
+  active,
+  payload,
+}: {
+  axis: DistributionAxis;
+  active?: boolean;
+  payload?: Array<{ payload: { label: string; count: number; total: number } }>;
+}) {
+  if (!active || !payload?.length) return null;
+  const bin = payload[0].payload;
+  const totalLabel = axis === 'cost' ? 'spend' : 'tokens';
+  return (
+    <div className="rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      <div className="font-medium text-foreground">{bin.label}</div>
+      <div className="mt-1 flex items-center justify-between gap-4 text-muted-foreground">
+        <span>{totalLabel}</span>
+        <span className="font-mono font-medium tabular-nums text-foreground">
+          {formatAxisValue(axis, bin.total)}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-4 text-muted-foreground">
+        <span>conversations</span>
+        <span className="font-mono font-medium tabular-nums text-foreground">
+          {formatNumber(bin.count)}
+        </span>
+      </div>
+    </div>
   );
 }
 
