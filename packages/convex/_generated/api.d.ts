@@ -481,7 +481,7 @@ export declare const api: {
         "query",
         "public",
         { token: string },
-        null | { status: "pending" | "accepted" | "expired" }
+        null | { email?: string; status: "pending" | "accepted" | "expired" }
       >;
       listInvites: FunctionReference<
         "query",

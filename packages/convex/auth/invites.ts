@@ -90,6 +90,7 @@ export const getInviteByToken = query({
     v.null(),
     v.object({
       status: v.union(v.literal('pending'), v.literal('accepted'), v.literal('expired')),
+      email: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -104,7 +105,10 @@ export const getInviteByToken = query({
       return { status: 'expired' as const };
     }
 
-    return { status: invite.status };
+    return {
+      status: invite.status,
+      email: invite.status === 'pending' ? invite.email : undefined,
+    };
   },
 });
 
@@ -112,6 +116,15 @@ export const acceptInvite = mutation({
   args: { token: v.string() },
   returns: v.object({ email: v.string() }),
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error('Authentication required');
+    }
+    const identityEmail = identity?.email?.toLowerCase().trim();
+    if (!identityEmail) {
+      throw new Error('Authenticated email is required');
+    }
+
     const invite = await ctx.db
       .query('invites')
       .withIndex('by_token', (q) => q.eq('token', args.token))
@@ -123,6 +136,10 @@ export const acceptInvite = mutation({
 
     if (invite.status !== 'pending') {
       throw new Error(`Invite has already been ${invite.status}`);
+    }
+
+    if (invite.email !== identityEmail) {
+      throw new Error('Invite is for a different email address');
     }
 
     if (invite.expiresAt < Date.now()) {

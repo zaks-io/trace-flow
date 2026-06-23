@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { type Preloaded, useMutation, usePreloadedQuery, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
@@ -36,12 +36,10 @@ export default function Usage({
   const onboardingCompleted = Boolean(sessionContext?.onboardingCompletedAt);
   const completeOnboarding = useMutation(api.auth.organizations.completeOnboarding);
 
-  const [errorCount, setErrorCount] = useState(0);
-
   const firstTraceQuery = useTinybirdQuery<TinybirdTraceListResponse>({
     pipe: 'traces_list',
     params: { limit: 1 },
-    enabled: Boolean(sessionContext?.user) && !onboardingCompleted && errorCount < 3,
+    enabled: Boolean(sessionContext?.user) && !onboardingCompleted,
     pollInterval: 10_000,
     staleTime: 0,
   });
@@ -53,10 +51,6 @@ export default function Usage({
       completeOnboarding().catch((e) => console.error('Failed to complete onboarding:', e));
     }
   }, [tinybirdHasTraces, onboardingCompleted, completeOnboarding]);
-
-  useEffect(() => {
-    if (firstTraceQuery.error) setErrorCount((c) => c + 1);
-  }, [firstTraceQuery.error]);
 
   if (sessionContext === undefined) {
     return <UsageLoadingState />;

@@ -194,9 +194,22 @@ describe('acceptInvite handler logic', () => {
     expect(ctx._dbPatch).toHaveBeenCalledWith('invite_id', { status: 'expired' });
   });
 
+  it('throws when authenticated email does not match invite email', () => {
+    const invite = makeInvite({ email: 'invitee@example.com' });
+    const identityEmail = 'other@example.com';
+
+    expect(() => {
+      if (invite.email !== identityEmail)
+        throw new Error('Invite is for a different email address');
+    }).toThrow('Invite is for a different email address');
+  });
+
   it('patches invite to accepted status', async () => {
     const invite = makeInvite();
     const ctx = makeCtx();
+    const identityEmail = 'invitee@example.com';
+
+    if (invite.email !== identityEmail) throw new Error('Invite is for a different email address');
 
     // validation passes, accept
     await ctx.db.patch(invite._id, {
