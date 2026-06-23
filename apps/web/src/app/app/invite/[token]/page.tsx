@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 
@@ -14,9 +14,11 @@ export default function AuthenticatedInviteAcceptPage({
   const initializeUser = useMutation(api.auth.users.initializeUser);
   const [status, setStatus] = useState<'accepting' | 'success' | 'error'>('accepting');
   const [errorMessage, setErrorMessage] = useState('');
+  const hasStarted = useRef(false);
 
   useEffect(() => {
-    if (status !== 'accepting') return;
+    if (status !== 'accepting' || hasStarted.current) return;
+    hasStarted.current = true;
 
     acceptInvite({ token })
       .then(async () => {

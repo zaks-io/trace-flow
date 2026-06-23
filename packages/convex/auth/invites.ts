@@ -138,7 +138,7 @@ export const acceptInvite = mutation({
       throw new Error(`Invite has already been ${invite.status}`);
     }
 
-    if (invite.email !== identityEmail) {
+    if (invite.email.toLowerCase().trim() !== identityEmail) {
       throw new Error('Invite is for a different email address');
     }
 
