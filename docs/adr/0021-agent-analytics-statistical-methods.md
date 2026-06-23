@@ -195,6 +195,16 @@ Sources: [QuantEcon Heavy Tails ch.22](https://intro.quantecon.org/heavy_tails.h
 - **THE COMMON BUG:** **R and NumPy default to Type 7**; Excel/older Python ≈ 6/7; SAS/Stata ≈
   type 2. Same data → different P90/P99 across tools unless pinned. **Set it explicitly**
   (NumPy `method='median_unbiased'` matches R type 8). The engine must pin one type everywhere.
+- **HOUSE ESTIMATOR (implementation exception):** the ClickHouse layer pins **`quantileExact`**
+  (and `quantileExactIf` / `quantileExactWeighted`) as the one estimator everywhere, **not**
+  Type 8. ClickHouse has no native Hyndman–Fan Type 8 function; reproducing it would mean
+  hand-rolled SQL interpolation and reworking the frozen `AggregateFunction(quantileExact(...))`
+  state columns (`agent_context_call_buckets_hourly`), and would re-baseline every live p90/p95
+  for a plotting-position difference that is immaterial at our n. `quantileExact` returns an
+  exact order statistic (with linear interpolation between neighbors), which is robust and
+  deterministic — it satisfies the real requirement ("pin ONE estimator, no cross-tool drift").
+  **Any future engine / TS-side quantile MUST match `quantileExact`, not Type 8.** If a layer
+  ever needs true Type 8, migrate the whole stack together; do not mix estimators.
 - **Extreme tail (P99/P99.9) with limited data:** the most extreme order statistics are
   high-variance; **you cannot extrapolate past the sample max** without a tail model. Principled
   far-tail = **Extreme Value Theory / Peaks-Over-Threshold + Generalized Pareto** above ~90–95th
@@ -450,8 +460,9 @@ upper adjusted-boxplot fence (medcouple-based, Hubert–Vandervieren) computed o
    Gini; never compare unequal-n groups uncorrected.
 3. **Attribution by dimension:** **Theil T (GE(1))**, report between- vs within-%; strip x≤0
    first and surface the drop count (GE(2) if zeros are unfilterable).
-4. **Location/spread:** **median + P50/P90/P99** (Hyndman–Fan **Type 8**, pinned), MAD×1.4826 for
-   outlier flags only. Never headline mean/stddev/CV.
+4. **Location/spread:** **median + P50/P90/P99** (one pinned estimator — `quantileExact` in the
+   ClickHouse layer; see §Distribution house-estimator note), MAD×1.4826 for outlier flags only.
+   Never headline mean/stddev/CV.
 5. **Far tail:** don't trust empirical P99.9; never extrapolate past sample max (EVT/GPD if it
    matters).
 6. **Distribution claim:** say "right-skewed / heavy-tailed," **not** "power law" / "80/20" —
@@ -465,8 +476,10 @@ The mistakes the engine must not make:
 
 1. **Population vs `n/(n−1)` sample Gini on unequal-n groups** — biases small cohorts toward
    looking equal. Use the bias-corrected estimator.
-2. **Unpinned quantile estimator** — R/NumPy default to Type 7, not the recommended Type 8 →
-   silent cross-tool P90/P99 disagreement. Pin the type.
+2. **Unpinned quantile estimator** — different tools use different plotting positions (R/NumPy
+   Type 7, SAS Type 2, ClickHouse `quantileExact`) → silent cross-tool P90/P99 disagreement.
+   Pin ONE estimator everywhere; ours is **`quantileExact`** (see the house-estimator note in
+   §Distribution), and any non-ClickHouse layer must match it rather than its own default.
 3. **Least-squares fit on log-log to claim a power law** — biased; use MLE + GoF + LR tests, or
    don't claim a law.
 4. **Equal-width histograms / un-normalized log bins on heavy tails** — hide the tail or distort
@@ -482,6 +495,30 @@ The mistakes the engine must not make:
     space out or pre-whiten.
 12. **Pooled cost-vs-turn_index trend** — risks Simpson's paradox; verify within model/repo,
     always state "association, not causation."
+
+## Implementation status / conformance (as of the agent-analytics pipeline)
+
+The shipped Tinybird `agent_*` pipes were audited against this catalog. They were already
+largely conformant — quantile-first (never mean±SD on cost/tokens), real Lorenz + top-decile
+share + Hoover-equivalent half-spend count, **equal-frequency** decile cost buckets, and
+fact-only copy (no "anomaly", explicit "NOT a statistical anomaly model"). Two defects were
+fixed to bring the live pipeline in line:
+
+- **Gini** (`pipes/agent_session_cost_distribution.pipe`) now applies the **`n/(n−1)` sample
+  correction**; it previously shipped the biased population form (guardrail #1).
+- **Cost/context-by-depth elasticity** (`pipes/agent_cost_by_depth.pipe`) now uses a
+  **Theil–Sen** slope (median of pairwise slopes); it previously used OLS
+  (`simpleLinearRegression`), which has 0% breakdown on the heavy-tailed cost it fits.
+
+Quantiles are pinned to **`quantileExact`** per the house-estimator exception above (no Type 8
+migration).
+
+**Known deferred gap (out of scope for this catalog, tracked separately):** the LLM/trace-layer
+pipes (`llm_usage_summary`, `operations_leaderboard`, `operation_user_breakdown`,
+`traces_summary`) headline **arithmetic-mean** durations (`avg`/`avgMerge`) and
+`cost_per_request = total/count` on heavy-tailed latency/cost. They predate this ADR (which is
+scoped to agent analytics) and already pair the mean with p95. Applying robust location to that
+layer is a follow-up, not a conformance failure of the agent-analytics surface.
 
 ## Consequences
 

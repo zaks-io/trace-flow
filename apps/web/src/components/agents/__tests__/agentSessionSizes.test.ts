@@ -164,13 +164,14 @@ describe('buildSkewSummary', () => {
 });
 
 describe('buildConcentrationCurve', () => {
-  // Mirrors the pipe fixture: costs {0.1, 0.8, 4.0}, total 4.9, gini 0.5306, half in 1 conversation.
+  // Mirrors the pipe fixture: costs {0.1, 0.8, 4.0}, total 4.9, n/(n-1)-corrected gini 0.7959
+  // (population 0.5306 * 3/2), half in 1 conversation.
   const fixtureRow = makeRow({
     session_count: 3,
     total_cost_usd: 4.9,
     top_10pct_cost_usd: 4,
     top_10pct_session_count: 1,
-    gini: 0.5306,
+    gini: 0.7959,
     half_spend_conv_count: 1,
     lorenz_conv_pct: [0, 1 / 3, 2 / 3, 1],
     lorenz_cost_pct: [0, 4 / 4.9, 4.8 / 4.9, 1],
@@ -178,7 +179,7 @@ describe('buildConcentrationCurve', () => {
 
   it('reads the derived scalars straight from the row', () => {
     const curve = buildConcentrationCurve(fixtureRow);
-    expect(curve.gini).toBeCloseTo(0.5306);
+    expect(curve.gini).toBeCloseTo(0.7959);
     expect(curve.halfSpendCount).toBe(1);
     expect(curve.topCount).toBe(1);
     expect(curve.topCostShare).toBeCloseTo(4 / 4.9);

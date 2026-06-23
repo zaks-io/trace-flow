@@ -29,7 +29,7 @@ const CHART_CONFIG = {
  * turns? Two stacked depth charts over raw conversation depth (turn_index): per-turn CONTEXT
  * (the cause) above per-turn COST (the effect). Each shows the median line, a p25–p75 band, and a
  * faint p95 envelope — a population view, every turn at a depth across every conversation, no single
- * conversation and no chosen "deep" cutoff. The headline is a log-log elasticity (the fitted slope):
+ * conversation and no chosen "deep" cutoff. The headline is a log-log elasticity (robust Theil-Sen slope):
  * ~1 is linear bloat, >1 is the runaway. Every number is derived from the per-turn facts.
  */
 export function CostByDepthCell({
@@ -46,7 +46,7 @@ export function CostByDepthCell({
     <BentoCell
       title="Cost as conversations deepen"
       hint="per-turn cost & context by how deep into the conversation a turn is"
-      caveat={`Each point pools every turn at that depth across all conversations — not one conversation. Depth is the raw turn position; the elasticity is the fitted log-log slope, not a chosen cutoff. Cost is an estimate (lower bound), last ${windowDays} days.`}
+      caveat={`Each point pools every turn at that depth across all conversations — not one conversation. Depth is the raw turn position; the elasticity is a robust Theil-Sen log-log slope, not a chosen cutoff. It is an association, not causation — pooled across models and repos, so it is not controlled for which model runs at which depth. Cost is an estimate (lower bound), last ${windowDays} days.`}
     >
       {hasData && series ? (
         <div className="flex h-full flex-col gap-4">
