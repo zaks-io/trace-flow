@@ -238,9 +238,10 @@ describe('acceptInvite handler logic', () => {
       identity: makeIdentity({ email: 'invitee@example.com' }),
     });
 
-    await expect(callAcceptInvite(ctx)).resolves.toEqual({ email: ' Invitee@Example.COM ' });
+    await expect(callAcceptInvite(ctx)).resolves.toEqual({ email: 'invitee@example.com' });
 
     expect(ctx._dbPatch).toHaveBeenCalledWith('invite_id', {
+      email: 'invitee@example.com',
       status: 'accepted',
       acceptedAt: expect.any(Number),
     });

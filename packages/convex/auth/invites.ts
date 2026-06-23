@@ -5,12 +5,16 @@ import { requireAdmin, requireEnabledUser } from './users';
 
 const INVITE_EXPIRY_DAYS = 7;
 
+function normalizeEmail(email: string): string {
+  return email.toLowerCase().trim();
+}
+
 export const createInvite = mutation({
   args: { email: v.string() },
   returns: v.id('invites'),
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
-    const email = args.email.toLowerCase().trim();
+    const email = normalizeEmail(args.email);
 
     const existing = await ctx.db
       .query('invites')
@@ -57,7 +61,7 @@ export const createOrgInvite = mutation({
       throw new Error('Only organization owners can invite members');
     }
 
-    const email = args.email.toLowerCase().trim();
+    const email = normalizeEmail(args.email);
     const existing = await ctx.db
       .query('invites')
       .withIndex('by_email', (q) => q.eq('email', email))
@@ -107,7 +111,7 @@ export const getInviteByToken = query({
 
     return {
       status: invite.status,
-      email: invite.status === 'pending' ? invite.email : undefined,
+      email: invite.status === 'pending' ? normalizeEmail(invite.email) : undefined,
     };
   },
 });
@@ -120,7 +124,7 @@ export const acceptInvite = mutation({
     if (!identity) {
       throw new Error('Authentication required');
     }
-    const identityEmail = identity?.email?.toLowerCase().trim();
+    const identityEmail = identity.email ? normalizeEmail(identity.email) : '';
     if (!identityEmail) {
       throw new Error('Authenticated email is required');
     }
@@ -138,7 +142,8 @@ export const acceptInvite = mutation({
       throw new Error(`Invite has already been ${invite.status}`);
     }
 
-    if (invite.email.toLowerCase().trim() !== identityEmail) {
+    const inviteEmail = normalizeEmail(invite.email);
+    if (inviteEmail !== identityEmail) {
       throw new Error('Invite is for a different email address');
     }
 
@@ -148,11 +153,12 @@ export const acceptInvite = mutation({
     }
 
     await ctx.db.patch(invite._id, {
+      email: inviteEmail,
       status: 'accepted',
       acceptedAt: Date.now(),
     });
 
-    return { email: invite.email };
+    return { email: inviteEmail };
   },
 });
 
