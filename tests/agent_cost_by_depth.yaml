@@ -3,10 +3,12 @@
 #   at turn_index d (0..5): cost_usd = d+1, context = input+cache_read+cache_creation = 10000*(d+1).
 # So every depth has sample_count=5 (>= default min_depth_samples=5) and an exact median:
 #   cost_p* = d+1, context_p* = 10000*(d+1) (all five sessions tie, so p25=p50=p75=p95).
-# Elasticity is the OLS slope of ln(median) on ln(depth+1). Because cost = depth+1 exactly,
-# ln(cost) == ln(depth+1), so the cost slope is exactly 1.0. context = 10000*(depth+1), so
-# ln(context) = ln(10000) + ln(depth+1) -> slope on ln(depth+1) is also exactly 1.0. All six
-# depths clear min_depth_samples and have positive medians, so cost_fit_points = context_fit_points = 6.
+# Elasticity is the Theil–Sen slope (median of pairwise slopes) of ln(median) on ln(depth+1).
+# Because cost = depth+1 exactly, ln(cost) == ln(depth+1): every pairwise slope is exactly 1.0,
+# so their median is 1.0. context = 10000*(depth+1), so ln(context) = ln(10000) + ln(depth+1) ->
+# every pairwise slope is 1.0 -> median 1.0. (On a perfect line Theil–Sen and OLS agree; the
+# robustness difference shows only when an outlier depth is present — see org_depth_outlier below.)
+# All six depths clear min_depth_samples and have positive medians, so cost_fit_points = context_fit_points = 6.
 # A slope of 1.0 reads as "each doubling of depth doubles per-turn cost" — linear context bloat.
 # Every depth has sample_count=5 >= 5 so well_sampled=1 and none is pooled out: charted_max_depth=5,
 # observed_max_depth=5, pooled_depth_count=0, pooled_turn_count=0 (the same window scalars on each row).
@@ -22,6 +24,50 @@
     {"depth":3,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":4,"cost_p50":4,"cost_p75":4,"cost_p95":4,"context_p25":40000,"context_p50":40000,"context_p75":40000,"context_p95":40000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
     {"depth":4,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":5,"cost_p50":5,"cost_p75":5,"cost_p95":5,"context_p25":50000,"context_p50":50000,"context_p75":50000,"context_p95":50000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
     {"depth":5,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":6,"cost_p50":6,"cost_p75":6,"cost_p95":6,"context_p25":60000,"context_p50":60000,"context_p75":60000,"context_p95":60000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+
+# Fixtures: fixtures/agent_message_facts.ndjson (org_depth_outlier). Five identical 6-turn
+# conversations (do1..do5). cost_usd = depth+1 at depths 0..4 but a runaway 1000 at depth 5;
+# context = 10000*(depth+1) at every depth (linear, no outlier). So the per-depth median costs
+# are [1,2,3,4,5,1000] and median contexts are [10000..60000]. This is the Theil–Sen vs OLS test:
+#   - Theil–Sen cost slope = median of the 15 pairwise slopes of ln(median cost) on ln(depth+1).
+#     14 of 15 pairs sit on the cost=depth+1 line (slope 1); only pairs touching depth 5 are steep.
+#     The median pairwise slope is exactly 1.0 -> the outlier does NOT move the elasticity.
+#     (OLS on the same points would be ~2.62, dragged up by the single outlier depth — the exact
+#     failure mode ADR 0021 §Relationship calls out. This fixture pins the robust behavior.)
+#   - context is a clean line -> context_elasticity = 1.0.
+# All six depths have sample_count=5 >= 5 and positive medians: cost_fit_points = context_fit_points = 6,
+# well_sampled=1 everywhere, charted/observed_max_depth=5, nothing pooled.
+- name: cost_by_depth_theil_sen_ignores_outlier_depth
+  description: a single runaway-cost depth leaves the Theil–Sen cost elasticity at 1.0 (OLS would be dragged to ~2.62), proving the robust slope estimator
+  expected_http_status: 200
+  parameters: org_id=org_depth_outlier&start_time_ms=1779235200000&end_time_ms=1779321600000
+  expected_result: |
+    {"depth":0,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":1,"cost_p50":1,"cost_p75":1,"cost_p95":1,"context_p25":10000,"context_p50":10000,"context_p75":10000,"context_p95":10000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":1,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":2,"cost_p50":2,"cost_p75":2,"cost_p95":2,"context_p25":20000,"context_p50":20000,"context_p75":20000,"context_p95":20000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":2,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":3,"cost_p50":3,"cost_p75":3,"cost_p95":3,"context_p25":30000,"context_p50":30000,"context_p75":30000,"context_p95":30000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":3,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":4,"cost_p50":4,"cost_p75":4,"cost_p95":4,"context_p25":40000,"context_p50":40000,"context_p75":40000,"context_p95":40000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":4,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":5,"cost_p50":5,"cost_p75":5,"cost_p95":5,"context_p25":50000,"context_p50":50000,"context_p75":50000,"context_p95":50000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":5,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":1000,"cost_p50":1000,"cost_p75":1000,"cost_p95":1000,"context_p25":60000,"context_p50":60000,"context_p75":60000,"context_p95":60000,"cost_elasticity":1,"context_elasticity":1,"cost_fit_points":6,"context_fit_points":6,"charted_max_depth":5,"observed_max_depth":5,"pooled_depth_count":0,"pooled_turn_count":0}
+
+# Fixtures: fixtures/agent_message_facts.ndjson (org_depth_even). Five identical 4-turn
+# conversations (de1..de5). cost_usd = [1,2,4,8] at depths 0..3; context = 10000*(depth+1).
+# Regression guard for the Theil-Sen median ESTIMATOR (medianExact, not the `median` alias):
+# 4 well-sampled depths -> 6 pairwise cost slopes [1.0, 1.2619, 1.5, 1.7095, 2.0, 2.4094] (EVEN
+# count). The exact order statistic `medianExact` returns the upper of the two central values
+# (index n/2, the 4th slope) = 1.7095; the interpolating `median` alias would AVERAGE the two
+# central values (1.5, 1.7095) = 1.6048. So a revert to `median` flips cost_elasticity
+# 1.7095 -> 1.6048, and this test catches it (the odd-count fixtures above cannot — their central
+# slope is a repeated 1.0, where both estimators agree). context is a clean line -> every pairwise
+# slope is 1.0 -> context_elasticity = 1.0. All four depths have sample_count=5.
+- name: cost_by_depth_theil_sen_uses_exact_median_estimator
+  description: even-count pairwise-slope array pins medianExact (1.7095), distinguishing it from the interpolating median alias (1.6048) — guards the house exact-estimator choice
+  expected_http_status: 200
+  parameters: org_id=org_depth_even&start_time_ms=1779235200000&end_time_ms=1779321600000
+  expected_result: |
+    {"depth":0,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":1,"cost_p50":1,"cost_p75":1,"cost_p95":1,"context_p25":10000,"context_p50":10000,"context_p75":10000,"context_p95":10000,"cost_elasticity":1.7095,"context_elasticity":1,"cost_fit_points":4,"context_fit_points":4,"charted_max_depth":3,"observed_max_depth":3,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":1,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":2,"cost_p50":2,"cost_p75":2,"cost_p95":2,"context_p25":20000,"context_p50":20000,"context_p75":20000,"context_p95":20000,"cost_elasticity":1.7095,"context_elasticity":1,"cost_fit_points":4,"context_fit_points":4,"charted_max_depth":3,"observed_max_depth":3,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":2,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":4,"cost_p50":4,"cost_p75":4,"cost_p95":4,"context_p25":30000,"context_p50":30000,"context_p75":30000,"context_p95":30000,"cost_elasticity":1.7095,"context_elasticity":1,"cost_fit_points":4,"context_fit_points":4,"charted_max_depth":3,"observed_max_depth":3,"pooled_depth_count":0,"pooled_turn_count":0}
+    {"depth":3,"sample_count":5,"priced_sample_count":5,"min_depth_samples":5,"well_sampled":1,"cost_p25":8,"cost_p50":8,"cost_p75":8,"cost_p95":8,"context_p25":40000,"context_p50":40000,"context_p75":40000,"context_p95":40000,"cost_elasticity":1.7095,"context_elasticity":1,"cost_fit_points":4,"context_fit_points":4,"charted_max_depth":3,"observed_max_depth":3,"pooled_depth_count":0,"pooled_turn_count":0}
 
 - name: cost_by_depth_source_filter_isolates_empty
   description: sources=codex isolates a source with no org_depth turns -> no rows (the client renders this as no-data)

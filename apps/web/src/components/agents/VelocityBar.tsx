@@ -47,7 +47,7 @@ export function VelocityBar({
       expanded={expanded}
       onToggleExpand={onToggleExpand}
       expandedContent={expandedContent}
-      caveat={`The diagonal is perfectly even spend; the bulge above it is concentration. Conversations are sorted priciest-first. Cost is an estimate (lower bound), last ${windowDays} days.`}
+      caveat={`The diagonal is perfectly even spend; the bulge above it is concentration. Conversations are sorted priciest-first. The Gini is sample-bias-corrected (n/(n-1)) so cohorts of different sizes compare fairly. Cost is an estimate (lower bound), last ${windowDays} days.`}
     >
       {hasData && curve && curve.points.length > 1 ? (
         <ConcentrationCurveView curve={curve} />

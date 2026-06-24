@@ -7,8 +7,9 @@ DESCRIPTION >
     every turn at a given depth across EVERY conversation contributes, so no single
     conversation is singled out and there is no chosen "deep vs shallow" cutoff.
 
-    The headline is a log–log elasticity: a closed-form OLS slope of ln(median cost) on
-    ln(depth) across the depths that carry enough turns to be meaningful. It answers the
+    The headline is a log–log elasticity: a robust Theil–Sen slope of ln(median cost) on
+    ln(depth+1) (the +1 keeps depth 0, where ln(1)=0, in the fit) across the depths that
+    carry enough turns to be meaningful. It answers the
     "slope tells me two things" question with one unitless number:
       ~0  -> flat: per-turn cost does not grow with depth (a few large reads, not bloat)
       ~1  -> linear: each doubling of depth doubles per-turn cost (history re-paid every turn)
@@ -17,7 +18,7 @@ DESCRIPTION >
     2^cost_elasticity". context_elasticity is the same fit on context size (the upstream cause).
 
     Nothing here is a magic cutpoint: depth values are raw stored turn_index; the band/envelope
-    are exact quantiles; the elasticity is fit by the regression, not chosen. The only knob is
+    are exact quantiles; the elasticity is the median pairwise slope, not chosen. The only knob is
     min_depth_samples — turns at a depth observed in fewer than this many conversations are too
     thin to quantile or fit, so they are excluded from the FIT (not the series) and the series
     carries sample_count so the UI can fade the thin right tail honestly.
@@ -87,24 +88,65 @@ SQL >
 NODE fit
 SQL >
     %
-    -- Closed-form OLS slope of ln(median) on ln(depth+1) over the depths that carry enough
+    -- Theil–Sen slope of ln(median) on ln(depth+1) over the depths that carry enough
     -- conversations to be a stable quantile. depth+1 keeps depth 0 in the fit (ln(1)=0).
     -- Cost fit uses depths with a positive median priced cost; context fit uses positive median
-    -- context. simpleLinearRegression returns (slope, intercept); .1 is the slope, which IS the
-    -- elasticity — derived, not chosen. With fewer than 2 fit points there is no line to fit, so
-    -- the slope is 0 (flat: the honest default when there is no trend to estimate).
+    -- context. The slope IS the elasticity — derived, not chosen.
+    --
+    -- We use Theil–Sen (the median of all pairwise slopes), NOT ordinary least squares (ADR 0021
+    -- §Relationship). OLS has a 0% breakdown point — one runaway-deep, high-cost depth drags the
+    -- fitted slope arbitrarily; on heavy-tailed cost that is exactly the failure mode. Theil–Sen
+    -- has a ~29.3% breakdown point, so a single outlier depth cannot move the elasticity. The
+    -- point set is one row per charted depth (already sparse-filtered), so the O(d^2) pairwise
+    -- enumeration is trivial. Pairs sharing an x (none here, since x = ln(depth+1) is distinct per
+    -- depth) are skipped as undefined. With fewer than 2 fit points there is no slope to estimate,
+    -- so the elasticity is 0 (flat: the honest default when there is no trend).
     SELECT
-        if(length(cost_x) >= 2, arrayReduce('simpleLinearRegression', cost_x, cost_y).1, 0.) AS cost_elasticity,
-        if(length(ctx_x) >= 2, arrayReduce('simpleLinearRegression', ctx_x, ctx_y).1, 0.) AS context_elasticity,
+        if(length(cost_slopes) >= 1, arrayReduce('medianExact', cost_slopes), 0.) AS cost_elasticity,
+        if(length(ctx_slopes) >= 1, arrayReduce('medianExact', ctx_slopes), 0.) AS context_elasticity,
         length(cost_x) AS cost_fit_points,
         length(ctx_x) AS context_fit_points
     FROM (
         SELECT
-            groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_x,
-            groupArrayIf(log(cost_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_y,
-            groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_x,
-            groupArrayIf(log(context_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_y
-        FROM by_depth
+            cost_x,
+            ctx_x,
+            -- Pairwise slopes (y_j - y_i)/(x_j - x_i) for every i<j with distinct x; their median
+            -- is the Theil–Sen estimate. Empty when < 2 fit points -> elasticity falls back to 0.
+            -- The median is taken with `medianExact` (exact order statistic), NOT the `median`
+            -- alias, which is the interpolating/sampling quantile — the house estimator is exact
+            -- everywhere (ADR 0021 §Distribution), and an even-length slope array must not drift.
+            arrayFilter(
+                s -> isFinite(s),
+                arrayFlatten(
+                    arrayMap(
+                        i -> arrayMap(
+                            j -> (cost_y[j] - cost_y[i]) / (cost_x[j] - cost_x[i]),
+                            arrayFilter(j -> j > i AND cost_x[j] != cost_x[i], range(1, length(cost_x) + 1))
+                        ),
+                        range(1, length(cost_x) + 1)
+                    )
+                )
+            ) AS cost_slopes,
+            arrayFilter(
+                s -> isFinite(s),
+                arrayFlatten(
+                    arrayMap(
+                        i -> arrayMap(
+                            j -> (ctx_y[j] - ctx_y[i]) / (ctx_x[j] - ctx_x[i]),
+                            arrayFilter(j -> j > i AND ctx_x[j] != ctx_x[i], range(1, length(ctx_x) + 1))
+                        ),
+                        range(1, length(ctx_x) + 1)
+                    )
+                )
+            ) AS ctx_slopes
+        FROM (
+            SELECT
+                groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_x,
+                groupArrayIf(log(cost_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_y,
+                groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_x,
+                groupArrayIf(log(context_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_y
+            FROM by_depth
+        )
     )
 
 NODE tail

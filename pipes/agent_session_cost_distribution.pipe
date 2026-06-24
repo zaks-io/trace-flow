@@ -188,6 +188,13 @@ SQL >
     -- The curve is (cumulative conversation share, cumulative spend share); Gini is the area
     -- between it and the even-spend diagonal; half_spend_conv_count is the smallest number of
     -- conversations that already carry half of total spend. P caps drawing resolution only.
+    --
+    -- Gini uses the n/(n-1) SAMPLE bias correction (ADR 0021 §Concentration), not the biased
+    -- "population" form: the n^2 denominator counts n zero self-pairs, biasing the estimate
+    -- downward (looks more equal) worst at small n. Without the correction a small repo/window
+    -- looks artificially less concentrated than a large one purely from n, so cross-cohort
+    -- comparison lies. The correction is undefined at n=1 (single conversation = no inequality),
+    -- which collapses to 0.
     WITH
         100 AS P,
         arraySort(x -> -x, groupArray(cost_usd)) AS costs_desc,
@@ -214,7 +221,7 @@ SQL >
         ) AS sample_ranks
     SELECT
         'current' AS period,
-        if(n = 0, 0., greatest(0., least(1., 1. - 2. * arraySum(arrayMap((x, i) -> x * (n - i + 0.5), costs_asc, arrayEnumerate(costs_asc))) / (n * total_cost)))) AS gini,
+        if(n <= 1 OR total_cost = 0, 0., greatest(0., least(1., (1. - 2. * arraySum(arrayMap((x, i) -> x * (n - i + 0.5), costs_asc, arrayEnumerate(costs_asc))) / (n * total_cost)) * n / (n - 1)))) AS gini,
         if(total_cost = 0, toUInt64(0), toUInt64(arrayFirstIndex(s -> s >= total_cost / 2, cum))) AS half_spend_conv_count,
         arrayMap(rk -> if(n = 0, 0., rk / n), sample_ranks) AS lorenz_conv_pct,
         arrayMap(rk -> if(rk = 0 OR total_cost = 0, 0., cum[rk] / total_cost), sample_ranks) AS lorenz_cost_pct
