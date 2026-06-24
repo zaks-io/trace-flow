@@ -19,6 +19,7 @@ const sparseBatch = {
     file_events: [],
     capability_snapshots: [],
     pull_request_links: [],
+    review_unit_attributions: [],
   },
 };
 

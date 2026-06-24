@@ -447,6 +447,7 @@ describe('query_agent_analytics tool definition', () => {
       'tool_failures',
       'tool_deltas',
       'projects',
+      'review_units',
     ]);
   });
 
@@ -457,6 +458,8 @@ describe('query_agent_analytics tool definition', () => {
     expect(props.end_time?.type).toBe('string');
     expect(props.group_by?.enum).toContain('repo');
     expect(props.dimension?.enum).toContain('model');
+    expect(props.order_by?.enum).toContain('estimated_cost_usd');
+    expect(props.order_by?.enum).toContain('recent');
     expect(props.sort).toBeUndefined();
     expect(props.attention_threshold_tokens?.type).toBe('number');
     expect(props.limit?.type).toBe('number');

@@ -4,6 +4,7 @@ import type {
   AgentIngestQueueMessage,
   AgentMessageQueueFact,
   AgentPullRequestLinkQueueFact,
+  AgentReviewUnitAttributionQueueFact,
   AgentTenancy,
   AgentToolEventQueueFact,
 } from '@trace-flow/types';
@@ -168,5 +169,39 @@ export function pullRequestLinkRow(ctx: BatchContext, fact: AgentPullRequestLink
     confidence: fact.confidence,
     evidence: fact.evidence,
     dropped_sensitive: fact.dropped_sensitive,
+  };
+}
+
+export function reviewUnitAttributionRow(
+  ctx: BatchContext,
+  fact: AgentReviewUnitAttributionQueueFact,
+) {
+  return {
+    OrgId: ctx.tenancy.org_id,
+    UserId: ctx.tenancy.user_id,
+    CollectorId: ctx.tenancy.collector_id,
+    CollectorCredentialId: ctx.tenancy.collector_credential_id,
+    session_pk: fact.session_pk,
+    review_unit_attribution_pk: fact.review_unit_attribution_pk,
+    repo_fingerprint: fact.repo_fingerprint,
+    repo_source: fact.repo_source,
+    source: ctx.source,
+    parser_version: ctx.parserVersion,
+    DecidedAt: toClickhouseDateTime64(fact.decided_at),
+    IngestedAt: ctx.ingestedAt,
+    vendor_session_id: fact.vendor_session_id,
+    review_unit_key: fact.review_unit_key,
+    review_url: fact.review_url,
+    review_host: fact.review_host,
+    review_owner: fact.review_owner,
+    review_repo: fact.review_repo,
+    review_number: fact.review_number,
+    git_branch: fact.git_branch,
+    attribution_method: fact.attribution_method,
+    confidence: fact.confidence,
+    status: fact.status,
+    ambiguity_reason: fact.ambiguity_reason,
+    evidence_pull_request_link_pk: fact.evidence_pull_request_link_pk,
+    rule_version: fact.rule_version,
   };
 }

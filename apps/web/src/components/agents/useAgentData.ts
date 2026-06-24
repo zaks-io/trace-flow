@@ -9,6 +9,7 @@ import type {
   AgentGroupBy,
   AgentNotableChangeDimension,
   AgentNotableChangeRow,
+  AgentReviewUnitCostRow,
   AgentSessionRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
@@ -148,6 +149,11 @@ export function useAgentData({
     enabled: spendDetailEnabled,
   });
 
+  const reviewUnitCostsQuery = useTinybirdQuery<TinybirdResponse<AgentReviewUnitCostRow>>({
+    pipe: 'agent_review_unit_costs',
+    params: { ...filterParams, limit: 10 },
+  });
+
   // Repos are the actionable mover unit; the dimension='' total row carries the org baseline.
   const notableByRepoParams = useMemo(
     () => ({ ...usageParams, dimension: 'repo' satisfies AgentNotableChangeDimension, limit: 50 }),
@@ -188,6 +194,7 @@ export function useAgentData({
   const costDistribution = getFreshFirstRow(costDistributionQuery);
   const costByDepth = getFreshRows(costByDepthQuery);
   const topSessions = getFreshRows(topSessionsQuery);
+  const reviewUnitCosts = getFreshRows(reviewUnitCostsQuery);
   const notableTotal = getFreshFirstRow(notableTotalQuery);
   const notableByRepo = getFreshRows(notableByRepoQuery);
   const contextHealth = getFreshFirstRow(contextQuery);
@@ -206,6 +213,7 @@ export function useAgentData({
     summaryQuery.isLoading ||
     costDistributionQuery.isLoading ||
     costByDepthQuery.isLoading ||
+    reviewUnitCostsQuery.isLoading ||
     notableTotalQuery.isLoading ||
     notableByRepoQuery.isLoading ||
     contextQuery.isLoading ||
@@ -220,6 +228,7 @@ export function useAgentData({
     summaryQuery.error ??
     costDistributionQuery.error ??
     costByDepthQuery.error ??
+    reviewUnitCostsQuery.error ??
     notableTotalQuery.error ??
     notableByRepoQuery.error ??
     contextQuery.error ??
@@ -237,6 +246,11 @@ export function useAgentData({
       id: 'costByDepth',
       label: 'cost as conversations deepen',
       error: costByDepthQuery.error,
+    },
+    {
+      id: 'reviewUnitCosts',
+      label: 'review unit costs',
+      error: reviewUnitCostsQuery.error,
     },
     { id: 'notableTotal', label: 'notable changes (total)', error: notableTotalQuery.error },
     { id: 'notableByRepo', label: 'notable changes (by repo)', error: notableByRepoQuery.error },
@@ -277,6 +291,7 @@ export function useAgentData({
     summary,
     costDistribution,
     costByDepth,
+    reviewUnitCosts,
     topSessions,
     topSessionsLoading: topSessionsQuery.isLoading,
     notableTotal,

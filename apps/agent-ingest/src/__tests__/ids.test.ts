@@ -1,8 +1,15 @@
 import { describe, it, expect } from 'vitest';
+import type { AgentIngestQueueFacts } from '@trace-flow/types';
 import { assembleQueueFacts, hashToUuid, repoFingerprint } from '../ids';
 import { emptyFacts, facts, messageFact, toolEventFact } from './factories';
 
 const UUID_V8 = /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function firstReviewUnitAttribution(queueFacts: AgentIngestQueueFacts) {
+  const [edge] = queueFacts.review_unit_attributions ?? [];
+  expect(edge).toBeDefined();
+  return edge!;
+}
 
 describe('hashToUuid', () => {
   it('emits a valid UUIDv8', async () => {
@@ -49,6 +56,7 @@ describe('assembleQueueFacts', () => {
     expect(queueFacts.file_events[0]!.file_event_pk).toMatch(UUID_V8);
     expect(queueFacts.capability_snapshots[0]!.capability_snapshot_pk).toMatch(UUID_V8);
     expect(queueFacts.pull_request_links[0]!.pull_request_link_pk).toMatch(UUID_V8);
+    expect(firstReviewUnitAttribution(queueFacts).review_unit_attribution_pk).toMatch(UUID_V8);
   });
 
   it('shares one session_pk + fingerprint across a session', async () => {
@@ -116,5 +124,126 @@ describe('assembleQueueFacts', () => {
     const { queueFacts, sessionPks } = await assembleQueueFacts(emptyFacts(), 'claude');
     expect(sessionPks).toHaveLength(0);
     expect(queueFacts.messages).toHaveLength(0);
+    expect(queueFacts.review_unit_attributions).toHaveLength(0);
+  });
+
+  it('attributes exactly one same-repo hosted-review link to a review unit', async () => {
+    const { queueFacts } = await assembleQueueFacts(facts(), 'claude');
+    const edge = firstReviewUnitAttribution(queueFacts);
+    expect(edge.status).toBe('attributed');
+    expect(edge.attribution_method).toBe('direct_link');
+    expect(edge.rule_version).toBe('direct_link_v1');
+    expect(edge.review_unit_key).toBe('hosted:github.com/acme/repo:pull_request:42');
+    expect(edge.review_url).toBe('https://github.com/acme/repo/pull/42');
+    expect(edge.confidence).toBe('high');
+    expect(edge.ambiguity_reason).toBe('');
+    expect(edge.evidence_pull_request_link_pk).toBe(
+      queueFacts.pull_request_links[0]!.pull_request_link_pk,
+    );
+  });
+
+  it('keeps duplicate decisions idempotent and gives changed decisions a new pk', async () => {
+    const original = await assembleQueueFacts(facts(), 'claude');
+    const duplicate = await assembleQueueFacts(facts(), 'claude');
+    const changed = await assembleQueueFacts(
+      facts({
+        pull_request_links: [
+          {
+            ...facts().pull_request_links[0]!,
+            number: 43,
+            url: 'https://github.com/acme/repo/pull/43',
+          },
+        ],
+      }),
+      'claude',
+    );
+
+    expect(firstReviewUnitAttribution(original.queueFacts).review_unit_attribution_pk).toBe(
+      firstReviewUnitAttribution(duplicate.queueFacts).review_unit_attribution_pk,
+    );
+    expect(firstReviewUnitAttribution(original.queueFacts).review_unit_attribution_pk).not.toBe(
+      firstReviewUnitAttribution(changed.queueFacts).review_unit_attribution_pk,
+    );
+  });
+
+  it('gives changed attribution audit metadata a new pk', async () => {
+    const original = await assembleQueueFacts(facts(), 'claude');
+    const branchChanged = await assembleQueueFacts(
+      facts({ messages: [messageFact({ git_branch: 'feature/renamed' })] }),
+      'claude',
+    );
+    const evidenceChanged = await assembleQueueFacts(
+      facts({
+        pull_request_links: [
+          {
+            ...facts().pull_request_links[0]!,
+            source_event_id: 'evt-9',
+          },
+        ],
+      }),
+      'claude',
+    );
+
+    const originalPk = firstReviewUnitAttribution(original.queueFacts).review_unit_attribution_pk;
+    expect(
+      firstReviewUnitAttribution(branchChanged.queueFacts).review_unit_attribution_pk,
+    ).not.toBe(originalPk);
+    expect(
+      firstReviewUnitAttribution(evidenceChanged.queueFacts).review_unit_attribution_pk,
+    ).not.toBe(originalPk);
+  });
+
+  it('marks multiple distinct review links in one session ambiguous', async () => {
+    const { queueFacts } = await assembleQueueFacts(
+      facts({
+        pull_request_links: [
+          {
+            ...facts().pull_request_links[0]!,
+            number: 42,
+            url: 'https://github.com/acme/repo/pull/42',
+          },
+          {
+            ...facts().pull_request_links[0]!,
+            stable_turn_index: 1,
+            number: 43,
+            url: 'https://github.com/acme/repo/pull/43',
+          },
+        ],
+      }),
+      'claude',
+    );
+    const edge = firstReviewUnitAttribution(queueFacts);
+    expect(edge.status).toBe('ambiguous');
+    expect(edge.ambiguity_reason).toBe('multiple_review_units');
+    expect(edge.review_unit_key).toBe('');
+  });
+
+  it('rejects a single review link when the repo identity does not match the session remote', async () => {
+    const { queueFacts } = await assembleQueueFacts(
+      facts({
+        pull_request_links: [
+          {
+            ...facts().pull_request_links[0]!,
+            repo: 'other',
+            url: 'https://github.com/acme/other/pull/42',
+          },
+        ],
+      }),
+      'claude',
+    );
+    const edge = firstReviewUnitAttribution(queueFacts);
+    expect(edge.status).toBe('rejected');
+    expect(edge.ambiguity_reason).toBe('repo_mismatch');
+    expect(edge.review_url).toBe('https://github.com/acme/other/pull/42');
+  });
+
+  it('rejects a review link when the session has no resolved remote', async () => {
+    const { queueFacts } = await assembleQueueFacts(
+      facts({ messages: [messageFact({ normalized_git_remote: '', repo_path_fallback: 'repo' })] }),
+      'claude',
+    );
+    const edge = firstReviewUnitAttribution(queueFacts);
+    expect(edge.status).toBe('rejected');
+    expect(edge.ambiguity_reason).toBe('missing_remote');
   });
 });

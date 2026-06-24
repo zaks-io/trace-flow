@@ -25,6 +25,7 @@ import {
   messageFact,
   pullRequestLinkFact,
   queueMessage,
+  reviewUnitAttributionFact,
   toolEventFact,
 } from './factories';
 
@@ -68,6 +69,21 @@ describe('processAgentBatch', () => {
     expect(insert?.rows[0]?.OrgId).toBe('org-1');
     expect(msg.ack).toHaveBeenCalledOnce();
     expect(msg.retry).not.toHaveBeenCalled();
+  });
+
+  it('accepts old queue messages with no review_unit_attributions array', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const body = queueMessage({
+      facts: { ...emptyQueueFacts(), messages: [messageFact({ input_tokens: 1_000_000 })] },
+    });
+    delete (body.facts as Partial<typeof body.facts>).review_unit_attributions;
+    const msg = stubMessage(body);
+
+    await processAgentBatch(batchOf([msg]), makeEnv(kv));
+
+    expect(insertFor(tb.inserts, 'agent_message_facts')).toBeDefined();
+    expect(msg.ack).toHaveBeenCalledOnce();
   });
 
   it('sums a constant-cost fixture to the exact expected total', async () => {
@@ -246,6 +262,7 @@ describe('processAgentBatch', () => {
           file_events: [fileEventFact()],
           capability_snapshots: [capabilitySnapshotFact()],
           pull_request_links: [pullRequestLinkFact()],
+          review_unit_attributions: [reviewUnitAttributionFact()],
         },
       }),
     );
@@ -257,8 +274,27 @@ describe('processAgentBatch', () => {
       'agent_file_event_facts',
       'agent_message_facts',
       'agent_pull_request_facts',
+      'agent_review_unit_attributions',
       'agent_tool_event_facts',
     ]);
+    expect(msg.ack).toHaveBeenCalledOnce();
+  });
+
+  it('does not dual-write review-unit attributions to a legacy datasource', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const msg = stubMessage(
+      queueMessage({
+        facts: {
+          ...emptyQueueFacts(),
+          review_unit_attributions: [reviewUnitAttributionFact()],
+        },
+      }),
+    );
+
+    await processAgentBatch(batchOf([msg]), makeEnv(kv, { TINYBIRD_AGENT_WRITE_MODE: 'dual' }));
+
+    expect(tb.inserts.map((i) => i.datasource)).toEqual(['agent_review_unit_attributions']);
     expect(msg.ack).toHaveBeenCalledOnce();
   });
 

@@ -52,11 +52,17 @@ export type AgentFileOperation =
 /** Conversation-visible capability observation kind (Codex strongest; ADR "Capability Snapshots"). */
 export type AgentCapabilityKind = 'base_instructions' | 'dynamic_tools' | 'mcp_servers' | 'other';
 
-/** Where a Pull Request Link was observed in the transcript. */
+/** Where a hosted-review link was observed in the transcript. */
 export type PullRequestLinkEvidence = 'assistant_text' | 'tool_output' | 'transcript_record';
 
-/** Confidence in a passively-extracted Pull Request Link. */
+/** Confidence in a passively-extracted hosted-review link. */
 export type PullRequestLinkConfidence = 'high' | 'medium' | 'low';
+
+export type ReviewUnitAttributionMethod = 'direct_link' | 'branch_retro' | 'manual';
+
+export type ReviewUnitAttributionConfidence = 'high' | 'medium' | 'low';
+
+export type ReviewUnitAttributionStatus = 'attributed' | 'ambiguous' | 'rejected';
 
 /** Batch-level metadata. One `source` per batch; a batch may span multiple sessions. */
 export interface AgentIngestBatch {
@@ -177,7 +183,7 @@ export interface AgentCapabilitySnapshotFact {
   dropped_sensitive: number;
 }
 
-/** One canonical Pull Request Link observation (passive transcript evidence; GitHub-only in v1). */
+/** One canonical hosted-review link observation (passive transcript evidence). */
 export interface AgentPullRequestLinkFact {
   vendor_session_id: string;
   source_event_id: string | null;
@@ -274,12 +280,36 @@ export interface AgentPullRequestLinkQueueFact extends AgentPullRequestLinkFact 
   repo_source: RepoSource;
 }
 
+export interface AgentReviewUnitAttributionQueueFact {
+  session_pk: string;
+  review_unit_attribution_pk: string;
+  repo_fingerprint: string;
+  repo_source: RepoSource;
+  vendor_session_id: string;
+  decided_at: number;
+  review_unit_key: string;
+  review_url: string;
+  review_host: string;
+  review_owner: string;
+  review_repo: string;
+  review_number: number;
+  git_branch: string;
+  attribution_method: ReviewUnitAttributionMethod;
+  confidence: ReviewUnitAttributionConfidence;
+  status: ReviewUnitAttributionStatus;
+  ambiguity_reason: string;
+  evidence_pull_request_link_pk: string;
+  rule_version: string;
+}
+
 export interface AgentIngestQueueFacts {
   messages: AgentMessageQueueFact[];
   tool_events: AgentToolEventQueueFact[];
   file_events: AgentFileEventQueueFact[];
   capability_snapshots: AgentCapabilitySnapshotQueueFact[];
   pull_request_links: AgentPullRequestLinkQueueFact[];
+  /** Optional so pre-rollout queue messages without this edge category still consume cleanly. */
+  review_unit_attributions?: AgentReviewUnitAttributionQueueFact[];
 }
 
 /**

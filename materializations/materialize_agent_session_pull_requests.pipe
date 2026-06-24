@@ -1,5 +1,6 @@
 DESCRIPTION >
-    Incremental session summary states from Pull Request facts.
+    Incremental zero-count session summary states from hosted-review link evidence.
+    Review-unit cost uses agent_review_unit_attributions, not primary_pull_request_url.
 
 NODE rollup
 SQL >
@@ -20,7 +21,7 @@ SQL >
         maxState(IngestedAt) AS IngestedAt,
         argMaxState('', toDateTime64(0, 3)) AS git_branch,
         argMaxState('', toDateTime64(0, 3)) AS git_head_sha,
-        argMaxState(url, EventAt) AS primary_pull_request_url,
+        argMaxState('', toDateTime64(0, 3)) AS primary_pull_request_url,
         sumState(toUInt64(0)) AS MessageCount,
         sumState(toUInt64(0)) AS ToolEventCount,
         sumState(toUInt64(0)) AS FileEventCount,

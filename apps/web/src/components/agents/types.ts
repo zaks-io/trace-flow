@@ -353,6 +353,27 @@ export interface AgentSessionRow {
   last_event_ms: number;
 }
 
+/** One row from `pipes/agent_review_unit_costs.pipe` — direct-link review-unit authoring cost. */
+export interface AgentReviewUnitCostRow {
+  review_unit_key: string;
+  review_url: string;
+  review_host: string;
+  review_owner: string;
+  review_repo: string;
+  review_number: number;
+  repo_fingerprint: string;
+  git_branch: string;
+  attribution_method: string;
+  confidence: string;
+  rule_version: string;
+  session_count: number;
+  message_count: number;
+  priced_message_count: number;
+  coverage_pct: number | null;
+  estimated_cost_usd: number;
+  last_event_ms: number;
+}
+
 /**
  * One depth row from `pipes/agent_cost_by_depth.pipe` — how per-turn cost and context behave as a
  * conversation deepens. `depth` is the raw, 0-indexed `turn_index` (no binning, no chosen cutoff).

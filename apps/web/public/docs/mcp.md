@@ -136,6 +136,7 @@ Use `view` to choose the read model:
 - `tool_failures`: tool failure leaderboard
 - `tool_deltas`: period-over-period tool usage movement
 - `projects`: available repo/project fingerprints for filtering
+- `review_units`: direct-link review-unit authoring cost estimates. This is PR/MR cost only when a transcript contains exactly one same-repo hosted-review link.
 
 Common parameters:
 
@@ -151,7 +152,7 @@ View-specific parameters:
 - `group_by`: for `timeseries`, `none`, `source`, `model`, or `repo`
 - `granularity`: for `timeseries`, `auto`, `hour`, or `day`
 - `dimension`: for `breakdown`, `source`, `model`, or `repo`
-- `order_by`: for `breakdown`, `cost_usd`, `total_tokens`, `message_count`, or `session_count`
+- `order_by`: for `breakdown`, `cost_usd`, `total_tokens`, `message_count`, or `session_count`; for `review_units`, `estimated_cost_usd`, `session_count`, `message_count`, or `recent`
 - `sort`: for `sessions`, `recent`, `cost`, `files`, `duration`, or `messages`
 - `min_events`: for `tool_failures`
 - `limit` / `offset`: bounded row paging for every multi-row view. Defaults to 25 rows except `timeseries`, which is capped at 50 rows per page.
@@ -165,6 +166,7 @@ View-specific parameters:
 - "Use `list_model_usage` to compare p95 latency and cost efficiency across models."
 - "Use `describe_agent_analytics` for the last 7 days to discover available repo fingerprints and models."
 - "Use `query_agent_analytics` with `view=\"projects\"`, then query `view=\"summary\"` with a repo fingerprint to show tokens spent on that project in the last week."
+- "Use `query_agent_analytics` with `view=\"review_units\"` and a repo fingerprint to list directly linked PR/MR cost estimates."
 
 ## Auth behavior
 

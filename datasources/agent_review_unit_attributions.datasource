@@ -1,0 +1,38 @@
+DESCRIPTION >
+    One session-to-review-unit attribution decision edge. Rows carry only decision metadata;
+    review-unit cost is computed by joining to agent_session_summaries.
+
+SCHEMA >
+    `OrgId` String `json:$.OrgId`,
+    `UserId` String `json:$.UserId`,
+    `CollectorId` String `json:$.CollectorId`,
+    `CollectorCredentialId` String `json:$.CollectorCredentialId`,
+    `session_pk` String `json:$.session_pk`,
+    `review_unit_attribution_pk` String `json:$.review_unit_attribution_pk`,
+    `repo_fingerprint` String `json:$.repo_fingerprint`,
+    `repo_source` LowCardinality(String) `json:$.repo_source`,
+    `source` LowCardinality(String) `json:$.source`,
+    `parser_version` LowCardinality(String) `json:$.parser_version`,
+    `DecidedAt` DateTime64(3) `json:$.DecidedAt`,
+    `IngestedAt` DateTime64(3) `json:$.IngestedAt`,
+    `vendor_session_id` String `json:$.vendor_session_id`,
+    `review_unit_key` String `json:$.review_unit_key`,
+    `review_url` String `json:$.review_url`,
+    `review_host` LowCardinality(String) `json:$.review_host`,
+    `review_owner` String `json:$.review_owner`,
+    `review_repo` String `json:$.review_repo`,
+    `review_number` UInt32 `json:$.review_number`,
+    `git_branch` String `json:$.git_branch`,
+    `attribution_method` LowCardinality(String) `json:$.attribution_method`,
+    `confidence` LowCardinality(String) `json:$.confidence`,
+    `status` LowCardinality(String) `json:$.status`,
+    `ambiguity_reason` LowCardinality(String) `json:$.ambiguity_reason`,
+    `evidence_pull_request_link_pk` String `json:$.evidence_pull_request_link_pk`,
+    `rule_version` LowCardinality(String) `json:$.rule_version`
+
+ENGINE "MergeTree"
+ENGINE_SORTING_KEY "OrgId, rule_version, session_pk, review_unit_attribution_pk"
+ENGINE_PARTITION_KEY "toYYYYMMDD(DecidedAt)"
+ENGINE_TTL "toDateTime(DecidedAt) + toIntervalYear(1)"
+
+TOKEN "agent_consumer_append" APPEND

@@ -89,6 +89,7 @@ describe('queryAgentAnalytics', () => {
 
     expect(payload.views.summary).toContain('KPI');
     expect(payload.views.context_health).toContain('context');
+    expect(payload.views.review_units).toContain('Direct-link');
     expect(payload.views.sessions).toBeUndefined();
     expect(payload.filters.sources.allowed_values).toContain('codex');
     expect(payload.view_parameters.timeseries.group_by).toContain('repo');
@@ -329,6 +330,51 @@ describe('queryAgentAnalytics', () => {
 
     const call = fetchSpy.mock.calls[0]![0] as string;
     expect(call).toContain('/v0/pipes/agent_repo_directory.json');
+    expect(call).toContain('limit=5');
+    expect(call).toContain('offset=10');
+  });
+
+  it('queries review-unit costs with direct-link ordering controls', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        data: [
+          {
+            review_unit_key: 'hosted:github.com/acme/app:pull_request:42',
+            review_url: 'https://github.com/acme/app/pull/42',
+            estimated_cost_usd: 1.25,
+            session_count: 2,
+          },
+        ],
+      }),
+    );
+
+    const result = await queryAgentAnalytics(
+      mockCtx,
+      ['key-1'],
+      {
+        view: 'review_units',
+        filters: { sources: ['codex'], repo_fingerprints: ['repo_123'] },
+        order_by: 'recent',
+        limit: 5,
+        offset: 10,
+      },
+      30,
+    );
+    const payload = JSON.parse(result.content[0]!.text!);
+
+    expect(payload.view).toBe('review_units');
+    expect(payload.data[0].review_url).toBe('https://github.com/acme/app/pull/42');
+    expect(mockCtx.mintToken).toHaveBeenCalledWith(
+      [{ type: 'PIPES:READ', resource: 'agent_review_unit_costs' }],
+      ['key-1'],
+      30,
+    );
+
+    const call = fetchSpy.mock.calls[0]![0] as string;
+    expect(call).toContain('/v0/pipes/agent_review_unit_costs.json');
+    expect(call).toContain('sources=codex');
+    expect(call).toContain('repos=repo_123');
+    expect(call).toContain('order_by=recent');
     expect(call).toContain('limit=5');
     expect(call).toContain('offset=10');
   });

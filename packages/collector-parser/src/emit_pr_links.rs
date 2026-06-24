@@ -4,17 +4,16 @@
 // contract, IDs, pricing, redaction, and storage around this code.
 
 //! `AgentPullRequestLinkFact` emission for Claude Code and Codex CLI transcripts.
-//! [`claude_pr_link_facts`] and [`codex_pr_link_facts`] scan a session for **canonical GitHub
-//! pull-request links** — `github.com/{owner}/{repo}/pull/{number}` — and emit one fact per distinct
-//! observed link. These links are the only v1 PR-attribution signal: an agent usually emits a click
-//! target, and that target carries both repo identity and PR number (ADR "Repo and pull request
-//! attribution").
+//! [`claude_pr_link_facts`] and [`codex_pr_link_facts`] scan a session for canonical hosted-review
+//! links and emit one fact per distinct observed link. These links are the only direct v1 review-unit
+//! attribution signal: an agent usually emits a click target, and that target carries both repo
+//! identity and review number (ADR "Repo and review-unit attribution").
 //!
 //! **Only links, never commands.** `gh pr create`, `gh pr view`, `git push`, branch names, and bare PR
 //! numbers are diagnostic evidence for *future* enrichment, not attribution, so this emitter reads
 //! assistant message text, tool *output*, and user/transcript text — never tool *input* / command
-//! strings. Every canonical link is `confidence = High` in v1; the `Medium`/`Low` rungs and non-GitHub
-//! hosts are reserved for that deferred diagnostic enrichment.
+//! strings. Every canonical link is `confidence = High` in v1; the `Medium`/`Low` rungs are reserved
+//! for deferred diagnostic enrichment.
 //!
 //! **Identity / dedup mirrors the ingest Worker pk.** The Worker keys `pull_request_link_pk` on
 //! `(source, vendor_session_id, source_event_id ?? turn:<stable_turn_index>, url)`. To never emit two
@@ -36,21 +35,26 @@ use serde_json::Value;
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
 
-/// Canonical GitHub pull-request link: `github.com/{owner}/{repo}/pull/{number}` (ADR v1 GitHub-only).
-/// `/pull/` is singular and a numeric id is required, so issue links, the `/pulls` list page, and bare
-/// PR numbers never match. Owner is a GitHub login (alphanumerics joined by single hyphens); repo
-/// additionally allows `.` and `_`, and must start/end alphanumeric. The scheme is ignored — a bare
-/// `github.com/...` reference counts the same as a full URL. Host look-alikes (`evilgithub.com`,
-/// `my-github.com`) and subdomains (`api.github.com`) are rejected by [`parse_pr_links`], not here: the
-/// `regex` crate has no look-behind, so the preceding character is checked after the match.
-static PR_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+/// Canonical hosted-review links whose URL path carries repo identity and review number:
+///
+/// - GitHub: `host/owner/repo/pull/{number}`
+/// - GitLab: `host/group/subgroup/repo/-/merge_requests/{number}`
+/// - Bitbucket: `host/workspace/repo/pull-requests/{number}`
+/// - Gitea/Forgejo-style: `host/owner/repo/pulls/{number}`
+///
+/// A numeric id is required, so issue links, list pages, and bare PR numbers never match. The scheme is
+/// ignored — a bare `github.com/...` reference counts the same as a full URL. Host look-alikes
+/// (`evilgithub.com`, `my-github.com`) and subdomains (`api.github.com`) are rejected by
+/// [`parse_pr_links`], not here: the `regex` crate has no look-behind, so the preceding character is
+/// checked after the match.
+static REVIEW_URL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/([A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)/pull/(\d+)",
+        r"(?i)([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)/([A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:/[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)*)/(?:pull/(\d+)|pulls/(\d+)|-/merge_requests/(\d+)|pull-requests/(\d+))",
     )
-    .expect("pr url pattern")
+    .expect("review url pattern")
 });
 
-/// A parsed canonical GitHub pull-request link, normalized to its `https://` form. Only public repo
+/// A parsed canonical hosted-review link, normalized to its `https://` form. Only public repo
 /// coordinates (host/owner/repo/number) are kept — the surrounding text is never carried onto a fact.
 struct PrLink {
     host: String,
@@ -60,11 +64,11 @@ struct PrLink {
     url: String,
 }
 
-/// Every canonical GitHub PR link in `text`, in first-appearance order (duplicates are collapsed later,
-/// at session scope). A `number` that overflows `i64` is not a real PR and is skipped.
+/// Every canonical hosted-review link in `text`, in first-appearance order (duplicates are collapsed
+/// later, at session scope). A `number` that overflows `i64` is not a real review id and is skipped.
 fn parse_pr_links(text: &str) -> Vec<PrLink> {
     let bytes = text.as_bytes();
-    PR_URL_PATTERN
+    REVIEW_URL_PATTERN
         .captures_iter(text)
         .filter_map(|caps| {
             let matched = caps.get(0)?;
@@ -77,29 +81,63 @@ fn parse_pr_links(text: &str) -> Vec<PrLink> {
                     return None;
                 }
             }
-            // `\d+` stops at the first non-digit, so `pull/270abc` would otherwise canonicalize to PR
+            // `\d+` stops at the first non-digit, so `pull/270abc` would otherwise canonicalize to id
             // 270. A word-continuation char right after the number means the digits were truncated from
-            // a larger token, not a real PR id; a real link ends in `/`, `#`, `?`, `)`, whitespace, or EOL.
+            // a larger token; a real link ends in `/`, `#`, `?`, `)`, whitespace, or EOL.
             if let Some(&next) = bytes.get(matched.end()) {
                 if matches!(next, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
                     return None;
                 }
             }
-            // GitHub owners and repos are case-insensitive; canonicalize to lowercase so differently
-            // cased references dedupe to one link (and one Worker pk) rather than fragmenting attribution.
-            let owner = caps.get(1)?.as_str().to_lowercase();
-            let repo = caps.get(2)?.as_str().to_lowercase();
-            let number = caps.get(3)?.as_str().parse::<i64>().ok()?;
-            let url = format!("https://github.com/{owner}/{repo}/pull/{number}");
+            let host = caps.get(1)?.as_str().to_ascii_lowercase();
+            if !host.contains('.') {
+                return None;
+            }
+            if is_provider_host_lookalike(&host) {
+                return None;
+            }
+            let is_github_pull = caps.get(3).is_some();
+            if is_github_pull && host != "github.com" && !host.starts_with("github.") {
+                return None;
+            }
+            let raw_path = caps.get(2)?.as_str();
+            let normalized_path = if host == "github.com" {
+                raw_path.to_ascii_lowercase()
+            } else {
+                raw_path.to_string()
+            };
+            let (owner, repo) = normalized_path.rsplit_once('/')?;
+            let number_match = caps.get(3).or_else(|| caps.get(4)).or_else(|| caps.get(5)).or_else(|| caps.get(6))?;
+            let number = number_match.as_str().parse::<i64>().ok()?;
+            let review_path = if is_github_pull {
+                format!("pull/{number}")
+            } else if caps.get(4).is_some() {
+                format!("pulls/{number}")
+            } else if caps.get(5).is_some() {
+                format!("-/merge_requests/{number}")
+            } else {
+                format!("pull-requests/{number}")
+            };
+            let url = format!("https://{host}/{normalized_path}/{review_path}");
             Some(PrLink {
-                host: "github.com".to_string(),
-                owner,
-                repo,
+                host,
+                owner: owner.to_string(),
+                repo: repo.to_string(),
                 number,
                 url,
             })
         })
         .collect()
+}
+
+fn is_provider_host_lookalike(host: &str) -> bool {
+    ["github.com", "gitlab.com", "bitbucket.org"]
+        .iter()
+        .any(|canonical| {
+            host != *canonical
+                && (host.ends_with(&format!(".{canonical}"))
+                    || host.starts_with(&format!("{canonical}.")))
+        })
 }
 
 /// The record's `event_at` in epoch ms from its top-level RFC3339 `timestamp`, falling back to the
@@ -184,7 +222,7 @@ fn tool_result_texts(block: &Value) -> Vec<&str> {
     }
 }
 
-/// Emits one [`AgentPullRequestLinkFact`] per distinct canonical GitHub PR link observed in a Claude
+/// Emits one [`AgentPullRequestLinkFact`] per distinct canonical hosted-review link observed in a Claude
 /// session: assistant message text ([`PullRequestLinkEvidence::AssistantText`]), `tool_result` output
 /// ([`PullRequestLinkEvidence::ToolOutput`]), and user message text
 /// ([`PullRequestLinkEvidence::TranscriptRecord`]). `source_event_id` is each record's `uuid`.
@@ -283,7 +321,7 @@ fn codex_output_text(payload: &Value) -> Option<&str> {
     }
 }
 
-/// Emits one [`AgentPullRequestLinkFact`] per distinct canonical GitHub PR link observed in a Codex
+/// Emits one [`AgentPullRequestLinkFact`] per distinct canonical hosted-review link observed in a Codex
 /// session: assistant message text ([`PullRequestLinkEvidence::AssistantText`]),
 /// `function_call_output` text ([`PullRequestLinkEvidence::ToolOutput`]), and user message text
 /// ([`PullRequestLinkEvidence::TranscriptRecord`]). Codex carries no per-record id, so `source_event_id`
@@ -328,7 +366,7 @@ pub fn codex_pr_link_facts(
     acc.facts
 }
 
-/// Emits one [`AgentPullRequestLinkFact`] per distinct canonical GitHub PR link observed in a Cursor
+/// Emits one [`AgentPullRequestLinkFact`] per distinct canonical hosted-review link observed in a Cursor
 /// session: assistant bubble text ([`PullRequestLinkEvidence::AssistantText`]), tool result output
 /// ([`PullRequestLinkEvidence::ToolOutput`]), and user bubble text
 /// ([`PullRequestLinkEvidence::TranscriptRecord`]). Cursor bubbles carry a stable `bubbleId`, so
@@ -607,6 +645,60 @@ mod tests {
     }
 
     #[test]
+    fn supported_hosted_review_links_emit_provider_neutral_coordinates() {
+        let cases = [
+            (
+                "https://gitlab.com/group/subgroup/trace-flow/-/merge_requests/44/diffs",
+                "gitlab.com",
+                "group/subgroup",
+                "trace-flow",
+                44,
+                "https://gitlab.com/group/subgroup/trace-flow/-/merge_requests/44",
+            ),
+            (
+                "https://bitbucket.org/acme/widgets/pull-requests/45#comment-1",
+                "bitbucket.org",
+                "acme",
+                "widgets",
+                45,
+                "https://bitbucket.org/acme/widgets/pull-requests/45",
+            ),
+            (
+                "https://git.example.com/team/widgets/pulls/46/files",
+                "git.example.com",
+                "team",
+                "widgets",
+                46,
+                "https://git.example.com/team/widgets/pulls/46",
+            ),
+        ];
+        for (text, host, owner, repo, number, url) in cases {
+            let records = [claude_assistant("u1", text, "2026-05-27T12:00:00Z")];
+            let facts = claude_pr_link_facts(&records, &ctx());
+            assert_eq!(facts.len(), 1, "case: {text}");
+            assert_eq!(facts[0].host, host, "case: {text}");
+            assert_eq!(facts[0].owner, owner, "case: {text}");
+            assert_eq!(facts[0].repo, repo, "case: {text}");
+            assert_eq!(facts[0].number, number, "case: {text}");
+            assert_eq!(facts[0].url, url, "case: {text}");
+        }
+    }
+
+    #[test]
+    fn github_links_lowercase_owner_and_repo_for_stable_dedupe() {
+        let records = [claude_assistant(
+            "u1",
+            "see https://github.com/Zaks-IO/Trace-Flow/pull/270",
+            "2026-05-27T12:00:00Z",
+        )];
+        let facts = claude_pr_link_facts(&records, &ctx());
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].owner, "zaks-io");
+        assert_eq!(facts[0].repo, "trace-flow");
+        assert_eq!(facts[0].url, PR);
+    }
+
+    #[test]
     fn non_canonical_references_are_not_links() {
         let cases = [
             "the issue github.com/zaks-io/trace-flow/issues/270",
@@ -616,6 +708,10 @@ mod tests {
             "github.com/zaks-io/trace-flow/pull/notanumber",
             // `\d+` stops at the first letter, so a number glued to a suffix is a truncated token, not PR 270.
             "github.com/zaks-io/trace-flow/pull/270abc",
+            "gitlab.com/group/project/-/merge_requests/notanumber",
+            "bitbucket.org/acme/project/pull-requests/270abc",
+            "git.example.com/acme/project/pulls",
+            "not-a-host/acme/project/pull/270",
             // Host look-alikes and subdomains are not github.com.
             "pushed to evilgithub.com/zaks-io/trace-flow/pull/270",
             "the mirror my-github.com/zaks-io/trace-flow/pull/270",
@@ -629,23 +725,6 @@ mod tests {
                 "case: {case}"
             );
         }
-    }
-
-    #[test]
-    fn owner_and_repo_are_canonicalized_to_lowercase_so_casing_dedupes() {
-        // GitHub owner/repo are case-insensitive. A mixed-case reference must produce the same canonical
-        // url (and Worker pk) as the lowercase one, or one repo's links fragment across rows and the
-        // session never reaches the "exactly one canonical link" attribution bar.
-        let records = [claude_assistant(
-            "u1",
-            "see https://github.com/Zaks-IO/Trace-Flow/pull/270",
-            "2026-05-27T12:00:00Z",
-        )];
-        let facts = claude_pr_link_facts(&records, &ctx());
-        assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].owner, "zaks-io");
-        assert_eq!(facts[0].repo, "trace-flow");
-        assert_eq!(facts[0].url, PR);
     }
 
     #[test]
