@@ -55,6 +55,7 @@ export const WEB_TINYBIRD_PIPES = [
   'agent_failure_leaderboard',
   'agent_tool_period_delta',
   'agent_repo_directory',
+  'agent_review_unit_costs',
 ] as const;
 
 export const MCP_TINYBIRD_PIPES = [
@@ -75,6 +76,7 @@ export const MCP_TINYBIRD_PIPES = [
   'agent_failure_leaderboard',
   'agent_tool_period_delta',
   'agent_repo_directory',
+  'agent_review_unit_costs',
 ] as const;
 
 const MCP_TINYBIRD_PIPE_SET = new Set<string>(MCP_TINYBIRD_PIPES);

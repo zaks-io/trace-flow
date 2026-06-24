@@ -39,6 +39,7 @@ const EXPECTED_WEB_PIPES = [
   'agent_failure_leaderboard',
   'agent_tool_period_delta',
   'agent_repo_directory',
+  'agent_review_unit_costs',
 ] as const;
 
 const EXPECTED_MCP_PIPES = [
@@ -59,6 +60,7 @@ const EXPECTED_MCP_PIPES = [
   'agent_failure_leaderboard',
   'agent_tool_period_delta',
   'agent_repo_directory',
+  'agent_review_unit_costs',
 ] as const;
 
 function readPipe(resource: string): string {
