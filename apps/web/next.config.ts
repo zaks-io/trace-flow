@@ -42,9 +42,5 @@ export default withSentryConfig(nextConfig, {
     deleteSourcemapsAfterUpload: true,
   },
   widenClientFileUpload: true,
-  webpack: {
-    treeshake: {
-      removeDebugLogging: true,
-    },
-  },
+  disableLogger: true,
 });

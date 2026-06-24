@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { acceptInvite } from '../auth/invites';
 
 // ---------------------------------------------------------------------------
 // invites.ts handler logic tests
@@ -19,13 +20,30 @@ function makeInvite(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeCtx() {
+function makeIdentity(overrides: Record<string, unknown> = {}) {
+  return {
+    tokenIdentifier: 'token|123',
+    email: 'invitee@example.com',
+    ...overrides,
+  };
+}
+
+function makeCtx({
+  identity = makeIdentity(),
+  invite = null,
+}: {
+  identity?: Record<string, unknown> | null;
+  invite?: ReturnType<typeof makeInvite> | null;
+} = {}) {
   const dbPatch = vi.fn().mockResolvedValue(undefined);
   const dbInsert = vi.fn().mockResolvedValue('new_invite_id');
   const dbGet = vi.fn();
   const schedulerRunAfter = vi.fn().mockResolvedValue('sched_id');
 
   return {
+    auth: {
+      getUserIdentity: vi.fn().mockResolvedValue(identity),
+    },
     db: {
       get: dbGet,
       patch: dbPatch,
@@ -34,7 +52,7 @@ function makeCtx() {
       query: vi.fn().mockReturnValue({
         withIndex: vi.fn().mockReturnThis(),
         filter: vi.fn().mockReturnThis(),
-        first: vi.fn().mockResolvedValue(null),
+        first: vi.fn().mockResolvedValue(invite),
         collect: vi.fn().mockResolvedValue([]),
         order: vi.fn().mockReturnThis(),
       }),
@@ -157,6 +175,14 @@ describe('getInviteByToken handler logic', () => {
 // ---------------------------------------------------------------------------
 
 describe('acceptInvite handler logic', () => {
+  type AcceptInviteHandler = (
+    ctx: ReturnType<typeof makeCtx>,
+    args: { token: string },
+  ) => Promise<{ email: string }>;
+
+  const callAcceptInvite = (ctx: ReturnType<typeof makeCtx>, token = 'token-uuid') =>
+    (acceptInvite as unknown as { _handler: AcceptInviteHandler })._handler(ctx, { token });
+
   it('throws when invite not found', () => {
     const invite = null;
     expect(() => {
@@ -194,17 +220,28 @@ describe('acceptInvite handler logic', () => {
     expect(ctx._dbPatch).toHaveBeenCalledWith('invite_id', { status: 'expired' });
   });
 
-  it('patches invite to accepted status', async () => {
-    const invite = makeInvite();
-    const ctx = makeCtx();
-
-    // validation passes, accept
-    await ctx.db.patch(invite._id, {
-      status: 'accepted',
-      acceptedAt: expect.any(Number),
+  it('throws when authenticated email does not match invite email', async () => {
+    const invite = makeInvite({ email: 'invitee@example.com' });
+    const ctx = makeCtx({
+      invite,
+      identity: makeIdentity({ email: 'other@example.com' }),
     });
 
+    await expect(callAcceptInvite(ctx)).rejects.toThrow('Invite is for a different email address');
+    expect(ctx._dbPatch).not.toHaveBeenCalled();
+  });
+
+  it('patches invite to accepted status', async () => {
+    const invite = makeInvite({ email: ' Invitee@Example.COM ' });
+    const ctx = makeCtx({
+      invite,
+      identity: makeIdentity({ email: 'invitee@example.com' }),
+    });
+
+    await expect(callAcceptInvite(ctx)).resolves.toEqual({ email: 'invitee@example.com' });
+
     expect(ctx._dbPatch).toHaveBeenCalledWith('invite_id', {
+      email: 'invitee@example.com',
       status: 'accepted',
       acceptedAt: expect.any(Number),
     });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Bot, X } from 'lucide-react';
 import { PageToolbar } from '@/components/shared/PageToolbar';
@@ -228,13 +229,40 @@ export function AgentAnalytics() {
           Loading agent analytics...
         </div>
       ) : mainView === 'error' ? null : mainView === 'empty' || !summary ? (
-        <div className="flex flex-col items-center gap-2 rounded-xl bg-card/40 py-16 text-center">
+        <div className="flex flex-col items-center gap-4 rounded-xl bg-card/40 px-6 py-16 text-center">
           <Bot className="h-10 w-10 text-muted-foreground/40" />
-          <p className="text-sm font-medium text-foreground">No agent activity yet</p>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Agent sessions appear here once your collector syncs Claude or Codex transcripts for
-            this time range.
-          </p>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-foreground">
+              {hasFilters ? 'No agent activity for these filters' : 'No collector activity yet'}
+            </p>
+            <p className="max-w-md text-sm text-muted-foreground">
+              Agent sessions appear here after the Trace Flow CLI syncs Claude or Codex transcripts
+              for this time range.
+            </p>
+          </div>
+          {!hasFilters ? (
+            <>
+              <pre className="max-w-full overflow-x-auto rounded-lg bg-background/80 p-4 text-left text-xs text-foreground">
+                <code>{`curl --proto '=https' --tlsv1.2 -sSf https://trace-flow.dev/install.sh | sh
+trace-flow login
+trace-flow sync --since 7d`}</code>
+              </pre>
+              <div className="flex flex-wrap justify-center gap-3">
+                <a
+                  href="/install.sh"
+                  className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  Download CLI installer
+                </a>
+                <Link
+                  href="/docs"
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Read docs
+                </Link>
+              </div>
+            </>
+          ) : null}
         </div>
       ) : (
         <AgentBentoGrid

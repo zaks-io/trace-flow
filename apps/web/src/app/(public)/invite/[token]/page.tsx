@@ -1,15 +1,20 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
-import { useQuery, useMutation } from 'convex/react';
+import Link from 'next/link';
+import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 
 export default function InviteAcceptPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
   const invite = useQuery(api.auth.invites.getInviteByToken, { token });
-  const acceptInvite = useMutation(api.auth.invites.acceptInvite);
-  const [status, setStatus] = useState<'loading' | 'accepting' | 'success' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'redirecting' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
+
+  const returnTo = `/app/invite/${encodeURIComponent(token)}`;
+  const loginUrl = invite?.email
+    ? `/auth/login?login_hint=${encodeURIComponent(invite.email)}&screen_hint=signup&returnTo=${encodeURIComponent(returnTo)}`
+    : `/auth/login?screen_hint=signup&returnTo=${encodeURIComponent(returnTo)}`;
 
   useEffect(() => {
     if (invite === undefined) return; // Still loading
@@ -28,37 +33,27 @@ export default function InviteAcceptPage({ params }: { params: Promise<{ token: 
 
     if (status !== 'loading') return;
 
-    setStatus('accepting');
-    acceptInvite({ token })
-      .then((result) => {
-        setStatus('success');
-        const loginUrl = `/auth/login?login_hint=${encodeURIComponent(result.email)}&screen_hint=signup&returnTo=/app`;
-        window.location.href = loginUrl;
-      })
-      .catch((err) => {
-        setStatus('error');
-        setErrorMessage(err instanceof Error ? err.message : 'Failed to accept invite');
-      });
-  }, [invite, token, acceptInvite, status]);
+    setStatus('redirecting');
+    window.location.href = loginUrl;
+  }, [invite, loginUrl, status]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="mx-auto max-w-md px-6 text-center">
-        {(status === 'loading' || status === 'accepting') && (
+        {(status === 'loading' || status === 'redirecting') && (
           <div>
-            <div className="mb-4 text-lg font-semibold text-foreground">
-              Accepting your invite...
-            </div>
+            <div className="mb-4 text-lg font-semibold text-foreground">Opening your invite...</div>
             <p className="text-sm text-muted-foreground">
-              You&apos;ll be redirected to create your account.
+              You&apos;ll be redirected to create your account before the invite is accepted.
             </p>
-          </div>
-        )}
-
-        {status === 'success' && (
-          <div>
-            <div className="mb-4 text-lg font-semibold text-foreground">Invite accepted!</div>
-            <p className="text-sm text-muted-foreground">Redirecting you to sign up...</p>
+            {status === 'redirecting' ? (
+              <Link
+                className="mt-4 inline-block text-sm text-primary hover:underline"
+                href={loginUrl}
+              >
+                Continue to sign up
+              </Link>
+            ) : null}
           </div>
         )}
 

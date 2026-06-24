@@ -36,6 +36,10 @@ interface UserInfo {
   picture?: string;
 }
 
+function normalizeEmail(email: string): string {
+  return email.toLowerCase().trim();
+}
+
 function hasUserDataChanged(existingUser: Doc<'users'>, newUserInfo: UserInfo): boolean {
   return (
     existingUser.email !== newUserInfo.email ||
@@ -99,9 +103,11 @@ async function ensureOrgMembership(
 }
 
 async function getAcceptedInviteForEmail(ctx: MutationCtx, email: string) {
+  const normalizedEmail = normalizeEmail(email);
+
   return await ctx.db
     .query('invites')
-    .withIndex('by_email', (q) => q.eq('email', email))
+    .withIndex('by_email', (q) => q.eq('email', normalizedEmail))
     .filter((q) => q.eq(q.field('status'), 'accepted'))
     .first();
 }
@@ -211,7 +217,8 @@ export const initializeUser = mutation({
       throw new Error('Authentication required');
     }
 
-    if (!identity.email) {
+    const email = identity.email ? normalizeEmail(identity.email) : '';
+    if (!email) {
       throw new Error('User email is required');
     }
 
@@ -222,7 +229,7 @@ export const initializeUser = mutation({
 
     const userInfo: UserInfo = {
       tokenIdentifier: identity.tokenIdentifier,
-      email: identity.email,
+      email,
       name: identity.name,
       picture: identity.pictureUrl,
     };
@@ -316,6 +323,11 @@ export const findOrCreateUser = internalMutation({
   },
   returns: v.id('users'),
   handler: async (ctx, args): Promise<Id<'users'>> => {
+    const email = normalizeEmail(args.email);
+    if (!email) {
+      throw new Error('User email is required');
+    }
+
     const existingUser = await ctx.db
       .query('users')
       .withIndex('by_token_identifier', (q) => q.eq('tokenIdentifier', args.tokenIdentifier))
@@ -323,12 +335,12 @@ export const findOrCreateUser = internalMutation({
 
     if (existingUser) {
       if (
-        existingUser.email !== args.email ||
+        existingUser.email !== email ||
         existingUser.name !== args.name ||
         existingUser.picture !== args.picture
       ) {
         await ctx.db.patch(existingUser._id, {
-          email: args.email,
+          email,
           name: args.name,
           picture: args.picture,
         });
@@ -339,7 +351,7 @@ export const findOrCreateUser = internalMutation({
 
       const userInfo: UserInfo = {
         tokenIdentifier: args.tokenIdentifier,
-        email: args.email,
+        email,
         name: args.name,
         picture: args.picture,
       };
@@ -360,11 +372,11 @@ export const findOrCreateUser = internalMutation({
       return existingUser._id;
     }
 
-    const acceptedInvite = await getAcceptedInviteForEmail(ctx, args.email);
+    const acceptedInvite = await getAcceptedInviteForEmail(ctx, email);
 
     const userId = await ctx.db.insert('users', {
       tokenIdentifier: args.tokenIdentifier,
-      email: args.email,
+      email,
       name: args.name,
       picture: args.picture,
       enabled: true,

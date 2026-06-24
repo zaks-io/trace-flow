@@ -5,12 +5,16 @@ import { requireAdmin, requireEnabledUser } from './users';
 
 const INVITE_EXPIRY_DAYS = 7;
 
+function normalizeEmail(email: string): string {
+  return email.toLowerCase().trim();
+}
+
 export const createInvite = mutation({
   args: { email: v.string() },
   returns: v.id('invites'),
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
-    const email = args.email.toLowerCase().trim();
+    const email = normalizeEmail(args.email);
 
     const existing = await ctx.db
       .query('invites')
@@ -57,7 +61,7 @@ export const createOrgInvite = mutation({
       throw new Error('Only organization owners can invite members');
     }
 
-    const email = args.email.toLowerCase().trim();
+    const email = normalizeEmail(args.email);
     const existing = await ctx.db
       .query('invites')
       .withIndex('by_email', (q) => q.eq('email', email))
@@ -90,6 +94,7 @@ export const getInviteByToken = query({
     v.null(),
     v.object({
       status: v.union(v.literal('pending'), v.literal('accepted'), v.literal('expired')),
+      email: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -104,7 +109,10 @@ export const getInviteByToken = query({
       return { status: 'expired' as const };
     }
 
-    return { status: invite.status };
+    return {
+      status: invite.status,
+      email: invite.status === 'pending' ? normalizeEmail(invite.email) : undefined,
+    };
   },
 });
 
@@ -112,6 +120,15 @@ export const acceptInvite = mutation({
   args: { token: v.string() },
   returns: v.object({ email: v.string() }),
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error('Authentication required');
+    }
+    const identityEmail = identity.email ? normalizeEmail(identity.email) : '';
+    if (!identityEmail) {
+      throw new Error('Authenticated email is required');
+    }
+
     const invite = await ctx.db
       .query('invites')
       .withIndex('by_token', (q) => q.eq('token', args.token))
@@ -125,17 +142,23 @@ export const acceptInvite = mutation({
       throw new Error(`Invite has already been ${invite.status}`);
     }
 
+    const inviteEmail = normalizeEmail(invite.email);
+    if (inviteEmail !== identityEmail) {
+      throw new Error('Invite is for a different email address');
+    }
+
     if (invite.expiresAt < Date.now()) {
       await ctx.db.patch(invite._id, { status: 'expired' });
       throw new Error('Invite has expired');
     }
 
     await ctx.db.patch(invite._id, {
+      email: inviteEmail,
       status: 'accepted',
       acceptedAt: Date.now(),
     });
 
-    return { email: invite.email };
+    return { email: inviteEmail };
   },
 });
 
