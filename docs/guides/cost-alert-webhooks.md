@@ -10,6 +10,8 @@ header as untrusted input.
 - The hostname must resolve only to public internet-routable IP addresses. Delivery blocks
   loopback, RFC1918, carrier-grade NAT, link-local, documentation, multicast, reserved, and
   cloud metadata address ranges.
+- Delivery pins the outbound connection to a validated resolved address. The HTTP client does
+  not perform a second DNS lookup after validation.
 - `localhost`, `*.localhost`, and known metadata hostnames are blocked even before DNS lookup.
 - Redirects are not followed. If a receiver moved, update the configured webhook URL to the
   final public endpoint.

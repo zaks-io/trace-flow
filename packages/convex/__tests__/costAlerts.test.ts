@@ -3,6 +3,7 @@ import { normalizeChannelConfig, validateAlertCondition, isOrgOwner } from '../c
 import { buildApiKeyParam, resolveScopedApiKeys, shouldNotify } from '../integrations/costAlerts';
 import {
   assertCostAlertWebhookDeliveryTarget,
+  createPinnedLookup,
   sendCostAlertWebhookNotification,
 } from '../integrations/costAlertWebhookDelivery';
 
@@ -83,9 +84,9 @@ describe('cost alert helpers', () => {
         'delivery-1',
         {
           resolveAddresses: async () => ['10.0.0.5'],
-          fetchImpl: async () => {
+          sendRequest: async () => {
             fetched = true;
-            return new Response(null, { status: 204 });
+            return { ok: true, status: 204, body: '' };
           },
         },
       ),
@@ -94,8 +95,14 @@ describe('cost alert helpers', () => {
     expect(fetched).toBe(false);
   });
 
-  it('delivers to allowed public HTTPS endpoints with redirects disabled', async () => {
-    const calls: { url: string; init: RequestInit }[] = [];
+  it('delivers to allowed public HTTPS endpoints through the pinned request sender', async () => {
+    const calls: {
+      url: string;
+      address: string;
+      family: 4 | 6;
+      body: string;
+      headers: Headers;
+    }[] = [];
 
     await sendCostAlertWebhookNotification(
       {
@@ -107,23 +114,87 @@ describe('cost alert helpers', () => {
       'delivery-1',
       {
         resolveAddresses: async () => ['93.184.216.34'],
-        fetchImpl: async (url, init) => {
-          calls.push({ url, init });
-          return new Response(null, { status: 204 });
+        sendRequest: async (request) => {
+          calls.push({
+            url: request.url.toString(),
+            address: request.address,
+            family: request.family,
+            body: request.body,
+            headers: request.headers,
+          });
+          return { ok: true, status: 204, body: '' };
         },
       },
     );
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe('https://receiver.example/hook');
-    expect(calls[0]?.init.redirect).toBe('error');
-    expect(calls[0]?.init.method).toBe('POST');
+    expect(calls[0]?.address).toBe('93.184.216.34');
+    expect(calls[0]?.family).toBe(4);
+    expect(calls[0]?.body).toBe('{"ok":true}');
 
-    const headers = calls[0]?.init.headers as Headers;
+    const headers = calls[0]!.headers;
     expect(headers.get('Content-Type')).toBe('application/json');
     expect(headers.get('Idempotency-Key')).toBe('delivery-1');
     expect(headers.get('X-Receiver')).toBe('cost-alerts');
     expect(headers.get('X-Trace-Flow-Signature')).toBeTruthy();
+  });
+
+  it('rejects redirect responses instead of following them', async () => {
+    await expect(
+      sendCostAlertWebhookNotification(
+        {
+          url: 'https://receiver.example/hook',
+        },
+        { ok: true },
+        'delivery-1',
+        {
+          resolveAddresses: async () => ['93.184.216.34'],
+          sendRequest: async () => ({ ok: false, status: 302, body: 'Moved' }),
+        },
+      ),
+    ).rejects.toThrow('Webhook delivery failed: 302 Moved');
+  });
+
+  it('pins delivery to the validated address to prevent DNS rebinding during send', async () => {
+    const requests: { address: string; family: 4 | 6 }[] = [];
+    let resolveCount = 0;
+
+    await sendCostAlertWebhookNotification(
+      {
+        url: 'https://receiver.example/hook',
+      },
+      { ok: true },
+      'delivery-1',
+      {
+        resolveAddresses: async () => {
+          resolveCount += 1;
+          return resolveCount === 1 ? ['93.184.216.34'] : ['10.0.0.5'];
+        },
+        sendRequest: async (request) => {
+          requests.push({ address: request.address, family: request.family });
+          return { ok: true, status: 204, body: '' };
+        },
+      },
+    );
+
+    expect(resolveCount).toBe(1);
+    expect(requests).toEqual([{ address: '93.184.216.34', family: 4 }]);
+  });
+
+  it('uses the pinned lookup result for outbound connection creation', () => {
+    const lookup = createPinnedLookup('93.184.216.34', 4);
+
+    lookup('receiver.example', {}, (error, address, family) => {
+      expect(error).toBe(null);
+      expect(address).toBe('93.184.216.34');
+      expect(family).toBe(4);
+    });
+
+    lookup('receiver.example', { all: true }, (error, addresses) => {
+      expect(error).toBe(null);
+      expect(addresses).toEqual([{ address: '93.184.216.34', family: 4 }]);
+    });
   });
 
   it('rejects custom webhook headers that can override delivery routing or auth', () => {
