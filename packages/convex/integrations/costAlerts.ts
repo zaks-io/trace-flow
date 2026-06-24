@@ -4,11 +4,12 @@ import { internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { render } from '@react-email/components';
 import { Resend } from 'resend';
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { internal } from '../_generated/api';
 import { CostAlertEmail } from '@trace-flow/emails';
 import type { Id } from '../_generated/dataModel';
 import { fetchPipe as fetchPipeShared } from '@trace-flow/tinybird-client';
+import { sendCostAlertWebhookNotification } from './costAlertWebhookDelivery';
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? 'Trace Flow <noreply@updates.trace-flow.dev>';
 const APP_URL = process.env.APP_URL ?? process.env.APP_BASE_URL ?? 'http://localhost:3000';
@@ -291,42 +292,6 @@ async function sendEmailNotification(
   });
 }
 
-async function sendWebhookNotification(
-  config: {
-    url: string;
-    secret?: string;
-    headers?: { key: string; value: string }[];
-  },
-  payload: Record<string, unknown>,
-  idempotencyKey: string,
-): Promise<void> {
-  const body = JSON.stringify(payload);
-  const headers = new Headers({
-    'Content-Type': 'application/json',
-    'Idempotency-Key': idempotencyKey,
-  });
-
-  for (const header of config.headers ?? []) {
-    headers.set(header.key, header.value);
-  }
-
-  if (config.secret) {
-    const signature = createHmac('sha256', config.secret).update(body).digest('hex');
-    headers.set('X-Trace-Flow-Signature', signature);
-  }
-
-  const response = await fetch(config.url, {
-    method: 'POST',
-    headers,
-    body,
-  });
-
-  if (!response.ok) {
-    const message = (await response.text()).slice(0, 500);
-    throw new Error(`Webhook delivery failed: ${response.status} ${message}`);
-  }
-}
-
 export function resolveScopedApiKeys(
   alert: {
     apiKeyIds?: string[];
@@ -413,7 +378,7 @@ async function deliverEvent(args: {
         `${APP_URL}/app/alerts`,
       );
     } else {
-      await sendWebhookNotification(channel.config, payload, idempotencyKey);
+      await sendCostAlertWebhookNotification(channel.config, payload, idempotencyKey);
     }
 
     await ctx.runMutation(internal.costAlerts.recordDelivery, {

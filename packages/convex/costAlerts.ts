@@ -22,6 +22,7 @@ import {
   costAlertValidator,
   organizationValidator,
 } from './validators';
+import { normalizeWebhookHeaders, parseWebhookDeliveryUrl } from './costAlertWebhookSecurity';
 
 const CONFIG_CHANGE_RECHECK_MS = 5 * 1000;
 
@@ -99,17 +100,18 @@ export function normalizeChannelConfig(
   }
 
   const url = config.url.trim();
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    throw new ConvexError('Webhook URL must start with http:// or https://');
+  try {
+    parseWebhookDeliveryUrl(url);
+  } catch (error) {
+    throw new ConvexError(error instanceof Error ? error.message : 'Invalid webhook URL');
   }
 
-  const headers =
-    config.headers
-      ?.map((header) => ({
-        key: header.key.trim(),
-        value: header.value.trim(),
-      }))
-      .filter((header) => header.key.length > 0 && header.value.length > 0) ?? [];
+  let headers: { key: string; value: string }[];
+  try {
+    headers = normalizeWebhookHeaders(config.headers);
+  } catch (error) {
+    throw new ConvexError(error instanceof Error ? error.message : 'Invalid webhook header');
+  }
 
   const secretTrimmed = config.secret?.trim();
   const isPlaceholder = secretTrimmed === WEBHOOK_SECRET_PLACEHOLDER;
