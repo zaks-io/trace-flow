@@ -60,7 +60,7 @@
 # slope is a repeated 1.0, where both estimators agree). context is a clean line -> every pairwise
 # slope is 1.0 -> context_elasticity = 1.0. All four depths have sample_count=5.
 - name: cost_by_depth_theil_sen_uses_exact_median_estimator
-  description: even-count pairwise-slope array pins medianExact (1.5), distinguishing it from the interpolating median alias (1.6) — guards the house exact-estimator choice
+  description: even-count pairwise-slope array pins medianExact (1.7095), distinguishing it from the interpolating median alias (1.6048) — guards the house exact-estimator choice
   expected_http_status: 200
   parameters: org_id=org_depth_even&start_time_ms=1779235200000&end_time_ms=1779321600000
   expected_result: |

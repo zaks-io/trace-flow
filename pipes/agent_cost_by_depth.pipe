@@ -8,7 +8,8 @@ DESCRIPTION >
     conversation is singled out and there is no chosen "deep vs shallow" cutoff.
 
     The headline is a log–log elasticity: a robust Theil–Sen slope of ln(median cost) on
-    ln(depth) across the depths that carry enough turns to be meaningful. It answers the
+    ln(depth+1) (the +1 keeps depth 0, where ln(1)=0, in the fit) across the depths that
+    carry enough turns to be meaningful. It answers the
     "slope tells me two things" question with one unitless number:
       ~0  -> flat: per-turn cost does not grow with depth (a few large reads, not bloat)
       ~1  -> linear: each doubling of depth doubles per-turn cost (history re-paid every turn)
