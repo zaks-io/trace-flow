@@ -5,6 +5,7 @@ import {
   fileEventRow,
   messageRow,
   pullRequestLinkRow,
+  reviewUnitAttributionRow,
   toClickhouseDateTime64,
   toolEventRow,
 } from '../rows';
@@ -15,6 +16,7 @@ import {
   messageFact,
   pullRequestLinkFact,
   queueMessage,
+  reviewUnitAttributionFact,
   toolEventFact,
 } from './factories';
 
@@ -167,6 +169,34 @@ const PULL_REQUEST_LINK_COLUMNS = [
   'evidence',
   'dropped_sensitive',
 ];
+const REVIEW_UNIT_ATTRIBUTION_COLUMNS = [
+  'OrgId',
+  'UserId',
+  'CollectorId',
+  'CollectorCredentialId',
+  'session_pk',
+  'review_unit_attribution_pk',
+  'repo_fingerprint',
+  'repo_source',
+  'source',
+  'parser_version',
+  'DecidedAt',
+  'IngestedAt',
+  'vendor_session_id',
+  'review_unit_key',
+  'review_url',
+  'review_host',
+  'review_owner',
+  'review_repo',
+  'review_number',
+  'git_branch',
+  'attribution_method',
+  'confidence',
+  'status',
+  'ambiguity_reason',
+  'evidence_pull_request_link_pk',
+  'rule_version',
+];
 
 const ctx = batchContext(queueMessage());
 
@@ -312,5 +342,19 @@ describe('pullRequestLinkRow', () => {
     expect(
       pullRequestLinkRow(ctx, pullRequestLinkFact({ source_event_id: null })).source_event_id,
     ).toBe('');
+  });
+});
+
+describe('reviewUnitAttributionRow', () => {
+  it('emits exactly the agent_review_unit_attributions schema columns', () => {
+    expect(keys(reviewUnitAttributionRow(ctx, reviewUnitAttributionFact()))).toEqual(
+      [...REVIEW_UNIT_ATTRIBUTION_COLUMNS].sort(),
+    );
+  });
+
+  it('renders decision and ingest timestamps separately', () => {
+    const row = reviewUnitAttributionRow(ctx, reviewUnitAttributionFact());
+    expect(row.DecidedAt).toBe('2026-05-20 10:00:00.000');
+    expect(row.IngestedAt).toBe('2026-05-20 12:00:00.000');
   });
 });

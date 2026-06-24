@@ -5,6 +5,7 @@ import type {
   AgentIngestQueueMessage,
   AgentMessageQueueFact,
   AgentPullRequestLinkQueueFact,
+  AgentReviewUnitAttributionQueueFact,
   AgentToolEventQueueFact,
 } from '@trace-flow/types';
 
@@ -149,6 +150,33 @@ export function pullRequestLinkFact(
   };
 }
 
+export function reviewUnitAttributionFact(
+  over: Partial<AgentReviewUnitAttributionQueueFact> = {},
+): AgentReviewUnitAttributionQueueFact {
+  return {
+    session_pk: 's1',
+    review_unit_attribution_pk: 'rua_1',
+    repo_fingerprint: 'repo_abc',
+    repo_source: 'remote',
+    vendor_session_id: 'vs1',
+    decided_at: EVENT_AT,
+    review_unit_key: 'hosted:github.com/acme/app:pull_request:42',
+    review_url: 'https://github.com/acme/app/pull/42',
+    review_host: 'github.com',
+    review_owner: 'acme',
+    review_repo: 'app',
+    review_number: 42,
+    git_branch: 'feature/direct-review-cost',
+    attribution_method: 'direct_link',
+    confidence: 'high',
+    status: 'attributed',
+    ambiguity_reason: '',
+    evidence_pull_request_link_pk: 'pr_1',
+    rule_version: 'direct_link_v1',
+    ...over,
+  };
+}
+
 export function emptyQueueFacts(): AgentIngestQueueFacts {
   return {
     messages: [],
@@ -156,6 +184,7 @@ export function emptyQueueFacts(): AgentIngestQueueFacts {
     file_events: [],
     capability_snapshots: [],
     pull_request_links: [],
+    review_unit_attributions: [],
   };
 }
 

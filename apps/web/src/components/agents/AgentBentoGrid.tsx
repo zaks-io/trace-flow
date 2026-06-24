@@ -13,6 +13,7 @@ import { DailyActiveUsage } from './DailyActiveUsage';
 import { SegmentedControl } from './SegmentedControl';
 import { SpendConcentrationDetail } from './SpendConcentrationDetail';
 import { StatTile } from './StatTile';
+import { ReviewUnitCostsCell } from './ReviewUnitCostsCell';
 import { UsageOverTimeCell } from './UsageOverTimeCell';
 import { VelocityBar } from './VelocityBar';
 import { buildAttentionSignals } from './buildAttentionSignals';
@@ -25,6 +26,7 @@ import type {
   AgentCostByDepthRow,
   AgentCostDistributionRow,
   AgentNotableChangeRow,
+  AgentReviewUnitCostRow,
   AgentSessionRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
@@ -46,6 +48,7 @@ export function AgentBentoGrid({
   onGroupByChange,
   costDistribution,
   costByDepth,
+  reviewUnitCosts,
   topSessions,
   topSessionsLoading,
   onSpendDetailToggle,
@@ -74,6 +77,8 @@ export function AgentBentoGrid({
   costDistribution: AgentCostDistributionRow | null;
   /** Per-turn cost/context by conversation depth; one row per depth, always fetched. */
   costByDepth: AgentCostByDepthRow[];
+  /** Direct-link review-unit costs; session-grain, fetched for every window. */
+  reviewUnitCosts: AgentReviewUnitCostRow[];
   /** Priciest conversations behind the spend curve; fetched only while that cell is expanded. */
   topSessions: AgentSessionRow[];
   topSessionsLoading: boolean;
@@ -239,7 +244,12 @@ export function AgentBentoGrid({
         <CostByDepthCell rows={costByDepth} windowDays={windowDays} />
       </div>
 
-      {/* Row 4 — Q5 where spend concentrates */}
+      {/* Row 4 — directly linked review units */}
+      <div className="lg:col-span-6 xl:col-span-12">
+        <ReviewUnitCostsCell rows={reviewUnitCosts} labelFor={labelFor} />
+      </div>
+
+      {/* Row 5 — Q5 where spend concentrates */}
       <div className="lg:col-span-6 xl:col-span-12">
         <VelocityBar
           row={costDistribution}
@@ -256,7 +266,7 @@ export function AgentBentoGrid({
         />
       </div>
 
-      {/* Row 5 — Q6 notable changes, always present */}
+      {/* Row 6 — Q6 notable changes, always present */}
       <div className="lg:col-span-6 xl:col-span-12">
         <NotableChangesStrip
           signals={signals}

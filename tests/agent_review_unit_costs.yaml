@@ -1,0 +1,23 @@
+# Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_review_unit_attributions.ndjson (org_1c).
+# cc1 has four priced assistant messages at $0.25 each and one attributed review-unit edge.
+# span1 is ambiguous and sub1 is rejected, so neither contributes to review-unit cost.
+# retention_days=20000 neutralizes the now()-relative tier floor.
+
+- name: review_unit_costs_direct_link_only
+  description: one directly attributed review unit sums canonical session cost and coverage from session summaries
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000
+  expected_result: |
+    {"review_unit_key":"hosted:github.com\/o\/r:pull_request:1","review_url":"https:\/\/github.com\/o\/r\/pull\/1","review_host":"github.com","review_owner":"o","review_repo":"r","review_number":1,"repo_fingerprint":"repo_1c","git_branch":"feature\/direct-cost","attribution_method":"direct_link","confidence":"high","rule_version":"direct_link_v1","session_count":1,"message_count":4,"priced_message_count":4,"coverage_pct":1,"estimated_cost_usd":1,"last_event_ms":1779271200000}
+
+- name: review_unit_costs_respects_source_filter
+  description: source filter excludes the attributed claude review unit
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000&sources=codex
+  expected_result: ''
+
+- name: review_unit_costs_respects_repo_filter
+  description: repo filter excludes other repos
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000&repos=repo_other
+  expected_result: ''

@@ -5,6 +5,7 @@ import { insertRows } from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from './context';
 import {
   CATEGORIES,
+  LEGACY_CATEGORIES,
   LEGACY_DATASOURCES,
   ROW_IDENTITY_FIELDS,
   emptyAccumulator,
@@ -19,6 +20,7 @@ import {
   fileEventRow,
   messageRow,
   pullRequestLinkRow,
+  reviewUnitAttributionRow,
   toolEventRow,
 } from './rows';
 
@@ -50,7 +52,12 @@ function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
     return false;
   }
   const f = facts as Record<string, unknown>;
-  return CATEGORIES.every((category) => Array.isArray(f[category]));
+  return CATEGORIES.every((category) => {
+    if (category === 'review_unit_attributions') {
+      return f[category] === undefined || Array.isArray(f[category]);
+    }
+    return Array.isArray(f[category]);
+  });
 }
 
 const TENANCY_FIELDS = ['org_id', 'user_id', 'collector_id', 'collector_credential_id'] as const;
@@ -90,6 +97,9 @@ async function accumulateMessage(
   }
   for (const fact of body.facts.pull_request_links) {
     acc.pull_request_links.push(pullRequestLinkRow(ctx, fact));
+  }
+  for (const fact of body.facts.review_unit_attributions ?? []) {
+    acc.review_unit_attributions.push(reviewUnitAttributionRow(ctx, fact));
   }
 }
 
@@ -156,7 +166,7 @@ async function flushLegacy(
   logger: Logger,
 ): Promise<boolean> {
   const results = await Promise.allSettled(
-    CATEGORIES.filter((category) => acc[category].length > 0).map((category) =>
+    LEGACY_CATEGORIES.filter((category) => acc[category].length > 0).map((category) =>
       insertRows(
         acc[category],
         env.TINYBIRD_TOKEN,

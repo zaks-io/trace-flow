@@ -414,9 +414,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             'tool_failures',
             'tool_deltas',
             'projects',
+            'review_units',
           ],
           description:
-            'Analytics view to query. summary is a KPI row; timeseries returns buckets; breakdown ranks source/model/repo; context_health returns context pressure aggregates; projects lists repo fingerprints.',
+            'Analytics view to query. summary is a KPI row; timeseries returns buckets; breakdown ranks source/model/repo; context_health returns context pressure aggregates; projects lists repo fingerprints; review_units returns direct-link review-unit cost estimates.',
         },
         hours: hoursProperty(DEFAULT_ANALYTICS_HOURS, MAX_ANALYTICS_HOURS),
         start_time: {
@@ -455,8 +456,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         order_by: {
           type: 'string',
-          enum: ['cost_usd', 'total_tokens', 'message_count', 'session_count'],
-          description: 'For view="breakdown", metric to rank by.',
+          enum: [
+            'cost_usd',
+            'total_tokens',
+            'message_count',
+            'session_count',
+            'estimated_cost_usd',
+            'recent',
+          ],
+          description: 'For view="breakdown" or view="review_units", metric to rank by.',
         },
         attention_threshold_tokens: {
           type: 'number',

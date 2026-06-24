@@ -1,0 +1,111 @@
+DESCRIPTION >
+    Estimated authoring cost by directly attributed review unit. Cost and coverage
+    come from canonical Agent Session summaries, not attribution rows.
+
+NODE sessions
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT
+        session_pk,
+        source,
+        message_count,
+        priced_message_count,
+        cost_usd,
+        last_event_ms
+    FROM (
+        SELECT
+            session_pk,
+            argMaxMerge(source) AS source,
+            sumMerge(MessageCount) AS message_count,
+            sumMerge(PricedMessageCount) AS priced_message_count,
+            round(sumMerge(CostUsd), 6) AS cost_usd,
+            maxMerge(LastEventAt) AS last_event_at,
+            toUnixTimestamp64Milli(last_event_at) AS last_event_ms
+        FROM agent_session_summaries
+        WHERE OrgId = {{ String(org_id, '') }}
+        GROUP BY session_pk
+    )
+    WHERE message_count > 0
+        AND last_event_at >= start_dt
+        AND last_event_at < end_dt
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+
+NODE attributed_sessions
+SQL >
+    %
+    SELECT
+        rua.session_pk,
+        argMax(rua.review_unit_key, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_unit_key,
+        argMax(rua.review_url, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_url,
+        argMax(rua.review_host, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_host,
+        argMax(rua.review_owner, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_owner,
+        argMax(rua.review_repo, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_repo,
+        argMax(rua.review_number, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS review_number,
+        argMax(rua.repo_fingerprint, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS repo_fingerprint,
+        argMax(rua.git_branch, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS git_branch,
+        argMax(rua.attribution_method, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS attribution_method,
+        argMax(rua.confidence, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS confidence,
+        argMax(rua.status, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS status,
+        argMax(rua.rule_version, (rua.DecidedAt, rua.IngestedAt, rua.review_unit_attribution_pk)) AS rule_version,
+        any(s.message_count) AS message_count,
+        any(s.priced_message_count) AS priced_message_count,
+        any(s.cost_usd) AS cost_usd,
+        any(s.last_event_ms) AS session_last_event_ms
+    FROM agent_review_unit_attributions AS rua
+    INNER JOIN sessions AS s USING (session_pk)
+    WHERE rua.OrgId = {{ String(org_id, '') }}
+        AND rua.rule_version = 'direct_link_v1'
+    GROUP BY rua.session_pk
+    HAVING status = 'attributed'
+        AND attribution_method = 'direct_link'
+        AND review_unit_key != ''
+        {% if defined(repos) %}
+        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        {% end %}
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        review_unit_key,
+        argMax(review_url, session_last_event_ms) AS review_url,
+        argMax(review_host, session_last_event_ms) AS review_host,
+        argMax(review_owner, session_last_event_ms) AS review_owner,
+        argMax(review_repo, session_last_event_ms) AS review_repo,
+        argMax(review_number, session_last_event_ms) AS review_number,
+        argMax(repo_fingerprint, session_last_event_ms) AS repo_fingerprint,
+        argMax(git_branch, session_last_event_ms) AS git_branch,
+        argMax(attribution_method, session_last_event_ms) AS attribution_method,
+        argMax(confidence, session_last_event_ms) AS confidence,
+        argMax(rule_version, session_last_event_ms) AS rule_version,
+        count() AS session_count,
+        sum(message_count) AS message_count,
+        sum(priced_message_count) AS priced_message_count,
+        if(
+            message_count = 0,
+            CAST(NULL, 'Nullable(Float64)'),
+            round(priced_message_count / message_count, 4)
+        ) AS coverage_pct,
+        round(sum(cost_usd), 6) AS estimated_cost_usd,
+        max(session_last_event_ms) AS last_event_ms
+    FROM attributed_sessions
+    GROUP BY review_unit_key
+    ORDER BY
+        multiIf(
+            {{ String(order_by, 'estimated_cost_usd') }} = 'session_count', toFloat64(session_count),
+            {{ String(order_by, 'estimated_cost_usd') }} = 'message_count', toFloat64(message_count),
+            {{ String(order_by, 'estimated_cost_usd') }} = 'recent', toFloat64(last_event_ms),
+            estimated_cost_usd
+        ) DESC,
+        review_unit_key ASC
+    LIMIT greatest(1, least({{ Int32(limit, 25) }}, 100))
+    OFFSET {{ Int32(offset, 0) }}
+
+TYPE ENDPOINT

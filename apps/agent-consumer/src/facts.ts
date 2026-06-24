@@ -5,19 +5,22 @@ export const DATASOURCES = {
   file_events: 'agent_file_event_facts',
   capability_snapshots: 'agent_capability_snapshot_facts',
   pull_request_links: 'agent_pull_request_facts',
+  review_unit_attributions: 'agent_review_unit_attributions',
 } as const;
 
-export const LEGACY_DATASOURCES: Record<keyof typeof DATASOURCES, string> = {
+export const LEGACY_DATASOURCES = {
   messages: 'agent_messages',
   tool_events: 'agent_tool_events',
   file_events: 'agent_file_events',
   capability_snapshots: 'agent_capability_snapshots',
   pull_request_links: 'agent_pull_request_links',
-};
+} as const;
 
 export type Category = keyof typeof DATASOURCES;
+type LegacyCategory = keyof typeof LEGACY_DATASOURCES;
 
 export const CATEGORIES = Object.keys(DATASOURCES) as Category[];
+export const LEGACY_CATEGORIES = Object.keys(LEGACY_DATASOURCES) as LegacyCategory[];
 
 export type Accumulator = Record<Category, unknown[]>;
 
@@ -27,6 +30,7 @@ export const ROW_IDENTITY_FIELDS: Record<Category, string[]> = {
   file_events: ['OrgId', 'session_pk', 'file_event_pk'],
   capability_snapshots: ['OrgId', 'session_pk', 'capability_snapshot_pk'],
   pull_request_links: ['OrgId', 'session_pk', 'pull_request_link_pk'],
+  review_unit_attributions: ['OrgId', 'session_pk', 'review_unit_attribution_pk'],
 };
 
 export function emptyAccumulator(): Accumulator {
@@ -36,6 +40,7 @@ export function emptyAccumulator(): Accumulator {
     file_events: [],
     capability_snapshots: [],
     pull_request_links: [],
+    review_unit_attributions: [],
   };
 }
 

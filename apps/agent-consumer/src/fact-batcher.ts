@@ -6,6 +6,7 @@ import type { AgentConsumerEnv } from './context';
 import {
   CATEGORIES,
   DATASOURCES,
+  LEGACY_CATEGORIES,
   LEGACY_DATASOURCES,
   ROW_IDENTITY_FIELDS,
   rowIdentity,
@@ -247,6 +248,8 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
     try {
       for (const category of CATEGORIES) {
         await this.flushCategory('pending_facts', DATASOURCES[category], category);
+      }
+      for (const category of LEGACY_CATEGORIES) {
         await this.flushCategory('legacy_pending_facts', LEGACY_DATASOURCES[category], category);
       }
     } finally {

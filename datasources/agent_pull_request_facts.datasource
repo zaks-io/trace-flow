@@ -1,8 +1,8 @@
 DESCRIPTION >
-    One canonical Pull Request Link observation (passive transcript evidence,
-    GitHub-only in v1). No GitHub/GitLab API calls. `confidence` and `evidence`
-    record how the link was extracted; PR authoring cost reads the canonical
-    session aggregate after dedupe, never these rows' cost directly.
+    One canonical hosted-review link observation (passive transcript evidence).
+    No provider API calls. `confidence` and `evidence` record how the link was
+    extracted; review-unit authoring cost reads attribution edges joined to the
+    canonical session aggregate, never these rows' cost directly.
     JSONPaths are defined because the consumer POSTs rows here via /v0/events;
     keys match column names exactly (the ingest contract for this fact table).
 

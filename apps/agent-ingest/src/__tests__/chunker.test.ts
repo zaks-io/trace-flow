@@ -58,6 +58,7 @@ function emptyQueueFacts(): AgentIngestQueueFacts {
     file_events: [],
     capability_snapshots: [],
     pull_request_links: [],
+    review_unit_attributions: [],
   };
 }
 

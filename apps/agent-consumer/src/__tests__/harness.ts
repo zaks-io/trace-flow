@@ -3,7 +3,13 @@ import type { ModelPricing } from '@trace-flow/pricing';
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
 import { insertRows } from '@trace-flow/tinybird-client';
 import type { AgentConsumerEnv } from '../context';
-import { CATEGORIES, DATASOURCES, LEGACY_DATASOURCES, type Accumulator } from '../facts';
+import {
+  CATEGORIES,
+  DATASOURCES,
+  LEGACY_CATEGORIES,
+  LEGACY_DATASOURCES,
+  type Accumulator,
+} from '../facts';
 
 const TINYBIRD_HOST = 'https://tb.test';
 
@@ -68,11 +74,12 @@ function makeFactBatcher(): AgentConsumerEnv['AGENT_FACT_BATCHER'] {
               }
               acceptedRows += rows[category].length;
               await insertRows(rows[category], 'tb-token', DATASOURCES[category], TINYBIRD_HOST);
-              if (writeLegacy) {
+              if (writeLegacy && LEGACY_CATEGORIES.includes(category as never)) {
+                const legacyCategory = category as (typeof LEGACY_CATEGORIES)[number];
                 await insertRows(
-                  rows[category],
+                  rows[legacyCategory],
                   'tb-token',
-                  LEGACY_DATASOURCES[category],
+                  LEGACY_DATASOURCES[legacyCategory],
                   TINYBIRD_HOST,
                 );
               }

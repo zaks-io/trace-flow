@@ -18,6 +18,7 @@ export const CATEGORIES: QueueFactCategory[] = [
   'file_events',
   'capability_snapshots',
   'pull_request_links',
+  'review_unit_attributions',
 ];
 
 const encoder = new TextEncoder();
@@ -30,6 +31,7 @@ function emptyFacts(): AgentIngestQueueFacts {
     file_events: [],
     capability_snapshots: [],
     pull_request_links: [],
+    review_unit_attributions: [],
   };
 }
 
@@ -61,7 +63,7 @@ export function chunkFacts(
   };
 
   for (const category of CATEGORIES) {
-    for (const fact of facts[category]) {
+    for (const fact of facts[category] ?? []) {
       const factSize = byteLength(fact) + 1; // +1 for the array-element comma
       if (currentCount > 0 && currentSize + factSize > maxBytes) flush();
       (current[category] as unknown[]).push(fact);

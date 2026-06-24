@@ -54,6 +54,7 @@ export function AgentAnalytics() {
     summary,
     costDistribution,
     costByDepth,
+    reviewUnitCosts,
     topSessions,
     topSessionsLoading,
     notableTotal,
@@ -276,6 +277,7 @@ trace-flow sync --since 7d`}</code>
           onGroupByChange={setGroupBy}
           costDistribution={costDistribution}
           costByDepth={costByDepth}
+          reviewUnitCosts={reviewUnitCosts}
           topSessions={topSessions}
           topSessionsLoading={topSessionsLoading}
           onSpendDetailToggle={setSpendDetailOpen}

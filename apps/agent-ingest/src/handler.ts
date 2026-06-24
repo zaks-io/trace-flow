@@ -284,12 +284,14 @@ async function inflateCapped(buf: ArrayBuffer, maxBytes: number): Promise<Inflat
 }
 
 function isEmpty(facts: AgentIngestQueueFacts | AgentIngestEnvelope['facts']): boolean {
+  const reviewUnitAttributions = (facts as Partial<AgentIngestQueueFacts>).review_unit_attributions;
   return (
     facts.messages.length === 0 &&
     facts.tool_events.length === 0 &&
     facts.file_events.length === 0 &&
     facts.capability_snapshots.length === 0 &&
-    facts.pull_request_links.length === 0
+    facts.pull_request_links.length === 0 &&
+    (reviewUnitAttributions?.length ?? 0) === 0
   );
 }
 
@@ -323,5 +325,6 @@ function dropConflicted(
     file_events: keep(facts.file_events),
     capability_snapshots: keep(facts.capability_snapshots),
     pull_request_links: keep(facts.pull_request_links),
+    review_unit_attributions: keep(facts.review_unit_attributions ?? []),
   };
 }

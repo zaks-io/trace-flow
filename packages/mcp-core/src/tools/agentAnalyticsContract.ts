@@ -19,6 +19,7 @@ export const AGENT_VIEWS = {
   tool_failures: 'agent_failure_leaderboard',
   tool_deltas: 'agent_tool_period_delta',
   projects: 'agent_repo_directory',
+  review_units: 'agent_review_unit_costs',
 } as const;
 
 const GROUP_BY_VALUES = ['none', 'source', 'model', 'repo'] as const;
@@ -29,6 +30,12 @@ const BREAKDOWN_ORDER_VALUES = [
   'total_tokens',
   'message_count',
   'session_count',
+] as const;
+const REVIEW_UNIT_ORDER_VALUES = [
+  'estimated_cost_usd',
+  'session_count',
+  'message_count',
+  'recent',
 ] as const;
 const SOURCE_VALUES = ['claude', 'codex', 'cursor'] as const;
 
@@ -214,6 +221,13 @@ export function buildPipeParams(
   if (view === 'tool_failures') {
     pipeParams.min_events = clampNumber(params.min_events, 10, 10_000);
   }
+  if (view === 'review_units') {
+    pipeParams.order_by = enumParam(
+      params.order_by,
+      REVIEW_UNIT_ORDER_VALUES,
+      'estimated_cost_usd',
+    );
+  }
   return pipeParams;
 }
 
@@ -243,6 +257,7 @@ export function buildStaticContract(window: AgentWindow) {
       tool_failures: 'Tool failure leaderboard.',
       tool_deltas: 'Period-over-period tool usage movement.',
       projects: 'Repo/project fingerprints for filtering.',
+      review_units: 'Direct-link review-unit authoring cost estimates.',
     },
     date_range: {
       params: ['hours', 'start_time', 'end_time', 'start_time_ms', 'end_time_ms'],
@@ -276,6 +291,11 @@ export function buildStaticContract(window: AgentWindow) {
         limit: `1-${MAX_AGENT_LIMIT}`,
       },
       tool_deltas: { limit: `1-${MAX_AGENT_LIMIT}` },
+      review_units: {
+        order_by: [...REVIEW_UNIT_ORDER_VALUES],
+        limit: `1-${MAX_AGENT_LIMIT}`,
+        offset: 'zero-based row offset',
+      },
     },
   };
 }
