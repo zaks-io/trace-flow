@@ -57,6 +57,28 @@ export const WEB_TINYBIRD_PIPES = [
   'agent_repo_directory',
 ] as const;
 
+export const MCP_TINYBIRD_PIPES = [
+  'mcp_traces_list',
+  'mcp_trace_detail',
+  'mcp_trace_events',
+  'mcp_trace_summaries',
+  'mcp_trace_summary',
+  'mcp_trace_by_provider',
+  'mcp_trace_by_model',
+  'llm_usage_summary',
+  'operations_leaderboard',
+  'llm_usage_by_model',
+  'agent_usage_summary',
+  'agent_usage_timeseries',
+  'agent_usage_breakdown',
+  'agent_context_health',
+  'agent_failure_leaderboard',
+  'agent_tool_period_delta',
+  'agent_repo_directory',
+] as const;
+
+const MCP_TINYBIRD_PIPE_SET = new Set<string>(MCP_TINYBIRD_PIPES);
+
 // Sentinels keep a token scoped to nothing rather than matching empty strings,
 // so a keyless/orgless caller can never read another tenant's rows.
 const NO_KEYS_SENTINEL = '__NO_KEYS__';
@@ -86,6 +108,22 @@ export function withRowSecurityParams(
 
 export function buildWebReadScopes(): TinybirdScope[] {
   return WEB_TINYBIRD_PIPES.map((resource) => ({ type: 'PIPES:READ', resource }));
+}
+
+export function validateMcpTinybirdScopes(scopes: TinybirdScope[]): TinybirdScope[] {
+  if (scopes.length === 0) {
+    throw new Error('Tinybird MCP scopes must not be empty');
+  }
+
+  return scopes.map((scope) => {
+    if (scope.type !== 'PIPES:READ') {
+      throw new Error(`Tinybird MCP scope type is not allowed: ${scope.type}`);
+    }
+    if (!MCP_TINYBIRD_PIPE_SET.has(scope.resource)) {
+      throw new Error(`Tinybird MCP pipe is not allowed: ${scope.resource}`);
+    }
+    return { type: 'PIPES:READ', resource: scope.resource };
+  });
 }
 
 async function signTinybirdToken(
@@ -197,7 +235,7 @@ export const generateTokenInternal = internalAction({
     // Same fixed_param builder as the web token path: always emits org_id
     // (sentinel when the caller has no org), so MCP cannot issue an agent JWT
     // that is unscoped on org_id.
-    const scopesWithApiKeys = withRowSecurityParams(args.scopes, {
+    const scopesWithApiKeys = withRowSecurityParams(validateMcpTinybirdScopes(args.scopes), {
       apiKeyString: validKeys.join(','),
       retentionDays: args.retentionDays ?? RETENTION_DAYS.hobby,
       orgId: args.orgId ?? '',

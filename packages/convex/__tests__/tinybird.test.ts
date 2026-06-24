@@ -1,11 +1,14 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   buildWebReadScopes,
   joinSanitizedApiKeys,
+  MCP_TINYBIRD_PIPES,
   sanitizeApiKeys,
   UUID_PATTERN,
+  validateMcpTinybirdScopes,
   WEB_READ_TOKEN_TTL_SECONDS,
   WEB_TINYBIRD_PIPES,
   withRowSecurityParams,
@@ -37,6 +40,30 @@ const EXPECTED_WEB_PIPES = [
   'agent_tool_period_delta',
   'agent_repo_directory',
 ] as const;
+
+const EXPECTED_MCP_PIPES = [
+  'mcp_traces_list',
+  'mcp_trace_detail',
+  'mcp_trace_events',
+  'mcp_trace_summaries',
+  'mcp_trace_summary',
+  'mcp_trace_by_provider',
+  'mcp_trace_by_model',
+  'llm_usage_summary',
+  'operations_leaderboard',
+  'llm_usage_by_model',
+  'agent_usage_summary',
+  'agent_usage_timeseries',
+  'agent_usage_breakdown',
+  'agent_context_health',
+  'agent_failure_leaderboard',
+  'agent_tool_period_delta',
+  'agent_repo_directory',
+] as const;
+
+function readPipe(resource: string): string {
+  return readFileSync(new URL(`../../../pipes/${resource}.pipe`, import.meta.url), 'utf8');
+}
 
 describe('Tinybird web read token scopes', () => {
   it('uses a fixed five-minute web token TTL', () => {
@@ -72,6 +99,67 @@ describe('Tinybird web read token scopes', () => {
         org_id: 'org_123',
         retention_days: 30,
       });
+    }
+  });
+});
+
+describe('Tinybird MCP read token scopes', () => {
+  it('allowlists the published pipes current MCP tools use', () => {
+    expect(MCP_TINYBIRD_PIPES).toEqual(EXPECTED_MCP_PIPES);
+  });
+
+  it('accepts allowlisted PIPES:READ scopes', () => {
+    expect(
+      validateMcpTinybirdScopes([
+        { type: 'PIPES:READ', resource: 'mcp_traces_list' },
+        { type: 'PIPES:READ', resource: 'agent_usage_summary' },
+      ]),
+    ).toEqual([
+      { type: 'PIPES:READ', resource: 'mcp_traces_list' },
+      { type: 'PIPES:READ', resource: 'agent_usage_summary' },
+    ]);
+  });
+
+  it('drops caller fixed params before the signer stamps row security', () => {
+    expect(
+      validateMcpTinybirdScopes([
+        {
+          type: 'PIPES:READ',
+          resource: 'mcp_traces_list',
+          fixed_params: { api_keys: 'attacker-supplied' },
+        },
+      ]),
+    ).toEqual([{ type: 'PIPES:READ', resource: 'mcp_traces_list' }]);
+  });
+
+  it.each([
+    ['empty scopes', [], /must not be empty/],
+    [
+      'datasource scopes',
+      [{ type: 'DATASOURCES:READ', resource: 'otel_trace_spans' }],
+      /scope type is not allowed/,
+    ],
+    ['SQL scopes', [{ type: 'SQL:READ', resource: 'select 1' }], /scope type is not allowed/],
+    ['unknown pipes', [{ type: 'PIPES:READ', resource: 'not_allowlisted' }], /pipe is not allowed/],
+    [
+      'helper pipes',
+      [{ type: 'PIPES:READ', resource: 'agent_priced_usage' }],
+      /pipe is not allowed/,
+    ],
+    ['empty resources', [{ type: 'PIPES:READ', resource: '' }], /pipe is not allowed/],
+  ] as const)('rejects %s', (_name, scopes, message) => {
+    expect(() => validateMcpTinybirdScopes([...scopes])).toThrow(message);
+  });
+
+  it('keeps every allowlisted pipe as an endpoint with fixed-param row security', () => {
+    for (const resource of MCP_TINYBIRD_PIPES) {
+      const pipe = readPipe(resource);
+      if (!/\bTYPE\s+ENDPOINT\b/.test(pipe)) {
+        throw new Error(`${resource} is not a Tinybird endpoint pipe`);
+      }
+      if (!pipe.includes('String(api_keys') && !pipe.includes('String(org_id')) {
+        throw new Error(`${resource} does not filter on fixed-param row security`);
+      }
     }
   });
 });
