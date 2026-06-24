@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeChannelConfig, validateAlertCondition, isOrgOwner } from '../costAlerts';
 import { buildApiKeyParam, resolveScopedApiKeys, shouldNotify } from '../integrations/costAlerts';
+import {
+  assertCostAlertWebhookDeliveryTarget,
+  createPinnedLookup,
+  sendCostAlertWebhookNotification,
+} from '../integrations/costAlertWebhookDelivery';
 
 describe('cost alert helpers', () => {
   it('recognizes org owners', () => {
@@ -35,6 +40,179 @@ describe('cost alert helpers', () => {
       secret: 'secret',
       headers: [{ key: 'X-Test', value: 'hello' }],
     });
+  });
+
+  it('rejects webhook URLs that target private, loopback, and link-local addresses', async () => {
+    await expect(assertCostAlertWebhookDeliveryTarget('http://127.0.0.1/hook')).rejects.toThrow(
+      'private or link-local',
+    );
+    await expect(assertCostAlertWebhookDeliveryTarget('http://10.0.0.1/hook')).rejects.toThrow(
+      'private or link-local',
+    );
+    await expect(assertCostAlertWebhookDeliveryTarget('http://172.16.0.1/hook')).rejects.toThrow(
+      'private or link-local',
+    );
+    await expect(assertCostAlertWebhookDeliveryTarget('http://192.168.1.10/hook')).rejects.toThrow(
+      'private or link-local',
+    );
+    await expect(
+      assertCostAlertWebhookDeliveryTarget('http://169.254.169.254/latest/meta-data'),
+    ).rejects.toThrow('private or link-local');
+    await expect(assertCostAlertWebhookDeliveryTarget('http://[::1]/hook')).rejects.toThrow(
+      'private or link-local',
+    );
+    await expect(assertCostAlertWebhookDeliveryTarget('http://[fe80::1]/hook')).rejects.toThrow(
+      'private or link-local',
+    );
+    await expect(
+      assertCostAlertWebhookDeliveryTarget('http://metadata.google.internal/computeMetadata/v1'),
+    ).rejects.toThrow('host is not allowed');
+    await expect(assertCostAlertWebhookDeliveryTarget('http://localhost/hook')).rejects.toThrow(
+      'host is not allowed',
+    );
+  });
+
+  it('rejects webhook hostnames that resolve to private addresses before fetch', async () => {
+    let fetched = false;
+
+    await expect(
+      sendCostAlertWebhookNotification(
+        {
+          url: 'https://receiver.example/hook',
+        },
+        { ok: true },
+        'delivery-1',
+        {
+          resolveAddresses: async () => ['10.0.0.5'],
+          sendRequest: async () => {
+            fetched = true;
+            return { ok: true, status: 204, body: '' };
+          },
+        },
+      ),
+    ).rejects.toThrow('cannot resolve to private');
+
+    expect(fetched).toBe(false);
+  });
+
+  it('delivers to allowed public HTTPS endpoints through the pinned request sender', async () => {
+    const calls: {
+      url: string;
+      address: string;
+      family: 4 | 6;
+      body: string;
+      headers: Headers;
+    }[] = [];
+
+    await sendCostAlertWebhookNotification(
+      {
+        url: 'https://receiver.example/hook',
+        secret: 'secret',
+        headers: [{ key: 'X-Receiver', value: 'cost-alerts' }],
+      },
+      { ok: true },
+      'delivery-1',
+      {
+        resolveAddresses: async () => ['93.184.216.34'],
+        sendRequest: async (request) => {
+          calls.push({
+            url: request.url.toString(),
+            address: request.address,
+            family: request.family,
+            body: request.body,
+            headers: request.headers,
+          });
+          return { ok: true, status: 204, body: '' };
+        },
+      },
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('https://receiver.example/hook');
+    expect(calls[0]?.address).toBe('93.184.216.34');
+    expect(calls[0]?.family).toBe(4);
+    expect(calls[0]?.body).toBe('{"ok":true}');
+
+    const headers = calls[0]!.headers;
+    expect(headers.get('Content-Type')).toBe('application/json');
+    expect(headers.get('Idempotency-Key')).toBe('delivery-1');
+    expect(headers.get('X-Receiver')).toBe('cost-alerts');
+    expect(headers.get('X-Trace-Flow-Signature')).toBeTruthy();
+  });
+
+  it('rejects redirect responses instead of following them', async () => {
+    await expect(
+      sendCostAlertWebhookNotification(
+        {
+          url: 'https://receiver.example/hook',
+        },
+        { ok: true },
+        'delivery-1',
+        {
+          resolveAddresses: async () => ['93.184.216.34'],
+          sendRequest: async () => ({ ok: false, status: 302, body: 'Moved' }),
+        },
+      ),
+    ).rejects.toThrow('Webhook delivery failed: 302 Moved');
+  });
+
+  it('pins delivery to the validated address to prevent DNS rebinding during send', async () => {
+    const requests: { address: string; family: 4 | 6 }[] = [];
+    let resolveCount = 0;
+
+    await sendCostAlertWebhookNotification(
+      {
+        url: 'https://receiver.example/hook',
+      },
+      { ok: true },
+      'delivery-1',
+      {
+        resolveAddresses: async () => {
+          resolveCount += 1;
+          return resolveCount === 1 ? ['93.184.216.34'] : ['10.0.0.5'];
+        },
+        sendRequest: async (request) => {
+          requests.push({ address: request.address, family: request.family });
+          return { ok: true, status: 204, body: '' };
+        },
+      },
+    );
+
+    expect(resolveCount).toBe(1);
+    expect(requests).toEqual([{ address: '93.184.216.34', family: 4 }]);
+  });
+
+  it('uses the pinned lookup result for outbound connection creation', () => {
+    const lookup = createPinnedLookup('93.184.216.34', 4);
+
+    lookup('receiver.example', {}, (error, address, family) => {
+      expect(error).toBe(null);
+      expect(address).toBe('93.184.216.34');
+      expect(family).toBe(4);
+    });
+
+    lookup('receiver.example', { all: true }, (error, addresses) => {
+      expect(error).toBe(null);
+      expect(addresses).toEqual([{ address: '93.184.216.34', family: 4 }]);
+    });
+  });
+
+  it('rejects custom webhook headers that can override delivery routing or auth', () => {
+    expect(() =>
+      normalizeChannelConfig({
+        type: 'webhook',
+        url: 'https://example.com/hook',
+        headers: [{ key: 'Host', value: 'internal.service' }],
+      }),
+    ).toThrow('Webhook header "Host" is not allowed');
+
+    expect(() =>
+      normalizeChannelConfig({
+        type: 'webhook',
+        url: 'https://example.com/hook',
+        headers: [{ key: 'Authorization', value: 'Bearer attacker' }],
+      }),
+    ).toThrow('Webhook header "Authorization" is not allowed');
   });
 
   it('validates supported alert conditions', () => {
