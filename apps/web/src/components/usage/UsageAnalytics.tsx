@@ -27,6 +27,7 @@ import {
   type RequestStatsRow,
 } from './types';
 import { SummaryCards } from './SummaryCards';
+import { LlmCostDistributionCard } from './LlmCostDistributionCard';
 import { CostTimeseriesChart } from './CostTimeseriesChart';
 import { CostBreakdownChart } from './CostBreakdownChart';
 import { OperationTable } from './OperationTable';
@@ -222,6 +223,15 @@ export function UsageAnalytics({
   const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key), [apiKeys]);
   const MetricIcon = METRIC_META[metric].icon;
 
+  // The cost-distribution card characterizes ONE slice. Surface which dimension is active so the
+  // reading is unambiguous; with no single filter it's the whole account.
+  const distributionDimensionLabel = useMemo(() => {
+    if (apiKeyFilter) return `API key · ${apiKeyMap.get(apiKeyFilter) ?? apiKeyFilter}`;
+    if (operationFilter) return `operation · ${operationFilter}`;
+    if (modelFilter) return `model · ${modelFilter}`;
+    return 'all requests';
+  }, [apiKeyFilter, operationFilter, modelFilter, apiKeyMap]);
+
   return (
     <div className="animate-fade-in">
       <PageToolbar>
@@ -338,6 +348,11 @@ export function UsageAnalytics({
             prevSummary={prevSummary}
             requestStats={requestStats}
             forecast={forecast}
+          />
+
+          <LlmCostDistributionCard
+            requestStats={requestStats}
+            dimensionLabel={distributionDimensionLabel}
           />
 
           <div className="rounded-xl bg-card/40 p-6">

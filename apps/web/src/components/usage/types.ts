@@ -210,19 +210,41 @@ export interface TinybirdResponse<T> {
   data: T[];
 }
 
+/**
+ * Per-request cost/duration distribution + cost concentration for one slice (one API key OR
+ * operation OR model). Robust estimators only (median/IQR/quantileExact) per ADR 0021 — no
+ * mean/stddev, which mislead on heavy-tailed cost. The concentration fields (gini, lorenz,
+ * half_spend, decile buckets) answer "uniform vs fat-tailed" for this slice's requests.
+ */
 export interface RequestStatsRow {
-  min_duration_ms: number;
-  avg_duration_ms: number;
-  max_duration_ms: number;
-  stddev_duration_ms: number;
-  p95_duration_ms: number;
-  p99_duration_ms: number;
-  min_cost_usd: number;
-  avg_cost_usd: number;
-  max_cost_usd: number;
-  stddev_cost_usd: number;
-  p95_cost_usd: number;
-  p99_cost_usd: number;
+  request_count: number;
+  total_cost_usd: number;
+
+  cost_min: number;
+  cost_p25: number;
+  cost_p50: number;
+  cost_p75: number;
+  cost_p95: number;
+  cost_p99: number;
+  cost_max: number;
+
+  duration_min: number;
+  duration_p25: number;
+  duration_p50: number;
+  duration_p75: number;
+  duration_p95: number;
+  duration_p99: number;
+  duration_max: number;
+
+  gini: number;
+  half_spend_request_count: number;
+  lorenz_request_pct: number[];
+  lorenz_cost_pct: number[];
+
+  cost_bucket_lo: number[];
+  cost_bucket_hi: number[];
+  cost_bucket_count: number[];
+  cost_bucket_sum: number[];
 }
 
 export type ModelSortKey =

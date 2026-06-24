@@ -174,29 +174,24 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
           requestStats
             ? [
                 {
-                  label: 'Min',
-                  value: formatCurrency(requestStats.min_cost_usd),
+                  label: 'Median',
+                  value: formatCurrency(requestStats.cost_p50),
                   color: 'var(--color-chart-3)',
                 },
                 {
-                  label: 'P95',
-                  value: formatCurrency(requestStats.p95_cost_usd),
+                  label: 'P75',
+                  value: formatCurrency(requestStats.cost_p75),
                   color: 'var(--color-chart-2)',
                 },
                 {
-                  label: 'P99',
-                  value: formatCurrency(requestStats.p99_cost_usd),
+                  label: 'P95',
+                  value: formatCurrency(requestStats.cost_p95),
                   color: 'var(--color-chart-6)',
                 },
                 {
                   label: 'Max',
-                  value: formatCurrency(requestStats.max_cost_usd),
+                  value: formatCurrency(requestStats.cost_max),
                   color: 'var(--color-chart-1)',
-                },
-                {
-                  label: 'σ',
-                  value: formatCurrency(requestStats.stddev_cost_usd),
-                  color: 'var(--color-muted-foreground)',
                 },
               ]
             : undefined
@@ -215,29 +210,24 @@ export function SummaryCards({ summary, prevSummary, requestStats, forecast }: S
           requestStats
             ? [
                 {
-                  label: 'Min',
-                  value: formatDuration(requestStats.min_duration_ms),
+                  label: 'Median',
+                  value: formatDuration(requestStats.duration_p50),
                   color: 'var(--color-chart-3)',
                 },
                 {
-                  label: 'P95',
-                  value: formatDuration(requestStats.p95_duration_ms),
+                  label: 'P75',
+                  value: formatDuration(requestStats.duration_p75),
                   color: 'var(--color-chart-2)',
                 },
                 {
-                  label: 'P99',
-                  value: formatDuration(requestStats.p99_duration_ms),
+                  label: 'P95',
+                  value: formatDuration(requestStats.duration_p95),
                   color: 'var(--color-chart-6)',
                 },
                 {
                   label: 'Max',
-                  value: formatDuration(requestStats.max_duration_ms),
+                  value: formatDuration(requestStats.duration_max),
                   color: 'var(--color-chart-1)',
-                },
-                {
-                  label: 'σ',
-                  value: formatDuration(requestStats.stddev_duration_ms),
-                  color: 'var(--color-muted-foreground)',
                 },
               ]
             : undefined
