@@ -3,8 +3,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
+  AGENT_ORG_DATASOURCES,
+  buildOrgTraceDeleteStatements,
   buildWebReadScopes,
   joinSanitizedApiKeys,
+  LLM_API_KEY_DATASOURCES,
   MCP_TINYBIRD_PIPES,
   sanitizeApiKeys,
   UUID_PATTERN,
@@ -163,6 +166,42 @@ describe('Tinybird MCP read token scopes', () => {
         throw new Error(`${resource} does not filter on fixed-param row security`);
       }
     }
+  });
+});
+
+describe('Tinybird org deletion SQL', () => {
+  it('deletes both API-key scoped LLM rows and org-scoped agent rows', () => {
+    const apiKey = '11111111-1111-1111-1111-111111111111';
+    const statements = buildOrgTraceDeleteStatements({ apiKeys: [apiKey], orgId: 'org_123' });
+
+    expect(statements.map((statement) => statement.datasource)).toEqual([
+      ...LLM_API_KEY_DATASOURCES,
+      ...AGENT_ORG_DATASOURCES,
+    ]);
+    expect(statements.find((statement) => statement.datasource === 'llm_request_facts')?.sql).toBe(
+      `ALTER TABLE llm_request_facts DELETE WHERE ApiKey IN ('${apiKey}')`,
+    );
+    expect(
+      statements.find((statement) => statement.datasource === 'agent_message_facts')?.sql,
+    ).toBe("ALTER TABLE agent_message_facts DELETE WHERE OrgId = 'org_123'");
+  });
+
+  it('still deletes agent analytics when an org has no valid API keys', () => {
+    const statements = buildOrgTraceDeleteStatements({
+      apiKeys: ['not-a-valid-api-key'],
+      orgId: 'org_123',
+    });
+
+    expect(statements.map((statement) => statement.datasource)).toEqual([...AGENT_ORG_DATASOURCES]);
+    expect(statements.every((statement) => statement.sql.includes("WHERE OrgId = 'org_123'"))).toBe(
+      true,
+    );
+  });
+
+  it('escapes org ids before interpolating them into SQL', () => {
+    const statements = buildOrgTraceDeleteStatements({ apiKeys: [], orgId: "org_'quoted" });
+
+    expect(statements[0]?.sql).toContain("OrgId = 'org_''quoted'");
   });
 });
 

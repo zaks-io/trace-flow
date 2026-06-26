@@ -45,7 +45,7 @@ are complete.
 
 ### Additional Components
 
-The platform includes several production-ready capabilities:
+The platform includes several production-oriented capabilities:
 
 - **Error handling and retry logic** - Queue consumer implements robust error handling with automatic retries
 - **Authentication** - Secure key management and authenticated gateway features protect your LLM endpoints

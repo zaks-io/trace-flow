@@ -51,8 +51,8 @@ export function HeroSection({ isWaitlistMode }: HeroSectionProps) {
 
         {/* Subheadline */}
         <p className="delay-300 animate-hero-fade mx-auto mb-10 max-w-lg text-lg leading-relaxed text-muted-foreground sm:text-xl">
-          Drop-in proxy for OpenAI, Anthropic, Google, and more. Exact per-request cost, token
-          usage, and full body capture — with &lt;20ms overhead.
+          Drop-in proxy for OpenAI, Anthropic, Google, and more. Capture token usage, cost
+          estimates, and encrypted body samples without blocking the response path.
         </p>
 
         {/* CTA */}

@@ -50,14 +50,14 @@ High-level system design and data models.
 
 Why we chose specific technologies and patterns.
 
-- [Cloudflare Workers](decisions/cloudflare-workers.md) - Edge-first serverless platform
-- [Tinybird Analytics](decisions/tinybird-analytics.md) - Managed ClickHouse for traces
-- [Queue-Based Processing](decisions/queue-based-processing.md) - Decoupling proxy from observability
-- [R2 Body Storage](decisions/r2-body-storage.md) - Separate storage for request/response bodies
-- [OpenTelemetry Conventions](decisions/otel-semantic-conventions.md) - GenAI semantic conventions
-- [JWT Tinybird Auth](decisions/jwt-tinybird-auth.md) - Frontend-direct queries with scoped tokens
-- [Next.js + OpenNext Frontend](decisions/nextjs-opennext-frontend.md) - Next.js on Cloudflare Workers
-- [Proxy KV Caching](decisions/proxy-kv-caching.md) - Two-layer cache for KV/DO cost control
+- [Cloudflare Workers](../docs/adr/0001-cloudflare-workers.md) - Edge-first serverless platform
+- [Tinybird Analytics](../docs/adr/0009-tinybird-analytics.md) - Managed ClickHouse for traces
+- [Queue-Based Processing](../docs/adr/0007-queue-based-processing.md) - Decoupling proxy from observability
+- [R2 Body Storage](../docs/adr/0008-r2-body-storage.md) - Separate storage for request/response bodies
+- [OpenTelemetry Conventions](../docs/adr/0005-otel-semantic-conventions.md) - GenAI semantic conventions
+- [JWT Tinybird Auth](../docs/adr/0002-jwt-tinybird-auth.md) - Frontend-direct queries with scoped tokens
+- [Next.js + OpenNext Frontend](../docs/adr/0004-nextjs-opennext-frontend.md) - Next.js on Cloudflare Workers
+- [Proxy KV Caching](../docs/adr/0006-proxy-kv-caching.md) - Two-layer cache for KV/DO cost control
 
 ### Components
 

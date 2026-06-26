@@ -215,6 +215,67 @@ export function joinSanitizedApiKeys(apiKeys: { key: string }[]): string {
   return sanitizeApiKeys(apiKeys.map((k) => k.key)).join(',');
 }
 
+export const LLM_API_KEY_DATASOURCES = [
+  'otel_trace_spans',
+  'otel_genai_spans',
+  'llm_request_facts',
+  'llm_usage_hourly',
+  'llm_usage_daily',
+  'llm_usage_monthly',
+] as const;
+
+export const AGENT_ORG_DATASOURCES = [
+  'agent_capability_snapshot_facts',
+  'agent_context_call_buckets_hourly',
+  'agent_file_event_facts',
+  'agent_message_facts',
+  'agent_pull_request_facts',
+  'agent_repositories',
+  'agent_session_summaries',
+  'agent_tool_event_facts',
+  'agent_tool_usage_daily',
+  'agent_tool_usage_hourly',
+  'agent_usage_daily',
+  'agent_usage_hourly',
+] as const;
+
+interface TinybirdDeleteStatement {
+  datasource: string;
+  sql: string;
+}
+
+function sqlStringLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+export function buildOrgTraceDeleteStatements(params: {
+  apiKeys: string[];
+  orgId: string;
+}): TinybirdDeleteStatement[] {
+  const validKeys = sanitizeApiKeys(params.apiKeys);
+  const statements: TinybirdDeleteStatement[] = [];
+
+  if (validKeys.length > 0) {
+    const apiKeysInClause = validKeys.map(sqlStringLiteral).join(',');
+    statements.push(
+      ...LLM_API_KEY_DATASOURCES.map((datasource) => ({
+        datasource,
+        sql: `ALTER TABLE ${datasource} DELETE WHERE ApiKey IN (${apiKeysInClause})`,
+      })),
+    );
+  }
+
+  const orgIdLiteral = sqlStringLiteral(params.orgId);
+  statements.push(
+    ...AGENT_ORG_DATASOURCES.map((datasource) => ({
+      datasource,
+      sql: `ALTER TABLE ${datasource} DELETE WHERE OrgId = ${orgIdLiteral}`,
+    })),
+  );
+
+  return statements;
+}
+
 async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
   const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
   return joinSanitizedApiKeys(apiKeys);
@@ -252,8 +313,9 @@ export const generateTokenInternal = internalAction({
 });
 
 /**
- * Deletes all trace data for an organization across all Tinybird datasources.
- * Uses ALTER TABLE DELETE with ApiKey filtering (same pattern as extendRetention).
+ * Deletes all trace data for an organization across Tinybird datasources.
+ * LLM traces are API-key scoped; agent analytics rows are org scoped and must
+ * still be deleted when an org has no API keys left.
  */
 export const deleteOrgTraces = internalAction({
   args: {
@@ -272,32 +334,11 @@ export const deleteOrgTraces = internalAction({
   handler: async (ctx, args) => {
     const apiKeys = await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: args.orgId });
     const apiKeyStrings = apiKeys.map((k: { key: string }) => k.key);
-
-    if (apiKeyStrings.length === 0) {
-      return { deleted: false as const, reason: 'No API keys found for organization' };
-    }
-
-    const validKeys = sanitizeApiKeys(apiKeyStrings);
-    if (validKeys.length === 0) {
-      return { deleted: false as const, reason: 'No valid API keys found for organization' };
-    }
-
-    const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
-
-    const datasources = [
-      'otel_trace_spans',
-      'otel_genai_spans',
-      'llm_request_facts',
-      'llm_usage_hourly',
-      'llm_usage_daily',
-      'llm_usage_monthly',
-    ];
+    const statements = buildOrgTraceDeleteStatements({ apiKeys: apiKeyStrings, orgId: args.orgId });
 
     const results: Record<string, { success: boolean; error?: string }> = {};
 
-    for (const datasource of datasources) {
-      const sql = `ALTER TABLE ${datasource} DELETE WHERE ApiKey IN (${apiKeysInClause})`;
-
+    for (const { datasource, sql } of statements) {
       try {
         await runAdminSql({ baseUrl: tinybirdApiUrl, adminToken, sql });
         results[datasource] = { success: true };

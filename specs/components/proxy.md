@@ -111,7 +111,7 @@ Secrets and variables:
 
 ## Caching
 
-API key validation and billing status KV reads use a two-layer cache (module-scope Map + Cache API) to avoid per-request KV billing. See [Proxy KV Caching](../decisions/proxy-kv-caching.md) for the full cost analysis and architecture.
+API key validation and billing status KV reads use a two-layer cache (module-scope Map + Cache API) to avoid per-request KV billing. See [Proxy KV Caching](../../docs/adr/0006-proxy-kv-caching.md) for the full cost analysis and architecture.
 
 ## Key Files
 
