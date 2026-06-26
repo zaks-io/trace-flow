@@ -1,23 +1,12 @@
 'use client';
 
-import { Loader2 } from 'lucide-react';
+import { Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import {
-  hasAnalystMessageContent,
-  normalizeAnalystMessages,
-  type AnalystMessage,
-  type NormalizedAnalystMessage,
-} from './analystMessageModel';
+import { hasAnalystMessageContent, type AnalystMessage } from './analystMessageModel';
 import { AnalystMessagePartView, type AnalystMessagePart } from './AnalystMessagePartView';
-import {
-  AnalystToolTimeline,
-  isTimelinePart,
-  toTimelinePart,
-  type TimelinePart,
-} from './AnalystToolTimeline';
+import { AnalystToolStep, isTimelinePart, toTimelinePart } from './AnalystToolTimeline';
 
-export type { AnalystMessage, NormalizedAnalystMessage } from './analystMessageModel';
+export type { AnalystMessage } from './analystMessageModel';
 
 export function AnalystMessageList({
   messages,
@@ -30,8 +19,6 @@ export function AnalystMessageList({
   loadMore: () => void;
   busy?: boolean;
 }) {
-  const ordered = normalizeAnalystMessages(messages);
-
   return (
     <div className="space-y-3">
       {canLoadMore && (
@@ -39,34 +26,42 @@ export function AnalystMessageList({
           Load older
         </Button>
       )}
-      {ordered.map((message, index) => (
+      {messages.map((message, index) => (
         <div key={message.key} className="space-y-2">
           <MessageBubble message={message} />
-          {shouldShowWorkingIndicator(ordered, index, busy) && <WorkingIndicator />}
+          {shouldShowWorkingIndicator(messages, index, busy) && <WorkingIndicator />}
         </div>
       ))}
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: NormalizedAnalystMessage }) {
+function MessageBubble({ message }: { message: AnalystMessage }) {
   const isUser = message.role === 'user';
 
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[90%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground">
+          <MessageContent message={message} />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
-      <div
-        className={cn(
-          'max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed',
-          isUser ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground',
-        )}
-      >
+    <div className="flex justify-start gap-2">
+      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <Sparkles className="h-3.5 w-3.5" />
+      </span>
+      <div className="min-w-0 max-w-[calc(100%-2rem)] flex-1 text-sm leading-relaxed text-foreground">
         <MessageContent message={message} />
       </div>
     </div>
   );
 }
 
-function MessageContent({ message }: { message: NormalizedAnalystMessage }) {
+function MessageContent({ message }: { message: AnalystMessage }) {
   const parts: AnalystMessagePart[] = message.parts.length
     ? message.parts
     : [
@@ -77,60 +72,31 @@ function MessageContent({ message }: { message: NormalizedAnalystMessage }) {
         },
       ];
   const isStreaming = message.status === 'streaming';
-  const groups = groupMessageParts(parts, message.key);
 
   return (
     <div className="space-y-2">
-      {groups.map((group) =>
-        Array.isArray(group) ? (
-          <AnalystToolTimeline key={group[0]?.key ?? 'timeline'} parts={group} />
-        ) : (
-          <AnalystMessagePartView
-            key={partKey(group.part, group.key)}
-            part={group.part}
-            isStreaming={isStreaming}
-          />
-        ),
-      )}
+      {parts.map((part, index) => (
+        <PartView
+          key={partKey(part, `${message.key}:${index}`)}
+          part={part}
+          isStreaming={isStreaming}
+        />
+      ))}
       <MessageStatusLine status={message.status} hasContent={hasAnalystMessageContent(message)} />
     </div>
   );
 }
 
-type PartGroup =
-  | TimelinePart[]
-  | {
-      key: string;
-      part: AnalystMessagePart;
-    };
+function PartView({ part, isStreaming }: { part: AnalystMessagePart; isStreaming: boolean }) {
+  if (part.type === 'step-start') return null;
 
-function groupMessageParts(parts: AnalystMessagePart[], messageKey: string): PartGroup[] {
-  const groups: PartGroup[] = [];
-  let timeline: TimelinePart[] = [];
+  if (isTimelinePart(part)) {
+    const timelinePart = toTimelinePart(part, 'part');
+    if (!timelinePart) return null;
+    return <AnalystToolStep part={timelinePart} />;
+  }
 
-  const flushTimeline = () => {
-    if (timeline.length > 0) {
-      groups.push(timeline);
-      timeline = [];
-    }
-  };
-
-  parts.forEach((part, index) => {
-    if (part.type === 'step-start') return;
-
-    const key = partKey(part, `${messageKey}:${index}`);
-    if (isTimelinePart(part)) {
-      const timelinePart = toTimelinePart(part, key);
-      if (timelinePart) timeline.push(timelinePart);
-      return;
-    }
-
-    flushTimeline();
-    groups.push({ key, part });
-  });
-
-  flushTimeline();
-  return groups;
+  return <AnalystMessagePartView part={part} isStreaming={isStreaming} />;
 }
 
 function MessageStatusLine({
@@ -144,7 +110,7 @@ function MessageStatusLine({
 
   if (status === 'failed') {
     return (
-      <div className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+      <div className="inline-flex items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
         Message failed
       </div>
     );
@@ -152,7 +118,7 @@ function MessageStatusLine({
 
   const label = status === 'pending' ? 'Waiting for stream' : 'Streaming';
   return (
-    <div className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs text-muted-foreground">
+    <div className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
       <Loader2 className="h-3 w-3 animate-spin" />
       {label}
     </div>
@@ -170,11 +136,7 @@ function WorkingIndicator() {
   );
 }
 
-function shouldShowWorkingIndicator(
-  messages: NormalizedAnalystMessage[],
-  index: number,
-  busy: boolean,
-) {
+function shouldShowWorkingIndicator(messages: AnalystMessage[], index: number, busy: boolean) {
   if (!busy || messages[index]?.role !== 'user') return false;
 
   const laterMessages = messages.slice(index + 1);

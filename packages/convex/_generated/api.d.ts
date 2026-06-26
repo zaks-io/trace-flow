@@ -425,6 +425,12 @@ export declare const api: {
       { afterSeq?: number; limit?: number; runId: Id<"analystSandboxRuns"> },
       any
     >;
+    listSandboxRunRows: FunctionReference<
+      "query",
+      "public",
+      { limit?: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
     listSandboxRuns: FunctionReference<
       "query",
       "public",

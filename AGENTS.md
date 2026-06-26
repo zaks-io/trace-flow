@@ -92,6 +92,11 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - **Workers**: `@cloudflare/vitest-pool-workers` — runs tests inside Workers runtime
 - Per-package `vitest.config.ts`, Turborepo parallelizes and caches
 - Run all: `bun run test` | Watch: `bun run test:watch`
+- **Test behavior, not rendered markup.** Do NOT write `renderToStaticMarkup` + `toContain('some text')`
+  assertions, or tests that grep a component's source for class names / JSX strings. They are brittle,
+  break on every cosmetic change, and verify nothing real. Extract logic into pure functions and unit-test
+  those (parsers, reducers, formatters, state machines). UI correctness is verified by running the app, not
+  by string-matching HTML.
 
 ## Code Style
 

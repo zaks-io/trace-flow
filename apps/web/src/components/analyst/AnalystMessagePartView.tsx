@@ -3,8 +3,8 @@
 import type { FileUIPart, SourceDocumentUIPart, SourceUrlUIPart } from 'ai';
 import { useSmoothText } from '@convex-dev/agent/react';
 import { CircleAlert, FileText, LinkIcon } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import type { AnalystMessage } from './analystMessageModel';
+import { AnalystMarkdown } from './analystMarkdown';
 import { formatStructuredValue } from './structuredValue';
 
 export type AnalystMessagePart = AnalystMessage['parts'][number];
@@ -42,9 +42,7 @@ export function TextPart({ text, streaming }: { text: string; streaming: boolean
   const content = streaming ? visibleText || text : visibleText;
 
   if (!content.trim()) return null;
-  return (
-    <ReactMarkdown components={{ p: ({ children }) => <p>{children}</p> }}>{content}</ReactMarkdown>
-  );
+  return <AnalystMarkdown>{content}</AnalystMarkdown>;
 }
 
 function SourceUrlPart({ part }: { part: SourceUrlUIPart }) {

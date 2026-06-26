@@ -7,10 +7,8 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { usePathname } from 'next/navigation';
 import {
-  Bot,
   ChevronDown,
   Loader2,
-  MessageSquare,
   PanelRightClose,
   PanelRightOpen,
   Plus,
@@ -28,10 +26,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
 import { useAnalyst } from './AnalystContext';
 import { AnalystMessageList, type AnalystMessage } from './AnalystMessageList';
 import { AnalystRunStatusBar, getAnalystRunState, type QueuedAnalystRun } from './AnalystRunStatus';
 import type { SandboxRun } from './AnalystSandboxRuns';
+import { isActive } from './piRunEvents';
+import { useResizableSidebar } from './useResizableSidebar';
 import { buildMessagePageContextReferences, type AnalystPageContextReference } from './pageContext';
 
 type AnalystThread = {
@@ -39,6 +40,12 @@ type AnalystThread = {
   title: string;
   updatedAt: number;
 };
+
+const EXAMPLE_PROMPTS = [
+  'What did I spend on agents in the last 7 days?',
+  'Which repos drove the most token usage this week?',
+  'Show me daily active usage and any notable changes.',
+];
 
 export function AnalystSidebar() {
   const {
@@ -62,6 +69,7 @@ export function AnalystSidebar() {
   const [queuedRun, setQueuedRun] = useState<QueuedAnalystRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const messageScrollRef = useRef<HTMLDivElement | null>(null);
+  const { width, resizing, handleProps } = useResizableSidebar();
 
   const currentThread = useMemo(
     () => threads?.find((thread) => thread._id === currentThreadId) ?? null,
@@ -78,7 +86,7 @@ export function AnalystSidebar() {
     currentThreadId ? { threadId: currentThreadId } : 'skip',
   ) as SandboxRun[] | undefined;
   const activeSandboxRuns = useMemo(
-    () => (sandboxRuns ?? []).filter((run) => isActiveSandboxRunStatus(run.status)),
+    () => (sandboxRuns ?? []).filter((run) => isActive(run.status)),
     [sandboxRuns],
   );
   const messageResults = useMemo(
@@ -134,6 +142,10 @@ export function AnalystSidebar() {
   useEffect(() => {
     const element = messageScrollRef.current;
     if (!element) return;
+    // Only stick to the bottom when the user is already there. If they've scrolled
+    // up to review history, don't yank them back down as new content streams in.
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    if (distanceFromBottom > 120) return;
     window.requestAnimationFrame(() => {
       element.scrollTop = element.scrollHeight;
     });
@@ -144,8 +156,8 @@ export function AnalystSidebar() {
     selectThread(threadId);
   }
 
-  async function handleSend() {
-    const nextPrompt = prompt.trim();
+  async function handleSend(text?: string) {
+    const nextPrompt = (text ?? prompt).trim();
     if (!nextPrompt || analystBusy) return;
 
     setSending(true);
@@ -198,9 +210,34 @@ export function AnalystSidebar() {
   }
 
   return (
-    <aside className="flex h-full w-[420px] shrink-0 flex-col border-l border-border bg-background shadow-xl">
-      <header className="flex min-h-14 items-center gap-2 border-b border-border px-3">
-        <Bot className="h-4 w-4 text-muted-foreground" />
+    <aside
+      style={{ width }}
+      className={cn(
+        'relative flex h-full shrink-0 flex-col border-l border-border bg-background shadow-xl',
+        !resizing && 'transition-[width] duration-150 motion-reduce:transition-none',
+      )}
+    >
+      <div
+        {...handleProps}
+        className={cn(
+          'group absolute -left-1 top-0 z-20 h-full w-2 cursor-col-resize touch-none',
+          'focus-visible:outline-none',
+        )}
+      >
+        <span
+          className={cn(
+            'absolute left-1 top-0 h-full w-px bg-border transition-colors',
+            'group-hover:bg-primary/60 group-focus-visible:bg-primary',
+            resizing && 'bg-primary',
+          )}
+          aria-hidden
+        />
+      </div>
+
+      <header className="flex min-h-14 items-center gap-2 border-b border-border bg-card/40 px-3">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Sparkles className="h-4 w-4" />
+        </span>
         <ThreadDropdown
           threads={threads ?? []}
           currentThread={currentThread}
@@ -214,8 +251,9 @@ export function AnalystSidebar() {
             size="icon-sm"
             onClick={() => setSelectionMode(!selectionMode)}
             aria-label="Toggle page context selection"
+            aria-pressed={selectionMode}
           >
-            <Sparkles className="h-4 w-4" />
+            <Plus className="h-4 w-4" />
           </Button>
         )}
         <Button
@@ -228,6 +266,7 @@ export function AnalystSidebar() {
           <PanelRightClose className="h-4 w-4" />
         </Button>
       </header>
+
       <AnalystRunStatusBar
         state={runState}
         onStop={canStopAnalyst ? () => void handleStop() : undefined}
@@ -243,16 +282,11 @@ export function AnalystSidebar() {
             busy={analystBusy}
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">
-            <div>
-              <MessageSquare className="mx-auto mb-3 h-8 w-8 opacity-60" />
-              <p>Ask the Analyst a question.</p>
-            </div>
-          </div>
+          <EmptyState onPick={(text) => void handleSend(text)} disabled={analystBusy} />
         )}
       </div>
 
-      <footer className="border-t border-border p-3">
+      <footer className="border-t border-border bg-card/40 p-3">
         {selectedReferences.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {selectedReferences.map((reference) => (
@@ -265,7 +299,7 @@ export function AnalystSidebar() {
           </div>
         )}
         {error && <p className="mb-2 text-xs text-destructive">{error}</p>}
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 rounded-xl border border-input bg-background p-1.5 transition-colors focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/30">
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
@@ -277,8 +311,8 @@ export function AnalystSidebar() {
               }
             }}
             rows={3}
-            placeholder="Ask about traces, costs, usage, or selected context"
-            className="min-h-20 flex-1 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            placeholder="Ask about costs, usage, or selected context"
+            className="min-h-16 flex-1 resize-none bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground"
           />
           <Button
             type="button"
@@ -306,6 +340,35 @@ export function AnalystSidebar() {
   );
 }
 
+function EmptyState({ onPick, disabled }: { onPick: (prompt: string) => void; disabled: boolean }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-5 text-center">
+      <div className="space-y-1.5">
+        <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <Sparkles className="h-5 w-5" />
+        </span>
+        <h2 className="text-sm font-semibold text-foreground">Ask the Analyst</h2>
+        <p className="mx-auto max-w-[18rem] text-xs leading-relaxed text-muted-foreground">
+          It reads your usage and cost data, then digs into the details to answer.
+        </p>
+      </div>
+      <div className="w-full max-w-[20rem] space-y-2">
+        {EXAMPLE_PROMPTS.map((example) => (
+          <button
+            key={example}
+            type="button"
+            disabled={disabled}
+            onClick={() => onPick(example)}
+            className="w-full rounded-xl border border-border/60 bg-card/40 px-3 py-2 text-left text-xs text-foreground/90 transition-colors hover:border-primary/50 hover:bg-card disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {example}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ThreadDropdown({
   threads,
   currentThread,
@@ -321,8 +384,8 @@ function ThreadDropdown({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="ghost" className="min-w-0 flex-1 justify-between">
-          <span className="truncate">{currentThread?.title ?? 'New conversation'}</span>
-          <ChevronDown className="h-4 w-4" />
+          <span className="truncate font-medium">{currentThread?.title ?? 'New conversation'}</span>
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-80">
@@ -364,8 +427,4 @@ function ContextChip({
       </button>
     </span>
   );
-}
-
-function isActiveSandboxRunStatus(status: SandboxRun['status']) {
-  return status === 'queued' || status === 'starting' || status === 'running';
 }

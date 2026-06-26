@@ -22,6 +22,7 @@ import { paginationOptsValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { z } from 'zod/v4';
 import { requireEnabledUser } from './auth/users';
+import { toPiRunRows } from './analystPiRows';
 import { createMcpBackend } from './mcp/backend';
 import {
   action,
@@ -45,7 +46,6 @@ const ANALYST_MODEL = process.env.ANALYST_MODEL ?? ANALYST_DEFAULT_MODEL;
 const TINYBIRD_BASE_URL = process.env.TINYBIRD_API_URL ?? 'https://api.us-west-2.aws.tinybird.co';
 const MAX_PROMPT_CHARS = 20_000;
 const MAX_PAGE_CONTEXT_REFS = 12;
-const MAX_DATASET_TEXT_CHARS = 200_000;
 const DEFAULT_PI_RUNTIME_MS = 60 * 60 * 1000;
 const MAX_PI_RUNTIME_MS = 120 * 60 * 1000;
 const MAX_SANDBOX_EVENT_BATCH = 50;
@@ -517,12 +517,6 @@ function buildAnalystTools(options: { allowSandboxControl?: boolean } = {}) {
       },
     }),
   };
-}
-
-function toolResultToBoundedText(result: ToolCallResult): string {
-  const text = JSON.stringify(result);
-  if (text.length <= MAX_DATASET_TEXT_CHARS) return text;
-  return `${text.slice(0, MAX_DATASET_TEXT_CHARS)}\n...[truncated]`;
 }
 
 function normalizeUnknownPageContextReferences(value: unknown): PageContextReference[] {
@@ -1077,6 +1071,38 @@ export const listSandboxRunEvents = query({
   },
 });
 
+/**
+ * Presentation-ready work-log rows for a Pi run. The server groups the ordered
+ * events (merges tool start/end, collapses usage, drops noise) so the client is
+ * a dumb render loop — the same contract as `listMessages` for chat.
+ */
+export const listSandboxRunRows = query({
+  args: { runId: v.id('analystSandboxRuns'), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const user = await requireEnabledUser(ctx);
+    const run = await ctx.db.get(args.runId);
+    if (run?.creatorUserId !== user._id) throw new Error('Pi run not found');
+
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 400);
+    const events = await ctx.db
+      .query('analystSandboxRunEvents')
+      .withIndex('by_run_seq', (q) => q.eq('runId', args.runId))
+      .collect();
+
+    const sorted = events.sort((a, b) => a.seq - b.seq).slice(-limit);
+    return toPiRunRows(
+      sorted.map((event) => ({
+        _id: event._id,
+        seq: event.seq,
+        type: event.type,
+        message: event.message,
+        data: event.data,
+        emittedAt: event.emittedAt,
+      })),
+    );
+  },
+});
+
 export const cancelSandboxRun = action({
   args: { runId: v.id('analystSandboxRuns') },
   handler: async (ctx, args) => {
@@ -1594,20 +1620,11 @@ export const executeSandboxToolCall = action({
     }
 
     const user = await getEnabledUserById(ctx, run.creatorUserId);
-    await ctx.runMutation(internal.analyst.appendSandboxRunEvents, {
-      runId: args.runId,
-      tokenHash,
-      events: [
-        {
-          type: 'tool_call',
-          message: args.toolName,
-          data: { arguments: args.arguments ?? {} },
-          emittedAt: Date.now(),
-        },
-      ],
-      now: Date.now(),
-    });
 
+    // The work log is built from the runner's own clean tool rows (the agent's
+    // bash/read steps). The data-fetch endpoint used to also write tool_call /
+    // tool_result trace rows here — a redundant second track — so we no longer do.
+    // We persist only a failure, as a clean error the work log surfaces.
     let result: ToolCallResult;
     try {
       result = await runTraceFlowTool(ctx, user._id, {
@@ -1621,9 +1638,8 @@ export const executeSandboxToolCall = action({
         tokenHash,
         events: [
           {
-            type: 'tool_result',
-            message: args.toolName,
-            data: { isError: true, error: message },
+            type: 'error',
+            message: `Trace Flow data tool ${args.toolName} failed: ${message}`,
             emittedAt: Date.now(),
           },
         ],
@@ -1631,21 +1647,6 @@ export const executeSandboxToolCall = action({
       });
       throw error;
     }
-    const resultText = toolResultToBoundedText(result);
-
-    await ctx.runMutation(internal.analyst.appendSandboxRunEvents, {
-      runId: args.runId,
-      tokenHash,
-      events: [
-        {
-          type: 'tool_result',
-          message: args.toolName,
-          data: { resultChars: resultText.length },
-          emittedAt: Date.now(),
-        },
-      ],
-      now: Date.now(),
-    });
 
     return { ok: true, result };
   },

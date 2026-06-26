@@ -133,6 +133,9 @@ let piEventCount = 0;
 let latestPhase = 'starting';
 let latestToolName;
 let latestUsageSignature = '';
+// The command/args live on tool_execution_start; the result on _end. We stash the
+// start's command preview by toolCallId so the persisted end row carries both.
+const toolCommandsByCallId = new Map();
 let dataArtifactSeq = 0;
 let latestToolResultText = '';
 let latestToolResultName = '';
@@ -366,78 +369,85 @@ async function writeTraceflowDataArtifact(toolName, args, result) {
   };
 }
 
-function safeEventData(event) {
-  return {
-    event: safeStringify(event, 12000),
-    eventType: typeof event?.type === 'string' ? event.type : 'session_event',
-    assistantEventType:
-      typeof event?.assistantMessageEvent?.type === 'string'
-        ? event.assistantMessageEvent.type
-        : undefined,
-    toolCallId: typeof event?.toolCallId === 'string' ? event.toolCallId : undefined,
-    toolName: typeof event?.toolName === 'string' ? event.toolName : undefined,
-  };
+const TOOL_COMMAND_KEYS = ['command', 'cmd', 'path', 'file', 'pattern', 'query', 'view'];
+
+// The native event carries arguments as a real object (no parsing). Pull the
+// single most descriptive field so the work log can show what the tool did.
+function toolCommandPreview(args) {
+  let record = args;
+  if (typeof record === 'string') {
+    try {
+      record = JSON.parse(record);
+    } catch {
+      return truncateText(args.trim(), 200);
+    }
+  }
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return '';
+  for (const key of TOOL_COMMAND_KEYS) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return truncateText(value.trim(), 200);
+  }
+  return '';
 }
 
+// The work log is built ONLY from the clean, typed rows we persist here. We pull
+// the meaningful fields straight off the native event object (which is fully
+// structured — no string-inside-a-string, no parsing) and never persist the raw
+// event dump. Downstream (Convex query + client) just reads these fields.
+//
+// Persisted shapes (all under data, discriminated by data.kind):
+//   { kind: 'tool', toolName, command, output, isError }  - one completed tool step
+//   { kind: 'text', text }                                - one finished assistant turn
 function describeSessionEvent(event) {
   const eventType = typeof event?.type === 'string' ? event.type : 'session_event';
-  const assistant = event?.assistantMessageEvent;
-  const assistantEventType = typeof assistant?.type === 'string' ? assistant.type : undefined;
-  const data = safeEventData(event);
 
   latestPhase = eventType;
   if (typeof event?.toolName === 'string') latestToolName = event.toolName;
 
-  if (eventType === 'message_update' && assistantEventType?.startsWith('thinking_')) {
+  const callId = typeof event?.toolCallId === 'string' ? event.toolCallId : undefined;
+
+  // The command/args are on the START event. Stash a preview so the completed END
+  // row can show *what* the tool did, then drop the start (no row of its own).
+  if (eventType === 'tool_execution_start') {
+    if (callId) toolCommandsByCallId.set(callId, toolCommandPreview(event?.args ?? event?.arguments));
     return null;
   }
 
-  if (eventType === 'message_update' && assistantEventType?.endsWith('_delta')) {
-    const delta = typeof assistant.delta === 'string' ? assistant.delta : '';
-    return delta ? {
-      type: 'stdout',
-      message: delta,
-      data,
-    } : null;
-  }
-
-  if (eventType === 'message_update' && assistantEventType) {
-    return {
-      type: 'message',
-      message: assistantEventType.replaceAll('_', ' '),
-      data,
-    };
-  }
-
-  if (eventType === 'tool_execution_start') {
-    return {
-      type: 'message',
-      message: 'tool started',
-      data,
-    };
-  }
-
-  if (eventType === 'tool_execution_update') {
-    return {
-      type: 'message',
-      message: 'tool updated',
-      data,
-    };
-  }
-
+  // A completed tool step is the unit of work — one finished row carrying the
+  // command (from the matching start) and its result.
   if (eventType === 'tool_execution_end') {
+    const isError = event?.isError === true;
+    const command = callId ? (toolCommandsByCallId.get(callId) ?? '') : '';
+    if (callId) toolCommandsByCallId.delete(callId);
     return {
-      type: event?.isError ? 'error' : 'message',
-      message: event?.isError ? 'tool failed' : 'tool completed',
-      data,
+      type: isError ? 'error' : 'message',
+      message: 'tool',
+      data: {
+        kind: 'tool',
+        toolName: typeof event?.toolName === 'string' ? event.toolName : 'tool',
+        command: command || toolCommandPreview(event?.args ?? event?.arguments),
+        output: truncateText(messageContentText(event?.result), 800),
+        isError,
+      },
     };
   }
 
-  return {
-    type: 'message',
-    message: eventType.replaceAll('_', ' '),
-    data,
-  };
+  // A finished assistant turn carries the agent's narration as clean markdown.
+  if (eventType === 'turn_end') {
+    const text = messageContentText(event?.message, true).trim();
+    if (!text) return null;
+    return {
+      type: 'message',
+      message: 'turn',
+      data: { kind: 'text', text },
+    };
+  }
+
+  // Everything else — token-level deltas (message_update), tool starts/updates,
+  // and lifecycle bookkeeping (message_start/end, agent_start/end, turn_start) — is
+  // either redundant or noise and is never persisted. Streaming text is accumulated
+  // into resultText separately (see appendResultText).
+  return null;
 }
 
 function appendResultText(text) {
@@ -835,7 +845,7 @@ async function emitUsage(reason) {
   await emit(
     {
       type: 'usage',
-      message: 'Pi usage updated',
+      message: 'Usage updated',
       data: { reason, usage },
     },
     { markActivity: false },
@@ -847,7 +857,7 @@ async function emitHeartbeat() {
   await emit(
     {
       type: 'status',
-      message: 'Pi runner heartbeat',
+      message: 'Runner heartbeat',
       data: {
         phase: latestPhase,
         latestToolName,
@@ -1011,7 +1021,7 @@ try {
   await fs.writeFile(contextGuardExtensionPath, buildTraceflowContextGuardExtension());
   await emit({
     type: 'status',
-    message: 'Starting Pi session',
+    message: 'Starting session',
     data: {
       phase: 'starting',
       trustedWorkspace: '/workspace',
@@ -1045,7 +1055,7 @@ try {
   });
   await emit({
     type: 'status',
-    message: 'Loading Pi runtime',
+    message: 'Loading runtime',
     data: { phase: 'loading_runtime' },
   });
   timeoutTimer = setTimeout(() => {
@@ -1075,7 +1085,7 @@ try {
     import('typebox'),
   ]);
   const traceflowDataTool = createTraceflowDataTool(defineTool, Type);
-  await emit({ type: 'status', message: 'Pi runtime loaded' });
+  await emit({ type: 'status', message: 'Runtime loaded' });
 
   const authStorage = AuthStorage.create(path.join(agentDir, 'auth.json'));
   authStorage.setRuntimeApiKey('traceflow-openrouter', runToken);
@@ -1124,7 +1134,7 @@ try {
   await resourceLoader.reload({ resolveProjectTrust: async () => true });
   await emit({
     type: 'status',
-    message: 'Pi runtime configured',
+    message: 'Runtime configured',
     data: {
       phase: 'runtime_configured',
       discovery: {
@@ -1190,7 +1200,7 @@ try {
   try {
     await emit({
       type: 'status',
-      message: 'Running Pi analysis',
+      message: 'Running analysis',
       data: { phase: 'running' },
     });
     await emitHeartbeat();
@@ -1203,7 +1213,7 @@ try {
         resultText: resultText.trim() || undefined,
       });
     } else {
-      await emit({ type: 'status', message: 'Pi analysis completed' });
+      await emit({ type: 'status', message: 'Analysis completed' });
       await complete('completed', {
         resultText: resultText.trim() || 'Pi completed without assistant text output.',
       });
