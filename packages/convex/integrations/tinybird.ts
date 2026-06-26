@@ -231,6 +231,7 @@ export const AGENT_ORG_DATASOURCES = [
   'agent_message_facts',
   'agent_pull_request_facts',
   'agent_repositories',
+  'agent_review_unit_attributions',
   'agent_session_summaries',
   'agent_tool_event_facts',
   'agent_tool_usage_daily',

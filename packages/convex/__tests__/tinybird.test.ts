@@ -1,6 +1,6 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   AGENT_ORG_DATASOURCES,
@@ -68,6 +68,15 @@ const EXPECTED_MCP_PIPES = [
 
 function readPipe(resource: string): string {
   return readFileSync(new URL(`../../../pipes/${resource}.pipe`, import.meta.url), 'utf8');
+}
+
+function readAgentOrgDatasources(): string[] {
+  const datasourceDir = new URL('../../../datasources/', import.meta.url);
+  return readdirSync(datasourceDir)
+    .filter((file) => file.startsWith('agent_') && file.endsWith('.datasource'))
+    .filter((file) => /\bOrgId\b/.test(readFileSync(new URL(file, datasourceDir), 'utf8')))
+    .map((file) => file.replace(/\.datasource$/, ''))
+    .sort();
 }
 
 describe('Tinybird web read token scopes', () => {
@@ -170,6 +179,10 @@ describe('Tinybird MCP read token scopes', () => {
 });
 
 describe('Tinybird org deletion SQL', () => {
+  it('covers every org-scoped agent datasource', () => {
+    expect([...AGENT_ORG_DATASOURCES].sort()).toEqual(readAgentOrgDatasources());
+  });
+
   it('deletes both API-key scoped LLM rows and org-scoped agent rows', () => {
     const apiKey = '11111111-1111-1111-1111-111111111111';
     const statements = buildOrgTraceDeleteStatements({ apiKeys: [apiKey], orgId: 'org_123' });
