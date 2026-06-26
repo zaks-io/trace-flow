@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { computePeriod } from '@trace-flow/utils';
-import { buildUsageSyncRequestInit } from '../usage-tracker';
+import { buildUsageSyncRequestInit, isPermanentUsageSyncFailure } from '../usage-tracker';
 
 /**
  * In-memory SQLite mock that replicates the DO's table structure.
@@ -526,6 +526,7 @@ describe('UsageTracker Durable Object', () => {
         }),
       });
       if (!response.ok) {
+        if (isPermanentUsageSyncFailure(response.status)) return;
         throw new Error(`pushToConvex failed: ${response.status}`);
       }
     }
@@ -583,6 +584,24 @@ describe('UsageTracker Durable Object', () => {
       expect(mockCtx.storage.setAlarm).toHaveBeenCalledOnce();
       const counters = sqlMock._getCounters();
       expect(counters.last_pushed_subscription).toBe(0);
+    });
+
+    it('drops permanent usage sync failures without retrying', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockResolvedValue(new Response('{"error":"Invalid organization id"}', { status: 400 })),
+      );
+
+      await callCheck(doFetch, 3, defaultConfig);
+      mockCtx.storage.setAlarm.mockClear();
+
+      await runAlarm();
+
+      expect(mockCtx.storage.setAlarm).not.toHaveBeenCalled();
+      const counters = sqlMock._getCounters();
+      expect(counters.last_pushed_subscription).toBe(3);
     });
 
     it('is a no-op when counters have not changed since last push', async () => {
@@ -744,6 +763,7 @@ describe('UsageTracker Durable Object', () => {
         }),
       });
       if (!response.ok) {
+        if (isPermanentUsageSyncFailure(response.status)) return;
         throw new Error(`pushToConvex failed: ${response.status}`);
       }
     }
@@ -783,6 +803,20 @@ describe('UsageTracker Durable Object', () => {
       await expect(
         pushToConvex('org-123', currentConfig.period_start, currentConfig.period_end),
       ).rejects.toThrow('pushToConvex failed: 500');
+    });
+
+    it('does not throw on permanent client errors', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response('Invalid organization id', { status: 400 })),
+      );
+
+      await callCheck(doFetch, 1, defaultConfig);
+      const currentConfig = sqlMock._getConfig()!;
+
+      await expect(
+        pushToConvex('org_dev_smoke', currentConfig.period_start, currentConfig.period_end),
+      ).resolves.toBeUndefined();
     });
 
     it('subtracts addon_baseline for incremental reporting', async () => {

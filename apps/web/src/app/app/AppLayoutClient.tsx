@@ -6,6 +6,8 @@ import { api } from '@convex/_generated/api';
 import { Providers } from '@/components/providers/Providers';
 import { AppSidebar } from '@/components/AppSidebar';
 import { AdminProvider } from '@/components/admin/AdminContext';
+import { AnalystProvider } from '@/components/analyst/AnalystContext';
+import { AnalystSidebar } from '@/components/analyst/AnalystSidebar';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { useUserInitialization } from '@/hooks/useUserInitialization';
 import { useLaunchDarklyIdentity } from '@/hooks/useLaunchDarklyIdentity';
@@ -75,14 +77,19 @@ function AppLayoutContent({
 
   return (
     <AdminProvider value={data.isAdmin}>
-      <SidebarProvider>
-        <AppSidebar isAdmin={data.isAdmin} />
-        <SidebarInset>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-6 lg:p-8">
-            {children}
+      <AnalystProvider>
+        <SidebarProvider>
+          <AppSidebar isAdmin={data.isAdmin} />
+          <div className="flex min-w-0 flex-1">
+            <SidebarInset>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-6 lg:p-8">
+                {children}
+              </div>
+            </SidebarInset>
+            <AnalystSidebar />
           </div>
-        </SidebarInset>
-      </SidebarProvider>
+        </SidebarProvider>
+      </AnalystProvider>
     </AdminProvider>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AgentUsageChart } from './AgentUsageChart';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { BentoCell } from './BentoCell';
 import { SegmentedControl } from './SegmentedControl';
 import {
@@ -34,6 +35,7 @@ export function UsageOverTimeCell({
   repoSeries,
   onRepoToggle,
   labelFor,
+  contextReference,
 }: {
   /** Daily, repo-grouped rows from `agent_usage_timeseries` (group_by=repo). */
   repoSeries: AgentTimeseriesRow[];
@@ -41,6 +43,7 @@ export function UsageOverTimeCell({
   onRepoToggle: (repoFingerprint: string) => void;
   /** Resolve a repo fingerprint to a display name. */
   labelFor: (value: string) => string;
+  contextReference?: AnalystPageContextReference;
 }) {
   const [metric, setMetric] = useState<UsageMetric>('cost');
   const [chartStyle, setChartStyle] = useState<AgentChartStyle>('line');
@@ -50,6 +53,7 @@ export function UsageOverTimeCell({
       title="Usage over time"
       hint="by repository"
       caveat={`Cost is an estimate (lower bound). Top ${REPO_TOP_N} repos are charted; the rest roll into "Other". Click a repo to filter.`}
+      contextReference={contextReference}
       toolbar={
         <div className="flex items-center gap-2">
           <SegmentedControl

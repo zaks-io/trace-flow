@@ -5,20 +5,17 @@ import type {
   JsonRpcMessage,
   ListToolsResult,
   ToolCallParams,
-  ToolCallResult,
 } from './protocol';
 import { JsonRpcErrorCode } from './protocol';
-import { TOOL_DEFINITIONS } from './tools/definitions';
 import type { McpBackend } from './backend';
 import type { ToolCtx } from './tinybird';
-import { listTraces } from './tools/listTracesAction';
-import { getTrace } from './tools/getTraceAction';
-import { getTraceSpans } from './tools/getTraceSpansAction';
-import { getTraceEvents } from './tools/getTraceEventsAction';
-import { listTraceSummaries } from './tools/listTraceSummaries';
-import { getUsageSummary, listModelUsage, listOperationUsage } from './tools/analytics';
-import { describeAgentAnalytics, queryAgentAnalytics } from './tools/agentAnalytics';
 import { listApiKeys } from './tools/listApiKeys';
+import {
+  getTraceFlowToolDefinitions,
+  getTraceFlowToolHandler,
+  isTraceFlowToolAvailableOnSurface,
+  type TraceFlowToolSurface,
+} from './tools/registry';
 
 export function isRequest(message: JsonRpcMessage): message is JsonRpcRequest {
   return 'id' in message && message.id !== undefined;
@@ -49,34 +46,16 @@ export function createSuccessResponse(id: string | number, result: unknown): Jso
   };
 }
 
-export function handleToolsList(id: string | number): JsonRpcResponse {
+export function handleToolsList(
+  id: string | number,
+  surface: TraceFlowToolSurface = 'mcp',
+): JsonRpcResponse {
   const result: ListToolsResult = {
-    tools: TOOL_DEFINITIONS,
+    tools: getTraceFlowToolDefinitions(surface),
   };
 
   return createSuccessResponse(id, result);
 }
-
-type ToolHandler = (
-  ctx: ToolCtx,
-  keys: string[],
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  args: any,
-  retentionDays: number,
-) => Promise<ToolCallResult>;
-
-const TOOL_HANDLERS: Record<string, ToolHandler> = {
-  list_traces: listTraces,
-  list_trace_summaries: listTraceSummaries,
-  get_trace: getTrace,
-  get_trace_spans: getTraceSpans,
-  get_trace_events: getTraceEvents,
-  get_usage_summary: getUsageSummary,
-  list_operation_usage: listOperationUsage,
-  list_model_usage: listModelUsage,
-  describe_agent_analytics: describeAgentAnalytics,
-  query_agent_analytics: queryAgentAnalytics,
-};
 
 /**
  * Host-agnostic `tools/call` dispatch. The host (Convex action or MCP worker)
@@ -90,14 +69,15 @@ export async function dispatchToolCall(
   id: string | number,
   params: ToolCallParams,
   protocolVersion?: string,
+  surface: TraceFlowToolSurface = 'mcp',
 ): Promise<JsonRpcResponse> {
   if (!params.name) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Missing tool name');
   }
 
   const isListApiKeys = params.name === 'list_api_keys';
-  const handler = TOOL_HANDLERS[params.name];
-  if (!isListApiKeys && !handler) {
+  const handler = getTraceFlowToolHandler(params.name);
+  if ((!isListApiKeys && !handler) || !isTraceFlowToolAvailableOnSurface(params.name, surface)) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, `Unknown tool: ${params.name}`);
   }
 

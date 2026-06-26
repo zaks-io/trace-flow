@@ -1,8 +1,10 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useOptionalAnalyst } from '@/components/analyst/AnalystContext';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 
 /**
  * Uniform chrome for one bento answer: a titled card that always shows its headline answer
@@ -18,6 +20,7 @@ export function BentoCell({
   expanded,
   onToggleExpand,
   toolbar,
+  contextReference,
   children,
   expandedContent,
 }: {
@@ -32,16 +35,49 @@ export function BentoCell({
   onToggleExpand?: () => void;
   /** Right-aligned controls in the header (e.g. a lens toggle). */
   toolbar?: ReactNode;
+  contextReference?: AnalystPageContextReference;
   children: ReactNode;
   expandedContent?: ReactNode;
 }) {
+  const analyst = useOptionalAnalyst();
+  const selectable = Boolean(analyst?.selectionMode && contextReference);
+  const selected = contextReference
+    ? (analyst?.isReferenceSelected(contextReference) ?? false)
+    : false;
+  const toggleSelection = () => {
+    if (contextReference) analyst?.toggleReference(contextReference);
+  };
+
   return (
     <section
+      role={selectable ? 'button' : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      aria-pressed={selectable ? selected : undefined}
+      onClick={(event) => {
+        if (!selectable) return;
+        const target = event.target as HTMLElement;
+        if (target !== event.currentTarget && target.closest('button,a,input,select,textarea')) {
+          return;
+        }
+        toggleSelection();
+      }}
+      onKeyDown={(event) => {
+        if (!selectable || (event.key !== 'Enter' && event.key !== ' ')) return;
+        event.preventDefault();
+        toggleSelection();
+      }}
       className={cn(
-        'flex min-w-0 flex-col rounded-2xl border border-border/60 bg-card/40 p-5',
+        'relative flex min-w-0 flex-col rounded-2xl border border-border/60 bg-card/40 p-5',
+        selectable && 'cursor-pointer transition-colors hover:border-primary/50',
+        selected && 'border-primary/70 ring-2 ring-primary/30',
         className,
       )}
     >
+      {selected && (
+        <span className="absolute right-3 top-3 rounded-full bg-primary p-1 text-primary-foreground">
+          <Check className="h-3 w-3" />
+        </span>
+      )}
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>

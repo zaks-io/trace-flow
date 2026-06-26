@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Area, AreaChart, ReferenceDot, ReferenceLine, XAxis, YAxis } from 'recharts';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { BentoCell } from './BentoCell';
@@ -26,12 +27,14 @@ export function VelocityBar({
   expanded,
   onToggleExpand,
   expandedContent,
+  contextReference,
 }: {
   row: AgentCostDistributionRow | null;
   windowDays: number;
   expanded: boolean;
   onToggleExpand: () => void;
   expandedContent: React.ReactNode;
+  contextReference?: AnalystPageContextReference;
 }) {
   const hasData = row != null && row.session_count > 0 && row.total_cost_usd > 0;
   const curve = useMemo<ConcentrationCurve | null>(
@@ -47,6 +50,7 @@ export function VelocityBar({
       expanded={expanded}
       onToggleExpand={onToggleExpand}
       expandedContent={expandedContent}
+      contextReference={contextReference}
       caveat={`The diagonal is perfectly even spend; the bulge above it is concentration. Conversations are sorted priciest-first. The Gini is sample-bias-corrected (n/(n-1)) so cohorts of different sizes compare fairly. Cost is an estimate (lower bound), last ${windowDays} days.`}
     >
       {hasData && curve && curve.points.length > 1 ? (

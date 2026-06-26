@@ -11,4 +11,11 @@ export {
   dispatchToolCall,
 } from './handler';
 export { TOOL_DEFINITIONS } from './tools/definitions';
+export {
+  getTraceFlowToolDefinitions,
+  getTraceFlowToolHandler,
+  isTraceFlowToolAvailableOnSurface,
+  type TraceFlowToolSurface,
+  type ToolHandler,
+} from './tools/registry';
 export { listApiKeys } from './tools/listApiKeys';

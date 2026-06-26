@@ -1,0 +1,93 @@
+name = "trace-flow-analyst-sandbox-dev"
+main = "src/index.ts"
+compatibility_date = "2026-06-24"
+compatibility_flags = ["nodejs_compat"]
+upload_source_maps = true
+
+logpush = true
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+# Secrets: ANALYST_SANDBOX_SHARED_SECRET, OPENROUTER_API_KEY
+# Var: CONVEX_URL
+
+[vars]
+CONVEX_URL = "https://hardy-iguana-812.convex.cloud"
+SENTRY_ENVIRONMENT = "development"
+SANDBOX_TRANSPORT = "http"
+
+[[containers]]
+class_name = "Sandbox"
+image = "./Dockerfile"
+instance_type = "lite"
+max_instances = 5
+
+[[durable_objects.bindings]]
+name = "Sandbox"
+class_name = "Sandbox"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Sandbox"]
+
+[env.preview]
+name = "trace-flow-analyst-sandbox-preview"
+
+[env.preview.version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[env.preview.vars]
+CONVEX_URL = "https://hardy-iguana-812.convex.cloud"
+SENTRY_ENVIRONMENT = "preview"
+SANDBOX_TRANSPORT = "rpc"
+
+[[env.preview.containers]]
+class_name = "Sandbox"
+image = "./Dockerfile"
+instance_type = "lite"
+max_instances = 5
+
+[[env.preview.durable_objects.bindings]]
+name = "Sandbox"
+class_name = "Sandbox"
+
+[[env.preview.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Sandbox"]
+
+[env.production]
+name = "trace-flow-analyst-sandbox"
+workers_dev = false
+
+[env.production.version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[env.production.vars]
+SENTRY_ENVIRONMENT = "prod"
+SANDBOX_TRANSPORT = "rpc"
+
+[[env.production.routes]]
+pattern = "analyst-sandbox.trace-flow.dev/*"
+zone_name = "trace-flow.dev"
+
+[[env.production.containers]]
+class_name = "Sandbox"
+image = "./Dockerfile"
+instance_type = "lite"
+max_instances = 10
+
+[[env.production.durable_objects.bindings]]
+name = "Sandbox"
+class_name = "Sandbox"
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Sandbox"]

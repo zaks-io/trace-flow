@@ -110,6 +110,77 @@ export default defineSchema({
     .index('by_provider', ['provider'])
     .index('by_provider_model', ['provider', 'model']),
 
+  analystThreads: defineTable({
+    creatorUserId: v.id('users'),
+    orgId: v.id('organizations'),
+    agentThreadId: v.string(),
+    title: v.string(),
+    status: v.union(v.literal('active'), v.literal('archived')),
+    updatedAt: v.number(),
+    lastMessageAt: v.optional(v.number()),
+    stopRequestedAt: v.optional(v.number()),
+  })
+    .index('by_creator_updated', ['creatorUserId', 'updatedAt'])
+    .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
+    .index('by_agent_thread_id', ['agentThreadId']),
+
+  analystSandboxRuns: defineTable({
+    analystThreadId: v.id('analystThreads'),
+    creatorUserId: v.id('users'),
+    orgId: v.id('organizations'),
+    sandboxId: v.string(),
+    processId: v.optional(v.string()),
+    prompt: v.string(),
+    pageContextReferences: v.optional(v.array(v.any())),
+    status: v.union(
+      v.literal('queued'),
+      v.literal('starting'),
+      v.literal('running'),
+      v.literal('completed'),
+      v.literal('failed'),
+      v.literal('timed_out'),
+      v.literal('cancelled'),
+    ),
+    runTokenHash: v.string(),
+    maxRuntimeMs: v.number(),
+    updatedAt: v.number(),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    lastEventAt: v.optional(v.number()),
+    nextSeq: v.number(),
+    resultText: v.optional(v.string()),
+    error: v.optional(v.string()),
+    continuationScheduledAt: v.optional(v.number()),
+  })
+    .index('by_thread_updated', ['analystThreadId', 'updatedAt'])
+    .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
+    .index('by_status_updated', ['status', 'updatedAt']),
+
+  analystSandboxRunEvents: defineTable({
+    runId: v.id('analystSandboxRuns'),
+    analystThreadId: v.id('analystThreads'),
+    creatorUserId: v.id('users'),
+    orgId: v.id('organizations'),
+    seq: v.number(),
+    type: v.union(
+      v.literal('status'),
+      v.literal('stdout'),
+      v.literal('stderr'),
+      v.literal('message'),
+      v.literal('tool_call'),
+      v.literal('tool_result'),
+      v.literal('result'),
+      v.literal('error'),
+      v.literal('control'),
+      v.literal('usage'),
+    ),
+    message: v.optional(v.string()),
+    data: v.optional(v.any()),
+    emittedAt: v.number(),
+  })
+    .index('by_run_seq', ['runId', 'seq'])
+    .index('by_thread_seq', ['analystThreadId', 'seq']),
+
   alerts: defineTable({
     name: v.string(),
     field: v.string(),

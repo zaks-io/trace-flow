@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@auth0/nextjs-auth0": "^4.20.0",
+    "@convex-dev/agent": "^0.6.4",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
@@ -39,6 +40,7 @@
     "@trace-flow/tinybird-client": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*",
+    "ai": "^6.0.208",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "convex": "^1.38.0",

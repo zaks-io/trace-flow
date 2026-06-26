@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart';
@@ -33,11 +34,13 @@ export function ConversationSizeHistogram({
   windowDays,
   expanded,
   onToggleExpand,
+  contextReference,
 }: {
   row: AgentCostDistributionRow | null;
   windowDays: number;
   expanded: boolean;
   onToggleExpand: () => void;
+  contextReference?: AnalystPageContextReference;
 }) {
   const [axis, setAxis] = useState<DistributionAxis>('cost');
   const hasData = row != null && row.session_count > 0;
@@ -57,6 +60,7 @@ export function ConversationSizeHistogram({
       expanded={expanded}
       onToggleExpand={onToggleExpand}
       toolbar={<AxisToggle axis={axis} onChange={setAxis} />}
+      contextReference={contextReference}
       caveat={
         axis === 'cost'
           ? `Cost is an estimate (lower bound). Distribution over the last ${windowDays} days.`
