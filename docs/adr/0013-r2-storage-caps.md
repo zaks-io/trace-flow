@@ -119,9 +119,9 @@ Billing should charge for purchased storage capacity or for metered overage only
 
 This ADR extends, but does not replace:
 
-- [R2 Body Storage](./r2-body-storage.md): Body Objects still live outside Tinybird, still truncate per object, and still expire after 30 days.
-- [Agent Conversation Analytics](./agent-conversation-analytics.md): Raw transcript upload remains opt-in and 90-day bounded, but now also consumes the shared org Storage Budget.
-- [Proxy Transaction Module](./proxy-transaction-module.md): `persistTransaction` remains the owner of side effects. Storage-cap enforcement is policy input to that persistence step, like tier and omit-body decisions.
+- [R2 Body Storage](./0008-r2-body-storage.md): Body Objects still live outside Tinybird, still truncate per object, and still expire after 30 days.
+- [Agent Conversation Analytics](./0012-agent-conversation-analytics.md): Raw transcript upload remains opt-in and 90-day bounded, but now also consumes the shared org Storage Budget.
+- [Proxy Transaction Module](./0011-proxy-transaction-module.md): `persistTransaction` remains the owner of side effects. Storage-cap enforcement is policy input to that persistence step, like tier and omit-body decisions.
 
 ## Trade-offs
 

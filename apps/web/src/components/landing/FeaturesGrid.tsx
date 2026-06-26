@@ -1,13 +1,14 @@
 const FEATURES = [
   {
-    title: 'Zero latency overhead',
+    title: 'Async capture',
     description:
-      '<20ms p95. Async capture via Cloudflare waitUntil(). Your requests never wait for us.',
+      'Cloudflare waitUntil() keeps observability writes off the user-visible response path.',
     icon: <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />,
   },
   {
-    title: 'Exact cost per request',
-    description: 'Token counts \u00d7 model pricing. Every call, every model, every provider.',
+    title: 'Cost estimates per request',
+    description:
+      'Token counts and model pricing produce comparable spend signals across providers.',
     icon: (
       <>
         <line x1="12" x2="12" y1="2" y2="22" />
@@ -16,9 +17,9 @@ const FEATURES = [
     ),
   },
   {
-    title: 'Full body capture',
+    title: 'Body capture controls',
     description:
-      'Request and response payloads stored on edge. Debug what was sent and what came back.',
+      'Captured request and response samples are encrypted on edge, with opt-out support for sensitive calls.',
     icon: (
       <>
         <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
@@ -73,7 +74,7 @@ export function FeaturesGrid() {
       <div className="mx-auto max-w-5xl px-6">
         <div className="mb-12 text-center">
           <h2 className="mb-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Built for production.
+            Built for real traffic.
           </h2>
           <p className="text-lg text-muted-foreground">
             Everything you need to understand your LLM spend.

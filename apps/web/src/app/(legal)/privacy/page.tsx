@@ -108,6 +108,7 @@ export default function PrivacyPage() {
                 ['Convex Cloud', 'Application backend and metadata'],
                 ['Auth0', 'Authentication'],
                 ['Sentry', 'Error tracking (may include request metadata)'],
+                ['LaunchDarkly', 'Feature flags and product rollout targeting'],
               ] as const
             ).map(([name, desc]) => (
               <div key={name} className="flex items-baseline gap-2">
@@ -170,7 +171,9 @@ export default function PrivacyPage() {
         <Section number={8} title="Cookies and Tracking">
           <p>
             The Service uses session cookies for authentication (set by Auth0). We do not use
-            analytics cookies, advertising trackers, or third-party tracking scripts.
+            advertising trackers or sell behavioral data. When feature flags are enabled,
+            LaunchDarkly may receive account identity attributes needed to evaluate and audit
+            product rollouts.
           </p>
         </Section>
 

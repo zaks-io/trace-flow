@@ -1,10 +1,10 @@
 # Storage Quotas and Overage Protection
 
-Status: superseded by [R2 Storage Caps](./r2-storage-caps.md)
+Status: superseded by [R2 Storage Caps](./0013-r2-storage-caps.md)
 
 Captured: 2026-05-24
 
-This draft is retained only as historical context. Do not implement the monthly KV-counter quota model below. The accepted decision is [R2 Storage Caps](./r2-storage-caps.md), which uses a live-byte Storage Budget, a strongly consistent Durable Object reservation point, and graceful raw-storage omission instead of rejecting proxied LLM traffic.
+This draft is retained only as historical context. Do not implement the monthly KV-counter quota model below. The accepted decision is [R2 Storage Caps](./0013-r2-storage-caps.md), which uses a live-byte Storage Budget, a strongly consistent Durable Object reservation point, and graceful raw-storage omission instead of rejecting proxied LLM traffic.
 
 ## Decision
 

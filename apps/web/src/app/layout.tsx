@@ -19,7 +19,7 @@ const firaCode = Fira_Code({
 export const metadata: Metadata = {
   title: 'Trace Flow — LLM Observability Proxy',
   description:
-    'Drop-in proxy for OpenAI, Anthropic, Google, and more. Exact per-request cost, token usage, and full body capture with <20ms overhead.',
+    'Drop-in proxy for OpenAI, Anthropic, Google, and more. Capture request metadata, token usage, cost estimates, and debuggable body samples.',
   openGraph: {
     title: 'Trace Flow — LLM Observability Proxy',
     description:

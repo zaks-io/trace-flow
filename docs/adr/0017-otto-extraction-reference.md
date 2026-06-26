@@ -4,7 +4,7 @@ Status: reference
 
 Captured: 2026-05-25
 
-This note records the Otto files to consult when implementing the Collector work described in [Agent Conversation Analytics](./agent-conversation-analytics.md) and [Trace Flow Desktop Collector](./trace-flow-desktop-collector.md). Otto is proof-of-concept source material, not a contract to preserve. Trace Flow vendors and refactors the working parser, source discovery, git/remote resolution, sync loop, and desktop shell patterns behind Trace Flow-owned types, tests, privacy rules, ingest contracts, IDs, pricing, and storage.
+This note records the Otto files to consult when implementing the Collector work described in [Agent Conversation Analytics](./0012-agent-conversation-analytics.md) and [Trace Flow Desktop Collector](./0015-trace-flow-desktop-collector.md). Otto is proof-of-concept source material, not a contract to preserve. Trace Flow vendors and refactors the working parser, source discovery, git/remote resolution, sync loop, and desktop shell patterns behind Trace Flow-owned types, tests, privacy rules, ingest contracts, IDs, pricing, and storage.
 
 The Otto checkout used for this survey was `~/src/otto`.
 

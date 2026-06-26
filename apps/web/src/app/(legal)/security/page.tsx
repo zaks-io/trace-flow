@@ -70,8 +70,9 @@ export default function SecurityPage() {
           </p>
           <p>
             Each ciphertext is bound to its owning organization and storage location: a body cannot
-            be decrypted outside the context it was written in. Keys can be rotated without
-            re-encrypting existing data.
+            be decrypted outside the context it was written in. Rotating the root encryption key
+            requires keeping the previous root available until older body objects expire or are
+            re-encrypted.
           </p>
         </Section>
 
@@ -128,8 +129,9 @@ export default function SecurityPage() {
             </li>
             <li>
               Tinybird queries from the dashboard use short-lived (10-minute) JWTs signed by Convex,
-              scoped per user with <Code>fixed_params.api_keys</Code> so a user only sees their own
-              API keys&apos; traffic. The Tinybird admin token never leaves the Convex environment.
+              scoped per user with <Code>fixed_params.api_keys</Code> and{' '}
+              <Code>fixed_params.org_id</Code> so a user only sees their organization&apos;s data.
+              The Tinybird admin token never leaves the Convex environment.
             </li>
           </ul>
         </Section>
@@ -203,6 +205,11 @@ export default function SecurityPage() {
                   'Sentry',
                   'Error tracking (may include redacted request metadata)',
                   'https://sentry.io/security/',
+                ],
+                [
+                  'LaunchDarkly',
+                  'Feature flag evaluation and rollout targeting',
+                  'https://launchdarkly.com/trust/',
                 ],
               ] as const
             ).map(([name, desc, url]) => (

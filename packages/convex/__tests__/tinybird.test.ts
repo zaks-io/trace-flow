@@ -1,10 +1,13 @@
 // tinybird.ts requires TINYBIRD_ADMIN_TOKEN and TINYBIRD_WORKSPACE_ID at module load time.
 // These are provided via vitest.config.ts env configuration.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
+  AGENT_ORG_DATASOURCES,
+  buildOrgTraceDeleteStatements,
   buildWebReadScopes,
   joinSanitizedApiKeys,
+  LLM_API_KEY_DATASOURCES,
   MCP_TINYBIRD_PIPES,
   sanitizeApiKeys,
   UUID_PATTERN,
@@ -65,6 +68,15 @@ const EXPECTED_MCP_PIPES = [
 
 function readPipe(resource: string): string {
   return readFileSync(new URL(`../../../pipes/${resource}.pipe`, import.meta.url), 'utf8');
+}
+
+function readAgentOrgDatasources(): string[] {
+  const datasourceDir = new URL('../../../datasources/', import.meta.url);
+  return readdirSync(datasourceDir)
+    .filter((file) => file.startsWith('agent_') && file.endsWith('.datasource'))
+    .filter((file) => /\bOrgId\b/.test(readFileSync(new URL(file, datasourceDir), 'utf8')))
+    .map((file) => file.replace(/\.datasource$/, ''))
+    .sort();
 }
 
 describe('Tinybird web read token scopes', () => {
@@ -163,6 +175,46 @@ describe('Tinybird MCP read token scopes', () => {
         throw new Error(`${resource} does not filter on fixed-param row security`);
       }
     }
+  });
+});
+
+describe('Tinybird org deletion SQL', () => {
+  it('covers every org-scoped agent datasource', () => {
+    expect([...AGENT_ORG_DATASOURCES].sort()).toEqual(readAgentOrgDatasources());
+  });
+
+  it('deletes both API-key scoped LLM rows and org-scoped agent rows', () => {
+    const apiKey = '11111111-1111-1111-1111-111111111111';
+    const statements = buildOrgTraceDeleteStatements({ apiKeys: [apiKey], orgId: 'org_123' });
+
+    expect(statements.map((statement) => statement.datasource)).toEqual([
+      ...LLM_API_KEY_DATASOURCES,
+      ...AGENT_ORG_DATASOURCES,
+    ]);
+    expect(statements.find((statement) => statement.datasource === 'llm_request_facts')?.sql).toBe(
+      `ALTER TABLE llm_request_facts DELETE WHERE ApiKey IN ('${apiKey}')`,
+    );
+    expect(
+      statements.find((statement) => statement.datasource === 'agent_message_facts')?.sql,
+    ).toBe("ALTER TABLE agent_message_facts DELETE WHERE OrgId = 'org_123'");
+  });
+
+  it('still deletes agent analytics when an org has no valid API keys', () => {
+    const statements = buildOrgTraceDeleteStatements({
+      apiKeys: ['not-a-valid-api-key'],
+      orgId: 'org_123',
+    });
+
+    expect(statements.map((statement) => statement.datasource)).toEqual([...AGENT_ORG_DATASOURCES]);
+    expect(statements.every((statement) => statement.sql.includes("WHERE OrgId = 'org_123'"))).toBe(
+      true,
+    );
+  });
+
+  it('escapes org ids before interpolating them into SQL', () => {
+    const statements = buildOrgTraceDeleteStatements({ apiKeys: [], orgId: "org_'quoted" });
+
+    expect(statements[0]?.sql).toContain("OrgId = 'org_''quoted'");
   });
 });
 
