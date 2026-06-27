@@ -1453,13 +1453,6 @@ export declare const internal: {
       },
       any
     >;
-    backfillAllUsageLedgers: FunctionReference<"mutation", "internal", {}, any>;
-    backfillThreadUsageLedger: FunctionReference<
-      "mutation",
-      "internal",
-      { threadId: Id<"analystThreads"> },
-      any
-    >;
     completeSandboxRunInternal: FunctionReference<
       "mutation",
       "internal",

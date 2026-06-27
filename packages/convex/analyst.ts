@@ -2,7 +2,6 @@ import {
   Agent,
   abortStream,
   createTool,
-  listMessages as listAgentMessages,
   listStreams,
   listUIMessages,
   saveMessage,
@@ -24,7 +23,7 @@ import { v } from 'convex/values';
 import { z } from 'zod/v4';
 import { requireEnabledUser } from './auth/users';
 import { runUsageTotal, toPiRunRows, type SandboxRunEventInput } from './analystPiRows';
-import { openRouterCost, sumAnalystUsage, type MessageUsageInput } from './analystUsage';
+import { openRouterCost } from './analystUsage';
 import {
   accumulateLedger,
   cumulativeDelta,
@@ -1314,159 +1313,6 @@ export const conversationUsageSummary = query({
     return readThreadLedger(ctx, args.threadId);
   },
 });
-
-/** Page the agent component's persisted messages and sum the Analyst's own usage. */
-async function sumThreadAnalystUsage(ctx: QueryCtx | MutationCtx, agentThreadId: string) {
-  const messages: MessageUsageInput[] = [];
-  let cursor: string | null = null;
-
-  // A single conversation is bounded; cap pages so a runaway thread can't wedge the query.
-  for (let page = 0; page < 20; page++) {
-    const result = await listAgentMessages(ctx, components.agent, {
-      threadId: agentThreadId,
-      excludeToolMessages: true,
-      paginationOpts: { numItems: 100, cursor },
-    });
-    for (const message of result.page) {
-      messages.push({
-        usage: message.usage,
-        providerMetadata: message.providerMetadata,
-      });
-    }
-    if (result.isDone) break;
-    cursor = result.continueCursor;
-  }
-
-  return sumAnalystUsage(messages);
-}
-
-/** One run's total usage (its latest cumulative snapshot), read straight from its events. */
-async function runUsageFromEvents(ctx: MutationCtx, runId: Id<'analystSandboxRuns'>) {
-  const events = await ctx.db
-    .query('analystSandboxRunEvents')
-    .withIndex('by_run_seq', (q) => q.eq('runId', runId))
-    .collect();
-  return runUsageTotal(
-    events
-      .sort((a, b) => a.seq - b.seq)
-      .map((event) => ({
-        _id: event._id,
-        seq: event.seq,
-        type: event.type,
-        message: event.message,
-        data: event.data,
-        emittedAt: event.emittedAt,
-      })),
-  );
-}
-
-/**
- * One-time, idempotent seed of the usage ledger for one existing thread. Computes both
- * agents' totals from raw data, writes them as the ledger's absolute values, and stamps
- * each run's `usageApplied` so the live Pi writer continues from the right baseline (else
- * the next snapshot would re-add the full cumulative total). Re-running recomputes cleanly.
- */
-export const backfillThreadUsageLedger = internalMutation({
-  args: { threadId: v.id('analystThreads') },
-  handler: async (ctx, args) => {
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread) return { skipped: true as const };
-    const now = Date.now();
-
-    const analyst = await sumThreadAnalystUsage(ctx, thread.agentThreadId);
-
-    const runs = await ctx.db
-      .query('analystSandboxRuns')
-      .withIndex('by_thread_updated', (q) => q.eq('analystThreadId', args.threadId))
-      .collect();
-
-    const pi = { totalTokens: 0, totalCost: 0, cacheReadTokens: 0, requests: 0, hasCost: false };
-    for (const run of runs) {
-      const usage = await runUsageFromEvents(ctx, run._id);
-      const cumulative = {
-        totalTokens: usage?.totalTokens ?? 0,
-        totalCost: usage?.totalCost ?? 0,
-        cacheReadTokens: usage?.cacheRead ?? 0,
-      };
-      await ctx.db.patch(run._id, { usageApplied: cumulative });
-      if (!usage) continue;
-      pi.totalTokens += cumulative.totalTokens;
-      pi.totalCost += cumulative.totalCost;
-      pi.cacheReadTokens += cumulative.cacheReadTokens;
-      if (usage.totalCost !== undefined) {
-        pi.hasCost = true;
-        pi.requests += 1;
-      } else if (cumulative.totalTokens > 0) {
-        pi.requests += 1;
-      }
-    }
-
-    await setLedgerRow(ctx, thread, 'analyst', {
-      totalTokens: analyst.totalTokens,
-      totalCost: analyst.totalCost,
-      cacheReadTokens: 0,
-      requests: 0,
-      hasCost: analyst.hasCost,
-      now,
-    });
-    await setLedgerRow(ctx, thread, 'pi', { ...pi, now });
-
-    return { skipped: false as const, analyst, pi };
-  },
-});
-
-/** Backfill every thread's ledger. Bounded fan-out; safe to re-run. */
-export const backfillAllUsageLedgers = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const threads = await ctx.db.query('analystThreads').collect();
-    for (const thread of threads) {
-      await ctx.runMutation(internal.analyst.backfillThreadUsageLedger, { threadId: thread._id });
-    }
-    return { threads: threads.length };
-  },
-});
-
-/** Set a ledger row to absolute values (backfill), upserting by (thread, agent). */
-async function setLedgerRow(
-  ctx: MutationCtx,
-  thread: Doc<'analystThreads'>,
-  agent: 'analyst' | 'pi',
-  totals: {
-    totalTokens: number;
-    totalCost: number;
-    cacheReadTokens: number;
-    requests: number;
-    hasCost: boolean;
-    now: number;
-  },
-) {
-  const existing = await ctx.db
-    .query('analystUsageLedger')
-    .withIndex('by_thread_agent', (q) => q.eq('analystThreadId', thread._id).eq('agent', agent))
-    .first();
-
-  const row = {
-    totalTokens: totals.totalTokens,
-    totalCost: totals.totalCost,
-    cacheReadTokens: totals.cacheReadTokens,
-    requests: totals.requests,
-    hasCost: totals.hasCost,
-    updatedAt: totals.now,
-  };
-
-  if (existing) {
-    await ctx.db.patch(existing._id, row);
-    return;
-  }
-  await ctx.db.insert('analystUsageLedger', {
-    analystThreadId: thread._id,
-    orgId: thread.orgId,
-    creatorUserId: thread.creatorUserId,
-    agent,
-    ...row,
-  });
-}
 
 export const cancelSandboxRun = action({
   args: { runId: v.id('analystSandboxRuns') },
