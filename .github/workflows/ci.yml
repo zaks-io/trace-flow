@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -168,7 +171,7 @@ jobs:
     name: Tinybird Schema Check
     runs-on: blacksmith-2vcpu-ubuntu-2404
     needs: [changes]
-    if: needs.changes.outputs.tinybird == 'true' || needs.changes.outputs.root == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || needs.changes.outputs.tinybird == 'true' || needs.changes.outputs.root == 'true'
     permissions:
       contents: read
     services:

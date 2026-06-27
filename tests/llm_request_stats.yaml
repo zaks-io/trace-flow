@@ -1,4 +1,4 @@
-# Fixtures: fixtures/llm_request_facts.ndjson. The key_proj/chat slice has 5 requests with
+# Fixtures: fixtures/otel_trace_spans.ndjson, materialized into llm_request_facts. The key_proj/chat slice has 5 requests with
 # per-request cost (USD) {0.01, 0.01, 0.02, 0.05, 4.00} (TotalCostMicrodollars /1e6), one
 # runaway $4.00 call -> a deliberately fat-tailed slice. A 6th row (key_other, openai,
 # operation=embed) exists only to prove the slice filters isolate it.
@@ -8,6 +8,8 @@
 # clock). NOTE: do not use an absurd value like 100000 — toIntervalDay overflows past ~36500 days
 # and the floor wraps into the FUTURE, clipping everything. 3650 floors at ~2016, safely before
 # the fixture and valid until ~2036. The guard stays in the pipe for production.
+# The source fixture keeps RetentionExpiresAt pinned to 2100-01-01 so the datasource TTL does not
+# delete the fixed 2026 rows as wall-clock time moves forward.
 #
 # Expected over the slice cost set {0.01,0.01,0.02,0.05,4.00}, n=5, total=4.09:
 #   median (quantileExact 0.5)=0.02; p25=0.01; p75=0.05; p95=4.0; p99=4.0; min=0.01; max=4.0.
