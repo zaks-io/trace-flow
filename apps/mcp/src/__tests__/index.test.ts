@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SELF } from 'cloudflare:test';
+import { SignJWT, exportJWK, generateKeyPair } from 'jose';
+import { JWKS_PATH, MCP_ACCESS_TOKEN_ALG, MCP_ACCESS_TOKEN_KID } from '@trace-flow/mcp-core';
 
 const CONNECT_ORIGIN = 'https://connect.test';
 
@@ -8,6 +10,34 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+async function signedAuthHeader(resourceUrl = 'http://localhost/mcp'): Promise<string> {
+  const { privateKey, publicKey } = await generateKeyPair(MCP_ACCESS_TOKEN_ALG, {
+    extractable: true,
+  });
+  const jwk = {
+    ...(await exportJWK(publicKey)),
+    kid: MCP_ACCESS_TOKEN_KID,
+    alg: MCP_ACCESS_TOKEN_ALG,
+    use: 'sig',
+  };
+  const token = await new SignJWT({ userId: 'u-1', tokenId: 't-1' })
+    .setProtectedHeader({ alg: MCP_ACCESS_TOKEN_ALG, kid: MCP_ACCESS_TOKEN_KID })
+    .setIssuer(CONNECT_ORIGIN)
+    .setAudience(resourceUrl)
+    .setIssuedAt()
+    .setExpirationTime('1h')
+    .sign(privateKey);
+
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const req = new Request(input, init);
+    expect(req.method).toBe('GET');
+    expect(req.url).toBe(`${CONNECT_ORIGIN}${JWKS_PATH}`);
+    return jsonResponse({ keys: [jwk] });
+  });
+
+  return `Bearer ${token}`;
 }
 
 describe('MCP worker auth discovery', () => {
@@ -42,14 +72,24 @@ describe('MCP worker auth discovery', () => {
     expect(await res.json()).toEqual({ error: 'Missing or invalid Authorization header' });
   });
 
-  it('405s GET /mcp so streamable HTTP clients do not fall back to legacy SSE', async () => {
+  it('accepts GET /mcp as an idle SSE receive stream for Codex clients', async () => {
+    const authorization = await signedAuthHeader();
     const res = await SELF.fetch('http://localhost/mcp', {
-      headers: { Accept: 'text/event-stream' },
+      headers: {
+        Accept: 'text/event-stream',
+        Authorization: authorization,
+        'cf-connecting-ip': '203.0.113.10',
+      },
     });
 
-    expect(res.status).toBe(405);
-    expect(res.headers.get('Allow')).toBe('POST, DELETE, OPTIONS');
-    expect(await res.json()).toEqual({ error: 'SSE stream is not supported on this endpoint' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toContain('text/event-stream');
+
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+    const chunk = await reader!.read();
+    expect(new TextDecoder().decode(chunk.value)).toContain(': connected');
+    await reader!.cancel();
   });
 
   it('proxies authorization-server metadata to Connect for legacy clients', async () => {

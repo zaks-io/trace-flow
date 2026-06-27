@@ -53,7 +53,7 @@ app.use(
   '*',
   cors({
     origin: '*',
-    allowMethods: ['POST', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'Mcp-Protocol-Version'],
     exposeHeaders: ['Mcp-Session-Id'],
     maxAge: 86400,
@@ -186,6 +186,60 @@ function jsonResponse(body: unknown, status = 200, headers?: Record<string, stri
   });
 }
 
+async function enforceMcpRateLimit(c: {
+  req: { raw: Request };
+  env: Env;
+  get(key: 'logger'): Logger;
+}): Promise<Response | null> {
+  const logger = c.get('logger');
+  const clientIp = getClientIp(c.req.raw);
+  if (!clientIp) {
+    logger.warn('mcp.client_ip_missing');
+    return jsonResponse({ error: 'Missing client IP' }, 400);
+  }
+
+  const limit = await c.env.MCP_LIMITER.limit({ key: clientIp });
+  if (!limit.success) {
+    logger.warn('mcp.rate_limited', { keyClass: 'ip' });
+    return jsonResponse({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
+  }
+
+  return null;
+}
+
+function mcpSseResponse(c: {
+  executionCtx: { waitUntil(promise: Promise<unknown>): void };
+}): Response {
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        await writer.write(encoder.encode(': connected\n\n'));
+        await new Promise((resolve) => setTimeout(resolve, 60_000));
+      } catch {
+        // Client closed the receive stream.
+      } finally {
+        try {
+          await writer.close();
+        } catch {
+          // The stream may already be closed after client disconnect.
+        }
+      }
+    })(),
+  );
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
 app.get('/healthz', (c) => c.json({ status: 'ok' }));
 
 app.get(PROTECTED_RESOURCE_PATH, (c) =>
@@ -210,26 +264,19 @@ app.get('/mcp/authorize', (c) => {
   return c.redirect(target.toString(), 302);
 });
 
-app.get('/mcp', (c) =>
-  c.json({ error: 'SSE stream is not supported on this endpoint' }, 405, {
-    Allow: 'POST, DELETE, OPTIONS',
-  }),
-);
+app.get('/mcp', async (c) => {
+  const rateLimitError = await enforceMcpRateLimit(c);
+  if (rateLimitError) return rateLimitError;
+
+  const auth = await authenticate(c);
+  if ('error' in auth) return auth.error;
+
+  return mcpSseResponse(c);
+});
 
 app.post('/mcp', async (c) => {
-  const logger = c.get('logger');
-
-  const clientIp = getClientIp(c.req.raw);
-  if (!clientIp) {
-    logger.warn('mcp.client_ip_missing');
-    return c.json({ error: 'Missing client IP' }, 400);
-  }
-
-  const limit = await c.env.MCP_LIMITER.limit({ key: clientIp });
-  if (!limit.success) {
-    logger.warn('mcp.rate_limited', { keyClass: 'ip' });
-    return c.json({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
-  }
+  const rateLimitError = await enforceMcpRateLimit(c);
+  if (rateLimitError) return rateLimitError;
 
   const auth = await authenticate(c);
   if ('error' in auth) return auth.error;

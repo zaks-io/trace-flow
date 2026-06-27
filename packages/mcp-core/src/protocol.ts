@@ -111,7 +111,7 @@ export interface ListToolsResult {
   nextCursor?: string;
 }
 
-export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18'] as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2024-11-05'] as const;
 export const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 export const SESSION_TTL_MS = 86400000; // 24 hours in milliseconds
