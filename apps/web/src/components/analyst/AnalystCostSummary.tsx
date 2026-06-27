@@ -23,10 +23,15 @@ export function AnalystCostSummary({ threadId }: { threadId: Id<'analystThreads'
 
   if (!isAdmin || !summary) return null;
 
+  // The total only advertises a dollar figure when it's complete: every source that actually has
+  // usage must be priced. A source with no usage doesn't count against completeness, but if any
+  // source has tokens yet no cost, the total is partial and stays dollar-free.
+  const analystPriced = summary.analyst.totalTokens === 0 || summary.analyst.hasCost;
+  const piPriced = summary.pi.totalTokens === 0 || summary.pi.hasCost;
   const total: UsageTotals = {
     totalTokens: summary.analyst.totalTokens + summary.pi.totalTokens,
     totalCost: summary.analyst.totalCost + summary.pi.totalCost,
-    hasCost: summary.analyst.hasCost || summary.pi.hasCost,
+    hasCost: analystPriced && piPriced && (summary.analyst.hasCost || summary.pi.hasCost),
   };
   if (total.totalTokens === 0 && !total.hasCost) return null;
 

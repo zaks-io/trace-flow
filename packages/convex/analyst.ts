@@ -2555,13 +2555,19 @@ async function recoverDeadSandboxRun(
   }
 
   const interruptedBase = 'The sandbox stopped responding (container exited).';
-  await ctx.runMutation(internal.analyst.markSandboxRunInterrupted, {
+  const interrupted = await ctx.runMutation(internal.analyst.markSandboxRunInterrupted, {
     runId: run._id,
     error: cause
       ? `${interruptedBase} Sandbox ${cause}. Recovering from the last checkpoint.`
       : `${interruptedBase} Recovering from the last checkpoint.`,
     now: Date.now(),
   });
+
+  // If the run reached a terminal state between the liveness query and now, markSandboxRunInterrupted
+  // no-ops (returns the run unpatched). Don't launch a duplicate replacement for an already-finished run.
+  if (interrupted?.status !== 'timed_out') {
+    return;
+  }
 
   if (attempt >= SANDBOX_MAX_RESUME_ATTEMPTS) {
     console.error('Pi run exhausted auto-resume attempts', {
@@ -2639,7 +2645,8 @@ export const recordSandboxControl = internalMutation({
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.runId);
     if (run?.creatorUserId !== args.userId) throw new Error('Pi run not found');
-    const terminalStatus = args.action === 'cancel' ? 'cancelled' : run.status;
+    // A cancel that arrives after the run already finished must not clobber its terminal status.
+    const cancelling = args.action === 'cancel' && isActiveSandboxRunStatus(run.status);
     await ctx.db.insert('analystSandboxRunEvents', {
       runId: args.runId,
       analystThreadId: run.analystThreadId,
@@ -2652,10 +2659,10 @@ export const recordSandboxControl = internalMutation({
       emittedAt: args.now,
     });
     await ctx.db.patch(args.runId, {
-      status: terminalStatus,
+      status: cancelling ? 'cancelled' : run.status,
       nextSeq: run.nextSeq + 1,
       lastEventAt: args.now,
-      completedAt: args.action === 'cancel' ? args.now : run.completedAt,
+      completedAt: cancelling ? args.now : run.completedAt,
       updatedAt: args.now,
     });
   },

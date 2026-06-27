@@ -10,6 +10,16 @@ import { formatStructuredValue } from './structuredValue';
 export type AnalystMessagePart = AnalystMessage['parts'][number];
 export type AnalystDataPart = Extract<AnalystMessagePart, { type: `data-${string}` }>;
 
+/** Source URLs come from agent/tool output, so only http(s) may become a clickable link (no javascript:/data:). */
+function isSafeHttpUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function AnalystMessagePartView({
   part,
   isStreaming,
@@ -46,6 +56,15 @@ export function TextPart({ text, streaming }: { text: string; streaming: boolean
 }
 
 function SourceUrlPart({ part }: { part: SourceUrlUIPart }) {
+  const label = part.title ?? part.url;
+  if (!isSafeHttpUrl(part.url)) {
+    return (
+      <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs text-muted-foreground">
+        <LinkIcon className="h-3 w-3 shrink-0" />
+        <span className="truncate">{label}</span>
+      </span>
+    );
+  }
   return (
     <a
       href={part.url}
@@ -54,7 +73,7 @@ function SourceUrlPart({ part }: { part: SourceUrlUIPart }) {
       className="inline-flex max-w-full items-center gap-1 rounded-md border border-border/70 bg-background/60 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
     >
       <LinkIcon className="h-3 w-3 shrink-0" />
-      <span className="truncate">{part.title ?? part.url}</span>
+      <span className="truncate">{label}</span>
     </a>
   );
 }
