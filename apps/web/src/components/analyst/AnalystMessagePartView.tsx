@@ -47,7 +47,7 @@ export function AnalystMessagePartView({
   }
 }
 
-export function TextPart({ text, streaming }: { text: string; streaming: boolean }) {
+function TextPart({ text, streaming }: { text: string; streaming: boolean }) {
   const [visibleText] = useSmoothText(text, { startStreaming: streaming });
   const content = streaming ? visibleText || text : visibleText;
 

@@ -1,18 +1,18 @@
 export const MAX_CODE_CHARS = 20_000;
 export const MAX_DATASETS = 5;
-export const MAX_DATASET_TEXT_CHARS = 250_000;
+const MAX_DATASET_TEXT_CHARS = 250_000;
 export const MAX_STDOUT_CHARS = 60_000;
 export const MAX_STDERR_CHARS = 20_000;
 export const EXECUTION_TIMEOUT_MS = 45_000;
 export const MAX_PI_PROMPT_CHARS = 20_000;
 export const MAX_PI_RUNTIME_MS = 120 * 60 * 1000;
-export const MIN_PI_RUNTIME_MS = 60_000;
+const MIN_PI_RUNTIME_MS = 60_000;
 export const MAX_PI_CONTROL_MESSAGE_CHARS = 8_000;
 export const MAX_PI_TAIL_LINES = 500;
-export const MAX_PI_TOOL_DEFINITIONS_CHARS = 100_000;
+const MAX_PI_TOOL_DEFINITIONS_CHARS = 100_000;
 
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-export const PI_THINKING_LEVELS: readonly PiThinkingLevel[] = [
+const PI_THINKING_LEVELS: readonly PiThinkingLevel[] = [
   'off',
   'minimal',
   'low',
@@ -105,7 +105,7 @@ function parseObjectArguments(value: unknown): ParseResult<Record<string, unknow
   return { ok: true, request: value as Record<string, unknown> };
 }
 
-export function timingSafeEqual(left: string, right: string): boolean {
+function timingSafeEqual(left: string, right: string): boolean {
   const encoder = new TextEncoder();
   const a = encoder.encode(left);
   const b = encoder.encode(right);

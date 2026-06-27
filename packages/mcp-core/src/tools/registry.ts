@@ -26,7 +26,7 @@ const BOTH_SURFACES = ['mcp', 'analyst'] as const;
 const MCP_ONLY = ['mcp'] as const;
 const SANDBOX_DATA_API_BLOCKED_TOOLS = new Set(['list_api_keys']);
 
-export const TRACE_FLOW_TOOL_SURFACES: Record<string, readonly TraceFlowToolSurface[]> =
+const TRACE_FLOW_TOOL_SURFACES: Record<string, readonly TraceFlowToolSurface[]> =
   Object.fromEntries(
     TOOL_DEFINITIONS.map((definition) => [
       definition.name,
@@ -34,7 +34,7 @@ export const TRACE_FLOW_TOOL_SURFACES: Record<string, readonly TraceFlowToolSurf
     ]),
   );
 
-export const TRACE_FLOW_TOOL_HANDLERS: Record<string, ToolHandler> = {
+const TRACE_FLOW_TOOL_HANDLERS: Record<string, ToolHandler> = {
   list_traces: listTraces,
   list_trace_summaries: listTraceSummaries,
   get_trace: getTrace,
