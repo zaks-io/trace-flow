@@ -18,17 +18,14 @@ binding = "CF_VERSION_METADATA"
 
 # Secrets: ANALYST_SANDBOX_SHARED_SECRET, OPENROUTER_API_KEY
 # Var: CONVEX_URL
+# Snapshots stream through the Worker to the BACKUP_BUCKET binding — the sealed
+# container makes no R2 calls, so no presigned-URL config (endpoint, account id,
+# R2 API token secrets) is needed.
 
 [vars]
 CONVEX_URL = "https://hardy-iguana-812.convex.cloud"
 SENTRY_ENVIRONMENT = "development"
 SANDBOX_TRANSPORT = "http"
-# Deployed worker → real R2 via presigned URLs (localBucket is only for `wrangler dev`).
-# Secrets R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY hold the R2 API token.
-BACKUP_LOCAL_BUCKET = "false"
-BACKUP_BUCKET_NAME = "trace-flow-analyst-sandbox-backups-dev"
-BACKUP_BUCKET_ENDPOINT = "https://a461d640900eb3905d7b6619c8c0da91.r2.cloudflarestorage.com"
-CLOUDFLARE_ACCOUNT_ID = "a461d640900eb3905d7b6619c8c0da91"
 
 [[r2_buckets]]
 binding = "BACKUP_BUCKET"
@@ -63,10 +60,6 @@ binding = "CF_VERSION_METADATA"
 CONVEX_URL = "https://hardy-iguana-812.convex.cloud"
 SENTRY_ENVIRONMENT = "preview"
 SANDBOX_TRANSPORT = "rpc"
-BACKUP_LOCAL_BUCKET = "false"
-BACKUP_BUCKET_NAME = "trace-flow-analyst-sandbox-backups-preview"
-BACKUP_BUCKET_ENDPOINT = "https://a461d640900eb3905d7b6619c8c0da91.r2.cloudflarestorage.com"
-CLOUDFLARE_ACCOUNT_ID = "a461d640900eb3905d7b6619c8c0da91"
 
 [[env.preview.r2_buckets]]
 binding = "BACKUP_BUCKET"
@@ -101,12 +94,6 @@ binding = "CF_VERSION_METADATA"
 [env.production.vars]
 SENTRY_ENVIRONMENT = "prod"
 SANDBOX_TRANSPORT = "rpc"
-# Prod uses presigned URLs (not the local R2 binding). Requires secrets
-# R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY.
-BACKUP_LOCAL_BUCKET = "false"
-BACKUP_BUCKET_NAME = "trace-flow-analyst-sandbox-backups-production"
-BACKUP_BUCKET_ENDPOINT = "https://a461d640900eb3905d7b6619c8c0da91.r2.cloudflarestorage.com"
-CLOUDFLARE_ACCOUNT_ID = "a461d640900eb3905d7b6619c8c0da91"
 
 [[env.production.r2_buckets]]
 binding = "BACKUP_BUCKET"

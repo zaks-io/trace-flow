@@ -1,4 +1,9 @@
-import { getSandbox, type Sandbox as SandboxBinding } from '@cloudflare/sandbox';
+import {
+  ContainerProxy as BaseContainerProxy,
+  getSandbox,
+  Sandbox as BaseSandbox,
+  type Sandbox as SandboxBinding,
+} from '@cloudflare/sandbox';
 import { getPricing } from '@trace-flow/pricing';
 import { ConvexHttpClient } from 'convex/browser';
 import { makeFunctionReference } from 'convex/server';
@@ -27,7 +32,59 @@ import {
   truncateOutput,
 } from './request';
 
-export { Sandbox } from '@cloudflare/sandbox';
+/**
+ * The analyst sandbox runs untrusted, model-generated Python. We seal it:
+ * `enableInternet = false` denies all container egress. The only traffic it
+ * legitimately needs is back to THIS Worker (LLM proxy + data/event callbacks),
+ * which the runner makes over plain HTTP so it is intercepted and serviced
+ * in-process by the ContainerProxy below — it never leaves for the internet.
+ *
+ * We deliberately do NOT use `interceptHttps`: on this SDK/platform it hangs
+ * intercepted HTTPS instead of delivering it to the handler. HTTP interception
+ * works, so the sandbox→Worker hop is HTTP (a same-origin control-plane call,
+ * not an exfiltration vector). Every other host falls through to default-deny.
+ */
+export class Sandbox extends BaseSandbox {
+  enableInternet = false;
+  // `enableInternet = false` alone does NOT enable outbound interception — the
+  // SDK only wires the ContainerProxy fetcher when a static outbound handler (or
+  // allow/deny list) is present. We set one purely to flip `usingInterception`
+  // on; the real routing lives in our ContainerProxy.fetch override below, which
+  // runs regardless of this handler (the static-handler registry does not cross
+  // the DO↔ContainerProxy isolate boundary, so this value is never read there).
+  static outbound = () => new Response('unused', { status: 500 });
+}
+
+/** SDK-internal mount hosts the base ContainerProxy services over the binding channel. */
+const INTERNAL_MOUNT_HOSTS = new Set(['r2.internal', 's3-credential-proxy.internal']);
+
+/**
+ * Egress chokepoint. Overriding ContainerProxy.fetch directly (not
+ * `Container.static outbound`) because the handler registry is NOT shared across
+ * the DO↔ContainerProxy isolate boundary, so a static handler is never found.
+ * Our own Worker routes are serviced in-process; internal mount hosts go to the
+ * SDK base; anything else is denied here (we return the deny Response ourselves —
+ * delegating unmatched hosts to super.fetch can stall the intercepted socket).
+ */
+export class ContainerProxy extends BaseContainerProxy {
+  override async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (isWorkerRoute(url.pathname)) {
+      const ctx = {
+        waitUntil: (promise: Promise<unknown>) => {
+          void promise.catch(() => undefined);
+        },
+        passThroughOnException: () => undefined,
+      } as ExecutionContext;
+      return handleWorkerRequest(request, this.env as Env, ctx);
+    }
+    if (INTERNAL_MOUNT_HOSTS.has(url.hostname)) {
+      return super.fetch(request);
+    }
+    console.warn(`sandbox egress denied: ${url.host}${url.pathname}`);
+    return new Response('Outbound network access is disabled', { status: 403 });
+  }
+}
 
 interface Env {
   Sandbox: DurableObjectNamespace<SandboxBinding>;
@@ -35,7 +92,6 @@ interface Env {
   CONVEX_URL: string;
   OPENROUTER_API_KEY: string;
   BACKUP_BUCKET: R2Bucket;
-  BACKUP_LOCAL_BUCKET: string;
   MODEL_PRICING: KVNamespace;
 }
 
@@ -54,6 +110,16 @@ async function resolvePiModelCost(env: Env, model: string): Promise<PiModelCost>
 
 /** Days a /workspace snapshot survives in R2 before automatic GC (matches an idle conversation). */
 const BACKUP_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * Hard ceiling on a snapshot archive. Workspaces hold sampled JSON + parsed
+ * analytics, never bulk data — a snapshot over this is a bug (or abuse), so we
+ * fail loud instead of streaming gigabytes through the Worker.
+ */
+const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
+
+/** In-container scratch path for the squashfs archive (outside /workspace, so it is never self-captured). */
+const SNAPSHOT_ARCHIVE_PATH = '/tmp/traceflow-workspace.sqfs';
 
 function jsonResponse(value: unknown, init?: ResponseInit): Response {
   return Response.json(value, {
@@ -86,37 +152,86 @@ function getAnalystSandbox(env: Env, sandboxId: string, options: { keepAlive?: b
   });
 }
 
+/**
+ * Serializable snapshot handle stored on the Convex thread between runs.
+ * Shape-compatible with the Convex validator (`{ id, dir, localBucket? }`):
+ * `id` is the R2 object key, `dir` is the restore target. `localBucket` is
+ * vestigial (the SDK presigned-backup flag) and always omitted now.
+ */
 interface WorkspaceBackup {
   id: string;
   dir: string;
   localBucket?: boolean;
 }
 
-/** Snapshot /workspace to R2. Returns the serializable handle, or null if it fails. */
+/**
+ * Snapshot /workspace to R2 entirely through the sealed channel: squashfs the
+ * dir inside the container, stream the archive out over the Worker→container
+ * control channel, and write it to R2 via the binding. The container makes no
+ * outbound network call — the Worker does the R2 put. Returns the handle, or
+ * null if it fails (callers treat null as "no snapshot", never as fatal).
+ */
 async function snapshotWorkspace(env: Env, sandboxId: string): Promise<WorkspaceBackup | null> {
   try {
     const sandbox = getAnalystSandbox(env, sandboxId);
-    const backup = await sandbox.createBackup({
-      dir: '/workspace',
-      name: sandboxId,
-      ttl: BACKUP_TTL_SECONDS,
-      localBucket: env.BACKUP_LOCAL_BUCKET === 'true',
+
+    const build = await sandbox.exec(
+      `mksquashfs /workspace ${SNAPSHOT_ARCHIVE_PATH} -noappend -quiet && stat -c %s ${SNAPSHOT_ARCHIVE_PATH}`,
+    );
+    if (!build.success) {
+      throw new Error(`mksquashfs failed (exit ${build.exitCode}): ${build.stderr}`);
+    }
+
+    const archiveSize = Number.parseInt(build.stdout.trim(), 10);
+    if (!Number.isFinite(archiveSize) || archiveSize <= 0) {
+      throw new Error(`could not determine snapshot size from: ${build.stdout.trim()}`);
+    }
+    if (archiveSize > MAX_SNAPSHOT_BYTES) {
+      throw new Error(
+        `snapshot ${archiveSize} bytes exceeds cap ${MAX_SNAPSHOT_BYTES}; refusing to upload`,
+      );
+    }
+
+    const key = `snapshots/${sandboxId}/${crypto.randomUUID()}.sqfs`;
+    const archive = await sandbox.readFileStream(SNAPSHOT_ARCHIVE_PATH);
+    await env.BACKUP_BUCKET.put(key, archive, {
+      httpMetadata: { contentType: 'application/octet-stream' },
+      customMetadata: { sandboxId, expiresAt: String(Date.now() + BACKUP_TTL_SECONDS * 1000) },
     });
-    return { id: backup.id, dir: backup.dir, localBucket: backup.localBucket };
+
+    return { id: key, dir: '/workspace' };
   } catch (error) {
     console.error('snapshotWorkspace failed', error);
     return null;
   }
 }
 
-/** Rehydrate /workspace from a prior backup handle. Returns true on success. */
+/**
+ * Rehydrate /workspace from a prior handle: read the archive from R2 via the
+ * binding, stream it into the container over the control channel, and unsquash
+ * it onto the restore dir. The container makes no outbound call. Returns true
+ * on success.
+ */
 async function restoreWorkspace(
+  env: Env,
   sandbox: ReturnType<typeof getAnalystSandbox>,
   backup: WorkspaceBackup,
 ): Promise<boolean> {
   try {
-    const result = await sandbox.restoreBackup(backup);
-    return result.success;
+    const object = await env.BACKUP_BUCKET.get(backup.id);
+    if (!object) {
+      console.error('restoreWorkspace failed: snapshot object missing', backup.id);
+      return false;
+    }
+
+    await sandbox.writeFile(SNAPSHOT_ARCHIVE_PATH, object.body);
+    const restore = await sandbox.exec(
+      `unsquashfs -f -d ${backup.dir} ${SNAPSHOT_ARCHIVE_PATH} && rm -f ${SNAPSHOT_ARCHIVE_PATH}`,
+    );
+    if (!restore.success) {
+      throw new Error(`unsquashfs failed (exit ${restore.exitCode}): ${restore.stderr}`);
+    }
+    return true;
   } catch (error) {
     console.error('restoreWorkspace failed', error);
     return false;
@@ -277,46 +392,79 @@ async function readProcessSnapshot(
   };
 }
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
+async function handleWorkerRequest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  const url = new URL(request.url);
 
-    if (url.pathname.startsWith('/ai-proxy/openrouter/')) {
-      return handleOpenRouterProxy(request, env, url);
-    }
+  if (url.pathname.startsWith('/ai-proxy/openrouter/')) {
+    return handleOpenRouterProxy(request, env, url);
+  }
 
-    if (request.method !== 'POST') {
-      return jsonResponse({ ok: false, error: 'Not found' }, { status: 404 });
-    }
-
-    if (url.pathname === '/execute') {
-      return handleExecuteAnalysis(request, env);
-    }
-    if (url.pathname === '/pi-runs/start') {
-      return handleStartPiRun(request, env, url);
-    }
-    if (url.pathname === '/pi-runs/control') {
-      return handleControlPiRun(request, env, ctx);
-    }
-    if (url.pathname === '/pi-runs/destroy') {
-      return handleDestroyPiRun(request, env);
-    }
-    if (url.pathname === '/pi-runs/events') {
-      return handlePiRunEvents(request, env);
-    }
-    if (url.pathname === '/pi-runs/complete') {
-      return handlePiRunComplete(request, env, ctx);
-    }
-    if (url.pathname === '/pi-runs/checkpoint') {
-      return handlePiRunCheckpoint(request, env);
-    }
-    if (url.pathname === '/traceflow-data/tool') {
-      return handleTraceflowTool(request, env);
-    }
-
+  if (request.method !== 'POST') {
     return jsonResponse({ ok: false, error: 'Not found' }, { status: 404 });
-  },
-};
+  }
+
+  if (url.pathname === '/execute') {
+    return handleExecuteAnalysis(request, env);
+  }
+  if (url.pathname === '/pi-runs/start') {
+    return handleStartPiRun(request, env, url);
+  }
+  if (url.pathname === '/pi-runs/control') {
+    return handleControlPiRun(request, env, ctx);
+  }
+  if (url.pathname === '/pi-runs/destroy') {
+    return handleDestroyPiRun(request, env);
+  }
+  if (url.pathname === '/pi-runs/events') {
+    return handlePiRunEvents(request, env);
+  }
+  if (url.pathname === '/pi-runs/complete') {
+    return handlePiRunComplete(request, env, ctx);
+  }
+  if (url.pathname === '/pi-runs/checkpoint') {
+    return handlePiRunCheckpoint(request, env);
+  }
+  if (url.pathname === '/traceflow-data/tool') {
+    return handleTraceflowTool(request, env);
+  }
+
+  return jsonResponse({ ok: false, error: 'Not found' }, { status: 404 });
+}
+
+export default { fetch: handleWorkerRequest };
+
+/**
+ * Paths the sealed container is allowed to reach — all on this same Worker,
+ * over intercepted HTTP. `/ai-proxy/openrouter/` is prefix-matched (it carries
+ * the runId); the rest are exact. Anything else is denied by ContainerProxy.
+ */
+const WORKER_ROUTES = new Set([
+  '/execute',
+  '/pi-runs/start',
+  '/pi-runs/control',
+  '/pi-runs/destroy',
+  '/pi-runs/events',
+  '/pi-runs/complete',
+  '/pi-runs/checkpoint',
+  '/traceflow-data/tool',
+]);
+
+function isWorkerRoute(pathname: string): boolean {
+  return pathname.startsWith('/ai-proxy/openrouter/') || WORKER_ROUTES.has(pathname);
+}
+
+/**
+ * The sealed container reaches the Worker over HTTP (intercepted + serviced
+ * in-process), never HTTPS (interceptHttps hangs on this SDK). Rewrite the
+ * inbound origin's scheme to http, preserving host so dev/preview/prod all work.
+ */
+function httpWorkerBase(url: URL): string {
+  return `http://${url.host}`;
+}
 
 async function handleExecuteAnalysis(request: Request, env: Env): Promise<Response> {
   if (!isAuthorized(request.headers.get('authorization'), env.ANALYST_SANDBOX_SHARED_SECRET)) {
@@ -376,14 +524,18 @@ async function handleStartPiRun(request: Request, env: Env, url: URL): Promise<R
   const body = parsed.request;
   const sandbox = getAnalystSandbox(env, body.sandboxId, { keepAlive: true });
   const paths = getPiRunnerPaths(body.runId);
-  const aiProxyBaseUrl = `${url.origin}/ai-proxy/openrouter/${body.runId}/api/v1`;
+  // The container is sealed (enableInternet=false). The runner reaches the Worker
+  // over HTTP so the call is intercepted and serviced in-process; force the scheme
+  // here rather than trusting url.origin (which is https on the public route).
+  const workerHttpBase = httpWorkerBase(url);
+  const aiProxyBaseUrl = `${workerHttpBase}/ai-proxy/openrouter/${body.runId}/api/v1`;
 
   // Rehydrate the prior /workspace (data + Pi session) before writing this run's
   // files, so the runner's continueRecent() picks up exactly where it left off.
   // If restore fails, fall through as a cold start rather than aborting the run.
   let resumed = false;
   if (body.resume && body.backup) {
-    resumed = await restoreWorkspace(sandbox, body.backup);
+    resumed = await restoreWorkspace(env, sandbox, body.backup);
   }
   // The runner resumes the Pi session only if the workspace actually rehydrated.
   const runBody = { ...body, resume: resumed };
@@ -430,7 +582,7 @@ async function handleStartPiRun(request: Request, env: Env, url: URL): Promise<R
           TRACEFLOW_RUN_ID: body.runId,
           TRACEFLOW_RUN_TOKEN: body.runToken,
           TRACEFLOW_SANDBOX_ID: body.sandboxId,
-          TRACEFLOW_WORKER_BASE_URL: url.origin,
+          TRACEFLOW_WORKER_BASE_URL: workerHttpBase,
           TRACEFLOW_REQUEST_PATH: paths.requestPath,
           TRACEFLOW_CONTROL_PATH: paths.controlPath,
           HOME: '/workspace',

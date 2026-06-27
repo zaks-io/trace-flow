@@ -18,10 +18,10 @@ RUN apt-get update \
     fuse-overlayfs \
   && rm -rf /var/lib/apt/lists/*
 
-# Pi SDK deps live OUTSIDE /workspace. A resume restores a squashfs snapshot of /workspace
-# as an overlay, which would shadow a baked-in /workspace/node_modules and break the runner's
-# import. Installing under /opt/pi (with NODE_PATH set on the runner) keeps the snapshot small
-# AND keeps the SDK resolvable after a restore.
+# Pi SDK deps live OUTSIDE /workspace. A resume unsquashes a snapshot of /workspace
+# over the live dir, which would clobber a baked-in /workspace/node_modules and break
+# the runner's import. Installing under /opt/pi (with NODE_PATH set on the runner) keeps
+# the snapshot small AND keeps the SDK resolvable after a restore.
 WORKDIR /opt/pi
 
 RUN npm init -y \
