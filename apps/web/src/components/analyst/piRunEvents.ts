@@ -161,12 +161,6 @@ export function formatCount(value: number) {
   return Math.round(value).toLocaleString('en-US');
 }
 
-export function formatCost(value: number) {
-  if (value === 0) return '$0.00';
-  if (Math.abs(value) < 0.01) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }

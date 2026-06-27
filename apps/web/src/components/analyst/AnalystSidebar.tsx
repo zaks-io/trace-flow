@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { useAnalyst } from './AnalystContext';
+import { AnalystCostSummary } from './AnalystCostSummary';
 import { AnalystMessageList, type AnalystMessage } from './AnalystMessageList';
 import { AnalystRunStatusBar, getAnalystRunState, type QueuedAnalystRun } from './AnalystRunStatus';
 import type { SandboxRun } from './AnalystSandboxRuns';
@@ -275,12 +276,15 @@ export function AnalystSidebar() {
 
       <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {currentThreadId ? (
-          <AnalystMessageList
-            messages={messageResults}
-            loadMore={() => messages.loadMore(20)}
-            canLoadMore={messages.status === 'CanLoadMore'}
-            busy={analystBusy}
-          />
+          <>
+            <AnalystMessageList
+              messages={messageResults}
+              loadMore={() => messages.loadMore(20)}
+              canLoadMore={messages.status === 'CanLoadMore'}
+              busy={analystBusy}
+            />
+            {!analystBusy && <AnalystCostSummary threadId={currentThreadId} />}
+          </>
         ) : (
           <EmptyState onPick={(text) => void handleSend(text)} disabled={analystBusy} />
         )}

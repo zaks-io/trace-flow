@@ -142,6 +142,7 @@ let dataApiBaseUrl = '';
 let controlOffset = 0;
 const eventBuffer = [];
 let flushQueue = Promise.resolve();
+let consecutiveFlushFailures = 0;
 let timeoutTimer;
 let controlTimer;
 let flushTimer;
@@ -160,6 +161,11 @@ let latestToolResultName = '';
 const IDLE_COMPLETION_MS = Math.min(60000, Math.max(20000, Math.round(request.maxRuntimeMs / 12)));
 const MIN_IDLE_COMPLETION_TEXT_CHARS = 80;
 const HEARTBEAT_MS = 10000;
+const EVENT_FLUSH_MAX_ATTEMPTS = 4;
+const EVENT_FLUSH_RETRY_BASE_MS = 250;
+const EVENT_BUFFER_RETAIN = 100;
+const EVENT_BUFFER_MAX = 500;
+const STDERR_TAIL_MAX_CHARS = 8000;
 const PROVIDER_REQUEST_TIMEOUT_MS = Math.min(request.maxRuntimeMs, 2 * 60 * 1000);
 const PROVIDER_IDLE_TIMEOUT_MS = 30000;
 // These are catastrophe backstops, NOT a working budget. Normal runs must never hit them:
@@ -176,6 +182,31 @@ function requiredEnv(name) {
   if (!value) throw new Error(name + ' is required');
   return value;
 }
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Forward the runner's OWN diagnostic output to Convex so a crash leaves a trail, not just a
+// line in an unforwarded container log. We tee console.error (where death traces, flush
+// failures, and Node warnings land) into a 'stderr' event. Tool command output is already
+// captured via Pi tool_result events, so we only mirror the runner process's own stderr here.
+const baseConsoleError = console.error.bind(console);
+let teeingStderr = false;
+console.error = (...args) => {
+  baseConsoleError(...args);
+  if (teeingStderr) return; // guard against recursion if emit() ever logs
+  teeingStderr = true;
+  try {
+    const text = args
+      .map((a) => (typeof a === 'string' ? a : a instanceof Error ? (a.stack ?? a.message) : safeStringify(a)))
+      .join(' ')
+      .slice(0, STDERR_TAIL_MAX_CHARS);
+    eventBuffer.push({ emittedAt: Date.now(), type: 'stderr', message: text });
+  } finally {
+    teeingStderr = false;
+  }
+};
 
 function safeStringify(value, maxChars = 6000) {
   try {
@@ -303,6 +334,20 @@ function buildTraceflowContextGuardExtension() {
     "    throw new Error(rejectionText('provider request payload', size, maxProviderPayloadChars));",
     '  });',
     '',
+    '  // Observe each provider HTTP response (fires after headers, before the stream body is',
+    '  // consumed). A non-2xx or a response that never yields a body is the difference between',
+    "  // 'the provider errored' and 'the agent is genuinely hanging' — record it so a stalled",
+    '  // run is diagnosable instead of looking like silence.',
+    "  pi.on('after_provider_response', async (event) => {",
+    '    const response = event && event.response ? event.response : event;',
+    "    const status = response && typeof response.status === 'number' ? response.status : undefined;",
+    '    const hasBody = Boolean(response && (response.body || response.ok));',
+    '    if (status !== undefined && status >= 200 && status < 300) return;',
+    "    await emitGuardEvent('Pi provider response was not successful', {",
+    "      reason: 'provider_response', status, hasBody,",
+    '    });',
+    '  });',
+    '',
     '  // Best-effort checkpoint when the runtime is being torn down gracefully (e.g. a',
     '  // deploy rollout signals the container to exit). Snapshots /workspace + the Pi',
     '  // session to R2 so an auto-resume picks up mid-question instead of re-running it.',
@@ -389,6 +434,31 @@ function describeSessionEvent(event) {
         output: truncateText(messageContentText(event?.result), 800),
         isError,
       },
+    };
+  }
+
+  // The SDK retries a failed provider call silently; surface it so a retry-then-give-up does
+  // not look like a hang. A retry firing at all means the provider already failed once.
+  if (eventType === 'auto_retry_start') {
+    return {
+      type: 'status',
+      message: 'Provider call failed; auto-retrying',
+      data: {
+        phase: eventType,
+        attempt: event?.attempt,
+        maxAttempts: event?.maxAttempts,
+        delayMs: event?.delayMs,
+        errorMessage: typeof event?.errorMessage === 'string' ? event.errorMessage : undefined,
+      },
+    };
+  }
+  if (eventType === 'auto_retry_end') {
+    const success = event?.success === true;
+    const finalError = typeof event?.finalError === 'string' ? event.finalError : undefined;
+    return {
+      type: success ? 'status' : 'error',
+      message: success ? 'Auto-retry succeeded' : 'Auto-retry exhausted: ' + (finalError ?? 'unknown error'),
+      data: { phase: eventType, success, attempt: event?.attempt, finalError },
     };
   }
 
@@ -736,10 +806,38 @@ async function flushEvents() {
 async function flushEventsOnce() {
   if (eventBuffer.length === 0) return;
   const events = eventBuffer.splice(0, eventBuffer.length);
-  await post('/pi-runs/events', { runId, events }).catch((error) => {
-    console.error('failed to flush events', error);
-    eventBuffer.unshift(...events.slice(-20));
-  });
+  // The event stream is the only way a run reports its state, so a failed POST must not be
+  // swallowed. Retry with bounded backoff; on exhaustion re-queue (bounded) and record the
+  // failure so it can't silently disappear. The watchdog's container-side post-mortem snapshot
+  // is the out-of-band backstop that does not depend on this POST succeeding.
+  for (let attempt = 0; attempt < EVENT_FLUSH_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await post('/pi-runs/events', { runId, events });
+      consecutiveFlushFailures = 0;
+      return;
+    } catch (error) {
+      if (attempt < EVENT_FLUSH_MAX_ATTEMPTS - 1) {
+        await delay(EVENT_FLUSH_RETRY_BASE_MS * (attempt + 1));
+        continue;
+      }
+      consecutiveFlushFailures += 1;
+      console.error(
+        'failed to flush ' +
+          events.length +
+          ' events after ' +
+          EVENT_FLUSH_MAX_ATTEMPTS +
+          ' attempts (consecutive failures: ' +
+          consecutiveFlushFailures +
+          ')',
+        error,
+      );
+      const keep = events.slice(-EVENT_BUFFER_RETAIN);
+      eventBuffer.unshift(...keep);
+      if (eventBuffer.length > EVENT_BUFFER_MAX) {
+        eventBuffer.splice(0, eventBuffer.length - EVENT_BUFFER_MAX);
+      }
+    }
+  }
 }
 
 async function complete(status, payload = {}) {
@@ -749,6 +847,44 @@ async function complete(status, payload = {}) {
   await post('/pi-runs/complete', { runId, sandboxId, status, ...payload });
 }
 
+// A dying process MUST report its cause, never exit silently. uncaughtException /
+// unhandledRejection give us an async window to emit a terminal 'failed' and POST it;
+// only a hard SIGKILL (OOM) skips these, and that case is covered out-of-band by the
+// Convex watchdog pulling the container's exit code + stderr (see plan A/D).
+async function reportFatal(kind, error) {
+  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  clearRunTimers();
+  try {
+    await emit({
+      type: 'error',
+      message: 'Runner ' + kind + ': ' + message,
+      data: { kind, fatal: true },
+    });
+  } catch {
+    // emit pushes to the buffer; complete() flushes below.
+  }
+  try {
+    await complete('failed', { error: 'Runner ' + kind + ': ' + message });
+  } catch (completeError) {
+    console.error('reportFatal failed to post completion', completeError);
+  }
+}
+
+process.on('uncaughtException', (error) => {
+  void reportFatal('uncaught exception', error).finally(() => process.exit(1));
+});
+process.on('unhandledRejection', (reason) => {
+  void reportFatal('unhandled rejection', reason).finally(() => process.exit(1));
+});
+process.on('exit', (code) => {
+  // exit handlers are synchronous-only, so we cannot POST here. Leave a loud breadcrumb in
+  // the container log (which the watchdog snapshot reads) when we exit non-zero without a
+  // clean completion — this is the last-ditch signal before the process is gone.
+  if (!completed && code !== 0) {
+    console.error('runner exiting with code ' + code + ' before reporting completion');
+  }
+});
+
 async function fetchTraceflowToolResult(toolName, args) {
   await flushEvents();
   const response = await post('/traceflow-data/tool', {
@@ -757,6 +893,33 @@ async function fetchTraceflowToolResult(toolName, args) {
     arguments: args ?? {},
   });
   return response.result;
+}
+
+// AgentState.errorMessage: 'Error message from the most recent failed or aborted assistant turn.'
+function readAgentErrorMessage() {
+  try {
+    const message = session?.agent?.state?.errorMessage;
+    return typeof message === 'string' && message.trim() ? message.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readAgentTurnState() {
+  try {
+    const state = session?.agent?.state;
+    if (!state) return undefined;
+    return {
+      isStreaming: Boolean(state.isStreaming),
+      pendingToolCalls:
+        state.pendingToolCalls && typeof state.pendingToolCalls.size === 'number'
+          ? state.pendingToolCalls.size
+          : undefined,
+      errorMessage: readAgentErrorMessage(),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function readSessionStats() {
@@ -798,6 +961,7 @@ async function emitUsage(reason) {
 
 async function emitHeartbeat() {
   const idleMs = Date.now() - lastActivityAt;
+  const turn = readAgentTurnState();
   await emit(
     {
       type: 'status',
@@ -808,7 +972,9 @@ async function emitHeartbeat() {
         idleMs,
         piEventCount,
         resultTextChars: resultText.length,
-        isStreaming: Boolean(session?.isStreaming),
+        isStreaming: turn?.isStreaming ?? false,
+        pendingToolCalls: turn?.pendingToolCalls,
+        agentErrorMessage: turn?.errorMessage,
       },
     },
     { markActivity: false },
@@ -833,6 +999,7 @@ function buildSystemPrompt() {
     'Your primary deliverable is a verified analysis script plus a compact final answer. Write code to call the client, aggregate, and validate the data instead of asking the model to inspect raw rows.',
     'Use Python, pandas, numpy, bash, or Node locally when useful. Keep scripts and intermediate files under /workspace/runs/' + runId + '.',
     'Never print full DataFrames to stdout. Print progress, counts, column names, and summary statistics only.',
+    'Do not run unbounded filesystem scans (for example find over / or another large root, or recursive listings of the whole container). They can exhaust memory and get the sandbox killed. Scope any file work to /workspace/runs/' + runId + '.',
     'There is a context-size safety net that rejects a tool result, message, or provider request only if it is enormous (a sign something went wrong, like dumping a full table). If you follow the workflow above (aggregate server-side, reduce in pandas, return summaries) you will never come close to it. If you ever do see that rejection, it means you tried to pull far too much at once: retry with a much more focused query, do not re-fetch the same thing.',
     'Think hard about the analysis: plan the approach, interpret the numbers, and reason about what they mean. But do not do arithmetic in your head when code is exact: compute totals, rates, and aggregates in pandas/bash and reason about the results. Once you have enough data, write the concise final answer as normal assistant text.',
     'Return a concise final answer with the data, calculations, caveats, and any failed queries that affected confidence.',
@@ -1120,9 +1287,19 @@ try {
     await session.prompt(request.prompt);
     clearRunTimers();
     await emitUsage('final');
+    // prompt() resolves even when the run failed: the SDK reports post-acceptance errors via the
+    // event stream and session.agent.state.errorMessage, NOT by throwing. So a resolved prompt is
+    // NOT proof of success — check the agent's error state before reporting 'completed'.
+    const agentError = readAgentErrorMessage();
     if (timedOut) {
       await complete('timed_out', {
         error: 'Run timed out.',
+        resultText: resultText.trim() || undefined,
+      });
+    } else if (agentError) {
+      await emit({ type: 'error', message: agentError, data: { source: 'agent_state' } });
+      await complete('failed', {
+        error: agentError,
         resultText: resultText.trim() || undefined,
       });
     } else {

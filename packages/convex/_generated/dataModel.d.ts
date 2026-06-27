@@ -193,6 +193,11 @@ export type DataModel = {
         | "timed_out"
         | "cancelled";
       updatedAt: number;
+      usageApplied?: {
+        cacheReadTokens: number;
+        totalCost: number;
+        totalTokens: number;
+      };
       _id: Id<"analystSandboxRuns">;
       _creationTime: number;
     };
@@ -217,7 +222,11 @@ export type DataModel = {
       | "sandboxId"
       | "startedAt"
       | "status"
-      | "updatedAt";
+      | "updatedAt"
+      | "usageApplied"
+      | "usageApplied.cacheReadTokens"
+      | "usageApplied.totalCost"
+      | "usageApplied.totalTokens";
     indexes: {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
@@ -279,6 +288,44 @@ export type DataModel = {
         "_creationTime",
       ];
       by_creator_updated: ["creatorUserId", "updatedAt", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  analystUsageLedger: {
+    document: {
+      agent: "analyst" | "pi";
+      analystThreadId: Id<"analystThreads">;
+      cacheReadTokens: number;
+      creatorUserId: Id<"users">;
+      hasCost: boolean;
+      orgId: Id<"organizations">;
+      requests: number;
+      totalCost: number;
+      totalTokens: number;
+      updatedAt: number;
+      _id: Id<"analystUsageLedger">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "agent"
+      | "analystThreadId"
+      | "cacheReadTokens"
+      | "creatorUserId"
+      | "hasCost"
+      | "orgId"
+      | "requests"
+      | "totalCost"
+      | "totalTokens"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org: ["orgId", "_creationTime"];
+      by_thread: ["analystThreadId", "_creationTime"];
+      by_thread_agent: ["analystThreadId", "agent", "_creationTime"];
     };
     searchIndexes: {};
     vectorIndexes: {};

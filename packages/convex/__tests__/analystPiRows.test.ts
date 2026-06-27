@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toPiRunRows, type SandboxRunEventInput } from '../analystPiRows';
+import { runUsageTotal, toPiRunRows, type SandboxRunEventInput } from '../analystPiRows';
 
 function event(partial: Partial<SandboxRunEventInput> & { seq: number }): SandboxRunEventInput {
   return {
@@ -71,7 +71,7 @@ describe('toPiRunRows', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('collapses many usage snapshots into a single trailing summary', () => {
+  it('drops usage snapshots from the work log', () => {
     const usage = (seq: number, total: number): SandboxRunEventInput =>
       event({ seq, type: 'usage', data: { usage: { tokens: { totalTokens: total } } } });
 
@@ -79,38 +79,68 @@ describe('toPiRunRows', () => {
       usage(1, 100),
       event({ seq: 2, data: { kind: 'text', text: 'working' } }),
       usage(3, 250),
-      usage(4, 380),
     ]);
 
-    const usageRows = rows.filter((row) => row.kind === 'usage');
-    expect(usageRows).toHaveLength(1);
-    expect(usageRows[0]).toMatchObject({ kind: 'usage', usage: { totalTokens: 380 } });
-    // The single usage summary always trails the work rows.
-    expect(rows[rows.length - 1]?.kind).toBe('usage');
-  });
-
-  it('parses cost and context percent from a usage snapshot', () => {
-    const [row] = toPiRunRows([
-      event({
-        seq: 1,
-        type: 'usage',
-        data: {
-          usage: {
-            tokens: { totalTokens: 2500, cacheRead: 1920 },
-            cost: { total: 0.0088 },
-            contextUsage: { percent: 6.1 },
-          },
-        },
-      }),
-    ]);
-    expect(row).toMatchObject({
-      kind: 'usage',
-      usage: { totalTokens: 2500, cacheRead: 1920, totalCost: 0.0088, contextPercent: 6.1 },
-    });
+    expect(rows).toEqual([{ kind: 'text', key: 'event_2', text: 'working' }]);
   });
 
   it('never emits raw JSON for unstructured events', () => {
     const rows = toPiRunRows([event({ seq: 1, type: 'message', message: 'message_update' })]);
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe('runUsageTotal', () => {
+  it('returns the latest cumulative usage snapshot as the run total', () => {
+    const usage = (seq: number, total: number): SandboxRunEventInput =>
+      event({ seq, type: 'usage', data: { usage: { tokens: { totalTokens: total } } } });
+
+    expect(
+      runUsageTotal([
+        usage(1, 100),
+        event({ seq: 2, data: { kind: 'text', text: 'working' } }),
+        usage(3, 250),
+        usage(4, 380),
+      ]),
+    ).toEqual({
+      totalTokens: 380,
+      cacheRead: undefined,
+      totalCost: undefined,
+      contextPercent: undefined,
+    });
+  });
+
+  it('parses cost (object breakdown) and context percent from the snapshot', () => {
+    expect(
+      runUsageTotal([
+        event({
+          seq: 1,
+          type: 'usage',
+          data: {
+            usage: {
+              tokens: { totalTokens: 2500, cacheRead: 1920 },
+              cost: { total: 0.0088 },
+              contextUsage: { percent: 6.1 },
+            },
+          },
+        }),
+      ]),
+    ).toMatchObject({ totalTokens: 2500, cacheRead: 1920, totalCost: 0.0088, contextPercent: 6.1 });
+  });
+
+  it('parses cost emitted as a flat number (in-sandbox pricing)', () => {
+    expect(
+      runUsageTotal([
+        event({
+          seq: 1,
+          type: 'usage',
+          data: { usage: { tokens: { total: 52722 }, cost: 0.0347 } },
+        }),
+      ]),
+    ).toMatchObject({ totalTokens: 52722, totalCost: 0.0347 });
+  });
+
+  it('returns null when no usage events are present', () => {
+    expect(runUsageTotal([event({ seq: 1, data: { kind: 'text', text: 'hi' } })])).toBeNull();
   });
 });

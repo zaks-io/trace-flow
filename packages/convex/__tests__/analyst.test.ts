@@ -8,6 +8,7 @@ import {
   buildHiddenAnalystMessageMetadata,
   buildOpenRouterExtraBody,
   buildPiCompletionPrompt,
+  describeSandboxProcessCause,
   getDirectAnalystTraceFlowToolDefinitions,
   isHiddenAnalystMessageLike,
   isHiddenAnalystProviderMetadata,
@@ -204,6 +205,36 @@ describe('analyst helpers', () => {
           'stop',
         );
       }
+    });
+  });
+
+  describe('describeSandboxProcessCause', () => {
+    it('reports a killed process with its exit code (OOM/SIGKILL signature)', () => {
+      expect(describeSandboxProcessCause({ id: 'pi-abc', status: 'killed', exitCode: 137 })).toBe(
+        'process pi-abc is killed with exit code 137',
+      );
+    });
+
+    it('omits the exit code when the process is still running', () => {
+      expect(describeSandboxProcessCause({ id: 'pi-abc', status: 'running' })).toBe(
+        'process pi-abc is running',
+      );
+    });
+
+    it('falls back to the known processId when the snapshot has none', () => {
+      expect(describeSandboxProcessCause({ status: 'completed' }, 'pi-fallback')).toBe(
+        'process pi-fallback is completed',
+      );
+    });
+
+    it('reports the fetch error when the snapshot could not be read', () => {
+      expect(describeSandboxProcessCause(null, 'pi-abc', 'sandbox timeout')).toBe(
+        'process diagnostics unavailable (sandbox timeout)',
+      );
+    });
+
+    it('returns undefined when there is genuinely nothing to say', () => {
+      expect(describeSandboxProcessCause(null, 'pi-abc')).toBeUndefined();
     });
   });
 });

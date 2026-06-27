@@ -1,6 +1,6 @@
 import { MessageSquareText } from 'lucide-react';
 import { AnalystMarkdown } from '../analystMarkdown';
-import { PiRunRowShell } from './PiUsageRow';
+import { PiRunRowShell } from './PiRunRowShell';
 
 export function PiTextRow({ text }: { text: string }) {
   const trimmed = text.trim();

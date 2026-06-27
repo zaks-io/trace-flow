@@ -2,6 +2,7 @@ import {
   Agent,
   abortStream,
   createTool,
+  listMessages as listAgentMessages,
   listStreams,
   listUIMessages,
   saveMessage,
@@ -22,7 +23,15 @@ import { paginationOptsValidator } from 'convex/server';
 import { v } from 'convex/values';
 import { z } from 'zod/v4';
 import { requireEnabledUser } from './auth/users';
-import { toPiRunRows } from './analystPiRows';
+import { runUsageTotal, toPiRunRows, type SandboxRunEventInput } from './analystPiRows';
+import { openRouterCost, sumAnalystUsage, type MessageUsageInput } from './analystUsage';
+import {
+  accumulateLedger,
+  cumulativeDelta,
+  readThreadLedger,
+  ZERO_CUMULATIVE,
+  type CumulativeUsage,
+} from './analystUsageLedger';
 import { createMcpBackend } from './mcp/backend';
 import {
   action,
@@ -212,6 +221,19 @@ function createAnalystAgent(analystThreadId: string) {
     languageModel: createAnalystLanguageModel(analystThreadId),
     instructions: BASE_ANALYST_INSTRUCTIONS,
     stopWhen: stepCountIs(ANALYST_MAX_STEPS),
+    // Fold every LLM step's tokens + OpenRouter cost into the unified usage ledger.
+    usageHandler: async (ctx, { threadId, usage, providerMetadata }) => {
+      if (!threadId) return;
+      const cacheReadTokens =
+        usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens ?? 0;
+      await ctx.runMutation(internal.analyst.recordAnalystUsageInternal, {
+        agentThreadId: threadId,
+        totalTokens: usage.totalTokens ?? 0,
+        cacheReadTokens,
+        cost: openRouterCost(providerMetadata),
+        now: Date.now(),
+      });
+    },
   });
 }
 
@@ -1021,6 +1043,79 @@ async function cancelSandboxRunBestEffort(
   };
 }
 
+/**
+ * Pull the container's exit code + stderr/stdout the instant a watchdog declares a run dead,
+ * and write them into the run's event log. This is the out-of-band post-mortem that does NOT
+ * depend on the (possibly-killed) runner reporting anything: it reads getProcess/getProcessLogs
+ * directly via /pi-runs/control. Returns a one-line cause for the terminal error message, e.g.
+ * "process pi-... is killed with exit code 137" — so "timed out" stops being a mystery.
+ */
+async function captureSandboxPostMortem(
+  ctx: ActionCtx,
+  run: Doc<'analystSandboxRuns'>,
+): Promise<{ cause?: string; exitCode?: number; processStatus?: string }> {
+  let snapshot: SandboxControlResponse | null = null;
+  let fetchError: string | undefined;
+  try {
+    snapshot = (await postSandboxJson(
+      '/pi-runs/control',
+      {
+        runId: run._id,
+        sandboxId: run.sandboxId,
+        processId: run.processId,
+        action: 'status',
+      },
+      10_000,
+    )) as SandboxControlResponse;
+  } catch (err) {
+    fetchError = err instanceof Error ? err.message : String(err);
+  }
+
+  const events = snapshot
+    ? buildSandboxControlEvents(run, snapshot)
+    : [
+        {
+          type: 'stderr' as const,
+          message: `Could not read sandbox process diagnostics: ${fetchError ?? 'unknown error'}.`,
+          data: { reason: 'post_mortem_fetch_failed', error: fetchError },
+        },
+      ];
+  if (events.length > 0) {
+    await ctx.runMutation(internal.analyst.appendSandboxRunEvents, {
+      runId: run._id,
+      tokenHash: run.runTokenHash,
+      events,
+      now: Date.now(),
+    });
+  }
+
+  const process = snapshot?.process ?? null;
+  const processStatus = process?.status ?? undefined;
+  const exitCode = typeof process?.exitCode === 'number' ? process.exitCode : undefined;
+  const cause = describeSandboxProcessCause(process, run.processId, fetchError);
+  return { cause, exitCode, processStatus };
+}
+
+/**
+ * One-line human cause for a dead run's terminal message, e.g.
+ * "process pi-abc is killed with exit code 137" (137 = 128 + SIGKILL = OOM). Returns undefined
+ * when there's genuinely nothing to say. Pure so it can be unit-tested without a sandbox.
+ */
+export function describeSandboxProcessCause(
+  process: SandboxControlResponse['process'],
+  fallbackProcessId?: string,
+  fetchError?: string,
+): string | undefined {
+  if (process) {
+    const id = process.id ?? fallbackProcessId ?? 'unknown';
+    const status = process.status ?? 'unknown';
+    const exit = typeof process.exitCode === 'number' ? ` with exit code ${process.exitCode}` : '';
+    return `process ${id} is ${status}${exit}`;
+  }
+  if (fetchError) return `process diagnostics unavailable (${fetchError})`;
+  return undefined;
+}
+
 function summarizeSandboxRun(run: Doc<'analystSandboxRuns'>) {
   if (isSandboxRunTimeoutExpired(run, Date.now())) {
     const deadline = sandboxRunDeadlineMs(run);
@@ -1200,6 +1295,177 @@ export const listSandboxRunRows = query({
     );
   },
 });
+
+/**
+ * Admin-only conversation cost summary. Returns `null` for non-admins (the client
+ * gates on `useIsAdmin`, so this is a debug/observability surface) and the totals
+ * otherwise: the conversation Analyst's own LLM usage vs. the Pi coding agent's,
+ * so an admin can see where the tokens and dollars went.
+ */
+export const conversationUsageSummary = query({
+  args: { threadId: v.id('analystThreads') },
+  handler: async (ctx, args) => {
+    const user = await requireEnabledUser(ctx);
+    const thread = await getOwnedThread(ctx, user._id, args.threadId);
+    if (!thread) throw new Error('Conversation not found');
+    if (!user.isAdmin) return null;
+
+    return readThreadLedger(ctx, args.threadId);
+  },
+});
+
+/** Page the agent component's persisted messages and sum the Analyst's own usage. */
+async function sumThreadAnalystUsage(ctx: QueryCtx | MutationCtx, agentThreadId: string) {
+  const messages: MessageUsageInput[] = [];
+  let cursor: string | null = null;
+
+  // A single conversation is bounded; cap pages so a runaway thread can't wedge the query.
+  for (let page = 0; page < 20; page++) {
+    const result = await listAgentMessages(ctx, components.agent, {
+      threadId: agentThreadId,
+      excludeToolMessages: true,
+      paginationOpts: { numItems: 100, cursor },
+    });
+    for (const message of result.page) {
+      messages.push({
+        usage: message.usage,
+        providerMetadata: message.providerMetadata,
+      });
+    }
+    if (result.isDone) break;
+    cursor = result.continueCursor;
+  }
+
+  return sumAnalystUsage(messages);
+}
+
+/** One run's total usage (its latest cumulative snapshot), read straight from its events. */
+async function runUsageFromEvents(ctx: MutationCtx, runId: Id<'analystSandboxRuns'>) {
+  const events = await ctx.db
+    .query('analystSandboxRunEvents')
+    .withIndex('by_run_seq', (q) => q.eq('runId', runId))
+    .collect();
+  return runUsageTotal(
+    events
+      .sort((a, b) => a.seq - b.seq)
+      .map((event) => ({
+        _id: event._id,
+        seq: event.seq,
+        type: event.type,
+        message: event.message,
+        data: event.data,
+        emittedAt: event.emittedAt,
+      })),
+  );
+}
+
+/**
+ * One-time, idempotent seed of the usage ledger for one existing thread. Computes both
+ * agents' totals from raw data, writes them as the ledger's absolute values, and stamps
+ * each run's `usageApplied` so the live Pi writer continues from the right baseline (else
+ * the next snapshot would re-add the full cumulative total). Re-running recomputes cleanly.
+ */
+export const backfillThreadUsageLedger = internalMutation({
+  args: { threadId: v.id('analystThreads') },
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread) return { skipped: true as const };
+    const now = Date.now();
+
+    const analyst = await sumThreadAnalystUsage(ctx, thread.agentThreadId);
+
+    const runs = await ctx.db
+      .query('analystSandboxRuns')
+      .withIndex('by_thread_updated', (q) => q.eq('analystThreadId', args.threadId))
+      .collect();
+
+    const pi = { totalTokens: 0, totalCost: 0, cacheReadTokens: 0, requests: 0, hasCost: false };
+    for (const run of runs) {
+      const usage = await runUsageFromEvents(ctx, run._id);
+      const cumulative = {
+        totalTokens: usage?.totalTokens ?? 0,
+        totalCost: usage?.totalCost ?? 0,
+        cacheReadTokens: usage?.cacheRead ?? 0,
+      };
+      await ctx.db.patch(run._id, { usageApplied: cumulative });
+      if (!usage) continue;
+      pi.totalTokens += cumulative.totalTokens;
+      pi.totalCost += cumulative.totalCost;
+      pi.cacheReadTokens += cumulative.cacheReadTokens;
+      if (usage.totalCost !== undefined) {
+        pi.hasCost = true;
+        pi.requests += 1;
+      } else if (cumulative.totalTokens > 0) {
+        pi.requests += 1;
+      }
+    }
+
+    await setLedgerRow(ctx, thread, 'analyst', {
+      totalTokens: analyst.totalTokens,
+      totalCost: analyst.totalCost,
+      cacheReadTokens: 0,
+      requests: 0,
+      hasCost: analyst.hasCost,
+      now,
+    });
+    await setLedgerRow(ctx, thread, 'pi', { ...pi, now });
+
+    return { skipped: false as const, analyst, pi };
+  },
+});
+
+/** Backfill every thread's ledger. Bounded fan-out; safe to re-run. */
+export const backfillAllUsageLedgers = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const threads = await ctx.db.query('analystThreads').collect();
+    for (const thread of threads) {
+      await ctx.runMutation(internal.analyst.backfillThreadUsageLedger, { threadId: thread._id });
+    }
+    return { threads: threads.length };
+  },
+});
+
+/** Set a ledger row to absolute values (backfill), upserting by (thread, agent). */
+async function setLedgerRow(
+  ctx: MutationCtx,
+  thread: Doc<'analystThreads'>,
+  agent: 'analyst' | 'pi',
+  totals: {
+    totalTokens: number;
+    totalCost: number;
+    cacheReadTokens: number;
+    requests: number;
+    hasCost: boolean;
+    now: number;
+  },
+) {
+  const existing = await ctx.db
+    .query('analystUsageLedger')
+    .withIndex('by_thread_agent', (q) => q.eq('analystThreadId', thread._id).eq('agent', agent))
+    .first();
+
+  const row = {
+    totalTokens: totals.totalTokens,
+    totalCost: totals.totalCost,
+    cacheReadTokens: totals.cacheReadTokens,
+    requests: totals.requests,
+    hasCost: totals.hasCost,
+    updatedAt: totals.now,
+  };
+
+  if (existing) {
+    await ctx.db.patch(existing._id, row);
+    return;
+  }
+  await ctx.db.insert('analystUsageLedger', {
+    analystThreadId: thread._id,
+    orgId: thread.orgId,
+    creatorUserId: thread.creatorUserId,
+    agent,
+    ...row,
+  });
+}
 
 export const cancelSandboxRun = action({
   args: { runId: v.id('analystSandboxRuns') },
@@ -2006,8 +2272,10 @@ export const appendSandboxRunEvents = internalMutation({
     if (run?.runTokenHash !== args.tokenHash) throw new Error('Pi run not found');
 
     let seq = run.nextSeq;
-    for (const event of args.events.slice(0, MAX_SANDBOX_EVENT_BATCH)) {
-      await ctx.db.insert('analystSandboxRunEvents', {
+    const batch = args.events.slice(0, MAX_SANDBOX_EVENT_BATCH);
+    const usageInputs: SandboxRunEventInput[] = [];
+    for (const event of batch) {
+      const id = await ctx.db.insert('analystSandboxRunEvents', {
         runId: args.runId,
         analystThreadId: run.analystThreadId,
         creatorUserId: run.creatorUserId,
@@ -2018,14 +2286,102 @@ export const appendSandboxRunEvents = internalMutation({
         data: event.data,
         emittedAt: event.emittedAt ?? args.now,
       });
+      if (event.type === 'usage') {
+        usageInputs.push({
+          _id: id,
+          seq,
+          type: event.type,
+          message: event.message,
+          data: event.data,
+          emittedAt: event.emittedAt ?? args.now,
+        });
+      }
       seq += 1;
     }
+
+    // Pi emits cumulative usage snapshots; fold only the delta of the latest snapshot
+    // in this batch into the (thread, 'pi') ledger so resumes/restreams don't double-count.
+    const usageApplied = await accumulatePiUsage(ctx, run, usageInputs, args.now);
 
     await ctx.db.patch(args.runId, {
       nextSeq: seq,
       lastEventAt: args.now,
       updatedAt: args.now,
       status: run.status === 'starting' ? 'running' : run.status,
+      ...(usageApplied ? { usageApplied } : {}),
+    });
+  },
+});
+
+/**
+ * Fold the delta of this batch's latest cumulative usage snapshot into the Pi ledger.
+ * Returns the new last-applied total to persist on the run, or null if nothing changed.
+ */
+async function accumulatePiUsage(
+  ctx: MutationCtx,
+  run: Doc<'analystSandboxRuns'>,
+  usageInputs: SandboxRunEventInput[],
+  now: number,
+): Promise<CumulativeUsage | null> {
+  const latest = runUsageTotal(usageInputs);
+  if (!latest) return null;
+
+  const cumulative: CumulativeUsage = {
+    totalTokens: latest.totalTokens ?? 0,
+    totalCost: latest.totalCost ?? 0,
+    cacheReadTokens: latest.cacheRead ?? 0,
+  };
+  const delta = cumulativeDelta(
+    run.usageApplied ?? ZERO_CUMULATIVE,
+    cumulative,
+    latest.totalCost !== undefined,
+  );
+
+  await accumulateLedger(ctx, {
+    analystThreadId: run.analystThreadId,
+    orgId: run.orgId,
+    creatorUserId: run.creatorUserId,
+    agent: 'pi',
+    delta,
+    now,
+  });
+
+  return cumulative;
+}
+
+/**
+ * Fold one Analyst LLM step's usage into the (thread, 'analyst') ledger. Called from the
+ * agent's usageHandler, which only knows the agent-component thread id — we resolve it back
+ * to our analystThreads row to attach org/creator. A step we can't attribute is dropped.
+ */
+export const recordAnalystUsageInternal = internalMutation({
+  args: {
+    agentThreadId: v.string(),
+    totalTokens: v.number(),
+    cacheReadTokens: v.number(),
+    cost: v.optional(v.number()),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const thread = await ctx.db
+      .query('analystThreads')
+      .withIndex('by_agent_thread_id', (q) => q.eq('agentThreadId', args.agentThreadId))
+      .first();
+    if (!thread) return;
+
+    await accumulateLedger(ctx, {
+      analystThreadId: thread._id,
+      orgId: thread.orgId,
+      creatorUserId: thread.creatorUserId,
+      agent: 'analyst',
+      delta: {
+        totalTokens: Math.max(0, args.totalTokens),
+        totalCost: Math.max(0, args.cost ?? 0),
+        cacheReadTokens: Math.max(0, args.cacheReadTokens),
+        requests: 1,
+        hasCost: args.cost !== undefined,
+      },
+      now: args.now,
     });
   },
 });
@@ -2192,8 +2548,63 @@ export const timeoutSandboxRunIfExpired = internalMutation({
       return false;
     }
 
-    const error =
+    // Expired with no completion callback. A mutation can't fetch the container's exit code, so
+    // hand off to an action that pulls the post-mortem (exit code + stderr) BEFORE stamping the
+    // run terminal — so "timed out" carries why (e.g. exit 137 = OOM) instead of being a mystery.
+    await ctx.scheduler.runAfter(0, internal.analyst.reapTimedOutSandboxRun, { runId: args.runId });
+    return true;
+  },
+});
+
+/**
+ * Stamp an expired run timed_out, but first pull the container post-mortem (exit code + stderr
+ * tail) so the terminal error explains the death. Runs as an action because the timeout mutation
+ * cannot fetch. Re-checks expiry under the action so a run that completed in the gap is left alone.
+ */
+export const reapTimedOutSandboxRun = internalAction({
+  args: { runId: v.id('analystSandboxRuns') },
+  handler: async (ctx, args) => {
+    const run = await ctx.runQuery(internal.analyst.getSandboxRunForReap, { runId: args.runId });
+    if (!run) return;
+    if (!isSandboxRunTimeoutExpired(run, Date.now())) return;
+
+    let cause: string | undefined;
+    try {
+      ({ cause } = await captureSandboxPostMortem(ctx, run));
+    } catch (error) {
+      console.error('reapTimedOutSandboxRun post-mortem failed', {
+        runId: args.runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const base =
       'Run exceeded its configured max runtime and the sandbox did not send a completion callback.';
+    const error = cause ? `${base} Sandbox ${cause}.` : base;
+    await ctx.runMutation(internal.analyst.markSandboxRunTimedOut, {
+      runId: args.runId,
+      error,
+      now: Date.now(),
+    });
+  },
+});
+
+export const getSandboxRunForReap = internalQuery({
+  args: { runId: v.id('analystSandboxRuns') },
+  handler: async (ctx, args) => ctx.db.get(args.runId),
+});
+
+export const markSandboxRunTimedOut = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    error: v.string(),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) return false;
+    if (!isActiveSandboxRunStatus(run.status)) return false;
+
     const seq = run.nextSeq;
     await ctx.db.insert('analystSandboxRunEvents', {
       runId: args.runId,
@@ -2202,21 +2613,21 @@ export const timeoutSandboxRunIfExpired = internalMutation({
       orgId: run.orgId,
       seq,
       type: 'error',
-      message: error,
+      message: args.error,
       data: {
         status: 'timed_out',
         deadlineMs: sandboxRunDeadlineMs(run),
         lastEventAt: run.lastEventAt,
       },
-      emittedAt: now,
+      emittedAt: args.now,
     });
 
     await ctx.db.patch(args.runId, {
       status: 'timed_out',
-      error,
-      completedAt: now,
-      lastEventAt: now,
-      updatedAt: now,
+      error: args.error,
+      completedAt: args.now,
+      lastEventAt: args.now,
+      updatedAt: args.now,
       nextSeq: seq + 1,
     });
 
@@ -2252,56 +2663,106 @@ export const resumeOrFailStaleSandboxRun = internalAction({
       return;
     }
 
-    const attempt = run.resumeAttempt ?? 0;
-    await ctx.runMutation(internal.analyst.markSandboxRunInterrupted, {
-      runId: args.runId,
-      error:
-        'The sandbox stopped responding (container exited). Recovering from the last checkpoint.',
-      now,
-    });
-
-    if (attempt >= SANDBOX_MAX_RESUME_ATTEMPTS) {
-      console.error('Pi run exhausted auto-resume attempts', {
-        runId: args.runId,
-        attempts: attempt,
-      });
-      await ctx.runMutation(internal.analyst.emitSandboxRunNote, {
-        runId: args.runId,
-        label: 'Stopped',
-        text: `The sandbox kept stopping after ${SANDBOX_MAX_RESUME_ATTEMPTS} recovery attempts. Ask again to retry.`,
-        now: Date.now(),
-      });
-      return;
+    // verdict === 'dead'. Recovery does fallible work (fetch the post-mortem, relaunch a run). If
+    // any of it throws, the failure MUST surface as a loud run event — never a swallowed throw that
+    // kills this action and leaves the run hanging until the slow deadline reaper. That silent-chain
+    // death is the original bug.
+    try {
+      await recoverDeadSandboxRun(ctx, run, backup);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Pi run liveness recovery threw', { runId: args.runId, error: message });
+      await ctx
+        .runMutation(internal.analyst.emitSandboxRunNote, {
+          runId: args.runId,
+          label: 'Recovery failed',
+          text: `The sandbox stopped responding and recovery failed: ${message}. Ask again to retry.`,
+          now: Date.now(),
+        })
+        .catch((noteError) => {
+          console.error('Pi run liveness recovery could not emit failure note', {
+            runId: args.runId,
+            error: noteError instanceof Error ? noteError.message : String(noteError),
+          });
+        });
     }
-
-    const launched = await launchSandboxRun(ctx, {
-      analystThreadId: run.analystThreadId,
-      creatorUserId: run.creatorUserId,
-      orgId: run.orgId,
-      prompt: run.prompt,
-      pageContextReferences: normalizeUnknownPageContextReferences(run.pageContextReferences),
-      maxRuntimeMs: run.maxRuntimeMs,
-      backup: backup ? { id: backup.id, dir: backup.dir, localBucket: backup.localBucket } : null,
-      resumeAttempt: attempt + 1,
-    });
-
-    if (!launched.ok) {
-      console.error('Pi run auto-resume failed to relaunch', {
-        runId: args.runId,
-        resumedRunId: launched.runId,
-        error: launched.error,
-      });
-      return;
-    }
-
-    await ctx.runMutation(internal.analyst.emitSandboxRunNote, {
-      runId: launched.runId,
-      label: 'Resumed',
-      text: 'Resumed after interruption — picking up from the last checkpoint.',
-      now: Date.now(),
-    });
   },
 });
+
+async function recoverDeadSandboxRun(
+  ctx: ActionCtx,
+  run: Doc<'analystSandboxRuns'>,
+  backup: { id: string; dir: string; localBucket?: boolean } | null,
+) {
+  const attempt = run.resumeAttempt ?? 0;
+
+  // Capture the container post-mortem (exit code + stderr) so each interruption records its cause.
+  let cause: string | undefined;
+  try {
+    ({ cause } = await captureSandboxPostMortem(ctx, run));
+  } catch (error) {
+    console.error('recoverDeadSandboxRun post-mortem failed', {
+      runId: run._id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const interruptedBase = 'The sandbox stopped responding (container exited).';
+  await ctx.runMutation(internal.analyst.markSandboxRunInterrupted, {
+    runId: run._id,
+    error: cause
+      ? `${interruptedBase} Sandbox ${cause}. Recovering from the last checkpoint.`
+      : `${interruptedBase} Recovering from the last checkpoint.`,
+    now: Date.now(),
+  });
+
+  if (attempt >= SANDBOX_MAX_RESUME_ATTEMPTS) {
+    console.error('Pi run exhausted auto-resume attempts', {
+      runId: run._id,
+      attempts: attempt,
+    });
+    await ctx.runMutation(internal.analyst.emitSandboxRunNote, {
+      runId: run._id,
+      label: 'Stopped',
+      text: `The sandbox kept stopping after ${SANDBOX_MAX_RESUME_ATTEMPTS} recovery attempts. Ask again to retry.`,
+      now: Date.now(),
+    });
+    return;
+  }
+
+  const launched = await launchSandboxRun(ctx, {
+    analystThreadId: run.analystThreadId,
+    creatorUserId: run.creatorUserId,
+    orgId: run.orgId,
+    prompt: run.prompt,
+    pageContextReferences: normalizeUnknownPageContextReferences(run.pageContextReferences),
+    maxRuntimeMs: run.maxRuntimeMs,
+    backup: backup ? { id: backup.id, dir: backup.dir, localBucket: backup.localBucket } : null,
+    resumeAttempt: attempt + 1,
+  });
+
+  if (!launched.ok) {
+    console.error('Pi run auto-resume failed to relaunch', {
+      runId: run._id,
+      resumedRunId: launched.runId,
+      error: launched.error,
+    });
+    await ctx.runMutation(internal.analyst.emitSandboxRunNote, {
+      runId: run._id,
+      label: 'Recovery failed',
+      text: `The sandbox stopped responding and could not be relaunched: ${launched.error}. Ask again to retry.`,
+      now: Date.now(),
+    });
+    return;
+  }
+
+  await ctx.runMutation(internal.analyst.emitSandboxRunNote, {
+    runId: launched.runId,
+    label: 'Resumed',
+    text: 'Resumed after interruption — picking up from the last checkpoint.',
+    now: Date.now(),
+  });
+}
 
 export const markSandboxContinuationScheduled = internalMutation({
   args: {

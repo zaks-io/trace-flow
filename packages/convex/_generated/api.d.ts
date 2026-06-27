@@ -391,6 +391,12 @@ export declare const api: {
       },
       any
     >;
+    conversationUsageSummary: FunctionReference<
+      "query",
+      "public",
+      { threadId: Id<"analystThreads"> },
+      any
+    >;
     executeSandboxToolCall: FunctionReference<
       "action",
       "public",
@@ -1447,6 +1453,13 @@ export declare const internal: {
       },
       any
     >;
+    backfillAllUsageLedgers: FunctionReference<"mutation", "internal", {}, any>;
+    backfillThreadUsageLedger: FunctionReference<
+      "mutation",
+      "internal",
+      { threadId: Id<"analystThreads"> },
+      any
+    >;
     completeSandboxRunInternal: FunctionReference<
       "mutation",
       "internal",
@@ -1530,6 +1543,12 @@ export declare const internal: {
       { runId: Id<"analystSandboxRuns"> },
       any
     >;
+    getSandboxRunForReap: FunctionReference<
+      "query",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
     getSandboxRunLivenessContext: FunctionReference<
       "query",
       "internal",
@@ -1586,6 +1605,30 @@ export declare const internal: {
         processId?: string;
         runId: Id<"analystSandboxRuns">;
         userId: Id<"users">;
+      },
+      any
+    >;
+    markSandboxRunTimedOut: FunctionReference<
+      "mutation",
+      "internal",
+      { error: string; now: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    reapTimedOutSandboxRun: FunctionReference<
+      "action",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    recordAnalystUsageInternal: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        agentThreadId: string;
+        cacheReadTokens: number;
+        cost?: number;
+        now: number;
+        totalTokens: number;
       },
       any
     >;

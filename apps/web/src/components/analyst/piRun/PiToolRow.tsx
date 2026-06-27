@@ -5,7 +5,7 @@ import { AlertCircle, CheckCircle2, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PiRunRow } from '../piRunEvents';
 import { getPiToolConfig, formatPiToolLabel } from '../piToolConfig';
-import { PiRunRowShell } from './PiUsageRow';
+import { PiRunRowShell } from './PiRunRowShell';
 
 type ToolRow = Extract<PiRunRow, { kind: 'tool' }>;
 

@@ -43,11 +43,6 @@ export type PiRunRow =
       text: string;
     }
   | {
-      kind: 'usage';
-      key: string;
-      usage: UsageSummary;
-    }
-  | {
       kind: 'note';
       key: string;
       label: string;
@@ -58,29 +53,33 @@ export type PiRunRow =
 /**
  * Project the ordered run events into work-log rows.
  *
- * The only "grouping" left is collapsing the stream of `usage` snapshots into a
- * single trailing summary — everything else is already one clean row per event.
+ * Usage snapshots are intentionally dropped here — per-step token/cost chips read
+ * as noise scattered through the log. The run's total usage is surfaced once, in
+ * the admin-only conversation cost summary (see `runUsageTotal`).
  */
 export function toPiRunRows(events: SandboxRunEventInput[]): PiRunRow[] {
   const rows: PiRunRow[] = [];
-  let latestUsage: { key: string; usage: UsageSummary } | null = null;
 
   for (const event of events) {
-    if (event.type === 'usage') {
-      const usage = parseUsage(event.data);
-      if (usage) latestUsage = { key: `${event._id}:usage`, usage };
-      continue;
-    }
-
+    if (event.type === 'usage') continue;
     const row = toRow(event);
     if (row) rows.push(row);
   }
 
-  if (latestUsage) {
-    rows.push({ kind: 'usage', key: latestUsage.key, usage: latestUsage.usage });
-  }
-
   return rows;
+}
+
+/**
+ * The run's total usage. Pi emits cumulative usage snapshots, so the last parseable
+ * `usage` event already holds the run total — no summing across snapshots needed.
+ */
+export function runUsageTotal(events: SandboxRunEventInput[]): UsageSummary | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type !== 'usage') continue;
+    const usage = parseUsage(events[i].data);
+    if (usage) return usage;
+  }
+  return null;
 }
 
 function toRow(event: SandboxRunEventInput): PiRunRow | null {
@@ -132,7 +131,6 @@ function parseUsage(data: unknown): UsageSummary | null {
   if (!isRecord(data) || !isRecord(data.usage)) return null;
   const usage = data.usage;
   const tokens = isRecord(usage.tokens) ? usage.tokens : null;
-  const cost = isRecord(usage.cost) ? usage.cost : null;
   const contextUsage = isRecord(usage.contextUsage) ? usage.contextUsage : null;
 
   const totalTokens = tokens
@@ -141,9 +139,9 @@ function parseUsage(data: unknown): UsageSummary | null {
       sumNumbers(tokens, ['input', 'output', 'cacheRead', 'cacheWrite']))
     : undefined;
   const cacheRead = tokens ? readNumber(tokens.cacheRead) : undefined;
-  const totalCost = cost
-    ? (readNumber(cost.total) ?? sumNumbers(cost, ['input', 'output', 'cacheRead', 'cacheWrite']))
-    : undefined;
+  // In-sandbox pricing emits `cost` as a flat number (total USD); older snapshots
+  // emit a `{ total, input, output, ... }` breakdown. Accept both.
+  const totalCost = parseCost(usage.cost);
   const contextPercent = contextUsage
     ? (readNumber(contextUsage.percent) ?? readNumber(contextUsage.percentage))
     : undefined;
@@ -157,6 +155,14 @@ function parseUsage(data: unknown): UsageSummary | null {
     return null;
   }
   return { totalTokens, cacheRead, totalCost, contextPercent };
+}
+
+/** `cost` is either a flat USD number or a `{ total, input, output, ... }` breakdown. */
+function parseCost(cost: unknown): number | undefined {
+  const flat = readNumber(cost);
+  if (flat !== undefined) return flat;
+  if (!isRecord(cost)) return undefined;
+  return readNumber(cost.total) ?? sumNumbers(cost, ['input', 'output', 'cacheRead', 'cacheWrite']);
 }
 
 function sumNumbers(record: Record<string, unknown>, keys: string[]) {

@@ -135,6 +135,26 @@ export default defineSchema({
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
     .index('by_agent_thread_id', ['agentThreadId']),
 
+  // Unified, authoritative usage totals per conversation, split by which agent spent
+  // it: the conversation Analyst vs. the Pi coding agent. Accumulated at write time
+  // (analyst via usageHandler, Pi via its run-event ingest), read by the cost summary.
+  // `orgId` rides every row so an org-wide rollup is a trivial group-by later.
+  analystUsageLedger: defineTable({
+    analystThreadId: v.id('analystThreads'),
+    orgId: v.id('organizations'),
+    creatorUserId: v.id('users'),
+    agent: v.union(v.literal('analyst'), v.literal('pi')),
+    totalTokens: v.number(),
+    totalCost: v.number(),
+    cacheReadTokens: v.number(),
+    requests: v.number(),
+    hasCost: v.boolean(),
+    updatedAt: v.number(),
+  })
+    .index('by_thread', ['analystThreadId'])
+    .index('by_thread_agent', ['analystThreadId', 'agent'])
+    .index('by_org', ['orgId']),
+
   analystSandboxRuns: defineTable({
     analystThreadId: v.id('analystThreads'),
     creatorUserId: v.id('users'),
@@ -165,6 +185,16 @@ export default defineSchema({
     // How many times this run has already been auto-resumed after a dead container.
     // Carried forward across resumes and capped so a crash-looping run fails loudly.
     resumeAttempt: v.optional(v.number()),
+    // Last cumulative usage snapshot already folded into the usage ledger for this run.
+    // Pi emits cumulative snapshots; we add only the delta so resumes/restreams don't
+    // double-count. Absent = nothing applied yet.
+    usageApplied: v.optional(
+      v.object({
+        totalTokens: v.number(),
+        totalCost: v.number(),
+        cacheReadTokens: v.number(),
+      }),
+    ),
   })
     .index('by_thread_updated', ['analystThreadId', 'updatedAt'])
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])

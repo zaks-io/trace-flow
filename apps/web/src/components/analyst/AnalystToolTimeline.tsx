@@ -75,10 +75,8 @@ export function AnalystToolStep({ part }: { part: TimelinePart }) {
 
 function TimelineStep({ part }: { part: TimelinePart }) {
   const [open, setOpen] = useState(
-    part.type === 'reasoning' ||
-      Boolean(part.piRun) ||
-      (part.type === 'tool' &&
-        (part.state === 'output-available' || part.state === 'output-error')),
+    part.type === 'tool' &&
+      (Boolean(part.piRun) || part.state === 'output-available' || part.state === 'output-error'),
   );
   const config = part.type === 'reasoning' ? null : getPiToolConfig(part.toolName);
   const Icon = config?.icon ?? Brain;
@@ -130,7 +128,7 @@ function TimelineStep({ part }: { part: TimelinePart }) {
           )}
         >
           <span className={cn('font-medium', isError ? 'text-destructive' : 'text-foreground/80')}>
-            {part.type === 'reasoning' ? 'Reasoning' : part.label}
+            {part.type === 'reasoning' ? 'Thinking' : part.label}
           </span>
           {part.type === 'tool' && <StepStatusPill state={part.state} running={part.running} />}
           {hasDetail && !isPiRun && (

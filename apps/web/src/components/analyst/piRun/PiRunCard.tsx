@@ -19,7 +19,7 @@ import {
 import type { PiRunRow } from '@convex/analystPiRows';
 import { PiToolRow } from './PiToolRow';
 import { PiTextRow } from './PiTextRow';
-import { PiUsageRow, PiRunRowShell } from './PiUsageRow';
+import { PiRunRowShell } from './PiRunRowShell';
 
 /**
  * The analysis run rendered inline as part of the parent agent's turn — no card,
@@ -154,8 +154,6 @@ function PiRunRowView({ row }: { row: PiRunRow }) {
       return <PiToolRow row={row} />;
     case 'text':
       return <PiTextRow text={row.text} />;
-    case 'usage':
-      return <PiUsageRow usage={row.usage} />;
     case 'note':
       return (
         <PiRunRowShell icon={<Info className="h-3.5 w-3.5 text-muted-foreground" />}>
