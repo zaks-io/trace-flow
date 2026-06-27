@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Area, ComposedChart, Line, XAxis, YAxis } from 'recharts';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart';
 import { BentoCell } from './BentoCell';
@@ -35,9 +36,11 @@ const CHART_CONFIG = {
 export function CostByDepthCell({
   rows,
   windowDays,
+  contextReference,
 }: {
   rows: AgentCostByDepthRow[];
   windowDays: number;
+  contextReference?: AnalystPageContextReference;
 }) {
   const series = useMemo(() => buildDepthSeries(rows), [rows]);
   const hasData = series != null && series.points.length > 1;
@@ -47,6 +50,7 @@ export function CostByDepthCell({
       title="Cost as conversations deepen"
       hint="per-turn cost & context by how deep into the conversation a turn is"
       caveat={`Each point pools every turn at that depth across all conversations — not one conversation. Depth is the raw turn position; the elasticity is a robust Theil-Sen log-log slope, not a chosen cutoff. It is an association, not causation — pooled across models and repos, so it is not controlled for which model runs at which depth. Cost is an estimate (lower bound), last ${windowDays} days.`}
+      contextReference={contextReference}
     >
       {hasData && series ? (
         <div className="flex h-full flex-col gap-4">

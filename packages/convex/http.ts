@@ -129,6 +129,12 @@ function isJsonContentType(contentType: string | undefined): boolean {
   return normalized === 'application/json' || normalized.startsWith('application/json;');
 }
 
+const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{32}$/;
+
+function isConvexDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && CONVEX_DOCUMENT_ID_PATTERN.test(value);
+}
+
 // Dependencies that can be injected for testing
 export interface HttpDeps {
   oauth: typeof oauthModule;
@@ -1022,12 +1028,19 @@ export function createApp(
       orgId: body.orgId,
     });
 
+    if (!isConvexDocumentId(body.orgId)) {
+      logger.warn('convex.usage_org_id_invalid');
+      await logger.flush();
+      return c.json({ error: 'Invalid organization id' }, 400);
+    }
+
     const orgId = body.orgId as Id<'organizations'>;
 
     // Verify the org exists before recording usage
     const org = await ctx.runQuery(internal.auth.organizations.getByIdInternal, { id: orgId });
     if (!org) {
       logger.warn('convex.usage_org_not_found');
+      await logger.flush();
       return c.json({ error: 'Organization not found' }, 404);
     }
 
@@ -1092,12 +1105,24 @@ export function createApp(
       return c.json({ error: `sessionPks must be an array of at most ${MAX_SESSION_PKS}` }, 400);
     }
 
+    if (!isConvexDocumentId(body.orgId)) {
+      logger.warn('convex.agent_claim_org_id_invalid');
+      await logger.flush();
+      return c.json({ error: 'Invalid organization id' }, 400);
+    }
+
     const orgId = body.orgId as Id<'organizations'>;
     const org = await ctx.runQuery(internal.auth.organizations.getByIdInternal, { id: orgId });
     if (!org) {
       logger.warn('convex.agent_claim_org_not_found');
       await logger.flush();
       return c.json({ error: 'Organization not found' }, 404);
+    }
+
+    if (!isConvexDocumentId(body.userId)) {
+      logger.warn('convex.agent_claim_user_id_invalid');
+      await logger.flush();
+      return c.json({ error: 'Invalid user id' }, 400);
     }
 
     const userId = body.userId as Id<'users'>;

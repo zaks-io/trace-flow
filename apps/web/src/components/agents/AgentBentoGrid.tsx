@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { formatNumber } from '@/lib/format';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { AgentUsageChart } from './AgentUsageChart';
 import { NotableChangesStrip } from './NotableChangesStrip';
 import { BentoCell } from './BentoCell';
@@ -139,6 +140,13 @@ export function AgentBentoGrid({
   const tokensDelta = computeDelta(summary.total_tokens, summary.prior_total_tokens);
   const sessionsDelta = computeDelta(summary.session_count, summary.prior_session_count);
   const generatedShare = costDistribution ? generatedTokenShare(costDistribution) : null;
+  const contextFor = (objectId: string, label: string): AnalystPageContextReference => ({
+    surface: 'agents',
+    objectId,
+    label,
+    route: '/app/agents',
+    filters: filterParams,
+  });
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-6 xl:grid-cols-12">
@@ -155,6 +163,7 @@ export function AgentBentoGrid({
             <GroupByToggle value={heroGroupBy} onChange={onGroupByChange} />
           ) : undefined
         }
+        contextReference={contextFor('cost-over-time', 'Cost over time')}
         caveat="Projection is a naive linear run-rate (no model). The band spans calendar-day to active-day pace."
         expandedContent={
           <div>
@@ -192,6 +201,7 @@ export function AgentBentoGrid({
           }
           delta={tokensDelta}
           invertDelta
+          contextReference={contextFor('tokens-processed', 'Tokens processed')}
         />
         <StatTile
           label="Conversations"
@@ -202,6 +212,7 @@ export function AgentBentoGrid({
               : undefined
           }
           delta={sessionsDelta}
+          contextReference={contextFor('conversations', 'Conversations')}
         />
         <StatTile
           label="Active days"
@@ -211,6 +222,7 @@ export function AgentBentoGrid({
               ? `of ${formatNumber(Math.round(stats.calendarDays))} in range`
               : 'needs daily buckets'
           }
+          contextReference={contextFor('active-days', 'Active days')}
         />
       </div>
 
@@ -220,10 +232,15 @@ export function AgentBentoGrid({
           repoSeries={repoSeries}
           onRepoToggle={onRepoToggle}
           labelFor={labelFor}
+          contextReference={contextFor('usage-over-time', 'Usage over time')}
         />
       </div>
       <div className="lg:col-span-6 xl:col-span-4">
-        <DailyActiveUsage burnSeries={burnSeries} stats={stats} />
+        <DailyActiveUsage
+          burnSeries={burnSeries}
+          stats={stats}
+          contextReference={contextFor('daily-active-usage', 'Daily active usage')}
+        />
       </div>
 
       {/* Row 2 — Q4 cost-per-conversation distribution + Q3 per-turn context distribution */}
@@ -233,15 +250,27 @@ export function AgentBentoGrid({
           windowDays={windowDays}
           expanded={expanded === 'conversationSize'}
           onToggleExpand={() => toggle('conversationSize')}
+          contextReference={contextFor('cost-per-conversation', 'Cost per conversation')}
         />
       </div>
       <div className="lg:col-span-6 xl:col-span-6">
-        <ContextDistributionCell row={contextHealth} windowDays={windowDays} />
+        <ContextDistributionCell
+          row={contextHealth}
+          windowDays={windowDays}
+          contextReference={contextFor('per-turn-context-size', 'Per-turn context size')}
+        />
       </div>
 
       {/* Row 3 — Q4b how per-turn cost & context grow as a conversation deepens */}
       <div className="lg:col-span-6 xl:col-span-12">
-        <CostByDepthCell rows={costByDepth} windowDays={windowDays} />
+        <CostByDepthCell
+          rows={costByDepth}
+          windowDays={windowDays}
+          contextReference={contextFor(
+            'cost-as-conversations-deepen',
+            'Cost as conversations deepen',
+          )}
+        />
       </div>
 
       {/* Row 4 — directly linked review units */}
@@ -256,6 +285,7 @@ export function AgentBentoGrid({
           windowDays={windowDays}
           expanded={expanded === 'spendConcentration'}
           onToggleExpand={() => toggle('spendConcentration')}
+          contextReference={contextFor('where-spend-concentrates', 'Where spend concentrates')}
           expandedContent={
             <SpendConcentrationDetail
               sessions={topSessions}
@@ -278,6 +308,7 @@ export function AgentBentoGrid({
           labelFor={labelFor}
           expanded={notableOpen}
           onToggleExpand={() => setNotableOpen((open) => !open)}
+          contextReference={contextFor('notable-changes', 'Notable changes')}
         />
       </div>
     </div>

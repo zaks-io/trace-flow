@@ -52,6 +52,10 @@ export function buildUsageSyncRequestInit(secret: string, payload: UsageSyncPayl
   };
 }
 
+export function isPermanentUsageSyncFailure(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
 export class UsageTracker extends DurableObject<Env> {
   private initialized = false;
 
@@ -396,6 +400,14 @@ export class UsageTracker extends DurableObject<Env> {
 
     if (!response.ok) {
       const body = await response.text();
+      if (isPermanentUsageSyncFailure(response.status)) {
+        logger.warn('proxy.usage_sync_rejected', {
+          status: response.status,
+          body,
+        });
+        return;
+      }
+
       logger.error('proxy.usage_sync_failed', undefined, {
         status: response.status,
         body,

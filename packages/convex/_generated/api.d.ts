@@ -355,6 +355,166 @@ export declare const api: {
       any
     >;
   };
+  analyst: {
+    cancelSandboxRun: FunctionReference<
+      "action",
+      "public",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    checkpointSandboxRun: FunctionReference<
+      "action",
+      "public",
+      {
+        backup: { dir: string; id: string; localBucket?: boolean };
+        runId: Id<"analystSandboxRuns">;
+        token: string;
+      },
+      any
+    >;
+    cleanupSandboxRunContainer: FunctionReference<
+      "action",
+      "public",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    completeSandboxRun: FunctionReference<
+      "action",
+      "public",
+      {
+        backup?: { dir: string; id: string; localBucket?: boolean };
+        error?: string;
+        resultText?: string;
+        runId: Id<"analystSandboxRuns">;
+        status: "completed" | "failed" | "timed_out" | "cancelled";
+        token: string;
+      },
+      any
+    >;
+    conversationUsageSummary: FunctionReference<
+      "query",
+      "public",
+      { threadId: Id<"analystThreads"> },
+      any
+    >;
+    executeSandboxToolCall: FunctionReference<
+      "action",
+      "public",
+      {
+        arguments?: any;
+        runId: Id<"analystSandboxRuns">;
+        token: string;
+        toolName: string;
+      },
+      any
+    >;
+    getSandboxRun: FunctionReference<
+      "query",
+      "public",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    listMessages: FunctionReference<
+      "query",
+      "public",
+      {
+        paginationOpts: {
+          cursor: string | null;
+          endCursor?: string | null;
+          id?: number;
+          maximumBytesRead?: number;
+          maximumRowsRead?: number;
+          numItems: number;
+        };
+        streamArgs?:
+          | { kind: "list"; startOrder?: number }
+          | {
+              cursors: Array<{ cursor: number; streamId: string }>;
+              kind: "deltas";
+            };
+        threadId: Id<"analystThreads">;
+      },
+      any
+    >;
+    listSandboxRunEvents: FunctionReference<
+      "query",
+      "public",
+      { afterSeq?: number; limit?: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    listSandboxRunRows: FunctionReference<
+      "query",
+      "public",
+      { limit?: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    listSandboxRuns: FunctionReference<
+      "query",
+      "public",
+      { threadId: Id<"analystThreads"> },
+      any
+    >;
+    listThreads: FunctionReference<"query", "public", {}, any>;
+    receiveSandboxEvents: FunctionReference<
+      "action",
+      "public",
+      {
+        events: Array<{
+          data?: any;
+          emittedAt?: number;
+          message?: string;
+          type:
+            | "status"
+            | "stdout"
+            | "stderr"
+            | "message"
+            | "tool_call"
+            | "tool_result"
+            | "result"
+            | "error"
+            | "control"
+            | "usage";
+        }>;
+        runId: Id<"analystSandboxRuns">;
+        token: string;
+      },
+      any
+    >;
+    refreshSandboxRunStatus: FunctionReference<
+      "action",
+      "public",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    sendMessage: FunctionReference<
+      "action",
+      "public",
+      {
+        pageContextReferences?: Array<{
+          filters?: Record<string, string | number | boolean | null>;
+          label: string;
+          objectId: string;
+          route: string;
+          surface: "agents";
+        }>;
+        prompt: string;
+        threadId?: Id<"analystThreads">;
+      },
+      any
+    >;
+    stopRun: FunctionReference<
+      "action",
+      "public",
+      { threadId: Id<"analystThreads"> },
+      any
+    >;
+    verifySandboxRunToken: FunctionReference<
+      "action",
+      "public",
+      { runId: Id<"analystSandboxRuns">; token: string },
+      any
+    >;
+  };
   apiKeys: {
     create: FunctionReference<
       "mutation",
@@ -1266,6 +1426,272 @@ export declare const internal: {
       }>
     >;
   };
+  analyst: {
+    appendSandboxRunEvents: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        events: Array<{
+          data?: any;
+          emittedAt?: number;
+          message?: string;
+          type:
+            | "status"
+            | "stdout"
+            | "stderr"
+            | "message"
+            | "tool_call"
+            | "tool_result"
+            | "result"
+            | "error"
+            | "control"
+            | "usage";
+        }>;
+        now: number;
+        runId: Id<"analystSandboxRuns">;
+        tokenHash: string;
+      },
+      any
+    >;
+    completeSandboxRunInternal: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        error?: string;
+        now: number;
+        resultText?: string;
+        runId: Id<"analystSandboxRuns">;
+        status: "completed" | "failed" | "timed_out" | "cancelled";
+        tokenHash: string;
+      },
+      any
+    >;
+    continueAfterSandboxRun: FunctionReference<
+      "action",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    createSandboxRun: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        analystThreadId: Id<"analystThreads">;
+        creatorUserId: Id<"users">;
+        maxRuntimeMs: number;
+        now: number;
+        orgId: Id<"organizations">;
+        pageContextReferences?: Array<{
+          filters?: Record<string, string | number | boolean | null>;
+          label: string;
+          objectId: string;
+          route: string;
+          surface: "agents";
+        }>;
+        prompt: string;
+        resumeAttempt?: number;
+        runTokenHash: string;
+        sandboxId: string;
+      },
+      any
+    >;
+    emitSandboxRunNote: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        label: string;
+        now: number;
+        runId: Id<"analystSandboxRuns">;
+        text: string;
+      },
+      any
+    >;
+    getActiveSandboxRunsForAction: FunctionReference<
+      "query",
+      "internal",
+      { threadId: Id<"analystThreads">; userId: Id<"users"> },
+      any
+    >;
+    getOwnedSandboxRunForAction: FunctionReference<
+      "query",
+      "internal",
+      { runId: Id<"analystSandboxRuns">; userId: Id<"users"> },
+      any
+    >;
+    getOwnedThreadForAction: FunctionReference<
+      "query",
+      "internal",
+      { threadId: Id<"analystThreads">; userId: Id<"users"> },
+      any
+    >;
+    getSandboxRunEventsForAction: FunctionReference<
+      "query",
+      "internal",
+      { limit: number; runId: Id<"analystSandboxRuns">; userId: Id<"users"> },
+      any
+    >;
+    getSandboxRunForAction: FunctionReference<
+      "query",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    getSandboxRunForReap: FunctionReference<
+      "query",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    getSandboxRunLivenessContext: FunctionReference<
+      "query",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    getThreadByAgentThreadIdForAction: FunctionReference<
+      "query",
+      "internal",
+      { agentThreadId: string; userId: Id<"users"> },
+      any
+    >;
+    getThreadStopRequestedAtForAction: FunctionReference<
+      "query",
+      "internal",
+      { threadId: Id<"analystThreads">; userId: Id<"users"> },
+      any
+    >;
+    getVerifiedSandboxRunForAction: FunctionReference<
+      "query",
+      "internal",
+      { runId: Id<"analystSandboxRuns">; tokenHash: string },
+      any
+    >;
+    insertThread: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        agentThreadId: string;
+        creatorUserId: Id<"users">;
+        now: number;
+        orgId: Id<"organizations">;
+        title: string;
+      },
+      any
+    >;
+    markSandboxContinuationScheduled: FunctionReference<
+      "mutation",
+      "internal",
+      { now: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    markSandboxRunInterrupted: FunctionReference<
+      "mutation",
+      "internal",
+      { error: string; now: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    markSandboxRunStarted: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        now: number;
+        processId?: string;
+        runId: Id<"analystSandboxRuns">;
+        userId: Id<"users">;
+      },
+      any
+    >;
+    markSandboxRunTimedOut: FunctionReference<
+      "mutation",
+      "internal",
+      { error: string; now: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    reapTimedOutSandboxRun: FunctionReference<
+      "action",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    recordAnalystUsageInternal: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        agentThreadId: string;
+        cacheReadTokens: number;
+        cost?: number;
+        now: number;
+        totalTokens: number;
+      },
+      any
+    >;
+    recordSandboxControl: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        action: "status" | "tail" | "cancel" | "steer" | "follow_up";
+        message?: string;
+        now: number;
+        runId: Id<"analystSandboxRuns">;
+        userId: Id<"users">;
+      },
+      any
+    >;
+    requestThreadStop: FunctionReference<
+      "mutation",
+      "internal",
+      { now: number; threadId: Id<"analystThreads">; userId: Id<"users"> },
+      any
+    >;
+    resumeOrFailStaleSandboxRun: FunctionReference<
+      "action",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    storeThreadSandboxBackup: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        backup: { dir: string; id: string; localBucket?: boolean };
+        now: number;
+        runId: Id<"analystSandboxRuns">;
+        tokenHash: string;
+      },
+      any
+    >;
+    streamMessage: FunctionReference<
+      "action",
+      "internal",
+      {
+        hiddenPrompt?: boolean;
+        pageContextReferences?: Array<{
+          filters?: Record<string, string | number | boolean | null>;
+          label: string;
+          objectId: string;
+          route: string;
+          surface: "agents";
+        }>;
+        prompt: string;
+        stopBaselineAt?: number;
+        threadId: Id<"analystThreads">;
+        userId: Id<"users">;
+      },
+      any
+    >;
+    timeoutSandboxRunIfExpired: FunctionReference<
+      "mutation",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    touchThread: FunctionReference<
+      "mutation",
+      "internal",
+      { now: number; threadId: Id<"analystThreads">; userId: Id<"users"> },
+      any
+    >;
+  };
   apiKeys: {
     getByIdInternal: FunctionReference<
       "query",
@@ -1451,6 +1877,12 @@ export declare const internal: {
         "internal",
         {},
         { imported: number; skipped: number }
+      >;
+      importOneFromOpenRouterInternal: FunctionReference<
+        "action",
+        "internal",
+        { model: string },
+        { imported: boolean }
       >;
       listAll: FunctionReference<
         "query",
@@ -2341,4 +2773,5 @@ export declare const internal: {
 export declare const components: {
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   launchdarkly: import("@convex-dev/launchdarkly/_generated/component.js").ComponentApi<"launchdarkly">;
+  agent: import("@convex-dev/agent/_generated/component.js").ComponentApi<"agent">;
 };

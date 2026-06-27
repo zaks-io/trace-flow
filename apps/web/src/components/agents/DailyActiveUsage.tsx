@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { formatCurrency, formatNumber, parseTinybirdDate } from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { BentoCell } from './BentoCell';
@@ -45,10 +46,12 @@ const CHART_CONFIG = {
 export function DailyActiveUsage({
   burnSeries,
   stats,
+  contextReference,
 }: {
   burnSeries: AgentTimeseriesRow[];
   /** null until daily buckets exist; the headline averages and deltas come from here. */
   stats: BurnRateStats | null;
+  contextReference?: AnalystPageContextReference;
 }) {
   const days = useMemo(() => buildDays(burnSeries), [burnSeries]);
 
@@ -57,6 +60,7 @@ export function DailyActiveUsage({
       title="Daily active usage"
       hint="per active day"
       caveat="Bars and rates count only days with activity (idle days excluded). Cost is an estimate (lower bound)."
+      contextReference={contextReference}
     >
       <div className="flex flex-col">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-3">

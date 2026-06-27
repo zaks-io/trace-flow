@@ -720,10 +720,12 @@ describe('convex/http.ts', () => {
   });
 
   describe('POST /usage/record', () => {
+    const ORG_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
+
     it('records usage when trace context is provided', async () => {
       vi.stubEnv('USAGE_SYNC_SECRET', 'sync-secret');
       const app = createApp(deps);
-      ctx.runQuery.mockResolvedValue({ _id: 'org123' });
+      ctx.runQuery.mockResolvedValue({ _id: ORG_ID });
       ctx.runMutation.mockResolvedValue(undefined);
 
       const res = await app.request(
@@ -736,7 +738,7 @@ describe('convex/http.ts', () => {
             traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
           },
           body: JSON.stringify({
-            orgId: 'org123',
+            orgId: ORG_ID,
             periodStart: 1,
             periodEnd: 2,
             subscriptionUnitsUsed: 3,
@@ -754,17 +756,110 @@ describe('convex/http.ts', () => {
       expect(ctx.runQuery).toHaveBeenCalledOnce();
       expect(ctx.runMutation).toHaveBeenCalledTimes(2);
       expect(ctx.runMutation.mock.calls[0]?.[1]).toMatchObject({
-        orgId: 'org123',
+        orgId: ORG_ID,
         periodStart: 1,
         periodEnd: 2,
         subscriptionUnitsUsed: 3,
         addonUnitsUsed: 4,
       });
       expect(ctx.runMutation.mock.calls[1]?.[1]).toMatchObject({
-        orgId: 'org123',
+        orgId: ORG_ID,
         subscriptionUnitsUsed: 3,
         addonUnitsUsed: 4,
       });
+    });
+
+    it('rejects malformed org ids before Convex validators run', async () => {
+      vi.stubEnv('USAGE_SYNC_SECRET', 'sync-secret');
+      const app = createApp(deps);
+
+      const res = await app.request(
+        'http://localhost/usage/record',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer sync-secret',
+          },
+          body: JSON.stringify({
+            orgId: 'org_dev_smoke',
+            periodStart: 1,
+            periodEnd: 2,
+            subscriptionUnitsUsed: 3,
+            addonUnitsUsed: 4,
+          }),
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: 'Invalid organization id' });
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /agent-ingest/claim-sessions', () => {
+    const ORG_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
+    const USER_ID = 'j57axc8sefsfp6k28nx6c481js806pwv';
+
+    beforeEach(() => {
+      vi.stubEnv('AGENT_INGEST_SHARED_SECRET', 'agent-secret');
+    });
+
+    it('rejects malformed org ids before Convex validators run', async () => {
+      const app = createApp(deps);
+
+      const res = await app.request(
+        'http://localhost/agent-ingest/claim-sessions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer agent-secret',
+          },
+          body: JSON.stringify({
+            orgId: 'org_dev_smoke',
+            userId: USER_ID,
+            collectorId: 'collector-1',
+            sessionPks: ['session-1'],
+          }),
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: 'Invalid organization id' });
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed user ids before Convex validators run', async () => {
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValueOnce({ _id: ORG_ID });
+
+      const res = await app.request(
+        'http://localhost/agent-ingest/claim-sessions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer agent-secret',
+          },
+          body: JSON.stringify({
+            orgId: ORG_ID,
+            userId: 'user_dev_smoke',
+            collectorId: 'collector-1',
+            sessionPks: ['session-1'],
+          }),
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: 'Invalid user id' });
+      expect(ctx.runQuery).toHaveBeenCalledOnce();
+      expect(ctx.runMutation).not.toHaveBeenCalled();
     });
   });
 

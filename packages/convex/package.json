@@ -10,8 +10,10 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@convex-dev/agent": "^0.6.4",
     "@convex-dev/launchdarkly": "^0.4.0",
     "@convex-dev/rate-limiter": "^0.3.2",
+    "@openrouter/ai-sdk-provider": "^2.9.1",
     "@react-email/components": "^1.0.12",
     "@trace-flow/emails": "workspace:*",
     "@trace-flow/logging": "workspace:*",
@@ -20,13 +22,15 @@
     "@trace-flow/tinybird-client": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*",
+    "ai": "^6.0.208",
     "convex": "^1.38.0",
     "convex-helpers": "^0.1.117",
     "hono": "^4.12.18",
     "jose": "^6.2.3",
     "react": "^19.2.6",
     "resend": "^6.12.3",
-    "stripe": "^20.3.1"
+    "stripe": "^20.3.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.6",

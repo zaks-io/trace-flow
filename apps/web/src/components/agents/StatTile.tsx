@@ -1,6 +1,10 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { Check } from 'lucide-react';
+import { useOptionalAnalyst } from '@/components/analyst/AnalystContext';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
+import { cn } from '@/lib/utils';
 import { DeltaBadge } from './DeltaBadge';
 
 /**
@@ -16,6 +20,7 @@ export function StatTile({
   invertDelta,
   chip,
   chipTitle,
+  contextReference,
 }: {
   label: string;
   value: string;
@@ -27,9 +32,40 @@ export function StatTile({
   invertDelta?: boolean;
   chip?: string;
   chipTitle?: string;
+  contextReference?: AnalystPageContextReference;
 }) {
+  const analyst = useOptionalAnalyst();
+  const selectable = Boolean(analyst?.selectionMode && contextReference);
+  const selected = contextReference
+    ? (analyst?.isReferenceSelected(contextReference) ?? false)
+    : false;
+
   return (
-    <div className="rounded-xl bg-card/40 p-4">
+    <div
+      role={selectable ? 'button' : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      aria-pressed={selectable ? selected : undefined}
+      onClick={() => {
+        if (contextReference && selectable) analyst?.toggleReference(contextReference);
+      }}
+      onKeyDown={(event) => {
+        if (!contextReference || !selectable || (event.key !== 'Enter' && event.key !== ' '))
+          return;
+        event.preventDefault();
+        analyst?.toggleReference(contextReference);
+      }}
+      className={cn(
+        'relative rounded-xl bg-card/40 p-4',
+        selectable &&
+          'cursor-pointer border border-border/60 transition-colors hover:border-primary/50',
+        selected && 'border-primary/70 ring-2 ring-primary/30',
+      )}
+    >
+      {selected && (
+        <span className="absolute right-2 top-2 rounded-full bg-primary p-1 text-primary-foreground">
+          <Check className="h-3 w-3" />
+        </span>
+      )}
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
       <div className="mt-1 flex items-baseline gap-2">
         <p className="font-mono text-2xl font-semibold tabular-nums text-foreground">{value}</p>

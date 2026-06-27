@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { BentoCell } from './BentoCell';
@@ -36,6 +37,7 @@ export function NotableChangesStrip({
   labelFor,
   expanded,
   onToggleExpand,
+  contextReference,
 }: {
   signals: AttentionSignal[];
   notableTotal: AgentNotableChangeRow | null;
@@ -46,6 +48,7 @@ export function NotableChangesStrip({
   labelFor: (value: string) => string;
   expanded: boolean;
   onToggleExpand: () => void;
+  contextReference?: AnalystPageContextReference;
 }) {
   const visible = signals.slice(0, VISIBLE_SIGNALS);
   const hidden = signals.length - visible.length;
@@ -78,6 +81,7 @@ export function NotableChangesStrip({
       expandable
       expanded={expanded}
       onToggleExpand={onToggleExpand}
+      contextReference={contextReference}
       caveat="Period-over-period facts and threshold crossings, not a statistical anomaly model. Spend pace is compared against a trailing 28-day daily average."
       expandedContent={
         <div className="flex flex-col gap-6">

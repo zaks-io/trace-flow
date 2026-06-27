@@ -226,8 +226,42 @@ Proxy-side redaction of common PII patterns before bodies are written to R2 or r
 **MCP Session**:
 A Model Context Protocol session (Convex table `mcpSessions`), scoped to one user.
 
+**Trace Flow Tool**:
+A shared tool implementation that exposes a bounded Trace Flow operation to AI-facing surfaces.
+_Avoid_: "MCP Tool" when the implementation is shared beyond MCP.
+
 **MCP Tool**:
-A tool exposed by the MCP server (e.g. `getTraceAction`, `listTracesAction`). MCP Tools obtain Pipe Tokens via `generateTokenInternal`, not the user-facing path.
+A **Trace Flow Tool** exposed through the MCP server (e.g. `getTraceAction`, `listTracesAction`). MCP Tools obtain Pipe Tokens via `generateTokenInternal`, not the user-facing path.
+
+### Analyst
+
+**Trace Flow Analyst**:
+The dedicated conversational analysis product surface for asking questions about Trace Flow data.
+_Avoid_: "agent" (collides with **Agent Session** and **Source**).
+
+**Analyst Sidebar**:
+The collapsible right-side **Trace Flow Analyst** chat surface.
+_Avoid_: "agent sidebar".
+
+**Analyst Runtime**:
+The isolated runtime that answers **Trace Flow Analyst** questions by coordinating model calls and approved tools.
+_Avoid_: "agent runtime", "MCP runtime".
+
+**Analyst Thread**:
+A creator-private Trace Flow-owned conversation record for a **Trace Flow Analyst** session.
+_Avoid_: "agent thread" when discussing product-owned conversation history.
+
+**Analyst Tool**:
+A **Trace Flow Tool** exposed to the **Analyst Runtime**.
+_Avoid_: "MCP Tool" when discussing Analyst-only access.
+
+**Context Selection Mode**:
+A **Trace Flow Analyst** UI mode where a user selects visible page objects to attach to their next message.
+_Avoid_: "screen scraping mode".
+
+**Page Context Reference**:
+A user-selected page object attached to an **Analyst Thread** message.
+_Avoid_: "screenshot", "DOM scrape".
 
 ### Agent analytics
 
@@ -358,6 +392,8 @@ _Avoid_: conflating with **StartedAt**.
 - The **Proxy Consumer** receives **Queue Message** batches, builds **Spans**, and hands them to a **Trace Shard**.
 - A **Trace Shard** flushes accumulated **Spans** into the `otel_trace_spans` **Datasource**.
 - The **Web** app reads **Spans** through Tinybird **Pipes** (using a **Pipe Token**) and fetches **Body Objects** through the **API Worker**.
+- **Trace Flow Analyst** conversations happen in the **Analyst Sidebar** and are represented by creator-private **Analyst Threads**, which use the **Analyst Runtime** to answer user questions through approved **Analyst Tools**.
+- **Context Selection Mode** adds one or more **Page Context References** to the next **Analyst Thread** message.
 - The **Collector** parses local **Source** transcripts into agent facts and uploads them to **Agent Ingest** with a **Collector Credential**.
 - **Agent Ingest** validates the upload, claims **Agent Session** ownership through Convex, and sends agent fact messages to the agent queue.
 - **Agent Consumer** prices, dedupes, and writes agent facts to `agent_*` **Datasources** for `/app/agents`.
@@ -382,5 +418,9 @@ _Avoid_: conflating with **StartedAt**.
 - **Root key naming** — `EncryptedStoredBodiesPayload` references a root key threaded into the worker as `rootKeyBase64`, but there's no canonical noun for the key itself. _Unresolved_: pick a project term ("Root Encryption Key"? "Body Root Key"?) and align the env var with it.
 - **"project"** was used for both a Trace Flow **Project** (a declared cross-source grouping) and `~/.claude/projects` (Claude Code's local per-workspace storage). _Resolved_: capitalized **Project** is the Trace Flow grouping; the local directory is "the local projects directory" and maps closer to a single repository.
 - **"session"** means three different things: an **Agent Session** (a parsed agent conversation), an **MCP Session** (a Model Context Protocol session), and a vendor "session id" inside Source transcripts. _Resolved_: always qualify as **Agent Session** or **MCP Session**; "vendor session ID" is the raw Source identifier that seeds an Agent Session's identity.
+- **"agent"** was used for both collected coding-agent activity and the new conversational analysis product. _Resolved_: the product is **Trace Flow Analyst**; its backend execution boundary is the **Analyst Runtime**.
+- **"MCP Tool"** was used to mean both a shared implementation and its MCP exposure. _Resolved_: the implementation is a **Trace Flow Tool**; **MCP Tool** and **Analyst Tool** are surface-specific exposures.
+- **"thread"** was used for both product-owned Analyst conversation history and runtime-managed message storage. _Resolved_: **Analyst Thread** is the Trace Flow-owned conversation record.
+- **"highlight boxes"** was used for Analyst-aware page selection. _Resolved_: use **Context Selection Mode** for the mode and **Page Context Reference** for each selected object.
 - **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn; **EventAt** is the fact retention and partition anchor; **LastEventAt** anchors session-summary retention and raw replay eligibility; **VendorStartedAt** is the Source's own declared start, captured as metadata where available.
 - **"dev"** meant three different things: (a) a Worker named `*-dev`, (b) the everyday "local Workers → cloud data" setup a developer runs, and (c) the fully local no-cloud stack the setup scripts provision by default. This directly caused a developer and an agent to expect data in different places. _Resolved_: a `*-dev` Worker is just the default **Local Workers** config, not a cloud environment; "where my data ends up" for daily development is **Cloud-Dev**; the scripted default is **Self-Contained Local** (for Cursor/CI). Always name which of **Control Plane** / **Data Plane** points at cloud vs local rather than saying "dev" unqualified.

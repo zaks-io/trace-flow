@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Bar, BarChart, Cell, ReferenceLine, XAxis, YAxis } from 'recharts';
+import type { AnalystPageContextReference } from '@/components/analyst/pageContext';
 import { formatNumber } from '@/lib/format';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { BentoCell } from './BentoCell';
@@ -23,9 +24,11 @@ const CHART_CONFIG = {
 export function ContextDistributionCell({
   row,
   windowDays,
+  contextReference,
 }: {
   row: AgentContextHealthRow | null;
   windowDays: number;
+  contextReference?: AnalystPageContextReference;
 }) {
   const hasData = row != null && row.model_call_count > 0;
   const threshold = row?.attention_threshold_tokens ?? 140_000;
@@ -41,6 +44,7 @@ export function ContextDistributionCell({
       caveat={`Per-turn context = input + cache read + cache write. The ${formatNumber(
         threshold,
       )} marker is a rough accuracy guide, not a limit. Last ${windowDays} days.`}
+      contextReference={contextReference}
     >
       {hasData && row ? (
         <div className="flex h-full flex-col">

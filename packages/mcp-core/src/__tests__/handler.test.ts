@@ -295,6 +295,27 @@ describe('dispatchToolCall', () => {
     expect(backend.resolveKeyIds).not.toHaveBeenCalled();
   });
 
+  it('does not expose API key inventory on the sandbox data API surface', async () => {
+    const backend = createBackend();
+
+    const response = await dispatchToolCall(
+      backend,
+      'https://api.tinybird.test',
+      1,
+      {
+        name: 'list_api_keys',
+        arguments: {},
+      },
+      undefined,
+      'analyst',
+    );
+
+    expect(response.error?.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(response.error?.message).toBe('Unknown tool: list_api_keys');
+    expect(backend.getUserContext).not.toHaveBeenCalled();
+    expect(backend.listApiKeys).not.toHaveBeenCalled();
+  });
+
   it('lists API keys through the backend formatter', async () => {
     const listApiKeys = vi.fn(async () => [
       { id: 'key-1', name: 'prod', expiresAt: Date.now() + 60_000 },
@@ -384,7 +405,7 @@ describe('dispatchToolCall', () => {
     );
   });
 
-  it('dispatches agent analytics without requiring API keys', async () => {
+  it('dispatches agent analytics through the sandbox data API without requiring API keys', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
       json: () =>
@@ -406,13 +427,20 @@ describe('dispatchToolCall', () => {
       resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: [] })),
     });
 
-    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
-      name: 'query_agent_analytics',
-      arguments: {
-        view: 'summary',
-        filters: { repo_fingerprints: ['repo_123'] },
+    const response = await dispatchToolCall(
+      backend,
+      'https://api.tinybird.test',
+      1,
+      {
+        name: 'query_agent_analytics',
+        arguments: {
+          view: 'summary',
+          filters: { repo_fingerprints: ['repo_123'] },
+        },
       },
-    });
+      undefined,
+      'analyst',
+    );
 
     expect(response.error).toBeUndefined();
     expect(mintToken).toHaveBeenCalledWith(
@@ -422,17 +450,24 @@ describe('dispatchToolCall', () => {
     );
   });
 
-  it('dispatches agent analytics description without requiring API keys', async () => {
+  it('dispatches agent analytics description through the sandbox data API', async () => {
     const mintToken = vi.fn(async () => 'tb-token');
     const backend = createBackend({
       mintToken,
       resolveKeyIds: vi.fn(async () => ({ ok: true as const, keyIds: [] })),
     });
 
-    const response = await dispatchToolCall(backend, 'https://api.tinybird.test', 1, {
-      name: 'describe_agent_analytics',
-      arguments: { include_values: false },
-    });
+    const response = await dispatchToolCall(
+      backend,
+      'https://api.tinybird.test',
+      1,
+      {
+        name: 'describe_agent_analytics',
+        arguments: { include_values: false },
+      },
+      undefined,
+      'analyst',
+    );
 
     expect(response.error).toBeUndefined();
     expect(mintToken).not.toHaveBeenCalled();

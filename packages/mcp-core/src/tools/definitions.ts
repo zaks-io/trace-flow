@@ -136,7 +136,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'list_traces',
     description:
-      'List recent LLM trace rows with optional filtering by provider, model, or status. Rows are span/model-call level, so a single trace_id may appear more than once.',
+      'List recent LLM trace rows with optional filtering by provider, model, or status. Rows are span/model-call level, so a single trace_id may appear more than once. Use this for row-level inspection; for cost, latency, or token totals prefer the aggregate tools (get_usage_summary, list_model_usage, list_operation_usage) instead of summing rows yourself.',
     inputSchema: {
       type: 'object',
       properties: {

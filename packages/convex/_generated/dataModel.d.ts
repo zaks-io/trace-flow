@@ -120,6 +120,216 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  analystSandboxRunEvents: {
+    document: {
+      analystThreadId: Id<"analystThreads">;
+      creatorUserId: Id<"users">;
+      data?: any;
+      emittedAt: number;
+      message?: string;
+      orgId: Id<"organizations">;
+      runId: Id<"analystSandboxRuns">;
+      seq: number;
+      type:
+        | "status"
+        | "stdout"
+        | "stderr"
+        | "message"
+        | "tool_call"
+        | "tool_result"
+        | "result"
+        | "error"
+        | "control"
+        | "usage";
+      _id: Id<"analystSandboxRunEvents">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "analystThreadId"
+      | "creatorUserId"
+      | "data"
+      | "emittedAt"
+      | "message"
+      | "orgId"
+      | "runId"
+      | "seq"
+      | "type";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_run_seq: ["runId", "seq", "_creationTime"];
+      by_thread_seq: ["analystThreadId", "seq", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  analystSandboxRuns: {
+    document: {
+      analystThreadId: Id<"analystThreads">;
+      completedAt?: number;
+      continuationScheduledAt?: number;
+      creatorUserId: Id<"users">;
+      error?: string;
+      lastEventAt?: number;
+      maxRuntimeMs: number;
+      nextSeq: number;
+      orgId: Id<"organizations">;
+      pageContextReferences?: Array<any>;
+      processId?: string;
+      prompt: string;
+      resultText?: string;
+      resumeAttempt?: number;
+      runTokenHash: string;
+      sandboxId: string;
+      startedAt?: number;
+      status:
+        | "queued"
+        | "starting"
+        | "running"
+        | "completed"
+        | "failed"
+        | "timed_out"
+        | "cancelled";
+      updatedAt: number;
+      usageApplied?: {
+        cacheReadTokens: number;
+        totalCost: number;
+        totalTokens: number;
+      };
+      _id: Id<"analystSandboxRuns">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "analystThreadId"
+      | "completedAt"
+      | "continuationScheduledAt"
+      | "creatorUserId"
+      | "error"
+      | "lastEventAt"
+      | "maxRuntimeMs"
+      | "nextSeq"
+      | "orgId"
+      | "pageContextReferences"
+      | "processId"
+      | "prompt"
+      | "resultText"
+      | "resumeAttempt"
+      | "runTokenHash"
+      | "sandboxId"
+      | "startedAt"
+      | "status"
+      | "updatedAt"
+      | "usageApplied"
+      | "usageApplied.cacheReadTokens"
+      | "usageApplied.totalCost"
+      | "usageApplied.totalTokens";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_creator_status_updated: [
+        "creatorUserId",
+        "status",
+        "updatedAt",
+        "_creationTime",
+      ];
+      by_status_updated: ["status", "updatedAt", "_creationTime"];
+      by_thread_updated: ["analystThreadId", "updatedAt", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  analystThreads: {
+    document: {
+      agentThreadId: string;
+      creatorUserId: Id<"users">;
+      lastMessageAt?: number;
+      orgId: Id<"organizations">;
+      sandboxBackup?: {
+        dir: string;
+        id: string;
+        localBucket?: boolean;
+        updatedAt: number;
+      };
+      status: "active" | "archived";
+      stopRequestedAt?: number;
+      title: string;
+      updatedAt: number;
+      _id: Id<"analystThreads">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "agentThreadId"
+      | "creatorUserId"
+      | "lastMessageAt"
+      | "orgId"
+      | "sandboxBackup"
+      | "sandboxBackup.dir"
+      | "sandboxBackup.id"
+      | "sandboxBackup.localBucket"
+      | "sandboxBackup.updatedAt"
+      | "status"
+      | "stopRequestedAt"
+      | "title"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_agent_thread_id: ["agentThreadId", "_creationTime"];
+      by_creator_status_updated: [
+        "creatorUserId",
+        "status",
+        "updatedAt",
+        "_creationTime",
+      ];
+      by_creator_updated: ["creatorUserId", "updatedAt", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  analystUsageLedger: {
+    document: {
+      agent: "analyst" | "pi";
+      analystThreadId: Id<"analystThreads">;
+      cacheReadTokens: number;
+      creatorUserId: Id<"users">;
+      hasCost: boolean;
+      orgId: Id<"organizations">;
+      requests: number;
+      totalCost: number;
+      totalTokens: number;
+      updatedAt: number;
+      _id: Id<"analystUsageLedger">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "agent"
+      | "analystThreadId"
+      | "cacheReadTokens"
+      | "creatorUserId"
+      | "hasCost"
+      | "orgId"
+      | "requests"
+      | "totalCost"
+      | "totalTokens"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org: ["orgId", "_creationTime"];
+      by_thread: ["analystThreadId", "_creationTime"];
+      by_thread_agent: ["analystThreadId", "agent", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   apiKeys: {
     document: {
       expiresAt: number;
