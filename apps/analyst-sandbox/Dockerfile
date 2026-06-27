@@ -35,4 +35,13 @@ RUN npm init -y \
 
 WORKDIR /workspace
 
+# Untrusted, model-generated code (the Pi runner and /execute analysis) runs as
+# this unprivileged user via setpriv, never as root. The /sandbox container server
+# itself stays root (it manages the container); only the agent processes drop down.
+# /workspace is chowned to traceflow at run start (writeFile/mkdir/unsquashfs run
+# as root and would otherwise leave files the agent can't write).
+RUN useradd --uid 10001 --create-home --home-dir /home/traceflow \
+  --shell /usr/sbin/nologin traceflow \
+  && chown traceflow:traceflow /workspace
+
 ENTRYPOINT ["/sandbox"]

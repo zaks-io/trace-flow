@@ -121,6 +121,28 @@ const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 /** In-container scratch path for the squashfs archive (outside /workspace, so it is never self-captured). */
 const SNAPSHOT_ARCHIVE_PATH = '/tmp/traceflow-workspace.sqfs';
 
+/**
+ * Untrusted, model-generated code runs as this unprivileged user, never root.
+ * The /sandbox server (and our writeFile/mkdir/exec helpers) run as root, so we
+ * drop privileges per-command with setpriv, which execs the target in place (no
+ * extra process layer — PID tracking by the SDK stays intact). Created in the
+ * Dockerfile; /workspace is chowned to it before each run.
+ */
+const SANDBOX_RUN_USER = 'traceflow';
+const DROP_PRIVS = `setpriv --reuid ${SANDBOX_RUN_USER} --regid ${SANDBOX_RUN_USER} --init-groups`;
+
+/**
+ * writeFile/mkdir/unsquashfs all run as root and leave root-owned files the
+ * unprivileged runner can't write. Hand /workspace to the run user before
+ * starting any agent process.
+ */
+async function chownWorkspace(sandbox: ReturnType<typeof getAnalystSandbox>): Promise<void> {
+  const result = await sandbox.exec(`chown -R ${SANDBOX_RUN_USER}:${SANDBOX_RUN_USER} /workspace`);
+  if (!result.success) {
+    throw new Error(`chown /workspace failed (exit ${result.exitCode}): ${result.stderr}`);
+  }
+}
+
 function jsonResponse(value: unknown, init?: ResponseInit): Response {
   return Response.json(value, {
     ...init,
@@ -480,9 +502,10 @@ async function handleExecuteAnalysis(request: Request, env: Env): Promise<Respon
   try {
     const scriptPath = '/workspace/traceflow_analysis.py';
     await sandbox.writeFile(scriptPath, buildPythonScript(parsed.request));
+    await chownWorkspace(sandbox);
 
     const result = await sandbox.exec(
-      'env -i HOME=/workspace PATH=/usr/local/bin:/usr/bin:/bin python3 /workspace/traceflow_analysis.py',
+      `${DROP_PRIVS} env -i HOME=/workspace PATH=/usr/local/bin:/usr/bin:/bin python3 /workspace/traceflow_analysis.py`,
       {
         cwd: '/workspace',
         timeout: EXECUTION_TIMEOUT_MS,
@@ -573,8 +596,12 @@ async function handleStartPiRun(request: Request, env: Env, url: URL): Promise<R
     );
     await sandboxStartupStep('write control file', () => sandbox.writeFile(paths.controlPath, ''));
 
+    // Hand the workspace (just written/restored as root) to the unprivileged run
+    // user so the agent process can write its session, run files, and outputs.
+    await sandboxStartupStep('chown workspace to run user', () => chownWorkspace(sandbox));
+
     const process = await sandboxStartupStep('start Pi runner', () =>
-      sandbox.startProcess('node /workspace/traceflow-pi-runner.mjs', {
+      sandbox.startProcess(`${DROP_PRIVS} node /workspace/traceflow-pi-runner.mjs`, {
         cwd: '/workspace',
         processId: `pi-${body.runId}`,
         timeout: body.maxRuntimeMs + 60_000,
