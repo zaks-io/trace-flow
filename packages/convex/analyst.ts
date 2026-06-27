@@ -27,6 +27,7 @@ import { openRouterCost } from './analystUsage';
 import {
   accumulateLedger,
   cumulativeDelta,
+  maxCumulative,
   readThreadLedger,
   ZERO_CUMULATIVE,
   type CumulativeUsage,
@@ -1799,8 +1800,9 @@ export const completeSandboxRun = action({
       now: Date.now(),
     });
 
-    // Persist the fresh /workspace snapshot on the conversation so the next Pi run
-    // rehydrates and resumes. Only clean completions carry a backup handle.
+    // Persist the fresh /workspace snapshot on the conversation so the next Pi run rehydrates
+    // and resumes. The runner only sends a backup handle when it has a usable snapshot;
+    // storeThreadSandboxBackup guards against a stale write clobbering a fresher checkpoint.
     if (args.backup) {
       await ctx.runMutation(internal.analyst.storeThreadSandboxBackup, {
         runId: args.runId,
@@ -2173,16 +2175,13 @@ async function accumulatePiUsage(
   const latest = runUsageTotal(usageInputs);
   if (!latest) return null;
 
+  const applied = run.usageApplied ?? ZERO_CUMULATIVE;
   const cumulative: CumulativeUsage = {
     totalTokens: latest.totalTokens ?? 0,
     totalCost: latest.totalCost ?? 0,
     cacheReadTokens: latest.cacheRead ?? 0,
   };
-  const delta = cumulativeDelta(
-    run.usageApplied ?? ZERO_CUMULATIVE,
-    cumulative,
-    latest.totalCost !== undefined,
-  );
+  const delta = cumulativeDelta(applied, cumulative, latest.totalCost !== undefined);
 
   await accumulateLedger(ctx, {
     analystThreadId: run.analystThreadId,
@@ -2193,7 +2192,10 @@ async function accumulatePiUsage(
     now,
   });
 
-  return cumulative;
+  // Persist a monotonic baseline. A resume can report a cumulative below the prior one;
+  // accumulateLedger already clamps the negative delta, but storing the regressed value as the
+  // baseline would re-add the recovered tokens on the next advance and double-count.
+  return maxCumulative(applied, cumulative);
 }
 
 /**
@@ -2364,6 +2366,14 @@ export const storeThreadSandboxBackup = internalMutation({
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.runId);
     if (run?.runTokenHash !== args.tokenHash) throw new Error('Pi run not found');
+
+    // A late callback from an older run can arrive after a newer run already stored a fresher
+    // snapshot. The backup is a single per-thread slot, so reject a write whose snapshot is not
+    // newer than the stored one — never let a stale checkpoint clobber the resume state.
+    const thread = await ctx.db.get(run.analystThreadId);
+    const existing = thread?.sandboxBackup;
+    if (existing && existing.updatedAt >= args.now) return;
+
     await ctx.db.patch(run.analystThreadId, {
       sandboxBackup: {
         id: args.backup.id,

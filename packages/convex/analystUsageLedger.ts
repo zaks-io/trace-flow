@@ -65,6 +65,19 @@ export function cumulativeDelta(
   };
 }
 
+/**
+ * Per-field max of two cumulative snapshots. The Pi run's last-applied baseline must stay
+ * monotonic: a resume can report a cumulative below the prior one, and persisting that
+ * regressed value as the baseline would re-add the recovered usage on the next advance.
+ */
+export function maxCumulative(a: CumulativeUsage, b: CumulativeUsage): CumulativeUsage {
+  return {
+    totalTokens: Math.max(a.totalTokens, b.totalTokens),
+    totalCost: Math.max(a.totalCost, b.totalCost),
+    cacheReadTokens: Math.max(a.cacheReadTokens, b.cacheReadTokens),
+  };
+}
+
 /** True when the delta carries nothing worth a write. */
 export function isEmptyDelta(delta: UsageDelta): boolean {
   return (

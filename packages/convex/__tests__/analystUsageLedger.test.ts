@@ -4,6 +4,7 @@ import {
   cumulativeDelta,
   emptyTotals,
   isEmptyDelta,
+  maxCumulative,
   ZERO_CUMULATIVE,
 } from '../analystUsageLedger';
 
@@ -91,6 +92,39 @@ describe('cumulativeDelta', () => {
     expect(delta.totalTokens).toBe(0);
     expect(delta.requests).toBe(0);
     expect(isEmptyDelta({ ...delta, hasCost: false })).toBe(true);
+  });
+});
+
+describe('maxCumulative', () => {
+  it('keeps the higher value per field', () => {
+    const a = { totalTokens: 1000, totalCost: 0.05, cacheReadTokens: 400 };
+    const b = { totalTokens: 600, totalCost: 0.08, cacheReadTokens: 200 };
+    expect(maxCumulative(a, b)).toEqual({
+      totalTokens: 1000,
+      totalCost: 0.08,
+      cacheReadTokens: 400,
+    });
+  });
+
+  it('a regressed snapshot followed by an advance never double-counts', () => {
+    // Pi reports cumulative totals. A resume can report a snapshot below the prior baseline.
+    // The ledger must reflect the true peak (1200), not 1000 + (1200 - 600) = 1600.
+    const applied = { totalTokens: 1000, totalCost: 0.05, cacheReadTokens: 0 };
+    const regressed = { totalTokens: 600, totalCost: 0.03, cacheReadTokens: 0 };
+
+    // Negative delta on the regression is clamped to nothing.
+    const regressDelta = cumulativeDelta(applied, regressed, true);
+    expect(applyDelta(emptyTotals(), regressDelta).totalTokens).toBe(0);
+
+    // The baseline stays monotonic, so the next advance only adds the real increment.
+    const baseline = maxCumulative(applied, regressed);
+    expect(baseline.totalTokens).toBe(1000);
+    const advance = cumulativeDelta(
+      baseline,
+      { totalTokens: 1200, totalCost: 0.06, cacheReadTokens: 0 },
+      true,
+    );
+    expect(advance.totalTokens).toBe(200);
   });
 });
 
