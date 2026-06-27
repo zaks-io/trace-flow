@@ -178,7 +178,10 @@ export function buildFallbackRun(
   output: PiAgentStartOutput,
   now = Date.now(),
 ): SandboxRun {
-  const status = normalizeRunStatus(output.status);
+  // A start that already failed must not fall through to a default 'running' state.
+  const failedStart =
+    output.status === undefined && (output.error !== undefined || output.ok === false);
+  const status = failedStart ? 'failed' : normalizeRunStatus(output.status);
   return {
     _id: runId,
     _creationTime: now,

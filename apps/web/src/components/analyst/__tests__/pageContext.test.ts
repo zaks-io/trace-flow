@@ -41,4 +41,17 @@ describe('Analyst page context references', () => {
       selectedReference,
     ]);
   });
+
+  it('attaches ambient context on /app/agents descendants but not sibling routes', () => {
+    const ambient = {
+      surface: 'agents',
+      objectId: 'agents-page',
+      label: 'Agent Analytics page',
+      route: '/app/agents/abc',
+      filters: {},
+    };
+    expect(buildMessagePageContextReferences('/app/agents/abc', [])).toEqual([ambient]);
+    // A sibling route that merely shares the prefix must not match.
+    expect(buildMessagePageContextReferences('/app/agentship', [])).toEqual([]);
+  });
 });

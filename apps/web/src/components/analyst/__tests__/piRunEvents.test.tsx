@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { ANALYST_MAX_STEPS, getAnalystRunState } from '../AnalystRunStatus';
-import { runtimeLabel } from '../piRunEvents';
+import { buildFallbackRun, runtimeLabel, type PiAgentStartOutput } from '../piRunEvents';
+
+const startOutput = (over: Partial<PiAgentStartOutput>): PiAgentStartOutput => ({
+  type: 'async_pi_agent_run',
+  ...over,
+});
+
+describe('buildFallbackRun', () => {
+  it('marks a fallback run failed when a start reported an error but no status', () => {
+    const run = buildFallbackRun('run_x' as never, startOutput({ error: 'launch refused' }), 1_000);
+    expect(run.status).toBe('failed');
+    expect(run.error).toBe('launch refused');
+  });
+
+  it('marks a fallback run failed when ok is false', () => {
+    const run = buildFallbackRun('run_x' as never, startOutput({ ok: false }), 1_000);
+    expect(run.status).toBe('failed');
+  });
+
+  it('defaults a clean start with no status to running', () => {
+    const run = buildFallbackRun('run_x' as never, startOutput({ ok: true }), 1_000);
+    expect(run.status).toBe('running');
+  });
+});
 
 // Pi run-event → row mapping moved server-side; its tests live in
 // packages/convex/__tests__/analystPiRows.test.ts. What stays here is the

@@ -114,7 +114,9 @@ function TimelineStep({ part }: { part: TimelinePart }) {
             <Icon className={cn('h-4 w-4', accent)} />
           )}
         </span>
-        <span className="mt-0.5 w-px flex-1 bg-border/70 last:hidden" aria-hidden />
+        {/* Connector rail. Timeline steps are interleaved with other message parts, so CSS can't
+            know which is the last step; the rail renders under every step including the final one. */}
+        <span className="mt-0.5 w-px flex-1 bg-border/70" aria-hidden />
       </div>
 
       <div className="min-w-0 flex-1 pb-2">

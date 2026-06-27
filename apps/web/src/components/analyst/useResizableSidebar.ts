@@ -31,10 +31,15 @@ export function useResizableSidebar() {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
   const frame = useRef<number | null>(null);
+  // Tears down the active drag (listeners + pending frame). Held in a ref so an unmount
+  // mid-gesture can run it even though the listeners were registered inside onPointerDown.
+  const teardown = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     setWidth(readStoredWidth());
   }, []);
+
+  useEffect(() => () => teardown.current?.(), []);
 
   const persist = useCallback((next: number) => {
     try {
@@ -68,19 +73,27 @@ export function useResizableSidebar() {
         });
       };
 
-      const handleUp = () => {
+      const stop = () => {
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
+        window.removeEventListener('pointercancel', handleUp);
         if (frame.current !== null) cancelAnimationFrame(frame.current);
+        teardown.current = null;
         setResizing(false);
+      };
+
+      const handleUp = () => {
+        stop();
         setWidth((current) => {
           persist(current);
           return current;
         });
       };
 
+      teardown.current = stop;
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
+      window.addEventListener('pointercancel', handleUp);
     },
     [persist, width],
   );

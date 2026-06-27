@@ -21,7 +21,8 @@ export function buildMessagePageContextReferences(
 }
 
 function ambientPageContextReferences(pathname: string): AnalystPageContextReference[] {
-  if (!pathname.startsWith('/app/agents')) return [];
+  // Match the Agents page and its descendants only — not sibling routes like /app/agentship.
+  if (pathname !== '/app/agents' && !pathname.startsWith('/app/agents/')) return [];
   return [
     {
       surface: 'agents',
