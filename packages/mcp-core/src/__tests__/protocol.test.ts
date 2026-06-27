@@ -27,6 +27,10 @@ describe('SUPPORTED_PROTOCOL_VERSIONS', () => {
   it('includes older protocol version for compatibility', () => {
     expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2025-06-18');
   });
+
+  it('includes Codex startup protocol version for compatibility', () => {
+    expect(SUPPORTED_PROTOCOL_VERSIONS).toContain('2024-11-05');
+  });
 });
 
 describe('LATEST_PROTOCOL_VERSION', () => {
