@@ -65,10 +65,12 @@
       "version": "0.0.1",
       "dependencies": {
         "@cloudflare/sandbox": "0.12.1",
+        "@trace-flow/pricing": "workspace:*",
         "convex": "^1.38.0",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^4.20260511.1",
+        "@trace-flow/mcp-core": "workspace:*",
         "@vitest/coverage-v8": "^4.1.6",
         "typescript": "^5.9.3",
         "vitest": "^4.1.6",

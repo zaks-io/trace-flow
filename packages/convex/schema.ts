@@ -119,6 +119,17 @@ export default defineSchema({
     updatedAt: v.number(),
     lastMessageAt: v.optional(v.number()),
     stopRequestedAt: v.optional(v.number()),
+    // Latest /workspace snapshot for this conversation's Pi sandbox. The next Pi
+    // run rehydrates from this handle and resumes the session instead of starting
+    // cold. R2 garbage-collects the underlying archive after its TTL.
+    sandboxBackup: v.optional(
+      v.object({
+        id: v.string(),
+        dir: v.string(),
+        localBucket: v.optional(v.boolean()),
+        updatedAt: v.number(),
+      }),
+    ),
   })
     .index('by_creator_updated', ['creatorUserId', 'updatedAt'])
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
@@ -151,6 +162,9 @@ export default defineSchema({
     resultText: v.optional(v.string()),
     error: v.optional(v.string()),
     continuationScheduledAt: v.optional(v.number()),
+    // How many times this run has already been auto-resumed after a dead container.
+    // Carried forward across resumes and capped so a crash-looping run fails loudly.
+    resumeAttempt: v.optional(v.number()),
   })
     .index('by_thread_updated', ['analystThreadId', 'updatedAt'])
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])

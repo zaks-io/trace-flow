@@ -27,7 +27,14 @@ import { PiUsageRow, PiRunRowShell } from './PiUsageRow';
  * and its composed answer renders as the assistant's reply, so the whole thing reads
  * as one seamless agent call.
  */
-export function PiRunCard({ run }: { run: SandboxRun; toolState?: string }) {
+export function PiRunCard({
+  run,
+  resumed,
+}: {
+  run: SandboxRun;
+  toolState?: string;
+  resumed?: boolean;
+}) {
   const events = useQuery(api.analyst.listSandboxRunEvents, {
     runId: run._id,
     limit: 100,
@@ -91,8 +98,13 @@ export function PiRunCard({ run }: { run: SandboxRun; toolState?: string }) {
       {(rows.length > 0 || active) && (
         <div className="rounded-lg border border-border/60 bg-background/40">
           <div className="flex items-center justify-between border-b border-border/50 px-2.5 py-1.5">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Work log
+              {resumed && (
+                <span className="rounded-full bg-chart-1/15 px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-chart-1">
+                  Resumed
+                </span>
+              )}
             </span>
             {active && (
               <Button

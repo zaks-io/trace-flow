@@ -29,5 +29,5 @@ export function AnalystSandboxRunInline({
     | undefined;
   const fallbackRun = useMemo(() => buildFallbackRun(convexRunId, output), [convexRunId, output]);
 
-  return <PiRunCard run={run ?? fallbackRun} toolState={toolState} />;
+  return <PiRunCard run={run ?? fallbackRun} toolState={toolState} resumed={output.resumed} />;
 }

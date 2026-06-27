@@ -220,6 +220,7 @@ function getPiAgentStartOutput(part: AnalystToolPart): PiAgentStartOutput | null
     async: typeof output.async === 'boolean' ? output.async : undefined,
     runId: typeof output.runId === 'string' ? output.runId : undefined,
     status: typeof output.status === 'string' ? output.status : undefined,
+    resumed: typeof output.resumed === 'boolean' ? output.resumed : undefined,
     maxRuntimeMinutes:
       typeof output.maxRuntimeMinutes === 'number' ? output.maxRuntimeMinutes : undefined,
     message: typeof output.message === 'string' ? output.message : undefined,

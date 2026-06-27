@@ -362,6 +362,16 @@ export declare const api: {
       { runId: Id<"analystSandboxRuns"> },
       any
     >;
+    checkpointSandboxRun: FunctionReference<
+      "action",
+      "public",
+      {
+        backup: { dir: string; id: string; localBucket?: boolean };
+        runId: Id<"analystSandboxRuns">;
+        token: string;
+      },
+      any
+    >;
     cleanupSandboxRunContainer: FunctionReference<
       "action",
       "public",
@@ -372,6 +382,7 @@ export declare const api: {
       "action",
       "public",
       {
+        backup?: { dir: string; id: string; localBucket?: boolean };
         error?: string;
         resultText?: string;
         runId: Id<"analystSandboxRuns">;
@@ -1472,8 +1483,20 @@ export declare const internal: {
           surface: "agents";
         }>;
         prompt: string;
+        resumeAttempt?: number;
         runTokenHash: string;
         sandboxId: string;
+      },
+      any
+    >;
+    emitSandboxRunNote: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        label: string;
+        now: number;
+        runId: Id<"analystSandboxRuns">;
+        text: string;
       },
       any
     >;
@@ -1502,6 +1525,12 @@ export declare const internal: {
       any
     >;
     getSandboxRunForAction: FunctionReference<
+      "query",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    getSandboxRunLivenessContext: FunctionReference<
       "query",
       "internal",
       { runId: Id<"analystSandboxRuns"> },
@@ -1543,6 +1572,12 @@ export declare const internal: {
       { now: number; runId: Id<"analystSandboxRuns"> },
       any
     >;
+    markSandboxRunInterrupted: FunctionReference<
+      "mutation",
+      "internal",
+      { error: string; now: number; runId: Id<"analystSandboxRuns"> },
+      any
+    >;
     markSandboxRunStarted: FunctionReference<
       "mutation",
       "internal",
@@ -1570,6 +1605,23 @@ export declare const internal: {
       "mutation",
       "internal",
       { now: number; threadId: Id<"analystThreads">; userId: Id<"users"> },
+      any
+    >;
+    resumeOrFailStaleSandboxRun: FunctionReference<
+      "action",
+      "internal",
+      { runId: Id<"analystSandboxRuns"> },
+      any
+    >;
+    storeThreadSandboxBackup: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        backup: { dir: string; id: string; localBucket?: boolean };
+        now: number;
+        runId: Id<"analystSandboxRuns">;
+        tokenHash: string;
+      },
       any
     >;
     streamMessage: FunctionReference<
@@ -1789,6 +1841,12 @@ export declare const internal: {
         "internal",
         {},
         { imported: number; skipped: number }
+      >;
+      importOneFromOpenRouterInternal: FunctionReference<
+        "action",
+        "internal",
+        { model: string },
+        { imported: boolean }
       >;
       listAll: FunctionReference<
         "query",

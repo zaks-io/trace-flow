@@ -13,16 +13,26 @@ RUN apt-get update \
     python3 \
     python3-pip \
     ripgrep \
+    squashfs-tools \
+    squashfuse \
+    fuse-overlayfs \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /workspace
+# Pi SDK deps live OUTSIDE /workspace. A resume restores a squashfs snapshot of /workspace
+# as an overlay, which would shadow a baked-in /workspace/node_modules and break the runner's
+# import. Installing under /opt/pi (with NODE_PATH set on the runner) keeps the snapshot small
+# AND keeps the SDK resolvable after a restore.
+WORKDIR /opt/pi
 
 RUN npm init -y \
   && npm install --ignore-scripts @earendil-works/pi-coding-agent@0.80.2 typebox@1.1.38 \
   && pip3 install --no-cache-dir --break-system-packages \
     numpy==2.3.5 \
     pandas==2.3.3 \
+    pydantic==2.12.3 \
     scipy==1.16.3 \
     scikit-learn==1.7.2
+
+WORKDIR /workspace
 
 ENTRYPOINT ["/sandbox"]

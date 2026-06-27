@@ -290,6 +290,42 @@ export const importFromOpenRouter = action({
   },
 });
 
+/**
+ * Import a single OpenRouter model's rate from the live catalog and push it to the worker KV.
+ * Internal so it can run unauthenticated (e.g. seeding a newly-configured analyst model whose
+ * daily import hasn't landed yet) using the same OpenRouter conversion as the bulk import.
+ */
+export const importOneFromOpenRouterInternal = internalAction({
+  args: { model: v.string() },
+  returns: v.object({ imported: v.boolean() }),
+  handler: async (ctx, args) => {
+    const response = await fetch('https://openrouter.ai/api/v1/models');
+    if (!response.ok) {
+      throw new Error(`OpenRouter API error: ${response.status}`);
+    }
+    const data = await response.json();
+    const orModel = (data.data as OpenRouterModel[]).find((m) => m.id === args.model);
+    if (!orModel || !parseOpenRouterModelId(orModel.id)) return { imported: false };
+
+    const converted = convertOpenRouterModelRates(orModel);
+    await ctx.runMutation(internal.billing.modelPricing.upsertInternal, {
+      provider: 'openrouter',
+      model: orModel.id,
+      promptCostPerMillion: converted.promptCostPerMillion,
+      completionCostPerMillion: converted.completionCostPerMillion,
+      cacheReadCostPerMillion: converted.cacheReadCostPerMillion,
+      cacheWriteCostPerMillion: converted.cacheWriteCostPerMillion,
+      reasoningCostPerMillion: converted.reasoningCostPerMillion,
+      source: 'openrouter',
+    });
+    await ctx.runAction(internal.billing.pricingSync.syncToKV, {
+      provider: 'openrouter',
+      model: orModel.id,
+    });
+    return { imported: true };
+  },
+});
+
 export const syncDefaults = action({
   args: {},
   returns: v.object({ synced: v.number() }),

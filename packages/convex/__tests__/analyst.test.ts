@@ -12,6 +12,7 @@ import {
   isHiddenAnalystMessageLike,
   isHiddenAnalystProviderMetadata,
   isSandboxRunTimeoutExpired,
+  sandboxRunLivenessVerdict,
   sandboxRunTimeoutRemainingMs,
   shouldExposeSandboxControlTool,
   supportsOpenRouterCacheControl,
@@ -170,5 +171,39 @@ describe('analyst helpers', () => {
     expect(sandboxRunTimeoutRemainingMs(run, 11_500, 0)).toBe(500);
     expect(sandboxRunTimeoutRemainingMs(run, 12_000, 0)).toBe(0);
     expect(sandboxRunTimeoutRemainingMs({ ...run, status: 'completed' }, 100_000, 0)).toBeNull();
+  });
+
+  describe('sandboxRunLivenessVerdict', () => {
+    const base = { _creationTime: 1_000, startedAt: 2_000, status: 'running' };
+
+    it('reschedules while an active run keeps signalling', () => {
+      const run = { ...base, lastEventAt: 100_000 };
+      expect(sandboxRunLivenessVerdict(run, 100_000 + 10_000, 30_000)).toBe('reschedule');
+    });
+
+    it('declares an active run dead once its heartbeats go silent', () => {
+      const run = { ...base, lastEventAt: 100_000 };
+      expect(sandboxRunLivenessVerdict(run, 100_000 + 30_000, 30_000)).toBe('dead');
+    });
+
+    it('falls back to startedAt then creationTime when no event has arrived', () => {
+      expect(sandboxRunLivenessVerdict({ ...base }, 2_000 + 10_000, 30_000)).toBe('reschedule');
+      expect(sandboxRunLivenessVerdict({ ...base }, 2_000 + 40_000, 30_000)).toBe('dead');
+      expect(
+        sandboxRunLivenessVerdict(
+          { _creationTime: 1_000, status: 'starting' },
+          1_000 + 40_000,
+          30_000,
+        ),
+      ).toBe('dead');
+    });
+
+    it('stops watching once the run is terminal', () => {
+      for (const status of ['completed', 'failed', 'timed_out', 'cancelled']) {
+        expect(sandboxRunLivenessVerdict({ ...base, status, lastEventAt: 0 }, 1_000_000)).toBe(
+          'stop',
+        );
+      }
+    });
   });
 });

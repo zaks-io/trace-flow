@@ -47,6 +47,7 @@ export type PiAgentStartOutput = {
   async?: boolean;
   runId?: string;
   status?: string;
+  resumed?: boolean;
   maxRuntimeMinutes?: number;
   message?: string;
   error?: string;

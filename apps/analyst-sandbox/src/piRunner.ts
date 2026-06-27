@@ -1,3 +1,4 @@
+import type { ModelPricing } from '@trace-flow/pricing';
 import type { StartPiRunRequest } from './request';
 
 const RUNNER_PATH = '/workspace/traceflow-pi-runner.mjs';
@@ -21,7 +22,9 @@ export function buildPiRunRequest(request: StartPiRunRequest) {
       pageContextReferences: request.pageContextReferences,
       maxRuntimeMs: request.maxRuntimeMs,
       model: request.model,
+      thinkingLevel: request.thinkingLevel,
       toolDefinitions: request.toolDefinitions,
+      resume: request.resume ?? false,
     },
     null,
     2,
@@ -37,14 +40,15 @@ export function buildPiWorkspaceManifest() {
     'Trust boundary:',
     '- The workspace itself is intentionally trusted for Pi startup.',
     '- Ambient Pi discovery is disabled for skills, prompt templates, themes, context files, and project-local extensions.',
-    '- The only loaded extension is the generated Trace Flow context guard for truncating oversized tool results and provider context.',
-    '- Trace Flow data access must go through the traceflow_data tool.',
-    '- traceflow_data writes raw approved data to /workspace/runs/<runId>/data and returns artifact paths, not inline datasets.',
-    '- A sandbox-local Trace Flow Data API serves live OpenAPI at http://127.0.0.1:<port>/openapi.json for code-driven access.',
+    '- The only loaded extension is the generated Trace Flow context guard. It rejects (does not truncate) oversized tool results and provider context, so retry rejected calls with a more focused query.',
+    '- All Trace Flow data access goes through the typed Python client at /workspace/traceflow_client.py. There is no data tool that returns rows into the conversation; you fetch and reduce data in code so your context stays small and runs stay cheap.',
+    '- `from traceflow_client import tf` exposes one DataFrame-returning method per approved tool (plus *_raw JSON variants). It fetches over a sandbox-local Trace Flow Data API, pages, validates, and caches per run.',
+    '- The data fetched by the client stays in the sandbox process. Only the summaries you compute and print enter the model context.',
     '- Convex verifies the run token, creator, org, disabled-user state, and current permissions on every data call.',
     '- The sandbox does not receive Tinybird admin tokens, Convex admin credentials, OpenRouter keys, or user session tokens.',
     '',
     'Expected inputs:',
+    '- /workspace/traceflow_client.py',
     '- /workspace/runs/<runId>/request.json',
     '- /workspace/runs/<runId>/controls.jsonl',
     '- /workspace/runs/<runId>/traceflow-context-guard.ts',
@@ -53,8 +57,31 @@ export function buildPiWorkspaceManifest() {
   ].join('\n');
 }
 
-export function buildPiModelsJson(model: string, aiProxyBaseUrl: string) {
-  const cost = piModelCost(model);
+/** Pi prices a run in-sandbox from these rates, in US dollars per million tokens. */
+export interface PiModelCost {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/**
+ * Converts a MODEL_PRICING record into Pi's models.json `cost` block. KV stores microdollars per
+ * million tokens; Pi prices in US dollars per million, hence the / 1e6. Unset cache rates fall back
+ * to the prompt rate (matching the consumers' calculateCost). Pure: no I/O, so it is unit-testable.
+ */
+export function pricingToPiCost(pricing: ModelPricing): PiModelCost {
+  const perMillion = (microdollars: number | undefined, fallback: number): number =>
+    (microdollars ?? fallback) / 1_000_000;
+  return {
+    input: perMillion(pricing.promptCostPerMillion, 0),
+    output: perMillion(pricing.completionCostPerMillion, 0),
+    cacheRead: perMillion(pricing.cacheReadCostPerMillion, pricing.promptCostPerMillion),
+    cacheWrite: perMillion(pricing.cacheWriteCostPerMillion, pricing.promptCostPerMillion),
+  };
+}
+
+export function buildPiModelsJson(model: string, aiProxyBaseUrl: string, cost: PiModelCost) {
   return JSON.stringify(
     {
       providers: {
@@ -71,7 +98,7 @@ export function buildPiModelsJson(model: string, aiProxyBaseUrl: string) {
             {
               id: model,
               name: model,
-              reasoning: false,
+              reasoning: true,
               input: ['text'],
               contextWindow: 128000,
               maxTokens: 4096,
@@ -89,17 +116,11 @@ export function buildPiModelsJson(model: string, aiProxyBaseUrl: string) {
   );
 }
 
-function piModelCost(model: string) {
-  if (model === 'z-ai/glm-5.2') {
-    return { input: 0.95, output: 3, cacheRead: 0.18, cacheWrite: 0 };
-  }
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-}
-
 export function buildPiRunnerScript() {
   return String.raw`import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const runId = requiredEnv('TRACEFLOW_RUN_ID');
 const runToken = requiredEnv('TRACEFLOW_RUN_TOKEN');
@@ -109,8 +130,6 @@ const requestPath = requiredEnv('TRACEFLOW_REQUEST_PATH');
 const controlPath = requiredEnv('TRACEFLOW_CONTROL_PATH');
 const agentDir = process.env.PI_CODING_AGENT_DIR ?? '/workspace/.pi/agent';
 const runDir = path.join('/workspace/runs', runId);
-const dataDir = path.join(runDir, 'data');
-const contextArtifactDir = path.join(runDir, 'context-artifacts');
 const dataApiDescriptorPath = path.join(runDir, 'traceflow-data-api.json');
 const contextGuardExtensionPath = path.join(runDir, 'traceflow-context-guard.ts');
 const request = JSON.parse(await fs.readFile(requestPath, 'utf8'));
@@ -136,7 +155,6 @@ let latestUsageSignature = '';
 // The command/args live on tool_execution_start; the result on _end. We stash the
 // start's command preview by toolCallId so the persisted end row carries both.
 const toolCommandsByCallId = new Map();
-let dataArtifactSeq = 0;
 let latestToolResultText = '';
 let latestToolResultName = '';
 const IDLE_COMPLETION_MS = Math.min(60000, Math.max(20000, Math.round(request.maxRuntimeMs / 12)));
@@ -144,9 +162,14 @@ const MIN_IDLE_COMPLETION_TEXT_CHARS = 80;
 const HEARTBEAT_MS = 10000;
 const PROVIDER_REQUEST_TIMEOUT_MS = Math.min(request.maxRuntimeMs, 2 * 60 * 1000);
 const PROVIDER_IDLE_TIMEOUT_MS = 30000;
-const MAX_TOOL_RESULT_CONTEXT_CHARS = 12000;
-const MAX_MESSAGE_CONTEXT_CHARS = 24000;
-const MAX_PROVIDER_PAYLOAD_CHARS = 180000;
+// These are catastrophe backstops, NOT a working budget. Normal runs must never hit them:
+// the prompt and the Python client steer the agent to fetch+aggregate in code and return
+// small summaries, so a legitimate result stays far below these. They only fire when
+// something has gone badly wrong (a full-table dump, a runaway loop) and would otherwise
+// blow the 128K context window. Sized generously so real analysis is never crippled.
+const MAX_TOOL_RESULT_CONTEXT_CHARS = 60000;
+const MAX_MESSAGE_CONTEXT_CHARS = 80000;
+const MAX_PROVIDER_PAYLOAD_CHARS = 420000;
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -170,17 +193,20 @@ function truncateText(value, maxChars = 6000) {
 
 function buildTraceflowContextGuardExtension() {
   return [
-    "import fs from 'node:fs/promises';",
-    "import path from 'node:path';",
+    'function requiredGuardEnv(name) {',
+    '  const value = process.env[name];',
+    "  if (!value) throw new Error('Trace Flow context guard missing required env: ' + name);",
+    '  return value;',
+    '}',
     '',
-    "const runId = process.env.TRACEFLOW_RUN_ID ?? 'unknown-run';",
-    "const runToken = process.env.TRACEFLOW_RUN_TOKEN ?? '';",
-    "const workerBaseUrl = process.env.TRACEFLOW_WORKER_BASE_URL ?? '';",
-    "const artifactDir = process.env.TRACEFLOW_CONTEXT_ARTIFACT_DIR ?? '/workspace/runs/' + runId + '/context-artifacts';",
-    'const maxToolResultChars = Number(process.env.TRACEFLOW_MAX_TOOL_RESULT_CONTEXT_CHARS ?? 12000);',
-    'const maxMessageChars = Number(process.env.TRACEFLOW_MAX_MESSAGE_CONTEXT_CHARS ?? 24000);',
-    'const maxProviderPayloadChars = Number(process.env.TRACEFLOW_MAX_PROVIDER_PAYLOAD_CHARS ?? 180000);',
-    'let seq = 0;',
+    "const runId = requiredGuardEnv('TRACEFLOW_RUN_ID');",
+    "const runToken = requiredGuardEnv('TRACEFLOW_RUN_TOKEN');",
+    "const workerBaseUrl = requiredGuardEnv('TRACEFLOW_WORKER_BASE_URL');",
+    // Single source of truth: these are baked in from the runner's MAX_* consts so the
+    // guard and the reported limits can never drift apart.
+    'const maxToolResultChars = ' + MAX_TOOL_RESULT_CONTEXT_CHARS + ';',
+    'const maxMessageChars = ' + MAX_MESSAGE_CONTEXT_CHARS + ';',
+    'const maxProviderPayloadChars = ' + MAX_PROVIDER_PAYLOAD_CHARS + ';',
     '',
     'function textFromContent(content) {',
     "  if (typeof content === 'string') return content;",
@@ -196,10 +222,6 @@ function buildTraceflowContextGuardExtension() {
     "    .join('\\n\\n');",
     '}',
     '',
-    'function byteLength(value) {',
-    "  return Buffer.byteLength(value, 'utf8');",
-    '}',
-    '',
     'function hasToolCall(content) {',
     '  return Array.isArray(content) && content.some((part) => {',
     "    const type = part && typeof part === 'object' ? part.type : undefined;",
@@ -207,23 +229,18 @@ function buildTraceflowContextGuardExtension() {
     '  });',
     '}',
     '',
-    'function sanitizeSegment(value) {',
-    '  return String(value)',
-    "    .replace(/[^A-Za-z0-9_-]+/g, '-')",
-    "    .replace(/^-+|-+$/g, '')",
-    '    .slice(0, 80) || "message";',
-    '}',
-    '',
-    'async function writeArtifact(kind, value) {',
-    '  await fs.mkdir(artifactDir, { recursive: true });',
-    "  const artifactPath = path.join(artifactDir, String(seq++).padStart(4, '0') + '-' + sanitizeSegment(kind) + '.json');",
-    "  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);",
-    '  await fs.writeFile(artifactPath, text);',
-    '  return { artifactPath, chars: text.length, bytes: byteLength(text) };',
+    '// The agent reads this verbatim. Tell it plainly what happened and what to do next,',
+    '// so it self-corrects with a tighter query instead of paging the whole dataset into context.',
+    'function rejectionText(kind, size, maxChars) {',
+    '  return [',
+    "    '[Trace Flow context guard] This ' + kind + ' was too large for the model context: ' + size + ' characters (limit ' + maxChars + ').',",
+    "    'It was rejected, not truncated, so no partial or misleading data reached the model.',",
+    "    'Retry with a more focused query: add filters, shorten the time window, lower the limit, or aggregate in Python (use the typed client at /workspace/traceflow_client.py and the *_raw summary methods).',",
+    "    'Never print or return full DataFrames or raw rows; compute summaries in code and return only the result.'",
+    "  ].join('\\n');",
     '}',
     '',
     'async function emitGuardEvent(message, data) {',
-    '  if (!workerBaseUrl || !runToken) return;',
     '  await fetch(new URL("/pi-runs/events", workerBaseUrl), {',
     "    method: 'POST',",
     "    headers: { authorization: 'Bearer ' + runToken, 'content-type': 'application/json' },",
@@ -239,134 +256,77 @@ function buildTraceflowContextGuardExtension() {
     '  }).catch(() => undefined);',
     '}',
     '',
-    'function replacementText(kind, artifact) {',
-    '  return [',
-    "    '[Trace Flow context guard] Large ' + kind + ' omitted from the LLM context.',",
-    "    'Saved artifact: ' + artifact.artifactPath,",
-    "    'Size: ' + artifact.bytes + ' bytes.',",
-    "    'Use bash/Python/read to inspect the artifact and compute summaries locally. Do not paste raw rows into the conversation.'",
-    "  ].join('\\n');",
-    '}',
-    '',
-    'async function compactContent(kind, content, maxChars) {',
-    '  const text = textFromContent(content);',
-    '  if (text.length <= maxChars) return null;',
-    '  const artifact = await writeArtifact(kind, content);',
-    "  return { artifact, content: [{ type: 'text', text: replacementText(kind, artifact) }] };",
-    '}',
-    '',
-    'function compactProviderPayload(payload) {',
-    '  if (!payload || typeof payload !== "object") return payload;',
-    '  const next = structuredClone(payload);',
-    '  const messages = Array.isArray(next.messages) ? next.messages : Array.isArray(next.input) ? next.input : null;',
-    '  if (!messages) return next;',
-    '  for (const message of messages) {',
-    '    if (!message || typeof message !== "object" || hasToolCall(message.content)) continue;',
-    '    const text = textFromContent(message.content);',
-    '    if (text.length > maxMessageChars) {',
-    "      message.content = '[Trace Flow context guard] Oversized message removed before provider request. Inspect saved artifacts or rerun analysis code for details.';",
-    '    }',
-    '  }',
-    '  return next;',
-    '}',
-    '',
     'export default function traceflowContextGuard(pi) {',
+    '  // Reject (not truncate) an oversized tool result. isError feeds it back to the agent',
+    '  // as a failed call so it retries with a tighter query.',
     "  pi.on('tool_result', async (event) => {",
-    "    const label = 'tool-result-' + (event.toolName ?? 'unknown');",
-    '    const compacted = await compactContent(label, event.content, maxToolResultChars);',
-    '    if (!compacted) return;',
-    "    await emitGuardEvent('Large Pi tool result saved outside LLM context', {",
+    '    const size = textFromContent(event.content).length;',
+    '    if (size <= maxToolResultChars) return;',
+    "    await emitGuardEvent('Pi tool result rejected as too large for context', {",
     '      toolName: event.toolName,',
-    '      artifactPath: compacted.artifact.artifactPath,',
-    '      bytes: compacted.artifact.bytes,',
+    '      size,',
     '      maxChars: maxToolResultChars,',
+    "      reason: 'tool_result_context_limit',",
     '    });',
     '    return {',
-    '      content: compacted.content,',
+    '      isError: true,',
+    "      content: [{ type: 'text', text: rejectionText('tool result from ' + (event.toolName ?? 'unknown'), size, maxToolResultChars) }],",
     '      details: {',
     '        ...(event.details ?? {}),',
-    '        traceFlowContextGuard: {',
-    '          omitted: true,',
-    '          artifactPath: compacted.artifact.artifactPath,',
-    '          bytes: compacted.artifact.bytes,',
-    '          reason: "tool_result_context_limit",',
-    '        },',
+    "        traceFlowContextGuard: { rejected: true, size, maxChars: maxToolResultChars, reason: 'tool_result_context_limit' },",
     '      },',
     '    };',
     '  });',
     '',
+    '  // A single conversation message over the cap fails the turn loudly. There is no per-message',
+    '  // reject channel here, and silently dropping it would hide data from the model.',
     "  pi.on('context', async (event) => {",
-    '    const messages = [];',
-    '    let compactedCount = 0;',
     '    for (const message of event.messages) {',
-    '      if (!message || typeof message !== "object" || hasToolCall(message.content)) {',
-    '        messages.push(message);',
-    '        continue;',
-    '      }',
-    '      const compacted = await compactContent("message-" + (message.role ?? "unknown"), message.content, maxMessageChars);',
-    '      if (!compacted) {',
-    '        messages.push(message);',
-    '        continue;',
-    '      }',
-    '      compactedCount += 1;',
-    '      messages.push({ ...message, content: compacted.content });',
+    '      if (!message || typeof message !== "object" || hasToolCall(message.content)) continue;',
+    '      const size = textFromContent(message.content).length;',
+    '      if (size <= maxMessageChars) continue;',
+    "      await emitGuardEvent('Pi context message rejected as too large', {",
+    "        role: message.role, size, maxChars: maxMessageChars, reason: 'message_context_limit',",
+    '      });',
+    "      throw new Error(rejectionText('conversation message (role ' + (message.role ?? 'unknown') + ')', size, maxMessageChars));",
     '    }',
-    '    if (compactedCount > 0) {',
-    "      await emitGuardEvent('Oversized Pi context messages saved outside LLM context', { compactedCount, maxChars: maxMessageChars });",
-    '    }',
-    '    return { messages };',
     '  });',
     '',
+    '  // Final backstop: the whole outgoing provider payload. Reject loudly rather than send a',
+    '  // request that blows the context window.',
     "  pi.on('before_provider_request', async (event) => {",
-    '    const text = JSON.stringify(event.payload ?? null);',
-    '    if (text.length <= maxProviderPayloadChars) return;',
-    '    const artifact = await writeArtifact("provider-payload", event.payload);',
-    "    await emitGuardEvent('Oversized Pi provider payload compacted before send', {",
-    '      artifactPath: artifact.artifactPath,',
-    '      bytes: artifact.bytes,',
-    '      maxChars: maxProviderPayloadChars,',
+    '    const size = JSON.stringify(event.payload ?? null).length;',
+    '    if (size <= maxProviderPayloadChars) return;',
+    "    await emitGuardEvent('Pi provider payload rejected as too large', {",
+    "      size, maxChars: maxProviderPayloadChars, reason: 'provider_payload_context_limit',",
     '    });',
-    '    const compacted = compactProviderPayload(event.payload);',
-    '    const compactedText = JSON.stringify(compacted ?? null);',
-    '    if (compactedText.length > maxProviderPayloadChars) {',
-    "      throw new Error('Trace Flow context guard blocked an oversized provider payload after compaction: ' + compactedText.length + ' chars');",
+    "    throw new Error(rejectionText('provider request payload', size, maxProviderPayloadChars));",
+    '  });',
+    '',
+    '  // Best-effort checkpoint when the runtime is being torn down gracefully (e.g. a',
+    '  // deploy rollout signals the container to exit). Snapshots /workspace + the Pi',
+    '  // session to R2 so an auto-resume picks up mid-question instead of re-running it.',
+    '  // A hard kill skips this; the resume then falls back to the last completed checkpoint.',
+    "  pi.on('session_shutdown', async (event) => {",
+    "    if (event && event.reason && event.reason !== 'quit') return;",
+    '    const controller = new AbortController();',
+    '    const timer = setTimeout(() => controller.abort(), 4000);',
+    '    try {',
+    "      await fetch(new URL('/pi-runs/checkpoint', workerBaseUrl), {",
+    "        method: 'POST',",
+    "        headers: { authorization: 'Bearer ' + runToken, 'content-type': 'application/json' },",
+    '        body: JSON.stringify({ runId, sandboxId: process.env.TRACEFLOW_SANDBOX_ID }),',
+    '        signal: controller.signal,',
+    '      });',
+    '    } catch (error) {',
+    "      console.error('session_shutdown checkpoint failed', error);",
+    '    } finally {',
+    '      clearTimeout(timer);',
     '    }',
-    '    return compacted;',
     '  });',
     '}',
     '',
   ].join('\n');
-}
-
-function sanitizeArtifactSegment(value) {
-  return (
-    String(value)
-      .replace(/[^A-Za-z0-9_-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 80) || 'tool'
-  );
-}
-
-async function writeTraceflowDataArtifact(toolName, args, result) {
-  await fs.mkdir(dataDir, { recursive: true });
-  const seq = String(dataArtifactSeq).padStart(4, '0');
-  dataArtifactSeq += 1;
-  const artifactPath = path.join(dataDir, seq + '-' + sanitizeArtifactSegment(toolName) + '.json');
-  const payload = {
-    toolName,
-    arguments: args ?? {},
-    fetchedAt: new Date().toISOString(),
-    result,
-  };
-  const text = JSON.stringify(payload, null, 2);
-  await fs.writeFile(artifactPath, text);
-  return {
-    toolName,
-    artifactPath,
-    chars: text.length,
-    instructions:
-      'Read this JSON file with the read tool or load it from Python/pandas. Raw Trace Flow data is not returned inline in this tool response.',
-  };
 }
 
 const TOOL_COMMAND_KEYS = ['command', 'cmd', 'path', 'file', 'pattern', 'query', 'view'];
@@ -799,22 +759,6 @@ async function fetchTraceflowToolResult(toolName, args) {
   return response.result;
 }
 
-async function callTraceflowTool(toolName, args) {
-  const result = await fetchTraceflowToolResult(toolName, args);
-  const artifact = await writeTraceflowDataArtifact(toolName, args ?? {}, result);
-  await emit({
-    type: 'status',
-    message: 'Trace Flow data artifact written',
-    data: {
-      phase: 'data_artifact_written',
-      toolName,
-      artifactPath: artifact.artifactPath,
-      chars: artifact.chars,
-    },
-  });
-  return artifact;
-}
-
 function readSessionStats() {
   if (!session || typeof session.getSessionStats !== 'function') return undefined;
   try {
@@ -872,72 +816,30 @@ async function emitHeartbeat() {
   await emitUsage('heartbeat');
 }
 
-function createTraceflowDataTool(defineTool, Type) {
-  return defineTool({
-    name: 'traceflow_data',
-    label: 'Trace Flow Data',
-    description: 'Materialize approved Trace Flow data as a JSON artifact on disk and return its path plus metadata. Use this for traces, usage, costs, and agent analytics data.',
-    promptSnippet: 'traceflow_data: materialize approved Trace Flow data artifacts by tool name.',
-    promptGuidelines: [
-      'Prefer the sandbox-local Trace Flow Data API from scripts. Use traceflow_data for one-off artifact materialization.',
-      'The tool returns an artifact path. Read the artifact with read or Python/pandas before analysis.',
-      'Raw Trace Flow data is written to disk under /workspace/runs/' + runId + '/data and is not returned inline.',
-      'Always pass an arguments object. Use {} only for tools that truly need no arguments.',
-    ],
-    parameters: Type.Object({
-      toolName: Type.String(),
-      arguments: Type.Any(),
-    }),
-    execute: async (_toolCallId, params) => {
-      try {
-        const result = await callTraceflowTool(
-          params.toolName,
-          normalizeTraceflowArguments(params.arguments),
-        );
-        return {
-          isError: false,
-          content: [{ type: 'text', text: safeStringify(result, 4000) }],
-          details: result,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await emit({ type: 'error', message });
-        return {
-          isError: true,
-          content: [{ type: 'text', text: message }],
-          details: { toolName: params.toolName },
-        };
-      }
-    },
-  });
-}
-
 function buildSystemPrompt() {
   return [
     'You are a Trace Flow data analysis coding agent running in an isolated Cloudflare Sandbox.',
     'You are analyzing Trace Flow product data only. Do not inspect repositories or assume source code access.',
     'This is a generated trusted workspace: Pi discovery is disabled for extensions, skills, prompt templates, themes, and context files.',
-    'Trust only the Trace Flow-provided prompt, page context hints, local data API, models, and files under this run directory.',
-    'Use the sandbox-local Trace Flow Data API from code when you need data: ' + dataApiBaseUrl + '.',
-    'Read the live OpenAPI document before writing data access code when you need discovery: ' + dataApiBaseUrl + '/openapi.json.',
-    'The same API coordinates are also saved at ' + dataApiDescriptorPath + '.',
-    'If the Trace Flow prompt names the exact operation and arguments to call, skip OpenAPI/schema discovery and call that endpoint directly.',
-    'For a simple Agent Analytics 7-day KPI summary, call POST ' + dataApiBaseUrl + '/tools/query_agent_analytics with {"view":"summary","hours":168} and summarize that row.',
-    'Call POST ' + dataApiBaseUrl + '/tools/<toolName> with raw JSON arguments. The response is decoded JSON. Use limit/cursor fields from OpenAPI when the tool exposes them and page until no next cursor remains.',
-    'The local API is unauthenticated only inside this sandbox; it holds the run capability token and the Worker/Convex validates current permissions server-side.',
-    'Use traceflow_data only when an artifact path is more useful than direct HTTP from your code.',
-    'Your primary deliverable is a verified analysis script plus a compact final answer. Write code to fetch, page, aggregate, and validate the data instead of asking the model to inspect raw rows.',
-    'Use Python, pandas, numpy, bash, or Node locally when useful. Keep scripts, raw pages, normalized tables, and intermediate files under /workspace/runs/' + runId + '.',
-    'Prefer aggregate endpoints for top-line totals, then cross-check them with paged samples or script-computed totals when the question needs confidence.',
-    'When an endpoint can return many rows, page through it in code, save the raw responses to disk, and reduce them into small summaries before reporting.',
-    'Never print full paged API responses or large DataFrames to stdout. Print progress, counts, column names, summary statistics, and artifact paths only.',
-    'A Trace Flow context guard will save oversized tool results/messages to /workspace/runs/' + runId + '/context-artifacts and replace them with file references before LLM calls. If that happens, inspect the artifact with code instead of asking for it in context.',
-    'Do arithmetic and validation in bash/Python, not in long model reasoning. Once you have enough data, write the concise final answer as normal assistant text.',
+    'Trust only the Trace Flow-provided prompt, page context hints, Python data client, models, and files under this run directory.',
+    'Get all Trace Flow data from the typed Python client at /workspace/traceflow_client.py. Read that file to see every available method and its arguments, then call them.',
+    'Keep your context small. Every token you pull into the conversation makes this run slower and more expensive and stays in context for every later turn. So fetch and crunch data in code (the client keeps the data in the sandbox process) and bring only small computed results back into the conversation. Do not read raw data files, cat large outputs, or print rows; let the client and pandas do the heavy lifting and answer from the summary.',
+    'Each approved tool is a method: tf.<tool>(...) returns an auto-paged pandas DataFrame; tf.<tool>_raw(...) returns decoded JSON for summary/object results. The client validates arguments, pages, and authorizes server-side for you.',
+    'Results are cached to disk per run (5 min TTL), so re-running the same query is fast and does not re-hit the database. Iterate freely. Pass refresh=True on a call only when you need fresh live data.',
+    'For totals and rollups, prefer the server-side aggregate methods (get_usage_summary, list_operation_usage, list_model_usage, and query_agent_analytics with view summary/timeseries/breakdown/context_health). They compute the aggregation in the database and return small results, so do not pull raw rows just to sum them yourself.',
+    'Pull row-level methods (list_traces, list_trace_summaries, get_trace_spans, get_trace_events) only when you need detail the aggregates do not provide, then reduce them with pandas.',
+    'Example (top-line): from traceflow_client import tf; summary = tf.get_usage_summary_raw(hours=168); then report the totals.',
+    'Example (drill-down): from traceflow_client import tf; df = tf.list_traces(hours=168, limit=200); then aggregate df with pandas.',
+    'Your primary deliverable is a verified analysis script plus a compact final answer. Write code to call the client, aggregate, and validate the data instead of asking the model to inspect raw rows.',
+    'Use Python, pandas, numpy, bash, or Node locally when useful. Keep scripts and intermediate files under /workspace/runs/' + runId + '.',
+    'Never print full DataFrames to stdout. Print progress, counts, column names, and summary statistics only.',
+    'There is a context-size safety net that rejects a tool result, message, or provider request only if it is enormous (a sign something went wrong, like dumping a full table). If you follow the workflow above (aggregate server-side, reduce in pandas, return summaries) you will never come close to it. If you ever do see that rejection, it means you tried to pull far too much at once: retry with a much more focused query, do not re-fetch the same thing.',
+    'Think hard about the analysis: plan the approach, interpret the numbers, and reason about what they mean. But do not do arithmetic in your head when code is exact: compute totals, rates, and aggregates in pandas/bash and reason about the results. Once you have enough data, write the concise final answer as normal assistant text.',
     'Return a concise final answer with the data, calculations, caveats, and any failed queries that affected confidence.',
     'Do not include raw API response bodies, API key names, API key IDs, credentials, tokens, or secrets in the final answer. Save raw outputs under the run directory and summarize them instead.',
-    'For smoke tests, prefer health checks and aggregate product-data endpoints. Do not use account, credential, or key-inventory endpoints as low-risk probes.',
+    'For smoke tests, prefer aggregate product-data methods (for example usage summaries). Do not use account, credential, or key-inventory methods as low-risk probes.',
     '',
-    'Selected page context references are non-authoritative hints. Resolve data through the local data API before making claims:',
+    'Selected page context references are non-authoritative hints. Resolve data through the Python client before making claims:',
     safeStringify(request.pageContextReferences, 10000),
   ].join('\n');
 }
@@ -1017,7 +919,6 @@ try {
   await fs.mkdir(agentDir, { recursive: true });
   await fs.rm(path.join(agentDir, 'extensions'), { recursive: true, force: true });
   await fs.rm('/workspace/.pi/extensions', { recursive: true, force: true });
-  await fs.mkdir(contextArtifactDir, { recursive: true });
   await fs.writeFile(contextGuardExtensionPath, buildTraceflowContextGuardExtension());
   await emit({
     type: 'status',
@@ -1047,7 +948,6 @@ try {
     data: {
       phase: 'context_guard_ready',
       extensionPath: contextGuardExtensionPath,
-      artifactDir: contextArtifactDir,
       maxToolResultChars: MAX_TOOL_RESULT_CONTEXT_CHARS,
       maxMessageChars: MAX_MESSAGE_CONTEXT_CHARS,
       maxProviderPayloadChars: MAX_PROVIDER_PAYLOAD_CHARS,
@@ -1069,22 +969,17 @@ try {
     });
   }, request.maxRuntimeMs);
 
+  // The SDK lives at /opt/pi/node_modules (outside /workspace) so a resume's overlay restore
+  // can't shadow it. Bare ESM import() ignores NODE_PATH, and the package's exports map is
+  // import-only (no require condition), so resolve its main from package.json and import that
+  // absolute file URL directly.
+  const piPkgDir = '/opt/pi/node_modules/@earendil-works/pi-coding-agent';
+  const piPkg = JSON.parse(await fs.readFile(path.join(piPkgDir, 'package.json'), 'utf8'));
+  const piMain = piPkg.exports?.['.']?.import ?? piPkg.module ?? piPkg.main ?? 'dist/index.js';
+  const piEntry = pathToFileURL(path.join(piPkgDir, piMain)).href;
   const [
-    {
-      AuthStorage,
-      createAgentSession,
-      DefaultResourceLoader,
-      defineTool,
-      ModelRegistry,
-      SessionManager,
-      SettingsManager,
-    },
-    { Type },
-  ] = await Promise.all([
-    import('@earendil-works/pi-coding-agent'),
-    import('typebox'),
-  ]);
-  const traceflowDataTool = createTraceflowDataTool(defineTool, Type);
+    { AuthStorage, createAgentSession, DefaultResourceLoader, ModelRegistry, SessionManager, SettingsManager },
+  ] = await Promise.all([import(piEntry)]);
   await emit({ type: 'status', message: 'Runtime loaded' });
 
   const authStorage = AuthStorage.create(path.join(agentDir, 'auth.json'));
@@ -1152,20 +1047,38 @@ try {
     },
   });
 
+  // File-backed session so the conversation transcript survives the run. We snapshot
+  // /workspace (data + this session dir) to R2 on completion and rehydrate it on the
+  // next question, so a follow-up resumes with full prior context — see request.resume.
+  const sessionDir = '/workspace/.pi/sessions';
+  await fs.mkdir(sessionDir, { recursive: true });
+  const sessionManager = request.resume
+    ? SessionManager.continueRecent('/workspace', sessionDir)
+    : SessionManager.create('/workspace', sessionDir);
+
   const created = await createAgentSession({
     cwd: '/workspace',
     agentDir,
     model,
-    thinkingLevel: 'off',
+    thinkingLevel: request.thinkingLevel ?? 'medium',
     authStorage,
     modelRegistry,
-    tools: ['read', 'write', 'bash', 'grep', 'find', 'ls', 'traceflow_data'],
-    customTools: [traceflowDataTool],
+    tools: ['read', 'write', 'bash', 'grep', 'find', 'ls'],
     resourceLoader,
-    sessionManager: SessionManager.inMemory('/workspace'),
+    sessionManager,
     settingsManager,
   });
   session = created.session;
+  await emit({
+    type: 'status',
+    message: request.resume ? 'Resumed prior session' : 'Started new session',
+    data: {
+      phase: 'session_ready',
+      resumed: Boolean(request.resume),
+      sessionId: sessionManager.getSessionId(),
+      persisted: sessionManager.isPersisted(),
+    },
+  });
   session.subscribe((event) => {
     piEventCount += 1;
     const displayEvent = describeSessionEvent(event);

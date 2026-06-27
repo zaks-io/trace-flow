@@ -23,6 +23,21 @@ binding = "CF_VERSION_METADATA"
 CONVEX_URL = "https://hardy-iguana-812.convex.cloud"
 SENTRY_ENVIRONMENT = "development"
 SANDBOX_TRANSPORT = "http"
+# Deployed worker → real R2 via presigned URLs (localBucket is only for `wrangler dev`).
+# Secrets R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY hold the R2 API token.
+BACKUP_LOCAL_BUCKET = "false"
+BACKUP_BUCKET_NAME = "trace-flow-analyst-sandbox-backups-dev"
+BACKUP_BUCKET_ENDPOINT = "https://a461d640900eb3905d7b6619c8c0da91.r2.cloudflarestorage.com"
+CLOUDFLARE_ACCOUNT_ID = "a461d640900eb3905d7b6619c8c0da91"
+
+[[r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "trace-flow-analyst-sandbox-backups-dev"
+
+# Bind by ID (never by CF title) — proxy-consumer binds the same namespaces by ID.
+[[kv_namespaces]]
+binding = "MODEL_PRICING"
+id = "25a35f71a8d64884a8e8935056880dba"
 
 [[containers]]
 class_name = "Sandbox"
@@ -48,6 +63,19 @@ binding = "CF_VERSION_METADATA"
 CONVEX_URL = "https://hardy-iguana-812.convex.cloud"
 SENTRY_ENVIRONMENT = "preview"
 SANDBOX_TRANSPORT = "rpc"
+BACKUP_LOCAL_BUCKET = "false"
+BACKUP_BUCKET_NAME = "trace-flow-analyst-sandbox-backups-preview"
+BACKUP_BUCKET_ENDPOINT = "https://a461d640900eb3905d7b6619c8c0da91.r2.cloudflarestorage.com"
+CLOUDFLARE_ACCOUNT_ID = "a461d640900eb3905d7b6619c8c0da91"
+
+[[env.preview.r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "trace-flow-analyst-sandbox-backups-preview"
+
+# Preview shares the Convex dev deployment, so it uses the dev MODEL_PRICING namespace.
+[[env.preview.kv_namespaces]]
+binding = "MODEL_PRICING"
+id = "25a35f71a8d64884a8e8935056880dba"
 
 [[env.preview.containers]]
 class_name = "Sandbox"
@@ -73,6 +101,20 @@ binding = "CF_VERSION_METADATA"
 [env.production.vars]
 SENTRY_ENVIRONMENT = "prod"
 SANDBOX_TRANSPORT = "rpc"
+# Prod uses presigned URLs (not the local R2 binding). Requires secrets
+# R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY.
+BACKUP_LOCAL_BUCKET = "false"
+BACKUP_BUCKET_NAME = "trace-flow-analyst-sandbox-backups-production"
+BACKUP_BUCKET_ENDPOINT = "https://a461d640900eb3905d7b6619c8c0da91.r2.cloudflarestorage.com"
+CLOUDFLARE_ACCOUNT_ID = "a461d640900eb3905d7b6619c8c0da91"
+
+[[env.production.r2_buckets]]
+binding = "BACKUP_BUCKET"
+bucket_name = "trace-flow-analyst-sandbox-backups-production"
+
+[[env.production.kv_namespaces]]
+binding = "MODEL_PRICING"
+id = "45dd0d5e619d44fc831ccab01ed428a4"
 
 [[env.production.routes]]
 pattern = "analyst-sandbox.trace-flow.dev/*"

@@ -1,4 +1,5 @@
 import { getSandbox, type Sandbox as SandboxBinding } from '@cloudflare/sandbox';
+import { getPricing } from '@trace-flow/pricing';
 import { ConvexHttpClient } from 'convex/browser';
 import { makeFunctionReference } from 'convex/server';
 import {
@@ -7,7 +8,10 @@ import {
   buildPiRunRequest,
   buildPiWorkspaceManifest,
   getPiRunnerPaths,
+  pricingToPiCost,
+  type PiModelCost,
 } from './piRunner';
+import { buildTraceflowPythonClient } from './pythonClient';
 import {
   EXECUTION_TIMEOUT_MS,
   MAX_PI_TAIL_LINES,
@@ -30,7 +34,26 @@ interface Env {
   ANALYST_SANDBOX_SHARED_SECRET: string;
   CONVEX_URL: string;
   OPENROUTER_API_KEY: string;
+  BACKUP_BUCKET: R2Bucket;
+  BACKUP_LOCAL_BUCKET: string;
+  MODEL_PRICING: KVNamespace;
 }
+
+/**
+ * Pi prices each run in-sandbox, so we bake the model's real rates into models.json at launch.
+ * Rates come from the same MODEL_PRICING KV (models.dev/OpenRouter-sourced) the consumers use, so
+ * there is one pricing source of truth. Fails loud if the model is unpriced — never silently $0.
+ */
+async function resolvePiModelCost(env: Env, model: string): Promise<PiModelCost> {
+  const pricing = await getPricing(env.MODEL_PRICING, 'openrouter', model);
+  if (!pricing) {
+    throw new Error(`No MODEL_PRICING entry for openrouter:${model}; cannot price Pi run`);
+  }
+  return pricingToPiCost(pricing);
+}
+
+/** Days a /workspace snapshot survives in R2 before automatic GC (matches an idle conversation). */
+const BACKUP_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 function jsonResponse(value: unknown, init?: ResponseInit): Response {
   return Response.json(value, {
@@ -44,6 +67,7 @@ function jsonResponse(value: unknown, init?: ResponseInit): Response {
 
 const receiveEventsRef = makeFunctionReference<'action'>('analyst:receiveSandboxEvents');
 const completeRunRef = makeFunctionReference<'action'>('analyst:completeSandboxRun');
+const checkpointRunRef = makeFunctionReference<'action'>('analyst:checkpointSandboxRun');
 const executeToolRef = makeFunctionReference<'action'>('analyst:executeSandboxToolCall');
 const verifyRunRef = makeFunctionReference<'action'>('analyst:verifySandboxRunToken');
 const SANDBOX_RPC_TIMEOUT_MS = 8_000;
@@ -60,6 +84,43 @@ function getAnalystSandbox(env: Env, sandboxId: string, options: { keepAlive?: b
     enableDefaultSession: false,
     keepAlive: options.keepAlive,
   });
+}
+
+interface WorkspaceBackup {
+  id: string;
+  dir: string;
+  localBucket?: boolean;
+}
+
+/** Snapshot /workspace to R2. Returns the serializable handle, or null if it fails. */
+async function snapshotWorkspace(env: Env, sandboxId: string): Promise<WorkspaceBackup | null> {
+  try {
+    const sandbox = getAnalystSandbox(env, sandboxId);
+    const backup = await sandbox.createBackup({
+      dir: '/workspace',
+      name: sandboxId,
+      ttl: BACKUP_TTL_SECONDS,
+      localBucket: env.BACKUP_LOCAL_BUCKET === 'true',
+    });
+    return { id: backup.id, dir: backup.dir, localBucket: backup.localBucket };
+  } catch (error) {
+    console.error('snapshotWorkspace failed', error);
+    return null;
+  }
+}
+
+/** Rehydrate /workspace from a prior backup handle. Returns true on success. */
+async function restoreWorkspace(
+  sandbox: ReturnType<typeof getAnalystSandbox>,
+  backup: WorkspaceBackup,
+): Promise<boolean> {
+  try {
+    const result = await sandbox.restoreBackup(backup);
+    return result.success;
+  } catch (error) {
+    console.error('restoreWorkspace failed', error);
+    return false;
+  }
 }
 
 function bearerToken(request: Request): string | null {
@@ -246,6 +307,9 @@ export default {
     if (url.pathname === '/pi-runs/complete') {
       return handlePiRunComplete(request, env, ctx);
     }
+    if (url.pathname === '/pi-runs/checkpoint') {
+      return handlePiRunCheckpoint(request, env);
+    }
     if (url.pathname === '/traceflow-data/tool') {
       return handleTraceflowTool(request, env);
     }
@@ -314,7 +378,20 @@ async function handleStartPiRun(request: Request, env: Env, url: URL): Promise<R
   const paths = getPiRunnerPaths(body.runId);
   const aiProxyBaseUrl = `${url.origin}/ai-proxy/openrouter/${body.runId}/api/v1`;
 
+  // Rehydrate the prior /workspace (data + Pi session) before writing this run's
+  // files, so the runner's continueRecent() picks up exactly where it left off.
+  // If restore fails, fall through as a cold start rather than aborting the run.
+  let resumed = false;
+  if (body.resume && body.backup) {
+    resumed = await restoreWorkspace(sandbox, body.backup);
+  }
+  // The runner resumes the Pi session only if the workspace actually rehydrated.
+  const runBody = { ...body, resume: resumed };
+
   try {
+    const modelCost = await sandboxStartupStep('resolve model pricing', () =>
+      resolvePiModelCost(env, body.model),
+    );
     await sandboxStartupStep('mkdir run dir', () =>
       sandbox.mkdir(paths.runDir, { recursive: true }),
     );
@@ -322,16 +399,22 @@ async function handleStartPiRun(request: Request, env: Env, url: URL): Promise<R
       sandbox.mkdir('/workspace/.pi/agent', { recursive: true }),
     );
     await sandboxStartupStep('write request', () =>
-      sandbox.writeFile(paths.requestPath, buildPiRunRequest(body)),
+      sandbox.writeFile(paths.requestPath, buildPiRunRequest(runBody)),
     );
     await sandboxStartupStep('write Pi models', () =>
       sandbox.writeFile(
         '/workspace/.pi/agent/models.json',
-        buildPiModelsJson(body.model, aiProxyBaseUrl),
+        buildPiModelsJson(body.model, aiProxyBaseUrl, modelCost),
       ),
     );
     await sandboxStartupStep('write workspace manifest', () =>
       sandbox.writeFile('/workspace/TRACEFLOW_RUNNER.md', buildPiWorkspaceManifest()),
+    );
+    await sandboxStartupStep('write Trace Flow Python client', () =>
+      sandbox.writeFile(
+        '/workspace/traceflow_client.py',
+        buildTraceflowPythonClient(body.toolDefinitions),
+      ),
     );
     await sandboxStartupStep('write runner', () =>
       sandbox.writeFile(paths.runnerPath, buildPiRunnerScript()),
@@ -368,6 +451,7 @@ async function handleStartPiRun(request: Request, env: Env, url: URL): Promise<R
 
     return jsonResponse({ ok: true, processId: process.id, pid: process.pid });
   } catch (error) {
+    console.error('handleStartPiRun failed', error);
     await sandbox.destroy().catch(() => undefined);
     return jsonResponse(
       { ok: false, error: error instanceof Error ? error.message : String(error) },
@@ -494,12 +578,22 @@ async function handlePiRunComplete(
     return jsonResponse({ ok: false, error: 'Invalid completion payload' }, { status: 400 });
   }
 
+  // Snapshot /workspace (data + Pi session transcript) to R2 BEFORE teardown, but
+  // only for a clean completion — a failed/timed-out run must not clobber the last
+  // good snapshot. The serializable handle is stored on the thread by Convex so the
+  // next question can rehydrate and resume.
+  let backup: { id: string; dir: string; localBucket?: boolean } | null = null;
+  if (body.sandboxId && body.status === 'completed') {
+    backup = await snapshotWorkspace(env, body.sandboxId);
+  }
+
   await getConvex(env).action(completeRunRef, {
     runId: body.runId,
     token,
     status: body.status,
     resultText: body.resultText,
     error: body.error,
+    backup: backup ?? undefined,
   });
 
   if (body.sandboxId) {
@@ -511,6 +605,29 @@ async function handlePiRunComplete(
         .then(() => sandbox.destroy().catch(() => undefined)),
     );
   }
+
+  return jsonResponse({ ok: true });
+}
+
+async function handlePiRunCheckpoint(request: Request, env: Env): Promise<Response> {
+  const token = bearerToken(request);
+  if (!token) return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  const body = (await request.json().catch(() => null)) as {
+    runId?: string;
+    sandboxId?: string;
+  } | null;
+  if (!body?.runId || !body.sandboxId) {
+    return jsonResponse({ ok: false, error: 'Invalid checkpoint payload' }, { status: 400 });
+  }
+
+  const backup = await snapshotWorkspace(env, body.sandboxId);
+  if (!backup) return jsonResponse({ ok: false, error: 'Snapshot failed' }, { status: 500 });
+
+  await getConvex(env).action(checkpointRunRef, {
+    runId: body.runId,
+    token,
+    backup,
+  });
 
   return jsonResponse({ ok: true });
 }

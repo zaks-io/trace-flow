@@ -103,6 +103,21 @@ function toRow(event: SandboxRunEventInput): PiRunRow | null {
     return text ? { kind: 'text', key: event._id, text } : null;
   }
 
+  // An informational note (e.g. "Resumed after interruption") emitted by the server,
+  // not by Pi. Distinct from an error note via tone.
+  if (kind === 'note') {
+    const text = readString(data?.text);
+    return text
+      ? {
+          kind: 'note',
+          key: event._id,
+          label: readString(data?.label) ?? 'Note',
+          text,
+          tone: data?.tone === 'danger' ? 'danger' : 'normal',
+        }
+      : null;
+  }
+
   // A raw stderr/error event with no structured payload still surfaces as an error.
   if (event.type === 'error' || event.type === 'stderr') {
     const text = event.message?.trim();

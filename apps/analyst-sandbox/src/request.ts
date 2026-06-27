@@ -11,6 +11,18 @@ export const MAX_PI_CONTROL_MESSAGE_CHARS = 8_000;
 export const MAX_PI_TAIL_LINES = 500;
 export const MAX_PI_TOOL_DEFINITIONS_CHARS = 100_000;
 
+export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export const PI_THINKING_LEVELS: readonly PiThinkingLevel[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+];
+/** Analyst runs reason by default; callers may override per run. Not 'off' — we want thinking. */
+export const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = 'medium';
+
 export interface AnalysisDataset {
   name: string;
   tool: string;
@@ -32,7 +44,12 @@ export interface StartPiRunRequest {
   pageContextReferences: unknown[];
   maxRuntimeMs: number;
   model: string;
+  thinkingLevel: PiThinkingLevel;
   toolDefinitions: unknown[];
+  /** Rehydrate prior /workspace + Pi session from R2 and resume it instead of starting fresh. */
+  resume: boolean;
+  /** Backup handle to restore when resume is true. Serializable metadata from createBackup(). */
+  backup?: { id: string; dir: string; localBucket?: boolean };
 }
 
 export interface ControlPiRunRequest {
@@ -211,6 +228,12 @@ export function parseStartPiRunRequest(value: unknown): ParseResult<StartPiRunRe
   ) {
     return { ok: false, error: 'Invalid model' };
   }
+  if (
+    payload.thinkingLevel !== undefined &&
+    !PI_THINKING_LEVELS.includes(payload.thinkingLevel as PiThinkingLevel)
+  ) {
+    return { ok: false, error: 'Invalid thinkingLevel' };
+  }
   if (!Array.isArray(payload.pageContextReferences)) {
     return { ok: false, error: 'pageContextReferences must be an array' };
   }
@@ -231,8 +254,22 @@ export function parseStartPiRunRequest(value: unknown): ParseResult<StartPiRunRe
       pageContextReferences: payload.pageContextReferences,
       maxRuntimeMs: Math.round(payload.maxRuntimeMs),
       model: payload.model,
+      thinkingLevel: (payload.thinkingLevel as PiThinkingLevel) ?? DEFAULT_PI_THINKING_LEVEL,
       toolDefinitions: payload.toolDefinitions,
+      resume: payload.resume === true,
+      backup: parseBackupHandle(payload.backup),
     },
+  };
+}
+
+function parseBackupHandle(value: unknown): StartPiRunRequest['backup'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const handle = value as Record<string, unknown>;
+  if (typeof handle.id !== 'string' || typeof handle.dir !== 'string') return undefined;
+  return {
+    id: handle.id,
+    dir: handle.dir,
+    localBucket: handle.localBucket === true,
   };
 }
 

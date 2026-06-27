@@ -56,6 +56,17 @@ const SANDBOX_CONTROL_FETCH_TIMEOUT_MS = 30_000;
 export const SANDBOX_START_FETCH_TIMEOUT_MS = 180_000;
 const SANDBOX_TIMEOUT_WATCHDOG_GRACE_MS = 30_000;
 const SANDBOX_TIMEOUT_RESCHEDULE_PADDING_MS = 10_000;
+// Liveness watchdog: the runner heartbeats every ~10s, so no event for this long
+// while the run is active means the container died (deploy rollout, eviction, crash).
+const SANDBOX_LIVENESS_CHECK_INTERVAL_MS = 30_000;
+const SANDBOX_LIVENESS_STALE_MS = 30_000;
+// A cold container can take longer than one interval to pull, boot, and emit its
+// first heartbeat. Don't run the first liveness check until after that window so a
+// legitimately-slow start isn't mistaken for a dead container.
+const SANDBOX_LIVENESS_FIRST_CHECK_MS = 90_000;
+// Auto-resume a dead container up to this many times before failing loudly, so a
+// run that crashes on every start can't loop forever burning tokens and containers.
+const SANDBOX_MAX_RESUME_ATTEMPTS = 2;
 const ANALYST_STOP_POLL_MS = 1_000;
 const ANALYST_STOP_REASON = 'user_stop';
 const ANALYST_FINAL_RESPONSE_PROMPT = `You reached the Analyst step limit. Do not call more tools. Provide the best final answer you can from the information already gathered. If the answer is incomplete, say what is missing and what follow-up would resolve it.`;
@@ -76,7 +87,9 @@ Answer questions about Trace Flow, LLM traces, usage, costs, and agent analytics
 Do not invent numbers or pretend page context is authoritative data.
 The main Analyst must not ingest Trace Flow rows, trace bodies, usage tables, agent analytics tables, raw datasets, or raw tool results directly.
 For any question that requires Trace Flow product data, numbers, traces, usage, costs, or agent analytics, call start_pi_agent_analysis. The Pi coding agent has sandboxed data access, writes scripts, pages and saves raw payloads to disk, analyzes them with coding tools, validates summaries/aggregates locally, and returns a final composed response.
-For long-running or open-ended data exploration, call start_pi_agent_analysis. It returns immediately with a run id; the run continues asynchronously, streams in the UI, and will notify this conversation when it completes. After starting a Pi run, wait for the async completion continuation before giving the final data answer. Do not call control_pi_agent_run just to wait. End the current turn with a short acknowledgement unless the user explicitly asked you to debug, steer, cancel, or add follow-up instructions to a specific existing run. control_pi_agent_run is for steering, debug/status inspection, cancellation, and follow-up only.
+start_pi_agent_analysis is the right tool for EVERY data question in this conversation, including follow-ups. The Pi sandbox persists across the conversation: each run automatically resumes the previous one with its full session history and the data already downloaded to disk. So a follow-up does NOT start from scratch — it continues where the last run left off, reusing prior work. Phrase each prompt as the next question or refinement; do not re-explain context the agent already has, and do not ask it to re-download data it already fetched.
+It returns immediately with a run id; the run continues asynchronously, streams in the UI, and will notify this conversation when it completes. After starting a Pi run, wait for the async completion continuation before giving the final data answer. Do not call control_pi_agent_run just to wait. End the current turn with a short acknowledgement unless the user explicitly asked you to debug, steer, cancel, or add follow-up instructions to a specific existing run.
+control_pi_agent_run steers a run that is still in flight (status, tail, cancel, steer, follow_up). Use follow_up/steer ONLY for a run that is currently running. For a new question after a run has completed, call start_pi_agent_analysis again — it resumes the same sandbox automatically; you do not need to, and must not, treat completion as losing context.
 When a Pi run completes, use its final composed response to answer the user. Do not request or infer raw datasets; raw data stays in sandbox artifacts.
 Conversations are private, but every tool call still uses the current user's live permissions.
 Direct Trace Flow data tools are intentionally not exposed to the main Analyst.`;
@@ -622,6 +635,28 @@ export function isSandboxRunTimeoutExpired(
   return sandboxRunTimeoutRemainingMs(run, now, graceMs) === 0;
 }
 
+interface SandboxRunLiveness {
+  status: string;
+  startedAt?: number;
+  lastEventAt?: number;
+  _creationTime: number;
+}
+
+/**
+ * Decide what the liveness watchdog should do for a run. 'reschedule' while it's
+ * active and recently signalled, 'dead' once it's active but silent past the
+ * staleness window (container exited), 'stop' once the run is terminal.
+ */
+export function sandboxRunLivenessVerdict(
+  run: SandboxRunLiveness,
+  now: number,
+  staleMs = SANDBOX_LIVENESS_STALE_MS,
+): 'reschedule' | 'dead' | 'stop' {
+  if (!ACTIVE_SANDBOX_RUN_STATUSES.has(run.status)) return 'stop';
+  const lastSignalAt = run.lastEventAt ?? run.startedAt ?? run._creationTime;
+  return now - lastSignalAt < staleMs ? 'reschedule' : 'dead';
+}
+
 export function sandboxRunTimeoutRemainingMs(
   run: SandboxRunTiming,
   now: number,
@@ -721,25 +756,93 @@ async function startPiAgentAnalysis(
   });
   if (!thread) return { ok: false, error: 'Conversation not found.' };
 
-  const { token, hash } = await createSandboxRunToken();
-  const now = Date.now();
-  const maxRuntimeMs = clampPiRuntimeMs(input.maxRuntimeMinutes);
-  const pageContextReferences = normalizeUnknownPageContextReferences(input.pageContextReferences);
-  const sandboxId = buildPiSandboxId();
-  const runId = await ctx.runMutation(internal.analyst.createSandboxRun, {
+  const launched = await launchSandboxRun(ctx, {
     analystThreadId: thread._id,
     creatorUserId: userId,
     orgId: thread.orgId,
+    prompt: input.prompt,
+    pageContextReferences: normalizeUnknownPageContextReferences(input.pageContextReferences),
+    maxRuntimeMs: clampPiRuntimeMs(input.maxRuntimeMinutes),
+    // Resume this conversation's prior sandbox: a fresh DO restores the last /workspace
+    // snapshot from R2 so Pi continues its session instead of re-downloading from zero.
+    backup: thread.sandboxBackup ?? null,
+    resumeAttempt: 0,
+  });
+
+  if (!launched.ok) {
+    return {
+      ok: false,
+      type: 'async_pi_agent_run',
+      runId: launched.runId,
+      status: 'failed',
+      error: launched.error,
+    };
+  }
+
+  return {
+    ok: true,
+    type: 'async_pi_agent_run',
+    async: true,
+    runId: launched.runId,
+    status: 'running',
+    resumed: launched.resumed,
+    maxRuntimeMinutes: Math.round(launched.maxRuntimeMs / 60_000),
+    message: launched.resumed
+      ? 'Pi data analysis resumed from this conversation’s prior sandbox session. The UI will stream progress and this conversation will be notified when it completes.'
+      : 'Pi data analysis started in a new sandbox. The UI will stream progress and this conversation will be notified when it completes.',
+  };
+}
+
+interface LaunchSandboxRunInput {
+  analystThreadId: Id<'analystThreads'>;
+  creatorUserId: Id<'users'>;
+  orgId: Id<'organizations'>;
+  prompt: string;
+  pageContextReferences: PageContextReference[];
+  maxRuntimeMs: number;
+  backup: { id: string; dir: string; localBucket?: boolean } | null;
+  resumeAttempt: number;
+}
+
+type LaunchSandboxRunResult =
+  | { ok: true; runId: Id<'analystSandboxRuns'>; resumed: boolean; maxRuntimeMs: number }
+  | { ok: false; runId: Id<'analystSandboxRuns'>; error: string };
+
+/**
+ * Create a sandbox run, arm its watchdogs (deadline + liveness), POST it to the
+ * sandbox worker, and mark it started. Shared by the initial tool call and the
+ * dead-container auto-resume path so both arm liveness identically.
+ */
+async function launchSandboxRun(
+  ctx: ActionCtx,
+  input: LaunchSandboxRunInput,
+): Promise<LaunchSandboxRunResult> {
+  const { token, hash } = await createSandboxRunToken();
+  const now = Date.now();
+  const sandboxId = buildPiSandboxId();
+  const resumed = Boolean(input.backup);
+  const runId = await ctx.runMutation(internal.analyst.createSandboxRun, {
+    analystThreadId: input.analystThreadId,
+    creatorUserId: input.creatorUserId,
+    orgId: input.orgId,
     sandboxId,
     prompt: input.prompt,
-    pageContextReferences,
+    pageContextReferences: input.pageContextReferences,
     runTokenHash: hash,
-    maxRuntimeMs,
+    maxRuntimeMs: input.maxRuntimeMs,
+    resumeAttempt: input.resumeAttempt,
     now,
   });
+  // Backstop deadline watchdog (hours) plus the fast liveness watchdog (30s) that
+  // catches a dead container long before the deadline.
   await ctx.scheduler.runAfter(
-    maxRuntimeMs + SANDBOX_TIMEOUT_WATCHDOG_GRACE_MS,
+    input.maxRuntimeMs + SANDBOX_TIMEOUT_WATCHDOG_GRACE_MS,
     internal.analyst.timeoutSandboxRunIfExpired,
+    { runId },
+  );
+  await ctx.scheduler.runAfter(
+    SANDBOX_LIVENESS_FIRST_CHECK_MS,
+    internal.analyst.resumeOrFailStaleSandboxRun,
     { runId },
   );
 
@@ -751,31 +854,26 @@ async function startPiAgentAnalysis(
         runToken: token,
         sandboxId,
         prompt: input.prompt,
-        pageContextReferences,
-        maxRuntimeMs,
+        pageContextReferences: input.pageContextReferences,
+        maxRuntimeMs: input.maxRuntimeMs,
         model: ANALYST_MODEL,
         toolDefinitions: sandboxTraceFlowToolDefinitions,
+        resume: resumed,
+        backup: input.backup
+          ? { id: input.backup.id, dir: input.backup.dir, localBucket: input.backup.localBucket }
+          : undefined,
       },
       SANDBOX_START_FETCH_TIMEOUT_MS,
     )) as { processId?: string };
 
     await ctx.runMutation(internal.analyst.markSandboxRunStarted, {
       runId,
-      userId,
+      userId: input.creatorUserId,
       processId: started.processId,
       now: Date.now(),
     });
 
-    return {
-      ok: true,
-      type: 'async_pi_agent_run',
-      async: true,
-      runId,
-      status: 'running',
-      maxRuntimeMinutes: Math.round(maxRuntimeMs / 60_000),
-      message:
-        'Pi data analysis started. The UI will stream progress and this conversation will be notified when it completes.',
-    };
+    return { ok: true, runId, resumed, maxRuntimeMs: input.maxRuntimeMs };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await ctx.runMutation(internal.analyst.completeSandboxRunInternal, {
@@ -785,7 +883,7 @@ async function startPiAgentAnalysis(
       error: message,
       now: Date.now(),
     });
-    return { ok: false, type: 'async_pi_agent_run', runId, status: 'failed', error: message };
+    return { ok: false, runId, error: message };
   }
 }
 
@@ -1573,6 +1671,9 @@ export const completeSandboxRun = action({
     ),
     resultText: v.optional(v.string()),
     error: v.optional(v.string()),
+    backup: v.optional(
+      v.object({ id: v.string(), dir: v.string(), localBucket: v.optional(v.boolean()) }),
+    ),
   },
   handler: async (ctx, args) => {
     const tokenHash = await sha256Hex(args.token);
@@ -1584,6 +1685,17 @@ export const completeSandboxRun = action({
       error: truncateText(args.error, MAX_SANDBOX_EVENT_MESSAGE_CHARS),
       now: Date.now(),
     });
+
+    // Persist the fresh /workspace snapshot on the conversation so the next Pi run
+    // rehydrates and resumes. Only clean completions carry a backup handle.
+    if (args.backup) {
+      await ctx.runMutation(internal.analyst.storeThreadSandboxBackup, {
+        runId: args.runId,
+        tokenHash,
+        backup: args.backup,
+        now: Date.now(),
+      });
+    }
 
     if (args.status === 'completed') {
       const scheduled = await ctx.runMutation(internal.analyst.markSandboxContinuationScheduled, {
@@ -1597,6 +1709,29 @@ export const completeSandboxRun = action({
       }
     }
 
+    return { ok: true };
+  },
+});
+
+/**
+ * Store a mid-run /workspace snapshot on the conversation without ending the run.
+ * Called best-effort from the runner's session_shutdown hook so a graceful container
+ * teardown (deploy rollout) leaves a fresh checkpoint for auto-resume.
+ */
+export const checkpointSandboxRun = action({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    token: v.string(),
+    backup: v.object({ id: v.string(), dir: v.string(), localBucket: v.optional(v.boolean()) }),
+  },
+  handler: async (ctx, args) => {
+    const tokenHash = await sha256Hex(args.token);
+    await ctx.runMutation(internal.analyst.storeThreadSandboxBackup, {
+      runId: args.runId,
+      tokenHash,
+      backup: args.backup,
+      now: Date.now(),
+    });
     return { ok: true };
   },
 });
@@ -1739,6 +1874,20 @@ export const getActiveSandboxRunsForAction = internalQuery({
   },
 });
 
+/** Run plus its thread's resume context, for the liveness watchdog. */
+export const getSandboxRunLivenessContext = internalQuery({
+  args: { runId: v.id('analystSandboxRuns') },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) return null;
+    const thread = await ctx.db.get(run.analystThreadId);
+    return {
+      run,
+      backup: thread?.sandboxBackup ?? null,
+    };
+  },
+});
+
 export const getVerifiedSandboxRunForAction = internalQuery({
   args: {
     runId: v.id('analystSandboxRuns'),
@@ -1803,6 +1952,7 @@ export const createSandboxRun = internalMutation({
     pageContextReferences: v.optional(v.array(pageContextReferenceValidator)),
     runTokenHash: v.string(),
     maxRuntimeMs: v.number(),
+    resumeAttempt: v.optional(v.number()),
     now: v.number(),
   },
   handler: async (ctx, args): Promise<Id<'analystSandboxRuns'>> => {
@@ -1816,6 +1966,7 @@ export const createSandboxRun = internalMutation({
       status: 'starting',
       runTokenHash: args.runTokenHash,
       maxRuntimeMs: args.maxRuntimeMs,
+      resumeAttempt: args.resumeAttempt,
       updatedAt: args.now,
       nextSeq: 0,
     });
@@ -1927,6 +2078,100 @@ export const completeSandboxRunInternal = internalMutation({
   },
 });
 
+/**
+ * Close out a run whose container went silent (deploy rollout, eviction, crash).
+ * Records an explicit interrupted event then marks the run terminal. Keyed by
+ * runId only — this is server-internal, not the runner posting with its token.
+ */
+export const markSandboxRunInterrupted = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    error: v.string(),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) return null;
+    if (!ACTIVE_SANDBOX_RUN_STATUSES.has(run.status)) return run;
+
+    const seq = run.nextSeq;
+    await ctx.db.insert('analystSandboxRunEvents', {
+      runId: args.runId,
+      analystThreadId: run.analystThreadId,
+      creatorUserId: run.creatorUserId,
+      orgId: run.orgId,
+      seq,
+      type: 'error',
+      message: args.error,
+      data: { status: 'timed_out', lastEventAt: run.lastEventAt },
+      emittedAt: args.now,
+    });
+
+    const patch = {
+      status: 'timed_out',
+      error: args.error,
+      completedAt: args.now,
+      lastEventAt: args.now,
+      updatedAt: args.now,
+      nextSeq: seq + 1,
+    } as const;
+    await ctx.db.patch(args.runId, patch);
+    return { ...run, ...patch };
+  },
+});
+
+/** Append an informational note (e.g. "Resumed after interruption") to a run's work log. */
+export const emitSandboxRunNote = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    label: v.string(),
+    text: v.string(),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run) return;
+    const seq = run.nextSeq;
+    await ctx.db.insert('analystSandboxRunEvents', {
+      runId: args.runId,
+      analystThreadId: run.analystThreadId,
+      creatorUserId: run.creatorUserId,
+      orgId: run.orgId,
+      seq,
+      type: 'status',
+      message: args.label,
+      data: { kind: 'note', label: args.label, text: args.text, tone: 'normal' },
+      emittedAt: args.now,
+    });
+    await ctx.db.patch(args.runId, { nextSeq: seq + 1, updatedAt: args.now });
+  },
+});
+
+export const storeThreadSandboxBackup = internalMutation({
+  args: {
+    runId: v.id('analystSandboxRuns'),
+    tokenHash: v.string(),
+    backup: v.object({
+      id: v.string(),
+      dir: v.string(),
+      localBucket: v.optional(v.boolean()),
+    }),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (run?.runTokenHash !== args.tokenHash) throw new Error('Pi run not found');
+    await ctx.db.patch(run.analystThreadId, {
+      sandboxBackup: {
+        id: args.backup.id,
+        dir: args.backup.dir,
+        localBucket: args.backup.localBucket,
+        updatedAt: args.now,
+      },
+    });
+  },
+});
+
 export const timeoutSandboxRunIfExpired = internalMutation({
   args: {
     runId: v.id('analystSandboxRuns'),
@@ -1976,6 +2221,85 @@ export const timeoutSandboxRunIfExpired = internalMutation({
     });
 
     return true;
+  },
+});
+
+/**
+ * Fast liveness watchdog (every 30s). The runner heartbeats every ~10s, so if a
+ * run is still active but hasn't emitted for 30s its container is dead (deploy
+ * rollout, eviction, crash). Marks the dead run interrupted and auto-resumes from
+ * the conversation's last R2 checkpoint — up to SANDBOX_MAX_RESUME_ATTEMPTS, then
+ * fails loudly. Healthy runs simply reschedule the next check.
+ */
+export const resumeOrFailStaleSandboxRun = internalAction({
+  args: { runId: v.id('analystSandboxRuns') },
+  handler: async (ctx, args) => {
+    const context = await ctx.runQuery(internal.analyst.getSandboxRunLivenessContext, {
+      runId: args.runId,
+    });
+    if (!context) return;
+    const { run, backup } = context;
+
+    const now = Date.now();
+    const verdict = sandboxRunLivenessVerdict(run, now);
+    if (verdict === 'stop') return;
+    if (verdict === 'reschedule') {
+      await ctx.scheduler.runAfter(
+        SANDBOX_LIVENESS_CHECK_INTERVAL_MS,
+        internal.analyst.resumeOrFailStaleSandboxRun,
+        { runId: args.runId },
+      );
+      return;
+    }
+
+    const attempt = run.resumeAttempt ?? 0;
+    await ctx.runMutation(internal.analyst.markSandboxRunInterrupted, {
+      runId: args.runId,
+      error:
+        'The sandbox stopped responding (container exited). Recovering from the last checkpoint.',
+      now,
+    });
+
+    if (attempt >= SANDBOX_MAX_RESUME_ATTEMPTS) {
+      console.error('Pi run exhausted auto-resume attempts', {
+        runId: args.runId,
+        attempts: attempt,
+      });
+      await ctx.runMutation(internal.analyst.emitSandboxRunNote, {
+        runId: args.runId,
+        label: 'Stopped',
+        text: `The sandbox kept stopping after ${SANDBOX_MAX_RESUME_ATTEMPTS} recovery attempts. Ask again to retry.`,
+        now: Date.now(),
+      });
+      return;
+    }
+
+    const launched = await launchSandboxRun(ctx, {
+      analystThreadId: run.analystThreadId,
+      creatorUserId: run.creatorUserId,
+      orgId: run.orgId,
+      prompt: run.prompt,
+      pageContextReferences: normalizeUnknownPageContextReferences(run.pageContextReferences),
+      maxRuntimeMs: run.maxRuntimeMs,
+      backup: backup ? { id: backup.id, dir: backup.dir, localBucket: backup.localBucket } : null,
+      resumeAttempt: attempt + 1,
+    });
+
+    if (!launched.ok) {
+      console.error('Pi run auto-resume failed to relaunch', {
+        runId: args.runId,
+        resumedRunId: launched.runId,
+        error: launched.error,
+      });
+      return;
+    }
+
+    await ctx.runMutation(internal.analyst.emitSandboxRunNote, {
+      runId: launched.runId,
+      label: 'Resumed',
+      text: 'Resumed after interruption — picking up from the last checkpoint.',
+      now: Date.now(),
+    });
   },
 });
 

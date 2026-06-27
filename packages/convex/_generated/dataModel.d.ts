@@ -180,6 +180,7 @@ export type DataModel = {
       processId?: string;
       prompt: string;
       resultText?: string;
+      resumeAttempt?: number;
       runTokenHash: string;
       sandboxId: string;
       startedAt?: number;
@@ -211,6 +212,7 @@ export type DataModel = {
       | "processId"
       | "prompt"
       | "resultText"
+      | "resumeAttempt"
       | "runTokenHash"
       | "sandboxId"
       | "startedAt"
@@ -237,6 +239,12 @@ export type DataModel = {
       creatorUserId: Id<"users">;
       lastMessageAt?: number;
       orgId: Id<"organizations">;
+      sandboxBackup?: {
+        dir: string;
+        id: string;
+        localBucket?: boolean;
+        updatedAt: number;
+      };
       status: "active" | "archived";
       stopRequestedAt?: number;
       title: string;
@@ -251,6 +259,11 @@ export type DataModel = {
       | "creatorUserId"
       | "lastMessageAt"
       | "orgId"
+      | "sandboxBackup"
+      | "sandboxBackup.dir"
+      | "sandboxBackup.id"
+      | "sandboxBackup.localBucket"
+      | "sandboxBackup.updatedAt"
       | "status"
       | "stopRequestedAt"
       | "title"

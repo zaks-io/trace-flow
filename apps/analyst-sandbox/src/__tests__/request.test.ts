@@ -3,6 +3,7 @@ import {
   MAX_CODE_CHARS,
   MAX_DATASETS,
   MAX_PI_CONTROL_MESSAGE_CHARS,
+  DEFAULT_PI_THINKING_LEVEL,
   MAX_PI_PROMPT_CHARS,
   MAX_PI_RUNTIME_MS,
   MAX_STDOUT_CHARS,
@@ -114,6 +115,21 @@ describe('analyst sandbox request boundary', () => {
     expect(
       parseStartPiRunRequest({ ...validRunPayload, maxRuntimeMs: MAX_PI_RUNTIME_MS + 1 }).ok,
     ).toBe(false);
+  });
+
+  it('defaults thinkingLevel to a reasoning level, honors valid overrides, rejects bad ones', () => {
+    const fallback = parseStartPiRunRequest(validRunPayload);
+    expect(fallback.ok).toBe(true);
+    if (fallback.ok) {
+      expect(fallback.request.thinkingLevel).toBe(DEFAULT_PI_THINKING_LEVEL);
+      expect(fallback.request.thinkingLevel).not.toBe('off');
+    }
+
+    const override = parseStartPiRunRequest({ ...validRunPayload, thinkingLevel: 'high' });
+    expect(override.ok).toBe(true);
+    if (override.ok) expect(override.request.thinkingLevel).toBe('high');
+
+    expect(parseStartPiRunRequest({ ...validRunPayload, thinkingLevel: 'ultra' }).ok).toBe(false);
   });
 
   it('accepts only bounded Pi control requests', () => {
