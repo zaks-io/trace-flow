@@ -72,6 +72,21 @@ describe('MCP worker auth discovery', () => {
     expect(await res.json()).toEqual({ error: 'Missing or invalid Authorization header' });
   });
 
+  it('401s missing GET auth with a protected-resource challenge', async () => {
+    const res = await SELF.fetch('http://localhost/mcp', {
+      headers: {
+        Accept: 'text/event-stream',
+        'cf-connecting-ip': '203.0.113.10',
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get('WWW-Authenticate')).toBe(
+      'Bearer resource_metadata="http://localhost/.well-known/oauth-protected-resource"',
+    );
+    expect(await res.json()).toEqual({ error: 'Missing or invalid Authorization header' });
+  });
+
   it('accepts GET /mcp as an idle SSE receive stream for Codex clients', async () => {
     const authorization = await signedAuthHeader();
     const res = await SELF.fetch('http://localhost/mcp', {

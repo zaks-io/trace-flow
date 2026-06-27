@@ -48,6 +48,7 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource';
 const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
+const MCP_SSE_HEARTBEAT_MS = 15_000;
 
 app.use(
   '*',
@@ -186,6 +187,10 @@ function jsonResponse(body: unknown, status = 200, headers?: Record<string, stri
   });
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function enforceMcpRateLimit(c: {
   req: { raw: Request };
   env: Env;
@@ -213,12 +218,23 @@ function mcpSseResponse(c: {
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const encoder = new TextEncoder();
+  const streamClosed = writer.closed.then(
+    () => true,
+    () => true,
+  );
 
   c.executionCtx.waitUntil(
     (async () => {
       try {
         await writer.write(encoder.encode(': connected\n\n'));
-        await new Promise((resolve) => setTimeout(resolve, 60_000));
+        for (;;) {
+          const closed = await Promise.race([
+            streamClosed,
+            delay(MCP_SSE_HEARTBEAT_MS).then(() => false),
+          ]);
+          if (closed) break;
+          await writer.write(encoder.encode(': heartbeat\n\n'));
+        }
       } catch {
         // Client closed the receive stream.
       } finally {
