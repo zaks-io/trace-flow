@@ -80,7 +80,7 @@ const ANALYST_STOP_POLL_MS = 1_000;
 const ANALYST_STOP_REASON = 'user_stop';
 const ANALYST_FINAL_RESPONSE_PROMPT = `You reached the Analyst step limit. Do not call more tools. Provide the best final answer you can from the information already gathered. If the answer is incomplete, say what is missing and what follow-up would resolve it.`;
 const INTERNAL_SANDBOX_CONTINUATION_PREFIX =
-  'A background Pi coding-agent analysis completed. Use this final composed response to answer the user';
+  'A background Trace Flow data analysis run completed. Use this final composed response to answer the user';
 const MAX_PI_FINAL_CONTEXT_CHARS = 24_000;
 
 const sandboxTraceFlowToolDefinitions = getTraceFlowToolDefinitions('analyst');
@@ -95,11 +95,12 @@ const BASE_ANALYST_INSTRUCTIONS = `You are Trace Flow Analyst.
 Answer questions about Trace Flow, LLM traces, usage, costs, and agent analytics.
 Do not invent numbers or pretend page context is authoritative data.
 The main Analyst must not ingest Trace Flow rows, trace bodies, usage tables, agent analytics tables, raw datasets, or raw tool results directly.
-For any question that requires Trace Flow product data, numbers, traces, usage, costs, or agent analytics, call start_pi_agent_analysis. The Pi coding agent has sandboxed data access, writes scripts, pages and saves raw payloads to disk, analyzes them with coding tools, validates summaries/aggregates locally, and returns a final composed response.
-start_pi_agent_analysis is the right tool for EVERY data question in this conversation, including follow-ups. The Pi sandbox persists across the conversation: each run automatically resumes the previous one with its full session history and the data already downloaded to disk. So a follow-up does NOT start from scratch — it continues where the last run left off, reusing prior work. Phrase each prompt as the next question or refinement; do not re-explain context the agent already has, and do not ask it to re-download data it already fetched.
-It returns immediately with a run id; the run continues asynchronously, streams in the UI, and will notify this conversation when it completes. After starting a Pi run, wait for the async completion continuation before giving the final data answer. Do not call control_pi_agent_run just to wait. End the current turn with a short acknowledgement unless the user explicitly asked you to debug, steer, cancel, or add follow-up instructions to a specific existing run.
+For any question that requires Trace Flow product data, numbers, traces, usage, costs, or agent analytics, call start_pi_agent_analysis. It runs the Trace Flow data analysis agent: an isolated sandbox whose only job is to answer Trace Flow data questions. It writes scripts, pages and saves raw payloads to disk, analyzes them with coding tools, validates summaries/aggregates locally, and returns a final composed response.
+The data analysis agent is narrow by design: it only analyzes Trace Flow data and will decline anything else. Relay only the Trace Flow data question — restate it as a clear data-analysis task. Do not hand it work outside that scope (writing or editing application code, repository inspection, infrastructure, web access, sending messages); handle or decline such requests yourself instead of forwarding them, since it will refuse them.
+start_pi_agent_analysis is the right tool for EVERY data question in this conversation, including follow-ups. The sandbox persists across the conversation: each run automatically resumes the previous one with its full session history and the data already downloaded to disk. So a follow-up does NOT start from scratch — it continues where the last run left off, reusing prior work. Phrase each prompt as the next question or refinement; do not re-explain context the agent already has, and do not ask it to re-download data it already fetched.
+It returns immediately with a run id; the run continues asynchronously, streams in the UI, and will notify this conversation when it completes. After starting a run, wait for the async completion continuation before giving the final data answer. Do not call control_pi_agent_run just to wait. End the current turn with a short acknowledgement unless the user explicitly asked you to debug, steer, cancel, or add follow-up instructions to a specific existing run.
 control_pi_agent_run steers a run that is still in flight (status, tail, cancel, steer, follow_up). Use follow_up/steer ONLY for a run that is currently running. For a new question after a run has completed, call start_pi_agent_analysis again — it resumes the same sandbox automatically; you do not need to, and must not, treat completion as losing context.
-When a Pi run completes, use its final composed response to answer the user. Do not request or infer raw datasets; raw data stays in sandbox artifacts.
+When a run completes, use its final composed response to answer the user. Do not request or infer raw datasets; raw data stays in sandbox artifacts.
 Conversations are private, but every tool call still uses the current user's live permissions.
 Direct Trace Flow data tools are intentionally not exposed to the main Analyst.`;
 
@@ -183,7 +184,7 @@ export function buildAnalystSystemPrompt(
     (ref) => ref.surface === 'agents' || ref.route.startsWith('/app/agents'),
   );
   const agentAnalyticsInstructions = hasAgentAnalyticsContext
-    ? `\nThe /app/agents page is Agent Analytics. When the user's request refers to "my data", usage, costs, tokens, conversations, repos, models, sources, active days, or agent activity from this page, start Pi with instructions to use the sandbox-local REST/OpenAPI data operation query_agent_analytics from a script. For a simple 7-day overview or KPI summary, tell Pi to call query_agent_analytics directly with {"view":"summary","hours":168}; do not ask it to inspect OpenAPI or call describe_agent_analytics unless the request needs filter discovery, allowed values, or non-summary view parameters. Tell Pi to validate numbers with aggregates or script-computed checks and to keep raw rows on disk, not in model context. Do not default to generic trace tools unless the user explicitly asks about LLM traces.`
+    ? `\nThe /app/agents page is Agent Analytics. When the user's request refers to "my data", usage, costs, tokens, conversations, repos, models, sources, active days, or agent activity from this page, start the data analysis agent with instructions to use the sandbox-local REST/OpenAPI data operation query_agent_analytics from a script. For a simple 7-day overview or KPI summary, tell it to call query_agent_analytics directly with {"view":"summary","hours":168}; do not ask it to inspect OpenAPI or call describe_agent_analytics unless the request needs filter discovery, allowed values, or non-summary view parameters. Tell it to validate numbers with aggregates or script-computed checks and to keep raw rows on disk, not in model context. Do not default to generic trace tools unless the user explicitly asks about LLM traces.`
     : '';
 
   return `${BASE_ANALYST_INSTRUCTIONS}
@@ -504,7 +505,7 @@ export function buildPiCompletionPrompt(run: { _id: string; prompt: string; resu
     'Original user request:',
     run.prompt,
     '',
-    'Pi final composed response:',
+    'Data analysis agent final composed response:',
     truncateText(run.resultText, MAX_PI_FINAL_CONTEXT_CHARS) ?? '',
     '',
     'Use this final composed response to answer the user. Do not request, reconstruct, or infer raw datasets; raw data stayed in sandbox artifacts.',
@@ -515,7 +516,7 @@ function buildAnalystTools(options: { allowSandboxControl?: boolean } = {}) {
   const tools = {
     start_pi_agent_analysis: createTool({
       description:
-        'Start a long-running asynchronous Pi coding-agent data analysis run. Use for nuanced or exploratory Trace Flow data questions that may need many data queries or Python work. Frame Pi as a coding analyst: write scripts, call the sandbox-local REST/OpenAPI data API, page and save raw responses to disk, compute summaries/aggregates locally, and validate before answering. Do not ask Pi to inspect or paste raw datasets into model context. For /app/agents and Agent Analytics context, tell Pi to use query_agent_analytics through the sandbox-local REST/OpenAPI data API; for simple 7-day KPI summaries, pass {"view":"summary","hours":168} directly and do not ask Pi to perform schema discovery first. This is async: after this tool returns, wait for the completion continuation before giving the final data answer. Do not call control_pi_agent_run just to wait. The UI streams progress and Convex will notify this conversation when the run completes.',
+        'Start a long-running asynchronous run of the Trace Flow data analysis agent. Use for nuanced or exploratory Trace Flow data questions that may need many data queries or Python work. The agent is narrow: its only job is to analyze Trace Flow data and it will decline anything else, so relay only the data question and do not ask it for code edits, repository work, infrastructure, web access, or non-data tasks. Frame the prompt as a data-analysis task: write scripts, call the sandbox-local REST/OpenAPI data API, page and save raw responses to disk, compute summaries/aggregates locally, and validate before answering. Do not ask it to inspect or paste raw datasets into model context. For /app/agents and Agent Analytics context, tell it to use query_agent_analytics through the sandbox-local REST/OpenAPI data API; for simple 7-day KPI summaries, pass {"view":"summary","hours":168} directly and do not ask it to perform schema discovery first. This is async: after this tool returns, wait for the completion continuation before giving the final data answer. Do not call control_pi_agent_run just to wait. The UI streams progress and Convex will notify this conversation when the run completes.',
       inputSchema: z.object({
         prompt: z.string().min(1).max(MAX_PROMPT_CHARS),
         pageContextReferences: z.array(z.object({}).catchall(z.unknown())).optional(),
@@ -539,7 +540,7 @@ function buildAnalystTools(options: { allowSandboxControl?: boolean } = {}) {
     ...tools,
     control_pi_agent_run: createTool({
       description:
-        'Steer, debug, inspect, cancel, or add follow-up instructions to an existing asynchronous Pi data analysis run. This is not the normal wait path after start_pi_agent_analysis. Do not poll a run you just started unless the user explicitly asks for debug/status/tail inspection.',
+        'Steer, debug, inspect, cancel, or add follow-up instructions to an existing asynchronous Trace Flow data analysis run. This is not the normal wait path after start_pi_agent_analysis. Do not poll a run you just started unless the user explicitly asks for debug/status/tail inspection.',
       inputSchema: z.object({
         runId: z.string().min(1),
         action: z.enum(['status', 'tail', 'cancel', 'steer', 'follow_up']),
@@ -810,8 +811,8 @@ async function startPiAgentAnalysis(
     resumed: launched.resumed,
     maxRuntimeMinutes: Math.round(launched.maxRuntimeMs / 60_000),
     message: launched.resumed
-      ? 'Pi data analysis resumed from this conversation’s prior sandbox session. The UI will stream progress and this conversation will be notified when it completes.'
-      : 'Pi data analysis started in a new sandbox. The UI will stream progress and this conversation will be notified when it completes.',
+      ? 'Trace Flow data analysis resumed from this conversation’s prior sandbox session. The UI will stream progress and this conversation will be notified when it completes.'
+      : 'Trace Flow data analysis started in a new sandbox. The UI will stream progress and this conversation will be notified when it completes.',
   };
 }
 

@@ -99,7 +99,7 @@ describe('analyst helpers', () => {
     expect(
       isHiddenAnalystMessageLike({
         role: 'user',
-        text: 'A background Pi coding-agent analysis completed. Use this final composed response to answer the user.',
+        text: 'A background Trace Flow data analysis run completed. Use this final composed response to answer the user.',
       }),
     ).toBe(true);
     expect(
@@ -120,14 +120,14 @@ describe('analyst helpers', () => {
     expect(supportsOpenRouterCacheControl('~anthropic/claude-sonnet-4')).toBe(true);
   });
 
-  it('passes only the Pi final composed response into completion continuation context', () => {
+  it('passes only the data analysis agent final composed response into completion continuation context', () => {
     const prompt = buildPiCompletionPrompt({
       _id: 'run_123',
       prompt: 'Analyze 90 days of usage',
       resultText: 'Final summary with numbers and caveats.',
     });
 
-    expect(prompt).toContain('Pi final composed response:');
+    expect(prompt).toContain('Data analysis agent final composed response:');
     expect(prompt).toContain('Final summary with numbers and caveats.');
     expect(prompt).toContain('raw data stayed in sandbox artifacts');
     expect(prompt).not.toContain('Pi result:');
