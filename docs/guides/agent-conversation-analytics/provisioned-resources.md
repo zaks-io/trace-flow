@@ -39,6 +39,9 @@ control plane, not the sole minting mechanism.
 - `AGENT_INGEST_LIMITER` — rate-limit binding, namespace **2006**. Declared in the agent-ingest
   worker's `wrangler.jsonc` `[[unsafe.bindings]]`; Cloudflare allocates it at deploy time, so there
   is no `wrangler` create command and no ID to record here.
+- `AGENT_INGEST_LIMITER` preview — rate-limit namespace **2010**. Preview reuses the dev
+  `COLLECTOR_CREDS` KV and `agent-ingest-dev` queue, but keeps its Worker name and rate-limit budget
+  separate from cloud-dev.
 
 ## Production resources (TRA-110)
 

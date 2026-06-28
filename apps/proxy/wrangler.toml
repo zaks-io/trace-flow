@@ -53,7 +53,8 @@ name = "IP_LIMITER"
 namespace_id = "2002"
 simple = { limit = 600, period = 60 }
 
-# Secrets required: CONVEX_SITE_URL (https://{deployment}.convex.site), USAGE_SYNC_SECRET, SENTRY_DSN, AXIOM_TOKEN, BODY_ENCRYPTION_ROOT_KEY
+# Deploy var required: CONVEX_SITE_URL (https://{deployment}.convex.site)
+# Secrets required: USAGE_SYNC_SECRET, SENTRY_DSN, AXIOM_TOKEN, BODY_ENCRYPTION_ROOT_KEY
 
 # Durable Object for usage tracking
 [[durable_objects.bindings]]

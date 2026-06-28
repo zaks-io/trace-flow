@@ -15,8 +15,9 @@
   "vars": {
     "SENTRY_ENVIRONMENT": "development",
   },
+  // CONVEX_SITE_URL is injected by deploy workflows from the Convex deployment output.
   // Secrets (set via `wrangler secret` / CI, never committed):
-  //   CONVEX_SITE_URL, AGENT_INGEST_SHARED_SECRET, SENTRY_DSN
+  //   AGENT_INGEST_SHARED_SECRET, SENTRY_DSN
   //
   // COLLECTOR_CREDS holds the Convex-synced Collector Credential records (see 2a syncCollectorCredToKV).
   // Bound to the 0d-provisioned dev namespace (see provisioned-resources.md).
@@ -42,10 +43,30 @@
   // Production agent pipeline (TRA-110). Prod-named worker reachable at collector.trace-flow.dev
   // (same trace-flow.dev zone as gateway/api). Binds the prod COLLECTOR_CREDS namespace and the
   // prod ingest queue; the rate limiter uses a fresh namespace_id 2007 (dev uses 2006 — never reuse
-  // a namespace_id, per the rate-limit budget registry). Secrets (CONVEX_SITE_URL,
-  // AGENT_INGEST_SHARED_SECRET, SENTRY_DSN) are set per-env via `wrangler secret put --env production`;
+  // a namespace_id, per the rate-limit budget registry). CONVEX_SITE_URL is injected by
+  // the production deploy workflow; secrets (AGENT_INGEST_SHARED_SECRET, SENTRY_DSN)
+  // are set per-env via `wrangler secret put --env production`;
   // AGENT_INGEST_SHARED_SECRET must match the value set in the prod Convex environment.
   "env": {
+    "preview": {
+      "name": "trace-flow-agent-ingest-preview",
+      "observability": { "enabled": true },
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "vars": {
+        "SENTRY_ENVIRONMENT": "preview",
+      },
+      "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "f945ee3d71954ffabd364e3db385d3ab" }],
+      "queues": {
+        "producers": [{ "queue": "agent-ingest-dev", "binding": "AGENT_QUEUE" }],
+      },
+      "ratelimits": [
+        {
+          "name": "AGENT_INGEST_LIMITER",
+          "namespace_id": "2010",
+          "simple": { "limit": 600, "period": 60 },
+        },
+      ],
+    },
     "production": {
       "name": "trace-flow-agent-ingest",
       "workers_dev": false,

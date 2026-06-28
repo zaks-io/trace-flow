@@ -8,7 +8,7 @@
     "build": "tsc",
     "deploy": "wrangler deploy",
     "deploy:dev": "wrangler deploy",
-    "deploy:preview": "wrangler deploy",
+    "deploy:preview": "wrangler deploy --env preview",
     "type-check": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
