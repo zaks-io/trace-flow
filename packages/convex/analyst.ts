@@ -152,27 +152,12 @@ export function buildAnalystThreadTitle(prompt: string): string {
   return title.length > 80 ? `${title.slice(0, 77)}...` : title;
 }
 
-export function supportsOpenRouterCacheControl(modelId: string): boolean {
-  return modelId.startsWith('anthropic/') || modelId.startsWith('~anthropic/');
-}
-
-export function buildOpenRouterExtraBody(
-  analystThreadId: string,
-  modelId = ANALYST_MODEL,
-): Record<string, unknown> {
-  const body: Record<string, unknown> = {
+export function buildOpenRouterExtraBody(analystThreadId: string): Record<string, unknown> {
+  return {
     session_id: analystThreadId.slice(0, 256),
     usage: { include: true },
+    cache_control: { type: 'ephemeral', ttl: '1h' },
   };
-
-  if (
-    supportsOpenRouterCacheControl(modelId) ||
-    process.env.ANALYST_OPENROUTER_CACHE_CONTROL === '1'
-  ) {
-    body.cache_control = { type: 'ephemeral', ttl: '1h' };
-  }
-
-  return body;
 }
 
 export function buildAnalystSystemPrompt(
@@ -212,7 +197,7 @@ function createAnalystLanguageModel(
   });
 
   return openrouter.chat(ANALYST_MODEL, {
-    extraBody: buildOpenRouterExtraBody(analystThreadId, ANALYST_MODEL),
+    extraBody: buildOpenRouterExtraBody(analystThreadId),
   });
 }
 

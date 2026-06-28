@@ -16,7 +16,6 @@ import {
   sandboxRunLivenessVerdict,
   sandboxRunTimeoutRemainingMs,
   shouldExposeSandboxControlTool,
-  supportsOpenRouterCacheControl,
 } from '../analyst';
 
 describe('analyst helpers', () => {
@@ -75,9 +74,10 @@ describe('analyst helpers', () => {
   });
 
   it('uses the Analyst thread id as the OpenRouter sticky session id', () => {
-    expect(buildOpenRouterExtraBody('thread_123', 'z-ai/glm-5.2')).toMatchObject({
+    expect(buildOpenRouterExtraBody('thread_123')).toMatchObject({
       session_id: 'thread_123',
       usage: { include: true },
+      cache_control: { type: 'ephemeral', ttl: '1h' },
     });
   });
 
@@ -110,14 +110,11 @@ describe('analyst helpers', () => {
     ).toBe(false);
   });
 
-  it('only adds explicit cache_control for supported provider paths by default', () => {
-    expect(buildOpenRouterExtraBody('thread_123', 'z-ai/glm-5.2')).not.toHaveProperty(
-      'cache_control',
-    );
-    expect(buildOpenRouterExtraBody('thread_123', 'anthropic/claude-sonnet-4')).toHaveProperty(
-      'cache_control',
-    );
-    expect(supportsOpenRouterCacheControl('~anthropic/claude-sonnet-4')).toBe(true);
+  it('always sends OpenRouter prompt cache control', () => {
+    expect(buildOpenRouterExtraBody('thread_123')).toHaveProperty('cache_control', {
+      type: 'ephemeral',
+      ttl: '1h',
+    });
   });
 
   it('passes only the data analysis agent final composed response into completion continuation context', () => {
