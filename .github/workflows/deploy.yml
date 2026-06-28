@@ -316,7 +316,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/mcp
-          command: deploy --env production --var CONNECT_BASE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
+          command: deploy --env production
           packageManager: bun
 
   # Agent pipeline (TRA-110). Production-real: prod-named workers bound to prod queue/DLQ/KV via the

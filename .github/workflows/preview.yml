@@ -99,7 +99,7 @@ jobs:
             if (
               cd apps/proxy && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
             ) && (
-              cd apps/mcp && bunx wrangler deploy --env preview --var CONNECT_BASE_URL:"$CONVEX_SITE_URL"
+              cd apps/mcp && bunx wrangler deploy --env preview
             ) && (
               cd apps/agent-ingest && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
             ) && (
