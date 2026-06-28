@@ -7,6 +7,9 @@ import { api, internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
 import { rateLimiter } from '../rateLimits';
+import { sanitizeApiKeys, sqlStringLiteral, UUID_PATTERN } from '../tinybirdSql';
+
+export { sanitizeApiKeys, UUID_PATTERN } from '../tinybirdSql';
 
 const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
 const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
@@ -201,15 +204,6 @@ export const generateWebReadToken = action({
   },
 });
 
-// Validate API keys are UUIDs before interpolating into JWT fixed_params (defense in depth).
-// Matches the same pattern used in extendRetention. Exported for unit testing.
-export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// Exported for unit testing.
-export function sanitizeApiKeys(keys: string[]): string[] {
-  return keys.filter((k) => UUID_PATTERN.test(k));
-}
-
 /** Build comma-separated api_keys for JWT fixed_params from key docs (e.g. listForUser). */
 export function joinSanitizedApiKeys(apiKeys: { key: string }[]): string {
   return sanitizeApiKeys(apiKeys.map((k) => k.key)).join(',');
@@ -243,10 +237,6 @@ export const AGENT_ORG_DATASOURCES = [
 interface TinybirdDeleteStatement {
   datasource: string;
   sql: string;
-}
-
-function sqlStringLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
 }
 
 export function buildOrgTraceDeleteStatements(params: {
