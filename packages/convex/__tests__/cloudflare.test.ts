@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { cloudflareKvFailureMessage } from '../integrations/cloudflare';
 
 // ---------------------------------------------------------------------------
 // cloudflare.ts handler logic tests
@@ -201,38 +202,40 @@ describe('putKV / deleteKeyFromKV error handling', () => {
       ok: false,
       status: 403,
       statusText: 'Forbidden',
-      text: vi.fn().mockResolvedValue('{"errors":[{"message":"Access denied"}]}'),
+      text: vi.fn().mockResolvedValue('{"errors":[{"message":"Access denied for test-key"}]}'),
     });
 
-    const key = 'test-key';
+    const rawKey = 'test-key';
     const response = await mockFetch('https://api.cloudflare.com/...');
     if (!response.ok) {
-      const errorText = await response.text();
+      await response.text();
       const error = new Error(
-        `Failed to write KV key ${key}: ${response.status} ${response.statusText} - ${errorText}`,
+        cloudflareKvFailureMessage('write', response.status, response.statusText),
       );
-      expect(error.message).toContain('Failed to write KV key test-key');
+      expect(error.message).toContain('Failed to write Cloudflare KV value');
       expect(error.message).toContain('403');
       expect(error.message).toContain('Forbidden');
+      expect(error.message).not.toContain(rawKey);
     }
   });
 
   it('throws descriptive error on non-ok DELETE response', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
-      status: 404,
-      statusText: 'Not Found',
-      text: vi.fn().mockResolvedValue('key not found'),
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: vi.fn().mockResolvedValue('delete failed for raw-api-key'),
     });
 
     const response = await mockFetch('https://api.cloudflare.com/...');
     if (!response.ok) {
-      const errorText = await response.text();
+      await response.text();
       const error = new Error(
-        `Failed to delete key from KV: ${response.status} ${response.statusText} - ${errorText}`,
+        cloudflareKvFailureMessage('delete', response.status, response.statusText),
       );
-      expect(error.message).toContain('Failed to delete key from KV');
-      expect(error.message).toContain('404');
+      expect(error.message).toContain('Failed to delete Cloudflare KV value');
+      expect(error.message).toContain('500');
+      expect(error.message).not.toContain('raw-api-key');
     }
   });
 

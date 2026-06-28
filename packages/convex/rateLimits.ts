@@ -19,6 +19,7 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
   createApiKey: { kind: 'fixed window', rate: 10, period: HOUR },
   mintCollectorCredential: { kind: 'fixed window', rate: 10, period: HOUR },
   generateTinybirdJwt: { kind: 'token bucket', rate: 60, period: MINUTE, capacity: 120 },
+  bodyAccessToken: { kind: 'token bucket', rate: 120, period: MINUTE, capacity: 240 },
   analystSendMessage: { kind: 'token bucket', rate: 20, period: MINUTE, capacity: 40 },
   submitFeedback: { kind: 'fixed window', rate: 5, period: HOUR },
 });

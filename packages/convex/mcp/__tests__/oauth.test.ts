@@ -3,7 +3,9 @@ import {
   exchangeAuth0Code,
   refreshAuth0Token,
   getAuth0UserInfo,
+  signConsent,
   signState,
+  verifyConsent,
   verifyState,
   buildAuth0AuthorizeUrl,
   type StatePayload,
@@ -260,6 +262,7 @@ describe('verifyState', () => {
     const result = await verifyState(token);
 
     expect(result).toMatchObject({
+      tokenUse: 'mcp_state',
       clientState: 'client-state-123',
       redirectUri: 'https://example.com/callback',
     });
@@ -283,10 +286,78 @@ describe('verifyState', () => {
     expect(result).toBeNull();
   });
 
+  it('rejects consent tokens as state tokens', async () => {
+    const token = await signConsent({
+      clientState: 'client-state',
+      clientId: 'client-1',
+      redirectUri: 'https://example.com/callback',
+      resource: 'https://mcp.example.com/mcp',
+      codeChallenge: 'challenge-123',
+      codeChallengeMethod: 'S256',
+    });
+
+    await expect(verifyState(token)).resolves.toBeNull();
+  });
+
   it('throws when MCP_JWT_SECRET missing', async () => {
     vi.stubEnv('MCP_JWT_SECRET', '');
 
     await expect(verifyState('some-token')).rejects.toThrow('MCP_JWT_SECRET not configured');
+  });
+});
+
+describe('MCP consent tokens', () => {
+  beforeEach(() => {
+    vi.stubEnv('MCP_JWT_SECRET', 'test-secret-key-for-signing');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('signs and verifies consent payloads', async () => {
+    const token = await signConsent({
+      clientState: 'client-state',
+      clientId: 'client-1',
+      redirectUri: 'https://example.com/callback',
+      resource: 'https://mcp.example.com/mcp',
+      codeChallenge: 'challenge-123',
+      codeChallengeMethod: 'S256',
+      responseType: 'code',
+    });
+
+    await expect(verifyConsent(token)).resolves.toEqual({
+      tokenUse: 'mcp_consent',
+      clientState: 'client-state',
+      clientId: 'client-1',
+      redirectUri: 'https://example.com/callback',
+      resource: 'https://mcp.example.com/mcp',
+      codeChallenge: 'challenge-123',
+      codeChallengeMethod: 'S256',
+      responseType: 'code',
+    });
+  });
+
+  it('rejects state tokens as consent tokens', async () => {
+    const token = await signState({
+      clientState: 'client-state',
+      redirectUri: 'https://example.com/callback',
+    });
+
+    await expect(verifyConsent(token)).resolves.toBeNull();
+  });
+
+  it('returns null for tampered consent tokens', async () => {
+    const token = await signConsent({
+      clientState: 'client-state',
+      clientId: 'client-1',
+      redirectUri: 'https://example.com/callback',
+      resource: 'https://mcp.example.com/mcp',
+      codeChallenge: 'challenge-123',
+      codeChallengeMethod: 'S256',
+    });
+
+    await expect(verifyConsent(`${token.slice(0, -5)}XXXXX`)).resolves.toBeNull();
   });
 });
 

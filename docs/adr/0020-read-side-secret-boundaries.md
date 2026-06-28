@@ -13,7 +13,8 @@ The current Worker is small, but it combines unrelated privilege classes in one 
 
 - R2 read access for Body Objects.
 - `BODY_ENCRYPTION_ROOT_KEY` for decrypting encrypted Body Objects.
-- Auth0 configuration and KV org membership data for user-to-Organization checks.
+- `BODY_ACCESS_JWT_SECRET` for verifying short-lived, request-scoped Body Object access tokens.
+- KV subscription data for current retention checks.
 - Tinybird Pipe passthrough code.
 - `TINYBIRD_ADMIN_TOKEN`, currently used to verify Tinybird JWTs before forwarding.
 
@@ -32,7 +33,7 @@ Split the read-side surfaces by secret class:
    This Worker forwards bearer Pipe Tokens to Tinybird, rate-limits requests, logs, and may cache responses. It does not bind R2, KV org membership, Auth0 configuration, `BODY_ENCRYPTION_ROOT_KEY`, or `TINYBIRD_ADMIN_TOKEN`.
 
 3. **`raw.trace-flow.dev` serves sensitive raw-object reads.**
-   This Worker retrieves raw stored artifacts such as Body Objects now and, if shipped later, Raw Session Bundles. It may bind R2, `BODY_ENCRYPTION_ROOT_KEY`, Auth0 configuration, KV org membership, and a raw-object rate limiter. It does not bind Tinybird admin credentials or Tinybird query forwarding logic.
+   This Worker retrieves raw stored artifacts such as Body Objects now and, if shipped later, Raw Session Bundles. It may bind R2, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET`, subscription KV data, and a raw-object rate limiter. It does not bind Tinybird admin credentials or Tinybird query forwarding logic.
 
 4. **Do not preserve `api.trace-flow.dev` as the canonical read-side origin.**
    Separate origins make the security model visible in URLs, CSP, Cloudflare bindings, logs, and operational runbooks. Backward-compatible redirects or aliases can exist temporarily if needed, but new Web configuration should use explicit `pipes` and `raw` origins.
@@ -49,14 +50,14 @@ Web -> pipes.trace-flow.dev/v0/pipes/* -> Tinybird
 Raw object flow:
 
 ```text
-Web -> Auth0 access token
+Web -> Convex action -> short-lived Body Access Token
 Web -> raw.trace-flow.dev/bodies/:requestId -> R2 Body Object
 ```
 
 Future raw transcript flow, if shipped:
 
 ```text
-Web -> Auth0 access token
+Web -> Convex action -> short-lived raw-object token
 Web -> raw.trace-flow.dev/agent-sessions/:sessionId/raw -> R2 Raw Session Bundle
 ```
 

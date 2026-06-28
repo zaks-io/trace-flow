@@ -980,6 +980,14 @@ export declare const api: {
       >;
     };
   };
+  bodyAccess: {
+    issueToken: FunctionReference<
+      "action",
+      "public",
+      { requestId: string },
+      { expiresAt: number; token: string }
+    >;
+  };
   collectorCompatibilityPolicy: {
     getActivePolicy: FunctionReference<
       "query",
@@ -2210,6 +2218,14 @@ export declare const internal: {
       >;
     };
   };
+  bodyAccess: {
+    currentSubject: FunctionReference<
+      "query",
+      "internal",
+      {},
+      { orgId: Id<"organizations">; sub: string; userId: Id<"users"> }
+    >;
+  };
   collectorCompatibilityPolicy: {
     getActivePolicyInternal: FunctionReference<
       "query",
@@ -2447,7 +2463,7 @@ export declare const internal: {
       deleteKeyFromKV: FunctionReference<
         "action",
         "internal",
-        { key: string },
+        { key: string; retryCount?: number },
         null
       >;
       deleteUserOrgFromKV: FunctionReference<

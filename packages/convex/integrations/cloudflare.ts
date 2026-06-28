@@ -49,6 +49,14 @@ function kvValueUrl({ accountId, namespaceId }: KvConfig, key: string): string {
   return `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
 }
 
+export function cloudflareKvFailureMessage(
+  operation: 'write' | 'delete',
+  status: number,
+  statusText: string,
+): string {
+  return `Failed to ${operation} Cloudflare KV value: ${status} ${statusText}`;
+}
+
 async function kvPut(config: KvConfig, key: string, value: string) {
   const response = await fetch(kvValueUrl(config, key), {
     method: 'PUT',
@@ -60,10 +68,8 @@ async function kvPut(config: KvConfig, key: string, value: string) {
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Failed to write KV key ${key}: ${response.status} ${response.statusText} - ${errorText}`,
-    );
+    await response.text();
+    throw new Error(cloudflareKvFailureMessage('write', response.status, response.statusText));
   }
 }
 
@@ -75,10 +81,8 @@ async function kvDelete(config: KvConfig, key: string) {
 
   // 404 means the key is already gone — the desired end state, not a failure.
   if (!response.ok && response.status !== 404) {
-    const errorText = await response.text();
-    throw new Error(
-      `Failed to delete KV key ${key}: ${response.status} ${response.statusText} - ${errorText}`,
-    );
+    await response.text();
+    throw new Error(cloudflareKvFailureMessage('delete', response.status, response.statusText));
   }
 }
 
@@ -428,22 +432,22 @@ export const syncAll = action({
 });
 
 export const deleteKeyFromKV = internalAction({
-  args: { key: v.string() },
+  args: { key: v.string(), retryCount: v.optional(v.number()) },
   returns: v.null(),
-  handler: async (_ctx, args) => {
-    const { accountId, apiToken, namespaceId } = getCloudflareConfig();
-    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(args.key)}`;
-
-    const response = await fetch(url, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${apiToken}` },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Failed to delete key from KV: ${response.status} ${response.statusText} - ${errorText}`,
-      );
+  handler: async (ctx, args) => {
+    try {
+      await kvDelete(getCloudflareConfig(), args.key);
+    } catch (e) {
+      const attempt = args.retryCount ?? 0;
+      console.error('convex.cloudflare_delete_key_failed', { attempt, error: e });
+      if (attempt < 3) {
+        await ctx.scheduler.runAfter(30_000, internal.integrations.cloudflare.deleteKeyFromKV, {
+          ...args,
+          retryCount: attempt + 1,
+        });
+        return;
+      }
+      throw e;
     }
   },
 });

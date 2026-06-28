@@ -30,6 +30,8 @@ function createMockDeps(): HttpDeps {
     oauth: {
       signState: vi.fn(),
       verifyState: vi.fn(),
+      signConsent: vi.fn(),
+      verifyConsent: vi.fn(),
       buildAuth0AuthorizeUrl: vi.fn(),
       exchangeAuth0Code: vi.fn(),
       getAuth0UserInfo: vi.fn(),
@@ -46,6 +48,17 @@ function createMockDeps(): HttpDeps {
 describe('convex/http.ts', () => {
   let ctx: MockCtx;
   let deps: HttpDeps;
+
+  const acceptedConsent = {
+    tokenUse: 'mcp_consent' as const,
+    clientState: 'client-state',
+    clientId: 'client-1',
+    redirectUri: 'https://example.com/callback',
+    resource: 'https://mcp.example.com/mcp',
+    codeChallenge: 'challenge123',
+    codeChallengeMethod: 'S256',
+    responseType: 'code',
+  };
 
   beforeEach(() => {
     vi.stubEnv('AUTH0_DOMAIN', 'test.auth0.com');
@@ -207,12 +220,13 @@ describe('convex/http.ts', () => {
         redirectUris: ['https://example.com/callback'],
       });
       (deps.oauth.signState as Mock).mockResolvedValue('signed-state-token');
+      (deps.oauth.verifyConsent as Mock).mockResolvedValue(acceptedConsent);
       (deps.oauth.buildAuth0AuthorizeUrl as Mock).mockReturnValue(
         'https://test.auth0.com/authorize?state=signed-state-token',
       );
 
       const res = await app.request(
-        'http://localhost/mcp/authorize?response_type=code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&state=client-state&code_challenge=challenge123&code_challenge_method=S256',
+        'http://localhost/mcp/authorize?response_type=code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&state=client-state&code_challenge=challenge123&code_challenge_method=S256&consent_token=signed-consent',
         {},
         ctx,
       );
@@ -238,10 +252,15 @@ describe('convex/http.ts', () => {
         redirectUris: ['https://example.com/callback'],
       });
       (deps.oauth.signState as Mock).mockResolvedValue('signed-state');
+      (deps.oauth.verifyConsent as Mock).mockResolvedValue({
+        ...acceptedConsent,
+        clientState: '',
+        responseType: undefined,
+      });
       (deps.oauth.buildAuth0AuthorizeUrl as Mock).mockReturnValue('https://auth0.com/auth');
 
       await app.request(
-        'http://localhost/mcp/authorize?client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&code_challenge=challenge123&code_challenge_method=S256',
+        'http://localhost/mcp/authorize?client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&code_challenge=challenge123&code_challenge_method=S256&consent_token=signed-consent',
         {},
         ctx,
       );
@@ -254,6 +273,62 @@ describe('convex/http.ts', () => {
         codeChallenge: 'challenge123',
         codeChallengeMethod: 'S256',
       });
+    });
+
+    it('shows explicit consent before redirecting to Auth0', async () => {
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        clientId: 'client-1',
+        clientName: 'Local MCP Client',
+        redirectUris: ['https://example.com/callback'],
+      });
+      (deps.oauth.signConsent as Mock).mockResolvedValue('signed-consent');
+
+      const res = await app.request(
+        'http://localhost/mcp/authorize?response_type=code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&state=client-state&code_challenge=challenge123&code_challenge_method=S256',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('text/html');
+      expect(res.headers.get('Cache-Control')).toContain('no-store');
+      const html = await res.text();
+      expect(html).toContain('Local MCP Client');
+      expect(html).toContain('https://example.com/callback');
+      expect(html).toContain('https://mcp.example.com/mcp');
+      expect(html).toContain('name="consent_token" value="signed-consent"');
+      expect(deps.oauth.signConsent).toHaveBeenCalledWith({
+        clientState: 'client-state',
+        clientId: 'client-1',
+        redirectUri: 'https://example.com/callback',
+        resource: 'https://mcp.example.com/mcp',
+        codeChallenge: 'challenge123',
+        codeChallengeMethod: 'S256',
+        responseType: 'code',
+      });
+      expect(deps.oauth.signState).not.toHaveBeenCalled();
+      expect(deps.oauth.buildAuth0AuthorizeUrl).not.toHaveBeenCalled();
+    });
+
+    it('does not let a client-controlled consent flag skip consent', async () => {
+      const app = createApp(deps);
+      ctx.runQuery.mockResolvedValue({
+        clientId: 'client-1',
+        redirectUris: ['https://example.com/callback'],
+      });
+      (deps.oauth.signConsent as Mock).mockResolvedValue('signed-consent');
+
+      const res = await app.request(
+        'http://localhost/mcp/authorize?response_type=code&client_id=client-1&redirect_uri=https://example.com/callback&resource=https://mcp.example.com/mcp&state=client-state&code_challenge=challenge123&code_challenge_method=S256&consent=accepted',
+        {},
+        ctx,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('name="consent_token" value="signed-consent"');
+      expect(deps.oauth.signState).not.toHaveBeenCalled();
+      expect(deps.oauth.buildAuth0AuthorizeUrl).not.toHaveBeenCalled();
     });
 
     it('rejects unregistered redirect_uri', async () => {

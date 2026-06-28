@@ -20,12 +20,24 @@ export interface Auth0UserInfo {
 }
 
 export interface StatePayload {
+  tokenUse?: 'mcp_state';
   clientState: string;
   clientId?: string;
   redirectUri: string;
   resource?: string;
   codeChallenge?: string;
   codeChallengeMethod?: string;
+}
+
+export interface ConsentPayload {
+  tokenUse: 'mcp_consent';
+  clientState: string;
+  clientId: string;
+  redirectUri: string;
+  resource: string;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  responseType?: string;
 }
 
 async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
@@ -136,7 +148,23 @@ export async function signState(payload: StatePayload): Promise<string> {
 
   const secretKey = new TextEncoder().encode(secret);
 
-  return new SignJWT(payload as unknown as Record<string, unknown>)
+  return new SignJWT({ ...payload, tokenUse: 'mcp_state' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime('5m')
+    .setIssuedAt()
+    .sign(secretKey);
+}
+
+export async function signConsent(payload: Omit<ConsentPayload, 'tokenUse'>): Promise<string> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  const secretKey = new TextEncoder().encode(secret);
+
+  return new SignJWT({ ...payload, tokenUse: 'mcp_consent' })
     .setProtectedHeader({ alg: 'HS256' })
     .setExpirationTime('5m')
     .setIssuedAt()
@@ -154,7 +182,74 @@ export async function verifyState(token: string): Promise<StatePayload | null> {
 
   try {
     const { payload } = await jwtVerify(token, secretKey);
-    return payload as unknown as StatePayload;
+    if (!isStatePayload(payload)) return null;
+    return {
+      ...(payload.tokenUse === undefined ? {} : { tokenUse: payload.tokenUse }),
+      clientState: payload.clientState,
+      ...(payload.clientId === undefined ? {} : { clientId: payload.clientId }),
+      redirectUri: payload.redirectUri,
+      ...(payload.resource === undefined ? {} : { resource: payload.resource }),
+      ...(payload.codeChallenge === undefined ? {} : { codeChallenge: payload.codeChallenge }),
+      ...(payload.codeChallengeMethod === undefined
+        ? {}
+        : { codeChallengeMethod: payload.codeChallengeMethod }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isStatePayload(payload: unknown): payload is StatePayload {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+  const value = payload as Partial<StatePayload>;
+  return (
+    (value.tokenUse === undefined || value.tokenUse === 'mcp_state') &&
+    typeof value.clientState === 'string' &&
+    (value.clientId === undefined || typeof value.clientId === 'string') &&
+    typeof value.redirectUri === 'string' &&
+    (value.resource === undefined || typeof value.resource === 'string') &&
+    (value.codeChallenge === undefined || typeof value.codeChallenge === 'string') &&
+    (value.codeChallengeMethod === undefined || typeof value.codeChallengeMethod === 'string')
+  );
+}
+
+function isConsentPayload(payload: unknown): payload is ConsentPayload {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+  const value = payload as Partial<ConsentPayload>;
+  return (
+    value.tokenUse === 'mcp_consent' &&
+    typeof value.clientState === 'string' &&
+    typeof value.clientId === 'string' &&
+    typeof value.redirectUri === 'string' &&
+    typeof value.resource === 'string' &&
+    typeof value.codeChallenge === 'string' &&
+    typeof value.codeChallengeMethod === 'string' &&
+    (value.responseType === undefined || typeof value.responseType === 'string')
+  );
+}
+
+export async function verifyConsent(token: string): Promise<ConsentPayload | null> {
+  const secret = process.env.MCP_JWT_SECRET;
+
+  if (!secret) {
+    throw new Error('MCP_JWT_SECRET not configured');
+  }
+
+  const secretKey = new TextEncoder().encode(secret);
+
+  try {
+    const { payload } = await jwtVerify(token, secretKey);
+    if (!isConsentPayload(payload)) return null;
+    return {
+      tokenUse: payload.tokenUse,
+      clientState: payload.clientState,
+      clientId: payload.clientId,
+      redirectUri: payload.redirectUri,
+      resource: payload.resource,
+      codeChallenge: payload.codeChallenge,
+      codeChallengeMethod: payload.codeChallengeMethod,
+      ...(payload.responseType === undefined ? {} : { responseType: payload.responseType }),
+    };
   } catch {
     return null;
   }
