@@ -25,10 +25,10 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { mergeSSEEvents, type FormattedBody, type ParsedSSEEvent } from '@trace-flow/utils';
-import { useQuery } from 'convex/react';
+import { useAction, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { AlertBadge, AlertList } from '@/components/alerts';
-import { fetchStoredBodies, formatStoredBodiesForDisplay } from '@/lib/bodies';
+import { fetchStoredBodies, formatStoredBodiesForDisplay, getBodyAccessToken } from '@/lib/bodies';
 import { evaluateAlertsForTraces, getHighestSeverity } from '@/lib/alerts';
 import { formatModelDisplay } from '@/lib/format';
 import type { AlertSeverity } from '@/types/alerts';
@@ -90,6 +90,7 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const alerts = useQuery(api.alerts.listEnabled);
+  const issueBodyToken = useAction(api.bodyAccess.issueToken);
 
   const parsedAttributes = useMemo(
     () => (request?.SpanAttributes ? parseSpanAttributes(request.SpanAttributes) : {}),
@@ -149,13 +150,7 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
     setBodiesLoading(true);
 
     const fetchBodies = async () => {
-      const tokenRes = await fetch('/api/token', { signal: controller.signal });
-      if (!tokenRes.ok) {
-        window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
-        return;
-      }
-      const { token } = await tokenRes.json();
-
+      const token = await getBodyAccessToken(requestId, issueBodyToken);
       const storedBodies = await fetchStoredBodies(requestId, token, controller.signal);
       if (controller.signal.aborted) return;
 
@@ -176,7 +171,7 @@ export function RequestDetailSidePanel({ request, isOpen, onClose }: RequestDeta
     return () => {
       controller.abort();
     };
-  }, [requestId, isOpen]);
+  }, [requestId, isOpen, issueBodyToken]);
 
   const formatDuration = (nanoseconds: number) => {
     const milliseconds = nanoseconds / 1_000_000;

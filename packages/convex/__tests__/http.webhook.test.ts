@@ -43,6 +43,8 @@ function createMockDeps(): HttpDeps {
     oauth: {
       signState: vi.fn(),
       verifyState: vi.fn(),
+      signConsent: vi.fn(),
+      verifyConsent: vi.fn(),
       buildAuth0AuthorizeUrl: vi.fn(),
       exchangeAuth0Code: vi.fn(),
       getAuth0UserInfo: vi.fn(),

@@ -69,6 +69,45 @@ async function scheduleUserOrgRemoval(ctx: MutationCtx, tokenIdentifier: string)
   }
 }
 
+async function revokeApiKeysForUser(ctx: MutationCtx, userId: Id<'users'>) {
+  const keys = await ctx.db
+    .query('apiKeys')
+    .withIndex('by_user_id', (q) => q.eq('userId', userId))
+    .collect();
+
+  for (const key of keys) {
+    await ctx.db.delete(key._id);
+    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteKeyFromKV, {
+      key: key.key,
+    });
+  }
+}
+
+async function revokeCollectorCredentialsForUser(ctx: MutationCtx, userId: Id<'users'>) {
+  const credentials = await ctx.db
+    .query('collectorCredentials')
+    .withIndex('by_user_id', (q) => q.eq('userId', userId))
+    .collect();
+
+  for (const credential of credentials) {
+    if (credential.status !== 'revoked') {
+      await ctx.db.patch(credential._id, {
+        status: 'revoked',
+        revokedAt: Date.now(),
+      });
+    }
+
+    await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteCollectorCredFromKV, {
+      hashedSecret: credential.hashedSecret,
+    });
+  }
+}
+
+async function revokeCredentialsForRemovedUser(ctx: MutationCtx, userId: Id<'users'>) {
+  await revokeApiKeysForUser(ctx, userId);
+  await revokeCollectorCredentialsForUser(ctx, userId);
+}
+
 async function ensureOrgMembership(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
@@ -201,6 +240,7 @@ export const removeMember = mutation({
     const removedUser = await ctx.db.get(membership.userId);
     if (removedUser) {
       await ctx.db.patch(removedUser._id, { orgId: undefined });
+      await revokeCredentialsForRemovedUser(ctx, removedUser._id);
       if (removedUser.tokenIdentifier) {
         await scheduleUserOrgRemoval(ctx, removedUser.tokenIdentifier);
       }

@@ -4,15 +4,13 @@ import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { applySecurityHeaders } from '@trace-flow/utils';
 import type { SubscriptionKVData } from '@trace-flow/types';
-import { validateAuth0JWT } from './auth';
+import { readBearerToken, verifyBodyAccessToken } from './body-access-token';
 import { getStoredBodies, isBodyVisible } from './bodies';
 import { tinybirdProxy } from './tinybird-proxy';
 
 interface Env {
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
-  AUTH0_DOMAIN: string;
-  AUTH0_CLIENT_ID: string;
   TINYBIRD_API_URL: string;
   TINYBIRD_ADMIN_TOKEN: string;
   BODIES_LIMITER: RateLimit;
@@ -24,11 +22,11 @@ interface Env {
   SENTRY_ENVIRONMENT?: string;
   BODY_ENCRYPTION_ROOT_KEY?: string;
   BODY_ENCRYPTION_KEY_ID?: string;
+  BODY_ACCESS_JWT_SECRET: string;
   CF_VERSION_METADATA?: { id: string };
 }
 
 interface Variables {
-  userSub: string;
   logger: Logger;
 }
 
@@ -86,19 +84,36 @@ apiApp.route('/', tinybirdProxy);
 
 apiApp.get('/bodies/:requestId', async (c) => {
   const logger = c.get('logger');
-  const authError = await validateAuth0JWT(c);
-  if (authError) {
-    return authError;
-  }
-
   const requestId = c.req.param('requestId');
   const requestLogger = logger.child({
     requestId,
     operation: 'fetch_bodies',
   });
 
-  const userSubForLimit = c.get('userSub') ?? c.req.header('cf-connecting-ip') ?? 'unknown';
-  const limit = await c.env.BODIES_LIMITER.limit({ key: userSubForLimit });
+  const token = readBearerToken(c.req.header('Authorization'));
+  if (!token) {
+    return c.json({ error: 'Missing authorization' }, 401);
+  }
+
+  if (!c.env.BODY_ACCESS_JWT_SECRET) {
+    requestLogger.error('api.body_access_secret_missing');
+    return c.json({ error: 'Server configuration error' }, 500);
+  }
+
+  const bodyAccess = await verifyBodyAccessToken(token, c.env.BODY_ACCESS_JWT_SECRET);
+  if (!bodyAccess) {
+    requestLogger.warn('api.body_access_token_invalid');
+    return c.json({ error: 'Invalid token' }, 401);
+  }
+
+  if (bodyAccess.requestId !== requestId) {
+    requestLogger.warn('api.body_access_request_mismatch', {
+      tokenRequestId: bodyAccess.requestId,
+    });
+    return c.json({ error: 'Forbidden', message: 'Request mismatch' }, 403);
+  }
+
+  const limit = await c.env.BODIES_LIMITER.limit({ key: bodyAccess.sub });
   if (!limit.success) {
     requestLogger.warn('api.rate_limited', { route: 'bodies', keyClass: 'user' });
     return c.json({ error: 'Too many requests' }, 429, { 'Retry-After': '60' });
@@ -119,17 +134,13 @@ apiApp.get('/bodies/:requestId', async (c) => {
     return c.json({ error: 'Forbidden', message: 'Object missing organization metadata' }, 403);
   }
 
-  const userSub = c.get('userSub');
-  const [userOrgData, subData] = await Promise.all([
-    userSub ? c.env.API_KEYS.get<{ orgId: string }>(`user-org:${userSub}`, 'json') : null,
-    c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json'),
-  ]);
+  const subData = await c.env.API_KEYS.get<SubscriptionKVData>(`sub:${orgId}`, 'json');
 
-  if (userOrgData?.orgId !== orgId) {
+  if (bodyAccess.orgId !== orgId) {
     requestLogger.warn('api.bodies_forbidden_wrong_org', {
       orgId,
-      userSub,
-      userOrgId: userOrgData?.orgId ?? null,
+      subject: bodyAccess.sub,
+      tokenOrgId: bodyAccess.orgId,
     });
     return c.json({ error: 'Forbidden', message: 'Organization mismatch' }, 403);
   }
@@ -144,7 +155,8 @@ apiApp.get('/bodies/:requestId', async (c) => {
   }
 
   return c.json(storedBodies.payload, 200, {
-    'Cache-Control': 'private, max-age=3600',
+    'Cache-Control': 'private, no-store',
+    Vary: 'Authorization',
   });
 });
 

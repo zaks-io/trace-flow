@@ -5,3 +5,4 @@ export * from './storage';
 export * from './queue';
 export * from './agent-ingest';
 export * from './feedback';
+export * from './body-access';

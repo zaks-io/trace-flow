@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useAction } from 'convex/react';
 import { Clock, Hash, GitBranch, ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, BAGGAGE_PREFIX } from '@trace-flow/otel-conventions';
+import { api } from '@convex/_generated/api';
 import {
   formatBodyForDisplay,
   mergeSSEEvents,
@@ -30,7 +32,7 @@ import {
 } from '@/components/shared/BarCard';
 import { AlertList } from '@/components/alerts';
 import { ModelPill } from '@/components/traces/spans-table/ModelPill';
-import { fetchStoredBodies, formatStoredBodiesForDisplay } from '@/lib/bodies';
+import { fetchStoredBodies, formatStoredBodiesForDisplay, getBodyAccessToken } from '@/lib/bodies';
 import type { TriggeredAlert } from '@/types/alerts';
 import { isLLMRequestSpan, parseSpanAttributes, type TraceSpan } from '@/lib/spans';
 
@@ -592,6 +594,7 @@ export function SpanDetailPanel({
   })();
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const issueBodyToken = useAction(api.bodyAccess.issueToken);
 
   useEffect(() => {
     abortControllerRef.current?.abort();
@@ -626,18 +629,7 @@ export function SpanDetailPanel({
         setMessageContentLoading(true);
       }
 
-      const tokenRes = await fetch('/api/token', { signal });
-      if (!tokenRes.ok) {
-        if (isLLMRoot) {
-          setBodiesLoading(false);
-          window.location.href = `/auth/login?returnTo=${encodeURIComponent(window.location.pathname)}`;
-        } else {
-          setMessageContentLoading(false);
-        }
-        return;
-      }
-      const { token } = await tokenRes.json();
-
+      const token = await getBodyAccessToken(requestId, issueBodyToken);
       const storedBodies = await fetchStoredBodies(requestId, token, signal);
       if (signal.aborted) return;
 
@@ -662,7 +654,7 @@ export function SpanDetailPanel({
     });
 
     return () => controller.abort();
-  }, [span, isRootSpan, isOpen, isOutputSpan, contentType]);
+  }, [span, isRootSpan, isOpen, isOutputSpan, contentType, issueBodyToken]);
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
