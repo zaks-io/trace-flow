@@ -90,10 +90,41 @@ jobs:
       - name: Build CLI release artifact
         run: cargo build --release -p trace-flow-cli --locked
 
-  deploy-convex-and-web:
-    name: Deploy Convex and Web
+  deploy-convex:
+    name: Deploy Convex
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
+    environment: Production
+    outputs:
+      convex_url: ${{ steps.deploy.outputs.convex_url }}
+      convex_site_url: ${{ steps.deploy.outputs.convex_site_url }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy Convex
+        id: deploy
+        run: |
+          bunx convex deploy \
+            --cmd 'bash scripts/ci/export-convex-outputs.sh' \
+            --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+  deploy-web:
+    name: Deploy Web Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [ci, deploy-convex]
     environment: Production
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -109,13 +140,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Deploy Convex and Build Web
-        run: |
-          bunx convex deploy \
-            --cmd 'cd apps/web && bunx opennextjs-cloudflare build' \
-            --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+      - name: Build Web
+        run: bunx opennextjs-cloudflare build
+        working-directory: apps/web
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          NEXT_PUBLIC_CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
           AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
           AUTH0_CLIENT_ID: ${{ vars.AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
@@ -126,10 +155,11 @@ jobs:
           NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID: ${{ vars.NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID }}
           AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
+          BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           APP_BASE_URL: ${{ vars.APP_BASE_URL }}
           NEXT_PUBLIC_DEPLOY_ID: ${{ github.sha }}
 
-      - name: Deploy Web (Workers)
+      - name: Deploy Web Worker
         run: bun opennextjs-cloudflare deploy --env production
         working-directory: apps/web
         env:
@@ -139,7 +169,7 @@ jobs:
   deploy-proxy:
     name: Deploy Proxy Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci]
+    needs: [ci, deploy-convex]
     environment: Production
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -161,7 +191,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/proxy
-          command: deploy --env production
+          command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
 
   # Schema must land before any consumer ships, or a consumer can write rows in the new shape while the
@@ -264,7 +294,7 @@ jobs:
   deploy-mcp:
     name: Deploy MCP Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci, deploy-convex-and-web]
+    needs: [ci, deploy-convex]
     environment: Production
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -286,7 +316,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/mcp
-          command: deploy --env production
+          command: deploy --env production --var CONNECT_BASE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
 
   # Agent pipeline (TRA-110). Production-real: prod-named workers bound to prod queue/DLQ/KV via the
@@ -295,7 +325,7 @@ jobs:
   deploy-agent-ingest:
     name: Deploy Agent Ingest Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci]
+    needs: [ci, deploy-convex]
     environment: Production
     permissions:
       contents: read
@@ -326,7 +356,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/agent-ingest
-          command: deploy --env production
+          command: deploy --env production --var CONVEX_SITE_URL:${{ needs.deploy-convex.outputs.convex_site_url }}
           packageManager: bun
 
   deploy-agent-consumer:
@@ -366,12 +396,41 @@ jobs:
           command: deploy --env production
           packageManager: bun
 
+  deploy-analyst-sandbox:
+    name: Deploy Analyst Sandbox Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [ci, deploy-convex]
+    environment: Production
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 2
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy Analyst Sandbox Worker
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/analyst-sandbox
+          command: deploy --env production --var CONVEX_URL:${{ needs.deploy-convex.outputs.convex_url }}
+          packageManager: bun
+
   deploy-status:
     name: Deployment Status
     runs-on: blacksmith-2vcpu-ubuntu-2404
     if: always()
     needs:
-      - deploy-convex-and-web
+      - deploy-convex
+      - deploy-web
       - deploy-proxy
       - deploy-tinybird-schema
       - deploy-proxy-consumer
@@ -379,6 +438,7 @@ jobs:
       - deploy-mcp
       - deploy-agent-ingest
       - deploy-agent-consumer
+      - deploy-analyst-sandbox
     steps:
       - name: Check deployment statuses
         run: |

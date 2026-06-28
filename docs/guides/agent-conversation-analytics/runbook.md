@@ -46,21 +46,20 @@ The production deploy workflow fails if an agent Worker is bound to a dev queue,
 Worker name, or the dev limiter namespace `2006` — enforced by `scripts/assert-agent-prod-resources.sh`,
 which renders each Worker's `--env production` config and refuses to deploy on any dev token.
 
-### Worker secrets (set out of band, never committed, never in CI)
+### Worker secrets and deploy vars
 
-Run each `secret put` from **inside the app directory** with no `--config` flag. Running from the repo
-root with `--config apps/<app>/wrangler.jsonc` mis-resolves the `--env production` worker name (it
-appends `-production` to the top-level `-dev` name) and silently creates a junk
-`trace-flow-agent-ingest-dev-production` worker instead of targeting the real `trace-flow-agent-ingest`.
+`CONVEX_SITE_URL` is injected by the production deploy workflow from the Convex deployment output. Do not
+set it as a Worker secret for normal deploys.
+
+Run each `secret put` from **inside the app directory** with no `--config` flag. Running from the repo root
+with `--config apps/<app>/wrangler.jsonc` mis-resolves the `--env production` worker name (it appends
+`-production` to the top-level `-dev` name) and silently creates a junk `trace-flow-agent-ingest-dev-production`
+worker instead of targeting the real `trace-flow-agent-ingest`.
 
 ```sh
 # ingest — run from apps/agent-ingest/
-#   CONVEX_SITE_URL MUST be the prod Convex *site* origin (https://laudable-bison-427.convex.site).
-#   If it points at any other deployment, the compatibility-policy fetch 404s and ingest fails closed
-#   with policy_unavailable even though auth is correct.
 #   AGENT_INGEST_SHARED_SECRET must match the value set in the prod Convex environment.
 ( cd apps/agent-ingest && \
-  wrangler secret put CONVEX_SITE_URL            --env production && \
   wrangler secret put AGENT_INGEST_SHARED_SECRET --env production && \
   wrangler secret put SENTRY_DSN                 --env production )
 

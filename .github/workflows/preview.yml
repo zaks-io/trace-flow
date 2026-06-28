@@ -17,9 +17,41 @@ permissions:
   pull-requests: write
 
 jobs:
+  deploy-convex:
+    name: Deploy Convex Preview
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: Preview
+    outputs:
+      convex_url: ${{ steps.deploy.outputs.convex_url }}
+      convex_site_url: ${{ steps.deploy.outputs.convex_site_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy Convex Preview
+        id: deploy
+        run: |
+          bunx convex deploy --preview-create "$BRANCH_NAME" \
+            --cmd 'bash scripts/ci/export-convex-outputs.sh' \
+            --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+        env:
+          BRANCH_NAME: ${{ github.head_ref }}
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
   preview:
     name: Deploy Preview
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [deploy-convex]
     environment: Preview
     steps:
       - uses: actions/checkout@v7
@@ -35,11 +67,18 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Deploy workers to preview environment
-      - name: Deploy Preview Workers
+      - name: Deploy Static Preview Workers
         run: |
           for attempt in 1 2 3; do
-            if bunx turbo run deploy:preview --filter='./apps/*' --filter='!@trace-flow/web' --env-mode=loose --concurrency=1; then
+            if bunx turbo run deploy:preview \
+              --filter='./apps/*' \
+              --filter='!@trace-flow/web' \
+              --filter='!@trace-flow/proxy' \
+              --filter='!@trace-flow/mcp' \
+              --filter='!@trace-flow/agent-ingest' \
+              --filter='!@trace-flow/analyst-sandbox' \
+              --env-mode=loose \
+              --concurrency=1; then
               exit 0
             fi
 
@@ -54,15 +93,38 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # Deploy Convex preview and build web
-      - name: Deploy Convex Preview and Build Web
+      - name: Deploy Convex-backed Preview Workers
         run: |
-          npx convex deploy --preview-create "$BRANCH_NAME" \
-            --cmd 'bunx turbo run build --filter=@trace-flow/web && cd apps/web && bunx opennextjs-cloudflare build' \
-            --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+          for attempt in 1 2 3; do
+            if (
+              cd apps/proxy && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+            ) && (
+              cd apps/mcp && bunx wrangler deploy --env preview --var CONNECT_BASE_URL:"$CONVEX_SITE_URL"
+            ) && (
+              cd apps/agent-ingest && bunx wrangler deploy --env preview --var CONVEX_SITE_URL:"$CONVEX_SITE_URL"
+            ) && (
+              cd apps/analyst-sandbox && bunx wrangler deploy --env preview --var CONVEX_URL:"$CONVEX_URL"
+            ); then
+              exit 0
+            fi
+
+            status=$?
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+
+            sleep $((attempt * 20))
+          done
         env:
-          BRANCH_NAME: ${{ github.head_ref }}
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
+          CONVEX_SITE_URL: ${{ needs.deploy-convex.outputs.convex_site_url }}
+
+      - name: Build Web Preview
+        run: bunx turbo run build --filter=@trace-flow/web && cd apps/web && bunx opennextjs-cloudflare build
+        env:
+          NEXT_PUBLIC_CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
           NEXT_PUBLIC_API_URL: https://trace-flow-api-preview.isaac-a46.workers.dev
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
@@ -73,6 +135,7 @@ jobs:
           NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID: ${{ vars.NEXT_PUBLIC_LAUNCHDARKLY_CLIENT_SIDE_ID }}
           AUTH0_SECRET: ${{ secrets.AUTH0_SECRET }}
           AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
+          BODY_ACCESS_JWT_SECRET: ${{ secrets.BODY_ACCESS_JWT_SECRET }}
           APP_BASE_URL: https://trace-flow-web-preview.isaac-a46.workers.dev
           NEXT_PUBLIC_DEPLOY_ID: ${{ github.sha }}
 
@@ -98,6 +161,8 @@ jobs:
             | Web | https://trace-flow-web-preview.isaac-a46.workers.dev |
             | API | https://trace-flow-api-preview.isaac-a46.workers.dev |
             | Proxy | https://trace-flow-proxy-preview.isaac-a46.workers.dev |
+            | Agent Ingest | https://trace-flow-agent-ingest-preview.isaac-a46.workers.dev |
+            | Analyst Sandbox | https://trace-flow-analyst-sandbox-preview.isaac-a46.workers.dev |
             `;
 
             const { data: comments } = await github.rest.issues.listComments({

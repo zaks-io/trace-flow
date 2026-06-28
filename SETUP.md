@@ -46,15 +46,15 @@ See `docs/agents/local-environment.md` for the environment vocabulary and script
 
 The production runtime uses these Cloudflare resource families:
 
-| Resource         | LLM request path                         | Agent conversation path                 |
-| ---------------- | ---------------------------------------- | --------------------------------------- |
-| Workers          | `proxy`, `proxy-consumer`, `api`, `web`  | `agent-ingest`, `agent-consumer`, `web` |
-| Queues           | `trace-flow-requests-*` + DLQ            | `agent-ingest-*` + DLQ                  |
-| R2               | `trace-flow-storage-*` body bucket       | raw transcript storage deferred         |
-| KV               | `API_KEYS`, `MODEL_PRICING`              | `COLLECTOR_CREDS`, `MODEL_PRICING`      |
-| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`         | `AGENT_FACT_BATCHER`                    |
-| Rate limiters    | org, IP, API read, token refresh budgets | `AGENT_INGEST_LIMITER`                  |
-| Analytics Engine | proxy/consumer operational metrics       | Worker logs and Sentry for now          |
+| Resource         | LLM request path                         | Agent conversation path                                    |
+| ---------------- | ---------------------------------------- | ---------------------------------------------------------- |
+| Workers          | `proxy`, `proxy-consumer`, `api`, `web`  | `agent-ingest`, `agent-consumer`, `analyst-sandbox`, `web` |
+| Queues           | `trace-flow-requests-*` + DLQ            | `agent-ingest-*` + DLQ                                     |
+| R2               | `trace-flow-storage-*` body bucket       | sandbox workspace backups                                  |
+| KV               | `API_KEYS`, `MODEL_PRICING`              | `COLLECTOR_CREDS`, `MODEL_PRICING`                         |
+| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`         | `AGENT_FACT_BATCHER`, `Sandbox`                            |
+| Rate limiters    | org, IP, API read, token refresh budgets | `AGENT_INGEST_LIMITER`                                     |
+| Analytics Engine | proxy/consumer operational metrics       | Worker logs and Sentry for now                             |
 
 The agent production resource IDs and smoke-test contract live in
 `docs/guides/agent-conversation-analytics/provisioned-resources.md` and
@@ -85,15 +85,16 @@ Set secrets through the owning platform only. Do not commit them.
 
 ### Worker Secrets
 
-| Worker           | Secrets                                                                                         |
-| ---------------- | ----------------------------------------------------------------------------------------------- |
-| `proxy`          | `CONVEX_SITE_URL`, `USAGE_SYNC_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY` |
-| `proxy-consumer` | `TINYBIRD_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`                                                   |
-| `api`            | `TINYBIRD_ADMIN_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`                 |
-| `web`            | Auth0, Sentry, LaunchDarkly, and app URL values supplied during build/deploy                    |
-| `mcp`            | Convex JWKS/read-side runtime values for MCP access                                             |
-| `agent-ingest`   | `CONVEX_SITE_URL`, `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`                                   |
-| `agent-consumer` | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                                  |
+| Worker            | Secrets                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| `proxy`           | `USAGE_SYNC_SECRET`, `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`                              |
+| `proxy-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`                                                             |
+| `api`             | `TINYBIRD_ADMIN_TOKEN`, `SENTRY_DSN`, `AXIOM_TOKEN`, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET` |
+| `web`             | Auth0, Sentry, LaunchDarkly, and app URL values supplied during build/deploy                              |
+| `mcp`             | Convex JWKS/read-side runtime values for MCP access                                                       |
+| `agent-ingest`    | `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`                                                                |
+| `agent-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                                            |
+| `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                                                     |
 
 ### Convex Environment
 
@@ -106,6 +107,9 @@ subscriptions, and Tinybird JWT signing. Required environment values include:
 - Cloudflare account/API config for KV sync
 - `CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID` for Collector Credential KV sync
 - `AGENT_INGEST_SHARED_SECRET` for the ingest control-plane endpoints
+- `ANALYST_SANDBOX_URL` and `ANALYST_SANDBOX_SHARED_SECRET` for Analyst sandbox orchestration
+- `OPENROUTER_API_KEY` for Analyst model calls
+- `BODY_ACCESS_JWT_SECRET` for short-lived Body Object access tokens shared with the API Worker
 
 Use `convex dev` for local/dev control-plane work. Do not run `convex deploy` or production secret
 changes without explicit approval.
@@ -117,9 +121,9 @@ Production deploys are automated by `.github/workflows/deploy.yml` on merge to `
 The workflow:
 
 1. runs CI checks
-2. deploys Convex and builds Web in one job
+2. deploys Convex and exports `.convex.cloud` / `.convex.site` URLs through `GITHUB_OUTPUT`
 3. deploys Tinybird schema before consumer Workers
-4. deploys proxy, proxy-consumer, API, MCP, Web, Agent Ingest, and Agent Consumer
+4. deploys proxy, proxy-consumer, API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
 5. fails agent deploys if production config resolves to dev queues or KV namespaces
 
 Never manually deploy production without explicit approval.

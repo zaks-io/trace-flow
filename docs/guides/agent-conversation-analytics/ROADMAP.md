@@ -77,8 +77,9 @@ The path is:
   - production `COLLECTOR_CREDS` KV namespace
   - production rate limiter namespace
   - production pricing KV binding if shared pricing cannot be safely reused
-- Create scoped Worker secrets:
-  - ingest: `CONVEX_SITE_URL`, `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`
+- Create scoped Worker secrets and deploy vars:
+  - ingest deploy var: `CONVEX_SITE_URL` injected by deploy workflow
+  - ingest secrets: `AGENT_INGEST_SHARED_SECRET`, `SENTRY_DSN`
   - consumer: Tinybird append-only token, `SENTRY_DSN`
 - Deploy agent Tinybird datasources and pipes to the production workspace through a scripted release
   gate, not a manual admin-token step.

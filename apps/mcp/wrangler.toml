@@ -38,7 +38,7 @@ workers_dev = false
 binding = "CF_VERSION_METADATA"
 
 [env.production.vars]
-CONNECT_BASE_URL = "https://connect.trace-flow.dev"
+CONNECT_BASE_URL = ""
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 SENTRY_ENVIRONMENT = "prod"
 AXIOM_DATASET = "cloudflare"
@@ -66,10 +66,7 @@ name = "trace-flow-mcp-preview"
 binding = "CF_VERSION_METADATA"
 
 [env.preview.vars]
-# Preview intentionally uses the production Connect backend until Connect has
-# preview deploys. The MCP worker only receives user-scoped tokens after Connect
-# revalidates user, org, API-key ownership, and retention.
-CONNECT_BASE_URL = "https://connect.trace-flow.dev"
+CONNECT_BASE_URL = ""
 TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 SENTRY_ENVIRONMENT = "preview"
 AXIOM_DATASET = "cloudflare"

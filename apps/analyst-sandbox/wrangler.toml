@@ -17,7 +17,7 @@ enabled = true
 binding = "CF_VERSION_METADATA"
 
 # Secrets: ANALYST_SANDBOX_SHARED_SECRET, OPENROUTER_API_KEY
-# Var: CONVEX_URL
+# Dev var: CONVEX_URL. Preview/prod deploy workflows inject it from Convex output.
 # Snapshots stream through the Worker to the BACKUP_BUCKET binding — the sealed
 # container makes no R2 calls, so no presigned-URL config (endpoint, account id,
 # R2 API token secrets) is needed.
@@ -57,7 +57,7 @@ name = "trace-flow-analyst-sandbox-preview"
 binding = "CF_VERSION_METADATA"
 
 [env.preview.vars]
-CONVEX_URL = "https://hardy-iguana-812.convex.cloud"
+CONVEX_URL = ""
 SENTRY_ENVIRONMENT = "preview"
 SANDBOX_TRANSPORT = "rpc"
 
@@ -92,6 +92,7 @@ workers_dev = false
 binding = "CF_VERSION_METADATA"
 
 [env.production.vars]
+CONVEX_URL = ""
 SENTRY_ENVIRONMENT = "prod"
 SANDBOX_TRANSPORT = "rpc"
 

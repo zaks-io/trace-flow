@@ -252,9 +252,9 @@ bun run build
 Production deployments are automated via GitHub Actions. When code is merged to `main`, the workflow:
 
 1. Runs CI checks (format, lint, type-check, test, build)
-2. Deploys Convex and builds Web together, so `NEXT_PUBLIC_CONVEX_URL` is baked into the OpenNext build
+2. Deploys Convex and exports `.convex.cloud` / `.convex.site` URLs for dependent Workers
 3. Deploys the Tinybird schema before the proxy and agent consumers
-4. Deploys Cloudflare Workers with dependency ordering: proxy, proxy-consumer, API, MCP, Web, Agent Ingest, and Agent Consumer
+4. Deploys Cloudflare Workers with dependency ordering: proxy, proxy-consumer, API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
 
 See `.github/workflows/deploy.yml` for the full workflow.
 
