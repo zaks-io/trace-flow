@@ -8,12 +8,8 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
-# Verify we're in a worktree (not the main repo)
-# In a worktree, .git is a file pointing to the actual git dir, not a directory
-if [ ! -f ".git" ]; then
-  echo "Error: This script should only be run in a git worktree"
-  exit 1
-fi
+REPO_ROOT=$(git rev-parse --path-format=absolute --show-toplevel)
+cd "$REPO_ROOT"
 
 # Get the main worktree location (git-common-dir returns /path/to/main/.git)
 MAIN_WORKTREE=$(git rev-parse --path-format=absolute --git-common-dir | sed 's|/.git$||')
@@ -29,13 +25,18 @@ bun install
 # secrets that are never committed, so a fresh worktree starts without them.
 copy_from_main() {
   local rel="$1"
-  if [ -f "$MAIN_WORKTREE/$rel" ]; then
+  local src="$MAIN_WORKTREE/$rel"
+  local dest="$REPO_ROOT/$rel"
+
+  if [ "$src" = "$dest" ]; then
+    echo "Already in main worktree, skipping $rel"
+  elif [ -f "$src" ]; then
     echo "Copying $rel from main worktree..."
-    mkdir -p "$(dirname "$rel")"
-    cp "$MAIN_WORKTREE/$rel" "$rel"
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
     echo "✓ $rel copied"
   else
-    echo "⚠ Warning: $MAIN_WORKTREE/$rel not found, skipping copy"
+    echo "⚠ Warning: $src not found, skipping copy"
   fi
 }
 
