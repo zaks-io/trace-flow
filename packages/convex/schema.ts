@@ -271,6 +271,14 @@ export default defineSchema({
     enabled: v.boolean(),
     severity: v.union(v.literal('info'), v.literal('warning'), v.literal('error')),
     apiKeyIds: v.optional(v.array(v.id('apiKeys'))),
+    scope: v.optional(
+      v.object({
+        provider: v.optional(v.string()),
+        model: v.optional(v.string()),
+        baggageOperation: v.optional(v.string()),
+        baggageUserId: v.optional(v.string()),
+      }),
+    ),
     channelIds: v.array(v.id('costAlertChannels')),
     cooldownMinutes: v.number(),
     notifyOnRecovery: v.boolean(),

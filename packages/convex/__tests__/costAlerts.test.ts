@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeChannelConfig, validateAlertCondition, isOrgOwner } from '../costAlerts';
-import { buildApiKeyParam, resolveScopedApiKeys, shouldNotify } from '../integrations/costAlerts';
+import {
+  normalizeAlertScope,
+  normalizeChannelConfig,
+  validateAlertCondition,
+  isOrgOwner,
+} from '../costAlerts';
+import {
+  buildApiKeyParam,
+  buildCostAlertPipeParams,
+  resolveScopedApiKeys,
+  shouldNotify,
+} from '../integrations/costAlerts';
 import {
   assertCostAlertWebhookDeliveryTarget,
   createPinnedLookup,
@@ -235,6 +245,33 @@ describe('cost alert helpers', () => {
     ).toThrow('Spike baseline must be between 4 and 168 hours');
   });
 
+  it('normalizes optional cost alert dimension scope', () => {
+    expect(
+      normalizeAlertScope({
+        provider: ' openai ',
+        model: ' gpt-4o ',
+        baggageOperation: ' checkout ',
+        baggageUserId: ' user_123 ',
+      }),
+    ).toEqual({
+      provider: 'openai',
+      model: 'gpt-4o',
+      baggageOperation: 'checkout',
+      baggageUserId: 'user_123',
+    });
+
+    expect(
+      normalizeAlertScope({
+        provider: ' ',
+        model: '',
+      }),
+    ).toBeUndefined();
+
+    expect(() => normalizeAlertScope({ provider: 'x'.repeat(201) })).toThrow(
+      'Scope filter values must be 200 characters or fewer',
+    );
+  });
+
   it('scopes API keys correctly', () => {
     expect(buildApiKeyParam([])).toBe('__NO_KEYS__');
     expect(
@@ -249,6 +286,32 @@ describe('cost alert helpers', () => {
         { _id: 'api_2', key: 'key-2' },
       ]),
     ).toEqual(['key-1', 'key-2']);
+  });
+
+  it('builds alert pipe params with API-key and dimension narrowing filters', () => {
+    expect(
+      buildCostAlertPipeParams(
+        {
+          selectedKeys: ['key-1'],
+          retentionDays: 30,
+          scope: {
+            provider: 'anthropic',
+            model: 'claude-sonnet-4',
+            baggageOperation: 'review',
+            baggageUserId: 'user_456',
+          },
+        },
+        { baseline_hours: 24, api_keys: 'attacker-supplied' },
+      ),
+    ).toEqual({
+      api_keys: 'key-1',
+      retention_days: 30,
+      provider: 'anthropic',
+      model: 'claude-sonnet-4',
+      baggage_operation: 'review',
+      baggage_user_id: 'user_456',
+      baseline_hours: 24,
+    });
   });
 
   it('deduplicates breach notifications using cooldown', () => {

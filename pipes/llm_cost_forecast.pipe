@@ -14,6 +14,7 @@ SQL >
     WHERE BucketStart >= today() - INTERVAL 30 DAY
         AND BucketStart < today()
         AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
         {% if defined(provider) %}
         AND Provider = {{ String(provider) }}
         {% end %}
@@ -22,6 +23,9 @@ SQL >
         {% end %}
         {% if defined(baggage_operation) %}
         AND BaggageOperation = {{ String(baggage_operation) }}
+        {% end %}
+        {% if defined(baggage_user_id) %}
+        AND BaggageUserId = {{ String(baggage_user_id) }}
         {% end %}
         {% if defined(api_key_filter) %}
         AND ApiKey = {{ String(api_key_filter) }}
@@ -72,6 +76,7 @@ SQL >
             WHERE BucketStart >= month_start
                 AND BucketStart <= now()
                 AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+                AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
                 {% if defined(provider) %}
                 AND Provider = {{ String(provider) }}
                 {% end %}
@@ -80,6 +85,9 @@ SQL >
                 {% end %}
                 {% if defined(baggage_operation) %}
                 AND BaggageOperation = {{ String(baggage_operation) }}
+                {% end %}
+                {% if defined(baggage_user_id) %}
+                AND BaggageUserId = {{ String(baggage_user_id) }}
                 {% end %}
                 {% if defined(api_key_filter) %}
                 AND ApiKey = {{ String(api_key_filter) }}

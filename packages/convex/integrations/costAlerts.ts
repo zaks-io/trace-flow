@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { internal } from '../_generated/api';
 import { CostAlertEmail } from '@trace-flow/emails';
 import type { Id } from '../_generated/dataModel';
+import { RETENTION_DAYS } from '@trace-flow/types';
 import { fetchPipe as fetchPipeShared } from '@trace-flow/tinybird-client';
 import { sendCostAlertWebhookNotification } from './costAlertWebhookDelivery';
 
@@ -37,6 +38,13 @@ interface HourlySpikeRow {
   absolute_increase_usd: number;
   baseline_hours: number;
   insufficient_data: number;
+}
+
+interface CostAlertScope {
+  provider?: string;
+  model?: string;
+  baggageOperation?: string;
+  baggageUserId?: string;
 }
 
 interface EvaluationResult {
@@ -70,8 +78,40 @@ export function buildApiKeyParam(selectedKeys: string[]): string {
   return selectedKeys.length > 0 ? selectedKeys.join(',') : '__NO_KEYS__';
 }
 
+export function buildCostAlertPipeParams(
+  base: {
+    selectedKeys: string[];
+    retentionDays: number;
+    scope?: CostAlertScope;
+  },
+  extra: Record<string, string | number | undefined> = {},
+): Record<string, string | number | undefined> {
+  return {
+    ...extra,
+    api_keys: buildApiKeyParam(base.selectedKeys),
+    retention_days: base.retentionDays,
+    provider: base.scope?.provider,
+    model: base.scope?.model,
+    baggage_operation: base.scope?.baggageOperation,
+    baggage_user_id: base.scope?.baggageUserId,
+  };
+}
+
 function formatCurrency(value: number): string {
   return `$${value.toFixed(2)}`;
+}
+
+function formatScopeSuffix(scope: CostAlertScope | undefined): string {
+  if (!scope) return '';
+
+  const parts = [
+    scope.provider ? `provider ${scope.provider}` : undefined,
+    scope.model ? `model ${scope.model}` : undefined,
+    scope.baggageOperation ? `operation ${scope.baggageOperation}` : undefined,
+    scope.baggageUserId ? `user ${scope.baggageUserId}` : undefined,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? ` Scope: ${parts.join(', ')}.` : '';
 }
 
 function nsFromMs(value: number): number {
@@ -99,6 +139,8 @@ function getAbsoluteWindow(condition: {
 
 async function evaluateAlert(
   selectedKeys: string[],
+  scope: CostAlertScope | undefined,
+  retentionDays: number,
   condition:
     | {
         type: 'absolute_spend_threshold';
@@ -117,28 +159,34 @@ async function evaluateAlert(
         minIncreaseUsd: number;
       },
 ): Promise<EvaluationResult> {
-  const apiKeys = buildApiKeyParam(selectedKeys);
-
   if (condition.type === 'absolute_spend_threshold') {
     const window = getAbsoluteWindow(condition);
-    const rows = await fetchPipe<UsageSummaryRow>('llm_usage_summary', {
-      api_keys: apiKeys,
-      start_time_ns: nsFromMs(window.startMs),
-      end_time_ns: nsFromMs(window.endMs),
-    });
+    const rows = await fetchPipe<UsageSummaryRow>(
+      'llm_usage_summary',
+      buildCostAlertPipeParams(
+        { selectedKeys, scope, retentionDays },
+        {
+          start_time_ns: nsFromMs(window.startMs),
+          end_time_ns: nsFromMs(window.endMs),
+        },
+      ),
+    );
     const totalCost = Number(rows[0]?.total_cost_usd ?? 0);
     return {
       triggered: totalCost >= condition.thresholdUsd,
       metricValue: totalCost,
       metricLabel: `Spend in ${window.label}`,
-      summary: `${formatCurrency(totalCost)} spent in the ${window.label} against a ${formatCurrency(condition.thresholdUsd)} threshold.`,
+      summary: `${formatCurrency(totalCost)} spent in the ${window.label} against a ${formatCurrency(condition.thresholdUsd)} threshold.${formatScopeSuffix(scope)}`,
       // MTD thresholds stay breached all month — only notify once
       suppressRenotify: condition.window === 'month_to_date',
     };
   }
 
   if (condition.type === 'projected_monthly_over') {
-    const rows = await fetchPipe<ForecastRow>('llm_cost_forecast', { api_keys: apiKeys });
+    const rows = await fetchPipe<ForecastRow>(
+      'llm_cost_forecast',
+      buildCostAlertPipeParams({ selectedKeys, scope, retentionDays }),
+    );
     const forecast = rows[0];
     const projected = Number(forecast?.projected_monthly_cost ?? 0);
     const monthToDate = Number(forecast?.month_to_date_cost ?? 0);
@@ -149,7 +197,7 @@ async function evaluateAlert(
         triggered: false,
         metricValue: projected,
         metricLabel: 'Projected monthly cost',
-        summary: `Insufficient data — no spend recorded this month yet. Projection will activate once current-month usage appears.`,
+        summary: `Insufficient data — no spend recorded this month yet. Projection will activate once current-month usage appears.${formatScopeSuffix(scope)}`,
       };
     }
 
@@ -157,16 +205,21 @@ async function evaluateAlert(
       triggered: projected >= condition.thresholdUsd,
       metricValue: projected,
       metricLabel: 'Projected monthly cost',
-      summary: `Projected monthly cost is ${formatCurrency(projected)} with ${formatCurrency(monthToDate)} spent month-to-date, compared with a ${formatCurrency(condition.thresholdUsd)} budget.`,
+      summary: `Projected monthly cost is ${formatCurrency(projected)} with ${formatCurrency(monthToDate)} spent month-to-date, compared with a ${formatCurrency(condition.thresholdUsd)} budget.${formatScopeSuffix(scope)}`,
       suppressRenotify: true,
     };
   }
 
-  const rows = await fetchPipe<HourlySpikeRow>('llm_cost_hourly_spike', {
-    api_keys: apiKeys,
-    baseline_hours: condition.baselineHours,
-    use_previous_hour: 1,
-  });
+  const rows = await fetchPipe<HourlySpikeRow>(
+    'llm_cost_hourly_spike',
+    buildCostAlertPipeParams(
+      { selectedKeys, scope, retentionDays },
+      {
+        baseline_hours: condition.baselineHours,
+        use_previous_hour: 1,
+      },
+    ),
+  );
   const spike = rows[0];
   const hourCost = Number(spike?.current_hour_cost_usd ?? 0);
   const baseline = Number(spike?.baseline_hourly_cost_usd ?? 0);
@@ -179,7 +232,7 @@ async function evaluateAlert(
       triggered: false,
       metricValue: hourCost,
       metricLabel: 'Previous hour spend',
-      summary: `Insufficient baseline data — need at least ${condition.baselineHours} hours of history before spike detection activates.`,
+      summary: `Insufficient baseline data — need at least ${condition.baselineHours} hours of history before spike detection activates.${formatScopeSuffix(scope)}`,
     };
   }
 
@@ -192,7 +245,7 @@ async function evaluateAlert(
     triggered,
     metricValue: hourCost,
     metricLabel: 'Previous hour spend',
-    summary: `Previous hour spend was ${formatCurrency(hourCost)} versus a ${formatCurrency(baseline)} trailing hourly baseline (${ratio.toFixed(2)}x, +${formatCurrency(increase)}).`,
+    summary: `Previous hour spend was ${formatCurrency(hourCost)} versus a ${formatCurrency(baseline)} trailing hourly baseline (${ratio.toFixed(2)}x, +${formatCurrency(increase)}).${formatScopeSuffix(scope)}`,
   };
 }
 
@@ -315,6 +368,7 @@ async function deliverEvent(args: {
   alertId?: Id<'costAlerts'>;
   alertName: string;
   alertSeverity?: string;
+  alertScope?: CostAlertScope;
   channel: {
     _id: Id<'costAlertChannels'>;
     name: string;
@@ -355,6 +409,7 @@ async function deliverEvent(args: {
       id: alertId,
       name: alertName,
       severity: args.alertSeverity,
+      scope: args.alertScope,
     },
     metric: {
       label: metricLabel,
@@ -433,6 +488,10 @@ export const evaluateOrg = internalAction({
     const channelMap = new Map(runtime.channels.map((channel) => [channel._id, channel]));
     const stateMap = new Map(runtime.states.map((state) => [state.costAlertId, state]));
     const enabledAlerts = runtime.alerts.filter((alert) => alert.enabled);
+    const subscription = await ctx.runQuery(internal.billing.subscriptions.getByOrgId, {
+      orgId: args.orgId,
+    });
+    const retentionDays = RETENTION_DAYS[subscription?.tier ?? 'hobby'];
     const now = Date.now();
     // Deterministic per evaluation run — same hour bucket produces the same
     // traceId so Convex action retries dedup via idempotencyKey.
@@ -453,7 +512,12 @@ export const evaluateOrg = internalAction({
           })),
         );
 
-        const evaluation = await evaluateAlert(scopedKeys, alert.condition);
+        const evaluation = await evaluateAlert(
+          scopedKeys,
+          alert.scope,
+          retentionDays,
+          alert.condition,
+        );
         const existingState = stateMap.get(alert._id);
         const transition = shouldNotify(alert, existingState, evaluation.triggered, now, {
           suppressRenotify: evaluation.suppressRenotify,
@@ -480,6 +544,7 @@ export const evaluateOrg = internalAction({
                   alertId: alert._id,
                   alertName: alert.name,
                   alertSeverity: alert.severity,
+                  alertScope: alert.scope,
                   channel,
                   eventType: transition.eventType,
                   metricLabel: evaluation.metricLabel,

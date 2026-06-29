@@ -25,6 +25,7 @@ SQL >
         WHERE BucketStart >= target_hour - toIntervalHour(baseline_hours)
             AND BucketStart < target_hour
             AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
             {% end %}
@@ -33,6 +34,9 @@ SQL >
             {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
             {% end %}
             {% if defined(api_key_filter) %}
             AND ApiKey = {{ String(api_key_filter) }}
@@ -53,6 +57,7 @@ SQL >
             FROM llm_usage_hourly
             WHERE BucketStart = target_hour
                 AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+                AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
                 {% if defined(provider) %}
                 AND Provider = {{ String(provider) }}
                 {% end %}
@@ -61,6 +66,9 @@ SQL >
                 {% end %}
                 {% if defined(baggage_operation) %}
                 AND BaggageOperation = {{ String(baggage_operation) }}
+                {% end %}
+                {% if defined(baggage_user_id) %}
+                AND BaggageUserId = {{ String(baggage_user_id) }}
                 {% end %}
                 {% if defined(api_key_filter) %}
                 AND ApiKey = {{ String(api_key_filter) }}

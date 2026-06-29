@@ -17,6 +17,7 @@ import {
   costAlertChannelConfigValidator,
   costAlertChannelValidator,
   costAlertConditionValidator,
+  costAlertScopeValidator,
   costAlertSeverityValidator,
   costAlertStateValidator,
   costAlertValidator,
@@ -25,6 +26,7 @@ import {
 import { normalizeWebhookHeaders, parseWebhookDeliveryUrl } from './costAlertWebhookSecurity';
 
 const CONFIG_CHANGE_RECHECK_MS = 5 * 1000;
+const MAX_SCOPE_VALUE_LENGTH = 200;
 
 const costAlertSettingsValidator = v.object({
   rules: v.array(costAlertValidator),
@@ -36,6 +38,7 @@ const costAlertSettingsValidator = v.object({
 
 type OrgContext = QueryCtx | MutationCtx;
 type CostAlert = Doc<'costAlerts'>;
+type CostAlertScope = NonNullable<CostAlert['scope']>;
 
 async function requireOrgMember(ctx: OrgContext) {
   const user = await requireEnabledUser(ctx);
@@ -62,6 +65,38 @@ async function requireOrgOwner(ctx: OrgContext) {
 
 export function isOrgOwner(userId: Id<'users'>, ownerId: Id<'users'>): boolean {
   return userId === ownerId;
+}
+
+function trimOptionalScopeValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length > MAX_SCOPE_VALUE_LENGTH) {
+    throw new ConvexError(
+      `Scope filter values must be ${MAX_SCOPE_VALUE_LENGTH} characters or fewer`,
+    );
+  }
+  return trimmed;
+}
+
+export function normalizeAlertScope(
+  scope: CostAlert['scope'] | undefined,
+): CostAlertScope | undefined {
+  if (!scope) {
+    return undefined;
+  }
+
+  const normalized = {
+    provider: trimOptionalScopeValue(scope.provider),
+    model: trimOptionalScopeValue(scope.model),
+    baggageOperation: trimOptionalScopeValue(scope.baggageOperation),
+    baggageUserId: trimOptionalScopeValue(scope.baggageUserId),
+  };
+
+  return Object.values(normalized).some(Boolean) ? normalized : undefined;
+}
+
+function normalizeApiKeyIds(apiKeyIds: Id<'apiKeys'>[] | undefined): Id<'apiKeys'>[] | undefined {
+  return apiKeyIds && apiKeyIds.length > 0 ? apiKeyIds : undefined;
 }
 
 export function normalizeChannelConfig(
@@ -468,6 +503,7 @@ export const createAlert = mutation({
     name: v.string(),
     severity: costAlertSeverityValidator,
     apiKeyIds: v.optional(v.array(v.id('apiKeys'))),
+    scope: v.optional(costAlertScopeValidator),
     channelIds: v.array(v.id('costAlertChannels')),
     cooldownMinutes: v.number(),
     notifyOnRecovery: v.boolean(),
@@ -496,7 +532,8 @@ export const createAlert = mutation({
       name,
       enabled: true,
       severity: args.severity,
-      apiKeyIds: args.apiKeyIds,
+      apiKeyIds: normalizeApiKeyIds(args.apiKeyIds),
+      scope: normalizeAlertScope(args.scope),
       channelIds: args.channelIds,
       cooldownMinutes: args.cooldownMinutes,
       notifyOnRecovery: args.notifyOnRecovery,
@@ -518,6 +555,7 @@ export const updateAlert = mutation({
     name: v.optional(v.string()),
     severity: v.optional(costAlertSeverityValidator),
     apiKeyIds: v.optional(v.array(v.id('apiKeys'))),
+    scope: v.optional(costAlertScopeValidator),
     channelIds: v.optional(v.array(v.id('costAlertChannels'))),
     cooldownMinutes: v.optional(v.number()),
     notifyOnRecovery: v.optional(v.boolean()),
@@ -534,7 +572,9 @@ export const updateAlert = mutation({
 
     const nextCondition = args.condition ?? alert.condition;
     validateAlertCondition(nextCondition);
-    const nextApiKeyIds = args.apiKeyIds ?? alert.apiKeyIds;
+    const nextApiKeyIds =
+      args.apiKeyIds === undefined ? alert.apiKeyIds : normalizeApiKeyIds(args.apiKeyIds);
+    const nextScope = args.scope === undefined ? alert.scope : normalizeAlertScope(args.scope);
     const nextChannelIds = args.channelIds ?? alert.channelIds;
     await assertApiKeysBelongToOrg(ctx, org._id, nextApiKeyIds);
     await assertChannelsBelongToOrg(ctx, org._id, nextChannelIds);
@@ -548,6 +588,7 @@ export const updateAlert = mutation({
       name: args.name?.trim() ?? alert.name,
       severity: args.severity ?? alert.severity,
       apiKeyIds: nextApiKeyIds,
+      scope: nextScope,
       channelIds: nextChannelIds,
       cooldownMinutes: nextCooldownMinutes,
       notifyOnRecovery: args.notifyOnRecovery ?? alert.notifyOnRecovery,

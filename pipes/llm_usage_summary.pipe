@@ -72,6 +72,9 @@ SQL >
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
@@ -116,6 +119,9 @@ SQL >
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
             {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
+            {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}
             {% end %}
@@ -158,6 +164,9 @@ SQL >
             {% end %}
             {% if defined(baggage_operation) %}
             AND BaggageOperation = {{ String(baggage_operation) }}
+            {% end %}
+            {% if defined(baggage_user_id) %}
+            AND BaggageUserId = {{ String(baggage_user_id) }}
             {% end %}
             {% if defined(status) %}
             AND StatusCode = {{ String(status) }}

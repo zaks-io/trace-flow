@@ -556,6 +556,12 @@ export type DataModel = {
       notifyOnRecovery: boolean;
       orgId: Id<"organizations">;
       severity: "info" | "warning" | "error";
+      scope?: {
+        baggageOperation?: string;
+        baggageUserId?: string;
+        model?: string;
+        provider?: string;
+      };
       updatedAt: number;
       updatedByUserId: Id<"users">;
       _id: Id<"costAlerts">;
@@ -582,6 +588,11 @@ export type DataModel = {
       | "notifyOnRecovery"
       | "orgId"
       | "severity"
+      | "scope"
+      | "scope.baggageOperation"
+      | "scope.baggageUserId"
+      | "scope.model"
+      | "scope.provider"
       | "updatedAt"
       | "updatedByUserId";
     indexes: {
