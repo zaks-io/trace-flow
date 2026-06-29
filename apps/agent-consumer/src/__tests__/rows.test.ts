@@ -84,8 +84,15 @@ const TOOL_EVENT_COLUMNS = [
   'command_program',
   'command_subcommand',
   'status',
+  'error_category',
+  'error_category_coverage',
   'exit_code',
   'duration_ms',
+  'is_navigation',
+  'navigation_kind',
+  'navigation_hint_coverage',
+  'navigation_path_hint',
+  'navigation_pattern_hint',
   'repo_relative_paths',
   'extracted_provider',
   'extracted_repo',
@@ -297,10 +304,45 @@ describe('toolEventRow', () => {
     expect(row.extracted_pr_number).toBe(0);
   });
 
+  it('defaults missing classification fields for pre-rollout queue messages', () => {
+    const legacy = toolEventFact() as unknown as Record<string, unknown>;
+    delete legacy.error_category;
+    delete legacy.error_category_coverage;
+    delete legacy.is_navigation;
+    delete legacy.navigation_kind;
+    delete legacy.navigation_hint_coverage;
+    delete legacy.navigation_path_hint;
+    delete legacy.navigation_pattern_hint;
+
+    const row = toolEventRow(ctx, legacy as unknown as ReturnType<typeof toolEventFact>);
+    expect(row.error_category).toBe('unknown');
+    expect(row.error_category_coverage).toBe('not_applicable');
+    expect(row.is_navigation).toBe(0);
+    expect(row.navigation_kind).toBe('none');
+    expect(row.navigation_hint_coverage).toBe('unknown');
+    expect(row.navigation_path_hint).toBe('');
+    expect(row.navigation_pattern_hint).toBe('');
+  });
+
+  it('defaults legacy failed tool events to unknown error coverage', () => {
+    const legacy = toolEventFact({ status: 'failure' }) as unknown as Record<string, unknown>;
+    delete legacy.error_category;
+    delete legacy.error_category_coverage;
+
+    const row = toolEventRow(ctx, legacy as unknown as ReturnType<typeof toolEventFact>);
+    expect(row.error_category).toBe('unknown');
+    expect(row.error_category_coverage).toBe('unknown');
+  });
+
   it('preserves present nullable values', () => {
     const row = toolEventRow(ctx, toolEventFact({ exit_code: 137, duration_ms: 250 }));
     expect(row.exit_code).toBe(137);
     expect(row.duration_ms).toBe(250);
+  });
+
+  it('encodes navigation booleans as UInt8', () => {
+    expect(toolEventRow(ctx, toolEventFact({ is_navigation: true })).is_navigation).toBe(1);
+    expect(toolEventRow(ctx, toolEventFact({ is_navigation: false })).is_navigation).toBe(0);
   });
 });
 

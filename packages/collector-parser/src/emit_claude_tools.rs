@@ -28,11 +28,13 @@ use crate::redaction::redact_field;
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
 use crate::tool_fold::{fold_tool_events, FoldedToolEvent, ToolOutcome};
+use crate::tool_signals::{classify_navigation, classify_tool_error};
 
 /// ADR caps: `command_excerpt` <= 1 KB, `error_excerpt` <= 4 KB, so total excerpt text per tool event
 /// stays <= the 5 KB ceiling without a separate combined check.
 const COMMAND_EXCERPT_CAP_BYTES: usize = 1024;
 const ERROR_EXCERPT_CAP_BYTES: usize = 4096;
+const NAVIGATION_HINT_CAP_BYTES: usize = 256;
 
 /// The assistant record's `message.id`, or `None` for any record without one. Tool-use blocks live only
 /// in assistant records, so a record with no id carries no tool event.
@@ -128,9 +130,18 @@ pub fn claude_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentTo
                 .and_then(Value::as_str);
             let classification = command.map(classify_command).unwrap_or_default();
             let (command_excerpt, command_dropped) = excerpt(command, COMMAND_EXCERPT_CAP_BYTES);
-            let (error_excerpt, error_dropped) = excerpt(
-                result.and_then(|r| r.error_text.as_deref()),
-                ERROR_EXCERPT_CAP_BYTES,
+            let status = status_from_outcome(result.map_or(ToolOutcome::Unknown, |r| r.outcome));
+            let error_source = result.and_then(|r| r.error_text.as_deref());
+            let error_classification = classify_tool_error(status, error_source);
+            let (error_excerpt, error_dropped) = excerpt(error_source, ERROR_EXCERPT_CAP_BYTES);
+            let navigation = classify_navigation(command);
+            let (navigation_path_hint, navigation_path_dropped) = excerpt(
+                (!navigation.path_hint.is_empty()).then_some(navigation.path_hint.as_str()),
+                NAVIGATION_HINT_CAP_BYTES,
+            );
+            let (navigation_pattern_hint, navigation_pattern_dropped) = excerpt(
+                (!navigation.pattern_hint.is_empty()).then_some(navigation.pattern_hint.as_str()),
+                NAVIGATION_HINT_CAP_BYTES,
             );
             let repo_relative_paths = block
                 .get("input")
@@ -153,10 +164,17 @@ pub fn claude_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentTo
                 command_family: classification.family,
                 command_program: classification.program,
                 command_subcommand: classification.subcommand,
-                status: status_from_outcome(result.map_or(ToolOutcome::Unknown, |r| r.outcome)),
+                status,
+                error_category: error_classification.category,
+                error_category_coverage: error_classification.coverage,
                 // Claude transcripts record no process exit code; status carries success/failure.
                 exit_code: None,
                 duration_ms: result.and_then(|r| r.duration_ms),
+                is_navigation: navigation.is_navigation,
+                navigation_kind: navigation.kind,
+                navigation_hint_coverage: navigation.hint_coverage,
+                navigation_path_hint,
+                navigation_pattern_hint,
                 repo_relative_paths,
                 // Deferred enrichment: no parser algorithm in the ADR; PR links are a separate fact.
                 extracted_provider: String::new(),
@@ -171,7 +189,10 @@ pub fn claude_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentTo
                 extracted_subagent_output_tokens: 0,
                 extracted_subagent_cache_read_tokens: 0,
                 extracted_subagent_cache_creation_tokens: 0,
-                dropped_sensitive: command_dropped + error_dropped,
+                dropped_sensitive: command_dropped
+                    + error_dropped
+                    + navigation_path_dropped
+                    + navigation_pattern_dropped,
             });
         }
     }
@@ -181,6 +202,10 @@ pub fn claude_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentTo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use collector_contracts::enums::{
+        AgentNavigationHintCoverage, AgentNavigationKind, AgentToolErrorCategory,
+        AgentToolErrorCoverage,
+    };
     use serde_json::json;
 
     const REPO_ROOT: &str = "/work/trace-flow";
@@ -248,8 +273,19 @@ mod tests {
         assert_eq!(f.command_family, "git");
         assert_eq!(f.command_subcommand, "push");
         assert_eq!(f.status, AgentEventStatus::Success);
+        assert_eq!(f.error_category, AgentToolErrorCategory::Unknown);
+        assert_eq!(
+            f.error_category_coverage,
+            AgentToolErrorCoverage::NotApplicable
+        );
         assert_eq!(f.exit_code, None);
         assert_eq!(f.duration_ms, Some(42));
+        assert!(!f.is_navigation);
+        assert_eq!(f.navigation_kind, AgentNavigationKind::None);
+        assert_eq!(
+            f.navigation_hint_coverage,
+            AgentNavigationHintCoverage::NotApplicable
+        );
         assert_eq!(f.command_excerpt, "git push origin HEAD");
         assert_eq!(f.error_excerpt, "");
         assert!(f.repo_relative_paths.is_empty());
@@ -284,6 +320,39 @@ mod tests {
         assert_eq!(f.status, AgentEventStatus::Failure);
         assert!(f.error_excerpt.contains("failed for user"));
         assert!(!f.error_excerpt.contains("janedoe"));
+    }
+
+    #[test]
+    fn failed_call_carries_bounded_error_category() {
+        let records = [
+            bash_use("t1", "cat missing.txt"),
+            result(
+                "t1",
+                true,
+                json!({ "stderr": "cat: missing.txt: No such file or directory", "interrupted": false }),
+            ),
+        ];
+        let f = &claude_tool_facts(&records, &ctx())[0];
+        assert_eq!(f.status, AgentEventStatus::Failure);
+        assert_eq!(f.error_category, AgentToolErrorCategory::MissingFile);
+        assert_eq!(
+            f.error_category_coverage,
+            AgentToolErrorCoverage::Classified
+        );
+    }
+
+    #[test]
+    fn bash_search_command_carries_navigation_hints() {
+        let records = [bash_use("t1", "rg -n \"AgentToolEventFact\" packages")];
+        let f = &claude_tool_facts(&records, &ctx())[0];
+        assert!(f.is_navigation);
+        assert_eq!(f.navigation_kind, AgentNavigationKind::Search);
+        assert_eq!(
+            f.navigation_hint_coverage,
+            AgentNavigationHintCoverage::Structured
+        );
+        assert_eq!(f.navigation_pattern_hint, "AgentToolEventFact");
+        assert_eq!(f.navigation_path_hint, "packages");
     }
 
     #[test]

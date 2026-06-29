@@ -364,6 +364,8 @@ describe('POST /v1/ingest', () => {
         tool_events: [
           toolEventFact({
             command_excerpt: 'export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+            navigation_path_hint: '/Users/janedoe/secret-project',
+            navigation_pattern_hint: 'AKIAIOSFODNN7EXAMPLE',
             dropped_sensitive: 0,
           }),
         ],
@@ -380,6 +382,8 @@ describe('POST /v1/ingest', () => {
     const enqueued = sentGroup[0]!.body;
     const tool = enqueued.facts.tool_events[0]!;
     expect(tool.command_excerpt).toBe('');
+    expect(tool.navigation_path_hint).toBe('/Users/[REDACTED]/secret-project');
+    expect(tool.navigation_pattern_hint).toBe('');
     expect(tool.dropped_sensitive).toBeGreaterThanOrEqual(1);
   });
 });

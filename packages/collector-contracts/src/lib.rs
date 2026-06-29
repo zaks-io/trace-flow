@@ -14,8 +14,10 @@ pub mod facts;
 pub mod sample;
 
 pub use enums::{
-    AgentCapabilityKind, AgentEventStatus, AgentFileOperation, AgentMessageRole, AgentSource,
-    CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence, RepoSource, TokenCoverage,
+    AgentCapabilityKind, AgentEventStatus, AgentFileOperation, AgentMessageRole,
+    AgentNavigationHintCoverage, AgentNavigationKind, AgentSource, AgentToolErrorCategory,
+    AgentToolErrorCoverage, CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence,
+    RepoSource, TokenCoverage,
 };
 pub use envelope::{
     AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts, RawSessionBundle,

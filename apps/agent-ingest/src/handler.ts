@@ -302,7 +302,16 @@ function reRedact(facts: AgentIngestEnvelope['facts']): void {
     t.command_excerpt = capExcerpt(cmd.value, MAX_COMMAND_EXCERPT);
     const errExcerpt = redactField(t.error_excerpt);
     t.error_excerpt = capExcerpt(errExcerpt.value, MAX_ERROR_EXCERPT);
-    t.dropped_sensitive = (t.dropped_sensitive ?? 0) + cmd.dropped + errExcerpt.dropped;
+    const navigationPath = redactField(t.navigation_path_hint ?? '');
+    t.navigation_path_hint = capExcerpt(navigationPath.value, MAX_COMMAND_EXCERPT);
+    const navigationPattern = redactField(t.navigation_pattern_hint ?? '');
+    t.navigation_pattern_hint = capExcerpt(navigationPattern.value, MAX_COMMAND_EXCERPT);
+    t.dropped_sensitive =
+      (t.dropped_sensitive ?? 0) +
+      cmd.dropped +
+      errExcerpt.dropped +
+      navigationPath.dropped +
+      navigationPattern.dropped;
   }
   for (const f of facts.file_events) {
     const path = redactField(f.normalized_repo_path);

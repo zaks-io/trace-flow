@@ -4,8 +4,10 @@
 //! Every field carries a real value so a serde or TS rename drops a field and fails the test.
 
 use crate::enums::{
-    AgentCapabilityKind, AgentEventStatus, AgentFileOperation, AgentMessageRole, AgentSource,
-    CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence, TokenCoverage,
+    AgentCapabilityKind, AgentEventStatus, AgentFileOperation, AgentMessageRole,
+    AgentNavigationHintCoverage, AgentNavigationKind, AgentSource, AgentToolErrorCategory,
+    AgentToolErrorCoverage, CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence,
+    TokenCoverage,
 };
 use crate::envelope::{
     AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts, RawSessionBundle,
@@ -64,8 +66,15 @@ pub fn sample_envelope() -> AgentIngestEnvelope {
                 command_program: "git".to_string(),
                 command_subcommand: "push".to_string(),
                 status: AgentEventStatus::Success,
+                error_category: AgentToolErrorCategory::Unknown,
+                error_category_coverage: AgentToolErrorCoverage::NotApplicable,
                 exit_code: Some(0),
                 duration_ms: Some(842),
+                is_navigation: false,
+                navigation_kind: AgentNavigationKind::None,
+                navigation_hint_coverage: AgentNavigationHintCoverage::NotApplicable,
+                navigation_path_hint: "".to_string(),
+                navigation_pattern_hint: "".to_string(),
                 repo_relative_paths: vec!["src/main.rs".to_string(), "outside_repo".to_string()],
                 extracted_provider: "github".to_string(),
                 extracted_repo: "acme/trace-flow".to_string(),
