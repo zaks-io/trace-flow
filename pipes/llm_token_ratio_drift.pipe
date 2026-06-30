@@ -1,0 +1,168 @@
+DESCRIPTION >
+    Grouped request-level LLM token-ratio drift over llm_request_facts.
+    Compares the selected current window to a previous equal-length baseline by default.
+    The api_keys parameter is enforced via JWT fixed_params for API-key scope.
+
+NODE current_window
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        if(start_ns_raw = 0, end_ns - toInt64({{ Int32(retention_days, 7) }}) * 86400 * 1000000000, start_ns_raw) AS start_ns
+    SELECT
+        ApiKey,
+        Provider,
+        Model,
+        OperationName,
+        BaggageOperation,
+        BaggageUserId,
+        count() AS request_count,
+        sum(InputTokens) AS input_tokens,
+        sum(OutputTokens) AS output_tokens
+    FROM llm_request_facts
+    WHERE ReceivedAt >= start_ns
+        AND ReceivedAt <= end_ns
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
+        {% if defined(provider) %}
+        AND Provider = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND Model = {{ String(model) }}
+        {% end %}
+        {% if defined(operation_name) %}
+        AND OperationName = {{ String(operation_name) }}
+        {% end %}
+        {% if defined(baggage_operation) %}
+        AND BaggageOperation = {{ String(baggage_operation) }}
+        {% end %}
+        {% if defined(baggage_user_id) %}
+        AND BaggageUserId = {{ String(baggage_user_id) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+    GROUP BY ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
+
+NODE baseline_window
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        if(start_ns_raw = 0, end_ns - toInt64({{ Int32(retention_days, 7) }}) * 86400 * 1000000000, start_ns_raw) AS start_ns,
+        greatest(end_ns - start_ns + 1, 1) AS window_ns,
+        {{ Int64(baseline_start_time_ns, 0) }} AS baseline_start_ns_raw,
+        {{ Int64(baseline_end_time_ns, 0) }} AS baseline_end_ns_raw,
+        if(baseline_end_ns_raw = 0, start_ns - 1, baseline_end_ns_raw) AS baseline_end_ns,
+        if(baseline_start_ns_raw = 0, baseline_end_ns - window_ns + 1, baseline_start_ns_raw) AS baseline_start_ns
+    SELECT
+        ApiKey,
+        Provider,
+        Model,
+        OperationName,
+        BaggageOperation,
+        BaggageUserId,
+        count() AS baseline_request_count,
+        sum(InputTokens) AS baseline_input_tokens,
+        sum(OutputTokens) AS baseline_output_tokens
+    FROM llm_request_facts
+    WHERE ReceivedAt >= baseline_start_ns
+        AND ReceivedAt <= baseline_end_ns
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
+        {% if defined(provider) %}
+        AND Provider = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND Model = {{ String(model) }}
+        {% end %}
+        {% if defined(operation_name) %}
+        AND OperationName = {{ String(operation_name) }}
+        {% end %}
+        {% if defined(baggage_operation) %}
+        AND BaggageOperation = {{ String(baggage_operation) }}
+        {% end %}
+        {% if defined(baggage_user_id) %}
+        AND BaggageUserId = {{ String(baggage_user_id) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+    GROUP BY ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
+
+NODE joined
+SQL >
+    SELECT
+        c.ApiKey AS api_key,
+        c.Provider AS provider,
+        c.Model AS model,
+        c.OperationName AS operation_name,
+        c.BaggageOperation AS baggage_operation,
+        c.BaggageUserId AS baggage_user_id,
+        c.request_count AS request_count,
+        c.input_tokens AS input_tokens,
+        c.output_tokens AS output_tokens,
+        coalesce(b.baseline_request_count, 0) AS baseline_request_count,
+        coalesce(b.baseline_input_tokens, 0) AS baseline_input_tokens,
+        coalesce(b.baseline_output_tokens, 0) AS baseline_output_tokens
+    FROM current_window AS c
+    LEFT JOIN baseline_window AS b
+        ON c.ApiKey = b.ApiKey
+        AND c.Provider = b.Provider
+        AND c.Model = b.Model
+        AND c.OperationName = b.OperationName
+        AND c.BaggageOperation = b.BaggageOperation
+        AND c.BaggageUserId = b.BaggageUserId
+
+NODE endpoint
+SQL >
+    %
+    WITH
+        if(input_tokens = 0, CAST(NULL, 'Nullable(Float64)'), round(output_tokens / input_tokens, 6)) AS current_output_input_ratio,
+        if(baseline_input_tokens = 0, CAST(NULL, 'Nullable(Float64)'), round(baseline_output_tokens / baseline_input_tokens, 6)) AS baseline_output_input_ratio,
+        if(request_count = 0, CAST(NULL, 'Nullable(Float64)'), round(input_tokens / request_count, 6)) AS current_input_tokens_per_request,
+        if(baseline_request_count = 0, CAST(NULL, 'Nullable(Float64)'), round(baseline_input_tokens / baseline_request_count, 6)) AS baseline_input_tokens_per_request
+    SELECT
+        api_key,
+        provider,
+        model,
+        operation_name,
+        baggage_operation,
+        baggage_user_id,
+        request_count,
+        input_tokens,
+        output_tokens,
+        baseline_request_count,
+        baseline_input_tokens,
+        baseline_output_tokens,
+        current_output_input_ratio,
+        baseline_output_input_ratio,
+        if(baseline_output_input_ratio IS NULL, CAST(NULL, 'Nullable(Float64)'), round(current_output_input_ratio - baseline_output_input_ratio, 6)) AS output_input_ratio_delta,
+        if(baseline_output_input_ratio IS NULL OR baseline_output_input_ratio = 0, CAST(NULL, 'Nullable(Float64)'), round((current_output_input_ratio - baseline_output_input_ratio) / baseline_output_input_ratio * 100, 4)) AS output_input_ratio_percent_delta,
+        current_input_tokens_per_request,
+        baseline_input_tokens_per_request,
+        if(baseline_input_tokens_per_request IS NULL, CAST(NULL, 'Nullable(Float64)'), round(current_input_tokens_per_request - baseline_input_tokens_per_request, 6)) AS input_tokens_per_request_delta,
+        if(baseline_input_tokens_per_request IS NULL OR baseline_input_tokens_per_request = 0, CAST(NULL, 'Nullable(Float64)'), round((current_input_tokens_per_request - baseline_input_tokens_per_request) / baseline_input_tokens_per_request * 100, 4)) AS input_tokens_per_request_percent_delta,
+        if(
+            baseline_request_count < {{ Int32(baseline_min_requests, 3) }}
+                OR baseline_input_tokens = 0
+                OR request_count = 0
+                OR input_tokens = 0,
+            'insufficient_data',
+            'ok'
+        ) AS state
+    FROM joined
+    ORDER BY state DESC, abs(coalesce(output_input_ratio_percent_delta, 0)) DESC, request_count DESC
+    LIMIT {{ Int32(limit, 100) }}
+
+TYPE ENDPOINT

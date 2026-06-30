@@ -1,0 +1,107 @@
+DESCRIPTION >
+    Grouped request-level LLM cost tail-risk over llm_request_facts.
+    The api_keys parameter is enforced via JWT fixed_params for API-key scope.
+
+NODE requests
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        if(start_ns_raw = 0, end_ns - toInt64({{ Int32(retention_days, 7) }}) * 86400 * 1000000000, start_ns_raw) AS start_ns
+    SELECT
+        ApiKey,
+        Provider,
+        Model,
+        OperationName,
+        BaggageOperation,
+        BaggageUserId,
+        TotalCostMicrodollars / 1000000. AS cost_usd,
+        InputTokens,
+        OutputTokens,
+        CacheReadInputTokens,
+        CacheCreationInputTokens,
+        ReasoningTokens,
+        UncachedInputTokens
+    FROM llm_request_facts
+    WHERE ReceivedAt >= start_ns
+        AND ReceivedAt <= end_ns
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
+        {% if defined(provider) %}
+        AND Provider = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND Model = {{ String(model) }}
+        {% end %}
+        {% if defined(operation_name) %}
+        AND OperationName = {{ String(operation_name) }}
+        {% end %}
+        {% if defined(baggage_operation) %}
+        AND BaggageOperation = {{ String(baggage_operation) }}
+        {% end %}
+        {% if defined(baggage_user_id) %}
+        AND BaggageUserId = {{ String(baggage_user_id) }}
+        {% end %}
+        {% if defined(status) %}
+        AND StatusCode = {{ String(status) }}
+        {% end %}
+
+NODE grouped
+SQL >
+    SELECT
+        ApiKey AS api_key,
+        Provider AS provider,
+        Model AS model,
+        OperationName AS operation_name,
+        BaggageOperation AS baggage_operation,
+        BaggageUserId AS baggage_user_id,
+        count() AS request_count,
+        sum(InputTokens) AS input_tokens,
+        sum(OutputTokens) AS output_tokens,
+        sum(CacheReadInputTokens) AS cache_read_input_tokens,
+        sum(CacheCreationInputTokens) AS cache_creation_input_tokens,
+        sum(ReasoningTokens) AS reasoning_tokens,
+        sum(UncachedInputTokens) AS uncached_input_tokens,
+        round(sum(cost_usd), 6) AS total_cost_usd,
+        round(avg(cost_usd), 6) AS avg_cost_usd,
+        round(quantileExact(0.5)(cost_usd), 6) AS cost_p50_usd,
+        round(quantileExact(0.95)(cost_usd), 6) AS cost_p95_usd,
+        round(quantileExact(0.99)(cost_usd), 6) AS cost_p99_usd,
+        round(max(cost_usd), 6) AS cost_max_usd
+    FROM requests
+    GROUP BY ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        api_key,
+        provider,
+        model,
+        operation_name,
+        baggage_operation,
+        baggage_user_id,
+        request_count,
+        input_tokens,
+        output_tokens,
+        cache_read_input_tokens,
+        cache_creation_input_tokens,
+        reasoning_tokens,
+        uncached_input_tokens,
+        total_cost_usd,
+        avg_cost_usd,
+        cost_p50_usd,
+        cost_p95_usd,
+        cost_p99_usd,
+        cost_max_usd,
+        if(cost_p50_usd = 0, CAST(NULL, 'Nullable(Float64)'), round(cost_p99_usd / cost_p50_usd, 4)) AS p99_p50_ratio
+    FROM grouped
+    ORDER BY cost_p99_usd DESC, total_cost_usd DESC, request_count DESC
+    LIMIT {{ Int32(limit, 100) }}
+
+TYPE ENDPOINT

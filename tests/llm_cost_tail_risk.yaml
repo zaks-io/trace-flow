@@ -1,0 +1,17 @@
+# Fixtures: fixtures/otel_trace_spans.ndjson, materialized into llm_request_facts.
+# key_proj/u1 has four request-level costs in the current window: {0.01, 0.01, 0.02, 0.05}.
+# The test fixes the user filter so the grouped endpoint returns one deterministic row and proves
+# tenant/API-key bounds through api_keys + api_key_filter.
+
+- name: cost_tail_risk_grouped_user_slice
+  description: grouped request-level cost tail risk for one API-key/provider/model/operation/user slice
+  expected_http_status: 200
+  parameters: api_keys=key_proj&api_key_filter=key_proj&provider=anthropic&model=claude-opus-4-8&operation_name=chat&baggage_operation=chat&baggage_user_id=u1&start_time_ns=1779840000000000000&end_time_ns=1779840110000000000&retention_days=3650
+  expected_result: |
+    {"api_key":"key_proj","provider":"anthropic","model":"claude-opus-4-8","operation_name":"chat","baggage_operation":"chat","baggage_user_id":"u1","request_count":4,"input_tokens":900,"output_tokens":450,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"uncached_input_tokens":900,"total_cost_usd":0.09,"avg_cost_usd":0.0225,"cost_p50_usd":0.02,"cost_p95_usd":0.05,"cost_p99_usd":0.05,"cost_max_usd":0.05,"p99_p50_ratio":2.5}
+
+- name: cost_tail_risk_api_key_scope_isolates
+  description: api_keys fixed-param scope prevents a different api_key_filter from returning rows
+  expected_http_status: 200
+  parameters: api_keys=key_proj&api_key_filter=key_other&start_time_ns=1779840000000000000&end_time_ns=1779840110000000000&retention_days=3650
+  expected_result: ''

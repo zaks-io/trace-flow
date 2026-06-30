@@ -1,0 +1,19 @@
+# Fixtures: fixtures/otel_trace_spans.ndjson, materialized into llm_request_facts.
+# key_drift has 3 baseline requests on 2026-05-26 with output/input=0.5 and
+# input/request=100, then 3 current requests on 2026-05-27 with output/input=1.0 and
+# input/request=200. key_sparse has only 1 baseline request so it must surface
+# state=insufficient_data while still returning bounded current/baseline values.
+
+- name: token_ratio_drift_previous_window
+  description: compares current output/input and input/request ratios to the previous equal window
+  expected_http_status: 200
+  parameters: api_keys=key_drift&api_key_filter=key_drift&provider=openai&model=gpt-4.1&operation_name=chat&baggage_operation=summarize&baggage_user_id=drift-user&start_time_ns=1779840000000000000&end_time_ns=1779926399999999999&retention_days=3650
+  expected_result: |
+    {"api_key":"key_drift","provider":"openai","model":"gpt-4.1","operation_name":"chat","baggage_operation":"summarize","baggage_user_id":"drift-user","request_count":3,"input_tokens":600,"output_tokens":600,"baseline_request_count":3,"baseline_input_tokens":300,"baseline_output_tokens":150,"current_output_input_ratio":1,"baseline_output_input_ratio":0.5,"output_input_ratio_delta":0.5,"output_input_ratio_percent_delta":100,"current_input_tokens_per_request":200,"baseline_input_tokens_per_request":100,"input_tokens_per_request_delta":100,"input_tokens_per_request_percent_delta":100,"state":"ok"}
+
+- name: token_ratio_drift_sparse_baseline
+  description: returns an explicit insufficient_data state when the matching baseline has too few requests
+  expected_http_status: 200
+  parameters: api_keys=key_sparse&api_key_filter=key_sparse&provider=anthropic&model=claude-3-5-haiku&operation_name=chat&baggage_operation=classify&baggage_user_id=sparse-user&start_time_ns=1779840000000000000&end_time_ns=1779926399999999999&retention_days=3650
+  expected_result: |
+    {"api_key":"key_sparse","provider":"anthropic","model":"claude-3-5-haiku","operation_name":"chat","baggage_operation":"classify","baggage_user_id":"sparse-user","request_count":1,"input_tokens":120,"output_tokens":60,"baseline_request_count":1,"baseline_input_tokens":100,"baseline_output_tokens":25,"current_output_input_ratio":0.5,"baseline_output_input_ratio":0.25,"output_input_ratio_delta":0.25,"output_input_ratio_percent_delta":100,"current_input_tokens_per_request":120,"baseline_input_tokens_per_request":100,"input_tokens_per_request_delta":20,"input_tokens_per_request_percent_delta":20,"state":"insufficient_data"}
