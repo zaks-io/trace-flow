@@ -284,7 +284,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       return;
     }
 
-    const facts = rows.map((row) => JSON.parse(row.data) as unknown);
+    const facts = rows.map((row) => normalizePendingFact(category, JSON.parse(row.data)));
     await insertRows(facts, this.env.TINYBIRD_TOKEN, datasource, this.env.TINYBIRD_HOST);
 
     const ids = rows.map((row) => row.id);
@@ -317,6 +317,28 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
       category,
     );
   }
+}
+
+function normalizePendingFact(category: Category, row: unknown): unknown {
+  if (category !== 'tool_events' || !isRecord(row)) {
+    return row;
+  }
+
+  return {
+    ...row,
+    error_category: row.error_category ?? 'unknown',
+    error_category_coverage:
+      row.error_category_coverage ?? (row.status === 'failure' ? 'unknown' : 'not_applicable'),
+    is_navigation: row.is_navigation ?? 0,
+    navigation_kind: row.navigation_kind ?? 'none',
+    navigation_hint_coverage: row.navigation_hint_coverage ?? 'unknown',
+    navigation_path_hint: row.navigation_path_hint ?? '',
+    navigation_pattern_hint: row.navigation_pattern_hint ?? '',
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 export const AgentFactBatcher = Sentry.instrumentDurableObjectWithSentry(
