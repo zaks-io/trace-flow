@@ -42,7 +42,7 @@ export function messageFact(over: Partial<AgentMessageFact> = {}): AgentMessageF
 }
 
 export function toolEventFact(over: Partial<AgentToolEventFact> = {}): AgentToolEventFact {
-  return {
+  const fact: AgentToolEventFact = {
     vendor_session_id: 'vsid-1',
     vendor_message_id: 'msg-1',
     tool_use_id: 'tool-1',
@@ -77,6 +77,17 @@ export function toolEventFact(over: Partial<AgentToolEventFact> = {}): AgentTool
     dropped_sensitive: 0,
     ...over,
   };
+
+  if (fact.status === 'failure') {
+    if (over.error_category_coverage === undefined) fact.error_category_coverage = 'unknown';
+    if (over.exit_code === undefined) fact.exit_code = 1;
+  }
+  if (fact.is_navigation) {
+    if (over.navigation_kind === undefined) fact.navigation_kind = 'search';
+    if (over.navigation_hint_coverage === undefined) fact.navigation_hint_coverage = 'unknown';
+  }
+
+  return fact;
 }
 
 function fileEventFact(over: Partial<AgentFileEventFact> = {}): AgentFileEventFact {

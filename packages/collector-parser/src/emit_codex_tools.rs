@@ -31,11 +31,12 @@ use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
 use crate::tool_signals::{classify_navigation, classify_tool_error};
 
-/// ADR caps: `command_excerpt` <= 1 KB, `error_excerpt` <= 4 KB, so total excerpt text per tool event
-/// stays <= the 5 KB ceiling without a separate combined check.
+/// ADR caps: command <= 1 KB, error <= 4 KB, and navigation hints consume only the remaining 5 KB
+/// budget.
 const COMMAND_EXCERPT_CAP_BYTES: usize = 1024;
 const ERROR_EXCERPT_CAP_BYTES: usize = 4096;
 const NAVIGATION_HINT_CAP_BYTES: usize = 256;
+const TOOL_EXCERPT_TOTAL_CAP_BYTES: usize = 5 * 1024;
 
 /// Clock-skew guard: a call→output gap outside `0..=30 days` is treated as unknown duration, never
 /// stored. Mirrors otto's `MAX_TOOL_DURATION_MS` bound.
@@ -203,13 +204,16 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
         let error_classification = classify_tool_error(status, error_source);
         let (error_excerpt, error_dropped) = excerpt(error_source, ERROR_EXCERPT_CAP_BYTES);
         let navigation = classify_navigation(command);
+        let mut remaining_hint_budget = TOOL_EXCERPT_TOTAL_CAP_BYTES
+            .saturating_sub(command_excerpt.len() + error_excerpt.len());
         let (navigation_path_hint, navigation_path_dropped) = excerpt(
             (!navigation.path_hint.is_empty()).then_some(navigation.path_hint.as_str()),
-            NAVIGATION_HINT_CAP_BYTES,
+            remaining_hint_budget.min(NAVIGATION_HINT_CAP_BYTES),
         );
+        remaining_hint_budget = remaining_hint_budget.saturating_sub(navigation_path_hint.len());
         let (navigation_pattern_hint, navigation_pattern_dropped) = excerpt(
             (!navigation.pattern_hint.is_empty()).then_some(navigation.pattern_hint.as_str()),
-            NAVIGATION_HINT_CAP_BYTES,
+            remaining_hint_budget.min(NAVIGATION_HINT_CAP_BYTES),
         );
 
         let event_at = record_event_at(record, ctx);
@@ -351,7 +355,7 @@ mod tests {
         assert_eq!(f.navigation_kind, AgentNavigationKind::None);
         assert_eq!(
             f.navigation_hint_coverage,
-            AgentNavigationHintCoverage::NotApplicable
+            AgentNavigationHintCoverage::Unknown
         );
         assert_eq!(f.command_excerpt, "git push origin HEAD");
         assert_eq!(f.error_excerpt, "");

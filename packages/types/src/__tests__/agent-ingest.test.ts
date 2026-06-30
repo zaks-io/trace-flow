@@ -250,6 +250,20 @@ describe('AgentIngestEnvelope contract fixture', () => {
     facts.pull_request_links.forEach(assertPrLink);
   });
 
+  it('keeps new tool classifications optional for legacy collectors', () => {
+    const legacyTool: AgentToolEventFact = { ...envelope.facts.tool_events[0]! };
+    delete legacyTool.error_category;
+    delete legacyTool.error_category_coverage;
+    delete legacyTool.is_navigation;
+    delete legacyTool.navigation_kind;
+    delete legacyTool.navigation_hint_coverage;
+    delete legacyTool.navigation_path_hint;
+    delete legacyTool.navigation_pattern_hint;
+
+    expect(legacyTool.error_category).toBeUndefined();
+    expect(legacyTool.navigation_kind).toBeUndefined();
+  });
+
   it('plumbs the deferred raw_session_bundles slot', () => {
     expect(envelope.raw_session_bundles).toBeDefined();
     const bundle = envelope.raw_session_bundles?.[0];

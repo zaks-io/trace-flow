@@ -50,7 +50,7 @@ export function messageFact(over: Partial<AgentMessageQueueFact> = {}): AgentMes
 export function toolEventFact(
   over: Partial<AgentToolEventQueueFact> = {},
 ): AgentToolEventQueueFact {
-  return {
+  const fact: AgentToolEventQueueFact = {
     session_pk: 's1',
     tool_use_pk: 'tu_1',
     repo_fingerprint: 'repo_abc',
@@ -89,6 +89,17 @@ export function toolEventFact(
     dropped_sensitive: 0,
     ...over,
   };
+
+  if (fact.status === 'failure') {
+    if (over.error_category_coverage === undefined) fact.error_category_coverage = 'unknown';
+    if (over.exit_code === undefined) fact.exit_code = 1;
+  }
+  if (fact.is_navigation) {
+    if (over.navigation_kind === undefined) fact.navigation_kind = 'search';
+    if (over.navigation_hint_coverage === undefined) fact.navigation_hint_coverage = 'unknown';
+  }
+
+  return fact;
 }
 
 export function fileEventFact(

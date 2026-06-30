@@ -174,7 +174,14 @@ pub fn classify_navigation(command: Option<&str>) -> ToolNavigationClassificatio
         "nl" | "cat" => path_command(&tokens, AgentNavigationKind::FileRead),
         "ls" => path_command(&tokens, AgentNavigationKind::DirectoryList),
         "cd" => path_command(&tokens, AgentNavigationKind::DirectoryChange),
-        _ => ToolNavigationClassification::default(),
+        _ => unknown_navigation(),
+    }
+}
+
+fn unknown_navigation() -> ToolNavigationClassification {
+    ToolNavigationClassification {
+        hint_coverage: AgentNavigationHintCoverage::Unknown,
+        ..ToolNavigationClassification::default()
     }
 }
 
@@ -198,19 +205,33 @@ fn search_command(
 }
 
 fn find_command(tokens: &[String]) -> ToolNavigationClassification {
-    let positionals = positionals(tokens, &["-name", "-iname", "-path", "-regex", "-type"]);
+    let path_hint = find_root(tokens).unwrap_or_else(|| ".".to_string());
     ToolNavigationClassification {
         is_navigation: true,
         kind: AgentNavigationKind::Search,
         hint_coverage: AgentNavigationHintCoverage::Structured,
-        path_hint: positionals
-            .first()
-            .filter(|path| !path.starts_with('-'))
-            .cloned()
-            .unwrap_or_default(),
+        path_hint,
         pattern_hint: option_value(tokens, &["-name", "-iname", "-path", "-regex"])
             .unwrap_or_default(),
     }
+}
+
+fn find_root(tokens: &[String]) -> Option<String> {
+    let mut after_separator = false;
+    for token in tokens.iter().skip(1) {
+        if token == "--" {
+            after_separator = true;
+            continue;
+        }
+        if !after_separator && matches!(token.as_str(), "-H" | "-L" | "-P") {
+            continue;
+        }
+        if !after_separator && (token.starts_with('-') || matches!(token.as_str(), "(" | "!")) {
+            break;
+        }
+        return Some(token.clone());
+    }
+    None
 }
 
 fn sed_command(tokens: &[String]) -> ToolNavigationClassification {
@@ -459,5 +480,31 @@ mod tests {
         assert!(c.is_navigation);
         assert_eq!(c.path_hint, "src");
         assert_eq!(c.pattern_hint, "foo");
+    }
+
+    #[test]
+    fn find_preserves_default_root_and_skips_predicate_values() {
+        let default_root = classify_navigation(Some("find -name '*.rs'"));
+        assert!(default_root.is_navigation);
+        assert_eq!(default_root.path_hint, ".");
+        assert_eq!(default_root.pattern_hint, "*.rs");
+
+        let maxdepth = classify_navigation(Some("find -maxdepth 2 -name '*.rs'"));
+        assert!(maxdepth.is_navigation);
+        assert_eq!(maxdepth.path_hint, ".");
+        assert_eq!(maxdepth.pattern_hint, "*.rs");
+
+        let explicit_root = classify_navigation(Some("find -L packages -maxdepth 2 -name '*.rs'"));
+        assert!(explicit_root.is_navigation);
+        assert_eq!(explicit_root.path_hint, "packages");
+        assert_eq!(explicit_root.pattern_hint, "*.rs");
+    }
+
+    #[test]
+    fn unsupported_commands_keep_unknown_navigation_coverage() {
+        let c = classify_navigation(Some("python scripts/sync.py"));
+        assert!(!c.is_navigation);
+        assert_eq!(c.kind, AgentNavigationKind::None);
+        assert_eq!(c.hint_coverage, AgentNavigationHintCoverage::Unknown);
     }
 }

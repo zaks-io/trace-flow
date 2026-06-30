@@ -158,17 +158,17 @@ export interface AgentToolEventFact {
   command_program: string;
   command_subcommand: string;
   status: AgentEventStatus;
-  error_category: AgentToolErrorCategory;
-  error_category_coverage: AgentToolErrorCoverage;
+  error_category?: AgentToolErrorCategory;
+  error_category_coverage?: AgentToolErrorCoverage;
   exit_code: number | null;
   duration_ms: number | null;
-  is_navigation: boolean;
-  navigation_kind: AgentNavigationKind;
-  navigation_hint_coverage: AgentNavigationHintCoverage;
+  is_navigation?: boolean;
+  navigation_kind?: AgentNavigationKind;
+  navigation_hint_coverage?: AgentNavigationHintCoverage;
   /** Redacted bounded path/directory/glob hint when the command structure is understood. */
-  navigation_path_hint: string;
+  navigation_path_hint?: string;
   /** Redacted bounded search pattern/range hint when the command structure is understood. */
-  navigation_pattern_hint: string;
+  navigation_pattern_hint?: string;
   /** Target files, repo-relative; `outside_repo` for files outside the primary Repo. */
   repo_relative_paths: string[];
   extracted_provider: string;
