@@ -2,6 +2,13 @@ export type CostAlertSeverity = 'info' | 'warning' | 'error';
 
 export type CostAlertWindow = 'last_hour' | 'last_24_hours' | 'month_to_date';
 
+export interface CostAlertScope {
+  provider?: string;
+  model?: string;
+  baggageOperation?: string;
+  baggageUserId?: string;
+}
+
 export type CostAlertConditionType =
   | 'absolute_spend_threshold'
   | 'projected_monthly_over'

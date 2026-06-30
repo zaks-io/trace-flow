@@ -116,6 +116,13 @@ export const costAlertChannelValidator = v.object({
   updatedAt: v.number(),
 });
 
+export const costAlertScopeValidator = v.object({
+  provider: v.optional(v.string()),
+  model: v.optional(v.string()),
+  baggageOperation: v.optional(v.string()),
+  baggageUserId: v.optional(v.string()),
+});
+
 export const costAlertConditionValidator = v.union(
   v.object({
     type: v.literal('absolute_spend_threshold'),
@@ -149,6 +156,7 @@ export const costAlertValidator = v.object({
   enabled: v.boolean(),
   severity: costAlertSeverityValidator,
   apiKeyIds: v.optional(v.array(v.id('apiKeys'))),
+  scope: v.optional(costAlertScopeValidator),
   channelIds: v.array(v.id('costAlertChannels')),
   cooldownMinutes: v.number(),
   notifyOnRecovery: v.boolean(),

@@ -925,6 +925,54 @@ export default function CostAlerts({
             </div>
 
             <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-foreground">Dimension Scope</label>
+              <div className="grid gap-3 rounded-lg border border-border p-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Provider</label>
+                  <Input
+                    value={alertForm.provider}
+                    onChange={(event) =>
+                      setAlertForm({ ...alertForm, provider: event.target.value })
+                    }
+                    maxLength={200}
+                    placeholder="openai"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Model</label>
+                  <Input
+                    value={alertForm.model}
+                    onChange={(event) => setAlertForm({ ...alertForm, model: event.target.value })}
+                    maxLength={200}
+                    placeholder="gpt-4o"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Operation</label>
+                  <Input
+                    value={alertForm.baggageOperation}
+                    onChange={(event) =>
+                      setAlertForm({ ...alertForm, baggageOperation: event.target.value })
+                    }
+                    maxLength={200}
+                    placeholder="checkout"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">User ID</label>
+                  <Input
+                    value={alertForm.baggageUserId}
+                    onChange={(event) =>
+                      setAlertForm({ ...alertForm, baggageUserId: event.target.value })
+                    }
+                    maxLength={200}
+                    placeholder="user_123"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium text-foreground">API Key Scope</label>
               <div className="rounded-lg border border-border p-3">
                 {settings.apiKeys.length === 0 ? (

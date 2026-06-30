@@ -1,6 +1,7 @@
 import type { Id } from '@convex/_generated/dataModel';
 import type {
   CostAlertConditionType,
+  CostAlertScope,
   CostAlertSeverity,
   CostAlertWindow,
 } from '../types/cost-alerts';
@@ -33,6 +34,10 @@ export interface AlertFormData {
   cooldownMinutes: string;
   notifyOnRecovery: boolean;
   apiKeyIds: string[];
+  provider: string;
+  model: string;
+  baggageOperation: string;
+  baggageUserId: string;
   channelIds: string[];
 }
 
@@ -55,6 +60,7 @@ interface CostAlertRuleLike {
   name: string;
   severity: CostAlertSeverity;
   apiKeyIds?: Id<'apiKeys'>[];
+  scope?: CostAlertScope;
   channelIds: Id<'costAlertChannels'>[];
   cooldownMinutes: number;
   notifyOnRecovery: boolean;
@@ -92,6 +98,10 @@ export const DEFAULT_ALERT_FORM_DATA: AlertFormData = {
   cooldownMinutes: '60',
   notifyOnRecovery: true,
   apiKeyIds: [],
+  provider: '',
+  model: '',
+  baggageOperation: '',
+  baggageUserId: '',
   channelIds: [],
 };
 
@@ -128,6 +138,15 @@ export function buildChannelConfigInput(form: ChannelFormData) {
   };
 }
 
+export function buildAlertScopeInput(form: AlertFormData): CostAlertScope {
+  const scope: CostAlertScope = {};
+  if (form.provider.trim()) scope.provider = form.provider.trim();
+  if (form.model.trim()) scope.model = form.model.trim();
+  if (form.baggageOperation.trim()) scope.baggageOperation = form.baggageOperation.trim();
+  if (form.baggageUserId.trim()) scope.baggageUserId = form.baggageUserId.trim();
+  return scope;
+}
+
 export function buildAlertInput(form: AlertFormData) {
   const base = {
     name: form.name.trim(),
@@ -135,7 +154,8 @@ export function buildAlertInput(form: AlertFormData) {
     channelIds: form.channelIds as Id<'costAlertChannels'>[],
     cooldownMinutes: Number(form.cooldownMinutes || 0),
     notifyOnRecovery: form.notifyOnRecovery,
-    apiKeyIds: form.apiKeyIds.length > 0 ? (form.apiKeyIds as Id<'apiKeys'>[]) : undefined,
+    apiKeyIds: form.apiKeyIds as Id<'apiKeys'>[],
+    scope: buildAlertScopeInput(form),
   };
 
   if (form.conditionType === 'absolute_spend_threshold') {
@@ -194,10 +214,22 @@ export function channelFormFromChannel(channel: CostAlertChannelLike): ChannelFo
 }
 
 export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
+  const base = {
+    name: rule.name,
+    severity: rule.severity,
+    cooldownMinutes: String(rule.cooldownMinutes),
+    notifyOnRecovery: rule.notifyOnRecovery,
+    apiKeyIds: rule.apiKeyIds?.map((id) => String(id)) ?? [],
+    provider: rule.scope?.provider ?? '',
+    model: rule.scope?.model ?? '',
+    baggageOperation: rule.scope?.baggageOperation ?? '',
+    baggageUserId: rule.scope?.baggageUserId ?? '',
+    channelIds: rule.channelIds.map((id) => String(id)),
+  };
+
   if (rule.condition.type === 'absolute_spend_threshold') {
     return {
-      name: rule.name,
-      severity: rule.severity,
+      ...base,
       conditionType: rule.condition.type,
       window: rule.condition.window,
       thresholdUsd: String(rule.condition.thresholdUsd),
@@ -205,17 +237,12 @@ export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
       multiplier: '2',
       minCurrentHourUsd: '10',
       minIncreaseUsd: '5',
-      cooldownMinutes: String(rule.cooldownMinutes),
-      notifyOnRecovery: rule.notifyOnRecovery,
-      apiKeyIds: rule.apiKeyIds?.map((id) => String(id)) ?? [],
-      channelIds: rule.channelIds.map((id) => String(id)),
     };
   }
 
   if (rule.condition.type === 'projected_monthly_over') {
     return {
-      name: rule.name,
-      severity: rule.severity,
+      ...base,
       conditionType: rule.condition.type,
       window: 'last_24_hours',
       thresholdUsd: String(rule.condition.thresholdUsd),
@@ -223,16 +250,11 @@ export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
       multiplier: '2',
       minCurrentHourUsd: '10',
       minIncreaseUsd: '5',
-      cooldownMinutes: String(rule.cooldownMinutes),
-      notifyOnRecovery: rule.notifyOnRecovery,
-      apiKeyIds: rule.apiKeyIds?.map((id) => String(id)) ?? [],
-      channelIds: rule.channelIds.map((id) => String(id)),
     };
   }
 
   return {
-    name: rule.name,
-    severity: rule.severity,
+    ...base,
     conditionType: rule.condition.type,
     window: 'last_24_hours',
     thresholdUsd: '',
@@ -240,10 +262,6 @@ export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
     multiplier: String(rule.condition.multiplier),
     minCurrentHourUsd: String(rule.condition.minCurrentHourUsd),
     minIncreaseUsd: String(rule.condition.minIncreaseUsd),
-    cooldownMinutes: String(rule.cooldownMinutes),
-    notifyOnRecovery: rule.notifyOnRecovery,
-    apiKeyIds: rule.apiKeyIds?.map((id) => String(id)) ?? [],
-    channelIds: rule.channelIds.map((id) => String(id)),
   };
 }
 
@@ -267,16 +285,25 @@ export function formatChannelDestination(channel: CostAlertChannelLike): string 
 }
 
 export function formatScope(rule: CostAlertRuleLike, apiKeys: ApiKeyOption[]): string {
-  if (!rule.apiKeyIds || rule.apiKeyIds.length === 0) {
-    return 'All API keys';
+  const parts: string[] = [];
+
+  if (rule.apiKeyIds && rule.apiKeyIds.length > 0) {
+    const labels = rule.apiKeyIds
+      .map((id) => apiKeys.find((apiKey) => apiKey._id === id))
+      .filter((apiKey): apiKey is ApiKeyOption => Boolean(apiKey))
+      .map((apiKey) => apiKey.name ?? apiKey.key);
+
+    parts.push(labels.length > 0 ? labels.join(', ') : 'Selected API keys');
+  } else {
+    parts.push('All API keys');
   }
 
-  const labels = rule.apiKeyIds
-    .map((id) => apiKeys.find((apiKey) => apiKey._id === id))
-    .filter((apiKey): apiKey is ApiKeyOption => Boolean(apiKey))
-    .map((apiKey) => apiKey.name ?? apiKey.key);
+  if (rule.scope?.provider) parts.push(`Provider: ${rule.scope.provider}`);
+  if (rule.scope?.model) parts.push(`Model: ${rule.scope.model}`);
+  if (rule.scope?.baggageOperation) parts.push(`Operation: ${rule.scope.baggageOperation}`);
+  if (rule.scope?.baggageUserId) parts.push(`User: ${rule.scope.baggageUserId}`);
 
-  return labels.length > 0 ? labels.join(', ') : 'Selected API keys';
+  return parts.join(' · ');
 }
 
 function formatCurrency(value: number): string {

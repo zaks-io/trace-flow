@@ -1073,6 +1073,12 @@ export declare const api: {
         name: string;
         notifyOnRecovery: boolean;
         severity: "info" | "warning" | "error";
+        scope?: {
+          baggageOperation?: string;
+          baggageUserId?: string;
+          model?: string;
+          provider?: string;
+        };
       },
       Id<"costAlerts">
     >;
@@ -1167,6 +1173,12 @@ export declare const api: {
           notifyOnRecovery: boolean;
           orgId: Id<"organizations">;
           severity: "info" | "warning" | "error";
+          scope?: {
+            baggageOperation?: string;
+            baggageUserId?: string;
+            model?: string;
+            provider?: string;
+          };
           updatedAt: number;
           updatedByUserId: Id<"users">;
         }>;
@@ -1242,6 +1254,12 @@ export declare const api: {
         name?: string;
         notifyOnRecovery?: boolean;
         severity?: "info" | "warning" | "error";
+        scope?: {
+          baggageOperation?: string;
+          baggageUserId?: string;
+          model?: string;
+          provider?: string;
+        };
       },
       null
     >;
@@ -2342,6 +2360,12 @@ export declare const internal: {
           notifyOnRecovery: boolean;
           orgId: Id<"organizations">;
           severity: "info" | "warning" | "error";
+          scope?: {
+            baggageOperation?: string;
+            baggageUserId?: string;
+            model?: string;
+            provider?: string;
+          };
           updatedAt: number;
           updatedByUserId: Id<"users">;
         }>;
