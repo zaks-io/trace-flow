@@ -12,6 +12,10 @@ import type {
   TokenCoverage,
   CacheCoverage,
   AgentEventStatus,
+  AgentToolErrorCategory,
+  AgentToolErrorCoverage,
+  AgentNavigationKind,
+  AgentNavigationHintCoverage,
   AgentFileOperation,
   AgentCapabilityKind,
   PullRequestLinkConfidence,
@@ -61,6 +65,37 @@ const isStatus = oneOf([
   'failure',
   'unknown',
 ] as const satisfies readonly AgentEventStatus[]);
+const isToolErrorCategory = oneOf([
+  'unknown',
+  'missing_file',
+  'read_directory',
+  'edit_before_read',
+  'stale_file_before_edit',
+  'external_schema_validation',
+  'runtime_env_mismatch',
+  'tool_input_validation',
+  'human_or_policy_rejection',
+  'wrong_tool_name',
+  'oversized_read',
+  'other',
+] as const satisfies readonly AgentToolErrorCategory[]);
+const isToolErrorCoverage = oneOf([
+  'not_applicable',
+  'classified',
+  'unknown',
+] as const satisfies readonly AgentToolErrorCoverage[]);
+const isNavigationKind = oneOf([
+  'none',
+  'search',
+  'file_read',
+  'directory_list',
+  'directory_change',
+] as const satisfies readonly AgentNavigationKind[]);
+const isNavigationHintCoverage = oneOf([
+  'not_applicable',
+  'structured',
+  'unknown',
+] as const satisfies readonly AgentNavigationHintCoverage[]);
 const isOperation = oneOf([
   'read',
   'write',
@@ -126,8 +161,15 @@ function assertToolEvent(t: AgentToolEventFact): void {
   expect(isString(t.command_program)).toBe(true);
   expect(isString(t.command_subcommand)).toBe(true);
   expect(isStatus(t.status)).toBe(true);
+  expect(isToolErrorCategory(t.error_category)).toBe(true);
+  expect(isToolErrorCoverage(t.error_category_coverage)).toBe(true);
   expect(isNullableNumber(t.exit_code)).toBe(true);
   expect(isNullableNumber(t.duration_ms)).toBe(true);
+  expect(isBool(t.is_navigation)).toBe(true);
+  expect(isNavigationKind(t.navigation_kind)).toBe(true);
+  expect(isNavigationHintCoverage(t.navigation_hint_coverage)).toBe(true);
+  expect(isString(t.navigation_path_hint)).toBe(true);
+  expect(isString(t.navigation_pattern_hint)).toBe(true);
   expect(Array.isArray(t.repo_relative_paths) && t.repo_relative_paths.every(isString)).toBe(true);
   expect(isString(t.extracted_provider)).toBe(true);
   expect(isString(t.extracted_repo)).toBe(true);
@@ -206,6 +248,20 @@ describe('AgentIngestEnvelope contract fixture', () => {
     facts.file_events.forEach(assertFileEvent);
     facts.capability_snapshots.forEach(assertCapability);
     facts.pull_request_links.forEach(assertPrLink);
+  });
+
+  it('keeps new tool classifications optional for legacy collectors', () => {
+    const legacyTool: AgentToolEventFact = { ...envelope.facts.tool_events[0]! };
+    delete legacyTool.error_category;
+    delete legacyTool.error_category_coverage;
+    delete legacyTool.is_navigation;
+    delete legacyTool.navigation_kind;
+    delete legacyTool.navigation_hint_coverage;
+    delete legacyTool.navigation_path_hint;
+    delete legacyTool.navigation_pattern_hint;
+
+    expect(legacyTool.error_category).toBeUndefined();
+    expect(legacyTool.navigation_kind).toBeUndefined();
   });
 
   it('plumbs the deferred raw_session_bundles slot', () => {

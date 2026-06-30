@@ -29,11 +29,14 @@ use crate::command::classify_command;
 use crate::redaction::redact_field;
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
+use crate::tool_signals::{classify_navigation, classify_tool_error};
 
-/// ADR caps: `command_excerpt` <= 1 KB, `error_excerpt` <= 4 KB, so total excerpt text per tool event
-/// stays <= the 5 KB ceiling without a separate combined check.
+/// ADR caps: command <= 1 KB, error <= 4 KB, and navigation hints consume only the remaining 5 KB
+/// budget.
 const COMMAND_EXCERPT_CAP_BYTES: usize = 1024;
 const ERROR_EXCERPT_CAP_BYTES: usize = 4096;
+const NAVIGATION_HINT_CAP_BYTES: usize = 256;
+const TOOL_EXCERPT_TOTAL_CAP_BYTES: usize = 5 * 1024;
 
 /// Clock-skew guard: a call→output gap outside `0..=30 days` is treated as unknown duration, never
 /// stored. Mirrors otto's `MAX_TOOL_DURATION_MS` bound.
@@ -198,7 +201,20 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
         let error_source = (status == AgentEventStatus::Failure)
             .then_some(out_text.as_deref())
             .flatten();
+        let error_classification = classify_tool_error(status, error_source);
         let (error_excerpt, error_dropped) = excerpt(error_source, ERROR_EXCERPT_CAP_BYTES);
+        let navigation = classify_navigation(command);
+        let mut remaining_hint_budget = TOOL_EXCERPT_TOTAL_CAP_BYTES
+            .saturating_sub(command_excerpt.len() + error_excerpt.len());
+        let (navigation_path_hint, navigation_path_dropped) = excerpt(
+            (!navigation.path_hint.is_empty()).then_some(navigation.path_hint.as_str()),
+            remaining_hint_budget.min(NAVIGATION_HINT_CAP_BYTES),
+        );
+        remaining_hint_budget = remaining_hint_budget.saturating_sub(navigation_path_hint.len());
+        let (navigation_pattern_hint, navigation_pattern_dropped) = excerpt(
+            (!navigation.pattern_hint.is_empty()).then_some(navigation.pattern_hint.as_str()),
+            remaining_hint_budget.min(NAVIGATION_HINT_CAP_BYTES),
+        );
 
         let event_at = record_event_at(record, ctx);
 
@@ -214,8 +230,15 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
             command_program: classification.program,
             command_subcommand: classification.subcommand,
             status,
+            error_category: error_classification.category,
+            error_category_coverage: error_classification.coverage,
             exit_code,
             duration_ms: call_duration_ms(event_at, output_record, ctx),
+            is_navigation: navigation.is_navigation,
+            navigation_kind: navigation.kind,
+            navigation_hint_coverage: navigation.hint_coverage,
+            navigation_path_hint,
+            navigation_pattern_hint,
             // Codex function calls carry no structured file path; extracting touched files from
             // `apply_patch` shell text is the file emitter's job.
             repo_relative_paths: Vec::new(),
@@ -232,7 +255,10 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
             extracted_subagent_output_tokens: 0,
             extracted_subagent_cache_read_tokens: 0,
             extracted_subagent_cache_creation_tokens: 0,
-            dropped_sensitive: command_dropped + error_dropped,
+            dropped_sensitive: command_dropped
+                + error_dropped
+                + navigation_path_dropped
+                + navigation_pattern_dropped,
         });
         block_index += 1;
     }
@@ -242,6 +268,10 @@ pub fn codex_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentToo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use collector_contracts::enums::{
+        AgentNavigationHintCoverage, AgentNavigationKind, AgentToolErrorCategory,
+        AgentToolErrorCoverage,
+    };
     use serde_json::json;
 
     fn ctx() -> SessionContext {
@@ -315,7 +345,18 @@ mod tests {
         assert_eq!(f.command_family, "git");
         assert_eq!(f.command_subcommand, "push");
         assert_eq!(f.status, AgentEventStatus::Success);
+        assert_eq!(f.error_category, AgentToolErrorCategory::Unknown);
+        assert_eq!(
+            f.error_category_coverage,
+            AgentToolErrorCoverage::NotApplicable
+        );
         assert_eq!(f.exit_code, Some(0));
+        assert!(!f.is_navigation);
+        assert_eq!(f.navigation_kind, AgentNavigationKind::None);
+        assert_eq!(
+            f.navigation_hint_coverage,
+            AgentNavigationHintCoverage::Unknown
+        );
         assert_eq!(f.command_excerpt, "git push origin HEAD");
         assert_eq!(f.error_excerpt, "");
         assert!(f.repo_relative_paths.is_empty());
@@ -338,6 +379,43 @@ mod tests {
         assert_eq!(f.status, AgentEventStatus::Failure);
         assert_eq!(f.exit_code, Some(1));
         assert!(f.error_excerpt.contains("error[E0425]"));
+    }
+
+    #[test]
+    fn nonzero_exit_code_carries_bounded_error_category() {
+        let records = [
+            exec_call("c1", "cat missing.txt", "2026-05-16T20:53:00.000Z"),
+            output(
+                "c1",
+                &exec_output(1, "cat: missing.txt: No such file or directory"),
+                "2026-05-16T20:53:01.000Z",
+            ),
+        ];
+        let f = &codex_tool_facts(&records, &ctx())[0];
+        assert_eq!(f.status, AgentEventStatus::Failure);
+        assert_eq!(f.error_category, AgentToolErrorCategory::MissingFile);
+        assert_eq!(
+            f.error_category_coverage,
+            AgentToolErrorCoverage::Classified
+        );
+    }
+
+    #[test]
+    fn exec_search_command_carries_navigation_hints() {
+        let records = [exec_call(
+            "c1",
+            "sed -n '1,120p' packages/types/src/agent-ingest.ts",
+            "2026-05-16T20:53:00.000Z",
+        )];
+        let f = &codex_tool_facts(&records, &ctx())[0];
+        assert!(f.is_navigation);
+        assert_eq!(f.navigation_kind, AgentNavigationKind::FileRead);
+        assert_eq!(
+            f.navigation_hint_coverage,
+            AgentNavigationHintCoverage::Structured
+        );
+        assert_eq!(f.navigation_pattern_hint, "1,120p");
+        assert_eq!(f.navigation_path_hint, "packages/types/src/agent-ingest.ts");
     }
 
     #[test]

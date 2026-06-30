@@ -36,3 +36,4 @@ pub mod redaction;
 pub mod session_context;
 pub mod timestamp;
 pub mod tool_fold;
+pub mod tool_signals;

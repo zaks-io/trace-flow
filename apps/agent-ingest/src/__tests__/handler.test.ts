@@ -355,6 +355,32 @@ describe('POST /v1/ingest', () => {
     expect(queueSend).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts legacy tool events without ingest-time classification fields', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const legacyTool = toolEventFact({ status: 'failure' });
+    delete legacyTool.error_category;
+    delete legacyTool.error_category_coverage;
+    delete legacyTool.is_navigation;
+    delete legacyTool.navigation_kind;
+    delete legacyTool.navigation_hint_coverage;
+    delete legacyTool.navigation_path_hint;
+    delete legacyTool.navigation_pattern_hint;
+    const legacyEnvelope = envelope({
+      facts: facts({
+        tool_events: [legacyTool],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+
+    const res = await post(env, JSON.stringify(legacyEnvelope), authHeaders);
+    expect(res.status).toBe(202);
+    expect(queueSend).toHaveBeenCalledTimes(1);
+  });
+
   it('re-redacts free-text excerpts and increments dropped_sensitive before enqueue', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);
@@ -364,6 +390,8 @@ describe('POST /v1/ingest', () => {
         tool_events: [
           toolEventFact({
             command_excerpt: 'export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+            navigation_path_hint: '/Users/janedoe/secret-project',
+            navigation_pattern_hint: 'AKIAIOSFODNN7EXAMPLE',
             dropped_sensitive: 0,
           }),
         ],
@@ -380,6 +408,47 @@ describe('POST /v1/ingest', () => {
     const enqueued = sentGroup[0]!.body;
     const tool = enqueued.facts.tool_events[0]!;
     expect(tool.command_excerpt).toBe('');
+    expect(tool.navigation_path_hint).toBe('/Users/[REDACTED]/secret-project');
+    expect(tool.navigation_pattern_hint).toBe('');
     expect(tool.dropped_sensitive).toBeGreaterThanOrEqual(1);
+  });
+
+  it('caps navigation hints to their field cap and the remaining tool excerpt budget', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const bounded = envelope({
+      facts: facts({
+        tool_events: [
+          toolEventFact({
+            command_excerpt: '',
+            error_excerpt: '',
+            navigation_path_hint: 'p'.repeat(300),
+            navigation_pattern_hint: 'q'.repeat(300),
+          }),
+          toolEventFact({
+            tool_use_id: 'tool-2',
+            source_block_index: 1,
+            command_excerpt: 'c'.repeat(1024),
+            error_excerpt: 'e'.repeat(4096),
+            navigation_path_hint: 'p'.repeat(300),
+            navigation_pattern_hint: 'q'.repeat(300),
+          }),
+        ],
+        file_events: [],
+        capability_snapshots: [],
+        pull_request_links: [],
+      }),
+    });
+
+    const res = await post(env, JSON.stringify(bounded), authHeaders);
+    expect(res.status).toBe(202);
+
+    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
+    const [withRoom, noRoom] = sentGroup[0]!.body.facts.tool_events;
+    expect(withRoom!.navigation_path_hint).toHaveLength(256);
+    expect(withRoom!.navigation_pattern_hint).toHaveLength(256);
+    expect(noRoom!.navigation_path_hint).toBe('');
+    expect(noRoom!.navigation_pattern_hint).toBe('');
   });
 });

@@ -21,10 +21,14 @@ use crate::cursor_records::{bubble_id, composer_id, tool_block, ToolBlock};
 use crate::redaction::redact_field;
 use crate::session_context::SessionContext;
 use crate::timestamp::rfc3339_to_epoch_ms;
+use crate::tool_signals::{classify_navigation, classify_tool_error};
 
-/// ADR caps: `command_excerpt` <= 1 KB, `error_excerpt` <= 4 KB. Mirrors the JSONL tool emitters.
+/// ADR caps: command <= 1 KB, error <= 4 KB, and navigation hints consume only the remaining 5 KB
+/// budget. Mirrors the JSONL tool emitters.
 const COMMAND_EXCERPT_CAP_BYTES: usize = 1024;
 const ERROR_EXCERPT_CAP_BYTES: usize = 4096;
+const NAVIGATION_HINT_CAP_BYTES: usize = 256;
+const TOOL_EXCERPT_TOTAL_CAP_BYTES: usize = 5 * 1024;
 
 /// Truncates `text` to at most `max_bytes` bytes on a UTF-8 char boundary (never splits a code point).
 /// Duplicated from the Codex/Claude tool emitters deliberately — hoisting it would edit those committed
@@ -88,7 +92,20 @@ fn tool_fact(
     let error_source = (status == AgentEventStatus::Failure)
         .then_some(block.result)
         .flatten();
+    let error_classification = classify_tool_error(status, error_source);
     let (error_excerpt, error_dropped) = excerpt(error_source, ERROR_EXCERPT_CAP_BYTES);
+    let navigation = classify_navigation(command);
+    let mut remaining_hint_budget =
+        TOOL_EXCERPT_TOTAL_CAP_BYTES.saturating_sub(command_excerpt.len() + error_excerpt.len());
+    let (navigation_path_hint, navigation_path_dropped) = excerpt(
+        (!navigation.path_hint.is_empty()).then_some(navigation.path_hint.as_str()),
+        remaining_hint_budget.min(NAVIGATION_HINT_CAP_BYTES),
+    );
+    remaining_hint_budget = remaining_hint_budget.saturating_sub(navigation_path_hint.len());
+    let (navigation_pattern_hint, navigation_pattern_dropped) = excerpt(
+        (!navigation.pattern_hint.is_empty()).then_some(navigation.pattern_hint.as_str()),
+        remaining_hint_budget.min(NAVIGATION_HINT_CAP_BYTES),
+    );
 
     AgentToolEventFact {
         vendor_session_id: composer_id(record)
@@ -106,9 +123,16 @@ fn tool_fact(
         command_program: classification.program,
         command_subcommand: classification.subcommand,
         status,
+        error_category: error_classification.category,
+        error_category_coverage: error_classification.coverage,
         // Cursor records no process exit code or call duration.
         exit_code: None,
         duration_ms: None,
+        is_navigation: navigation.is_navigation,
+        navigation_kind: navigation.kind,
+        navigation_hint_coverage: navigation.hint_coverage,
+        navigation_path_hint,
+        navigation_pattern_hint,
         // File paths a tool touched are the file emitter's concern, not duplicated here.
         repo_relative_paths: Vec::new(),
         // Deferred enrichment: no parser algorithm in the ADR; PR links are a separate fact.
@@ -123,7 +147,10 @@ fn tool_fact(
         extracted_subagent_output_tokens: 0,
         extracted_subagent_cache_read_tokens: 0,
         extracted_subagent_cache_creation_tokens: 0,
-        dropped_sensitive: command_dropped + error_dropped,
+        dropped_sensitive: command_dropped
+            + error_dropped
+            + navigation_path_dropped
+            + navigation_pattern_dropped,
     }
 }
 

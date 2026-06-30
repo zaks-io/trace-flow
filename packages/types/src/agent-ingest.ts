@@ -33,6 +33,31 @@ export type CacheCoverage = 'full' | 'missing';
 /** Outcome of a Tool Event, mapped from `extracted_success` (None → `unknown`). */
 export type AgentEventStatus = 'success' | 'failure' | 'unknown';
 
+export type AgentToolErrorCategory =
+  | 'unknown'
+  | 'missing_file'
+  | 'read_directory'
+  | 'edit_before_read'
+  | 'stale_file_before_edit'
+  | 'external_schema_validation'
+  | 'runtime_env_mismatch'
+  | 'tool_input_validation'
+  | 'human_or_policy_rejection'
+  | 'wrong_tool_name'
+  | 'oversized_read'
+  | 'other';
+
+export type AgentToolErrorCoverage = 'not_applicable' | 'classified' | 'unknown';
+
+export type AgentNavigationKind =
+  | 'none'
+  | 'search'
+  | 'file_read'
+  | 'directory_list'
+  | 'directory_change';
+
+export type AgentNavigationHintCoverage = 'not_applicable' | 'structured' | 'unknown';
+
 /** How a fact's `repo_fingerprint` was resolved (remote-backed vs path-fallback Provisional Repo). */
 export type RepoSource = 'remote' | 'path';
 
@@ -133,8 +158,17 @@ export interface AgentToolEventFact {
   command_program: string;
   command_subcommand: string;
   status: AgentEventStatus;
+  error_category?: AgentToolErrorCategory;
+  error_category_coverage?: AgentToolErrorCoverage;
   exit_code: number | null;
   duration_ms: number | null;
+  is_navigation?: boolean;
+  navigation_kind?: AgentNavigationKind;
+  navigation_hint_coverage?: AgentNavigationHintCoverage;
+  /** Redacted bounded path/directory/glob hint when the command structure is understood. */
+  navigation_path_hint?: string;
+  /** Redacted bounded search pattern/range hint when the command structure is understood. */
+  navigation_pattern_hint?: string;
   /** Target files, repo-relative; `outside_repo` for files outside the primary Repo. */
   repo_relative_paths: string[];
   extracted_provider: string;

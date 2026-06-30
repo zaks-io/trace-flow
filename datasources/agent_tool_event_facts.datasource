@@ -4,8 +4,11 @@ DESCRIPTION >
     denominator counts each invocation once). Carries the invocation (tool name,
     command family/program/subcommand, target paths, extracted provider/repo/PR)
     and the outcome (status, exit code, duration), plus capped redacted excerpts
-    and tool-result subagent token facts. status in {success, failure, unknown};
-    exit_code/duration_ms are 0 when absent (status disambiguates).
+    and tool-result subagent token facts. Tool failure categories and navigation
+    hints are classified at ingest so derived read models do not scan free-form
+    excerpts. Coverage fields distinguish unknown from not-applicable gaps.
+    status in {success, failure, unknown}; exit_code/duration_ms are 0 when
+    absent (status disambiguates).
     JSONPaths are defined because the consumer POSTs rows here via /v0/events;
     keys match column names exactly (the ingest contract for this fact table).
 
@@ -31,8 +34,15 @@ SCHEMA >
     `command_program` String `json:$.command_program`,
     `command_subcommand` String `json:$.command_subcommand`,
     `status` LowCardinality(String) `json:$.status`,
+    `error_category` LowCardinality(String) DEFAULT 'unknown' `json:$.error_category`,
+    `error_category_coverage` LowCardinality(String) DEFAULT if(status = 'failure', 'unknown', 'not_applicable') `json:$.error_category_coverage`,
     `exit_code` Int32 `json:$.exit_code`,
     `duration_ms` UInt32 `json:$.duration_ms`,
+    `is_navigation` UInt8 DEFAULT 0 `json:$.is_navigation`,
+    `navigation_kind` LowCardinality(String) DEFAULT 'none' `json:$.navigation_kind`,
+    `navigation_hint_coverage` LowCardinality(String) DEFAULT 'unknown' `json:$.navigation_hint_coverage`,
+    `navigation_path_hint` String DEFAULT '' `json:$.navigation_path_hint`,
+    `navigation_pattern_hint` String DEFAULT '' `json:$.navigation_pattern_hint`,
     `repo_relative_paths` Array(String) DEFAULT [] `json:$.repo_relative_paths[:]`,
     `extracted_provider` LowCardinality(String) `json:$.extracted_provider`,
     `extracted_repo` String `json:$.extracted_repo`,
@@ -48,7 +58,7 @@ SCHEMA >
     `dropped_sensitive` UInt32 `json:$.dropped_sensitive`
 
 FORWARD_QUERY >
-  SELECT OrgId, UserId, CollectorId, CollectorCredentialId, session_pk, tool_use_pk, repo_fingerprint, repo_source, source, parser_version, EventAt, IngestedAt, vendor_session_id, vendor_message_id, tool_use_id, source_block_index, tool_name, command_family, command_program, command_subcommand, status, exit_code, duration_ms, repo_relative_paths, CAST(extracted_provider, 'LowCardinality(String)') AS extracted_provider, extracted_repo, extracted_pr_number, command_excerpt, error_excerpt, extracted_subagent_agent_id, extracted_subagent_model, extracted_subagent_input_tokens, extracted_subagent_output_tokens, extracted_subagent_cache_read_tokens, extracted_subagent_cache_creation_tokens, dropped_sensitive
+  SELECT OrgId, UserId, CollectorId, CollectorCredentialId, session_pk, tool_use_pk, repo_fingerprint, repo_source, source, parser_version, EventAt, IngestedAt, vendor_session_id, vendor_message_id, tool_use_id, source_block_index, tool_name, command_family, command_program, command_subcommand, status, CAST('unknown', 'LowCardinality(String)') AS error_category, CAST(if(status = 'failure', 'unknown', 'not_applicable'), 'LowCardinality(String)') AS error_category_coverage, exit_code, duration_ms, toUInt8(0) AS is_navigation, CAST('none', 'LowCardinality(String)') AS navigation_kind, CAST('unknown', 'LowCardinality(String)') AS navigation_hint_coverage, '' AS navigation_path_hint, '' AS navigation_pattern_hint, repo_relative_paths, CAST(extracted_provider, 'LowCardinality(String)') AS extracted_provider, extracted_repo, extracted_pr_number, command_excerpt, error_excerpt, extracted_subagent_agent_id, extracted_subagent_model, extracted_subagent_input_tokens, extracted_subagent_output_tokens, extracted_subagent_cache_read_tokens, extracted_subagent_cache_creation_tokens, dropped_sensitive
 
 ENGINE "MergeTree"
 ENGINE_SORTING_KEY "OrgId, session_pk, tool_use_pk"

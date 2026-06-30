@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env as workerEnv } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
+import { insertRows } from '@trace-flow/tinybird-client';
 import type { AgentFactBatcherInstance } from '../fact-batcher';
 import { AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS } from '../fact-batcher';
+import { batchContext, toolEventRow } from '../rows';
+import { queueMessage, toolEventFact } from './factories';
 
 vi.mock('@trace-flow/tinybird-client', () => ({
   insertRows: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +26,15 @@ const sparseBatch = {
   },
 };
 
+const emptyBatchRows = {
+  messages: [],
+  tool_events: [],
+  file_events: [],
+  capability_snapshots: [],
+  pull_request_links: [],
+  review_unit_attributions: [],
+};
+
 describe('AgentFactBatcher logic', () => {
   let batcher: DurableObjectStub<AgentFactBatcherInstance>;
 
@@ -35,6 +47,7 @@ describe('AgentFactBatcher logic', () => {
   });
 
   afterEach(() => {
+    vi.clearAllMocks();
     vi.useRealTimers();
   });
 
@@ -59,5 +72,42 @@ describe('AgentFactBatcher logic', () => {
     expect(scheduled.alarm).toBeLessThanOrEqual(
       scheduled.after + AGENT_FACT_BATCHER_FLUSH_INTERVAL_MS,
     );
+  });
+
+  it('normalizes pre-rollout pending tool event rows before flushing', async () => {
+    const row = toolEventRow(batchContext(queueMessage()), toolEventFact({ status: 'failure' }));
+    const pendingRow = { ...row } as Record<string, unknown>;
+    delete pendingRow.error_category;
+    delete pendingRow.error_category_coverage;
+    delete pendingRow.is_navigation;
+    delete pendingRow.navigation_kind;
+    delete pendingRow.navigation_hint_coverage;
+    delete pendingRow.navigation_path_hint;
+    delete pendingRow.navigation_pattern_hint;
+
+    await runInDurableObject(batcher, async (instance: AgentFactBatcherInstance) => {
+      await instance.addFacts({
+        rows: {
+          ...emptyBatchRows,
+          tool_events: [pendingRow],
+        },
+      });
+      await instance.alarm();
+    });
+
+    expect(insertRows).toHaveBeenCalledOnce();
+    const [flushedRows, , datasource] = vi.mocked(insertRows).mock.calls[0] ?? [];
+    expect(datasource).toBe('agent_tool_event_facts');
+    expect(flushedRows).toEqual([
+      expect.objectContaining({
+        error_category: 'unknown',
+        error_category_coverage: 'unknown',
+        is_navigation: 0,
+        navigation_kind: 'none',
+        navigation_hint_coverage: 'unknown',
+        navigation_path_hint: '',
+        navigation_pattern_hint: '',
+      }),
+    ]);
   });
 });

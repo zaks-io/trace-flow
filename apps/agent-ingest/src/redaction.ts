@@ -23,6 +23,8 @@ const REDACTED = '[REDACTED]';
 
 export const MAX_COMMAND_EXCERPT = 1024;
 export const MAX_ERROR_EXCERPT = 4096;
+export const MAX_NAVIGATION_HINT_EXCERPT = 256;
+export const MAX_TOOL_EXCERPT_TOTAL = 5 * 1024;
 
 /** Mask matchers keep the field; each replaces its capture and counts one toward `dropped`. */
 const HOME_PATH_PATTERN = /(\/(?:Users|home)\/)([^/\s]+)/g;

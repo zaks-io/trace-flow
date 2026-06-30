@@ -5,8 +5,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{
-    AgentCapabilityKind, AgentEventStatus, AgentFileOperation, AgentMessageRole, CacheCoverage,
-    PullRequestLinkConfidence, PullRequestLinkEvidence, TokenCoverage,
+    AgentCapabilityKind, AgentEventStatus, AgentFileOperation, AgentMessageRole,
+    AgentNavigationHintCoverage, AgentNavigationKind, AgentToolErrorCategory,
+    AgentToolErrorCoverage, CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence,
+    TokenCoverage,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,8 +52,15 @@ pub struct AgentToolEventFact {
     pub command_program: String,
     pub command_subcommand: String,
     pub status: AgentEventStatus,
+    pub error_category: AgentToolErrorCategory,
+    pub error_category_coverage: AgentToolErrorCoverage,
     pub exit_code: Option<i64>,
     pub duration_ms: Option<i64>,
+    pub is_navigation: bool,
+    pub navigation_kind: AgentNavigationKind,
+    pub navigation_hint_coverage: AgentNavigationHintCoverage,
+    pub navigation_path_hint: String,
+    pub navigation_pattern_hint: String,
     pub repo_relative_paths: Vec<String>,
     pub extracted_provider: String,
     pub extracted_repo: String,

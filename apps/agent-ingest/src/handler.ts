@@ -11,7 +11,14 @@ import { checkCompatibility, getCompatibilityPolicy } from './policy';
 import { assembleQueueFacts } from './ids';
 import { ConvexUnreachableError, claimSessions } from './ownership';
 import { chunkFacts } from './chunker';
-import { MAX_COMMAND_EXCERPT, MAX_ERROR_EXCERPT, capExcerpt, redactField } from './redaction';
+import {
+  MAX_COMMAND_EXCERPT,
+  MAX_ERROR_EXCERPT,
+  MAX_NAVIGATION_HINT_EXCERPT,
+  MAX_TOOL_EXCERPT_TOTAL,
+  capExcerpt,
+  redactField,
+} from './redaction';
 import { validateEnvelopeShape } from './validation';
 
 /** Collector authenticates with this header; the value is the raw Collector Credential secret. */
@@ -302,7 +309,27 @@ function reRedact(facts: AgentIngestEnvelope['facts']): void {
     t.command_excerpt = capExcerpt(cmd.value, MAX_COMMAND_EXCERPT);
     const errExcerpt = redactField(t.error_excerpt);
     t.error_excerpt = capExcerpt(errExcerpt.value, MAX_ERROR_EXCERPT);
-    t.dropped_sensitive = (t.dropped_sensitive ?? 0) + cmd.dropped + errExcerpt.dropped;
+    let remaining = Math.max(
+      0,
+      MAX_TOOL_EXCERPT_TOTAL - t.command_excerpt.length - t.error_excerpt.length,
+    );
+    const navigationPath = redactField(t.navigation_path_hint ?? '');
+    t.navigation_path_hint = capExcerpt(
+      navigationPath.value,
+      Math.min(MAX_NAVIGATION_HINT_EXCERPT, remaining),
+    );
+    remaining = Math.max(0, remaining - t.navigation_path_hint.length);
+    const navigationPattern = redactField(t.navigation_pattern_hint ?? '');
+    t.navigation_pattern_hint = capExcerpt(
+      navigationPattern.value,
+      Math.min(MAX_NAVIGATION_HINT_EXCERPT, remaining),
+    );
+    t.dropped_sensitive =
+      (t.dropped_sensitive ?? 0) +
+      cmd.dropped +
+      errExcerpt.dropped +
+      navigationPath.dropped +
+      navigationPattern.dropped;
   }
   for (const f of facts.file_events) {
     const path = redactField(f.normalized_repo_path);

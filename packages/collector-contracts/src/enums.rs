@@ -36,6 +36,49 @@ pub enum AgentEventStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum AgentToolErrorCategory {
+    Unknown,
+    MissingFile,
+    ReadDirectory,
+    EditBeforeRead,
+    StaleFileBeforeEdit,
+    ExternalSchemaValidation,
+    RuntimeEnvMismatch,
+    ToolInputValidation,
+    HumanOrPolicyRejection,
+    WrongToolName,
+    OversizedRead,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentToolErrorCoverage {
+    NotApplicable,
+    Classified,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentNavigationKind {
+    None,
+    Search,
+    FileRead,
+    DirectoryList,
+    DirectoryChange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentNavigationHintCoverage {
+    NotApplicable,
+    Structured,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RepoSource {
     Remote,
     Path,
