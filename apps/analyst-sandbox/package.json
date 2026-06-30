@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@cloudflare/sandbox": "0.12.1",
+    "@trace-flow/convex": "workspace:*",
     "@trace-flow/pricing": "workspace:*",
     "convex": "^1.38.0"
   },

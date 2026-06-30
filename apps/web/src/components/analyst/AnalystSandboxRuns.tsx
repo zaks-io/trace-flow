@@ -23,7 +23,7 @@ export function AnalystSandboxRunInline({
   toolState: string;
 }) {
   const convexRunId = runId as Id<'analystSandboxRuns'>;
-  const run = useQuery(api.analyst.getSandboxRun, { runId: convexRunId }) as
+  const run = useQuery(api.analystSandbox.getSandboxRun, { runId: convexRunId }) as
     | SandboxRun
     | null
     | undefined;

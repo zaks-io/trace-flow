@@ -1,5 +1,10 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import {
+  sandboxBackupHandle,
+  sandboxRunEventFields,
+  sandboxRunFields,
+} from './analystSandboxSchema';
 
 export default defineSchema({
   users: defineTable({
@@ -122,14 +127,7 @@ export default defineSchema({
     // Latest /workspace snapshot for this conversation's Pi sandbox. The next Pi
     // run rehydrates from this handle and resumes the session instead of starting
     // cold. R2 garbage-collects the underlying archive after its TTL.
-    sandboxBackup: v.optional(
-      v.object({
-        id: v.string(),
-        dir: v.string(),
-        localBucket: v.optional(v.boolean()),
-        updatedAt: v.number(),
-      }),
-    ),
+    sandboxBackup: v.optional(v.object({ ...sandboxBackupHandle.fields, updatedAt: v.number() })),
   })
     .index('by_creator_updated', ['creatorUserId', 'updatedAt'])
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
@@ -155,73 +153,12 @@ export default defineSchema({
     .index('by_thread_agent', ['analystThreadId', 'agent'])
     .index('by_org', ['orgId']),
 
-  analystSandboxRuns: defineTable({
-    analystThreadId: v.id('analystThreads'),
-    creatorUserId: v.id('users'),
-    orgId: v.id('organizations'),
-    sandboxId: v.string(),
-    processId: v.optional(v.string()),
-    prompt: v.string(),
-    pageContextReferences: v.optional(v.array(v.any())),
-    status: v.union(
-      v.literal('queued'),
-      v.literal('starting'),
-      v.literal('running'),
-      v.literal('completed'),
-      v.literal('failed'),
-      v.literal('timed_out'),
-      v.literal('cancelled'),
-    ),
-    runTokenHash: v.string(),
-    maxRuntimeMs: v.number(),
-    updatedAt: v.number(),
-    startedAt: v.optional(v.number()),
-    completedAt: v.optional(v.number()),
-    lastEventAt: v.optional(v.number()),
-    nextSeq: v.number(),
-    resultText: v.optional(v.string()),
-    error: v.optional(v.string()),
-    continuationScheduledAt: v.optional(v.number()),
-    // How many times this run has already been auto-resumed after a dead container.
-    // Carried forward across resumes and capped so a crash-looping run fails loudly.
-    resumeAttempt: v.optional(v.number()),
-    // Last cumulative usage snapshot already folded into the usage ledger for this run.
-    // Pi emits cumulative snapshots; we add only the delta so resumes/restreams don't
-    // double-count. Absent = nothing applied yet.
-    usageApplied: v.optional(
-      v.object({
-        totalTokens: v.number(),
-        totalCost: v.number(),
-        cacheReadTokens: v.number(),
-      }),
-    ),
-  })
+  analystSandboxRuns: defineTable(sandboxRunFields)
     .index('by_thread_updated', ['analystThreadId', 'updatedAt'])
     .index('by_creator_status_updated', ['creatorUserId', 'status', 'updatedAt'])
     .index('by_status_updated', ['status', 'updatedAt']),
 
-  analystSandboxRunEvents: defineTable({
-    runId: v.id('analystSandboxRuns'),
-    analystThreadId: v.id('analystThreads'),
-    creatorUserId: v.id('users'),
-    orgId: v.id('organizations'),
-    seq: v.number(),
-    type: v.union(
-      v.literal('status'),
-      v.literal('stdout'),
-      v.literal('stderr'),
-      v.literal('message'),
-      v.literal('tool_call'),
-      v.literal('tool_result'),
-      v.literal('result'),
-      v.literal('error'),
-      v.literal('control'),
-      v.literal('usage'),
-    ),
-    message: v.optional(v.string()),
-    data: v.optional(v.any()),
-    emittedAt: v.number(),
-  })
+  analystSandboxRunEvents: defineTable(sandboxRunEventFields)
     .index('by_run_seq', ['runId', 'seq'])
     .index('by_thread_seq', ['analystThreadId', 'seq']),
 

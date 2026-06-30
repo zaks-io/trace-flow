@@ -35,16 +35,16 @@ export function PiRunCard({
   toolState?: string;
   resumed?: boolean;
 }) {
-  const events = useQuery(api.analyst.listSandboxRunEvents, {
+  const events = useQuery(api.analystSandbox.listSandboxRunEvents, {
     runId: run._id,
     limit: 100,
   }) as SandboxRunEvent[] | undefined;
-  const serverRows = useQuery(api.analyst.listSandboxRunRows, {
+  const serverRows = useQuery(api.analystSandbox.listSandboxRunRows, {
     runId: run._id,
     limit: 200,
   }) as PiRunRow[] | undefined;
-  const cancelRun = useAction(api.analyst.cancelSandboxRun);
-  const refreshRunStatus = useAction(api.analyst.refreshSandboxRunStatus);
+  const cancelRun = useAction(api.analystSandbox.cancelSandboxRun);
+  const refreshRunStatus = useAction(api.analystSandbox.refreshSandboxRunStatus);
   const shouldRefreshStatus = isActive(run.status) || Boolean(run.needsStatusRefresh);
   const now = useNowWhileActive(shouldRefreshStatus);
   const refreshKeyRef = useRef<string | null>(null);

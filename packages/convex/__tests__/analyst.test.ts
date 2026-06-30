@@ -2,21 +2,25 @@ import { describe, expect, it } from 'vitest';
 import {
   ANALYST_DEFAULT_MODEL,
   ANALYST_MAX_STEPS,
-  SANDBOX_START_FETCH_TIMEOUT_MS,
   buildAnalystSystemPrompt,
   buildAnalystThreadTitle,
   buildHiddenAnalystMessageMetadata,
   buildOpenRouterExtraBody,
   buildPiCompletionPrompt,
-  describeSandboxProcessCause,
-  getDirectAnalystTraceFlowToolDefinitions,
   isHiddenAnalystMessageLike,
   isHiddenAnalystProviderMetadata,
+} from '../analyst';
+import {
+  SANDBOX_START_FETCH_TIMEOUT_MS,
+  getDirectAnalystTraceFlowToolDefinitions,
+  shouldExposeSandboxControlTool,
+} from '../analystSandbox';
+import {
+  describeSandboxProcessCause,
   isSandboxRunTimeoutExpired,
   sandboxRunLivenessVerdict,
   sandboxRunTimeoutRemainingMs,
-  shouldExposeSandboxControlTool,
-} from '../analyst';
+} from '../analystSandboxPolicy';
 
 describe('analyst helpers', () => {
   it('uses the configured GLM 5.2 default model', () => {
