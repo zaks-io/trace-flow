@@ -83,7 +83,7 @@ export function AnalystSidebar() {
     { initialNumItems: 30, stream: true },
   );
   const sandboxRuns = useQuery(
-    api.analyst.listSandboxRuns,
+    api.analystSandbox.listSandboxRuns,
     currentThreadId ? { threadId: currentThreadId } : 'skip',
   ) as SandboxRun[] | undefined;
   const activeSandboxRuns = useMemo(

@@ -153,11 +153,11 @@ function jsonResponse(value: unknown, init?: ResponseInit): Response {
   });
 }
 
-const receiveEventsRef = makeFunctionReference<'action'>('analyst:receiveSandboxEvents');
-const completeRunRef = makeFunctionReference<'action'>('analyst:completeSandboxRun');
-const checkpointRunRef = makeFunctionReference<'action'>('analyst:checkpointSandboxRun');
-const executeToolRef = makeFunctionReference<'action'>('analyst:executeSandboxToolCall');
-const verifyRunRef = makeFunctionReference<'action'>('analyst:verifySandboxRunToken');
+const receiveEventsRef = makeFunctionReference<'action'>('analystSandbox:receiveSandboxEvents');
+const completeRunRef = makeFunctionReference<'action'>('analystSandbox:completeSandboxRun');
+const checkpointRunRef = makeFunctionReference<'action'>('analystSandbox:checkpointSandboxRun');
+const executeToolRef = makeFunctionReference<'action'>('analystSandbox:executeSandboxToolCall');
+const verifyRunRef = makeFunctionReference<'action'>('analystSandbox:verifySandboxRunToken');
 const SANDBOX_RPC_TIMEOUT_MS = 8_000;
 const SANDBOX_CLEANUP_TIMEOUT_MS = 5_000;
 const SANDBOX_START_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 12_000, 16_000];
