@@ -6,7 +6,23 @@ import {
 } from '@cloudflare/sandbox';
 import { getPricing } from '@trace-flow/pricing';
 import { ConvexHttpClient } from 'convex/browser';
-import { makeFunctionReference } from 'convex/server';
+import type { Infer } from 'convex/values';
+import { api } from '@trace-flow/convex/_generated/api';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
+import type {
+  sandboxRunEventInput,
+  sandboxRunTerminalStatus,
+} from '@trace-flow/convex/analystSandboxSchema';
+
+type SandboxRunId = Id<'analystSandboxRuns'>;
+type SandboxRunEventInput = Infer<typeof sandboxRunEventInput>;
+type SandboxRunTerminalStatus = Infer<typeof sandboxRunTerminalStatus>;
+
+const TERMINAL_RUN_STATUSES = ['completed', 'failed', 'timed_out', 'cancelled'] as const;
+
+function isTerminalRunStatus(value: unknown): value is SandboxRunTerminalStatus {
+  return (TERMINAL_RUN_STATUSES as readonly string[]).includes(String(value));
+}
 import {
   buildPiModelsJson,
   buildPiRunnerScript,
@@ -153,11 +169,14 @@ function jsonResponse(value: unknown, init?: ResponseInit): Response {
   });
 }
 
-const receiveEventsRef = makeFunctionReference<'action'>('analystSandbox:receiveSandboxEvents');
-const completeRunRef = makeFunctionReference<'action'>('analystSandbox:completeSandboxRun');
-const checkpointRunRef = makeFunctionReference<'action'>('analystSandbox:checkpointSandboxRun');
-const executeToolRef = makeFunctionReference<'action'>('analystSandbox:executeSandboxToolCall');
-const verifyRunRef = makeFunctionReference<'action'>('analystSandbox:verifySandboxRunToken');
+// Typed references to the Convex callbacks this worker invokes over HTTP. Importing
+// the generated `api` means a rename or move on the Convex side is a compile error
+// here, instead of a string that silently resolves to a dead function at runtime.
+const receiveEventsRef = api.analystSandbox.receiveSandboxEvents;
+const completeRunRef = api.analystSandbox.completeSandboxRun;
+const checkpointRunRef = api.analystSandbox.checkpointSandboxRun;
+const executeToolRef = api.analystSandbox.executeSandboxToolCall;
+const verifyRunRef = api.analystSandbox.verifySandboxRunToken;
 const SANDBOX_RPC_TIMEOUT_MS = 8_000;
 const SANDBOX_CLEANUP_TIMEOUT_MS = 5_000;
 const SANDBOX_START_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 12_000, 16_000];
@@ -729,9 +748,9 @@ async function handlePiRunEvents(request: Request, env: Env): Promise<Response> 
   }
 
   await getConvex(env).action(receiveEventsRef, {
-    runId: body.runId,
+    runId: body.runId as SandboxRunId,
     token,
-    events: body.events,
+    events: body.events as SandboxRunEventInput[],
   });
   return jsonResponse({ ok: true });
 }
@@ -750,26 +769,24 @@ async function handlePiRunComplete(
     resultText?: string;
     error?: string;
   } | null;
-  if (
-    !body?.runId ||
-    !['completed', 'failed', 'timed_out', 'cancelled'].includes(String(body.status))
-  ) {
+  if (!body?.runId || !isTerminalRunStatus(body.status)) {
     return jsonResponse({ ok: false, error: 'Invalid completion payload' }, { status: 400 });
   }
+  const status = body.status;
 
   // Snapshot /workspace (data + Pi session transcript) to R2 BEFORE teardown, but
   // only for a clean completion — a failed/timed-out run must not clobber the last
   // good snapshot. The serializable handle is stored on the thread by Convex so the
   // next question can rehydrate and resume.
   let backup: { id: string; dir: string; localBucket?: boolean } | null = null;
-  if (body.sandboxId && body.status === 'completed') {
+  if (body.sandboxId && status === 'completed') {
     backup = await snapshotWorkspace(env, body.sandboxId);
   }
 
   await getConvex(env).action(completeRunRef, {
-    runId: body.runId,
+    runId: body.runId as SandboxRunId,
     token,
-    status: body.status,
+    status,
     resultText: body.resultText,
     error: body.error,
     backup: backup ?? undefined,
@@ -803,7 +820,7 @@ async function handlePiRunCheckpoint(request: Request, env: Env): Promise<Respon
   if (!backup) return jsonResponse({ ok: false, error: 'Snapshot failed' }, { status: 500 });
 
   await getConvex(env).action(checkpointRunRef, {
-    runId: body.runId,
+    runId: body.runId as SandboxRunId,
     token,
     backup,
   });
@@ -819,7 +836,7 @@ async function handleTraceflowTool(request: Request, env: Env): Promise<Response
 
   try {
     const result: unknown = await getConvex(env).action(executeToolRef, {
-      runId: parsed.request.runId,
+      runId: parsed.request.runId as SandboxRunId,
       token,
       toolName: parsed.request.toolName,
       arguments: parsed.request.arguments,
@@ -849,7 +866,10 @@ async function handleOpenRouterProxy(request: Request, env: Env, url: URL): Prom
   if (!runId || !targetPath)
     return jsonResponse({ ok: false, error: 'Invalid proxy path' }, { status: 404 });
 
-  const verified = (await getConvex(env).action(verifyRunRef, { runId, token })) as {
+  const verified = (await getConvex(env).action(verifyRunRef, {
+    runId: runId as SandboxRunId,
+    token,
+  })) as {
     ok?: boolean;
     status?: string | null;
   };
