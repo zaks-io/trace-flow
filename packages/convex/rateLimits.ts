@@ -9,10 +9,15 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
   // proves insufficient.
   joinWaitlistEmail: { kind: 'fixed window', rate: 3, period: HOUR },
   confirmEmail: { kind: 'fixed window', rate: 20, period: HOUR },
-  mcpRegister: { kind: 'fixed window', rate: 10, period: HOUR },
-  mcpAuthorize: { kind: 'fixed window', rate: 30, period: MINUTE },
-  mcpTokenExchange: { kind: 'fixed window', rate: 60, period: MINUTE },
-  mcpCallback: { kind: 'fixed window', rate: 30, period: MINUTE },
+
+  // MCP OAuth endpoints (/mcp/register, /mcp/authorize, /mcp/callback, /mcp/token,
+  // /collector/authorize) are intentionally NOT rate-limited at the application
+  // layer. A DB-backed limiter writes a hot per-IP `rateLimits` row on every hop;
+  // an interactive login hits several hops in a burst, the same-row writes race,
+  // and Convex OCC conflicts surfaced as 503s that broke login (Sentry
+  // TRACE-FLOW-1G). Per OAuth-server guidance (Duende), a single-org deployment
+  // behind Cloudflare should not app-layer rate-limit these endpoints; abuse
+  // protection lives at the Cloudflare edge instead.
 
   // Authenticated user/org actions
   initializeUser: { kind: 'fixed window', rate: 5, period: HOUR },
