@@ -1,0 +1,20 @@
+# Fixtures: fixtures/agent_file_event_facts.ndjson + fixtures/agent_tool_event_facts.ndjson (org_file_attention).
+# Covers repeated reads, edits, writes, directory reads, and missing-file path hints.
+
+- name: files_roll_up_session_path_counts
+  description: repeated reads and ./ path variants group into one repo-relative path with raw read/edit/write counts
+  expected_http_status: 200
+  parameters: org_id=org_file_attention&start_time_ms=1779235200000&end_time_ms=1779321600000&repo_fingerprint=repo_file_attention&limit=4
+  expected_result: |
+    {"repo_fingerprint":"repo_file_attention","normalized_repo_path":"src\/hot.ts","path_confidence":"structured","touch_count":4,"session_count":2,"read_count":2,"edit_count":1,"write_count":1,"directory_read_count":0,"missing_file_count":0,"coverage_debt_count":0,"structured_file_event_count":4,"hint_event_count":0,"tool_families":["read","edit","write"],"first_touch_ms":1779271200000,"last_touch_ms":1779274800000}
+    {"repo_fingerprint":"repo_file_attention","normalized_repo_path":"docs\/","path_confidence":"structured","touch_count":2,"session_count":2,"read_count":1,"edit_count":0,"write_count":0,"directory_read_count":2,"missing_file_count":0,"coverage_debt_count":1,"structured_file_event_count":1,"hint_event_count":1,"tool_families":["read","directory_read"],"first_touch_ms":1779273000000,"last_touch_ms":1779275760000}
+    {"repo_fingerprint":"repo_file_attention","normalized_repo_path":"docs\/guide.md","path_confidence":"structured","touch_count":2,"session_count":1,"read_count":1,"edit_count":0,"write_count":1,"directory_read_count":0,"missing_file_count":0,"coverage_debt_count":0,"structured_file_event_count":2,"hint_event_count":0,"tool_families":["read","write"],"first_touch_ms":1779271800000,"last_touch_ms":1779272400000}
+    {"repo_fingerprint":"repo_file_attention","normalized_repo_path":"missing\/lost.ts","path_confidence":"hint","touch_count":1,"session_count":1,"read_count":0,"edit_count":0,"write_count":0,"directory_read_count":0,"missing_file_count":1,"coverage_debt_count":1,"structured_file_event_count":0,"hint_event_count":1,"tool_families":["missing_file"],"first_touch_ms":1779275700000,"last_touch_ms":1779275700000}
+
+- name: files_can_sort_by_session_count
+  description: sort=sessions ranks cross-session paths before single-session files and then ties by touch count
+  expected_http_status: 200
+  parameters: org_id=org_file_attention&start_time_ms=1779235200000&end_time_ms=1779321600000&repo_fingerprint=repo_file_attention&sort=sessions&limit=2
+  expected_result: |
+    {"repo_fingerprint":"repo_file_attention","normalized_repo_path":"src\/hot.ts","path_confidence":"structured","touch_count":4,"session_count":2,"read_count":2,"edit_count":1,"write_count":1,"directory_read_count":0,"missing_file_count":0,"coverage_debt_count":0,"structured_file_event_count":4,"hint_event_count":0,"tool_families":["read","edit","write"],"first_touch_ms":1779271200000,"last_touch_ms":1779274800000}
+    {"repo_fingerprint":"repo_file_attention","normalized_repo_path":"docs\/","path_confidence":"structured","touch_count":2,"session_count":2,"read_count":1,"edit_count":0,"write_count":0,"directory_read_count":2,"missing_file_count":0,"coverage_debt_count":1,"structured_file_event_count":1,"hint_event_count":1,"tool_families":["read","directory_read"],"first_touch_ms":1779273000000,"last_touch_ms":1779275760000}

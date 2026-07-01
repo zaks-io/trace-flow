@@ -1,0 +1,12 @@
+# Fixtures: fixtures/agent_file_event_facts.ndjson + fixtures/agent_tool_event_facts.ndjson (org_file_attention).
+# Directory grouping is top-level and includes structured file events plus coverage-debt hints.
+
+- name: directories_roll_up_top_level_counts
+  description: top directories expose touch and session counts with directory-read and missing-file coverage debt
+  expected_http_status: 200
+  parameters: org_id=org_file_attention&start_time_ms=1779235200000&end_time_ms=1779321600000&repo_fingerprint=repo_file_attention&limit=4
+  expected_result: |
+    {"repo_fingerprint":"repo_file_attention","directory_path":"docs","touch_count":4,"session_count":2,"read_count":2,"edit_count":0,"write_count":1,"directory_read_count":2,"missing_file_count":0,"coverage_debt_count":1,"first_touch_ms":1779271800000,"last_touch_ms":1779275760000}
+    {"repo_fingerprint":"repo_file_attention","directory_path":"src","touch_count":4,"session_count":2,"read_count":2,"edit_count":1,"write_count":1,"directory_read_count":0,"missing_file_count":0,"coverage_debt_count":0,"first_touch_ms":1779271200000,"last_touch_ms":1779274800000}
+    {"repo_fingerprint":"repo_file_attention","directory_path":"missing","touch_count":1,"session_count":1,"read_count":0,"edit_count":0,"write_count":0,"directory_read_count":0,"missing_file_count":1,"coverage_debt_count":1,"first_touch_ms":1779275700000,"last_touch_ms":1779275700000}
+    {"repo_fingerprint":"repo_file_attention","directory_path":"outside_repo","touch_count":1,"session_count":1,"read_count":1,"edit_count":0,"write_count":0,"directory_read_count":0,"missing_file_count":0,"coverage_debt_count":1,"first_touch_ms":1779275400000,"last_touch_ms":1779275400000}
