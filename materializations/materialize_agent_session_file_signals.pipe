@@ -31,6 +31,7 @@ SQL >
                 normalized_repo_path = '', 'unknown_path',
                 dropped_sensitive > 0 OR startsWith(normalized_repo_path, '/'), 'unsafe_path',
                 normalized_repo_path = 'outside_repo', 'outside_repo',
+                replaceRegexpAll(normalized_repo_path, '^\\./+', '') = '', 'unknown_path',
                 replaceRegexpAll(normalized_repo_path, '^\\./+', '')
             ) AS normalized_path,
             toUInt8(if(normalized_path IN ('unknown_path', 'unsafe_path', 'outside_repo'), 1, 3)) AS path_confidence_rank

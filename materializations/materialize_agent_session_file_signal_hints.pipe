@@ -28,14 +28,7 @@ SQL >
     FROM (
         SELECT
             *,
-            arrayJoin(arrayDistinct(arrayConcat(
-                repo_relative_paths,
-                if(
-                    navigation_hint_coverage = 'structured' AND navigation_path_hint != '',
-                    [navigation_path_hint],
-                    CAST([], 'Array(String)')
-                )
-            ))) AS raw_path,
+            arrayJoin(if(length(path_candidates) = 0, [''], path_candidates)) AS raw_path,
             multiIf(
                 raw_path = '', 'unknown_path',
                 dropped_sensitive > 0 OR startsWith(raw_path, '/'), 'unsafe_path',
@@ -43,10 +36,21 @@ SQL >
                 replaceRegexpAll(raw_path, '^\\./+', '')
             ) AS normalized_path,
             toUInt8(if(normalized_path IN ('unknown_path', 'unsafe_path', 'outside_repo'), 1, 2)) AS path_confidence_rank
-        FROM agent_tool_event_facts
-        WHERE error_category IN ('missing_file', 'read_directory')
+        FROM (
+            SELECT
+                *,
+                arrayDistinct(arrayConcat(
+                    repo_relative_paths,
+                    if(
+                        navigation_hint_coverage = 'structured' AND navigation_path_hint != '',
+                        [navigation_path_hint],
+                        CAST([], 'Array(String)')
+                    )
+                )) AS path_candidates
+            FROM agent_tool_event_facts
+            WHERE error_category IN ('missing_file', 'read_directory')
+        )
     )
-    WHERE raw_path != ''
     GROUP BY OrgId, repo_fingerprint, session_pk, normalized_path
 
 TYPE MATERIALIZED

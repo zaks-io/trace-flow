@@ -64,6 +64,6 @@ SQL >
         session_count DESC,
         directory_path ASC
     LIMIT greatest(1, least({{ Int32(limit, 25) }}, 100))
-    OFFSET {{ Int32(offset, 0) }}
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
 
 TYPE ENDPOINT

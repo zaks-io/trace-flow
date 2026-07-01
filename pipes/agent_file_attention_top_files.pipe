@@ -13,17 +13,17 @@ SQL >
     SELECT
         repo_fingerprint,
         normalized_repo_path,
-        multiIf(max(path_confidence_rank) >= 3, 'structured', max(path_confidence_rank) = 2, 'hint', max(path_confidence_rank) = 1, 'coverage_debt', 'unknown') AS path_confidence,
-        sum(touch_count) AS touch_count,
-        uniqExact(session_pk) AS session_count,
-        sum(read_count) AS read_count,
-        sum(edit_count) AS edit_count,
-        sum(write_count) AS write_count,
-        sum(directory_read_count) AS directory_read_count,
-        sum(missing_file_count) AS missing_file_count,
-        sum(coverage_debt_count) AS coverage_debt_count,
-        sum(structured_file_event_count) AS structured_file_event_count,
-        sum(hint_event_count) AS hint_event_count,
+        path_confidence,
+        touch_count,
+        session_count,
+        read_count,
+        edit_count,
+        write_count,
+        directory_read_count,
+        missing_file_count,
+        coverage_debt_count,
+        structured_file_event_count,
+        hint_event_count,
         arrayFilter(x -> x != '', [
             if(read_count > 0, 'read', ''),
             if(edit_count > 0, 'edit', ''),
@@ -31,48 +31,66 @@ SQL >
             if(directory_read_count > 0, 'directory_read', ''),
             if(missing_file_count > 0, 'missing_file', '')
         ]) AS tool_families,
-        toUnixTimestamp64Milli(min(first_touched_at)) AS first_touch_ms,
-        toUnixTimestamp64Milli(max(last_touched_at)) AS last_touch_ms
+        first_touch_ms,
+        last_touch_ms
     FROM (
         SELECT
             repo_fingerprint,
-            session_pk,
             normalized_repo_path,
-            maxMerge(PathConfidenceRank) AS path_confidence_rank,
-            minMerge(FirstTouchedAt) AS first_touched_at,
-            maxMerge(LastTouchedAt) AS last_touched_at,
-            sumMerge(TouchCount) AS touch_count,
-            sumMerge(ReadCount) AS read_count,
-            sumMerge(EditCount) AS edit_count,
-            sumMerge(WriteCount) AS write_count,
-            sumMerge(DirectoryReadCount) AS directory_read_count,
-            sumMerge(MissingFileCount) AS missing_file_count,
-            sumMerge(CoverageDebtCount) AS coverage_debt_count,
-            sumMerge(StructuredFileEventCount) AS structured_file_event_count,
-            sumMerge(HintEventCount) AS hint_event_count,
-            argMaxMerge(source) AS source
-        FROM agent_session_file_signals
-        WHERE OrgId = {{ String(org_id, '') }}
-            {% if defined(repos) %}
-            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-            {% if defined(repo_fingerprint) %}
-            AND repo_fingerprint = {{ String(repo_fingerprint) }}
-            {% end %}
-        GROUP BY repo_fingerprint, session_pk, normalized_repo_path
-        HAVING last_touched_at >= start_dt
-            AND last_touched_at < end_dt
-            {% if defined(sources) %}
-            AND source IN splitByChar(',', {{ String(sources) }})
-            {% end %}
+            multiIf(max(path_confidence_rank) >= 3, 'structured', max(path_confidence_rank) = 2, 'hint', max(path_confidence_rank) = 1, 'coverage_debt', 'unknown') AS path_confidence,
+            sum(touch_count) AS touch_count,
+            uniqExact(session_pk) AS session_count,
+            sum(read_count) AS read_count,
+            sum(edit_count) AS edit_count,
+            sum(write_count) AS write_count,
+            sum(directory_read_count) AS directory_read_count,
+            sum(missing_file_count) AS missing_file_count,
+            sum(coverage_debt_count) AS coverage_debt_count,
+            sum(structured_file_event_count) AS structured_file_event_count,
+            sum(hint_event_count) AS hint_event_count,
+            toUnixTimestamp64Milli(min(first_touched_at)) AS first_touch_ms,
+            toUnixTimestamp64Milli(max(last_touched_at)) AS last_touch_ms
+        FROM (
+            SELECT
+                repo_fingerprint,
+                session_pk,
+                normalized_repo_path,
+                maxMerge(PathConfidenceRank) AS path_confidence_rank,
+                minMerge(FirstTouchedAt) AS first_touched_at,
+                maxMerge(LastTouchedAt) AS last_touched_at,
+                sumMerge(TouchCount) AS touch_count,
+                sumMerge(ReadCount) AS read_count,
+                sumMerge(EditCount) AS edit_count,
+                sumMerge(WriteCount) AS write_count,
+                sumMerge(DirectoryReadCount) AS directory_read_count,
+                sumMerge(MissingFileCount) AS missing_file_count,
+                sumMerge(CoverageDebtCount) AS coverage_debt_count,
+                sumMerge(StructuredFileEventCount) AS structured_file_event_count,
+                sumMerge(HintEventCount) AS hint_event_count,
+                argMaxMerge(source) AS source
+            FROM agent_session_file_signals
+            WHERE OrgId = {{ String(org_id, '') }}
+                {% if defined(repos) %}
+                AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+                {% end %}
+                {% if defined(repo_fingerprint) %}
+                AND repo_fingerprint = {{ String(repo_fingerprint) }}
+                {% end %}
+            GROUP BY repo_fingerprint, session_pk, normalized_repo_path
+            HAVING last_touched_at >= start_dt
+                AND last_touched_at < end_dt
+                {% if defined(sources) %}
+                AND source IN splitByChar(',', {{ String(sources) }})
+                {% end %}
+        )
+        GROUP BY repo_fingerprint, normalized_repo_path
     )
-    GROUP BY repo_fingerprint, normalized_repo_path
     ORDER BY
         multiIf({{ String(sort, 'touches') }} = 'sessions', toFloat64(session_count), toFloat64(touch_count)) DESC,
         touch_count DESC,
         session_count DESC,
         normalized_repo_path ASC
     LIMIT greatest(1, least({{ Int32(limit, 25) }}, 100))
-    OFFSET {{ Int32(offset, 0) }}
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
 
 TYPE ENDPOINT
