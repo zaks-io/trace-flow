@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { type api } from '@convex/_generated/api';
-import { validateTraceId } from '@trace-flow/utils';
+import { validateSpanId, validateTraceId } from '@trace-flow/utils';
 import { useLiveTraceDetail } from '@/hooks/useLiveTraceDetail';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { TokenSummaryCards } from '@/components/traces/TokenSummaryCards';
@@ -44,12 +45,14 @@ interface TraceDetailProps {
 }
 
 export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailProps) {
+  const searchParams = useSearchParams();
   const [copied, setCopied] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
   const validatedTraceId = validateTraceId(traceId);
+  const linkedSpanId = validateSpanId(searchParams.get('span'));
   const alerts = usePreloadedQuery(preloadedAlerts);
 
   const { spans, loading, error } = useLiveTraceDetail({
@@ -59,6 +62,10 @@ export default function TraceDetail({ traceId, preloadedAlerts }: TraceDetailPro
   const rootSpan = spans.find((s) => s.ParentSpanId === '');
   const requestSpans = spans.filter(isLLMRequestSpan);
   const selectedSpan = spans.find((s) => s.SpanId === selectedSpanId);
+
+  useEffect(() => {
+    setSelectedSpanId(linkedSpanId);
+  }, [linkedSpanId, validatedTraceId]);
 
   const { triggeredAlerts, spanAlertSummary } = useMemo(() => {
     if (!alerts || alerts.length === 0 || requestSpans.length === 0 || !validatedTraceId) {

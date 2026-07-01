@@ -25,6 +25,8 @@ import {
   type ApiKeyRow,
   type CostForecastRow,
   type RequestStatsRow,
+  type CostTailRiskRow,
+  type TokenRatioDriftRow,
 } from './types';
 import { SummaryCards } from './SummaryCards';
 import { LlmCostDistributionCard } from './LlmCostDistributionCard';
@@ -35,6 +37,8 @@ import { ModelComparisonTable } from './ModelComparisonTable';
 import { ProviderBreakdownChart } from './ProviderBreakdownChart';
 import { ApiKeyBreakdownTable } from './ApiKeyBreakdownTable';
 import { FilterDropdown } from './FilterDropdown';
+import { CostTailRiskTable } from './CostTailRiskTable';
+import { TokenRatioDriftTable } from './TokenRatioDriftTable';
 
 const METRIC_META = {
   cost: { label: 'Cost Over Time', icon: DollarSign, config: costChartConfig },
@@ -122,6 +126,24 @@ export function UsageAnalytics({
     return p;
   }, [providerFilter, modelFilter, operationFilter, apiKeyFilter]);
 
+  const tailRiskParams = useMemo(
+    () => ({
+      ...filterParams,
+      limit: 25,
+    }),
+    [filterParams],
+  );
+
+  const tokenRatioParams = useMemo(
+    () => ({
+      ...filterParams,
+      baseline_start_time_ns: prevStartTimeNs,
+      baseline_end_time_ns: prevEndTimeNs,
+      limit: 25,
+    }),
+    [filterParams, prevStartTimeNs, prevEndTimeNs],
+  );
+
   const summaryQuery = useTinybirdQuery<TinybirdResponse<SummaryRow>>({
     pipe: 'llm_usage_summary',
     params: filterParams,
@@ -167,6 +189,16 @@ export function UsageAnalytics({
     params: forecastParams,
   });
 
+  const tailRiskQuery = useTinybirdQuery<TinybirdResponse<CostTailRiskRow>>({
+    pipe: 'llm_cost_tail_risk',
+    params: tailRiskParams,
+  });
+
+  const tokenRatioQuery = useTinybirdQuery<TinybirdResponse<TokenRatioDriftRow>>({
+    pipe: 'llm_token_ratio_drift',
+    params: tokenRatioParams,
+  });
+
   const summary = summaryQuery.data?.data?.[0];
   const prevSummary = prevSummaryQuery.data?.data?.[0];
   const requestStats = requestStatsQuery.data?.data?.[0];
@@ -176,6 +208,8 @@ export function UsageAnalytics({
   const operations = operationsQuery.data?.data ?? [];
   const apiKeyRows = apiKeysQuery.data?.data ?? [];
   const forecast = forecastQuery.data?.data?.[0] ?? null;
+  const tailRiskRows = tailRiskQuery.data?.data ?? [];
+  const tokenRatioRows = tokenRatioQuery.data?.data ?? [];
 
   const isLoading = [
     summaryQuery.isLoading,
@@ -187,6 +221,8 @@ export function UsageAnalytics({
     operationsQuery.isLoading,
     apiKeysQuery.isLoading,
     forecastQuery.isLoading,
+    tailRiskQuery.isLoading,
+    tokenRatioQuery.isLoading,
   ].some(Boolean);
 
   const hasError =
@@ -198,7 +234,9 @@ export function UsageAnalytics({
     providersQuery.error ??
     operationsQuery.error ??
     apiKeysQuery.error ??
-    forecastQuery.error;
+    forecastQuery.error ??
+    tailRiskQuery.error ??
+    tokenRatioQuery.error;
 
   // Accumulate filter options so they persist across filter changes
   const seenProviders = useRef(new Set<string>());
@@ -354,6 +392,24 @@ export function UsageAnalytics({
             requestStats={requestStats}
             dimensionLabel={distributionDimensionLabel}
           />
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <div className="rounded-xl bg-card/40 p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-base font-medium text-foreground">Request Cost Tail Risk</h2>
+              </div>
+              <CostTailRiskTable data={tailRiskRows} apiKeyMap={apiKeyMap} />
+            </div>
+
+            <div className="rounded-xl bg-card/40 p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <Hash className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-base font-medium text-foreground">Token Ratio Drift</h2>
+              </div>
+              <TokenRatioDriftTable data={tokenRatioRows} />
+            </div>
+          </div>
 
           <div className="rounded-xl bg-card/40 p-6">
             <div className="mb-4 flex items-center justify-between">
