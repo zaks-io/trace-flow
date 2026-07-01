@@ -89,6 +89,7 @@ export function BentoCell({
             <button
               type="button"
               onClick={onToggleExpand}
+              aria-label={`${expanded ? 'Collapse' : 'Expand'} ${title}`}
               aria-expanded={expanded}
               className="flex items-center gap-1 rounded-lg border border-border/60 px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
             >

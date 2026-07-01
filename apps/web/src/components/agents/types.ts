@@ -1,7 +1,9 @@
 import type { ChartConfig } from '@/components/ui/chart';
 
-/** Canonical agent sources (the static Source filter options). */
-export const AGENT_SOURCES = ['claude', 'codex', 'cursor'] as const;
+/** Sources the production collector can currently sync. Cursor is listed only as unsupported. */
+const AGENT_UNSUPPORTED_SOURCES = ['cursor'] as const;
+export const AGENT_FILTER_SOURCES = ['claude', 'codex'] as const;
+export const AGENT_SOURCES = [...AGENT_FILTER_SOURCES, ...AGENT_UNSUPPORTED_SOURCES] as const;
 
 /** Hero-chart metric switcher. Cost is the default and is always an estimate. */
 export type AgentMetric = 'cost' | 'tokens' | 'messages' | 'sessions' | 'tool-events';
@@ -35,6 +37,18 @@ export interface AgentRepoDirectoryRow {
   normalized_git_remote: string;
   repo_path_fallback: string;
   repo_source: string;
+}
+
+/** Per-source collector metadata from `pipes/agent_source_sync_status.pipe`. */
+export interface AgentSourceSyncStatusRow {
+  source: string;
+  collector_id: string;
+  last_ingested_ms: number;
+  last_successful_sync_ms: number;
+  last_event_ms: number;
+  message_count: number;
+  session_count: number;
+  tool_event_count: number;
 }
 
 /** Stacked area shows composition + total; line un-stacks to compare trends across series. */

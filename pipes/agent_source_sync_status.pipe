@@ -1,0 +1,40 @@
+DESCRIPTION >
+    Per-source Agent collector sync status for /app/agents. Reads the incremental
+    session serving table, so it exposes only server-ingested metadata that already
+    exists for the authenticated org.
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        source,
+        collector_id,
+        max(session_last_ingested_ms) AS last_ingested_ms,
+        max(session_last_ingested_ms) AS last_successful_sync_ms,
+        max(session_last_event_ms) AS last_event_ms,
+        sum(message_count) AS message_count,
+        sum(session_count) AS session_count,
+        sum(tool_event_count) AS tool_event_count
+    FROM (
+        SELECT
+            toString(argMaxMerge(source)) AS source,
+            toString(argMaxMerge(CollectorId)) AS collector_id,
+            toUnixTimestamp64Milli(maxMerge(IngestedAt)) AS session_last_ingested_ms,
+            toUnixTimestamp64Milli(maxMerge(LastEventAt)) AS session_last_event_ms,
+            sumMerge(MessageCount) AS message_count,
+            toUInt64(1) AS session_count,
+            sumMerge(ToolEventCount) AS tool_event_count
+        FROM agent_session_summaries
+        WHERE OrgId = {{ String(org_id, '') }}
+        GROUP BY session_pk
+    )
+    WHERE source != ''
+        AND collector_id != ''
+        {% if defined(sources) %}
+        AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+    GROUP BY source, collector_id
+    ORDER BY last_ingested_ms DESC, source ASC, collector_id ASC
+    LIMIT greatest(1, least({{ Int32(limit, 100) }}, 500))
+
+TYPE ENDPOINT

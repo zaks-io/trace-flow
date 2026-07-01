@@ -114,8 +114,6 @@ export function AgentUsageChart({
   const clickable = groupBy !== 'none' && Boolean(onGroupClick);
   const stacked = chartStyle === 'stacked';
 
-  // Legend clicks expose the display name; map it back to the raw value for filtering.
-  const nameToValue = new Map(series.map((s) => [s.name, s.value]));
   const handleFilterClick = (value: string) => {
     // "Other" is an aggregate of many repos, so it is intentionally not filterable.
     if (clickable && value && value !== OTHER_GROUP) onGroupClick?.(value);
@@ -131,7 +129,11 @@ export function AgentUsageChart({
       ) < 86_400_000);
 
   return (
-    <ChartContainer config={config} className="!aspect-auto h-[320px] w-full">
+    <ChartContainer
+      config={config}
+      data-testid={`agent-usage-chart-${groupBy}`}
+      className="!aspect-auto h-[320px] w-full"
+    >
       <AreaChart data={chartData} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
         <XAxis
@@ -158,17 +160,9 @@ export function AgentUsageChart({
           }
         />
         <Legend
-          wrapperStyle={{ fontSize: 11, paddingTop: 8, cursor: clickable ? 'pointer' : undefined }}
-          iconType="circle"
-          iconSize={8}
-          onClick={
-            clickable
-              ? (entry) => {
-                  const name = String(entry.value);
-                  handleFilterClick(nameToValue.get(name) ?? name);
-                }
-              : undefined
-          }
+          content={() => (
+            <AgentChartLegend series={series} clickable={clickable} onClick={handleFilterClick} />
+          )}
         />
         {series.map((s) => (
           <Area
@@ -188,5 +182,36 @@ export function AgentUsageChart({
         ))}
       </AreaChart>
     </ChartContainer>
+  );
+}
+
+function AgentChartLegend({
+  series,
+  clickable,
+  onClick,
+}: {
+  series: Series[];
+  clickable: boolean;
+  onClick: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 pt-2 text-[11px]">
+      {series.map((entry) => (
+        <button
+          key={entry.id}
+          type="button"
+          onClick={() => onClick(entry.value)}
+          disabled={!clickable || entry.value === OTHER_GROUP}
+          className="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:hover:text-muted-foreground"
+        >
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ backgroundColor: entry.color }}
+            aria-hidden="true"
+          />
+          {entry.name}
+        </button>
+      ))}
+    </div>
   );
 }

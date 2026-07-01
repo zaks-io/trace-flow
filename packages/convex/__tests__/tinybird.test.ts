@@ -43,6 +43,7 @@ const EXPECTED_WEB_PIPES = [
   'agent_tool_period_delta',
   'agent_repo_directory',
   'agent_review_unit_costs',
+  'agent_source_sync_status',
 ] as const;
 
 const EXPECTED_MCP_PIPES = [

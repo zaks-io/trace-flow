@@ -60,6 +60,20 @@ describe('agent analytics state', () => {
     ).toBe(false);
   });
 
+  it('counts source sync metadata as loaded data without suppressing empty states', () => {
+    const sourceOnly = { ...emptyState, sourceStatuses: [{ source: 'claude' }] };
+
+    expect(hasLoadedAgentData(sourceOnly)).toBe(true);
+    expect(
+      shouldShowAgentEmptyState({
+        isEmpty: true,
+        hasError: null,
+        hasLoadedData: true,
+        hasLoadedDetailData: hasLoadedAgentDetailData(sourceOnly),
+      }),
+    ).toBe(true);
+  });
+
   it('shows the global empty state for a clean empty summary', () => {
     expect(
       shouldShowAgentEmptyState({

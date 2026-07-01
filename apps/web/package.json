@@ -14,6 +14,7 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
+    "test:e2e:agents": "playwright test --config=playwright.config.ts e2e/agents-dashboard.walkthrough.spec.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
@@ -62,6 +63,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260511.1",
     "@opennextjs/cloudflare": "^1.19.9",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^24",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19",

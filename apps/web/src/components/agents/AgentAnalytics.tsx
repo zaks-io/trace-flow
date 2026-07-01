@@ -10,9 +10,10 @@ import { cn } from '@/lib/utils';
 import { useRepoDirectory } from '@/hooks/useRepoDirectory';
 import { useAgentFilters } from './useAgentFilters';
 import { useAgentData } from './useAgentData';
-import { AGENT_SOURCES } from './types';
+import { AGENT_FILTER_SOURCES } from './types';
 import { MultiFilterDropdown } from './MultiFilterDropdown';
 import { AgentBentoGrid } from './AgentBentoGrid';
+import { AgentSourceStatusPanel } from './AgentSourceStatusPanel';
 import { resolveAttentionThreshold } from './contextHealth';
 import {
   hasLoadedAgentData,
@@ -20,6 +21,12 @@ import {
   resolveAgentMainView,
   shouldShowAgentEmptyState,
 } from './agentAnalyticsState';
+import {
+  buildAgentSourceStatusItems,
+  hasSyncedAgentSource,
+  resolveAgentEmptyStateCopy,
+  resolveAgentOrgTruthState,
+} from './sourceStatus';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -55,6 +62,7 @@ export function AgentAnalytics() {
     costDistribution,
     costByDepth,
     reviewUnitCosts,
+    sourceStatuses,
     topSessions,
     topSessionsLoading,
     notableTotal,
@@ -123,6 +131,7 @@ export function AgentAnalytics() {
   );
   const hasAnyLoadedData = hasLoadedAgentData({
     summary,
+    sourceStatuses,
     timeseries,
     contextHealth,
     failures,
@@ -136,6 +145,15 @@ export function AgentAnalytics() {
   });
   const failedSurfaceLabels =
     failedSurfaces.map((failure) => failure.label).join(', ') || 'one or more analytics sections';
+  const sourceStatusFailed = failedSurfaces.some((failure) => failure.id === 'sourceStatus');
+  const sourceStatusItems = useMemo(
+    () => buildAgentSourceStatusItems(sourceStatuses),
+    [sourceStatuses],
+  );
+  const hasSyncedSource = hasSyncedAgentSource(sourceStatusItems);
+  const emptyStateCopy = resolveAgentEmptyStateCopy(
+    resolveAgentOrgTruthState({ hasFilters, hasSyncedSource }),
+  );
   // A summary FAILURE leaves `summary` null without meaning the workspace is empty. The bento grid
   // needs a non-null summary, so it still can't render — but the empty state would lie ("No agent
   // activity yet") when other surfaces loaded and the toolbar already explains the summary failure.
@@ -172,7 +190,7 @@ export function AgentAnalytics() {
         <MultiFilterDropdown
           label="Source"
           values={sources}
-          options={[...AGENT_SOURCES]}
+          options={[...AGENT_FILTER_SOURCES]}
           onToggle={toggleSource}
           onClear={() => sources.forEach(toggleSource)}
         />
@@ -224,6 +242,10 @@ export function AgentAnalytics() {
         </div>
       )}
 
+      {mainView !== 'loading' && mainView !== 'error' && !sourceStatusFailed && (
+        <AgentSourceStatusPanel items={sourceStatusItems} />
+      )}
+
       {mainView === 'loading' ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -233,15 +255,10 @@ export function AgentAnalytics() {
         <div className="flex flex-col items-center gap-4 rounded-xl bg-card/40 px-6 py-16 text-center">
           <Bot className="h-10 w-10 text-muted-foreground/40" />
           <div className="space-y-2">
-            <p className="text-sm font-medium text-foreground">
-              {hasFilters ? 'No agent activity for these filters' : 'No collector activity yet'}
-            </p>
-            <p className="max-w-md text-sm text-muted-foreground">
-              Agent sessions appear here after the Trace Flow CLI syncs Claude or Codex transcripts
-              for this time range.
-            </p>
+            <p className="text-sm font-medium text-foreground">{emptyStateCopy.title}</p>
+            <p className="max-w-md text-sm text-muted-foreground">{emptyStateCopy.description}</p>
           </div>
-          {!hasFilters ? (
+          {emptyStateCopy.showCliCta ? (
             <>
               <pre className="max-w-full overflow-x-auto rounded-lg bg-background/80 p-4 text-left text-xs text-foreground">
                 <code>{`curl --proto '=https' --tlsv1.2 -sSf https://trace-flow.dev/install.sh | sh
@@ -250,10 +267,10 @@ trace-flow sync --since 7d`}</code>
               </pre>
               <div className="flex flex-wrap justify-center gap-3">
                 <a
-                  href="/install.sh"
+                  href="https://trace-flow.dev/install.sh"
                   className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                 >
-                  Download CLI installer
+                  Production CLI installer
                 </a>
                 <Link
                   href="/docs"

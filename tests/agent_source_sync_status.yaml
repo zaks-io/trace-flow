@@ -1,0 +1,24 @@
+# Fixtures: fixtures/agent_message_facts.ndjson + fixtures/agent_tool_event_facts.ndjson,
+# materialized into agent_session_summaries. This is all-retention sync metadata for the
+# authenticated org; it intentionally reports server-ingested timestamps, not local client logs.
+
+- name: source_sync_status_groups_by_source_and_collector
+  description: exposes last ingested/successful sync metadata for a synced CLI source
+  expected_http_status: 200
+  parameters: org_id=org_cov
+  expected_result: |
+    {"source":"claude","collector_id":"col_cov","last_ingested_ms":1779278400000,"last_successful_sync_ms":1779278400000,"last_event_ms":1779271200000,"message_count":3,"session_count":1,"tool_event_count":0}
+    {"source":"codex","collector_id":"col_cov","last_ingested_ms":1779278400000,"last_successful_sync_ms":1779278400000,"last_event_ms":1779271200000,"message_count":1,"session_count":1,"tool_event_count":0}
+
+- name: source_sync_status_respects_source_filter
+  description: sources=codex narrows metadata to the requested live source
+  expected_http_status: 200
+  parameters: org_id=org_cov&sources=codex
+  expected_result: |
+    {"source":"codex","collector_id":"col_cov","last_ingested_ms":1779278400000,"last_successful_sync_ms":1779278400000,"last_event_ms":1779271200000,"message_count":1,"session_count":1,"tool_event_count":0}
+
+- name: source_sync_status_empty_for_never_synced_org
+  description: a new org with no agent rows returns no metadata
+  expected_http_status: 200
+  parameters: org_id=org_never_synced
+  expected_result: ''

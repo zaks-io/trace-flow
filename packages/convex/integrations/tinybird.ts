@@ -59,6 +59,7 @@ export const WEB_TINYBIRD_PIPES = [
   'agent_tool_period_delta',
   'agent_repo_directory',
   'agent_review_unit_costs',
+  'agent_source_sync_status',
 ] as const;
 
 export const MCP_TINYBIRD_PIPES = [

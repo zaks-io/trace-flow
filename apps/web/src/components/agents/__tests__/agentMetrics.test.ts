@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   AGENT_METRICS,
+  AGENT_FILTER_SOURCES,
+  AGENT_SOURCES,
   AGENT_METRIC_CONFIG,
   AGENT_METRIC_KEYS,
   AGENT_METRIC_VALUE_KIND,
@@ -8,6 +10,11 @@ import {
 } from '../types';
 
 describe('agent hero-chart metric/stack behavior', () => {
+  it('keeps Cursor visible only as unsupported, not as a live source filter', () => {
+    expect(AGENT_SOURCES).toContain('cursor');
+    expect(AGENT_FILTER_SOURCES).toEqual(['claude', 'codex']);
+  });
+
   it('defaults the switcher to the estimated cost metric', () => {
     expect(AGENT_METRICS[0]).toBe('cost');
   });

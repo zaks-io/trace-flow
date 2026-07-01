@@ -1,8 +1,10 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { formatCurrency, formatDuration, formatNumber } from '@/lib/format';
 import type { AgentSessionRow } from './types';
+
+export const SESSION_TABLE_PAGE_SIZE = 10;
 
 /**
  * The drill-down behind "Where spend concentrates": the actual priciest conversations. A repo +
@@ -20,12 +22,14 @@ export function SpendConcentrationDetail({
   loading: boolean;
   labelFor: (value: string) => string;
 }) {
+  const [page, setPage] = useState(0);
   const totalCost = useMemo(() => sessions.reduce((sum, s) => sum + s.cost_usd, 0), [sessions]);
   const byRepo = useMemo(
     () => rollup(sessions, (s) => repoLabel(s.repo_fingerprint, labelFor)),
     [sessions, labelFor],
   );
   const byModel = useMemo(() => rollup(sessions, (s) => s.model || 'unknown'), [sessions]);
+  const pagination = paginateAgentSessions(sessions, page);
 
   if (loading) {
     return (
@@ -48,9 +52,36 @@ export function SpendConcentrationDetail({
       </div>
 
       <div>
-        <p className="mb-2 text-xs font-medium text-muted-foreground">
-          Priciest {formatNumber(sessions.length)} conversations
-        </p>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            Priciest {formatNumber(sessions.length)} conversations
+          </p>
+          <div
+            aria-label="Agent session pagination"
+            className="flex items-center gap-2 text-xs text-muted-foreground"
+          >
+            <span>
+              {formatNumber(pagination.start + 1)}-{formatNumber(pagination.end)} of{' '}
+              {formatNumber(sessions.length)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={pagination.pageIndex === 0}
+              className="rounded-md border border-border/60 px-2 py-1 transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(pagination.pageCount - 1, p + 1))}
+              disabled={pagination.pageIndex >= pagination.pageCount - 1}
+              className="rounded-md border border-border/60 px-2 py-1 transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="text-muted-foreground">
@@ -64,7 +95,7 @@ export function SpendConcentrationDetail({
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s) => (
+              {pagination.rows.map((s) => (
                 <tr key={s.session_pk} className="border-b border-border/30 last:border-0">
                   <Td className="text-right font-mono font-semibold tabular-nums text-foreground">
                     {formatCurrency(s.cost_usd)}
@@ -93,6 +124,25 @@ export function SpendConcentrationDetail({
       </div>
     </div>
   );
+}
+
+export function paginateAgentSessions(
+  sessions: readonly AgentSessionRow[],
+  pageIndex: number,
+  pageSize = SESSION_TABLE_PAGE_SIZE,
+) {
+  const pageCount = Math.max(1, Math.ceil(sessions.length / pageSize));
+  const safePageIndex = Math.min(Math.max(0, pageIndex), pageCount - 1);
+  const start = safePageIndex * pageSize;
+  const end = Math.min(start + pageSize, sessions.length);
+
+  return {
+    rows: sessions.slice(start, end),
+    pageIndex: safePageIndex,
+    pageCount,
+    start,
+    end,
+  };
 }
 
 interface RollupRow {

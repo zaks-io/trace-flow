@@ -1,22 +1,26 @@
 type LoadedAgentData = {
   summary: unknown | null;
+  sourceStatuses?: readonly unknown[];
   timeseries: readonly unknown[];
   contextHealth: unknown | null;
   failures: readonly unknown[];
   deltas: readonly unknown[];
 };
 
-type LoadedAgentDetailData = Omit<LoadedAgentData, 'summary'>;
+type LoadedAgentDetailData = Omit<LoadedAgentData, 'summary' | 'sourceStatuses'>;
 
 export function hasLoadedAgentData({
   summary,
+  sourceStatuses = [],
   timeseries,
   contextHealth,
   failures,
   deltas,
 }: LoadedAgentData) {
   return (
-    summary != null || hasLoadedAgentDetailData({ timeseries, contextHealth, failures, deltas })
+    summary != null ||
+    sourceStatuses.length > 0 ||
+    hasLoadedAgentDetailData({ timeseries, contextHealth, failures, deltas })
   );
 }
 
