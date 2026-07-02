@@ -1,6 +1,6 @@
 # AGENTS.md
 
-LLM observability platform on Cloudflare Workers. Six workers: **Proxy** (streaming LLM capture), **Proxy Consumer** (LLM queue to Tinybird), **Agent Ingest** (collector fact intake), **Agent Consumer** (agent queue to Tinybird), **API** (R2 body retrieval), **Web** (Next.js dashboard via OpenNext).
+LLM observability platform on Cloudflare Workers. Seven workers: **Proxy** (streaming LLM capture), **Proxy Consumer** (LLM queue to Tinybird), **Agent Ingest** (collector fact intake), **Agent Consumer** (agent queue to Tinybird), **Pipes API** (Tinybird Pipe forwarding), **Raw API** (R2 Body Object retrieval), **Web** (Next.js dashboard via OpenNext).
 
 Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web/public/agents.md)
 
@@ -13,7 +13,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 3. `TransformStream` captures response chunks while streaming back to client
 4. `c.executionCtx.waitUntil()` defers R2 storage + queue enqueue (non-blocking)
 5. Proxy Consumer processes queue batches → sends OTel traces to Tinybird
-6. Web fetches trace metadata from Tinybird, bodies from API worker
+6. Web fetches trace metadata through Pipes API, bodies through Raw API
 
 ### Agent Conversation Path
 
@@ -46,7 +46,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 1. Frontend requests JWT from Convex action (`api.tinybird.generateToken`)
 2. Convex signs JWT with admin token (HS256), includes `fixed_params` (api_keys, retention_days)
-3. Frontend calls Tinybird APIs directly with JWT — no backend proxy needed
+3. Frontend calls Pipes API with the JWT; Pipes API forwards it to Tinybird for validation
 4. Tokens expire after 10 min, 403 triggers auto-refresh
 5. Admin token never exposed to frontend
 
@@ -77,6 +77,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - **Queue consumer**: Must call `message.ack()` after processing
 - **OTel**: Proxy Consumer uses `@microlabs/otel-cf-workers`
 - **Agent ingest auth**: Collector Credentials are separate from API keys; they live in Convex, sync to `COLLECTOR_CREDS`, and cannot call the Proxy
+- **Read-side secret boundary**: `apps/pipes-api` forwards Convex-minted Pipe Tokens and never binds raw-object credentials or `TINYBIRD_ADMIN_TOKEN`; `apps/api` reads Body Objects and never contains Tinybird Pipe forwarding.
 - **Agent fact ledger**: `AGENT_FACT_BATCHER` dedupes by stable fact identity before Tinybird insert; same-key changed facts become repair signals
 
 ## Deployment

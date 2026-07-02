@@ -1,0 +1,30 @@
+{
+  "name": "@trace-flow/pipes-api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:dev": "wrangler deploy",
+    "deploy:preview": "wrangler deploy --env preview",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@sentry/cloudflare": "^10.53.1",
+    "@trace-flow/logging": "workspace:*",
+    "@trace-flow/utils": "workspace:*",
+    "hono": "^4.12.18"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260511.1",
+    "@types/node": "^22.13.5",
+    "@vitest/coverage-v8": "^4.1.6",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.6",
+    "wrangler": "^4.88.0"
+  }
+}

@@ -3,66 +3,7 @@ import { NextResponse } from 'next/server';
 import { applySecurityHeaders } from '@trace-flow/utils';
 import { auth0 } from '@/lib/auth0';
 import { clearAuthCookies } from '@/lib/auth-cookies';
-
-const PROD_CONNECT_SRC = [
-  "'self'",
-  'https://api.trace-flow.dev',
-  'https://*.convex.cloud',
-  'wss://*.convex.cloud',
-  'https://auth0.zaks.io',
-  'https://*.ingest.sentry.io',
-  'https://*.ingest.us.sentry.io',
-  'https://*.launchdarkly.com',
-  'https://clientstream.launchdarkly.com',
-  'https://events.launchdarkly.com',
-  'https://app.launchdarkly.com',
-];
-
-// Localhost origins are needed in dev for HMR websockets, dev server fetches,
-// and the local API/Convex/Tinybird workers running on 127.0.0.1/localhost ports.
-const DEV_CONNECT_SRC = ['http://localhost:*', 'ws://localhost:*', 'http://127.0.0.1:*'];
-
-// Turn a Sentry browser DSN into the CSP `report-uri` endpoint.
-// DSN:    https://{key}@{host}/{projectId}
-// Report: https://{host}/api/{projectId}/security/?sentry_key={key}
-function buildSentryReportUri(dsn: string | undefined): string | null {
-  if (!dsn) return null;
-  try {
-    const url = new URL(dsn);
-    const projectId = url.pathname.replace(/^\//, '');
-    const key = url.username;
-    if (!projectId || !key) return null;
-    return `${url.protocol}//${url.host}/api/${projectId}/security/?sentry_key=${key}`;
-  } catch {
-    return null;
-  }
-}
-
-function buildCsp(nonce: string, isDev: boolean, reportUri: string | null): string {
-  const connectSrc = isDev ? [...PROD_CONNECT_SRC, ...DEV_CONNECT_SRC] : PROD_CONNECT_SRC;
-
-  const directives = [
-    "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' blob: data:",
-    "font-src 'self'",
-    `connect-src ${connectSrc.join(' ')}`,
-    "worker-src 'self' blob:",
-    "frame-src 'self' https://auth0.zaks.io",
-    "frame-ancestors 'none'",
-    "form-action 'self' https://auth0.zaks.io",
-    "base-uri 'self'",
-    "object-src 'none'",
-  ];
-
-  if (reportUri) directives.push(`report-uri ${reportUri}`);
-
-  return directives.join('; ');
-}
-
-// Rollout is Report-Only first. Flip to 'Content-Security-Policy' to enforce.
-const CSP_HEADER_NAME = 'Content-Security-Policy-Report-Only';
+import { buildCsp, buildSentryReportUri, CSP_HEADER_NAME, readOrigin } from '@/lib/csp';
 
 function applyResponseSecurityHeaders(response: NextResponse, csp: string): void {
   applySecurityHeaders(response.headers);
@@ -74,7 +15,11 @@ export async function middleware(request: NextRequest) {
 
   const nonce = btoa(crypto.randomUUID());
   const reportUri = buildSentryReportUri(process.env.NEXT_PUBLIC_SENTRY_DSN);
-  const csp = buildCsp(nonce, process.env.NODE_ENV === 'development', reportUri);
+  const csp = buildCsp(nonce, process.env.NODE_ENV === 'development', reportUri, [
+    readOrigin(process.env.NEXT_PUBLIC_PIPES_API_URL) ?? '',
+    readOrigin(process.env.NEXT_PUBLIC_RAW_API_URL) ?? '',
+    readOrigin(process.env.NEXT_PUBLIC_API_URL) ?? '',
+  ]);
 
   // Mutate the request Headers so downstream Server Components can read the
   // nonce via `headers().get('x-nonce')` and apply it to inline scripts.

@@ -58,6 +58,7 @@ jobs:
               - 'packages/pricing/**'
             api:
               - 'apps/api/**'
+              - 'apps/pipes-api/**'
               - 'packages/types/**'
               - 'packages/logging/**'
               - 'packages/utils/**'
@@ -445,6 +446,8 @@ jobs:
   api:
     name: API Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
     needs: [changes]
     if: needs.changes.outputs.api == 'true' || needs.changes.outputs.root == 'true'
     steps:
@@ -470,16 +473,16 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Format check
-        run: bun prettier --check "apps/api/**/*.{ts,tsx,js,jsx,json}"
+        run: bun prettier --check "apps/{api,pipes-api}/**/*.{ts,tsx,js,jsx,json}"
 
       - name: Lint
-        run: bunx turbo run lint --filter=@trace-flow/api
+        run: bunx turbo run lint --filter=@trace-flow/api --filter=@trace-flow/pipes-api
 
       - name: Type check
-        run: bunx turbo run type-check --filter=@trace-flow/api
+        run: bunx turbo run type-check --filter=@trace-flow/api --filter=@trace-flow/pipes-api
 
       - name: Test
-        run: bunx turbo run test --filter=@trace-flow/api
+        run: bunx turbo run test --filter=@trace-flow/api --filter=@trace-flow/pipes-api
 
   web:
     name: Web Worker
@@ -534,6 +537,8 @@ jobs:
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
+          NEXT_PUBLIC_PIPES_API_URL: https://pipes.trace-flow.dev
+          NEXT_PUBLIC_RAW_API_URL: https://raw.trace-flow.dev
         run: bunx turbo run build --filter=@trace-flow/web
 
   pricing:

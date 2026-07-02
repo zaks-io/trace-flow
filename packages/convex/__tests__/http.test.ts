@@ -207,7 +207,7 @@ describe('convex/http.ts', () => {
   });
 
   describe('GET /mcp/authorize', () => {
-    it('redirects to Auth0 with signed state', async () => {
+    it('returns an HTML redirect to Auth0 with signed state', async () => {
       const app = createApp(deps);
       ctx.runQuery.mockResolvedValue({
         clientId: 'client-1',
@@ -225,10 +225,12 @@ describe('convex/http.ts', () => {
         ctx,
       );
 
-      expect(res.status).toBe(302);
-      expect(res.headers.get('Location')).toBe(
-        'https://test.auth0.com/authorize?state=signed-state-token',
-      );
+      // Must be a 200, not a 302: the consent form's CSP (`form-action 'self'`) blocks
+      // cross-origin redirects on the form-submission chain in Chrome.
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Location')).toBeNull();
+      const html = await res.text();
+      expect(html).toContain('https://test.auth0.com/authorize?state=signed-state-token');
       expect(deps.oauth.signState).toHaveBeenCalledWith({
         clientState: 'client-state',
         clientId: 'client-1',

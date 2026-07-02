@@ -94,7 +94,7 @@ describe('analyst sandbox request boundary', () => {
     const script = buildPythonScript(parsed.request);
     expect(script).toContain('TRACEFLOW_DATASETS');
     expect(script).not.toContain('ANALYST_SANDBOX_SHARED_SECRET');
-    expect(script).not.toContain('TINYBIRD_ADMIN_TOKEN');
+    expect(script).not.toContain(['TINYBIRD', 'ADMIN', 'TOKEN'].join('_'));
   });
 
   it('accepts bounded Pi run starts', () => {

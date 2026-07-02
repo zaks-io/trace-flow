@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { apiApp } from '../index';
+import { pipesApp } from '../index';
 
 function executionCtx() {
   return {
@@ -8,10 +8,10 @@ function executionCtx() {
   } as unknown as ExecutionContext;
 }
 
-describe('api CORS', () => {
-  it('allows browser tracing headers on production body preflights', async () => {
-    const res = await apiApp.fetch(
-      new Request('https://raw.trace-flow.dev/bodies/req_123', {
+describe('pipes API CORS', () => {
+  it('allows browser tracing headers on production pipe preflights', async () => {
+    const res = await pipesApp.fetch(
+      new Request('https://pipes.trace-flow.dev/v0/pipes/agent_usage_timeseries.json', {
         method: 'OPTIONS',
         headers: {
           Origin: 'https://trace-flow.dev',
