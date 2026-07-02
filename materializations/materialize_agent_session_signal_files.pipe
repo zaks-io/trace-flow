@@ -6,6 +6,7 @@ SQL >
     SELECT
         OrgId,
         repo_fingerprint,
+        toDate(EventAt) AS EventDate,
         session_pk,
         argMaxState(toString(source), EventAt) AS source,
         argMaxState(toString(repo_source), EventAt) AS repo_source,
@@ -55,7 +56,7 @@ SQL >
         uniqState(normalized_repo_path) AS UniqueFileCount,
         uniqStateIf('', 0) AS PullRequestLinkCount
     FROM agent_file_event_facts
-    GROUP BY OrgId, repo_fingerprint, session_pk
+    GROUP BY OrgId, repo_fingerprint, EventDate, session_pk
 
 TYPE MATERIALIZED
 DATASOURCE agent_session_signals

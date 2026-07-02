@@ -2,6 +2,40 @@ DESCRIPTION >
     Top runaway Agent Sessions from the session-grain signal read model. Requires
     org, repo, and bounded time-window filters; no raw fact table reads.
 
+NODE candidate_sessions
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        toDate(start_dt) AS start_date,
+        toDate(fromUnixTimestamp64Milli(greatest(start_ms, end_ms - 1))) AS end_date
+    SELECT
+        repo_fingerprint,
+        session_pk
+    FROM agent_session_signals
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND EventDate >= start_date
+        AND EventDate <= end_date
+        {% if defined(repos) %}
+        AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(repos) }}))), repo_fingerprint)
+        {% else %}
+            {% if defined(repo_fingerprint) %}
+            AND repo_fingerprint = {{ String(repo_fingerprint) }}
+            {% else %}
+            AND 0
+            {% end %}
+        {% end %}
+    GROUP BY repo_fingerprint, session_pk
+    HAVING maxMerge(LastEventAt) >= start_dt
+        AND maxMerge(LastEventAt) < end_dt
+
 NODE scoped_sessions
 SQL >
     %
@@ -70,7 +104,7 @@ SQL >
     FROM agent_session_signals
     WHERE OrgId = {{ String(org_id, '') }}
         {% if defined(repos) %}
-        AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+        AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(repos) }}))), repo_fingerprint)
         {% else %}
             {% if defined(repo_fingerprint) %}
             AND repo_fingerprint = {{ String(repo_fingerprint) }}
@@ -78,12 +112,14 @@ SQL >
             AND 0
             {% end %}
         {% end %}
+        AND (repo_fingerprint, session_pk) IN (SELECT repo_fingerprint, session_pk FROM candidate_sessions)
     GROUP BY repo_fingerprint, session_pk
+    -- Runaway scoring is message-cost oriented; tool/file/PR-only sessions have no model-call denominator.
     HAVING message_count > 0
         AND last_event_at >= start_dt
         AND last_event_at < end_dt
         {% if defined(sources) %}
-        AND source IN splitByChar(',', {{ String(sources) }})
+        AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(sources) }}))), source)
         {% end %}
 
 NODE scored

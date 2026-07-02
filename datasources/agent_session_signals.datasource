@@ -1,12 +1,12 @@
 DESCRIPTION >
-    Incremental Agent Session optimization-signal serving table. One aggregate
-    state row per organization, Repo, and Agent Session keeps runaway-session,
-    cache-pressure, tool-failure, file-touch, and PR-link reads off raw fact
-    tables while preserving replay from retained facts.
+    Incremental Agent Session optimization-signal serving table. Event-date
+    buckets prune bounded reads while endpoints merge back to one row per
+    organization, Repo, and Agent Session without scanning raw fact tables.
 
 SCHEMA >
     `OrgId` String,
     `repo_fingerprint` String,
+    `EventDate` Date,
     `session_pk` String,
     `source` AggregateFunction(argMax, String, DateTime64(3)),
     `repo_source` AggregateFunction(argMax, String, DateTime64(3)),
@@ -57,7 +57,59 @@ SCHEMA >
     `PullRequestLinkCount` AggregateFunction(uniq, String)
 
 ENGINE "AggregatingMergeTree"
-ENGINE_SORTING_KEY "OrgId, repo_fingerprint, session_pk"
+ENGINE_SORTING_KEY "OrgId, repo_fingerprint, EventDate, session_pk"
+ENGINE_PARTITION_KEY "toYYYYMM(EventDate)"
 
 FORWARD_QUERY >
-    SELECT *
+    SELECT
+        OrgId,
+        repo_fingerprint,
+        toDate('1970-01-01') AS EventDate,
+        session_pk,
+        source,
+        repo_source,
+        model,
+        parser_version,
+        StartedAt,
+        LastEventAt,
+        VendorStartedAt,
+        IngestedAt,
+        MessageCount,
+        InputTokens,
+        OutputTokens,
+        CacheReadTokens,
+        CacheCreationTokens,
+        ReasoningTokens,
+        PricedMessageCount,
+        TokenCoveredMessageCount,
+        CacheCoveredMessageCount,
+        MissingModelMessageCount,
+        MissingSourceFactCount,
+        CostUsd,
+        ToolEventCount,
+        ToolSuccessCount,
+        ToolFailureCount,
+        ToolUnknownCount,
+        NavigationToolCount,
+        SearchToolCount,
+        NavigationHintStructuredCount,
+        NavigationHintUnknownCount,
+        MissingFileFailureCount,
+        ReadDirectoryFailureCount,
+        EditBeforeReadFailureCount,
+        StaleFileBeforeEditFailureCount,
+        ExternalSchemaValidationFailureCount,
+        RuntimeEnvMismatchFailureCount,
+        ToolInputValidationFailureCount,
+        HumanOrPolicyRejectionFailureCount,
+        WrongToolNameFailureCount,
+        OversizedReadFailureCount,
+        OtherFailureCount,
+        ClassifiedErrorCategoryFailureCount,
+        UnknownErrorCategoryFailureCount,
+        FileTouchCount,
+        ReadFileTouchCount,
+        EditFileTouchCount,
+        WriteFileTouchCount,
+        UniqueFileCount,
+        PullRequestLinkCount

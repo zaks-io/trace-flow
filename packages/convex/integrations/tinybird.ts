@@ -227,6 +227,7 @@ export const AGENT_ORG_DATASOURCES = [
   'agent_repositories',
   'agent_review_unit_attributions',
   'agent_session_file_signals',
+  'agent_session_signals',
   'agent_session_summaries',
   'agent_tool_event_facts',
   'agent_tool_usage_daily',

@@ -22,7 +22,9 @@ bun run tinybird:agent-signal:perf --local
 
 Representative fixture window:
 `org_session_signals`, `repo_session_signals`, `2026-05-20T00:00:00Z` through
-`2026-05-22T00:00:00Z`. The endpoint finalizes aggregate states from
-`agent_session_signals`; it does not scan `agent_message_facts`,
+`2026-05-22T00:00:00Z`. The endpoint first prunes
+`agent_session_signals` by `EventDate` to find candidate sessions in the bounded
+window, then merges those sessions back to session grain for final scoring. It
+does not scan `agent_message_facts`,
 `agent_tool_event_facts`, `agent_file_event_facts`, or
 `agent_pull_request_facts` on the read path.
