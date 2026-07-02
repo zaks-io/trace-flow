@@ -23,20 +23,20 @@ describe('hashString', () => {
 describe('buildCacheKey', () => {
   it('should build a deterministic cache key', () => {
     const params = new URLSearchParams({ start: '100', end: '200' });
-    const key = buildCacheKey('traces_list', 'abc123', 7, params);
-    expect(key).toBe('cache:v1:traces_list:abc123:7:end=200&start=100');
+    const key = buildCacheKey('traces_list', 'abc123', params);
+    expect(key).toBe('cache:v2:traces_list:abc123:end=200&start=100');
   });
 
   it('should sort params alphabetically', () => {
     const params = new URLSearchParams({ z: '1', a: '2', m: '3' });
-    const key = buildCacheKey('pipe', 'hash', 30, params);
-    expect(key).toBe('cache:v1:pipe:hash:30:a=2&m=3&z=1');
+    const key = buildCacheKey('pipe', 'hash', params);
+    expect(key).toBe('cache:v2:pipe:hash:a=2&m=3&z=1');
   });
 
   it('should exclude token param', () => {
     const params = new URLSearchParams({ token: 'secret', a: '1' });
-    const key = buildCacheKey('pipe', 'hash', 7, params);
-    expect(key).toBe('cache:v1:pipe:hash:7:a=1');
+    const key = buildCacheKey('pipe', 'hash', params);
+    expect(key).toBe('cache:v2:pipe:hash:a=1');
   });
 
   it('should exclude row-security params from the query component', () => {
@@ -46,14 +46,14 @@ describe('buildCacheKey', () => {
       retention_days: '365',
       start: '100',
     });
-    const key = buildCacheKey('pipe', 'verified-access', 30, params);
-    expect(key).toBe('cache:v1:pipe:verified-access:30:start=100');
+    const key = buildCacheKey('pipe', 'verified-access', params);
+    expect(key).toBe('cache:v2:pipe:verified-access:start=100');
   });
 
   it('should handle empty params', () => {
     const params = new URLSearchParams();
-    const key = buildCacheKey('pipe', 'hash', 7, params);
-    expect(key).toBe('cache:v1:pipe:hash:7:');
+    const key = buildCacheKey('pipe', 'hash', params);
+    expect(key).toBe('cache:v2:pipe:hash:');
   });
 });
 

@@ -22,6 +22,7 @@ describe('body helpers', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('formats combined stored bodies for display', () => {
@@ -37,6 +38,8 @@ describe('body helpers', () => {
   });
 
   it('returns null when the combined body payload is missing', async () => {
+    vi.stubEnv('NEXT_PUBLIC_RAW_API_URL', undefined);
+    vi.stubEnv('NEXT_PUBLIC_API_URL', undefined);
     vi.mocked(fetch).mockResolvedValue(
       new Response(null, {
         status: 404,
@@ -47,6 +50,42 @@ describe('body helpers', () => {
 
     expect(result).toBeNull();
     expect(fetch).toHaveBeenCalledWith('http://localhost:8788/bodies/req_123', {
+      headers: { Authorization: 'Bearer token_123' },
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('uses NEXT_PUBLIC_RAW_API_URL for Body Object reads when configured', async () => {
+    vi.stubEnv('NEXT_PUBLIC_RAW_API_URL', 'https://raw.trace-flow.dev');
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://legacy-api.trace-flow.dev');
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ requestBody: null, responseBody: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await fetchStoredBodies('req_123', 'token_123', new AbortController().signal);
+
+    expect(fetch).toHaveBeenCalledWith('https://raw.trace-flow.dev/bodies/req_123', {
+      headers: { Authorization: 'Bearer token_123' },
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('falls back to NEXT_PUBLIC_API_URL for Body Object reads', async () => {
+    vi.stubEnv('NEXT_PUBLIC_RAW_API_URL', undefined);
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://legacy-api.trace-flow.dev');
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ requestBody: null, responseBody: null }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await fetchStoredBodies('req_123', 'token_123', new AbortController().signal);
+
+    expect(fetch).toHaveBeenCalledWith('https://legacy-api.trace-flow.dev/bodies/req_123', {
       headers: { Authorization: 'Bearer token_123' },
       signal: expect.any(AbortSignal),
     });

@@ -148,7 +148,9 @@ jobs:
           AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
           AUTH0_CLIENT_ID: ${{ vars.AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
-          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_API_URL: https://raw.trace-flow.dev
+          NEXT_PUBLIC_PIPES_API_URL: https://pipes.trace-flow.dev
+          NEXT_PUBLIC_RAW_API_URL: https://raw.trace-flow.dev
           NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
           NEXT_PUBLIC_SENTRY_ENVIRONMENT: prod
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -263,7 +265,7 @@ jobs:
           packageManager: bun
 
   deploy-api:
-    name: Deploy API Worker
+    name: Deploy Read API Workers
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [ci]
     environment: Production
@@ -281,12 +283,21 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Deploy API Worker
+      - name: Deploy Raw API Worker
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/api
+          command: deploy --env production
+          packageManager: bun
+
+      - name: Deploy Pipes API Worker
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/pipes-api
           command: deploy --env production
           packageManager: bun
 

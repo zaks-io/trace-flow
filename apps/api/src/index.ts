@@ -6,15 +6,11 @@ import { applySecurityHeaders } from '@trace-flow/utils';
 import type { SubscriptionKVData } from '@trace-flow/types';
 import { readBearerToken, verifyBodyAccessToken } from './body-access-token';
 import { getStoredBodies, isBodyVisible } from './bodies';
-import { tinybirdProxy } from './tinybird-proxy';
 
 interface Env {
   STORAGE: R2Bucket;
   API_KEYS: KVNamespace;
-  TINYBIRD_API_URL: string;
-  TINYBIRD_ADMIN_TOKEN: string;
   BODIES_LIMITER: RateLimit;
-  PIPES_LIMITER: RateLimit;
   AXIOM_TOKEN?: string;
   AXIOM_DATASET?: string;
   AXIOM_DOMAIN?: string;
@@ -30,9 +26,10 @@ interface Variables {
   logger: Logger;
 }
 
-const PRODUCTION_ORIGINS = [
-  'https://trace-flow.dev',
+const PRODUCTION_ORIGINS = ['https://trace-flow.dev'];
+const NON_PROD_ORIGINS = [
   'https://trace-flow-web-dev.isaac-a46.workers.dev',
+  'https://trace-flow-web-preview.isaac-a46.workers.dev',
 ];
 
 const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
@@ -42,7 +39,9 @@ export const apiApp = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 apiApp.use('*', async (c, next) => {
   const isDev = c.env.SENTRY_ENVIRONMENT !== 'prod';
-  const allowed = isDev ? [...PRODUCTION_ORIGINS, ...DEV_ORIGINS] : PRODUCTION_ORIGINS;
+  const allowed = isDev
+    ? [...PRODUCTION_ORIGINS, ...NON_PROD_ORIGINS, ...DEV_ORIGINS]
+    : PRODUCTION_ORIGINS;
   const mw = cors({
     origin: (origin) => (allowed.includes(origin) ? origin : null),
     allowMethods: ['GET', 'OPTIONS'],
@@ -59,7 +58,7 @@ apiApp.use('*', async (c, next) => {
 
 apiApp.use('*', async (c, next) => {
   const logger = createWorkerLogger({
-    service: 'api',
+    service: 'raw-api',
     request: c.req.raw,
     axiom: axiomConfigFromEnv(c.env),
     context: {
@@ -70,7 +69,7 @@ apiApp.use('*', async (c, next) => {
   const start = Date.now();
   await next();
   if (c.req.method !== 'OPTIONS') {
-    logger.info('api.request_complete', {
+    logger.info('raw_api.request_complete', {
       status: c.res.status,
       latencyMs: Date.now() - start,
     });
@@ -79,8 +78,6 @@ apiApp.use('*', async (c, next) => {
 });
 
 apiApp.get('/healthz', (c) => c.json({ status: 'ok' }));
-
-apiApp.route('/', tinybirdProxy);
 
 apiApp.get('/bodies/:requestId', async (c) => {
   const logger = c.get('logger');

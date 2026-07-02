@@ -125,7 +125,9 @@ jobs:
         run: bunx turbo run build --filter=@trace-flow/web && cd apps/web && bunx opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_CONVEX_URL: ${{ needs.deploy-convex.outputs.convex_url }}
-          NEXT_PUBLIC_API_URL: https://trace-flow-api-preview.isaac-a46.workers.dev
+          NEXT_PUBLIC_API_URL: https://trace-flow-raw-api-preview.isaac-a46.workers.dev
+          NEXT_PUBLIC_PIPES_API_URL: https://trace-flow-pipes-api-preview.isaac-a46.workers.dev
+          NEXT_PUBLIC_RAW_API_URL: https://trace-flow-raw-api-preview.isaac-a46.workers.dev
           NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
           NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
           NEXT_PUBLIC_TINYBIRD_API_URL: ${{ vars.NEXT_PUBLIC_TINYBIRD_API_URL }}
@@ -159,7 +161,8 @@ jobs:
             | Service | URL |
             |---------|-----|
             | Web | https://trace-flow-web-preview.isaac-a46.workers.dev |
-            | API | https://trace-flow-api-preview.isaac-a46.workers.dev |
+            | Pipes API | https://trace-flow-pipes-api-preview.isaac-a46.workers.dev |
+            | Raw API | https://trace-flow-raw-api-preview.isaac-a46.workers.dev |
             | Proxy | https://trace-flow-proxy-preview.isaac-a46.workers.dev |
             | Agent Ingest | https://trace-flow-agent-ingest-preview.isaac-a46.workers.dev |
             | Analyst Sandbox | https://trace-flow-analyst-sandbox-preview.isaac-a46.workers.dev |

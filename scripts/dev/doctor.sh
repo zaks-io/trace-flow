@@ -35,6 +35,7 @@ for path in \
   apps/proxy/.dev.vars \
   apps/proxy-consumer/.dev.vars \
   apps/api/.dev.vars \
+  apps/pipes-api/.dev.vars \
   apps/agent-ingest/.dev.vars \
   apps/agent-consumer/.dev.vars \
   apps/web/.env.local

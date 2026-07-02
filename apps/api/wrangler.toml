@@ -1,4 +1,4 @@
-name = "trace-flow-api-dev"
+name = "trace-flow-raw-api-dev"
 main = "src/index.ts"
 compatibility_date = "2024-11-27"
 compatibility_flags = ["nodejs_compat", "no_nodejs_compat_v2"]
@@ -16,11 +16,10 @@ enabled = true
 [version_metadata]
 binding = "CF_VERSION_METADATA"
 
-# Secrets: TINYBIRD_ADMIN_TOKEN, AXIOM_TOKEN, BODY_ENCRYPTION_ROOT_KEY, BODY_ACCESS_JWT_SECRET
+# Secrets: AXIOM_TOKEN, BODY_ENCRYPTION_ROOT_KEY, BODY_ACCESS_JWT_SECRET
 
 [vars]
 SENTRY_ENVIRONMENT = "development"
-TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
 BODY_ENCRYPTION_KEY_ID = "v1"
 
@@ -38,14 +37,8 @@ name = "BODIES_LIMITER"
 namespace_id = "2003"
 simple = { limit = 120, period = 60 }
 
-# Per-user rate limit on Tinybird proxy queries
-[[ratelimits]]
-name = "PIPES_LIMITER"
-namespace_id = "2004"
-simple = { limit = 240, period = 60 }
-
 [env.production]
-name = "trace-flow-api"
+name = "trace-flow-raw-api"
 workers_dev = false
 
 [env.production.version_metadata]
@@ -53,12 +46,11 @@ binding = "CF_VERSION_METADATA"
 
 [env.production.vars]
 SENTRY_ENVIRONMENT = "prod"
-TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
 BODY_ENCRYPTION_KEY_ID = "v1"
 
 [[env.production.routes]]
-pattern = "api.trace-flow.dev/*"
+pattern = "raw.trace-flow.dev/*"
 zone_name = "trace-flow.dev"
 
 [[env.production.r2_buckets]]
@@ -74,20 +66,14 @@ name = "BODIES_LIMITER"
 namespace_id = "2003"
 simple = { limit = 120, period = 60 }
 
-[[env.production.ratelimits]]
-name = "PIPES_LIMITER"
-namespace_id = "2004"
-simple = { limit = 240, period = 60 }
-
 [env.preview]
-name = "trace-flow-api-preview"
+name = "trace-flow-raw-api-preview"
 
 [env.preview.version_metadata]
 binding = "CF_VERSION_METADATA"
 
 [env.preview.vars]
 SENTRY_ENVIRONMENT = "preview"
-TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
 BODY_ENCRYPTION_KEY_ID = "v1"
 
@@ -103,8 +89,3 @@ id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 name = "BODIES_LIMITER"
 namespace_id = "2003"
 simple = { limit = 120, period = 60 }
-
-[[env.preview.ratelimits]]
-name = "PIPES_LIMITER"
-namespace_id = "2004"
-simple = { limit = 240, period = 60 }

@@ -27,7 +27,8 @@ For agent workflow or Linear work, also read:
 | --------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `apps/proxy`          | Edge LLM gateway. Handles provider routing, stream capture, R2 writes, and queue enqueue. | Provider proxying, streaming, capture, billing enforcement, body omission.        |
 | `apps/proxy-consumer` | Queue consumer and durable batching for trace ingestion into Tinybird.                    | Queue delivery, OpenTelemetry rows, Tinybird writes, batch retries, DLQ behavior. |
-| `apps/api`            | Authenticated API for body retrieval and scoped data access.                              | R2 body reads, API auth, JWT boundaries, dashboard API calls.                     |
+| `apps/api`            | Raw API Worker for authenticated Body Object retrieval.                                   | R2 body reads, Body Access Token auth, retention checks.                          |
+| `apps/pipes-api`      | Pipes API Worker for Tinybird Pipe passthrough.                                           | Tinybird Pipe forwarding, Pipe Token CORS/cache/rate-limit behavior.              |
 | `apps/web`            | Next.js dashboard on OpenNext/Workers.                                                    | UI, routes, dashboard data views, auth UX, docs pages.                            |
 | `apps/mcp`            | Cloudflare Worker MCP server for agent access to trace data.                              | MCP auth, tool calls, trace-read integration.                                     |
 | `apps/agent-ingest`   | Agent conversation ingest worker.                                                         | Local agent transcript upload, ingest validation, queue enqueue.                  |
@@ -119,6 +120,8 @@ path.
   `packages/convex` action/query.
 - Body retrieval: start in `apps/api`, then R2 key rules in `AGENTS.md` and
   body storage ADRs.
+- Tinybird Pipe forwarding: start in `apps/pipes-api`, then Convex token minting
+  in `packages/convex/integrations/tinybird.ts`.
 - Auth, orgs, billing, or Tinybird JWTs: start in `packages/convex`, then
   `specs/integrations/auth0.md`, `specs/features/stripe-billing.md`, and
   `docs/adr/0002-jwt-tinybird-auth.md`.

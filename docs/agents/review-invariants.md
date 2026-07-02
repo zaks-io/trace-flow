@@ -34,6 +34,9 @@ the skill's checklist when reviewing Trace Flow diffs or PRs.
 - JWT is signed in a Convex action with the admin token (HS256) and includes `fixed_params`.
 - The admin token must never reach the frontend. Tokens expire after 10 min; 403 triggers
   auto-refresh. Flag any path that exposes the admin token or signs tokens client-side.
+- Public read-side Workers are split by secret boundary: `apps/pipes-api` may forward Pipe
+  Tokens to Tinybird but must not bind R2/KV body credentials or `TINYBIRD_ADMIN_TOKEN`;
+  `apps/api` may read/decrypt Body Objects but must not contain Tinybird Pipe forwarding.
 - Dev only: `bunx convex dev --once`. Never `convex deploy` or mutate Convex env vars
   (`convex deploy` is hook-blocked).
 

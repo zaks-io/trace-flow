@@ -1,6 +1,8 @@
 # Read-Side Secret Boundaries
 
-Trace Flow's read side currently has one **API Worker** (`apps/api`) serving two different surfaces:
+Status: implemented by `apps/pipes-api` (Tinybird Pipe forwarding) and `apps/api` (Raw API Body Object retrieval).
+
+Before this split, Trace Flow's read side had one **API Worker** (`apps/api`) serving two different surfaces:
 
 - Body Object retrieval for the Web app.
 - Tinybird Pipe passthrough for dashboard analytics queries.

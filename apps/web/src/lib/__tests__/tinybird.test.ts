@@ -26,6 +26,7 @@ describe('fetchTinybirdPipe', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it('coalesces concurrent token requests for different pipes', async () => {
@@ -223,6 +224,36 @@ describe('fetchTinybirdPipe', () => {
     expect(generateWebReadToken).toHaveBeenCalledTimes(2);
     expect(mockFetchPipe).toHaveBeenLastCalledWith(
       expect.objectContaining({ pipe: 'agent_context_health', token: 'fresh-jwt' }),
+    );
+  });
+
+  it('uses NEXT_PUBLIC_PIPES_API_URL for pipe calls when configured', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PIPES_API_URL', 'https://pipes.trace-flow.dev');
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://legacy-api.trace-flow.dev');
+    const generateWebReadToken = vi.fn().mockResolvedValue(tokenResult('pipe-jwt'));
+
+    await fetchTinybirdPipe({
+      pipe: 'agent_usage_summary',
+      generateWebReadToken,
+    });
+
+    expect(mockFetchPipe).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://pipes.trace-flow.dev' }),
+    );
+  });
+
+  it('falls back to NEXT_PUBLIC_API_URL for pipe calls', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PIPES_API_URL', undefined);
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://legacy-api.trace-flow.dev');
+    const generateWebReadToken = vi.fn().mockResolvedValue(tokenResult('pipe-jwt'));
+
+    await fetchTinybirdPipe({
+      pipe: 'agent_usage_summary',
+      generateWebReadToken,
+    });
+
+    expect(mockFetchPipe).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://legacy-api.trace-flow.dev' }),
     );
   });
 });

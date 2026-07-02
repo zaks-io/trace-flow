@@ -81,7 +81,11 @@ export function clearTokenCache() {
 }
 
 function baseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+  return (
+    process.env.NEXT_PUBLIC_PIPES_API_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    'http://localhost:8788'
+  );
 }
 
 async function fetchOnce<T>(token: string, opts: FetchTinybirdPipeOptions<T>): Promise<T> {
