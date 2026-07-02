@@ -289,6 +289,8 @@ export interface CostTailRiskRow {
   cost_p95_usd: number;
   cost_p99_usd: number;
   cost_max_usd: number;
+  max_cost_trace_id: string | null;
+  max_cost_span_id: string | null;
   p99_p50_ratio: number | null;
 }
 
