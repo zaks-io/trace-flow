@@ -6,13 +6,12 @@ export async function hashString(input: string): Promise<string> {
   const hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray, (b) => b.toString(16).padStart(2, '0'))
     .join('')
-    .slice(0, 16);
+    .slice(0, 32);
 }
 
 export function buildCacheKey(
   pipe: string,
-  accessHash: string,
-  retentionDays: number,
+  tokenHash: string,
   searchParams: URLSearchParams,
 ): string {
   const filtered = [...searchParams.entries()]
@@ -23,7 +22,7 @@ export function buildCacheKey(
     .sort(([a], [b]) => a.localeCompare(b));
   const sorted = new URLSearchParams(filtered).toString();
 
-  return `cache:v1:${pipe}:${accessHash}:${retentionDays}:${sorted}`;
+  return `cache:v2:${pipe}:${tokenHash}:${sorted}`;
 }
 
 export function computeTTL(pipe: string, searchParams: URLSearchParams): number {

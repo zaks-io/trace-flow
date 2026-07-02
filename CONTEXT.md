@@ -70,8 +70,12 @@ _Avoid_: "Consumer" without the "Agent" qualifier.
 **AgentFactBatcher**:
 The Durable Object class (`apps/agent-consumer/src/fact-batcher.ts`) that owns cross-delivery dedupe for agent fact rows before Tinybird insert. Same-key changed facts are repair signals, not blind overwrites.
 
-**API Worker**:
-`apps/api`. Read-side worker for Body Object retrieval and Tinybird Pipe passthrough used by the Web app.
+**Pipes API Worker**:
+`apps/pipes-api`. Read-side worker for Tinybird Pipe passthrough used by the Web app. It forwards Convex-minted Pipe Tokens to Tinybird and does not bind raw-object credentials or `TINYBIRD_ADMIN_TOKEN`.
+_Avoid_: "API Worker" when discussing Body Object retrieval.
+
+**Raw API Worker**:
+`apps/api`. Read-side worker for Body Object retrieval used by the Web app. It binds Body Object storage/decryption/access-token material and does not contain Tinybird Pipe forwarding logic.
 _Avoid_: "backend".
 
 **Web**:
@@ -159,7 +163,7 @@ _Avoid_: "retention" when you mean what a Tier can see.
 The word **"dev"** is overloaded and has caused real confusion: a Worker named `*-dev` is not a deployed cloud environment, and "run the dev env" can mean two different data planes. These terms fix that. The split that matters is **control plane** (which Worker code runs, and _where_) vs **data plane** (which Convex deployment + Tinybird workspace the running Workers read and write).
 
 **Local Workers**:
-The five non-Web Workers run as local `wrangler dev` processes via `bun run dev:all` (`scripts/dev/workers.sh`): **Proxy**, **Proxy Consumer**, **API Worker**, **Agent Ingest**, and **Agent Consumer**. They run under their default top-level config, which uses `*-dev` names (`trace-flow-agent-ingest-dev`, etc.). The `*-dev` name is the **default/top-level wrangler config**, the code that runs locally; it is _not_ by itself a separately deployed cloud "dev" Worker. The other real deployed environments are `[env.production]` and, for some Workers, `[env.preview]`. `apps/agent-ingest` and `apps/agent-consumer` now have production env blocks, but production readiness still depends on the agent-analytics gates in `docs/guides/agent-conversation-analytics/ROADMAP.md`.
+The six non-Web Workers run as local `wrangler dev` processes via `bun run dev:all` (`scripts/dev/workers.sh`): **Proxy**, **Proxy Consumer**, **Raw API Worker**, **Pipes API Worker**, **Agent Ingest**, and **Agent Consumer**. They run under their default top-level config, which uses `*-dev` names (`trace-flow-agent-ingest-dev`, etc.). The `*-dev` name is the **default/top-level wrangler config**, the code that runs locally; it is _not_ by itself a separately deployed cloud "dev" Worker. The other real deployed environments are `[env.production]` and, for some Workers, `[env.preview]`. `apps/agent-ingest` and `apps/agent-consumer` now have production env blocks, but production readiness still depends on the agent-analytics gates in `docs/guides/agent-conversation-analytics/ROADMAP.md`.
 _Avoid_: saying "deploy to dev" or "the dev Workers" as if a cloud dev environment exists; it does not.
 
 **Cloud-Dev**:
@@ -182,14 +186,15 @@ route), so each is live at `https://<worker-name>.isaac-a46.workers.dev`. Produc
 unauthenticated request: a deployed Worker returns 401/403/400 (auth/validation), a missing one returns
 Cloudflare's 404.
 
-| Purpose                                                                               | Dev (deployed cloud `-dev` Worker)                                                                               | Production                                                                                               |
-| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Agent ingest (`POST /v1/ingest`) — collector egress target                            | `https://trace-flow-agent-ingest-dev.isaac-a46.workers.dev`                                                      | `https://collector.trace-flow.dev`                                                                       |
-| Agent consumer (queue → Tinybird)                                                     | `trace-flow-agent-consumer-dev` (queue consumer, no public route)                                                | `trace-flow-agent-consumer`                                                                              |
-| Web dashboard                                                                         | `https://trace-flow-web-dev.isaac-a46.workers.dev` (`/app/agents`)                                               | prod web has no custom route in `apps/web/wrangler.jsonc` — confirm the live prod host before citing one |
-| LLM proxy / gateway                                                                   | `https://trace-flow-proxy-dev.isaac-a46.workers.dev` (`/` → 401, live)                                           | `https://gateway.trace-flow.dev`                                                                         |
-| Body-retrieval API                                                                    | `https://trace-flow-api-dev.isaac-a46.workers.dev` (only `/bodies/*` is routed; `/` and `/health` 404 by design) | `https://api.trace-flow.dev`                                                                             |
-| Convex **site** origin (`/collector/authorize`, `/agent-ingest/compatibility-policy`) | `https://hardy-iguana-812.convex.site`                                                                           | `https://laudable-bison-427.convex.site`                                                                 |
+| Purpose                                                                               | Dev (deployed cloud `-dev` Worker)                                       | Production                                                                                               |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Agent ingest (`POST /v1/ingest`) — collector egress target                            | `https://trace-flow-agent-ingest-dev.isaac-a46.workers.dev`              | `https://collector.trace-flow.dev`                                                                       |
+| Agent consumer (queue → Tinybird)                                                     | `trace-flow-agent-consumer-dev` (queue consumer, no public route)        | `trace-flow-agent-consumer`                                                                              |
+| Web dashboard                                                                         | `https://trace-flow-web-dev.isaac-a46.workers.dev` (`/app/agents`)       | prod web has no custom route in `apps/web/wrangler.jsonc` — confirm the live prod host before citing one |
+| LLM proxy / gateway                                                                   | `https://trace-flow-proxy-dev.isaac-a46.workers.dev` (`/` → 401, live)   | `https://gateway.trace-flow.dev`                                                                         |
+| Tinybird Pipe API                                                                     | `https://trace-flow-pipes-api-dev.isaac-a46.workers.dev` (`/v0/pipes/*`) | `https://pipes.trace-flow.dev`                                                                           |
+| Body-retrieval Raw API                                                                | `https://trace-flow-raw-api-dev.isaac-a46.workers.dev` (`/bodies/*`)     | `https://raw.trace-flow.dev`                                                                             |
+| Convex **site** origin (`/collector/authorize`, `/agent-ingest/compatibility-policy`) | `https://hardy-iguana-812.convex.site`                                   | `https://laudable-bison-427.convex.site`                                                                 |
 
 **Collector env overrides** (CLI + desktop; `packages/collector-embedder/src/defaults.rs` bakes **production**,
 so reaching the cloud `-dev` target REQUIRES setting these): `TRACE_FLOW_INGEST_URL` = the dev ingest Worker
@@ -206,7 +211,7 @@ A named Tinybird query, e.g. `trace_detail.pipe`. Frontend calls Pipes via the T
 A Tinybird table, e.g. `otel_trace_spans.datasource`. Has an attached `_quarantine` datasource for schema-rejected rows.
 
 **Pipe Token**:
-Short-lived JWT (HS256, 10-minute TTL) signed by Convex with `fixed_params` for row-level read constraints. Proxied **LLM Request** pipes use `api_keys` and `retention_days`; agent-analytics pipes use organization scope; the separate **Provider Usage Tracking** feature adds user scope for user-private **Provider Usage Snapshots**.
+Short-lived JWT (HS256, 10-minute TTL) signed by Convex with `fixed_params` for row-level read constraints. Proxied **LLM Request** pipes use `api_keys` and `retention_days`; agent-analytics pipes use organization scope; the separate **Provider Usage Tracking** feature adds user scope for user-private **Provider Usage Snapshots**. The Web sends Pipe Tokens to the **Pipes API Worker**, which forwards them to Tinybird; Convex is the only Tinybird admin-token holder.
 _Avoid_: "user token", "JWT" (too generic).
 
 **Admin Token**:
@@ -391,7 +396,7 @@ _Avoid_: conflating with **StartedAt**.
 - The **Proxy** writes one **Body Object** to R2 and sends one **Queue Message** per **LLM Request**.
 - The **Proxy Consumer** receives **Queue Message** batches, builds **Spans**, and hands them to a **Trace Shard**.
 - A **Trace Shard** flushes accumulated **Spans** into the `otel_trace_spans` **Datasource**.
-- The **Web** app reads **Spans** through Tinybird **Pipes** (using a **Pipe Token**) and fetches **Body Objects** through the **API Worker**.
+- The **Web** app reads **Spans** through Tinybird **Pipes** via the **Pipes API Worker** (using a **Pipe Token**) and fetches **Body Objects** through the **Raw API Worker**.
 - **Trace Flow Analyst** conversations happen in the **Analyst Sidebar** and are represented by creator-private **Analyst Threads**, which use the **Analyst Runtime** to answer user questions through approved **Analyst Tools**.
 - **Context Selection Mode** adds one or more **Page Context References** to the next **Analyst Thread** message.
 - The **Collector** parses local **Source** transcripts into agent facts and uploads them to **Agent Ingest** with a **Collector Credential**.

@@ -4,13 +4,14 @@ LLM request proxy and analytics platform built on Cloudflare Workers.
 
 ## Architecture
 
-The primary observability runtime contains six Cloudflare Workers across two ingestion paths:
+The primary observability runtime contains seven Cloudflare Workers across two ingestion paths:
 
 - **Proxy** (`apps/proxy`) - LLM request proxy that logs requests and enqueues them for processing
 - **Proxy Consumer** (`apps/proxy-consumer`) - Queue consumer that writes LLM traces to Tinybird
 - **Agent Ingest** (`apps/agent-ingest`) - Collector intake worker for local AI-agent transcript facts
 - **Agent Consumer** (`apps/agent-consumer`) - Queue consumer that prices and writes agent facts to Tinybird
-- **API** (`apps/api`) - Provides R2 access for fetching request/response bodies
+- **Pipes API** (`apps/pipes-api`) - Forwards Convex-minted Tinybird Pipe Tokens to Tinybird
+- **Raw API** (`apps/api`) - Provides R2 access for fetching request/response bodies
 - **Web** (`apps/web`) - Next.js analytics dashboard (Cloudflare Workers via OpenNext)
 
 ### How It Works
@@ -65,7 +66,8 @@ trace-flow/
     ├── proxy-consumer/      # Queue consumer worker
     ├── agent-ingest/        # Agent collector ingest worker
     ├── agent-consumer/      # Agent fact queue consumer worker
-    ├── api/                 # API worker for R2 body access
+    ├── api/                 # Raw API worker for R2 Body Object access
+    ├── pipes-api/           # Pipes API worker for Tinybird Pipe forwarding
     ├── mcp/                 # MCP worker for agent access to trace data
     ├── web/                 # Next.js dashboard (Cloudflare Workers via OpenNext)
     ├── cli/                 # Collector CLI
@@ -160,7 +162,7 @@ See [docs/agents/local-environment.md](./docs/agents/local-environment.md) for t
 
 ### Full Local Stack (Recommended)
 
-Run the five non-Web Workers together with shared local R2, queues, KV, and Durable Objects:
+Run the six non-Web Workers together with shared local R2, queues, KV, and Durable Objects:
 
 ```bash
 # Terminal 1: Proxy, Proxy Consumer, API, Agent Ingest, Agent Consumer
@@ -182,6 +184,7 @@ wrangler dev \
   -c apps/proxy/wrangler.toml \
   -c apps/proxy-consumer/wrangler.toml \
   -c apps/api/wrangler.toml \
+  -c apps/pipes-api/wrangler.toml \
   -c apps/agent-ingest/wrangler.jsonc \
   -c apps/agent-consumer/wrangler.jsonc \
   --persist-to .wrangler/state
@@ -209,6 +212,8 @@ Create `apps/web/.env.local`:
 ```bash
 NEXT_PUBLIC_CONVEX_URL=https://your-deployment-url.convex.cloud
 NEXT_PUBLIC_API_URL=http://localhost:8788
+NEXT_PUBLIC_PIPES_API_URL=http://localhost:8788
+NEXT_PUBLIC_RAW_API_URL=http://localhost:8788
 NEXT_PUBLIC_AUTH0_DOMAIN=your-auth0-domain
 NEXT_PUBLIC_AUTH0_CLIENT_ID=your-auth0-client-id
 ```
@@ -224,8 +229,11 @@ cd apps/proxy && bun run dev
 # Proxy Consumer only
 cd apps/proxy-consumer && bun run dev
 
-# API only
+# Raw API only
 cd apps/api && bun run dev
+
+# Pipes API only
+cd apps/pipes-api && bun run dev
 
 # Agent Ingest only
 cd apps/agent-ingest && bun run dev

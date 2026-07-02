@@ -1,6 +1,8 @@
 # Read-Side Secret Boundaries
 
-Trace Flow's read side currently has one **API Worker** (`apps/api`) serving two different surfaces:
+Status: implemented by `apps/pipes-api` (Tinybird Pipe forwarding) and `apps/api` (Raw API Body Object retrieval).
+
+Before this split, Trace Flow's read side had one **API Worker** (`apps/api`) serving two different surfaces:
 
 - Body Object retrieval for the Web app.
 - Tinybird Pipe passthrough for dashboard analytics queries.
@@ -93,7 +95,8 @@ The raw surface can carry stricter headers and CORS behavior than the pipe surfa
 2. Add Web configuration for separate read origins:
    - `NEXT_PUBLIC_PIPES_API_URL`
    - `NEXT_PUBLIC_RAW_API_URL`
-     Both may initially default to `NEXT_PUBLIC_API_URL`.
+     Raw reads may initially fall back to `NEXT_PUBLIC_API_URL`; pipe queries must use
+     `NEXT_PUBLIC_PIPES_API_URL` or the local pipes default.
 3. Split `apps/api` into two deploy units:
    - Pipe Worker for `pipes.trace-flow.dev`.
    - Raw Worker for `raw.trace-flow.dev`.

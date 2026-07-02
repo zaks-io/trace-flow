@@ -1,0 +1,67 @@
+name = "trace-flow-pipes-api-dev"
+main = "src/index.ts"
+compatibility_date = "2024-11-27"
+compatibility_flags = ["nodejs_compat", "no_nodejs_compat_v2"]
+upload_source_maps = true
+
+logpush = true
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+# Secrets: AXIOM_TOKEN, SENTRY_DSN
+
+[vars]
+SENTRY_ENVIRONMENT = "development"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
+AXIOM_DATASET = "cloudflare"
+
+# Per-token rate limit on Tinybird Pipe queries
+[[ratelimits]]
+name = "PIPES_LIMITER"
+namespace_id = "2004"
+simple = { limit = 240, period = 60 }
+
+[env.production]
+name = "trace-flow-pipes-api"
+workers_dev = false
+
+[env.production.version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[env.production.vars]
+SENTRY_ENVIRONMENT = "prod"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
+AXIOM_DATASET = "cloudflare"
+
+[[env.production.routes]]
+pattern = "pipes.trace-flow.dev/*"
+zone_name = "trace-flow.dev"
+
+[[env.production.ratelimits]]
+name = "PIPES_LIMITER"
+namespace_id = "2013"
+simple = { limit = 240, period = 60 }
+
+[env.preview]
+name = "trace-flow-pipes-api-preview"
+
+[env.preview.version_metadata]
+binding = "CF_VERSION_METADATA"
+
+[env.preview.vars]
+SENTRY_ENVIRONMENT = "preview"
+TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
+AXIOM_DATASET = "cloudflare"
+
+[[env.preview.ratelimits]]
+name = "PIPES_LIMITER"
+namespace_id = "2014"
+simple = { limit = 240, period = 60 }

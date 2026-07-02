@@ -92,7 +92,10 @@ export async function fetchStoredBodies(
   token: string,
   signal: AbortSignal,
 ): Promise<StoredBodiesPayload | null> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8788';
+  const apiUrl =
+    process.env.NEXT_PUBLIC_RAW_API_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    'http://localhost:8788';
 
   const res = await fetch(`${apiUrl}/bodies/${requestId}`, {
     headers: { Authorization: `Bearer ${token}` },

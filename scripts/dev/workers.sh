@@ -11,6 +11,7 @@ args=(
   -c apps/proxy/wrangler.toml
   -c apps/proxy-consumer/wrangler.toml
   -c apps/api/wrangler.toml
+  -c apps/pipes-api/wrangler.toml
   -c apps/agent-ingest/wrangler.jsonc
   -c apps/agent-consumer/wrangler.jsonc
   --persist-to .wrangler/state
