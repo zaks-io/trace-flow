@@ -1,0 +1,61 @@
+DESCRIPTION >
+    Incremental Agent Session signal states from Tool Event facts.
+
+NODE rollup
+SQL >
+    SELECT
+        OrgId,
+        repo_fingerprint,
+        session_pk,
+        argMaxState(toString(source), EventAt) AS source,
+        argMaxState(toString(repo_source), EventAt) AS repo_source,
+        argMaxState('', toDateTime64(0, 3)) AS model,
+        argMaxState(toString(parser_version), EventAt) AS parser_version,
+        minState(EventAt) AS StartedAt,
+        maxState(EventAt) AS LastEventAt,
+        maxState(toDateTime64(0, 3)) AS VendorStartedAt,
+        maxState(IngestedAt) AS IngestedAt,
+        sumState(toUInt64(0)) AS MessageCount,
+        sumState(toUInt64(0)) AS InputTokens,
+        sumState(toUInt64(0)) AS OutputTokens,
+        sumState(toUInt64(0)) AS CacheReadTokens,
+        sumState(toUInt64(0)) AS CacheCreationTokens,
+        sumState(toUInt64(0)) AS ReasoningTokens,
+        sumState(toUInt64(0)) AS PricedMessageCount,
+        sumState(toUInt64(0)) AS TokenCoveredMessageCount,
+        sumState(toUInt64(0)) AS CacheCoveredMessageCount,
+        sumState(toUInt64(0)) AS MissingModelMessageCount,
+        sumState(toUInt64(toString(agent_tool_event_facts.source) = '')) AS MissingSourceFactCount,
+        sumState(toFloat64(0)) AS CostUsd,
+        sumState(toUInt64(1)) AS ToolEventCount,
+        sumState(toUInt64(status = 'success')) AS ToolSuccessCount,
+        sumState(toUInt64(status = 'failure')) AS ToolFailureCount,
+        sumState(toUInt64(status = 'unknown')) AS ToolUnknownCount,
+        sumState(toUInt64(is_navigation = 1)) AS NavigationToolCount,
+        sumState(toUInt64(is_navigation = 1 AND (navigation_kind = 'search' OR command_family IN ('rg', 'grep', 'find', 'fd')))) AS SearchToolCount,
+        sumState(toUInt64(is_navigation = 1 AND navigation_hint_coverage = 'structured')) AS NavigationHintStructuredCount,
+        sumState(toUInt64(is_navigation = 1 AND navigation_hint_coverage = 'unknown')) AS NavigationHintUnknownCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'missing_file')) AS MissingFileFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'read_directory')) AS ReadDirectoryFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'edit_before_read')) AS EditBeforeReadFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'stale_file_before_edit')) AS StaleFileBeforeEditFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'external_schema_validation')) AS ExternalSchemaValidationFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'runtime_env_mismatch')) AS RuntimeEnvMismatchFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'tool_input_validation')) AS ToolInputValidationFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'human_or_policy_rejection')) AS HumanOrPolicyRejectionFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'wrong_tool_name')) AS WrongToolNameFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'oversized_read')) AS OversizedReadFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category = 'other')) AS OtherFailureCount,
+        sumState(toUInt64(status = 'failure' AND error_category_coverage = 'classified')) AS ClassifiedErrorCategoryFailureCount,
+        sumState(toUInt64(status = 'failure' AND (error_category_coverage = 'unknown' OR error_category = 'unknown'))) AS UnknownErrorCategoryFailureCount,
+        sumState(toUInt64(0)) AS FileTouchCount,
+        sumState(toUInt64(0)) AS ReadFileTouchCount,
+        sumState(toUInt64(0)) AS EditFileTouchCount,
+        sumState(toUInt64(0)) AS WriteFileTouchCount,
+        uniqStateIf('', 0) AS UniqueFileCount,
+        uniqStateIf('', 0) AS PullRequestLinkCount
+    FROM agent_tool_event_facts
+    GROUP BY OrgId, repo_fingerprint, session_pk
+
+TYPE MATERIALIZED
+DATASOURCE agent_session_signals

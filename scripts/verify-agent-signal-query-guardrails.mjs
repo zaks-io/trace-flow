@@ -14,6 +14,7 @@ const knownSignalPipes = new Set([
   'agent_repo_directory',
   'agent_review_unit_costs',
   'agent_session_cost_distribution',
+  'agent_session_signals_top_runaway',
   'agent_sessions_browser',
   'agent_tool_period_delta',
 ]);
@@ -38,17 +39,23 @@ const accountWideSummaries = new Map([
 const repoScopedSignalPipes = new Set([
   'agent_file_attention_top_directories',
   'agent_file_attention_top_files',
+  'agent_session_signals_top_runaway',
 ]);
 
 const signalMaterializationTargets = new Set([
   'agent_context_call_buckets_hourly',
   'agent_repositories',
   'agent_session_file_signals',
+  'agent_session_signals',
   'agent_session_summaries',
 ]);
 
 const performanceProbes = [
-  { family: 'session risk', pipe: 'agent_sessions_browser', test: 'agent_sessions_browser' },
+  {
+    family: 'session risk',
+    pipe: 'agent_session_signals_top_runaway',
+    test: 'agent_session_signals_top_runaway',
+  },
   {
     family: 'file hotspots',
     pipe: 'agent_file_attention_top_files',

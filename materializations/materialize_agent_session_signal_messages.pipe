@@ -1,0 +1,62 @@
+DESCRIPTION >
+    Incremental Agent Session signal states from Agent Message facts.
+
+NODE rollup
+SQL >
+    SELECT
+        OrgId,
+        repo_fingerprint,
+        session_pk,
+        argMaxState(toString(source), EventAt) AS source,
+        argMaxState(toString(repo_source), EventAt) AS repo_source,
+        argMaxState(toString(model), EventAt) AS model,
+        argMaxState(toString(parser_version), EventAt) AS parser_version,
+        minState(EventAt) AS StartedAt,
+        maxState(EventAt) AS LastEventAt,
+        maxState(VendorStartedAt) AS VendorStartedAt,
+        maxState(IngestedAt) AS IngestedAt,
+        sumState(toUInt64(1)) AS MessageCount,
+        sumState(toUInt64(input_tokens)) AS InputTokens,
+        sumState(toUInt64(output_tokens)) AS OutputTokens,
+        sumState(toUInt64(cache_read_tokens)) AS CacheReadTokens,
+        sumState(toUInt64(cache_creation_tokens)) AS CacheCreationTokens,
+        sumState(toUInt64(reasoning_tokens)) AS ReasoningTokens,
+        sumState(toUInt64(cost_usd IS NOT NULL)) AS PricedMessageCount,
+        sumState(toUInt64(token_coverage != 'missing')) AS TokenCoveredMessageCount,
+        sumState(toUInt64(cache_coverage != 'missing')) AS CacheCoveredMessageCount,
+        sumState(toUInt64(toString(agent_message_facts.model) = '')) AS MissingModelMessageCount,
+        sumState(toUInt64(toString(agent_message_facts.source) = '')) AS MissingSourceFactCount,
+        sumState(ifNull(cost_usd, 0.)) AS CostUsd,
+        sumState(toUInt64(0)) AS ToolEventCount,
+        sumState(toUInt64(0)) AS ToolSuccessCount,
+        sumState(toUInt64(0)) AS ToolFailureCount,
+        sumState(toUInt64(0)) AS ToolUnknownCount,
+        sumState(toUInt64(0)) AS NavigationToolCount,
+        sumState(toUInt64(0)) AS SearchToolCount,
+        sumState(toUInt64(0)) AS NavigationHintStructuredCount,
+        sumState(toUInt64(0)) AS NavigationHintUnknownCount,
+        sumState(toUInt64(0)) AS MissingFileFailureCount,
+        sumState(toUInt64(0)) AS ReadDirectoryFailureCount,
+        sumState(toUInt64(0)) AS EditBeforeReadFailureCount,
+        sumState(toUInt64(0)) AS StaleFileBeforeEditFailureCount,
+        sumState(toUInt64(0)) AS ExternalSchemaValidationFailureCount,
+        sumState(toUInt64(0)) AS RuntimeEnvMismatchFailureCount,
+        sumState(toUInt64(0)) AS ToolInputValidationFailureCount,
+        sumState(toUInt64(0)) AS HumanOrPolicyRejectionFailureCount,
+        sumState(toUInt64(0)) AS WrongToolNameFailureCount,
+        sumState(toUInt64(0)) AS OversizedReadFailureCount,
+        sumState(toUInt64(0)) AS OtherFailureCount,
+        sumState(toUInt64(0)) AS ClassifiedErrorCategoryFailureCount,
+        sumState(toUInt64(0)) AS UnknownErrorCategoryFailureCount,
+        sumState(toUInt64(0)) AS FileTouchCount,
+        sumState(toUInt64(0)) AS ReadFileTouchCount,
+        sumState(toUInt64(0)) AS EditFileTouchCount,
+        sumState(toUInt64(0)) AS WriteFileTouchCount,
+        uniqStateIf('', 0) AS UniqueFileCount,
+        uniqStateIf('', 0) AS PullRequestLinkCount
+    FROM agent_message_facts
+    WHERE role = 'assistant'
+    GROUP BY OrgId, repo_fingerprint, session_pk
+
+TYPE MATERIALIZED
+DATASOURCE agent_session_signals

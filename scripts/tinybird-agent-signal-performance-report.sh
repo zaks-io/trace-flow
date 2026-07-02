@@ -35,7 +35,7 @@ run_probe() {
   echo "agent-signal-perf family=\"$family\" pipe=$pipe test=$test_name elapsed_ms=$((finished_at - started_at)) status=passed"
 }
 
-run_probe "session risk" "agent_sessions_browser" "agent_sessions_browser"
+run_probe "session risk" "agent_session_signals_top_runaway" "agent_session_signals_top_runaway"
 run_probe "file hotspots" "agent_file_attention_top_files" "agent_file_attention_top_files"
 run_probe "tool failures" "agent_failure_leaderboard" "agent_failure_leaderboard"
 run_probe "repo baselines" "agent_notable_changes" "agent_notable_changes"
