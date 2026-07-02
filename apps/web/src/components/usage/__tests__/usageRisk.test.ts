@@ -6,6 +6,7 @@ import {
   formatTokensPerRequest,
   isTailRiskInsufficient,
   isTokenRatioInsufficient,
+  tailRiskTraceHref,
   usageSliceLabel,
 } from '../usageRisk';
 
@@ -53,6 +54,17 @@ describe('tail risk state', () => {
         p99_p50_ratio: null,
       }),
     ).toBe(true);
+  });
+
+  it('builds trace drilldown hrefs only when a trace id is present', () => {
+    expect(
+      tailRiskTraceHref({
+        max_cost_trace_id: '0123456789abcdef0123456789abcdef',
+      }),
+    ).toBe('/app/trace/0123456789abcdef0123456789abcdef');
+    expect(tailRiskTraceHref({ max_cost_trace_id: '' })).toBeNull();
+    expect(tailRiskTraceHref({ max_cost_trace_id: null })).toBeNull();
+    expect(tailRiskTraceHref({ max_cost_trace_id: 'not-a-trace-id' })).toBeNull();
   });
 });
 

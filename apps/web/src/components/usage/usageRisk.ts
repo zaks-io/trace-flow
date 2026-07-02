@@ -1,3 +1,4 @@
+import { validateTraceId } from '@trace-flow/utils';
 import { formatModelDisplay, formatNumber } from '@/lib/format';
 import type { CostTailRiskRow, TokenRatioDriftRow } from './types';
 
@@ -19,6 +20,11 @@ export function isTailRiskInsufficient(
   row: Pick<CostTailRiskRow, 'request_count' | 'p99_p50_ratio'>,
 ): boolean {
   return row.request_count < MIN_TAIL_RISK_REQUESTS || row.p99_p50_ratio == null;
+}
+
+export function tailRiskTraceHref(row: Pick<CostTailRiskRow, 'max_cost_trace_id'>): string | null {
+  const traceId = validateTraceId(row.max_cost_trace_id?.trim());
+  return traceId ? `/app/trace/${encodeURIComponent(traceId)}` : null;
 }
 
 export function formatRatio(value: number | null | undefined): string {
