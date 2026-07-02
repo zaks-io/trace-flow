@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   MIN_TAIL_RISK_REQUESTS,
-  buildTraceHref,
   formatRatio,
   formatSignedPercentDelta,
   formatTokensPerRequest,
@@ -34,31 +33,6 @@ describe('usageSliceLabel', () => {
         baggage_operation: '',
       }).primary,
     ).toBe('responses');
-  });
-});
-
-describe('buildTraceHref', () => {
-  it('returns a trace detail href with a valid span query when both IDs are present', () => {
-    expect(
-      buildTraceHref({
-        trace_id: 'ABCDEF0123456789ABCDEF0123456789',
-        span_id: 'ABCDEF0123456789',
-      }),
-    ).toBe('/app/trace/abcdef0123456789abcdef0123456789?span=abcdef0123456789');
-  });
-
-  it('supports TraceId and SpanId field names from existing trace rows', () => {
-    expect(
-      buildTraceHref({
-        TraceId: 'abcdef0123456789abcdef0123456789',
-        SpanId: 'abcdef0123456789',
-      }),
-    ).toBe('/app/trace/abcdef0123456789abcdef0123456789?span=abcdef0123456789');
-  });
-
-  it('returns null for invalid or missing trace IDs', () => {
-    expect(buildTraceHref({ trace_id: 'bad', span_id: 'abcdef0123456789' })).toBeNull();
-    expect(buildTraceHref({ span_id: 'abcdef0123456789' })).toBeNull();
   });
 });
 

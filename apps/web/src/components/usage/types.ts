@@ -269,14 +269,7 @@ export interface CostForecastRow {
   insufficient_data: number;
 }
 
-interface OptionalTraceLinkFields {
-  trace_id?: string | null;
-  span_id?: string | null;
-  TraceId?: string | null;
-  SpanId?: string | null;
-}
-
-export interface CostTailRiskRow extends OptionalTraceLinkFields {
+export interface CostTailRiskRow {
   api_key: string;
   provider: string;
   model: string;
@@ -301,7 +294,7 @@ export interface CostTailRiskRow extends OptionalTraceLinkFields {
 
 export type TokenRatioDriftState = 'ok' | 'insufficient_data';
 
-export interface TokenRatioDriftRow extends OptionalTraceLinkFields {
+export interface TokenRatioDriftRow {
   api_key: string;
   provider: string;
   model: string;

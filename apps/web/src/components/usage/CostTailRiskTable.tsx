@@ -1,12 +1,9 @@
 'use client';
 
-import Link from 'next/link';
-import { ArrowUpRight } from 'lucide-react';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import type { CostTailRiskRow } from './types';
 import {
   MIN_TAIL_RISK_REQUESTS,
-  buildTraceHref,
   formatRatio,
   isTailRiskInsufficient,
   usageSliceLabel,
@@ -25,7 +22,7 @@ export function CostTailRiskTable({
 
   return (
     <div className="overflow-auto">
-      <table className="w-full min-w-[760px] text-sm">
+      <table className="w-full min-w-[680px] text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="pb-2 font-medium">Slice</th>
@@ -35,13 +32,11 @@ export function CostTailRiskTable({
             <th className="pb-2 text-right font-medium">P99</th>
             <th className="pb-2 text-right font-medium">Max</th>
             <th className="pb-2 text-right font-medium">P99/P50</th>
-            <th className="pb-2 text-right font-medium">Trace</th>
           </tr>
         </thead>
         <tbody>
           {data.map((row) => {
             const label = usageSliceLabel(row);
-            const traceHref = buildTraceHref(row);
             const thinSample = isTailRiskInsufficient(row);
             const apiKeyLabel = apiKeyMap.get(row.api_key) ?? row.api_key;
 
@@ -74,19 +69,6 @@ export function CostTailRiskTable({
                   <div className="font-mono text-foreground">{formatRatio(row.p99_p50_ratio)}</div>
                   {thinSample && (
                     <div className="text-[11px] text-amber-400">need {MIN_TAIL_RISK_REQUESTS}+</div>
-                  )}
-                </td>
-                <td className="py-2 text-right">
-                  {traceHref ? (
-                    <Link
-                      href={traceHref}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                    >
-                      Trace
-                      <ArrowUpRight className="h-3 w-3" />
-                    </Link>
-                  ) : (
-                    <span className="text-muted-foreground">-</span>
                   )}
                 </td>
               </tr>

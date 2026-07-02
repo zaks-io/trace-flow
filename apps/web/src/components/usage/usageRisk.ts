@@ -1,11 +1,5 @@
-import { validateSpanId, validateTraceId } from '@trace-flow/utils';
 import { formatModelDisplay, formatNumber } from '@/lib/format';
 import type { CostTailRiskRow, TokenRatioDriftRow } from './types';
-
-type TraceLinkSource = Pick<
-  CostTailRiskRow | TokenRatioDriftRow,
-  'trace_id' | 'span_id' | 'TraceId' | 'SpanId'
->;
 
 export const MIN_TAIL_RISK_REQUESTS = 20;
 
@@ -19,14 +13,6 @@ export function usageSliceLabel(
     primary: row.baggage_operation || row.operation_name || 'unknown operation',
     secondary: formatModelDisplay(row.model || 'unknown model', row.provider || undefined),
   };
-}
-
-export function buildTraceHref(row: TraceLinkSource): string | null {
-  const traceId = validateTraceId(row.trace_id ?? row.TraceId);
-  if (!traceId) return null;
-
-  const spanId = validateSpanId(row.span_id ?? row.SpanId);
-  return spanId ? `/app/trace/${traceId}?span=${spanId}` : `/app/trace/${traceId}`;
 }
 
 export function isTailRiskInsufficient(
