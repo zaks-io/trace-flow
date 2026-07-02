@@ -52,6 +52,7 @@ export function AgentUsageChart({
   granularity,
   chartStyle,
   onGroupClick,
+  isGroupClickable,
   labelFor,
 }: {
   data: AgentTimeseriesRow[];
@@ -61,6 +62,8 @@ export function AgentUsageChart({
   chartStyle: AgentChartStyle;
   /** Toggle a group value into the active filter (click-to-filter); only when grouped. */
   onGroupClick?: (value: string) => void;
+  /** Disable aggregate or unsupported group values while keeping the legend visible. */
+  isGroupClickable?: (value: string) => boolean;
   /** Resolve a raw group value to a display name (e.g. repo fingerprint -> owner/repo). */
   labelFor?: (value: string) => string;
 }) {
@@ -113,10 +116,11 @@ export function AgentUsageChart({
   const formatValue = (v: number) => (isCurrency ? formatCurrency(v) : formatNumber(v));
   const clickable = groupBy !== 'none' && Boolean(onGroupClick);
   const stacked = chartStyle === 'stacked';
+  const canFilterGroup = (value: string) =>
+    clickable && Boolean(value) && value !== OTHER_GROUP && (isGroupClickable?.(value) ?? true);
 
   const handleFilterClick = (value: string) => {
-    // "Other" is an aggregate of many repos, so it is intentionally not filterable.
-    if (clickable && value && value !== OTHER_GROUP) onGroupClick?.(value);
+    if (canFilterGroup(value)) onGroupClick?.(value);
   };
 
   const hourly =
@@ -161,7 +165,11 @@ export function AgentUsageChart({
         />
         <Legend
           content={() => (
-            <AgentChartLegend series={series} clickable={clickable} onClick={handleFilterClick} />
+            <AgentChartLegend
+              series={series}
+              canClick={canFilterGroup}
+              onClick={handleFilterClick}
+            />
           )}
         />
         {series.map((s) => (
@@ -176,8 +184,8 @@ export function AgentUsageChart({
             fillOpacity={stacked ? 0.55 : 0}
             strokeWidth={2}
             isAnimationActive={false}
-            style={clickable ? { cursor: 'pointer' } : undefined}
-            onClick={clickable ? () => handleFilterClick(s.value) : undefined}
+            style={canFilterGroup(s.value) ? { cursor: 'pointer' } : undefined}
+            onClick={canFilterGroup(s.value) ? () => handleFilterClick(s.value) : undefined}
           />
         ))}
       </AreaChart>
@@ -187,11 +195,11 @@ export function AgentUsageChart({
 
 function AgentChartLegend({
   series,
-  clickable,
+  canClick,
   onClick,
 }: {
   series: Series[];
-  clickable: boolean;
+  canClick: (value: string) => boolean;
   onClick: (value: string) => void;
 }) {
   return (
@@ -201,7 +209,7 @@ function AgentChartLegend({
           key={entry.id}
           type="button"
           onClick={() => onClick(entry.value)}
-          disabled={!clickable || entry.value === OTHER_GROUP}
+          disabled={!canClick(entry.value)}
           className="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:hover:text-muted-foreground"
         >
           <span

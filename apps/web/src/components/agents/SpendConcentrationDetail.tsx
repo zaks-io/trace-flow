@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatCurrency, formatDuration, formatNumber } from '@/lib/format';
 import type { AgentSessionRow } from './types';
 
@@ -29,6 +29,10 @@ export function SpendConcentrationDetail({
     [sessions, labelFor],
   );
   const byModel = useMemo(() => rollup(sessions, (s) => s.model || 'unknown'), [sessions]);
+  const sessionSetKey = useMemo(() => sessions.map((s) => s.session_pk).join('\u001f'), [sessions]);
+  useEffect(() => {
+    setPage(0);
+  }, [sessionSetKey]);
   const pagination = paginateAgentSessions(sessions, page);
 
   if (loading) {

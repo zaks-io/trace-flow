@@ -21,7 +21,12 @@ import { buildAttentionSignals } from './buildAttentionSignals';
 import { buildBurnRateStats, hasUsableBurnRateBuckets, type BurnRateStats } from './burnRate';
 import { computeDelta } from './delta';
 import { generatedTokenShare } from './agentSessionSizes';
-import { AGENT_GROUP_BY, AGENT_GROUP_BY_LABEL, type AgentGroupBy } from './types';
+import {
+  AGENT_FILTER_SOURCES,
+  AGENT_GROUP_BY,
+  AGENT_GROUP_BY_LABEL,
+  type AgentGroupBy,
+} from './types';
 import type {
   AgentContextHealthRow,
   AgentCostByDepthRow,
@@ -45,6 +50,8 @@ export function AgentBentoGrid({
   groupedSeries,
   repoSeries,
   onRepoToggle,
+  onSourceToggle,
+  onModelToggle,
   groupBy,
   onGroupByChange,
   costDistribution,
@@ -73,6 +80,10 @@ export function AgentBentoGrid({
   repoSeries: AgentTimeseriesRow[];
   /** Toggle a repo into the active Repo filter (legend click-to-filter on the repo chart). */
   onRepoToggle: (repoFingerprint: string) => void;
+  /** Toggle a source into the active Source filter from grouped chart legends. */
+  onSourceToggle: (source: string) => void;
+  /** Toggle a model into the active Model filter from grouped chart legends. */
+  onModelToggle: (model: string) => void;
   groupBy: AgentGroupBy;
   onGroupByChange: (next: AgentGroupBy) => void;
   costDistribution: AgentCostDistributionRow | null;
@@ -147,6 +158,16 @@ export function AgentBentoGrid({
     route: '/app/agents',
     filters: filterParams,
   });
+  const onHeroGroupClick =
+    heroGroupBy === 'repo'
+      ? onRepoToggle
+      : heroGroupBy === 'model'
+        ? onModelToggle
+        : heroGroupBy === 'source'
+          ? onSourceToggle
+          : undefined;
+  const isHeroGroupClickable =
+    heroGroupBy === 'source' ? (source: string) => FILTERABLE_SOURCE_SET.has(source) : undefined;
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-6 xl:grid-cols-12">
@@ -177,6 +198,8 @@ export function AgentBentoGrid({
               groupBy={heroGroupBy}
               granularity="day"
               chartStyle="stacked"
+              onGroupClick={onHeroGroupClick}
+              isGroupClickable={isHeroGroupClickable}
               labelFor={labelFor}
             />
           </div>
@@ -319,6 +342,7 @@ const GROUP_BY_OPTIONS = AGENT_GROUP_BY.filter((g) => g !== 'none').map((value) 
   value,
   label: AGENT_GROUP_BY_LABEL[value],
 }));
+const FILTERABLE_SOURCE_SET = new Set<string>(AGENT_FILTER_SOURCES);
 
 function GroupByToggle({
   value,

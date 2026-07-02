@@ -290,6 +290,8 @@ trace-flow sync --since 7d`}</code>
           groupedSeries={timeseries}
           repoSeries={repoSeries}
           onRepoToggle={toggleRepo}
+          onSourceToggle={toggleSource}
+          onModelToggle={toggleModel}
           groupBy={groupBy}
           onGroupByChange={setGroupBy}
           costDistribution={costDistribution}

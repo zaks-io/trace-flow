@@ -42,6 +42,7 @@ export function AgentSourceStatusPanel({ items }: { items: AgentSourceStatusItem
 
 function SourceStatusCard({ item }: { item: AgentSourceStatusItem }) {
   const synced = item.state === 'synced';
+  const hasDistinctIngestedTime = item.lastIngestedMs !== item.lastSuccessfulSyncMs;
 
   return (
     <div className="rounded-lg border border-border/60 bg-background/40 p-3">
@@ -63,17 +64,21 @@ function SourceStatusCard({ item }: { item: AgentSourceStatusItem }) {
       {synced && (
         <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <div>
-            <dt className="text-muted-foreground">Last sync</dt>
+            <dt className="text-muted-foreground">
+              {hasDistinctIngestedTime ? 'Last sync' : 'Last sync / ingest'}
+            </dt>
             <dd className="mt-0.5 font-medium text-foreground">
               {formatTimestampMs(item.lastSuccessfulSyncMs)}
             </dd>
           </div>
-          <div>
-            <dt className="text-muted-foreground">Last ingested</dt>
-            <dd className="mt-0.5 font-medium text-foreground">
-              {formatTimestampMs(item.lastIngestedMs)}
-            </dd>
-          </div>
+          {hasDistinctIngestedTime ? (
+            <div>
+              <dt className="text-muted-foreground">Last ingested</dt>
+              <dd className="mt-0.5 font-medium text-foreground">
+                {formatTimestampMs(item.lastIngestedMs)}
+              </dd>
+            </div>
+          ) : null}
           <div>
             <dt className="text-muted-foreground">Sessions</dt>
             <dd className="mt-0.5 font-mono text-foreground">{formatNumber(item.sessionCount)}</dd>
