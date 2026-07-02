@@ -268,3 +268,52 @@ export interface CostForecastRow {
   anomalies: [string, number, number, number][] | null;
   insufficient_data: number;
 }
+
+export interface CostTailRiskRow {
+  api_key: string;
+  provider: string;
+  model: string;
+  operation_name: string;
+  baggage_operation: string;
+  baggage_user_id: string;
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  reasoning_tokens: number;
+  uncached_input_tokens: number;
+  total_cost_usd: number;
+  avg_cost_usd: number;
+  cost_p50_usd: number;
+  cost_p95_usd: number;
+  cost_p99_usd: number;
+  cost_max_usd: number;
+  p99_p50_ratio: number | null;
+}
+
+export type TokenRatioDriftState = 'ok' | 'insufficient_data';
+
+export interface TokenRatioDriftRow {
+  api_key: string;
+  provider: string;
+  model: string;
+  operation_name: string;
+  baggage_operation: string;
+  baggage_user_id: string;
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  baseline_request_count: number;
+  baseline_input_tokens: number;
+  baseline_output_tokens: number;
+  current_output_input_ratio: number | null;
+  baseline_output_input_ratio: number | null;
+  output_input_ratio_delta: number | null;
+  output_input_ratio_percent_delta: number | null;
+  current_input_tokens_per_request: number | null;
+  baseline_input_tokens_per_request: number | null;
+  input_tokens_per_request_delta: number | null;
+  input_tokens_per_request_percent_delta: number | null;
+  state: TokenRatioDriftState | string;
+}
