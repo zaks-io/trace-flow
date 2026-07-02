@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { type Preloaded, usePreloadedQuery, useMutation, useAction, useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { useMemo, useState } from 'react';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { ApiKeyQuickStart } from '@/components/onboarding/ApiKeyQuickStart';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { ChevronRight, Copy, Check, ExternalLink, FileText, Hash } from 'lucide-react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
-import { type api } from '@convex/_generated/api';
+import { type api } from '@trace-flow/convex/_generated/api';
 import { validateTraceId } from '@trace-flow/utils';
 import { useLiveTraceDetail } from '@/hooks/useLiveTraceDetail';
 import { PageToolbar } from '@/components/shared/PageToolbar';

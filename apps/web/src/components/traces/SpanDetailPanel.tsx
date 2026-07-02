@@ -5,7 +5,7 @@ import { useAction } from 'convex/react';
 import { Clock, Hash, GitBranch, ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { GEN_AI, GEN_AI_COST, GEN_AI_USAGE, BAGGAGE_PREFIX } from '@trace-flow/otel-conventions';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import {
   formatBodyForDisplay,
   mergeSSEEvents,

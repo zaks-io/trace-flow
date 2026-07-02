@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAction } from 'convex/react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import {
   Activity,
   AlertTriangle,

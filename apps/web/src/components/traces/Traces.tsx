@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
-import { type api } from '@convex/_generated/api';
+import { type api } from '@trace-flow/convex/_generated/api';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';

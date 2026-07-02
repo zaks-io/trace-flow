@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { type Preloaded, usePreloadedQuery, useMutation } from 'convex/react';
-import { api } from '@convex/_generated/api';
-import { type Doc } from '@convex/_generated/dataModel';
+import { api } from '@trace-flow/convex/_generated/api';
+import { type Doc } from '@trace-flow/convex/_generated/dataModel';
 import { useIsAdmin } from '@/components/admin/AdminContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

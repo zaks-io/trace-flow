@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { Layers } from 'lucide-react';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/shared/PageToolbar';

@@ -2,7 +2,7 @@
 
 import { Fragment, useState, useMemo, useRef } from 'react';
 import { type Preloaded, usePreloadedQuery, useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { Activity, DollarSign, Hash, Layers, Server, Cpu, Timer, Key } from 'lucide-react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { snapToMinute } from '@/lib/tinybird';

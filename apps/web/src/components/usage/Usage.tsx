@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { type Preloaded, useMutation, usePreloadedQuery, useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
 import { useDefaultApiKey } from '@/hooks/useDefaultApiKey';
 import { GettingStarted } from '@/components/onboarding/GettingStarted';
