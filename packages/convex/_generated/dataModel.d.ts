@@ -547,6 +547,15 @@ export type DataModel = {
             minIncreaseUsd: number;
             multiplier: number;
             type: "hourly_spend_spike";
+          }
+        | {
+            approvedModels: Array<{
+              allowZeroCost?: boolean;
+              model: string;
+              provider: string;
+            }>;
+            type: "model_approval_and_pricing";
+            window: "last_hour" | "last_24_hours" | "month_to_date";
           };
       cooldownMinutes: number;
       createdAt: number;
@@ -573,6 +582,7 @@ export type DataModel = {
       | "apiKeyIds"
       | "channelIds"
       | "condition"
+      | "condition.approvedModels"
       | "condition.baselineHours"
       | "condition.minCurrentHourUsd"
       | "condition.minIncreaseUsd"

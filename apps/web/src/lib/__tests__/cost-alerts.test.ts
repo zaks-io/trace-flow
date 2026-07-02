@@ -6,6 +6,8 @@ import {
   buildChannelConfigInput,
   formatScope,
   formatCondition,
+  formatProviderModelPairs,
+  parseProviderModelPairs,
   parseRecipients,
   sanitizeHeaderRows,
 } from '../cost-alerts';
@@ -25,6 +27,19 @@ describe('cost alert helpers', () => {
         { key: '', value: 'ignored' },
       ]),
     ).toEqual([{ key: 'X-Test', value: 'hello' }]);
+  });
+
+  it('parses provider/model pairs from line input', () => {
+    expect(
+      parseProviderModelPairs('OpenAI, gpt-4o\nanthropic, claude/sonnet\nopenai, gpt-4o'),
+    ).toEqual([
+      { provider: 'openai', model: 'gpt-4o' },
+      { provider: 'anthropic', model: 'claude/sonnet' },
+    ]);
+
+    expect(() => parseProviderModelPairs('openai gpt-4o')).toThrow(
+      'Provider/model pairs must use "provider, model" format',
+    );
   });
 
   it('builds email channel config', () => {
@@ -55,6 +70,8 @@ describe('cost alert helpers', () => {
         multiplier: '2.5',
         minCurrentHourUsd: '15',
         minIncreaseUsd: '10',
+        approvedModelsText: '',
+        zeroCostModelsText: '',
         cooldownMinutes: '30',
         notifyOnRecovery: true,
         apiKeyIds: ['api_1'],
@@ -83,6 +100,50 @@ describe('cost alert helpers', () => {
         multiplier: 2.5,
         minCurrentHourUsd: 15,
         minIncreaseUsd: 10,
+      },
+    });
+  });
+
+  it('builds model approval alert input with zero-cost allowances', () => {
+    expect(
+      buildAlertInput({
+        name: 'Model guard',
+        severity: 'error',
+        conditionType: 'model_approval_and_pricing',
+        window: 'last_hour',
+        thresholdUsd: '',
+        baselineHours: '24',
+        multiplier: '2',
+        minCurrentHourUsd: '10',
+        minIncreaseUsd: '5',
+        approvedModelsText: 'OpenAI, gpt-4o-mini\nopenai, free-tier',
+        zeroCostModelsText: 'openai, free-tier',
+        cooldownMinutes: '0',
+        notifyOnRecovery: false,
+        apiKeyIds: ['api_1'],
+        provider: '',
+        model: '',
+        baggageOperation: ' checkout ',
+        baggageUserId: '',
+        channelIds: ['channel_1'],
+      }),
+    ).toEqual({
+      name: 'Model guard',
+      severity: 'error',
+      channelIds: ['channel_1'],
+      cooldownMinutes: 0,
+      notifyOnRecovery: false,
+      apiKeyIds: ['api_1'],
+      scope: {
+        baggageOperation: 'checkout',
+      },
+      condition: {
+        type: 'model_approval_and_pricing',
+        window: 'last_hour',
+        approvedModels: [
+          { provider: 'openai', model: 'gpt-4o-mini', allowZeroCost: undefined },
+          { provider: 'openai', model: 'free-tier', allowZeroCost: true },
+        ],
       },
     });
   });
@@ -133,6 +194,8 @@ describe('cost alert helpers', () => {
         multiplier: '2',
         minCurrentHourUsd: '10',
         minIncreaseUsd: '5',
+        approvedModelsText: '',
+        zeroCostModelsText: '',
         cooldownMinutes: '60',
         notifyOnRecovery: true,
         apiKeyIds: [],
@@ -152,5 +215,38 @@ describe('cost alert helpers', () => {
         thresholdUsd: 1000,
       }),
     ).toBe('Projected Monthly Over: $1000.00');
+  });
+
+  it('roundtrips and displays model approval conditions', () => {
+    const approvedModels = [
+      { provider: 'openai', model: 'gpt-4o-mini' },
+      { provider: 'openai', model: 'free-tier', allowZeroCost: true },
+    ];
+
+    const rule = {
+      _id: 'alert_1',
+      name: 'Model guard',
+      severity: 'error',
+      channelIds: ['channel_1'],
+      cooldownMinutes: 0,
+      notifyOnRecovery: false,
+      condition: {
+        type: 'model_approval_and_pricing',
+        window: 'last_hour',
+        approvedModels,
+      },
+    } as const;
+
+    expect(alertFormFromRule(rule as never)).toMatchObject({
+      conditionType: 'model_approval_and_pricing',
+      approvedModelsText: 'openai, gpt-4o-mini\nopenai, free-tier',
+      zeroCostModelsText: 'openai, free-tier',
+    });
+    expect(formatProviderModelPairs(approvedModels, { zeroCostOnly: true })).toBe(
+      'openai, free-tier',
+    );
+    expect(formatCondition(rule.condition as never)).toBe(
+      'Model Approval: 2 approved pairs in Last Hour',
+    );
   });
 });
