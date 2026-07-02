@@ -57,7 +57,7 @@ SQL >
             toFloat64(last_event_ms)
         ) DESC,
         session_pk ASC
-    LIMIT {{ Int32(limit, 25) }}
-    OFFSET {{ Int32(offset, 0) }}
+    LIMIT greatest(1, least({{ Int32(limit, 25) }}, 100))
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
 
 TYPE ENDPOINT

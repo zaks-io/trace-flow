@@ -19,3 +19,9 @@
   parameters: org_id=org_file_attention&start_time_ms=1779235200000&end_time_ms=1779321600000&repo_fingerprint=repo_file_attention&limit=1&offset=-3
   expected_result: |
     {"repo_fingerprint":"repo_file_attention","directory_path":"docs","touch_count":4,"session_count":2,"read_count":2,"edit_count":0,"write_count":1,"directory_read_count":2,"missing_file_count":0,"coverage_debt_count":1,"first_touch_ms":1779271800000,"last_touch_ms":1779275760000}
+
+- name: directories_require_repo_scope
+  description: directory hotspot hints are repo-scoped; omitting repos/repo_fingerprint returns no rows
+  expected_http_status: 200
+  parameters: org_id=org_file_attention&start_time_ms=1779235200000&end_time_ms=1779321600000&limit=5
+  expected_result: ''

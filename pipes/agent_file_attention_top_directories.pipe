@@ -46,9 +46,12 @@ SQL >
         WHERE OrgId = {{ String(org_id, '') }}
             {% if defined(repos) %}
             AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
-            {% end %}
-            {% if defined(repo_fingerprint) %}
-            AND repo_fingerprint = {{ String(repo_fingerprint) }}
+            {% else %}
+                {% if defined(repo_fingerprint) %}
+                AND repo_fingerprint = {{ String(repo_fingerprint) }}
+                {% else %}
+                AND 0
+                {% end %}
             {% end %}
         GROUP BY repo_fingerprint, session_pk, normalized_repo_path
         HAVING last_touched_at >= start_dt
