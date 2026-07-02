@@ -1,0 +1,69 @@
+DESCRIPTION >
+    Top Agent file-attention directories by Repo and time window. Directory grouping
+    is top-level and bounded for repo-map and MCP hint consumers.
+
+NODE endpoint
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms,
+        {{ Int64(end_time_ms, 0) }} AS end_ms,
+        if(end_ms = 0, toDateTime64(now(), 3), fromUnixTimestamp64Milli(end_ms)) AS end_dt,
+        if(start_ms = 0, end_dt - toIntervalDay(7), fromUnixTimestamp64Milli(start_ms)) AS start_dt
+    SELECT
+        repo_fingerprint,
+        directory_path,
+        sum(touch_count) AS touch_count,
+        uniqExact(session_pk) AS session_count,
+        sum(read_count) AS read_count,
+        sum(edit_count) AS edit_count,
+        sum(write_count) AS write_count,
+        sum(directory_read_count) AS directory_read_count,
+        sum(missing_file_count) AS missing_file_count,
+        sum(coverage_debt_count) AS coverage_debt_count,
+        toUnixTimestamp64Milli(min(first_touched_at)) AS first_touch_ms,
+        toUnixTimestamp64Milli(max(last_touched_at)) AS last_touch_ms
+    FROM (
+        SELECT
+            repo_fingerprint,
+            session_pk,
+            multiIf(
+                normalized_repo_path IN ('unknown_path', 'unsafe_path', 'outside_repo'), normalized_repo_path,
+                position(normalized_repo_path, '/') = 0, '.',
+                arrayElement(splitByChar('/', normalized_repo_path), 1)
+            ) AS directory_path,
+            minMerge(FirstTouchedAt) AS first_touched_at,
+            maxMerge(LastTouchedAt) AS last_touched_at,
+            sumMerge(TouchCount) AS touch_count,
+            sumMerge(ReadCount) AS read_count,
+            sumMerge(EditCount) AS edit_count,
+            sumMerge(WriteCount) AS write_count,
+            sumMerge(DirectoryReadCount) AS directory_read_count,
+            sumMerge(MissingFileCount) AS missing_file_count,
+            sumMerge(CoverageDebtCount) AS coverage_debt_count,
+            argMaxMerge(source) AS source
+        FROM agent_session_file_signals
+        WHERE OrgId = {{ String(org_id, '') }}
+            {% if defined(repos) %}
+            AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
+            {% end %}
+            {% if defined(repo_fingerprint) %}
+            AND repo_fingerprint = {{ String(repo_fingerprint) }}
+            {% end %}
+        GROUP BY repo_fingerprint, session_pk, normalized_repo_path
+        HAVING last_touched_at >= start_dt
+            AND last_touched_at < end_dt
+            {% if defined(sources) %}
+            AND source IN splitByChar(',', {{ String(sources) }})
+            {% end %}
+    )
+    GROUP BY repo_fingerprint, directory_path
+    ORDER BY
+        multiIf({{ String(sort, 'touches') }} = 'sessions', toFloat64(session_count), toFloat64(touch_count)) DESC,
+        touch_count DESC,
+        session_count DESC,
+        directory_path ASC
+    LIMIT greatest(1, least({{ Int32(limit, 25) }}, 100))
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
+
+TYPE ENDPOINT

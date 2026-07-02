@@ -1,0 +1,32 @@
+DESCRIPTION >
+    Incremental Agent Session file-attention serving table. One aggregate row per
+    organization, Repo, Agent Session, and normalized repo path keeps repo-map and
+    file-hint queries off raw file/tool facts while retaining coverage debt.
+
+SCHEMA >
+    `OrgId` String,
+    `repo_fingerprint` String,
+    `session_pk` String,
+    `normalized_repo_path` String,
+    `source` AggregateFunction(argMax, String, DateTime64(3)),
+    `repo_source` AggregateFunction(argMax, String, DateTime64(3)),
+    `parser_version` AggregateFunction(argMax, String, DateTime64(3)),
+    `PathConfidenceRank` AggregateFunction(max, UInt8),
+    `FirstTouchedAt` AggregateFunction(min, DateTime64(3)),
+    `LastTouchedAt` AggregateFunction(max, DateTime64(3)),
+    `IngestedAt` AggregateFunction(max, DateTime64(3)),
+    `TouchCount` AggregateFunction(sum, UInt64),
+    `ReadCount` AggregateFunction(sum, UInt64),
+    `EditCount` AggregateFunction(sum, UInt64),
+    `WriteCount` AggregateFunction(sum, UInt64),
+    `DirectoryReadCount` AggregateFunction(sum, UInt64),
+    `MissingFileCount` AggregateFunction(sum, UInt64),
+    `CoverageDebtCount` AggregateFunction(sum, UInt64),
+    `StructuredFileEventCount` AggregateFunction(sum, UInt64),
+    `HintEventCount` AggregateFunction(sum, UInt64)
+
+ENGINE "AggregatingMergeTree"
+ENGINE_SORTING_KEY "OrgId, repo_fingerprint, session_pk, normalized_repo_path"
+
+FORWARD_QUERY >
+    SELECT *

@@ -1,0 +1,57 @@
+DESCRIPTION >
+    Incremental Agent Session file-attention coverage debt from structured Tool Event
+    path hints for missing-file and read-directory failures.
+
+NODE rollup
+SQL >
+    SELECT
+        OrgId,
+        repo_fingerprint,
+        session_pk,
+        normalized_path AS normalized_repo_path,
+        argMaxState(toString(source), EventAt) AS source,
+        argMaxState(toString(repo_source), EventAt) AS repo_source,
+        argMaxState(toString(parser_version), EventAt) AS parser_version,
+        maxState(path_confidence_rank) AS PathConfidenceRank,
+        minState(EventAt) AS FirstTouchedAt,
+        maxState(EventAt) AS LastTouchedAt,
+        maxState(IngestedAt) AS IngestedAt,
+        sumState(toUInt64(1)) AS TouchCount,
+        sumState(toUInt64(0)) AS ReadCount,
+        sumState(toUInt64(0)) AS EditCount,
+        sumState(toUInt64(0)) AS WriteCount,
+        sumState(toUInt64(error_category = 'read_directory')) AS DirectoryReadCount,
+        sumState(toUInt64(error_category = 'missing_file')) AS MissingFileCount,
+        sumState(toUInt64(1)) AS CoverageDebtCount,
+        sumState(toUInt64(0)) AS StructuredFileEventCount,
+        sumState(toUInt64(1)) AS HintEventCount
+    FROM (
+        SELECT
+            *,
+            arrayJoin(if(length(path_candidates) = 0, [''], path_candidates)) AS raw_path,
+            multiIf(
+                raw_path = '', 'unknown_path',
+                dropped_sensitive > 0 OR startsWith(raw_path, '/'), 'unsafe_path',
+                raw_path = 'outside_repo', 'outside_repo',
+                replaceRegexpAll(raw_path, '^\\./+', '')
+            ) AS normalized_path,
+            toUInt8(if(normalized_path IN ('unknown_path', 'unsafe_path', 'outside_repo'), 1, 2)) AS path_confidence_rank
+        FROM (
+            SELECT
+                *,
+                arrayDistinct(arrayConcat(
+                    repo_relative_paths,
+                    if(
+                        navigation_hint_coverage = 'structured' AND navigation_path_hint != '',
+                        [navigation_path_hint],
+                        CAST([], 'Array(String)')
+                    )
+                )) AS path_candidates
+            FROM agent_tool_event_facts
+            WHERE error_category IN ('missing_file', 'read_directory')
+        )
+    )
+    GROUP BY OrgId, repo_fingerprint, session_pk, normalized_path
+
+TYPE MATERIALIZED
+DATASOURCE agent_session_file_signals
