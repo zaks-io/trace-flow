@@ -1,11 +1,14 @@
 'use client';
 
+import Link from 'next/link';
+import { ExternalLink } from 'lucide-react';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import type { CostTailRiskRow } from './types';
 import {
   MIN_TAIL_RISK_REQUESTS,
   formatRatio,
   isTailRiskInsufficient,
+  tailRiskTraceHref,
   usageSliceLabel,
 } from './usageRisk';
 
@@ -22,7 +25,7 @@ export function CostTailRiskTable({
 
   return (
     <div className="overflow-auto">
-      <table className="w-full min-w-[680px] text-sm">
+      <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
             <th className="pb-2 font-medium">Slice</th>
@@ -31,6 +34,7 @@ export function CostTailRiskTable({
             <th className="pb-2 text-right font-medium">P95</th>
             <th className="pb-2 text-right font-medium">P99</th>
             <th className="pb-2 text-right font-medium">Max</th>
+            <th className="pb-2 text-right font-medium">Trace</th>
             <th className="pb-2 text-right font-medium">P99/P50</th>
           </tr>
         </thead>
@@ -39,6 +43,7 @@ export function CostTailRiskTable({
             const label = usageSliceLabel(row);
             const thinSample = isTailRiskInsufficient(row);
             const apiKeyLabel = apiKeyMap.get(row.api_key) ?? row.api_key;
+            const traceHref = tailRiskTraceHref(row);
 
             return (
               <tr key={rowKey(row)} className="border-b border-border/50">
@@ -66,6 +71,20 @@ export function CostTailRiskTable({
                   {formatCurrency(row.cost_max_usd)}
                 </td>
                 <td className="py-2 text-right">
+                  {traceHref ? (
+                    <Link
+                      href={traceHref}
+                      className="inline-flex items-center justify-end gap-1 font-mono text-primary hover:underline"
+                      aria-label={traceLinkLabel(row)}
+                    >
+                      Open
+                      <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-muted-foreground">-</span>
+                  )}
+                </td>
+                <td className="py-2 text-right">
                   <div className="font-mono text-foreground">{formatRatio(row.p99_p50_ratio)}</div>
                   {thinSample && (
                     <div className="text-[11px] text-amber-400">need {MIN_TAIL_RISK_REQUESTS}+</div>
@@ -89,4 +108,9 @@ function rowKey(row: CostTailRiskRow): string {
     row.baggage_operation,
     row.baggage_user_id,
   ].join('|');
+}
+
+function traceLinkLabel(row: CostTailRiskRow): string {
+  const spanSuffix = row.max_cost_span_id ? ` span ${row.max_cost_span_id}` : '';
+  return `Open max-cost trace ${row.max_cost_trace_id}${spanSuffix}`;
 }

@@ -11,6 +11,9 @@ SQL >
         if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
         if(start_ns_raw = 0, end_ns - toInt64({{ Int32(retention_days, 7) }}) * 86400 * 1000000000, start_ns_raw) AS start_ns
     SELECT
+        TraceId,
+        SpanId,
+        ReceivedAt,
         ApiKey,
         Provider,
         Model,
@@ -23,7 +26,8 @@ SQL >
         CacheReadInputTokens,
         CacheCreationInputTokens,
         ReasoningTokens,
-        UncachedInputTokens
+        UncachedInputTokens,
+        TotalCostMicrodollars
     FROM llm_request_facts
     WHERE ReceivedAt >= start_ns
         AND ReceivedAt <= end_ns
@@ -72,7 +76,9 @@ SQL >
         round(quantileExact(0.5)(cost_usd), 6) AS cost_p50_usd,
         round(quantileExact(0.95)(cost_usd), 6) AS cost_p95_usd,
         round(quantileExact(0.99)(cost_usd), 6) AS cost_p99_usd,
-        round(max(cost_usd), 6) AS cost_max_usd
+        round(max(cost_usd), 6) AS cost_max_usd,
+        nullIf(argMax(TraceId, (TotalCostMicrodollars, ReceivedAt, TraceId, SpanId)), '') AS max_cost_trace_id,
+        nullIf(argMax(SpanId, (TotalCostMicrodollars, ReceivedAt, TraceId, SpanId)), '') AS max_cost_span_id
     FROM requests
     GROUP BY ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
 
@@ -99,6 +105,8 @@ SQL >
         cost_p95_usd,
         cost_p99_usd,
         cost_max_usd,
+        max_cost_trace_id,
+        max_cost_span_id,
         if(cost_p50_usd = 0, CAST(NULL, 'Nullable(Float64)'), round(cost_p99_usd / cost_p50_usd, 4)) AS p99_p50_ratio
     FROM grouped
     ORDER BY cost_p99_usd DESC, total_cost_usd DESC, request_count DESC
