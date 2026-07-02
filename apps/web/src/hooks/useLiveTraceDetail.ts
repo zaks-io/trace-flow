@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAction } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { TraceSpanRowSchema } from '@trace-flow/spans';
 import { fetchTinybirdPipe, tinybirdKeys } from '@/lib/tinybird';
 import type { TraceSpan } from '@/lib/spans';

@@ -1,7 +1,7 @@
 'use client';
 
 import type { Preloaded } from 'convex/react';
-import type { api } from '@convex/_generated/api';
+import type { api } from '@trace-flow/convex/_generated/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Alerts from '@/components/alerts/Alerts';
 import CostAlerts from '@/components/alerts/CostAlerts';

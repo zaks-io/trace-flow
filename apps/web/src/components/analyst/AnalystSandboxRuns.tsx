@@ -2,8 +2,8 @@
 
 import { useMemo } from 'react';
 import { useQuery } from 'convex/react';
-import type { Id } from '@convex/_generated/dataModel';
-import { api } from '@convex/_generated/api';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
+import { api } from '@trace-flow/convex/_generated/api';
 import { buildFallbackRun, type PiAgentStartOutput, type SandboxRun } from './piRunEvents';
 import { PiRunCard } from './piRun/PiRunCard';
 

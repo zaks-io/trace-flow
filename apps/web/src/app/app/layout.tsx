@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { preloadQuery } from 'convex/nextjs';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { getSession } from '@/lib/auth0';
 import { AppLayoutClient } from './AppLayoutClient';
 

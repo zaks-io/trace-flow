@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useAction } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { fetchTinybirdPipe, tinybirdKeys } from '@/lib/tinybird';
 
 interface UseTinybirdQueryOptions<T> {

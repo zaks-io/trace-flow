@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type { Id } from '@convex/_generated/dataModel';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { pageContextKey, type AnalystPageContextReference } from './pageContext';
 
 interface AnalystContextValue {

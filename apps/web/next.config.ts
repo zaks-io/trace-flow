@@ -15,7 +15,7 @@ const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   reactCompiler: true,
-  transpilePackages: ['@trace-flow/utils', '@trace-flow/emails'],
+  transpilePackages: ['@trace-flow/convex', '@trace-flow/utils', '@trace-flow/emails'],
   experimental: {
     optimizePackageImports: ['recharts'],
   },

@@ -1,10 +1,10 @@
-import type { Id } from '@convex/_generated/dataModel';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
 
 // Presentation rows + their summaries are mapped on the server (the
 // `listSandboxRunRows` query owns the grouping). The client only renders them,
 // so it re-exports the types from the shared server module.
-export type { PiRunRow, UsageSummary } from '@convex/analystPiRows';
-import type { PiRunRow } from '@convex/analystPiRows';
+export type { PiRunRow, UsageSummary } from '@trace-flow/convex/analystPiRows';
+import type { PiRunRow } from '@trace-flow/convex/analystPiRows';
 
 export const CLIENT_RUN_TIMEOUT_GRACE_MS = 30_000;
 

@@ -1,5 +1,5 @@
 import { preloadQuery } from 'convex/nextjs';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { getConvexToken } from '@/lib/convex';
 import AdminInvitesClient from './AdminInvitesClient';
 

@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { mergeSSEEvents, type FormattedBody, type ParsedSSEEvent } from '@trace-flow/utils';
 import { useAction, useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { AlertBadge, AlertList } from '@/components/alerts';
 import { fetchStoredBodies, formatStoredBodiesForDisplay, getBodyAccessToken } from '@/lib/bodies';
 import { evaluateAlertsForTraces, getHighestSeverity } from '@/lib/alerts';

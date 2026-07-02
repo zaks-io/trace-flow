@@ -2,7 +2,7 @@
 
 import { type Preloaded, useConvexAuth, usePreloadedQuery, useQuery } from 'convex/react';
 import { type FunctionReturnType } from 'convex/server';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { Providers } from '@/components/providers/Providers';
 import { AppSidebar } from '@/components/AppSidebar';
 import { AdminProvider } from '@/components/admin/AdminContext';

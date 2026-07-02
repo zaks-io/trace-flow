@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
-import { type api } from '@convex/_generated/api';
+import { type api } from '@trace-flow/convex/_generated/api';
 import { parseSpanAttributes } from '@trace-flow/spans';
 import { GEN_AI } from '@trace-flow/otel-conventions';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';

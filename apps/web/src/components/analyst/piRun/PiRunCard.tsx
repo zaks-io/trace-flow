@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAction, useQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -16,7 +16,7 @@ import {
   type SandboxRun,
   type SandboxRunEvent,
 } from '../piRunEvents';
-import type { PiRunRow } from '@convex/analystPiRows';
+import type { PiRunRow } from '@trace-flow/convex/analystPiRows';
 import { PiToolRow } from './PiToolRow';
 import { PiTextRow } from './PiTextRow';
 import { PiRunRowShell } from './PiRunRowShell';

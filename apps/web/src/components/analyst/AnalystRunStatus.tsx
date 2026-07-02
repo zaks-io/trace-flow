@@ -1,6 +1,6 @@
 'use client';
 
-import type { Id } from '@convex/_generated/dataModel';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { AlertCircle, CheckCircle2, Clock3, Loader2, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';

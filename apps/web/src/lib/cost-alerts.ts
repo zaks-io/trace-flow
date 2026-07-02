@@ -1,4 +1,4 @@
-import type { Id } from '@convex/_generated/dataModel';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import type {
   CostAlertConditionType,
   CostAlertScope,

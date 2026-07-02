@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useLDClient } from 'launchdarkly-react-client-sdk';
-import type { Doc } from '@convex/_generated/dataModel';
+import type { Doc } from '@trace-flow/convex/_generated/dataModel';
 
 export function useLaunchDarklyIdentity(
   user: Doc<'users'> | null,

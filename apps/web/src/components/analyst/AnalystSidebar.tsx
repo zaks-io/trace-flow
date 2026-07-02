@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAction, useQuery } from 'convex/react';
 import { useUIMessages } from '@convex-dev/agent/react';
-import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import { api } from '@trace-flow/convex/_generated/api';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { usePathname } from 'next/navigation';
 import {
   ChevronDown,

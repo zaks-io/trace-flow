@@ -1,9 +1,9 @@
 'use client';
 
 import { type Preloaded, usePreloadedQuery, useMutation, useAction } from 'convex/react';
-import { api } from '@convex/_generated/api';
+import { api } from '@trace-flow/convex/_generated/api';
 import { useState } from 'react';
-import type { Id, Doc } from '@convex/_generated/dataModel';
+import type { Id, Doc } from '@trace-flow/convex/_generated/dataModel';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 
 type ModelPricing = Doc<'modelPricing'>;

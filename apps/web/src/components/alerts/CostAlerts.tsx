@@ -1,8 +1,8 @@
 'use client';
 
 import { type Preloaded, useMutation, usePaginatedQuery, usePreloadedQuery } from 'convex/react';
-import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
+import { api } from '@trace-flow/convex/_generated/api';
+import type { Id } from '@trace-flow/convex/_generated/dataModel';
 import { useMemo, useState } from 'react';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import {
