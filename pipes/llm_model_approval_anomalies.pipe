@@ -10,8 +10,8 @@ SQL >
         if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(1), 9)), start_ns_raw) AS start_ns,
         {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
         if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
-        arrayFilter(pair -> pair != '', splitByChar(',', {{ String(approved_provider_models, '') }})) AS approved_pairs,
-        arrayFilter(pair -> pair != '', splitByChar(',', {{ String(zero_cost_provider_models, '') }})) AS zero_cost_pairs
+        arrayFilter(key -> key != '', splitByChar(',', {{ String(approved_provider_models, '') }})) AS approved_pair_keys,
+        arrayFilter(key -> key != '', splitByChar(',', {{ String(zero_cost_provider_models, '') }})) AS zero_cost_pair_keys
     SELECT
         Provider AS provider,
         Model AS model,
@@ -35,12 +35,21 @@ SQL >
             greatest(InputTokens, UncachedInputTokens + CacheReadInputTokens + CacheCreationInputTokens)
                 + OutputTokens
                 + ReasoningTokens AS TokenCount,
-            concat(Provider, '|', Model) AS ProviderModelPair,
-            NOT has(approved_pairs, ProviderModelPair) AS IsUnapproved,
+            lowerUTF8(Provider) AS ProviderKey,
+            lowerUTF8(Model) AS ModelKey,
+            lower(hex(SHA256(concat(
+                toString(length(ProviderKey)),
+                ':',
+                ProviderKey,
+                toString(length(ModelKey)),
+                ':',
+                ModelKey
+            )))) AS ProviderModelPairKey,
+            NOT has(approved_pair_keys, ProviderModelPairKey) AS IsUnapproved,
             (
                 TokenCount > 0
                 AND TotalCostMicrodollars = 0
-                AND NOT has(zero_cost_pairs, ProviderModelPair)
+                AND NOT has(zero_cost_pair_keys, ProviderModelPairKey)
             ) AS IsUnpriced
         FROM llm_request_facts
         WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})

@@ -10,7 +10,31 @@ import {
   parseProviderModelPairs,
   parseRecipients,
   sanitizeHeaderRows,
+  type AlertFormData,
 } from '../cost-alerts';
+
+const modelApprovalForm = (overrides: Partial<AlertFormData> = {}): AlertFormData => ({
+  name: 'Model guard',
+  severity: 'error',
+  conditionType: 'model_approval_and_pricing',
+  window: 'last_hour',
+  thresholdUsd: '',
+  baselineHours: '24',
+  multiplier: '2',
+  minCurrentHourUsd: '10',
+  minIncreaseUsd: '5',
+  approvedModelsText: 'OpenAI, GPT-4O-MINI\nopenai, free-tier',
+  zeroCostModelsText: 'OPENAI, FREE-TIER',
+  cooldownMinutes: '0',
+  notifyOnRecovery: false,
+  apiKeyIds: ['api_1'],
+  provider: '',
+  model: '',
+  baggageOperation: ' checkout ',
+  baggageUserId: '',
+  channelIds: ['channel_1'],
+  ...overrides,
+});
 
 describe('cost alert helpers', () => {
   it('parses email recipients from mixed separators', () => {
@@ -31,7 +55,7 @@ describe('cost alert helpers', () => {
 
   it('parses provider/model pairs from line input', () => {
     expect(
-      parseProviderModelPairs('OpenAI, gpt-4o\nanthropic, claude/sonnet\nopenai, gpt-4o'),
+      parseProviderModelPairs('OpenAI, GPT-4O\nanthropic, claude/sonnet\nopenai, gpt-4o'),
     ).toEqual([
       { provider: 'openai', model: 'gpt-4o' },
       { provider: 'anthropic', model: 'claude/sonnet' },
@@ -105,29 +129,7 @@ describe('cost alert helpers', () => {
   });
 
   it('builds model approval alert input with zero-cost allowances', () => {
-    expect(
-      buildAlertInput({
-        name: 'Model guard',
-        severity: 'error',
-        conditionType: 'model_approval_and_pricing',
-        window: 'last_hour',
-        thresholdUsd: '',
-        baselineHours: '24',
-        multiplier: '2',
-        minCurrentHourUsd: '10',
-        minIncreaseUsd: '5',
-        approvedModelsText: 'OpenAI, gpt-4o-mini\nopenai, free-tier',
-        zeroCostModelsText: 'openai, free-tier',
-        cooldownMinutes: '0',
-        notifyOnRecovery: false,
-        apiKeyIds: ['api_1'],
-        provider: '',
-        model: '',
-        baggageOperation: ' checkout ',
-        baggageUserId: '',
-        channelIds: ['channel_1'],
-      }),
-    ).toEqual({
+    expect(buildAlertInput(modelApprovalForm())).toEqual({
       name: 'Model guard',
       severity: 'error',
       channelIds: ['channel_1'],
@@ -146,6 +148,21 @@ describe('cost alert helpers', () => {
         ],
       },
     });
+  });
+
+  it('validates model approval pair lists before save', () => {
+    expect(() =>
+      buildAlertInput(modelApprovalForm({ approvedModelsText: '', zeroCostModelsText: '' })),
+    ).toThrow('Add at least one approved provider/model pair');
+
+    expect(() =>
+      buildAlertInput(
+        modelApprovalForm({
+          approvedModelsText: 'openai, gpt-4o-mini',
+          zeroCostModelsText: 'anthropic, free-tier',
+        }),
+      ),
+    ).toThrow('Zero-cost pairs must also be listed as approved provider/model pairs');
   });
 
   it('roundtrips and displays scoped alert filters', () => {

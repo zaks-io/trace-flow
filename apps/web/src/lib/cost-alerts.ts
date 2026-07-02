@@ -138,7 +138,10 @@ export function parseProviderModelPairs(text: string): { provider: string; model
     }
 
     const provider = trimmed.slice(0, separatorIndex).trim().toLowerCase();
-    const model = trimmed.slice(separatorIndex + 1).trim();
+    const model = trimmed
+      .slice(separatorIndex + 1)
+      .trim()
+      .toLowerCase();
     if (!provider || !model) {
       throw new Error('Provider/model pairs must include both provider and model');
     }
@@ -147,6 +150,10 @@ export function parseProviderModelPairs(text: string): { provider: string; model
   }
 
   return Array.from(pairs.values());
+}
+
+function providerModelFormKey(pair: { provider: string; model: string }): string {
+  return JSON.stringify([pair.provider, pair.model]);
 }
 
 export function formatProviderModelPairs(
@@ -223,14 +230,24 @@ export function buildAlertInput(form: AlertFormData) {
   }
 
   if (form.conditionType === 'model_approval_and_pricing') {
-    const zeroCostPairs = new Set(
-      parseProviderModelPairs(form.zeroCostModelsText).map((pair) =>
-        JSON.stringify([pair.provider, pair.model]),
-      ),
+    const approvedPairs = parseProviderModelPairs(form.approvedModelsText);
+    if (approvedPairs.length === 0) {
+      throw new Error('Add at least one approved provider/model pair');
+    }
+
+    const approvedKeys = new Set(approvedPairs.map(providerModelFormKey));
+    const zeroCostPairs = parseProviderModelPairs(form.zeroCostModelsText);
+    const unmatchedZeroCostPair = zeroCostPairs.find(
+      (pair) => !approvedKeys.has(providerModelFormKey(pair)),
     );
-    const approvedModels = parseProviderModelPairs(form.approvedModelsText).map((pair) => ({
+    if (unmatchedZeroCostPair) {
+      throw new Error('Zero-cost pairs must also be listed as approved provider/model pairs');
+    }
+
+    const zeroCostKeys = new Set(zeroCostPairs.map(providerModelFormKey));
+    const approvedModels = approvedPairs.map((pair) => ({
       ...pair,
-      allowZeroCost: zeroCostPairs.has(JSON.stringify([pair.provider, pair.model])) || undefined,
+      allowZeroCost: zeroCostKeys.has(providerModelFormKey(pair)) || undefined,
     }));
 
     return {

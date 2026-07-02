@@ -26,7 +26,7 @@ import {
 import { normalizeWebhookHeaders, parseWebhookDeliveryUrl } from './costAlertWebhookSecurity';
 
 const CONFIG_CHANGE_RECHECK_MS = 5 * 1000;
-const MAX_SCOPE_VALUE_LENGTH = 200;
+const MAX_ALERT_STRING_LENGTH = 200;
 
 const costAlertSettingsValidator = v.object({
   rules: v.array(costAlertValidator),
@@ -70,9 +70,9 @@ export function isOrgOwner(userId: Id<'users'>, ownerId: Id<'users'>): boolean {
 function trimOptionalScopeValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
-  if (trimmed.length > MAX_SCOPE_VALUE_LENGTH) {
+  if (trimmed.length > MAX_ALERT_STRING_LENGTH) {
     throw new ConvexError(
-      `Scope filter values must be ${MAX_SCOPE_VALUE_LENGTH} characters or fewer`,
+      `Scope filter values must be ${MAX_ALERT_STRING_LENGTH} characters or fewer`,
     );
   }
   return trimmed;
@@ -100,8 +100,8 @@ function trimModelApprovalValue(value: string, label: string): string {
   if (!trimmed) {
     throw new ConvexError(`${label} is required`);
   }
-  if (trimmed.length > MAX_SCOPE_VALUE_LENGTH) {
-    throw new ConvexError(`${label} values must be ${MAX_SCOPE_VALUE_LENGTH} characters or fewer`);
+  if (trimmed.length > MAX_ALERT_STRING_LENGTH) {
+    throw new ConvexError(`${label} values must be ${MAX_ALERT_STRING_LENGTH} characters or fewer`);
   }
   return trimmed;
 }
@@ -116,7 +116,7 @@ export function normalizeApprovedModels(
 
   for (const entry of approvedModels) {
     const provider = trimModelApprovalValue(entry.provider, 'Provider').toLowerCase();
-    const model = trimModelApprovalValue(entry.model, 'Model');
+    const model = trimModelApprovalValue(entry.model, 'Model').toLowerCase();
     const key = JSON.stringify([provider, model]);
     const existing = deduped.get(key);
     const allowZeroCost = existing?.allowZeroCost === true || entry.allowZeroCost === true;

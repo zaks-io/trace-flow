@@ -4,7 +4,8 @@ import { internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { render } from '@react-email/components';
 import { Resend } from 'resend';
-import { randomUUID } from 'node:crypto';
+import { Buffer } from 'node:buffer';
+import { createHash, randomUUID } from 'node:crypto';
 import { internal } from '../_generated/api';
 import { CostAlertEmail } from '@trace-flow/emails';
 import type { Id } from '../_generated/dataModel';
@@ -166,8 +167,18 @@ function getAlertWindow(window: 'last_hour' | 'last_24_hours' | 'month_to_date')
   });
 }
 
+function providerModelKey(provider: string, model: string): string {
+  const normalizedProvider = provider.trim().toLowerCase();
+  const normalizedModel = model.trim().toLowerCase();
+  const lengthPrefixed =
+    `${Buffer.byteLength(normalizedProvider, 'utf8')}:${normalizedProvider}` +
+    `${Buffer.byteLength(normalizedModel, 'utf8')}:${normalizedModel}`;
+
+  return createHash('sha256').update(lengthPrefixed, 'utf8').digest('hex');
+}
+
 function encodeProviderModelPairs(models: ApprovedModel[]): string {
-  return models.map((entry) => `${entry.provider}|${entry.model}`).join(',');
+  return models.map((entry) => providerModelKey(entry.provider, entry.model)).join(',');
 }
 
 export function buildModelApprovalPipeParams(

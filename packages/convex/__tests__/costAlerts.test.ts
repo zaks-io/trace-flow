@@ -252,7 +252,7 @@ describe('cost alert helpers', () => {
         type: 'model_approval_and_pricing',
         window: 'last_hour',
         approvedModels: [
-          { provider: ' OpenAI ', model: ' gpt-4o-mini ' },
+          { provider: ' OpenAI ', model: ' GPT-4o-Mini ' },
           { provider: 'openai', model: 'gpt-4o-mini', allowZeroCost: true },
         ],
       } as never),
@@ -369,8 +369,10 @@ describe('cost alert helpers', () => {
         baggage_user_id: undefined,
         start_time_ns: 1779879600000000000,
         end_time_ns: 1779883200000000000,
-        approved_provider_models: 'openai|gpt-4o-mini,openai|free-tier',
-        zero_cost_provider_models: 'openai|free-tier',
+        approved_provider_models:
+          '7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f,ce078399a3fb50ce4c0007cfc27234465067543fb2bc8772830ab05121981c03',
+        zero_cost_provider_models:
+          'ce078399a3fb50ce4c0007cfc27234465067543fb2bc8772830ab05121981c03',
       });
     } finally {
       vi.useRealTimers();
@@ -399,14 +401,46 @@ describe('cost alert helpers', () => {
 
     expect(summary.triggered).toBe(true);
     expect(summary.metricValue).toBe(1);
-    expect(summary.summary).toContain('openai/gpt-4o-mini: 1 requests, 400 tokens');
-    expect(summary.summary).toContain('sample t_model_unpriced/s_model_unpriced');
-    expect(summary.summary).not.toContain('prompt');
-    expect(summary.details).toMatchObject({
+    const details = summary.details as Record<string, unknown> & {
+      rows: Record<string, unknown>[];
+    };
+    expect(details).toMatchObject({
       requestCount: 1,
       tokenCount: 400,
       unpricedRequestCount: 1,
+      rows: [
+        {
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          request_count: 1,
+          token_count: 400,
+          sample_trace_id: 't_model_unpriced',
+          sample_span_id: 's_model_unpriced',
+        },
+      ],
     });
+    expect(Object.keys(details)).toEqual([
+      'requestCount',
+      'tokenCount',
+      'unapprovedRequestCount',
+      'unpricedRequestCount',
+      'firstSeen',
+      'lastSeen',
+      'rows',
+    ]);
+    expect(Object.keys(details.rows[0])).toEqual([
+      'provider',
+      'model',
+      'request_count',
+      'token_count',
+      'total_cost_usd',
+      'unapproved_request_count',
+      'unpriced_request_count',
+      'first_seen_ns',
+      'last_seen_ns',
+      'sample_trace_id',
+      'sample_span_id',
+    ]);
   });
 
   it('deduplicates breach notifications using cooldown', () => {
