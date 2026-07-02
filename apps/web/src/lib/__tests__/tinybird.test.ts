@@ -242,7 +242,7 @@ describe('fetchTinybirdPipe', () => {
     );
   });
 
-  it('falls back to NEXT_PUBLIC_API_URL for pipe calls', async () => {
+  it('uses the local pipes API default when pipe origin is unset', async () => {
     vi.stubEnv('NEXT_PUBLIC_PIPES_API_URL', undefined);
     vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://legacy-api.trace-flow.dev');
     const generateWebReadToken = vi.fn().mockResolvedValue(tokenResult('pipe-jwt'));
@@ -253,7 +253,7 @@ describe('fetchTinybirdPipe', () => {
     });
 
     expect(mockFetchPipe).toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: 'https://legacy-api.trace-flow.dev' }),
+      expect.objectContaining({ baseUrl: 'http://localhost:8788' }),
     );
   });
 });

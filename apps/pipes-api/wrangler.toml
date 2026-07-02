@@ -47,7 +47,7 @@ zone_name = "trace-flow.dev"
 
 [[env.production.ratelimits]]
 name = "PIPES_LIMITER"
-namespace_id = "2004"
+namespace_id = "2013"
 simple = { limit = 240, period = 60 }
 
 [env.preview]
@@ -63,5 +63,5 @@ AXIOM_DATASET = "cloudflare"
 
 [[env.preview.ratelimits]]
 name = "PIPES_LIMITER"
-namespace_id = "2004"
+namespace_id = "2014"
 simple = { limit = 240, period = 60 }

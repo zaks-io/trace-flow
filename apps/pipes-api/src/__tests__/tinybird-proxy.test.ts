@@ -54,6 +54,7 @@ describe('pipes API Tinybird passthrough', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get('X-Cache')).toBe('MISS');
+    expect(res.headers.get('Vary')).toContain('Authorization');
     expect(cache.match).toHaveBeenCalledTimes(1);
     expect(cache.put).toHaveBeenCalledTimes(1);
 

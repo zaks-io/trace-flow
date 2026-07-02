@@ -150,6 +150,7 @@ function pipeResponse(body: string, cacheState: string, ttl?: number): Response 
   });
   if (ttl !== undefined) {
     headers.set('Cache-Control', `private, max-age=${ttl}`);
+    headers.set('Vary', 'Authorization');
   }
   return new Response(body, { status: 200, headers });
 }

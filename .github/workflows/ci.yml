@@ -446,6 +446,8 @@ jobs:
   api:
     name: API Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
     needs: [changes]
     if: needs.changes.outputs.api == 'true' || needs.changes.outputs.root == 'true'
     steps:

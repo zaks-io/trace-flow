@@ -18,6 +18,7 @@ export async function middleware(request: NextRequest) {
   const csp = buildCsp(nonce, process.env.NODE_ENV === 'development', reportUri, [
     readOrigin(process.env.NEXT_PUBLIC_PIPES_API_URL) ?? '',
     readOrigin(process.env.NEXT_PUBLIC_RAW_API_URL) ?? '',
+    readOrigin(process.env.NEXT_PUBLIC_API_URL) ?? '',
   ]);
 
   // Mutate the request Headers so downstream Server Components can read the

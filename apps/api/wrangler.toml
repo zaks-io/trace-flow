@@ -63,7 +63,7 @@ id = "f004c21e2b8c4754af5947c08069bd00"
 
 [[env.production.ratelimits]]
 name = "BODIES_LIMITER"
-namespace_id = "2003"
+namespace_id = "2011"
 simple = { limit = 120, period = 60 }
 
 [env.preview]
@@ -87,5 +87,5 @@ id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 
 [[env.preview.ratelimits]]
 name = "BODIES_LIMITER"
-namespace_id = "2003"
+namespace_id = "2012"
 simple = { limit = 120, period = 60 }

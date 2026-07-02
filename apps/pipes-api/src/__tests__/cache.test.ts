@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildCacheKey, computeTTL, hashString } from '../cache';
 
 describe('hashString', () => {
-  it('should return a 16-char hex string', async () => {
+  it('should return a 32-char hex string', async () => {
     const result = await hashString('test-input');
-    expect(result).toMatch(/^[0-9a-f]{16}$/);
+    expect(result).toMatch(/^[0-9a-f]{32}$/);
   });
 
   it('should return deterministic results', async () => {
