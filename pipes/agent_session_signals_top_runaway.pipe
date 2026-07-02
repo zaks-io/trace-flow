@@ -1,0 +1,216 @@
+DESCRIPTION >
+    Top runaway Agent Sessions from the session-grain signal read model. Requires
+    org, repo, and bounded time-window filters; no raw fact table reads.
+
+NODE candidate_sessions
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt,
+        toDate(start_dt) AS start_date,
+        toDate(fromUnixTimestamp64Milli(greatest(start_ms, end_ms - 1))) AS end_date
+    SELECT
+        repo_fingerprint,
+        session_pk
+    FROM agent_session_signals
+    WHERE OrgId = {{ String(org_id, '') }}
+        AND EventDate >= start_date
+        AND EventDate <= end_date
+        {% if defined(repos) %}
+        AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(repos) }}))), repo_fingerprint)
+        {% else %}
+            {% if defined(repo_fingerprint) %}
+            AND repo_fingerprint = {{ String(repo_fingerprint) }}
+            {% else %}
+            AND 0
+            {% end %}
+        {% end %}
+    GROUP BY repo_fingerprint, session_pk
+    HAVING maxMerge(LastEventAt) >= start_dt
+        AND maxMerge(LastEventAt) < end_dt
+
+NODE scoped_sessions
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ms, 0) }} AS start_ms_raw,
+        {{ Int64(end_time_ms, 0) }} AS end_ms_raw,
+        if(end_ms_raw = 0, toUnixTimestamp64Milli(toDateTime64(now(), 3)), end_ms_raw) AS end_ms_candidate,
+        if(start_ms_raw = 0, end_ms_candidate - 7 * 24 * 60 * 60 * 1000, start_ms_raw) AS start_ms_candidate,
+        least(start_ms_candidate, end_ms_candidate) AS start_ms,
+        greatest(start_ms_candidate, end_ms_candidate) AS end_ms,
+        fromUnixTimestamp64Milli(start_ms) AS start_dt,
+        fromUnixTimestamp64Milli(end_ms) AS end_dt
+    SELECT
+        repo_fingerprint,
+        session_pk,
+        argMaxMerge(source) AS source,
+        argMaxMerge(repo_source) AS repo_source,
+        argMaxMerge(model) AS model,
+        argMaxMerge(parser_version) AS parser_version,
+        minMerge(StartedAt) AS started_at,
+        maxMerge(LastEventAt) AS last_event_at,
+        maxMerge(IngestedAt) AS ingested_at,
+        sumMerge(MessageCount) AS message_count,
+        sumMerge(InputTokens) AS input_tokens,
+        sumMerge(OutputTokens) AS output_tokens,
+        sumMerge(CacheReadTokens) AS cache_read_tokens,
+        sumMerge(CacheCreationTokens) AS cache_creation_tokens,
+        sumMerge(ReasoningTokens) AS reasoning_tokens,
+        input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens + reasoning_tokens AS total_tokens,
+        sumMerge(PricedMessageCount) AS priced_message_count,
+        sumMerge(TokenCoveredMessageCount) AS token_covered_message_count,
+        sumMerge(CacheCoveredMessageCount) AS cache_covered_message_count,
+        sumMerge(MissingModelMessageCount) AS missing_model_message_count,
+        sumMerge(MissingSourceFactCount) AS missing_source_fact_count,
+        round(sumMerge(CostUsd), 6) AS estimated_cost_usd,
+        sumMerge(ToolEventCount) AS tool_event_count,
+        sumMerge(ToolSuccessCount) AS tool_success_count,
+        sumMerge(ToolFailureCount) AS failed_tool_count,
+        sumMerge(ToolUnknownCount) AS unknown_tool_count,
+        sumMerge(NavigationToolCount) AS navigation_tool_count,
+        sumMerge(SearchToolCount) AS search_tool_count,
+        sumMerge(NavigationHintStructuredCount) AS navigation_hint_structured_count,
+        sumMerge(NavigationHintUnknownCount) AS navigation_hint_unknown_count,
+        sumMerge(MissingFileFailureCount) AS missing_file_failure_count,
+        sumMerge(ReadDirectoryFailureCount) AS read_directory_failure_count,
+        sumMerge(EditBeforeReadFailureCount) AS edit_before_read_failure_count,
+        sumMerge(StaleFileBeforeEditFailureCount) AS stale_file_before_edit_failure_count,
+        sumMerge(ExternalSchemaValidationFailureCount) AS external_schema_validation_failure_count,
+        sumMerge(RuntimeEnvMismatchFailureCount) AS runtime_env_mismatch_failure_count,
+        sumMerge(ToolInputValidationFailureCount) AS tool_input_validation_failure_count,
+        sumMerge(HumanOrPolicyRejectionFailureCount) AS human_or_policy_rejection_failure_count,
+        sumMerge(WrongToolNameFailureCount) AS wrong_tool_name_failure_count,
+        sumMerge(OversizedReadFailureCount) AS oversized_read_failure_count,
+        sumMerge(OtherFailureCount) AS other_failure_count,
+        sumMerge(ClassifiedErrorCategoryFailureCount) AS classified_error_category_failure_count,
+        sumMerge(UnknownErrorCategoryFailureCount) AS unknown_error_category_failure_count,
+        sumMerge(FileTouchCount) AS file_touch_count,
+        sumMerge(ReadFileTouchCount) AS read_file_touch_count,
+        sumMerge(EditFileTouchCount) AS edit_file_touch_count,
+        sumMerge(WriteFileTouchCount) AS write_file_touch_count,
+        uniqMerge(UniqueFileCount) AS unique_file_count,
+        uniqMerge(PullRequestLinkCount) AS pull_request_link_count,
+        greatest(0, toUnixTimestamp64Milli(last_event_at) - toUnixTimestamp64Milli(started_at)) AS duration_ms,
+        toUnixTimestamp64Milli(started_at) AS started_at_ms,
+        toUnixTimestamp64Milli(last_event_at) AS last_event_ms
+    FROM agent_session_signals
+    WHERE OrgId = {{ String(org_id, '') }}
+        {% if defined(repos) %}
+        AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(repos) }}))), repo_fingerprint)
+        {% else %}
+            {% if defined(repo_fingerprint) %}
+            AND repo_fingerprint = {{ String(repo_fingerprint) }}
+            {% else %}
+            AND 0
+            {% end %}
+        {% end %}
+        AND (repo_fingerprint, session_pk) IN (SELECT repo_fingerprint, session_pk FROM candidate_sessions)
+    GROUP BY repo_fingerprint, session_pk
+    -- Runaway scoring is message-cost oriented; tool/file/PR-only sessions have no model-call denominator.
+    HAVING message_count > 0
+        AND last_event_at >= start_dt
+        AND last_event_at < end_dt
+        {% if defined(sources) %}
+        AND has(arrayFilter(x -> x != '', arrayMap(x -> trim(x), splitByChar(',', {{ String(sources) }}))), source)
+        {% end %}
+
+NODE scored
+SQL >
+    SELECT
+        *,
+        if(total_tokens = 0, 0., round(toFloat64(cache_read_tokens) / toFloat64(total_tokens), 4)) AS cache_read_ratio,
+        if(total_tokens = 0, 0., round(toFloat64(input_tokens) / toFloat64(total_tokens), 4)) AS fresh_input_ratio,
+        if(message_count = 0, 0., round(toFloat64(token_covered_message_count) / toFloat64(message_count), 4)) AS token_coverage_ratio,
+        if(message_count = 0, 0., round(toFloat64(cache_covered_message_count) / toFloat64(message_count), 4)) AS cache_coverage_ratio,
+        if(failed_tool_count = 0, 1., round(toFloat64(classified_error_category_failure_count) / toFloat64(failed_tool_count), 4)) AS error_category_coverage_ratio,
+        if(failed_tool_count = 0, 0., round(toFloat64(unknown_error_category_failure_count) / toFloat64(failed_tool_count), 4)) AS unknown_error_category_ratio,
+        if(navigation_tool_count = 0, 1., round(toFloat64(navigation_hint_structured_count) / toFloat64(navigation_tool_count), 4)) AS navigation_hint_coverage_ratio,
+        round(least(100.,
+            least(toFloat64(message_count) / 250., 2.) * 20.
+            + least(toFloat64(duration_ms) / (8. * 60. * 60. * 1000.), 2.) * 15.
+            + least(toFloat64(total_tokens) / 30000000., 2.) * 25.
+            + least(toFloat64(tool_event_count) / 500., 2.) * 15.
+            + least(toFloat64(failed_tool_count) / 50., 2.) * 15.
+            + least(toFloat64(navigation_tool_count) / 100., 2.) * 10.
+        ), 2) AS runaway_score
+    FROM scoped_sessions
+
+NODE endpoint
+SQL >
+    %
+    SELECT
+        session_pk,
+        source,
+        model,
+        repo_fingerprint,
+        repo_source,
+        message_count,
+        duration_ms,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        reasoning_tokens,
+        total_tokens,
+        cache_read_ratio,
+        fresh_input_ratio,
+        estimated_cost_usd,
+        priced_message_count,
+        tool_event_count,
+        tool_success_count,
+        failed_tool_count,
+        unknown_tool_count,
+        navigation_tool_count,
+        search_tool_count,
+        file_touch_count,
+        unique_file_count,
+        read_file_touch_count,
+        edit_file_touch_count,
+        write_file_touch_count,
+        pull_request_link_count,
+        missing_file_failure_count,
+        read_directory_failure_count,
+        edit_before_read_failure_count,
+        stale_file_before_edit_failure_count,
+        external_schema_validation_failure_count,
+        runtime_env_mismatch_failure_count,
+        tool_input_validation_failure_count,
+        human_or_policy_rejection_failure_count,
+        wrong_tool_name_failure_count,
+        oversized_read_failure_count,
+        other_failure_count,
+        classified_error_category_failure_count,
+        unknown_error_category_failure_count,
+        unknown_error_category_ratio,
+        token_coverage_ratio,
+        cache_coverage_ratio,
+        error_category_coverage_ratio,
+        navigation_hint_coverage_ratio,
+        round((token_coverage_ratio + cache_coverage_ratio + error_category_coverage_ratio + navigation_hint_coverage_ratio) / 4., 4) AS coverage_score,
+        multiIf(coverage_score >= 0.9, 'high', coverage_score >= 0.6, 'partial', 'low') AS coverage,
+        runaway_score,
+        multiIf(runaway_score >= 80., 'critical', runaway_score >= 50., 'high', runaway_score >= 25., 'medium', 'low') AS runaway_band,
+        multiIf(
+            source = '' OR model = '' OR repo_fingerprint = '', 'low',
+            coverage = 'high' AND message_count >= 3, 'high',
+            coverage = 'low', 'low',
+            'medium'
+        ) AS confidence,
+        parser_version,
+        started_at_ms,
+        last_event_ms
+    FROM scored
+    WHERE runaway_score >= {{ Float64(min_runaway_score, 0) }}
+    ORDER BY runaway_score DESC, estimated_cost_usd DESC, last_event_ms DESC, session_pk ASC
+    LIMIT greatest(1, least({{ Int32(limit, 25) }}, 100))
+    OFFSET greatest(0, {{ Int32(offset, 0) }})
+
+TYPE ENDPOINT
