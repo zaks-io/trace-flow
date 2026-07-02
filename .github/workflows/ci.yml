@@ -150,6 +150,8 @@ jobs:
               - 'tests/**'
               - 'tinybird.config.json'
               - 'scripts/deploy-agent-tinybird.sh'
+              - 'scripts/tinybird-agent-signal-performance-report.sh'
+              - 'scripts/verify-agent-signal-query-guardrails.mjs'
               - 'scripts/verify-tinybird-copy-policy.sh'
               - 'scripts/verify-tinybird-cost-contract.sh'
 
@@ -198,13 +200,15 @@ jobs:
       - name: Build and test against Tinybird Local
         run: |
           bash scripts/verify-tinybird-cost-contract.sh
+          node scripts/verify-agent-signal-query-guardrails.mjs
           TB_TARGET_WORKSPACE=trace_flow_prod \
             TINYBIRD_DEPLOY_PHASE=switch \
             TINYBIRD_LEGACY_REF=11613a4619444adb0e27abc3df958cebb43cc280 \
             TINYBIRD_VALIDATE_DEPLOY_TREE_ONLY=1 \
-            bash scripts/deploy-agent-tinybird.sh
+          bash scripts/deploy-agent-tinybird.sh
           tb --local build
           tb --local test run
+          bash scripts/tinybird-agent-signal-performance-report.sh --local
         env:
           TB_VERSION_WARNING: 0
 

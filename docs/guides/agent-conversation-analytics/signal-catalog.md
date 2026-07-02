@@ -279,6 +279,24 @@ Do not build product claims on these without additional evidence:
 6. Coverage panel: priced-token coverage, unknown-status rate, parser version mix, remote-vs-path repo
    attribution.
 
+## Tinybird Query Guardrails
+
+Public signal endpoints must stay bounded as data grows:
+
+- org scope is mandatory
+- repo/project scope is mandatory for file-hotspot and repo-guidance endpoints
+- account-wide endpoints are only small summaries or discovery lists, capped at 100 rows or one
+  aggregate row
+- every endpoint needs a default time window and an explicit time filter
+- MCP-oriented responses must cap rows and arrays, and must not include raw transcripts or excerpts
+- `FINAL` belongs to admin diagnostics and repair analysis, not public signal endpoints
+- hot rollups should be incremental materialized writes; cold baselines should be bounded daily
+  rollups, not frequent all-history replacement jobs
+
+Run `bun run tinybird:contract` before changing signal pipes or materializations. Run
+`bun run tinybird:agent-signal:perf` after `tb --local build` when changing session-risk, file-hotspot,
+tool-failure, or repo-baseline queries.
+
 ## Parser Improvements
 
 Promote these before making stronger claims:

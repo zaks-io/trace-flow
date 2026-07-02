@@ -81,6 +81,25 @@ Every public signal query must be bounded:
 
 For Tinybird specifically, derived endpoints should filter on sorting-key dimensions first and avoid broad `FINAL` reads. Full raw scans remain a diagnostic/admin workflow, not the runtime product path.
 
+Agent signal Tinybird files carry a static query contract in
+`scripts/verify-agent-signal-query-guardrails.mjs`:
+
+- public signal endpoints must filter by `OrgId`, derive `start_time_ms` / `end_time_ms`, and apply
+  that window in the query
+- repo/project-scoped signal endpoints must return no rows unless `repos` or `repo_fingerprint` is
+  supplied
+- account-wide signal endpoints are allowed only as explicit small summaries or discovery pages,
+  capped at 100 rows or a single aggregate row
+- MCP-facing outputs must not return raw transcript text, raw excerpts, or unbounded arrays
+- `FINAL` is not allowed in public signal endpoints or signal materializations; broad raw `FINAL`
+  scans stay admin-only diagnostics
+- signal materializations must be incremental `TYPE MATERIALIZED` resources grouped by organization
+  and stable serving grain; scheduled replacement copies are repair-only and must stay unscheduled
+
+Representative query performance is checked with
+`scripts/tinybird-agent-signal-performance-report.sh`, which times fixture-backed Tinybird tests for
+session risk, file hotspots, tool failures, and daily repo-baseline movement.
+
 ## Alternatives Considered
 
 ### Query raw facts directly from dashboard and MCP

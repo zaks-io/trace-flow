@@ -27,3 +27,9 @@
   parameters: org_id=org_file_attention&start_time_ms=1779235200000&end_time_ms=1779321600000&repo_fingerprint=repo_file_attention&limit=1&offset=-5
   expected_result: |
     {"repo_fingerprint":"repo_file_attention","normalized_repo_path":"src\/hot.ts","path_confidence":"structured","touch_count":4,"session_count":2,"read_count":2,"edit_count":1,"write_count":1,"directory_read_count":0,"missing_file_count":0,"coverage_debt_count":0,"structured_file_event_count":4,"hint_event_count":0,"tool_families":["read","edit","write"],"first_touch_ms":1779271200000,"last_touch_ms":1779274800000}
+
+- name: files_require_repo_scope
+  description: file hotspot hints are repo-scoped; omitting repos/repo_fingerprint returns no rows
+  expected_http_status: 200
+  parameters: org_id=org_file_attention&start_time_ms=1779235200000&end_time_ms=1779321600000&limit=5
+  expected_result: ''
