@@ -789,7 +789,11 @@ export function createApp(
 
     const auth0Url = oauth.buildAuth0AuthorizeUrl(state, callbackUrl);
 
-    // Return HTML redirect page as fallback for browsers that might not follow 302 immediately
+    // This branch is reached by the consent form's GET submission. Chrome checks the consent
+    // page's `form-action 'self'` CSP against every redirect hop of that submission, so a 302
+    // here (self -> Auth0, and on silent SSO all the way to the client's localhost callback)
+    // gets blocked. A 200 HTML redirect ends the form-submission chain before the
+    // cross-origin navigation.
     const redirectHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -798,14 +802,13 @@ export function createApp(
 </head>
 <body>
   <p>Redirecting to authentication... <a href="${auth0Url}">Click here if not redirected</a></p>
-  <script>window.location.href = "${auth0Url}";</script>
+  <script>window.location.replace("${auth0Url}");</script>
 </body>
 </html>`;
 
     return new Response(redirectHtml, {
-      status: 302,
+      status: 200,
       headers: {
-        Location: auth0Url,
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate',
       },
