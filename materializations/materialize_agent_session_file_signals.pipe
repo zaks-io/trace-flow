@@ -1,0 +1,43 @@
+DESCRIPTION >
+    Incremental Agent Session file-attention states from structured File Event facts.
+
+NODE rollup
+SQL >
+    SELECT
+        OrgId,
+        repo_fingerprint,
+        session_pk,
+        normalized_path AS normalized_repo_path,
+        argMaxState(toString(source), EventAt) AS source,
+        argMaxState(toString(repo_source), EventAt) AS repo_source,
+        argMaxState(toString(parser_version), EventAt) AS parser_version,
+        maxState(path_confidence_rank) AS PathConfidenceRank,
+        minState(EventAt) AS FirstTouchedAt,
+        maxState(EventAt) AS LastTouchedAt,
+        maxState(IngestedAt) AS IngestedAt,
+        sumState(toUInt64(1)) AS TouchCount,
+        sumState(toUInt64(operation = 'read')) AS ReadCount,
+        sumState(toUInt64(operation = 'edit')) AS EditCount,
+        sumState(toUInt64(operation IN ('write', 'create', 'delete', 'rename'))) AS WriteCount,
+        sumState(toUInt64(operation = 'read' AND endsWith(normalized_path, '/'))) AS DirectoryReadCount,
+        sumState(toUInt64(0)) AS MissingFileCount,
+        sumState(toUInt64(path_confidence_rank < 3)) AS CoverageDebtCount,
+        sumState(toUInt64(1)) AS StructuredFileEventCount,
+        sumState(toUInt64(0)) AS HintEventCount
+    FROM (
+        SELECT
+            *,
+            multiIf(
+                normalized_repo_path = '', 'unknown_path',
+                dropped_sensitive > 0 OR startsWith(normalized_repo_path, '/'), 'unsafe_path',
+                normalized_repo_path = 'outside_repo', 'outside_repo',
+                replaceRegexpAll(normalized_repo_path, '^\\./+', '') = '', 'unknown_path',
+                replaceRegexpAll(normalized_repo_path, '^\\./+', '')
+            ) AS normalized_path,
+            toUInt8(if(normalized_path IN ('unknown_path', 'unsafe_path', 'outside_repo'), 1, 3)) AS path_confidence_rank
+        FROM agent_file_event_facts
+    )
+    GROUP BY OrgId, repo_fingerprint, session_pk, normalized_path
+
+TYPE MATERIALIZED
+DATASOURCE agent_session_file_signals

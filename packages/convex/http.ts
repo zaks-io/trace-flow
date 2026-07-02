@@ -9,7 +9,6 @@ import {
   traceContextFromHeaders,
   type LogContext,
   type TraceContext,
-  type Logger,
 } from '@trace-flow/logging';
 import type { ActionCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
@@ -23,36 +22,6 @@ import type Stripe from 'stripe';
 import { UNITS_PER_ADDON } from '@trace-flow/types';
 import { mapStripeStatusToInternal } from './billing/subscriptions';
 import { getStripeClient, stripeWebhookSecret, stripeProPriceId } from './billing/stripe';
-import { rateLimiter } from './rateLimits';
-
-type RateLimitName = 'mcpRegister' | 'mcpAuthorize' | 'mcpTokenExchange' | 'mcpCallback';
-
-async function enforceRateLimit(
-  ctx: ActionCtx,
-  name: RateLimitName,
-  key: string,
-  logger: Logger,
-): Promise<Response | null> {
-  const result = await rateLimiter.limit(ctx, name, { key });
-  if (result.ok) return null;
-  logger.warn('convex.rate_limited', {
-    route: name,
-    keyClass: 'ip',
-    retryAfterMs: result.retryAfter,
-  });
-  const retryAfterSec = Math.max(1, Math.ceil(result.retryAfter / 1000));
-  return new Response(
-    JSON.stringify({ error: 'rate_limited', error_description: 'Too many requests' }),
-    {
-      status: 429,
-      headers: {
-        'Content-Type': 'application/json',
-        'Retry-After': String(retryAfterSec),
-      },
-    },
-  );
-}
-
 /**
  * Whether `redirectUri` is a loopback HTTP address (the CLI's local listener). The Collector login
  * flow delivers a freshly minted credential to this URL, so anything but `127.0.0.1` / `[::1]` /
@@ -265,13 +234,6 @@ function timingSafeEqual(a: string, b: string): boolean {
 function hasValidBearerSecret(authHeader: string | undefined, secret: string | undefined): boolean {
   if (!secret || !authHeader?.startsWith('Bearer ')) return false;
   return timingSafeEqual(authHeader.slice(7), secret);
-}
-
-function getClientIp(request: Request): string {
-  // Only trust `cf-connecting-ip` — Cloudflare injects it and clients can't set
-  // it. `x-forwarded-for` is client-controlled and trivially spoofable, which
-  // would let a caller cycle their rate-limit key at will.
-  return request.headers.get('cf-connecting-ip') ?? 'unknown';
 }
 
 function isJsonContentType(contentType: string | undefined): boolean {
@@ -664,13 +626,6 @@ export function createApp(
   // OAuth: Dynamic Client Registration (RFC 7591)
   app.post('/mcp/register', async (c) => {
     const ctx = c.env;
-    const logger = getRequestLogger(c.req.raw, { operation: 'mcp_register' });
-
-    const limited = await enforceRateLimit(ctx, 'mcpRegister', getClientIp(c.req.raw), logger);
-    if (limited) {
-      await logger.flush();
-      return limited;
-    }
 
     let body: {
       redirect_uris?: string[];
@@ -723,14 +678,6 @@ export function createApp(
   // OAuth: Start authorization flow
   app.get('/mcp/authorize', async (c) => {
     const ctx = c.env;
-    const logger = getRequestLogger(c.req.raw, { operation: 'mcp_authorize' });
-
-    const limited = await enforceRateLimit(ctx, 'mcpAuthorize', getClientIp(c.req.raw), logger);
-    if (limited) {
-      await logger.flush();
-      return limited;
-    }
-
     const url = new URL(c.req.url);
     const responseType = url.searchParams.get('response_type');
     const clientId = url.searchParams.get('client_id');
@@ -871,12 +818,6 @@ export function createApp(
     const logger = getRequestLogger(c.req.raw, {
       operation: 'mcp_callback',
     });
-
-    const limited = await enforceRateLimit(ctx, 'mcpCallback', getClientIp(c.req.raw), logger);
-    if (limited) {
-      await logger.flush();
-      return limited;
-    }
 
     try {
       const url = new URL(c.req.url);
@@ -1023,12 +964,6 @@ export function createApp(
     const logger = getRequestLogger(c.req.raw, {
       operation: 'mcp_token',
     });
-
-    const limited = await enforceRateLimit(ctx, 'mcpTokenExchange', getClientIp(c.req.raw), logger);
-    if (limited) {
-      await logger.flush();
-      return limited;
-    }
 
     try {
       const body = await c.req.parseBody();
@@ -1479,12 +1414,6 @@ export function createApp(
   // authorize machinery. The minted secret is delivered to that loopback by /collector/callback.
   app.get('/collector/authorize', async (c) => {
     const logger = getRequestLogger(c.req.raw, { operation: 'collector_authorize' });
-
-    const limited = await enforceRateLimit(c.env, 'mcpAuthorize', getClientIp(c.req.raw), logger);
-    if (limited) {
-      await logger.flush();
-      return limited;
-    }
 
     const url = new URL(c.req.url);
     const redirectUri = url.searchParams.get('redirect_uri');
