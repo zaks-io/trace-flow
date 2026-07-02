@@ -1,9 +1,7 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { agentsStorageState, agentsStorageStateSkipReason } from './agents-e2e-config';
 
-test.skip(
-  !process.env.TRACE_FLOW_AGENTS_E2E_STORAGE_STATE,
-  'Set TRACE_FLOW_AGENTS_E2E_STORAGE_STATE to an authenticated Playwright storage state.',
-);
+test.skip(!agentsStorageState, agentsStorageStateSkipReason);
 
 test.describe('/app/agents authenticated walkthrough', () => {
   test('exercises filters, drilldowns, pagination, and tool reliability with live agent data', async ({

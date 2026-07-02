@@ -14,6 +14,7 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
+    "test:e2e:agents:auth": "bun run scripts/save-agents-e2e-auth.ts",
     "test:e2e:agents": "playwright test --config=playwright.config.ts e2e/agents-dashboard.walkthrough.spec.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

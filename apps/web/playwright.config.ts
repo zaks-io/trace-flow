@@ -1,6 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-
-const storageState = process.env.TRACE_FLOW_AGENTS_E2E_STORAGE_STATE || undefined;
+import { agentsE2eBaseUrl, agentsStorageState } from './e2e/agents-e2e-config';
 
 export default defineConfig({
   testDir: './e2e',
@@ -10,8 +9,8 @@ export default defineConfig({
   },
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
   use: {
-    baseURL: process.env.TRACE_FLOW_AGENTS_E2E_BASE_URL ?? 'http://localhost:3000',
-    storageState,
+    baseURL: agentsE2eBaseUrl,
+    storageState: agentsStorageState,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
