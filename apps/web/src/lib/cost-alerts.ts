@@ -31,6 +31,8 @@ export interface AlertFormData {
   multiplier: string;
   minCurrentHourUsd: string;
   minIncreaseUsd: string;
+  approvedModelsText: string;
+  zeroCostModelsText: string;
   cooldownMinutes: string;
   notifyOnRecovery: boolean;
   apiKeyIds: string[];
@@ -73,6 +75,11 @@ interface CostAlertRuleLike {
         multiplier: number;
         minCurrentHourUsd: number;
         minIncreaseUsd: number;
+      }
+    | {
+        type: 'model_approval_and_pricing';
+        window: CostAlertWindow;
+        approvedModels: { provider: string; model: string; allowZeroCost?: boolean }[];
       };
 }
 
@@ -95,6 +102,8 @@ export const DEFAULT_ALERT_FORM_DATA: AlertFormData = {
   multiplier: '2',
   minCurrentHourUsd: '10',
   minIncreaseUsd: '5',
+  approvedModelsText: '',
+  zeroCostModelsText: '',
   cooldownMinutes: '60',
   notifyOnRecovery: true,
   apiKeyIds: [],
@@ -114,6 +123,47 @@ export function parseRecipients(text: string): string[] {
         .filter((part) => part.length > 0),
     ),
   );
+}
+
+export function parseProviderModelPairs(text: string): { provider: string; model: string }[] {
+  const pairs = new Map<string, { provider: string; model: string }>();
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const separatorIndex = trimmed.indexOf(',');
+    if (separatorIndex === -1) {
+      throw new Error('Provider/model pairs must use "provider, model" format');
+    }
+
+    const provider = trimmed.slice(0, separatorIndex).trim().toLowerCase();
+    const model = trimmed
+      .slice(separatorIndex + 1)
+      .trim()
+      .toLowerCase();
+    if (!provider || !model) {
+      throw new Error('Provider/model pairs must include both provider and model');
+    }
+
+    pairs.set(JSON.stringify([provider, model]), { provider, model });
+  }
+
+  return Array.from(pairs.values());
+}
+
+function providerModelFormKey(pair: { provider: string; model: string }): string {
+  return JSON.stringify([pair.provider, pair.model]);
+}
+
+export function formatProviderModelPairs(
+  pairs: { provider: string; model: string; allowZeroCost?: boolean }[],
+  options?: { zeroCostOnly?: boolean },
+): string {
+  return pairs
+    .filter((pair) => !options?.zeroCostOnly || pair.allowZeroCost)
+    .map((pair) => `${pair.provider}, ${pair.model}`)
+    .join('\n');
 }
 
 export function sanitizeHeaderRows(rows: ChannelHeaderFormRow[]): ChannelHeaderFormRow[] {
@@ -179,6 +229,37 @@ export function buildAlertInput(form: AlertFormData) {
     };
   }
 
+  if (form.conditionType === 'model_approval_and_pricing') {
+    const approvedPairs = parseProviderModelPairs(form.approvedModelsText);
+    if (approvedPairs.length === 0) {
+      throw new Error('Add at least one approved provider/model pair');
+    }
+
+    const approvedKeys = new Set(approvedPairs.map(providerModelFormKey));
+    const zeroCostPairs = parseProviderModelPairs(form.zeroCostModelsText);
+    const unmatchedZeroCostPair = zeroCostPairs.find(
+      (pair) => !approvedKeys.has(providerModelFormKey(pair)),
+    );
+    if (unmatchedZeroCostPair) {
+      throw new Error('Zero-cost pairs must also be listed as approved provider/model pairs');
+    }
+
+    const zeroCostKeys = new Set(zeroCostPairs.map(providerModelFormKey));
+    const approvedModels = approvedPairs.map((pair) => ({
+      ...pair,
+      allowZeroCost: zeroCostKeys.has(providerModelFormKey(pair)) || undefined,
+    }));
+
+    return {
+      ...base,
+      condition: {
+        type: 'model_approval_and_pricing' as const,
+        window: form.window,
+        approvedModels,
+      },
+    };
+  }
+
   return {
     ...base,
     condition: {
@@ -225,6 +306,8 @@ export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
     baggageOperation: rule.scope?.baggageOperation ?? '',
     baggageUserId: rule.scope?.baggageUserId ?? '',
     channelIds: rule.channelIds.map((id) => String(id)),
+    approvedModelsText: '',
+    zeroCostModelsText: '',
   };
 
   if (rule.condition.type === 'absolute_spend_threshold') {
@@ -253,6 +336,23 @@ export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
     };
   }
 
+  if (rule.condition.type === 'model_approval_and_pricing') {
+    return {
+      ...base,
+      conditionType: rule.condition.type,
+      window: rule.condition.window,
+      thresholdUsd: '',
+      baselineHours: '24',
+      multiplier: '2',
+      minCurrentHourUsd: '10',
+      minIncreaseUsd: '5',
+      approvedModelsText: formatProviderModelPairs(rule.condition.approvedModels),
+      zeroCostModelsText: formatProviderModelPairs(rule.condition.approvedModels, {
+        zeroCostOnly: true,
+      }),
+    };
+  }
+
   return {
     ...base,
     conditionType: rule.condition.type,
@@ -273,6 +373,8 @@ export function formatCondition(condition: CostAlertRuleLike['condition']): stri
       return `${COST_ALERT_CONDITION_LABELS[condition.type]}: ${formatCurrency(condition.thresholdUsd)}`;
     case 'hourly_spend_spike':
       return `${COST_ALERT_CONDITION_LABELS[condition.type]}: ${condition.multiplier}x baseline over ${condition.baselineHours}h`;
+    case 'model_approval_and_pricing':
+      return `${COST_ALERT_CONDITION_LABELS[condition.type]}: ${condition.approvedModels.length} approved pairs in ${COST_ALERT_WINDOW_LABELS[condition.window]}`;
   }
 }
 

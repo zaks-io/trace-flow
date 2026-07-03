@@ -4,7 +4,8 @@ import { internalAction, type ActionCtx } from '../_generated/server';
 import { v } from 'convex/values';
 import { render } from '@react-email/components';
 import { Resend } from 'resend';
-import { randomUUID } from 'node:crypto';
+import { Buffer } from 'node:buffer';
+import { createHash, randomUUID } from 'node:crypto';
 import { internal } from '../_generated/api';
 import { CostAlertEmail } from '@trace-flow/emails';
 import type { Id } from '../_generated/dataModel';
@@ -40,6 +41,20 @@ interface HourlySpikeRow {
   insufficient_data: number;
 }
 
+interface ModelApprovalAnomalyRow {
+  provider: string;
+  model: string;
+  request_count: number;
+  token_count: number;
+  total_cost_usd: number;
+  unapproved_request_count: number;
+  unpriced_request_count: number;
+  first_seen_ns: number;
+  last_seen_ns: number;
+  sample_trace_id: string;
+  sample_span_id: string;
+}
+
 interface CostAlertScope {
   provider?: string;
   model?: string;
@@ -47,11 +62,18 @@ interface CostAlertScope {
   baggageUserId?: string;
 }
 
+interface ApprovedModel {
+  provider: string;
+  model: string;
+  allowZeroCost?: boolean;
+}
+
 interface EvaluationResult {
   triggered: boolean;
   metricValue: number;
   metricLabel: string;
   summary: string;
+  details?: unknown;
   /** When true, only notify on the first trigger — suppress re-notifications even after cooldown */
   suppressRenotify?: boolean;
 }
@@ -137,6 +159,101 @@ function getAbsoluteWindow(condition: {
   }
 }
 
+function getAlertWindow(window: 'last_hour' | 'last_24_hours' | 'month_to_date') {
+  return getAbsoluteWindow({
+    type: 'absolute_spend_threshold',
+    window,
+    thresholdUsd: 1,
+  });
+}
+
+function providerModelKey(provider: string, model: string): string {
+  const normalizedProvider = provider.trim().toLowerCase();
+  const normalizedModel = model.trim().toLowerCase();
+  const lengthPrefixed =
+    `${Buffer.byteLength(normalizedProvider, 'utf8')}:${normalizedProvider}` +
+    `${Buffer.byteLength(normalizedModel, 'utf8')}:${normalizedModel}`;
+
+  return createHash('sha256').update(lengthPrefixed, 'utf8').digest('hex');
+}
+
+function encodeProviderModelPairs(models: ApprovedModel[]): string {
+  return models.map((entry) => providerModelKey(entry.provider, entry.model)).join(',');
+}
+
+export function buildModelApprovalPipeParams(
+  base: {
+    selectedKeys: string[];
+    retentionDays: number;
+    scope?: CostAlertScope;
+  },
+  condition: {
+    window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+    approvedModels: ApprovedModel[];
+  },
+) {
+  const window = getAlertWindow(condition.window);
+  return buildCostAlertPipeParams(base, {
+    start_time_ns: nsFromMs(window.startMs),
+    end_time_ns: nsFromMs(window.endMs),
+    approved_provider_models: encodeProviderModelPairs(condition.approvedModels),
+    zero_cost_provider_models: encodeProviderModelPairs(
+      condition.approvedModels.filter((entry) => entry.allowZeroCost),
+    ),
+  });
+}
+
+function formatTimestampNs(value: number): string {
+  return new Date(Math.floor(value / 1_000_000)).toISOString();
+}
+
+function formatModelApprovalRow(row: ModelApprovalAnomalyRow): string {
+  const reasons = [
+    row.unapproved_request_count > 0 ? `${row.unapproved_request_count} unapproved` : undefined,
+    row.unpriced_request_count > 0 ? `${row.unpriced_request_count} unpriced` : undefined,
+  ].filter((reason): reason is string => Boolean(reason));
+
+  return `${row.provider}/${row.model}: ${row.request_count} requests, ${row.token_count} tokens, first ${formatTimestampNs(row.first_seen_ns)}, last ${formatTimestampNs(row.last_seen_ns)}, sample ${row.sample_trace_id}/${row.sample_span_id}, ${reasons.join(' and ')}`;
+}
+
+export function summarizeModelApprovalAnomalies(
+  rows: ModelApprovalAnomalyRow[],
+  scope: CostAlertScope | undefined,
+): EvaluationResult {
+  if (rows.length === 0) {
+    return {
+      triggered: false,
+      metricValue: 0,
+      metricLabel: 'Model approval/pricing anomalies',
+      summary: `No unapproved or unpriced model usage detected.${formatScopeSuffix(scope)}`,
+      details: { rows: [] },
+    };
+  }
+
+  const requestCount = rows.reduce((sum, row) => sum + Number(row.request_count), 0);
+  const tokenCount = rows.reduce((sum, row) => sum + Number(row.token_count), 0);
+  const unapprovedCount = rows.reduce((sum, row) => sum + Number(row.unapproved_request_count), 0);
+  const unpricedCount = rows.reduce((sum, row) => sum + Number(row.unpriced_request_count), 0);
+  const firstSeenNs = Math.min(...rows.map((row) => Number(row.first_seen_ns)));
+  const lastSeenNs = Math.max(...rows.map((row) => Number(row.last_seen_ns)));
+
+  return {
+    triggered: true,
+    metricValue: requestCount,
+    metricLabel: 'Model approval/pricing anomalies',
+    summary: `${rows.length} provider/model pairs breached approval or pricing rules: ${rows.map(formatModelApprovalRow).join('; ')}.${formatScopeSuffix(scope)}`,
+    details: {
+      requestCount,
+      tokenCount,
+      unapprovedRequestCount: unapprovedCount,
+      unpricedRequestCount: unpricedCount,
+      firstSeen: formatTimestampNs(firstSeenNs),
+      lastSeen: formatTimestampNs(lastSeenNs),
+      rows,
+    },
+  };
+}
+
 async function evaluateAlert(
   selectedKeys: string[],
   scope: CostAlertScope | undefined,
@@ -157,6 +274,11 @@ async function evaluateAlert(
         multiplier: number;
         minCurrentHourUsd: number;
         minIncreaseUsd: number;
+      }
+    | {
+        type: 'model_approval_and_pricing';
+        window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+        approvedModels: ApprovedModel[];
       },
 ): Promise<EvaluationResult> {
   if (condition.type === 'absolute_spend_threshold') {
@@ -208,6 +330,14 @@ async function evaluateAlert(
       summary: `Projected monthly cost is ${formatCurrency(projected)} with ${formatCurrency(monthToDate)} spent month-to-date, compared with a ${formatCurrency(condition.thresholdUsd)} budget.${formatScopeSuffix(scope)}`,
       suppressRenotify: true,
     };
+  }
+
+  if (condition.type === 'model_approval_and_pricing') {
+    const rows = await fetchPipe<ModelApprovalAnomalyRow>(
+      'llm_model_approval_anomalies',
+      buildModelApprovalPipeParams({ selectedKeys, scope, retentionDays }, condition),
+    );
+    return summarizeModelApprovalAnomalies(rows, scope);
   }
 
   const rows = await fetchPipe<HourlySpikeRow>(
@@ -385,6 +515,7 @@ async function deliverEvent(args: {
   metricLabel: string;
   summary: string;
   metricValue?: number;
+  details?: unknown;
 }) {
   const {
     ctx,
@@ -415,6 +546,7 @@ async function deliverEvent(args: {
       label: metricLabel,
       value: args.metricValue,
       summary,
+      details: args.details,
     },
     channel: {
       id: channel._id,
@@ -550,6 +682,7 @@ export const evaluateOrg = internalAction({
                   metricLabel: evaluation.metricLabel,
                   metricValue: evaluation.metricValue,
                   summary: evaluation.summary,
+                  details: evaluation.details,
                 });
               } catch (error) {
                 deliveryErrors.push(

@@ -1070,6 +1070,15 @@ export declare const api: {
               minIncreaseUsd: number;
               multiplier: number;
               type: "hourly_spend_spike";
+            }
+          | {
+              approvedModels: Array<{
+                allowZeroCost?: boolean;
+                model: string;
+                provider: string;
+              }>;
+              type: "model_approval_and_pricing";
+              window: "last_hour" | "last_24_hours" | "month_to_date";
             };
         cooldownMinutes: number;
         name: string;
@@ -1166,6 +1175,15 @@ export declare const api: {
                 minIncreaseUsd: number;
                 multiplier: number;
                 type: "hourly_spend_spike";
+              }
+            | {
+                approvedModels: Array<{
+                  allowZeroCost?: boolean;
+                  model: string;
+                  provider: string;
+                }>;
+                type: "model_approval_and_pricing";
+                window: "last_hour" | "last_24_hours" | "month_to_date";
               };
           cooldownMinutes: number;
           createdAt: number;
@@ -1250,6 +1268,15 @@ export declare const api: {
               minIncreaseUsd: number;
               multiplier: number;
               type: "hourly_spend_spike";
+            }
+          | {
+              approvedModels: Array<{
+                allowZeroCost?: boolean;
+                model: string;
+                provider: string;
+              }>;
+              type: "model_approval_and_pricing";
+              window: "last_hour" | "last_24_hours" | "month_to_date";
             };
         cooldownMinutes?: number;
         id: Id<"costAlerts">;
@@ -2357,6 +2384,15 @@ export declare const internal: {
                 minIncreaseUsd: number;
                 multiplier: number;
                 type: "hourly_spend_spike";
+              }
+            | {
+                approvedModels: Array<{
+                  allowZeroCost?: boolean;
+                  model: string;
+                  provider: string;
+                }>;
+                type: "model_approval_and_pricing";
+                window: "last_hour" | "last_24_hours" | "month_to_date";
               };
           cooldownMinutes: number;
           createdAt: number;

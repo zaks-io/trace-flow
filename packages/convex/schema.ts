@@ -240,6 +240,21 @@ export default defineSchema({
         minCurrentHourUsd: v.number(),
         minIncreaseUsd: v.number(),
       }),
+      v.object({
+        type: v.literal('model_approval_and_pricing'),
+        window: v.union(
+          v.literal('last_hour'),
+          v.literal('last_24_hours'),
+          v.literal('month_to_date'),
+        ),
+        approvedModels: v.array(
+          v.object({
+            provider: v.string(),
+            model: v.string(),
+            allowZeroCost: v.optional(v.boolean()),
+          }),
+        ),
+      }),
     ),
     createdByUserId: v.id('users'),
     updatedByUserId: v.id('users'),

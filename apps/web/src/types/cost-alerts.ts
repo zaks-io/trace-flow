@@ -12,12 +12,14 @@ export interface CostAlertScope {
 export type CostAlertConditionType =
   | 'absolute_spend_threshold'
   | 'projected_monthly_over'
-  | 'hourly_spend_spike';
+  | 'hourly_spend_spike'
+  | 'model_approval_and_pricing';
 
 export const COST_ALERT_CONDITION_LABELS: Record<CostAlertConditionType, string> = {
   absolute_spend_threshold: 'Hard Threshold',
   projected_monthly_over: 'Projected Monthly Over',
   hourly_spend_spike: 'Hourly Spend Spike',
+  model_approval_and_pricing: 'Model Approval',
 };
 
 export const COST_ALERT_WINDOW_LABELS: Record<CostAlertWindow, string> = {

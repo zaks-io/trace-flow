@@ -26,7 +26,7 @@ import {
 import { normalizeWebhookHeaders, parseWebhookDeliveryUrl } from './costAlertWebhookSecurity';
 
 const CONFIG_CHANGE_RECHECK_MS = 5 * 1000;
-const MAX_SCOPE_VALUE_LENGTH = 200;
+const MAX_ALERT_STRING_LENGTH = 200;
 
 const costAlertSettingsValidator = v.object({
   rules: v.array(costAlertValidator),
@@ -70,9 +70,9 @@ export function isOrgOwner(userId: Id<'users'>, ownerId: Id<'users'>): boolean {
 function trimOptionalScopeValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
-  if (trimmed.length > MAX_SCOPE_VALUE_LENGTH) {
+  if (trimmed.length > MAX_ALERT_STRING_LENGTH) {
     throw new ConvexError(
-      `Scope filter values must be ${MAX_SCOPE_VALUE_LENGTH} characters or fewer`,
+      `Scope filter values must be ${MAX_ALERT_STRING_LENGTH} characters or fewer`,
     );
   }
   return trimmed;
@@ -93,6 +93,73 @@ export function normalizeAlertScope(
   };
 
   return Object.values(normalized).some(Boolean) ? normalized : undefined;
+}
+
+function trimModelApprovalValue(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new ConvexError(`${label} is required`);
+  }
+  if (trimmed.length > MAX_ALERT_STRING_LENGTH) {
+    throw new ConvexError(`${label} values must be ${MAX_ALERT_STRING_LENGTH} characters or fewer`);
+  }
+  return trimmed;
+}
+
+export function normalizeApprovedModels(
+  approvedModels: Extract<
+    CostAlert['condition'],
+    { type: 'model_approval_and_pricing' }
+  >['approvedModels'],
+) {
+  const deduped = new Map<string, { provider: string; model: string; allowZeroCost?: boolean }>();
+
+  for (const entry of approvedModels) {
+    const provider = trimModelApprovalValue(entry.provider, 'Provider').toLowerCase();
+    const model = trimModelApprovalValue(entry.model, 'Model').toLowerCase();
+    const key = JSON.stringify([provider, model]);
+    const existing = deduped.get(key);
+    const allowZeroCost = existing?.allowZeroCost === true || entry.allowZeroCost === true;
+    deduped.set(key, {
+      provider,
+      model,
+      allowZeroCost: allowZeroCost ? true : undefined,
+    });
+  }
+
+  const normalized = Array.from(deduped.values());
+  if (normalized.length === 0) {
+    throw new ConvexError('Add at least one approved provider/model pair');
+  }
+
+  return normalized;
+}
+
+export function normalizeAlertCondition(condition: CostAlert['condition']): CostAlert['condition'] {
+  switch (condition.type) {
+    case 'absolute_spend_threshold':
+    case 'projected_monthly_over':
+      if (condition.thresholdUsd <= 0) {
+        throw new ConvexError('Threshold must be greater than zero');
+      }
+      return condition;
+    case 'hourly_spend_spike':
+      if (condition.baselineHours < 4 || condition.baselineHours > 168) {
+        throw new ConvexError('Spike baseline must be between 4 and 168 hours');
+      }
+      if (condition.multiplier <= 1) {
+        throw new ConvexError('Spike multiplier must be greater than 1');
+      }
+      if (condition.minCurrentHourUsd < 0 || condition.minIncreaseUsd < 0) {
+        throw new ConvexError('Spike minimums cannot be negative');
+      }
+      return condition;
+    case 'model_approval_and_pricing':
+      return {
+        ...condition,
+        approvedModels: normalizeApprovedModels(condition.approvedModels),
+      };
+  }
 }
 
 function normalizeApiKeyIds(apiKeyIds: Id<'apiKeys'>[] | undefined): Id<'apiKeys'>[] | undefined {
@@ -165,25 +232,7 @@ export function normalizeChannelConfig(
 }
 
 export function validateAlertCondition(condition: CostAlert['condition']) {
-  switch (condition.type) {
-    case 'absolute_spend_threshold':
-    case 'projected_monthly_over':
-      if (condition.thresholdUsd <= 0) {
-        throw new ConvexError('Threshold must be greater than zero');
-      }
-      return;
-    case 'hourly_spend_spike':
-      if (condition.baselineHours < 4 || condition.baselineHours > 168) {
-        throw new ConvexError('Spike baseline must be between 4 and 168 hours');
-      }
-      if (condition.multiplier <= 1) {
-        throw new ConvexError('Spike multiplier must be greater than 1');
-      }
-      if (condition.minCurrentHourUsd < 0 || condition.minIncreaseUsd < 0) {
-        throw new ConvexError('Spike minimums cannot be negative');
-      }
-      return;
-  }
+  normalizeAlertCondition(condition);
 }
 
 async function assertApiKeysBelongToOrg(
@@ -513,7 +562,7 @@ export const createAlert = mutation({
   handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
     const { user, org } = await requireOrgOwner(ctx);
-    validateAlertCondition(args.condition);
+    const condition = normalizeAlertCondition(args.condition);
     await assertApiKeysBelongToOrg(ctx, org._id, args.apiKeyIds);
     await assertChannelsBelongToOrg(ctx, org._id, args.channelIds);
 
@@ -537,7 +586,7 @@ export const createAlert = mutation({
       channelIds: args.channelIds,
       cooldownMinutes: args.cooldownMinutes,
       notifyOnRecovery: args.notifyOnRecovery,
-      condition: args.condition,
+      condition,
       createdByUserId: user._id,
       updatedByUserId: user._id,
       createdAt: now,
@@ -570,8 +619,7 @@ export const updateAlert = mutation({
       throw new ConvexError('Alert not found');
     }
 
-    const nextCondition = args.condition ?? alert.condition;
-    validateAlertCondition(nextCondition);
+    const nextCondition = normalizeAlertCondition(args.condition ?? alert.condition);
     const nextApiKeyIds =
       args.apiKeyIds === undefined ? alert.apiKeyIds : normalizeApiKeyIds(args.apiKeyIds);
     const nextScope = args.scope === undefined ? alert.scope : normalizeAlertScope(args.scope);

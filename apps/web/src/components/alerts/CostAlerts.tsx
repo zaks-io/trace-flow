@@ -898,6 +898,52 @@ export default function CostAlerts({
               </>
             )}
 
+            {alertForm.conditionType === 'model_approval_and_pricing' && (
+              <>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">Time Window</label>
+                  <SelectField
+                    value={alertForm.window}
+                    onChange={(value) =>
+                      setAlertForm({ ...alertForm, window: value as AlertFormData['window'] })
+                    }
+                    options={Object.entries(COST_ALERT_WINDOW_LABELS).map(([value, label]) => ({
+                      value,
+                      label,
+                    }))}
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-sm font-medium text-foreground">
+                    Approved Provider/Model Pairs
+                  </label>
+                  <textarea
+                    value={alertForm.approvedModelsText}
+                    onChange={(event) =>
+                      setAlertForm({ ...alertForm, approvedModelsText: event.target.value })
+                    }
+                    rows={5}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+                    placeholder={'openai, gpt-4o\nanthropic, claude-sonnet-4'}
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-sm font-medium text-foreground">
+                    Allowed Zero-Cost Pairs
+                  </label>
+                  <textarea
+                    value={alertForm.zeroCostModelsText}
+                    onChange={(event) =>
+                      setAlertForm({ ...alertForm, zeroCostModelsText: event.target.value })
+                    }
+                    rows={3}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+                    placeholder="openai, free-tier-model"
+                  />
+                </div>
+              </>
+            )}
+
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Cooldown (minutes)</label>
               <Input
