@@ -1,0 +1,66 @@
+DESCRIPTION >
+    Top request-level LLM costs for single-request cost alerts.
+    The api_keys parameter is enforced by the caller's org/API-key scope.
+
+NODE requests
+SQL >
+    %
+    WITH
+        {{ Int64(start_time_ns, 0) }} AS start_ns_raw,
+        if(start_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now() - toIntervalDay(1), 9)), start_ns_raw) AS start_ns,
+        {{ Int64(end_time_ns, 0) }} AS end_ns_raw,
+        if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
+        toUInt64(round(greatest({{ Float64(threshold_usd, 0) }}, 0.) * 1000000)) AS threshold_microdollars
+    SELECT
+        TraceId AS trace_id,
+        SpanId AS span_id,
+        Timestamp AS timestamp_ns,
+        ReceivedAt AS received_at_ns,
+        Provider AS provider,
+        Model AS model,
+        OperationName AS operation,
+        BaggageOperation AS baggage_operation,
+        BaggageUserId AS baggage_user_id,
+        round(TotalCostMicrodollars / 1000000., 6) AS cost_usd,
+        InputTokens AS input_tokens,
+        OutputTokens AS output_tokens,
+        CacheReadInputTokens AS cache_read_input_tokens,
+        CacheCreationInputTokens AS cache_creation_input_tokens,
+        ReasoningTokens AS reasoning_tokens,
+        UncachedInputTokens AS uncached_input_tokens,
+        greatest(InputTokens, UncachedInputTokens + CacheReadInputTokens + CacheCreationInputTokens)
+            + OutputTokens
+            + ReasoningTokens AS total_tokens,
+        TotalCostMicrodollars AS total_cost_microdollars
+    FROM llm_request_facts
+    WHERE ReceivedAt >= start_ns
+        AND ReceivedAt < end_ns
+        AND TotalCostMicrodollars >= threshold_microdollars
+        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
+        {% if defined(provider) %}
+        AND Provider = {{ String(provider) }}
+        {% end %}
+        {% if defined(model) %}
+        AND Model = {{ String(model) }}
+        {% end %}
+        {% if defined(operation_name) %}
+        AND OperationName = {{ String(operation_name) }}
+        {% end %}
+        {% if defined(baggage_operation) %}
+        AND BaggageOperation = {{ String(baggage_operation) }}
+        {% end %}
+        {% if defined(baggage_user_id) %}
+        AND BaggageUserId = {{ String(baggage_user_id) }}
+        {% end %}
+        {% if defined(api_key_filter) %}
+        AND ApiKey = {{ String(api_key_filter) }}
+        {% end %}
+    ORDER BY TotalCostMicrodollars DESC, ReceivedAt DESC, TraceId, SpanId
+    LIMIT {{ Int32(limit, 5) }}
+
+NODE endpoint
+SQL >
+    SELECT * FROM requests
+
+TYPE ENDPOINT

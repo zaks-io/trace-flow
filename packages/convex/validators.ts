@@ -134,6 +134,11 @@ export const costAlertConditionValidator = v.union(
     thresholdUsd: v.number(),
   }),
   v.object({
+    type: v.literal('single_request_cost_threshold'),
+    window: v.union(v.literal('last_hour'), v.literal('last_24_hours'), v.literal('month_to_date')),
+    thresholdUsd: v.number(),
+  }),
+  v.object({
     type: v.literal('hourly_spend_spike'),
     baselineHours: v.number(),
     multiplier: v.number(),

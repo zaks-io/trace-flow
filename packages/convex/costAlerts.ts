@@ -138,6 +138,7 @@ export function normalizeApprovedModels(
 export function normalizeAlertCondition(condition: CostAlert['condition']): CostAlert['condition'] {
   switch (condition.type) {
     case 'absolute_spend_threshold':
+    case 'single_request_cost_threshold':
     case 'projected_monthly_over':
       if (condition.thresholdUsd <= 0) {
         throw new ConvexError('Threshold must be greater than zero');

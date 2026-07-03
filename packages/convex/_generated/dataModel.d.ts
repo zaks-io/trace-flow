@@ -542,6 +542,11 @@ export type DataModel = {
           }
         | { thresholdUsd: number; type: "projected_monthly_over" }
         | {
+            thresholdUsd: number;
+            type: "single_request_cost_threshold";
+            window: "last_hour" | "last_24_hours" | "month_to_date";
+          }
+        | {
             baselineHours: number;
             minCurrentHourUsd: number;
             minIncreaseUsd: number;
@@ -564,13 +569,13 @@ export type DataModel = {
       name: string;
       notifyOnRecovery: boolean;
       orgId: Id<"organizations">;
-      severity: "info" | "warning" | "error";
       scope?: {
         baggageOperation?: string;
         baggageUserId?: string;
         model?: string;
         provider?: string;
       };
+      severity: "info" | "warning" | "error";
       updatedAt: number;
       updatedByUserId: Id<"users">;
       _id: Id<"costAlerts">;
@@ -597,12 +602,12 @@ export type DataModel = {
       | "name"
       | "notifyOnRecovery"
       | "orgId"
-      | "severity"
       | "scope"
       | "scope.baggageOperation"
       | "scope.baggageUserId"
       | "scope.model"
       | "scope.provider"
+      | "severity"
       | "updatedAt"
       | "updatedByUserId";
     indexes: {

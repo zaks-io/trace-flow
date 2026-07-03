@@ -804,7 +804,8 @@ export default function CostAlerts({
               />
             </div>
 
-            {alertForm.conditionType === 'absolute_spend_threshold' && (
+            {(alertForm.conditionType === 'absolute_spend_threshold' ||
+              alertForm.conditionType === 'single_request_cost_threshold') && (
               <>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground">Time Window</label>
@@ -820,14 +821,20 @@ export default function CostAlerts({
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-foreground">Threshold (USD)</label>
+                  <label className="text-sm font-medium text-foreground">
+                    {alertForm.conditionType === 'single_request_cost_threshold'
+                      ? 'Request Threshold (USD)'
+                      : 'Threshold (USD)'}
+                  </label>
                   <Input
                     type="number"
                     value={alertForm.thresholdUsd}
                     onChange={(event) =>
                       setAlertForm({ ...alertForm, thresholdUsd: event.target.value })
                     }
-                    placeholder="100"
+                    placeholder={
+                      alertForm.conditionType === 'single_request_cost_threshold' ? '5' : '100'
+                    }
                   />
                 </div>
               </>
