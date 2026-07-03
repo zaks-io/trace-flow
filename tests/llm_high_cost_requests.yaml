@@ -1,7 +1,7 @@
 # Fixtures: fixtures/otel_trace_spans.ndjson, materialized into llm_request_facts.
 # key_proj/chat has one $4.00 runaway request (trace t5/span s5) and smaller
-# requests below $1.00. Tests pin threshold behavior, API-key scope, and
-# dimension filters without exposing request or response bodies.
+# requests at or below $0.05. Tests pin threshold behavior, ordering, API-key
+# scope, and dimension filters without exposing request or response bodies.
 
 - name: high_cost_requests_detects_request_above_threshold
   description: returns the most expensive request at or above the configured USD threshold
@@ -15,6 +15,13 @@
   expected_http_status: 200
   parameters: api_keys=key_proj&api_key_filter=key_proj&baggage_operation=chat&threshold_usd=5&start_time_ns=1779840000000000000&end_time_ns=1779840110000000000&retention_days=3650
   expected_result: ''
+
+- name: high_cost_requests_orders_multiple_matches_by_cost
+  description: returns the highest-cost request first when several requests exceed the threshold
+  expected_http_status: 200
+  parameters: api_keys=key_proj&api_key_filter=key_proj&baggage_operation=chat&threshold_usd=0.01&limit=1&start_time_ns=1779840000000000000&end_time_ns=1779840110000000000&retention_days=3650
+  expected_result: |
+    {"trace_id":"t5","span_id":"s5","timestamp_ns":1779840004000000000,"received_at_ns":1779840004000000000,"provider":"anthropic","model":"claude-opus-4-8","operation":"chat","baggage_operation":"chat","baggage_user_id":"u2","cost_usd":4,"input_tokens":50000,"output_tokens":25000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"reasoning_tokens":0,"uncached_input_tokens":50000,"total_tokens":75000,"total_cost_microdollars":4000000}
 
 - name: high_cost_requests_scope_filter_isolates_user
   description: scoped baggage user filter excludes the runaway request outside that scope

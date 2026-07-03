@@ -342,12 +342,14 @@ export function summarizeHighCostRequests(
 ): EvaluationResult {
   const window = getAlertWindow(condition.window);
   const requests = rows.map(normalizeHighCostRequestRow);
+  const suppressRenotify = condition.window === 'month_to_date';
 
   if (requests.length === 0) {
     return {
       triggered: false,
       metricValue: 0,
       metricLabel: `Max request cost in ${window.label}`,
+      suppressRenotify,
       summary: `No request at or above ${formatCurrency(condition.thresholdUsd)} in the ${window.label}.${formatScopeSuffix(scope)}`,
       details: {
         thresholdUsd: condition.thresholdUsd,
@@ -365,6 +367,7 @@ export function summarizeHighCostRequests(
     triggered: true,
     metricValue: maxRequestCostUsd,
     metricLabel: `Max request cost in ${window.label}`,
+    suppressRenotify,
     summary: `${requests.length} ${requestLabel} at or above ${formatCurrency(condition.thresholdUsd)} in the ${window.label}. Most expensive: ${formatHighCostRequestRow(requests[0]!)}.${formatScopeSuffix(scope)}`,
     details: {
       thresholdUsd: condition.thresholdUsd,

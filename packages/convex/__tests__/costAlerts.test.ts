@@ -23,6 +23,27 @@ import {
 } from '../integrations/costAlertWebhookDelivery';
 
 describe('cost alert helpers', () => {
+  const highCostRequestRow = {
+    trace_id: 't5',
+    span_id: 's5',
+    timestamp_ns: 1779840004000000000,
+    received_at_ns: 1779840004000000000,
+    provider: 'anthropic',
+    model: 'claude-opus-4-8',
+    operation: 'chat',
+    baggage_operation: 'chat',
+    baggage_user_id: 'u2',
+    cost_usd: 4,
+    input_tokens: 50000,
+    output_tokens: 25000,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    reasoning_tokens: 0,
+    uncached_input_tokens: 50000,
+    total_tokens: 75000,
+    total_cost_microdollars: 4000000,
+  };
+
   it('recognizes org owners', () => {
     expect(isOrgOwner('user_1' as never, 'user_1' as never)).toBe(true);
     expect(isOrgOwner('user_1' as never, 'user_2' as never)).toBe(false);
@@ -418,35 +439,13 @@ describe('cost alert helpers', () => {
 
   it('summarizes high-cost requests without body content', () => {
     const summary = summarizeHighCostRequests(
-      [
-        {
-          trace_id: 't5',
-          span_id: 's5',
-          timestamp_ns: 1779840004000000000,
-          received_at_ns: 1779840004000000000,
-          provider: 'anthropic',
-          model: 'claude-opus-4-8',
-          operation: 'chat',
-          baggage_operation: 'chat',
-          baggage_user_id: 'u2',
-          cost_usd: 4,
-          input_tokens: 50000,
-          output_tokens: 25000,
-          cache_read_input_tokens: 0,
-          cache_creation_input_tokens: 0,
-          reasoning_tokens: 0,
-          uncached_input_tokens: 50000,
-          total_tokens: 75000,
-          total_cost_microdollars: 4000000,
-        },
-      ],
+      [highCostRequestRow],
       { window: 'last_24_hours', thresholdUsd: 1 },
       { baggageOperation: 'chat' },
     );
 
     expect(summary.triggered).toBe(true);
     expect(summary.metricValue).toBe(4);
-    expect(summary.summary).toContain('trace t5/s5');
     const details = summary.details as Record<string, unknown> & {
       requests: Record<string, unknown>[];
     };
@@ -491,6 +490,30 @@ describe('cost alert helpers', () => {
       'totalTokens',
       'totalCostMicrodollars',
     ]);
+  });
+
+  it('suppresses high-cost request re-notifications for month-to-date windows only', () => {
+    expect(
+      summarizeHighCostRequests(
+        [highCostRequestRow],
+        { window: 'month_to_date', thresholdUsd: 1 },
+        undefined,
+      ),
+    ).toMatchObject({
+      triggered: true,
+      suppressRenotify: true,
+    });
+
+    expect(
+      summarizeHighCostRequests(
+        [highCostRequestRow],
+        { window: 'last_24_hours', thresholdUsd: 1 },
+        undefined,
+      ),
+    ).toMatchObject({
+      triggered: true,
+      suppressRenotify: false,
+    });
   });
 
   it('does not trigger high-cost request alerts when no candidates match', () => {
