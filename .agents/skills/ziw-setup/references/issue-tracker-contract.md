@@ -47,7 +47,7 @@ Risk:
 
 Review evidence:
 
-- `Code review passed`
+- configured exact label slug or ID, such as `code-review-passed`
 
 Type:
 
@@ -72,9 +72,31 @@ contains:
 - required checks
 - security, privacy, data, or operational invariants
 - dependencies or blockers
+- estimate when repo config stores estimates in the body
 
 If the work requires multiple PRs, keep it as a container or split it into
 multiple `kind-slice` issues. Do not mark a multi-PR scope as a ready slice.
+
+## Estimate Rules
+
+Repo config decides whether estimates exist and where they live. A repo may use
+a tracker estimate field, estimate labels, a body heading, or no estimates.
+
+- Do not create or infer estimates when config has no estimate field, scale, and
+  policy.
+- When config grants agents authority to estimate, To Issues and Issue Triage
+  include estimates on `kind-slice` tickets using the configured field, label, or
+  body heading.
+- Missing estimates block `ready-for-agent` only when config says estimates are
+  required for ready handoff. Otherwise leave the estimate empty and do not use
+  it as a readiness blocker.
+- Use only the configured scale. If a slice exceeds the configured maximum, split
+  it or route it to human planning instead of inventing a larger value.
+- Preserve existing human estimates unless config explicitly allows repair and
+  current scope evidence proves the estimate is stale or outside the allowed
+  scale.
+- Treat estimates as implementation effort or size, not priority, risk,
+  deadline, or merge authority.
 
 ## Label Treatment Rules
 
@@ -92,6 +114,9 @@ multiple `kind-slice` issues. Do not mark a multi-PR scope as a ready slice.
   parked, or not shaped correctly.
 - `ready-for-agent` must be removed when an issue moves to the configured `Done`
   state. Done work is complete, not waiting for agent handoff.
+- Only the To Issues intake pass, or a triage pass applying the same body
+  contract, may set `ready-for-agent`. Flows that file tickets without intake
+  must leave readiness labels off so the gap stays visible.
 - Queries for `ready-for-agent`, `ready-for-human`, or equivalent readiness
   attention labels must also exclude the configured `Done` state by default.
   Stale labels on Done tickets are cleanup drift, not current work queue input.
@@ -136,11 +161,12 @@ multiple `kind-slice` issues. Do not mark a multi-PR scope as a ready slice.
   triage must verify the full issue scope is complete before leaving it there.
   If linked PR evidence covers only part of the issue, reopen or narrow it
   according to repo config.
-- `Code review passed` means the latest linked PR head SHA has passed the
-  configured code review gate for this ticket. Apply it only with adjacent
-  review evidence that names the PR URL and reviewed head SHA. Remove it when
-  the PR head changes, blocking review findings appear, the linked PR changes,
-  or the review evidence is missing or stale.
+- The configured review evidence label means the latest linked PR head SHA has
+  passed the configured code review gate for this ticket. Resolve it by the
+  exact configured slug or ID, not by reconstructing a display name. Apply it
+  only with adjacent review evidence that names the PR URL and reviewed head
+  SHA. Remove it when the PR head changes, blocking review findings appear, the
+  linked PR changes, or the review evidence is missing or stale.
 - Blocked work can keep `ready-for-agent`. Blocker relationships, body blockers,
   or workflow state stop scheduling; they do not redefine readiness metadata.
 - Worker environment labels are approval and routing metadata. They do not say
@@ -148,6 +174,9 @@ multiple `kind-slice` issues. Do not mark a multi-PR scope as a ready slice.
   whether Orchestrator may start it now.
 - Human setup, credentials, product judgment, provider approval, customer input,
   and ADR decisions use `ready-for-human` or `needs-info`.
+- `ready-for-human` and other human-attention states are truthful claims that
+  the only remaining work is the named human action. Unresolved agent-fixable
+  review findings keep the ticket with the agent; fix them before escalating.
 - Dependency order should be encoded with tracker relationships when the
   provider supports them. By default, if ticket A needs ticket B first, A is
   blocked by B and B blocks A. Use the smallest direct graph that lets

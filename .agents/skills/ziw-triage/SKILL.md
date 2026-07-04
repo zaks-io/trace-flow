@@ -1,6 +1,6 @@
 ---
 name: ziw-triage
-description: Use for issue tracker triage when reconciling current project issues with reality, making Todo tickets agent-ready, applying workflow labels, setting dependencies, normalizing issue bodies, cleaning explicitly requested Linear Backlog review or backfill scope separately from configured intake issues, and updating verified stale states.
+description: Use for issue tracker triage when reconciling current project issues with reality, making Todo tickets agent-ready, applying workflow labels, setting dependencies and configured estimates, normalizing issue bodies, cleaning explicitly requested Linear Backlog review or backfill scope separately from configured intake issues, and updating verified stale states.
 argument-hint: "[project-url|team|repo|filter]"
 disable-model-invocation: true
 ---
@@ -35,8 +35,8 @@ label and return the exact questions or next actions needed.
 - Issue tracker project, team, repo, board, roadmap, query, or explicit Linear
   `Backlog` state scope.
 - Repo path and `docs/agents/workflow/config.md`.
-- Existing tracker teams, projects, statuses, labels, priorities, dependencies,
-  parent or child relationships, PR links, and issue comments.
+- Existing tracker teams, projects, statuses, labels, priorities, estimates,
+  dependencies, parent or child relationships, PR links, and issue comments.
 - Optional user instructions for first-run intake backfill, first-run Linear
   Backlog backfill, dry run, priority policy, Linear Backlog review, intake
   cleanup, or orphan routing.
@@ -54,7 +54,7 @@ Confirm these config values before mutating the issue tracker:
   environment labels
 - readiness label policy, worker environment label policy, and startable work
   criteria
-- priority policy, dependency policy, and orphan policy
+- priority policy, estimate policy, dependency policy, and orphan policy
 - agent-ready issue body contract
 - active workflow status transition owner
 - Issue Triage intake-state transition authority
@@ -108,9 +108,10 @@ when an orchestrator tick delegates this triage repair.
 For the requested Linear Backlog or intake scope:
 
 - promote now: complete `kind-slice` issues with route, labels, body contract,
-  readiness, worker environment approval, and dependency blockers encoded
+  readiness, configured required estimate, worker environment approval, and
+  dependency blockers encoded
 - needs human review: issues missing product, security, credential, customer,
-  ADR, priority, or acceptance-criteria decisions
+  ADR, priority, required estimate, or acceptance-criteria decisions
 - needs To Issues: `kind-spec`, `kind-epic`, project notes, vague plans, or
   multi-PR work that must be split before dispatch
 - leave parked: uncommitted ideas or intentionally parked work the user does not
@@ -167,7 +168,7 @@ Apply obvious mechanical updates in batches:
 - route orphan issues into the configured project, team, or parent when evidence
   is direct
 - make configured ready-state issues, usually `Todo`, match the agent-ready body
-  contract, labels, blockers, and route
+  contract, labels, estimates when configured, blockers, and route
 - move issues from configured intake states such as `Triage` or equivalent to
   the configured ready state only when the user asked for intake cleanup or
   intake backfill and routing, labels, and the agent-ready body contract are
@@ -192,6 +193,7 @@ Apply obvious mechanical updates in batches:
 - recommend moving issues out of done or merge-ready states when current external
   state proves the status is wrong, such as a closed-unmerged PR or reverted work
 - add missing routing, type, risk, area, kind, and readiness labels from config
+- add or preserve estimates according to the configured estimate policy
 - set exactly one `kind-*` value and clear the others; keep `kind-spec` and
   `kind-epic` as containers and never mark a container `ready-for-agent`
 - normalize review-created findings: make concrete one-PR findings
@@ -214,9 +216,9 @@ Apply obvious mechanical updates in batches:
 - apply configured review, merge-ready, or blocked states only when the repo
   config gives Issue Triage that authority and current external evidence is
   direct
-- remove stale `Code review passed` when the linked PR head changed, blocking
-  findings exist, the linked PR changed, or reviewed head SHA evidence is
-  missing
+- remove the configured review evidence label when the linked PR head changed,
+  blocking findings exist, the linked PR changed, or reviewed head SHA evidence
+  is missing
 - mark duplicates only when the duplicate relationship is clear and preserve the
   canonical issue
 
@@ -252,6 +254,7 @@ An issue can receive `ready-for-agent` only when it is:
 - scoped to one PR
 - assigned to the configured project or route
 - labeled with one clear type and risk
+- estimated when config requires estimates before handoff
 - complete enough for Agent Implement to verify
 
 By default, `ready-for-agent` means the ticket needs no further human refinement
@@ -271,10 +274,22 @@ Required body content:
 - required checks
 - security, privacy, data, and operational invariants
 - dependencies or blockers
+- estimate when config stores estimates in the body
 
 If any required field is unknowable, add the missing heading, ask the specific
 question when the user is available, label the issue `needs-info` or
 `ready-for-human`, and do not mark it ready.
+
+If an issue carries `ready-for-agent` but the body says it is waiting on human
+setup, credentials, provider decisions, security judgment, or a
+`ready-for-human` rationale, treat the body as the stronger signal. Remove or
+withhold `ready-for-agent`, preserve the exact human decision needed, and report
+the contradiction.
+
+When a ticket depends on exact external config, resource IDs, provider names,
+label slugs, secret names, or environment values, make sure those hard literals
+or their config lookup location are in the body before marking it ready. Prior
+comments are not enough for worker handoff.
 
 When deciding whether a ticket should become agent-ready, consider the work type
 and risk. Docs, tests, build or CI updates, small local refactors, scoped bugs
@@ -310,6 +325,12 @@ Encode dependencies only from evidence:
 Detect cycles, blockers that are done or canceled, parent issues marked ready,
 and issues blocked by vague placeholder work. Fix obvious completed blockers.
 Escalate ambiguous ordering instead of guessing.
+
+When a blocker has completed, compare the dependent ticket's body against the
+landed blocker or sibling PR evidence before declaring it ready to start. If the
+body names APIs, files, commands, or mechanics that the landed work removed or
+superseded, narrow the residual scope or mark the ticket for human/triage
+repair instead of sending stale instructions to an implementation worker.
 
 Do not use dependencies as a reason to withhold or remove `ready-for-agent` or a
 configured worker environment label. Encode dependency order with tracker
@@ -351,12 +372,22 @@ Use the configured priority policy. Good signals are:
 Do not turn personal preference into priority. When priority is unclear, leave it
 neutral and mark the issue for human triage.
 
+## Estimates
+
+Follow the Estimate Rules in
+[../ziw-setup/references/issue-tracker-contract.md](../ziw-setup/references/issue-tracker-contract.md).
+Set missing estimates only when current scope is clear and config grants Issue
+Triage that authority. Missing estimates block `ready-for-agent` only when
+config requires estimates before handoff; otherwise leave the estimate empty
+and keep triage focused on body completeness, labels, blockers, and verified
+state.
+
 ## First Run
 
 For first-run intake or Linear Backlog backfill:
 
-1. Snapshot current project counts by status, label, priority, dependency state,
-   and readiness.
+1. Snapshot current project counts by status, label, priority, estimate state,
+   dependency state, and readiness.
 2. Create missing workflow labels only when names are exact and config-approved.
 3. Normalize orphan routing and body headings before setting priorities.
 4. Include Linear `Backlog` or equivalent out-of-work-queue states only if the
@@ -398,7 +429,7 @@ Report:
 - whether Linear Backlog or intake states were skipped or explicitly included
 - issues changed, unchanged, and needing human decision
 - orphans routed or left with reasons
-- labels, priorities, body contracts, dependency tree, and status
+- labels, priorities, estimates, body contracts, dependency tree, and status
   recommendations updated
 - ready-state issues made agent-ready or left with exact blockers
 - review-debt intake issues normalized, promoted, left for To Issues, or left for

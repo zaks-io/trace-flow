@@ -26,6 +26,9 @@ Last updated: YYYY-MM-DD
 - Full local gate:
 - Local gate cache policy:
 - CI env passthrough:
+- Separate threshold gates: coverage, smoke, secret scan, generated artifacts, or
+  none; include the exact local command for each hosted job not covered by the
+  full local gate
 - Coverage and secret-scan scope:
 - Focused checks:
 - Build:
@@ -100,7 +103,9 @@ Last updated: YYYY-MM-DD
 - Worker environment labels:
 - Worker environment label policy:
   - remote-cursor: approved to run in the remote Cursor environment; does not mean unblocked or startable
-- Startable work criteria: kind-slice, ready state, ready-for-agent, complete body, repo-route label when issue-assigned, no active blockers, no active claim or open PR
+- Startable work criteria: kind-slice, ready state, ready-for-agent, complete
+  body, configured required estimate, repo-route label when issue-assigned, no
+  active blockers, no active claim or open PR
 - Done cleanup: remove ready-for-agent or the repo-configured readiness label
   when moving an issue to Done
 - Agent suitability policy: default agent work includes docs, tests, build/CI,
@@ -111,12 +116,20 @@ Last updated: YYYY-MM-DD
 - Kind labels: kind-spec, kind-epic, kind-slice (single-select; skills enforce exclusivity; only kind-slice is dispatchable)
 - Risk labels: risk-normal, risk-security-sensitive, risk-schema, risk-cross-cutting
 - Risk label policy: use the default risk labels as dimensions, not severity levels; add repo-specific risk labels only when they change routing, checks, approvals, or reviewer assignment
-- Review evidence labels: Code review passed
+- Review evidence labels: exact configured label slugs or IDs, such as
+  `code-review-passed`
 - Review evidence label policy:
-  - Code review passed: latest linked PR head SHA passed the configured code review gate; apply only with PR URL and reviewed head SHA evidence; remove when PR head changes, blocking findings appear, linked PR changes, or evidence is missing
+  - code-review-passed: latest linked PR head SHA passed the configured code review gate; apply only with PR URL and reviewed head SHA evidence; remove when PR head changes, blocking findings appear, linked PR changes, or evidence is missing
 - Type labels: Bug, Feature, Improvement, Tech Debt, Spike, Hotfix
 - Area labels:
 - Priority policy:
+- Estimate field: tracker estimate field, estimate label family, configured body
+  heading, or none
+- Estimate scale: numeric points, T-shirt sizes, hours, custom allowed values,
+  or none
+- Estimate policy: whether To Issues and Issue Triage may set estimates,
+  whether estimates are optional or required before `ready-for-agent`, and what
+  to do when an estimate is missing or above the configured maximum
 - Dependency policy: dependency-ready `kind-slice` tickets stay in the configured
   ready state, usually `Todo`; blockers decide startability, not Linear Backlog
   placement
@@ -127,11 +140,18 @@ Last updated: YYYY-MM-DD
   how Orchestrator verifies full scope before leaving multi-PR or partial-scope
   issues Done
 - File footprint convention: where To Issues records predicted files/packages per slice
+- Shared document hotspot convention: whether footprints must name dense doc
+  list blocks, registries, status ledgers, changelogs, or config tables that
+  should serialize concurrent slices
 - Review-debt footprint convention: where Agent Review or triage records likely
   files/packages for review-created `kind-slice` tickets before Orchestrator can
   dispatch them
 - Agent-ready issue body: outcome, context docs, likely files/packages/artifacts,
-  scope, acceptance criteria, required checks, safety invariants, dependencies
+  scope, acceptance criteria, required checks, safety invariants, dependencies,
+  and estimate when body-backed estimates are configured
+- Hard config literal policy: where exact provider resource IDs, secret names,
+  label slugs, environment values, and other worker-critical literals are
+  recorded so worker prompts do not depend on old issue comments
 - Labels are signals, not authority:
 
 ## Work Coordination
@@ -147,8 +167,12 @@ Last updated: YYYY-MM-DD
   dispatches. Obey any stricter preview-provider or worker-session limit
 - Dispatch footprint policy: before fanning out startable work, compare predicted
   file or package footprints against active PRs, active worker branches, and other
-  selected candidates. Hold collisions or unknown footprints for triage or a later
-  tick; capacity headroom alone is not permission to dispatch
+  selected candidates, including shared document hotspots. Hold collisions or
+  unknown footprints for triage or a later tick; capacity headroom alone is not
+  permission to dispatch
+- Worktree hygiene policy: configured disposable worktree root or prefixes,
+  prune command, and orphan-removal guard. Only orchestrator-owned disposable
+  worktrees may be removed automatically
 - Capacity drain policy: when active delivery slots are at or over cap,
   Orchestrator advances, merges, routes fixes, cleans up previews, or escalates
   existing PRs and previews before dispatching new implementation work
@@ -210,6 +234,18 @@ Last updated: YYYY-MM-DD
 ## Agent Access
 
 - Local Codex:
+- Workflow skill distribution: project skills, plugin or marketplace, managed
+  settings, user/global-only, or mixed
+- Workflow skill source: `zaks-io/skills`, a pinned tag, a pinned commit SHA,
+  plugin marketplace entry, managed setting, or repo-local project-specific
+  skills
+- Workflow skill lockfile: `skills-lock.json`, plugin marketplace lock, managed
+  setting, or none
+- Workflow skill refresh command:
+- Project skill paths: relative repo paths such as `.agents/skills/`,
+  `.claude/skills/`, or `node_modules/@org/skills/`
+- Generated shared skill copies: committed dependency, symlink fanout, ignored
+  local cache, absent, or repo-authored project-specific skills
 - Issue-assigned agents: none, or project-specific routing/continuation notes
 - Issue-assigned delegation: tool or field, verified agent names or IDs, and continuation path
 - Issue-assigned continuation replies: reply into the agent-session thread (its thread-root comment's parentId); top-level issue comments are not continuation unless verified here. For Linear + Cursor this is the "agent session" thread; record the session handle (such as the cursor.com/agents/bc-id URL)
