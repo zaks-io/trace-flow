@@ -25,12 +25,6 @@
       "skillPath": "skills/ziw-pr/SKILL.md",
       "computedHash": "b8b1a8c5fb16057f10d7519b58c4a577f41adbc2681f0c8ded8810f4b7599a3f"
     },
-    "ziw-review": {
-      "source": "zaks-io/skills",
-      "sourceType": "github",
-      "skillPath": "skills/ziw-review/SKILL.md",
-      "computedHash": "252727905ebdf79bda4a8b4e3cf777ad88d7ad4c02e6d40a43f6f3299510477f"
-    },
     "ziw-setup": {
       "source": "zaks-io/skills",
       "sourceType": "github",
