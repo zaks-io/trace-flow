@@ -9,9 +9,11 @@ import {
 import {
   buildApiKeyParam,
   buildCostAlertPipeParams,
+  buildHighCostRequestPipeParams,
   buildModelApprovalPipeParams,
   resolveScopedApiKeys,
   shouldNotify,
+  summarizeHighCostRequests,
   summarizeModelApprovalAnomalies,
 } from '../integrations/costAlerts';
 import {
@@ -21,6 +23,27 @@ import {
 } from '../integrations/costAlertWebhookDelivery';
 
 describe('cost alert helpers', () => {
+  const highCostRequestRow = {
+    trace_id: 't5',
+    span_id: 's5',
+    timestamp_ns: 1779840004000000000,
+    received_at_ns: 1779840004000000000,
+    provider: 'anthropic',
+    model: 'claude-opus-4-8',
+    operation: 'chat',
+    baggage_operation: 'chat',
+    baggage_user_id: 'u2',
+    cost_usd: 4,
+    input_tokens: 50000,
+    output_tokens: 25000,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    reasoning_tokens: 0,
+    uncached_input_tokens: 50000,
+    total_tokens: 75000,
+    total_cost_microdollars: 4000000,
+  };
+
   it('recognizes org owners', () => {
     expect(isOrgOwner('user_1' as never, 'user_1' as never)).toBe(true);
     expect(isOrgOwner('user_1' as never, 'user_2' as never)).toBe(false);
@@ -377,6 +400,135 @@ describe('cost alert helpers', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('builds high-cost request pipe params with threshold and scoped filters', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-27T12:00:00.000Z'));
+
+    try {
+      expect(
+        buildHighCostRequestPipeParams(
+          {
+            selectedKeys: ['key-1'],
+            retentionDays: 30,
+            scope: { provider: 'anthropic', baggageUserId: 'u2' },
+          },
+          {
+            window: 'last_24_hours',
+            thresholdUsd: 1.25,
+          },
+          50,
+        ),
+      ).toEqual({
+        api_keys: 'key-1',
+        retention_days: 30,
+        provider: 'anthropic',
+        model: undefined,
+        baggage_operation: undefined,
+        baggage_user_id: 'u2',
+        start_time_ns: 1779796800000000000,
+        end_time_ns: 1779883200000000000,
+        threshold_usd: 1.25,
+        limit: 20,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('summarizes high-cost requests without body content', () => {
+    const summary = summarizeHighCostRequests(
+      [highCostRequestRow],
+      { window: 'last_24_hours', thresholdUsd: 1 },
+      { baggageOperation: 'chat' },
+    );
+
+    expect(summary.triggered).toBe(true);
+    expect(summary.metricValue).toBe(4);
+    const details = summary.details as Record<string, unknown> & {
+      requests: Record<string, unknown>[];
+    };
+    expect(details).toMatchObject({
+      thresholdUsd: 1,
+      window: 'last 24 hours',
+      requestCount: 1,
+      maxRequestCostUsd: 4,
+      requests: [
+        {
+          traceId: 't5',
+          spanId: 's5',
+          timestamp: '2026-05-27T00:00:04.000Z',
+          provider: 'anthropic',
+          model: 'claude-opus-4-8',
+          operation: 'chat',
+          baggageOperation: 'chat',
+          baggageUserId: 'u2',
+          costUsd: 4,
+          totalTokens: 75000,
+        },
+      ],
+    });
+    expect(Object.keys(details.requests[0]!)).toEqual([
+      'traceId',
+      'spanId',
+      'timestamp',
+      'timestampNs',
+      'receivedAtNs',
+      'provider',
+      'model',
+      'operation',
+      'baggageOperation',
+      'baggageUserId',
+      'costUsd',
+      'inputTokens',
+      'outputTokens',
+      'cacheReadInputTokens',
+      'cacheCreationInputTokens',
+      'reasoningTokens',
+      'uncachedInputTokens',
+      'totalTokens',
+      'totalCostMicrodollars',
+    ]);
+  });
+
+  it('suppresses high-cost request re-notifications for month-to-date windows only', () => {
+    expect(
+      summarizeHighCostRequests(
+        [highCostRequestRow],
+        { window: 'month_to_date', thresholdUsd: 1 },
+        undefined,
+      ),
+    ).toMatchObject({
+      triggered: true,
+      suppressRenotify: true,
+    });
+
+    expect(
+      summarizeHighCostRequests(
+        [highCostRequestRow],
+        { window: 'last_24_hours', thresholdUsd: 1 },
+        undefined,
+      ),
+    ).toMatchObject({
+      triggered: true,
+      suppressRenotify: false,
+    });
+  });
+
+  it('does not trigger high-cost request alerts when no candidates match', () => {
+    const summary = summarizeHighCostRequests(
+      [],
+      { window: 'last_hour', thresholdUsd: 5 },
+      { provider: 'openai' },
+    );
+
+    expect(summary).toMatchObject({
+      triggered: false,
+      metricValue: 0,
+      metricLabel: 'Max request cost in last hour',
+      details: { thresholdUsd: 5, window: 'last hour', requestCount: 0, requests: [] },
+    });
   });
 
   it('summarizes model approval anomalies without body content', () => {

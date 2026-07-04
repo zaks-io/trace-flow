@@ -68,6 +68,7 @@ interface CostAlertRuleLike {
   notifyOnRecovery: boolean;
   condition:
     | { type: 'absolute_spend_threshold'; window: CostAlertWindow; thresholdUsd: number }
+    | { type: 'single_request_cost_threshold'; window: CostAlertWindow; thresholdUsd: number }
     | { type: 'projected_monthly_over'; thresholdUsd: number }
     | {
         type: 'hourly_spend_spike';
@@ -208,11 +209,14 @@ export function buildAlertInput(form: AlertFormData) {
     scope: buildAlertScopeInput(form),
   };
 
-  if (form.conditionType === 'absolute_spend_threshold') {
+  if (
+    form.conditionType === 'absolute_spend_threshold' ||
+    form.conditionType === 'single_request_cost_threshold'
+  ) {
     return {
       ...base,
       condition: {
-        type: 'absolute_spend_threshold' as const,
+        type: form.conditionType,
         window: form.window,
         thresholdUsd: Number(form.thresholdUsd || 0),
       },
@@ -310,7 +314,10 @@ export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
     zeroCostModelsText: '',
   };
 
-  if (rule.condition.type === 'absolute_spend_threshold') {
+  if (
+    rule.condition.type === 'absolute_spend_threshold' ||
+    rule.condition.type === 'single_request_cost_threshold'
+  ) {
     return {
       ...base,
       conditionType: rule.condition.type,
@@ -368,6 +375,7 @@ export function alertFormFromRule(rule: CostAlertRuleLike): AlertFormData {
 export function formatCondition(condition: CostAlertRuleLike['condition']): string {
   switch (condition.type) {
     case 'absolute_spend_threshold':
+    case 'single_request_cost_threshold':
       return `${COST_ALERT_CONDITION_LABELS[condition.type]}: ${formatCurrency(condition.thresholdUsd)} in ${COST_ALERT_WINDOW_LABELS[condition.window]}`;
     case 'projected_monthly_over':
       return `${COST_ALERT_CONDITION_LABELS[condition.type]}: ${formatCurrency(condition.thresholdUsd)}`;

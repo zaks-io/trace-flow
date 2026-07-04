@@ -150,6 +150,48 @@ describe('cost alert helpers', () => {
     });
   });
 
+  it('builds single-request threshold alert input', () => {
+    expect(
+      buildAlertInput({
+        name: 'Runaway request',
+        severity: 'error',
+        conditionType: 'single_request_cost_threshold',
+        window: 'last_hour',
+        thresholdUsd: '5',
+        baselineHours: '24',
+        multiplier: '2',
+        minCurrentHourUsd: '10',
+        minIncreaseUsd: '5',
+        approvedModelsText: '',
+        zeroCostModelsText: '',
+        cooldownMinutes: '15',
+        notifyOnRecovery: true,
+        apiKeyIds: ['api_1'],
+        provider: 'anthropic',
+        model: '',
+        baggageOperation: 'chat',
+        baggageUserId: '',
+        channelIds: ['channel_1'],
+      }),
+    ).toEqual({
+      name: 'Runaway request',
+      severity: 'error',
+      channelIds: ['channel_1'],
+      cooldownMinutes: 15,
+      notifyOnRecovery: true,
+      apiKeyIds: ['api_1'],
+      scope: {
+        provider: 'anthropic',
+        baggageOperation: 'chat',
+      },
+      condition: {
+        type: 'single_request_cost_threshold',
+        window: 'last_hour',
+        thresholdUsd: 5,
+      },
+    });
+  });
+
   it('validates model approval pair lists before save', () => {
     expect(() =>
       buildAlertInput(modelApprovalForm({ approvedModelsText: '', zeroCostModelsText: '' })),
@@ -232,6 +274,36 @@ describe('cost alert helpers', () => {
         thresholdUsd: 1000,
       }),
     ).toBe('Projected Monthly Over: $1000.00');
+
+    expect(
+      formatCondition({
+        type: 'single_request_cost_threshold',
+        window: 'last_hour',
+        thresholdUsd: 5,
+      }),
+    ).toBe('Single Request Cost: $5.00 in Last Hour');
+  });
+
+  it('roundtrips single-request threshold conditions', () => {
+    const rule = {
+      _id: 'alert_1',
+      name: 'Runaway request',
+      severity: 'error',
+      channelIds: ['channel_1'],
+      cooldownMinutes: 15,
+      notifyOnRecovery: true,
+      condition: {
+        type: 'single_request_cost_threshold',
+        window: 'last_hour',
+        thresholdUsd: 5,
+      },
+    } as const;
+
+    expect(alertFormFromRule(rule as never)).toMatchObject({
+      conditionType: 'single_request_cost_threshold',
+      window: 'last_hour',
+      thresholdUsd: '5',
+    });
   });
 
   it('roundtrips and displays model approval conditions', () => {

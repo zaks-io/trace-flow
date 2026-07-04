@@ -55,6 +55,27 @@ interface ModelApprovalAnomalyRow {
   sample_span_id: string;
 }
 
+interface HighCostRequestRow {
+  trace_id: string;
+  span_id: string;
+  timestamp_ns: number;
+  received_at_ns: number;
+  provider: string;
+  model: string;
+  operation: string;
+  baggage_operation: string;
+  baggage_user_id: string;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  reasoning_tokens: number;
+  uncached_input_tokens: number;
+  total_tokens: number;
+  total_cost_microdollars: number;
+}
+
 interface CostAlertScope {
   provider?: string;
   model?: string;
@@ -203,6 +224,28 @@ export function buildModelApprovalPipeParams(
   });
 }
 
+export function buildHighCostRequestPipeParams(
+  base: {
+    selectedKeys: string[];
+    retentionDays: number;
+    scope?: CostAlertScope;
+  },
+  condition: {
+    window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+    thresholdUsd: number;
+  },
+  limit = 5,
+) {
+  const window = getAlertWindow(condition.window);
+  const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(Math.trunc(limit), 20)) : 5;
+  return buildCostAlertPipeParams(base, {
+    start_time_ns: nsFromMs(window.startMs),
+    end_time_ns: nsFromMs(window.endMs),
+    threshold_usd: condition.thresholdUsd,
+    limit: boundedLimit,
+  });
+}
+
 function formatTimestampNs(value: number): string {
   return new Date(Math.floor(value / 1_000_000)).toISOString();
 }
@@ -254,6 +297,88 @@ export function summarizeModelApprovalAnomalies(
   };
 }
 
+function normalizeHighCostRequestRow(row: HighCostRequestRow) {
+  const timestampNs = Number(row.timestamp_ns);
+  return {
+    traceId: row.trace_id,
+    spanId: row.span_id,
+    timestamp: formatTimestampNs(timestampNs),
+    timestampNs,
+    receivedAtNs: Number(row.received_at_ns),
+    provider: row.provider,
+    model: row.model,
+    operation: row.operation,
+    baggageOperation: row.baggage_operation,
+    baggageUserId: row.baggage_user_id,
+    costUsd: Number(row.cost_usd),
+    inputTokens: Number(row.input_tokens),
+    outputTokens: Number(row.output_tokens),
+    cacheReadInputTokens: Number(row.cache_read_input_tokens),
+    cacheCreationInputTokens: Number(row.cache_creation_input_tokens),
+    reasoningTokens: Number(row.reasoning_tokens),
+    uncachedInputTokens: Number(row.uncached_input_tokens),
+    totalTokens: Number(row.total_tokens),
+    totalCostMicrodollars: Number(row.total_cost_microdollars),
+  };
+}
+
+type NormalizedHighCostRequest = ReturnType<typeof normalizeHighCostRequestRow>;
+
+function formatHighCostRequestRow(row: NormalizedHighCostRequest): string {
+  const operation = row.baggageOperation || row.operation || 'unknown operation';
+  const providerModel = [row.provider, row.model].filter(Boolean).join('/');
+  const user = row.baggageUserId ? `, user ${row.baggageUserId}` : '';
+  const model = providerModel ? `${providerModel}, ` : '';
+  return `${formatCurrency(row.costUsd)} request (${row.totalTokens} tokens, ${model}${operation}${user}) at ${row.timestamp}, trace ${row.traceId}/${row.spanId}`;
+}
+
+export function summarizeHighCostRequests(
+  rows: HighCostRequestRow[],
+  condition: {
+    window: 'last_hour' | 'last_24_hours' | 'month_to_date';
+    thresholdUsd: number;
+  },
+  scope: CostAlertScope | undefined,
+): EvaluationResult {
+  const window = getAlertWindow(condition.window);
+  const requests = rows.map(normalizeHighCostRequestRow);
+  const suppressRenotify = condition.window === 'month_to_date';
+
+  if (requests.length === 0) {
+    return {
+      triggered: false,
+      metricValue: 0,
+      metricLabel: `Max request cost in ${window.label}`,
+      suppressRenotify,
+      summary: `No request at or above ${formatCurrency(condition.thresholdUsd)} in the ${window.label}.${formatScopeSuffix(scope)}`,
+      details: {
+        thresholdUsd: condition.thresholdUsd,
+        window: window.label,
+        requestCount: 0,
+        requests: [],
+      },
+    };
+  }
+
+  const maxRequestCostUsd = Math.max(...requests.map((row) => row.costUsd));
+  const requestLabel = requests.length === 1 ? 'request' : 'requests';
+
+  return {
+    triggered: true,
+    metricValue: maxRequestCostUsd,
+    metricLabel: `Max request cost in ${window.label}`,
+    suppressRenotify,
+    summary: `${requests.length} ${requestLabel} at or above ${formatCurrency(condition.thresholdUsd)} in the ${window.label}. Most expensive: ${formatHighCostRequestRow(requests[0]!)}.${formatScopeSuffix(scope)}`,
+    details: {
+      thresholdUsd: condition.thresholdUsd,
+      window: window.label,
+      requestCount: requests.length,
+      maxRequestCostUsd,
+      requests,
+    },
+  };
+}
+
 async function evaluateAlert(
   selectedKeys: string[],
   scope: CostAlertScope | undefined,
@@ -266,6 +391,11 @@ async function evaluateAlert(
       }
     | {
         type: 'projected_monthly_over';
+        thresholdUsd: number;
+      }
+    | {
+        type: 'single_request_cost_threshold';
+        window: 'last_hour' | 'last_24_hours' | 'month_to_date';
         thresholdUsd: number;
       }
     | {
@@ -330,6 +460,14 @@ async function evaluateAlert(
       summary: `Projected monthly cost is ${formatCurrency(projected)} with ${formatCurrency(monthToDate)} spent month-to-date, compared with a ${formatCurrency(condition.thresholdUsd)} budget.${formatScopeSuffix(scope)}`,
       suppressRenotify: true,
     };
+  }
+
+  if (condition.type === 'single_request_cost_threshold') {
+    const rows = await fetchPipe<HighCostRequestRow>(
+      'llm_high_cost_requests',
+      buildHighCostRequestPipeParams({ selectedKeys, scope, retentionDays }, condition),
+    );
+    return summarizeHighCostRequests(rows, condition, scope);
   }
 
   if (condition.type === 'model_approval_and_pricing') {
