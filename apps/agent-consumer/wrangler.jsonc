@@ -13,7 +13,18 @@
   "compatibility_date": "2024-11-27",
   "compatibility_flags": ["nodejs_compat", "no_nodejs_compat_v2"],
   "upload_source_maps": true,
-  "observability": { "enabled": true },
+  "observability": {
+    "traces": {
+      "enabled": true,
+      "destinations": ["axiom-traces"],
+      "head_sampling_rate": 1,
+    },
+    "logs": {
+      "enabled": true,
+      "destinations": ["axiom-logs"],
+      "head_sampling_rate": 1,
+    },
+  },
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "vars": {
     "SENTRY_ENVIRONMENT": "development",
@@ -53,7 +64,18 @@
     "production": {
       "name": "trace-flow-agent-consumer",
       "workers_dev": false,
-      "observability": { "enabled": true },
+      "observability": {
+        "traces": {
+          "enabled": true,
+          "destinations": ["axiom-traces"],
+          "head_sampling_rate": 1,
+        },
+        "logs": {
+          "enabled": true,
+          "destinations": ["axiom-logs"],
+          "head_sampling_rate": 1,
+        },
+      },
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "vars": {
         "SENTRY_ENVIRONMENT": "prod",

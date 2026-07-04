@@ -6,12 +6,15 @@ upload_source_maps = true
 
 logpush = true
 
-[observability]
+[observability.traces]
 enabled = true
+destinations = ["axiom-traces"]
 head_sampling_rate = 1
 
 [observability.logs]
 enabled = true
+destinations = ["axiom-logs"]
+head_sampling_rate = 1
 
 [version_metadata]
 binding = "CF_VERSION_METADATA"

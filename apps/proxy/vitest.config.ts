@@ -1,5 +1,5 @@
 import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [
@@ -18,6 +18,7 @@ export default defineConfig({
   test: {
     reporters: ['dot'],
     passWithNoTests: true,
+    exclude: [...configDefaults.exclude, 'dist/**'],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json-summary', 'json', 'html'],
