@@ -6,8 +6,9 @@ Use this when writing or refreshing `docs/agents/workflow/config.md`.
 
 - To Issues: turns a spec, PRD, or epic ticket into dependency-ordered one-PR
   `kind-slice` tickets. Adopts hand-created tickets instead of duplicating them,
-  applies the agent-ready body and labels, and emits a dependency graph and file
-  footprint. Creates tickets; it does not implement or move active work.
+  applies the agent-ready body, labels, and configured estimates, and emits a
+  dependency graph and file footprint. Creates tickets; it does not implement or
+  move active work.
 - Agent Orchestrator: runs the work loop. Keeps tracked work moving, delegates
   startable `kind-slice` work, calls review and integrate as steps, heals
   unambiguous tracker mistakes, logs friction, owns the authority to mutate
@@ -21,11 +22,12 @@ Use this when writing or refreshing `docs/agents/workflow/config.md`.
   orchestrator refactor findings to Agent Orchestrator, and files actionable
   tracker issues without moving active work between workflow states.
 - Issue Triage: the bulk reconciler. Periodically updates configured current
-  tracker issues, labels, kinds, priorities, dependencies, orphans, stale
-  verified states, and agent-ready issue bodies before Agent Orchestrator selects
-  work; its default goal is to make all Todo tickets ready for agents and keep
-  tracker state truthful. It does not review Linear Backlog unless asked. When
-  something is unclear, it asks the user or leaves exact human next actions.
+  tracker issues, labels, kinds, priorities, estimates when configured,
+  dependencies, orphans, stale verified states, and agent-ready issue bodies
+  before Agent Orchestrator selects work; its default goal is to make all Todo
+  tickets ready for agents and keep tracker state truthful. It does not review
+  Linear Backlog unless asked. When something is unclear, it asks the user or
+  leaves exact human next actions.
 
 ## Ticket Kinds
 
@@ -53,11 +55,13 @@ domain behavior, and performance work without benchmarks.
 ## Flow
 
 1. To Issues turns a spec, PRD, or epic ticket into `kind-slice` tickets, applies
-   the body contract and labels, and emits the dependency graph and footprint.
-2. Issue Triage normalizes current tracker metadata, kinds, readiness, and
-   verified stale status.
+   the body contract, labels, and configured estimates, and emits the dependency
+   graph and footprint.
+2. Issue Triage normalizes current tracker metadata, kinds, readiness,
+   configured estimates, and verified stale status.
 3. Agent Orchestrator selects startable work from the configured tracker:
-   `kind-slice`, `ready-for-agent`, complete body, and no active blockers.
+   `kind-slice`, `ready-for-agent`, configured required estimate, complete body,
+   and no active blockers.
 4. Agent Orchestrator claims the issue and delegates implementation using a
    supported worker path.
 5. The implementation worker accepts the issue, implements the scoped change,
@@ -70,9 +74,9 @@ domain behavior, and performance work without benchmarks.
    head SHA without modifying product code or moving issue state.
 8. Agent Orchestrator routes findings back to the worker, repairs stuck draft PRs
    or marks them ready-for-review when allowed, requests CodeRabbit when the
-   current diff needs it, applies or removes `Code review passed`, or calls the
-   integrate step to merge on green, move the issue to the done state, and remove
-   `ready-for-agent`.
+   current diff needs it, applies or removes the configured review evidence
+   label, or calls the integrate step to merge on green, move the issue to the
+   done state, and remove `ready-for-agent`.
 
 ## Loop Model
 
@@ -194,9 +198,9 @@ For issue-assigned delegation:
   tracker's live assignee list into config.
 - The config should record only project-specific details that are annoying to
   rediscover, such as supported worker delegation paths, routing labels, routing
-  fields, readiness label policy, worker environment label policy, startable work
-  criteria, direct-agent reply targets, or non-default continuation comment
-  rules.
+  fields, readiness label policy, worker environment label policy, estimate
+  policy, startable work criteria, direct-agent reply targets, or non-default
+  continuation comment rules.
 - Worker environment labels, such as `remote-worker` or `remote-cursor`, are
   approval metadata. Apply or preserve them when the issue route and environment
   approval criteria are verified. Do not require dependencies to be clear just to
@@ -236,17 +240,17 @@ For issue-assigned delegation:
   disabled, opt-in, or unknown. Manual review requests are top-level PR
   comments. `@coderabbitai ignore` is a PR-description marker for skipping
   automatic reviews on that PR, and is recorded as a policy skip when used.
-- `Code review passed` is a review-evidence label, not workflow state. Apply it
-  only with PR URL and reviewed head SHA evidence. Remove it when the PR head
-  changes, blocking findings appear, the linked PR changes, or evidence is
-  missing.
+- The configured review evidence label is not workflow state. Resolve it by
+  exact configured slug or ID, apply it only with PR URL and reviewed head SHA
+  evidence, and remove it when the PR head changes, blocking findings appear,
+  the linked PR changes, or evidence is missing.
 
 For local agent runtimes, keep the orchestrator parent thread small and delegate
 large context loads to isolated workers when available. Claude Code uses plugin
 subagents such as `ziw-triager`, `ziw-implementer`, and
 `ziw-reviewer`. Codex and other Agent Skills runtimes should use matching
 skill names such as `$ziw-triage`, `$ziw-implement`,
-`$ziw-review`, and `$ziw-code-review` inside isolated sessions,
+and `$ziw-code-review` inside isolated sessions,
 branches, worktrees, or subagents when available.
 
 ## State Authority
@@ -314,7 +318,7 @@ orchestration for that ticket only if config or the user grants mutation
 authority.
 Orchestrator diagnoses stuck draft PRs without treating draft state as a review
 request, repairs blockers, verifies the code-host PR is non-draft, and applies or
-removes `Code review passed` based on current PR head SHA evidence. When
+removes the configured review evidence label based on current PR head SHA evidence. When
 Orchestrator moves a ticket to `Done`, it verifies the full issue scope is
 complete and removes `ready-for-agent`. If a code-host integration auto-moved a
 partial or multi-PR issue to `Done`, Orchestrator reopens or narrows it according
@@ -329,10 +333,10 @@ and name the core skills:
 - `ziw-to-issues` for turning a spec, PRD, or epic into `kind-slice` tickets
 - `ziw-orchestrate` for the orchestration loop
 - `ziw-implement` for one startable issue through PR creation
-- `ziw-review` for independent latest-committed PR and main drift review
 - `ziw-triage` for current tracker cleanup, readiness repair, and
   optional Linear Backlog or intake backfill when explicitly requested
-- `ziw-code-review` as the shared review gate
+- `ziw-code-review` as the shared review gate, including independent
+  latest-committed PR review and main-drift review
 - `ziw-pr` for PR creation
 
 Do not duplicate this whole workflow into adapter docs.

@@ -110,15 +110,22 @@ Run the issue's required checks first, then the configured full local gate unles
 a narrower gate is justified. Use focused checks while iterating.
 
 Before claiming completion, map each acceptance criterion, safety invariant, and
-required test named by the issue to concrete evidence: a test, check, doc change,
-or explicit manual verification result. A nearby test for a different criterion
-does not count.
+required test named by the issue or the dispatch prompt to concrete evidence: a
+test, check, doc change, or explicit manual verification result. A nearby test
+for a different criterion does not count. Constraints carried forward from a
+prior slice or named in the dispatch prompt are acceptance-critical: close each
+one with a test or explicit evidence, not by passing the note along.
 
 Use exact configured or CI-equivalent commands for the full gate. Do not accept a
 self-reported green status, a package-local substitute, or a non-threshold
 variant when config or CI requires typecheck, build, coverage thresholds,
 generated-artifact checks, smoke, or secret scanning. In monorepos, include the
 cross-package checks that CI will enforce for the touched surface.
+
+If config or CI defines a coverage threshold gate separately from the full local
+gate, run the configured coverage command before `ziw-pr` whenever the change
+touches covered code. Treat separate coverage, smoke, and secret-scan jobs as
+required gates, not optional extras hidden behind local hooks.
 
 When Markdown or docs changed, run the configured docs formatting check before
 handoff. If the target repo exposes `pnpm format:docs:check`, run that command
@@ -144,6 +151,13 @@ codec, generated artifact, or provider response shape the feature depends on.
 
 If hosted verification is required but not authorized or unavailable, stop and
 report the gap. Do not mark acceptance criteria complete on partial evidence.
+
+When a slice depends on exact external config, resource IDs, provider names,
+label slugs, secret names, or environment values, verify those literals come
+from repo config, the issue body, or the dispatch prompt. Do not treat prior
+issue comments as sufficient handoff evidence unless the current issue body or
+prompt repeats the exact values. If the values are missing, stop for triage or
+config refresh instead of inventing placeholders.
 
 ## Review And PR
 
@@ -187,7 +201,7 @@ Report:
 - whether code review covers the current diff
 - PR head SHA, base SHA, and merge base used for the final checks and review
 - PR draft or ready-for-review state
-- `Code review passed` recommendation with reviewed head SHA
+- configured review evidence label recommendation with reviewed head SHA
 - CodeRabbit decision or remaining escalation
 - tracker comments and status handoff
 - blockers or follow-up issues

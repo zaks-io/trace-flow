@@ -18,6 +18,13 @@ Agents should query external systems to refresh live state, not to rediscover
 these values. If a value cannot be verified during setup, record it as an
 explicit unknown with the source that should verify it.
 
+Shared workflow skills may be distributed as project skills, plugin or
+marketplace, managed settings, user/global-only, or mixed mode. Record which
+mode this repo actually uses. Project-scoped generated `ziw-*` copies are valid
+when repo, remote, or cloud workers need the skills from a fresh clone; treat
+them as vendored generated dependencies from `zaks-io/skills`, update them
+mechanically, and do not hand-edit them in downstream repos.
+
 Setup is a verification pass, not a best-effort note-taking pass. Every populated
 config value that can change agent behavior must have current evidence from the
 repo, tracker, code host, CI, agent integration, environment config, or explicit
@@ -90,8 +97,8 @@ Verify all populated workflow fields that setup writes or preserves:
   commands from scripts, CI workflows, makefiles, justfiles, runbooks, or direct
   safe command execution
 - issue tracker provider, location, team/project/board/roadmap, statuses,
-  labels, priorities, relationships, issue templates, and query contracts with
-  read-only tracker tool calls when tools are available
+  labels, priorities, estimate fields, relationships, issue templates, and query
+  contracts with read-only tracker tool calls when tools are available
 - code host default branch, branch protections, PR conventions, linked checks,
   and open PR query shape through git metadata, code host tools, or workflow
   files
@@ -100,6 +107,9 @@ Verify all populated workflow fields that setup writes or preserves:
   or explicit user instruction
 - Claude, Codex, editor, and repo-local adapter paths by resolving files,
   symlinks, imports, and generated skill metadata from a clean path
+- shared workflow skill distribution mode, source, lockfile, refresh command,
+  project paths, symlink layout, plugin marketplace, and whether generated skill
+  directories are committed dependencies, ignored local cache, or absent
 - environment safety, deployment paths, hosted checks, preview rules, credential
   rules, and production approval rules from deployment config, CI, runbooks, or
   explicit user instruction
@@ -138,18 +148,34 @@ Record:
 - a compact verification summary: date, scope, evidence sources, safe commands or
   read-only tool calls used, and unverified values
 - repo identity, default branch, branch prefix, and PR conventions
+- default-branch baseline health: current required-check state, known-red jobs
+  with an `expected-red-until-<ticket>` note, and which job conclusion the
+  post-merge check judges when an umbrella workflow contains a known-broken
+  sibling job
+- remote worker environment enforcement: whether repo hooks and gates actually
+  install and run in each remote or cloud worker environment (installers often
+  skip under a generic `CI=true`) and the exact pre-push gate that environment
+  enforces; prompt-level instructions are not a substitute for an
+  environment-enforced gate
 - package manager and command table: install, full gate, focused checks, build,
   lint, typecheck, tests, smoke, generated artifacts, cache policy, CI env
   passthrough rules, and the exact coverage or secret-scan scopes that hosted
   checks enforce
+- gate parity: the repo's CI required job should invoke the same single verify
+  entrypoint the local hooks run, so a check added to CI is a check added
+  locally by construction. Record the entrypoint command and the CI job that
+  calls it. Flag any test, lint, coverage, format, or scan step that CI runs
+  outside that entrypoint as a `config-gap` to fix in the repo, not a
+  difference to document in prose
 - issue tracker provider, provider location, project or board, routing label,
   triage scope, orphan policy, statuses, labels, kind label set
   (`kind-spec`, `kind-epic`, `kind-slice`) and its single-select policy,
   readiness label policy, worker environment label policy when present, startable
   work criteria (including `kind-slice` only), readiness-label query policy that
-  excludes the configured done state, priority policy, dependency policy,
-  dependency graph mechanism, file footprint convention, issue body contract,
-  agent-suitability policy for work types and risk,
+  excludes the configured done state, priority policy, estimate field, estimate
+  scale, estimate policy, dependency policy, dependency graph mechanism, file
+  footprint convention, issue body contract, agent-suitability policy for work
+  types and risk,
   Issue Triage verified-state reconciliation authority, requested ready-state
   promotion authority, explicit Linear Backlog promotion gate, and which workflow
   role owns active status transitions
@@ -159,6 +185,8 @@ Record:
 - code-host issue sync policy, including whether Linear advances ticket states
   from linked GitHub PR status and whether agents should assume synced state when
   both linked entities exist
+- code-host PR attention labels the orchestrator applies when a PR needs human
+  merge or input, such as `needs-human-merge` and `needs-human-input`
 - supported worker delegation paths: `local-worktree`, `issue-assigned`, or both
 - default worker path and capacity policy when the user or repo has a stable
   preference
@@ -168,7 +196,9 @@ Record:
   active PR/preview cap, cap count policy, preview-provider cap, stuck-worker
   timeout, attempt cap before the thrash circuit breaker, required checks that
   define green for the integrate gate, auto-merge risk tiers, merge method,
-  post-merge preparation and check, auto-Done integration behavior,
+  post-merge preparation and check, the production deploy status check on the
+  default-branch HEAD when the repo deploys on push, auto-Done integration
+  behavior,
   single-ticket one-off mutation policy, verified-ready ticket-set policy,
   completely-blocked stop policy, friction intake provider, location, mode,
   visibility, agent create authority, review cadence, cleanup policy, and
@@ -183,10 +213,15 @@ Record:
   they mirror this config or redirect agents back to it
 - verified tracker metadata: lookup tool or query used, verification date, and
   exact provider IDs, URLs, or keys for teams, projects, boards, repos,
-  milestones, roadmaps, statuses, labels, priorities, and relationship types
-  when the tracker exposes them
+  milestones, roadmaps, statuses, labels, priorities, estimate fields and
+  allowed values, and relationship types when the tracker exposes them
 - agent access rules for local Codex, remote worker agents, Claude, and any
   repo-approved worker
+- workflow skill distribution policy: project skills, plugin or marketplace,
+  managed settings, user/global-only, or mixed; include installer source,
+  lockfile, pinned tag or commit when required, refresh command, project skill
+  paths, symlink layout, and whether generated local copies are committed
+  dependencies or ignored cache
 - issue-assigned agent notes when available: project-specific environment labels
   or fields, worker environment approval labels, delegation tool or field,
   verified agent IDs, direct-agent reply targets, continuation comment rules, and
@@ -264,12 +299,14 @@ labels only when they change routing, checks, approvals, or reviewer assignment.
 
 Review evidence:
 
-- `Code review passed`
+- configured exact label slug or ID, such as `code-review-passed`
 
-By default, `Code review passed` means the latest linked PR head SHA has passed
-the configured code review gate for the ticket. Record the PR URL and reviewed
-head SHA when applying it. Remove it when the PR head changes, blocking findings
-appear, the linked PR changes, or the evidence is missing.
+By default, the review evidence label means the latest linked PR head SHA has
+passed the configured code review gate for the ticket. Record the exact
+configured label slug or ID, PR URL, and reviewed head SHA when applying it.
+Remove it when the PR head changes, blocking findings appear, the linked PR
+changes, or the evidence is missing. Resolve the label by configured slug or ID,
+not by reconstructing a title-case display name.
 
 Type:
 
@@ -324,6 +361,13 @@ Adapters should say to read `docs/agents/workflow/config.md` before using the
 workflow skills. Keep them short and use
 [references/agent-workflow.md](references/agent-workflow.md) as the adapter
 contract.
+
+If runtime-generated shared `ziw-*` skill files exist under `.agents/skills/`,
+`.claude/skills/`, `.codex/skills/`, or `skills/`, decide whether those files
+are a committed dependency, symlink fanout, ignored local cache, absent, or
+repo-authored project-specific skills. For committed dependencies, record the
+source and lockfile and commit mechanical updates. Never hand-edit downstream
+generated copies.
 
 For Claude Code, configure the target repo's Claude Code integration, not this
 skills repo. Treat that integration as the source of truth for Claude-facing

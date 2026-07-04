@@ -1,6 +1,6 @@
 ---
 name: ziw-to-issues
-description: Use to turn a spec, PRD, or epic ticket into dependency-ordered one-PR implementation tickets, adopting any hand-created tickets, applying the agent-ready body contract and kind labels, and emitting a dependency graph and predicted file footprint.
+description: Use to turn a spec, PRD, or epic ticket into dependency-ordered one-PR implementation tickets, adopting any hand-created tickets, applying the agent-ready body contract, configured estimates, and kind labels, and emitting a dependency graph and predicted file footprint.
 argument-hint: "[spec-doc|prd-ticket|epic-ticket|project]"
 disable-model-invocation: true
 ---
@@ -14,6 +14,11 @@ the user created by hand.
 
 To Issues creates and shapes tickets. It does not implement, review, or move
 active work. Spec or epic tickets are input containers, not work to ship.
+
+Flows that file tickets outside To Issues, such as review sweeps or eval
+sessions, must either run this intake pass or leave readiness labels off so
+the gap stays visible. A hand-filed ticket carrying `ready-for-agent` without
+intake metadata is a dispatch hazard.
 
 ## Inputs
 
@@ -33,6 +38,7 @@ Confirm before creating or editing tickets:
 - status names, the configured ready state, and intake states
 - kind label set and its single-select policy
 - readiness, risk, type, and area labels and their policies
+- estimate field, scale, and requiredness policy
 - agent-ready issue body contract
 - dependency and blocker fields
 - file footprint convention from config
@@ -115,6 +121,7 @@ contract:
 - required checks
 - security, privacy, data, and operational invariants
 - dependencies or blockers
+- estimate when config stores estimates in the body
 
 If a required field is unknowable from the plan, add the heading, mark the ticket
 `needs-info`, leave the specific question, and do not mark it ready. Do not
@@ -130,6 +137,11 @@ Record deploy prerequisites, runtime secrets, hosted gates, generated artifact
 updates, and CI env passthrough requirements as explicit acceptance criteria or
 required checks. Do not bury launch blockers only in background docs.
 
+When a slice depends on exact external config, resource IDs, provider names,
+label slugs, secret names, or environment values, put the exact configured
+literals or their config lookup location in the body. Do not rely on prior issue
+comments as the only source for hard values a worker must use.
+
 Prefer slices that match known strong agent-fit work: docs, tests, build or CI
 updates, small refactors with clear checks, scoped bugs with reproduction, and
 isolated UI changes with target states. Mark high-risk or ambiguous work for
@@ -142,16 +154,43 @@ Name the authenticated actor, tenant or resource binding, replay behavior,
 atomic consume or claim requirement, and concurrency checks the worker must
 prove.
 
+For custody, persistence, driver-integration, or provider-integration slices,
+give acceptance criteria an executable shape that exercises the real boundary.
+Prefer checks such as multi-instance readback, concurrent first use, real driver
+queries, env passthrough, or provider-shape verification over prose-only
+assertions. Do not make a mock of the integrated seam the only proof.
+
+For slices that drop or narrow schema on retained data, put the deploy order in
+the acceptance criteria: pre-deploy data cleanup must land before the schema
+change deploys when the platform validates the new schema against existing
+rows, and bulk migrations must use a resumable batched runner, not a single
+transaction. Name the production deploy status that proves the change landed; a
+green preview does not prove the production deploy.
+
+## Estimates
+
+Follow the Estimate Rules in
+[../ziw-setup/references/issue-tracker-contract.md](../ziw-setup/references/issue-tracker-contract.md):
+estimate each `kind-slice` after splitting to one PR, using only the
+configured field and scale, and omit estimates when config defines none. If
+estimates are required before `ready-for-agent` and a value is unknowable from
+the plan, leave the exact question, apply `needs-info` or `ready-for-human`,
+and do not mark the ticket ready.
+
 ## Labels And Readiness
 
 For each `kind-slice`:
 
 - apply one type and one risk label from config
 - apply routing and area labels from config
+- apply the configured estimate when the estimate policy grants To Issues that
+  authority
 - apply the configured worker environment label only when the environment
   approval criteria are met; dependency state is not a reason to withhold it
 - apply `ready-for-agent` only when the slice is scoped to one PR, routed,
-  type and risk labeled, and complete enough to verify
+  type and risk labeled, estimated if required, and complete enough to verify
+- do not apply `ready-for-agent` when the body itself says human setup,
+  credentials, provider decisions, or security judgment are still required
 - place ready `kind-slice` issues in the configured ready state, usually `Todo`,
   even when they are blocked by other tickets; do not park
   implementation-ready slices in Linear `Backlog`
@@ -176,6 +215,10 @@ run safe work in parallel.
 - Serialize slices that must not run concurrently even without a direct data
   dependency, such as shared schema or migration ordering, using the configured
   dependency mechanism.
+- When several slices converge on the same core files or regenerate the same
+  shared artifact, sequence the convergent slice to land first or immediately
+  adjacent to its siblings, or serialize the cohort. Same-base siblings all
+  conflict the moment one merges.
 - Encoding a dependency never removes `ready-for-agent`, the configured ready
   state, or a worker environment label.
 
@@ -186,6 +229,9 @@ configured location and shape, so the orchestrator can avoid dispatching
 colliding slices concurrently.
 
 - List the files, directories, or packages the slice is most likely to change.
+- Include shared document surfaces the slice is likely to edit, such as dense
+  markdown list blocks, status ledgers, registries, changelogs, config tables,
+  and docs sections owned by many slices.
 - Keep it a prediction, not a guarantee; the worker may diverge.
 - Flag slices with heavy expected overlap so they are serialized or sequenced.
 - Compare sibling slices after assigning individual footprints. Record hot files
@@ -222,6 +268,7 @@ Report:
 - source plan and target location
 - slices created, slices adopted, and duplicates converged
 - kind labels set and any kind contradictions healed
+- estimates set, preserved, omitted by policy, or left with exact questions
 - tickets marked `ready-for-agent`, `needs-info`, or `ready-for-human`
 - dependency graph and any cycles or required serializations
 - file footprints recorded and overlaps flagged
