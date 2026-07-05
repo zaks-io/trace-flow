@@ -11,7 +11,6 @@ target/
 
 # Centrally-managed workflow skills (pinned in skills-lock.json; do not reformat locally)
 .agents/skills/ziw-*/
-.claude/skills/ziw-*/
 
 # Tauri-generated schemas (gitignored, not hand-edited)
 apps/desktop/src-tauri/gen/
