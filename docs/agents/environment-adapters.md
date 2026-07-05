@@ -25,8 +25,8 @@ Codex should read:
 ## Claude
 
 Use Claude for planning, documentation, second-pass review, or implementation
-when the user explicitly chooses it. Claude should use the repo-local skills
-under `.claude/skills`, which link to `.agents/skills`.
+when the user explicitly chooses it. Claude reads `CLAUDE.md`, which imports
+`@AGENTS.md`; do not add Claude-specific skill symlinks.
 
 Claude should read the same shared workflow docs as Codex and any issue-linked
 specs, ADRs, or runbooks before editing.

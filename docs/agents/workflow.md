@@ -51,7 +51,7 @@ Work moves through six stages.
 
 5. PR review and fix loop
 
-   Use `ziw-review` to review the PR against the Linear issue,
+   Use `ziw-code-review` to review the PR against the Linear issue,
    acceptance criteria, Trace Flow invariants, tests, and docs. If review finds
    actionable feedback, post it on the PR, move Linear to `Changes Requested`,
    and send the original worker thread back to the same branch and PR.
@@ -76,7 +76,7 @@ For delegated implementation work:
 4. The worker opens a ready-for-review PR, links Linear, and moves the issue to
    `In Review`.
 5. The orchestrator checks out the PR in a clean local worktree and reviews it
-   with `ziw-review`.
+   with `ziw-code-review`.
 6. Review findings are posted as normal GitHub PR review comments.
 7. If changes are needed, Linear moves to `Changes Requested`.
 8. The orchestrator replies in the original worker thread with the PR feedback,

@@ -19,11 +19,11 @@ answer, or adds no new ✅ across 6 turns; in any case stop after 150 turns.
 
 - On the `agent-analytics` branch, cut off `main`.
 - `tb workspace current` returns `trace_flow_dev` (never prod).
-- The `code-review` skill / `code-reviewer` subagent is discoverable (`.claude/skills/code-review`
-  resolves). CodeRabbit is optional — only needed if a slice hits the escalation rubric; auth it with
-  `coderabbit auth status` then if so.
-- The skill is discoverable: `.claude/skills/agent-analytics-driver` resolves to this folder.
-- Effort: Opus 4.7 `/effort max` (or `xhigh` floor); GPT-5.5 `xhigh` (or `high` floor).
+- Claude Code reads `CLAUDE.md`, which imports `@AGENTS.md`; do not depend on `.claude/skills`
+  resolving.
+- Use `ziw-code-review` for the local review gate. CodeRabbit is optional and only needed if a slice
+  hits the escalation rubric; auth it with `coderabbit auth status` first.
+- Effort: use the strongest available reasoning setting for broad Agent Conversation Analytics work.
 
 ## Why the goal stays this short
 

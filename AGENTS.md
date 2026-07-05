@@ -111,9 +111,8 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 Shared agent context lives in `AGENTS.md`, `docs/agents/...`, and
 `.agents/skills/...`; update those files first so Claude Code, Codex, and
-Cursor stay aligned. Claude-facing redirects under `.claude` point back to the
-shared `.agents`, `.codex`, and `AGENTS.md` paths, while `CLAUDE.md` points at
-`AGENTS.md`.
+Cursor stay aligned. Claude Code reads `CLAUDE.md`, which imports `@AGENTS.md`;
+do not maintain Claude-specific skill symlinks.
 
 Codex project settings live in `.codex/config.toml` for MCP endpoints and main
 config values, and `.codex/hooks.json` for hook wiring and shell commands.
@@ -126,11 +125,10 @@ Workflow logic lives in the centrally-managed `ziw-*` org skills (pinned in
 `skills-lock.json`). Repo-specific values live in
 `docs/agents/workflow/config.md` — read it before using any workflow skill.
 Core skills: `ziw-orchestrate` (orchestration),
-`ziw-implement` (one issue → PR), `ziw-review`
-(independent PR + main-drift review), `ziw-triage` (tracker cleanup),
+`ziw-implement` (one issue → PR), `ziw-triage` (tracker cleanup),
 `ziw-to-issues` (spec/epic → dependency-ordered tickets),
-`ziw-code-review` (shared review gate), `ziw-pr` (PR creation),
-`ziw-setup` (repo workflow config).
+`ziw-code-review` (shared review gate, independent PR review, main-drift review),
+`ziw-pr` (PR creation), `ziw-setup` (repo workflow config).
 
 Shared workflow docs:
 

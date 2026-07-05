@@ -81,16 +81,15 @@ sync with `packages/otel-conventions`.
 ## Agent And Workflow Files
 
 - `AGENTS.md` is the top-level agent instruction file.
+- `CLAUDE.md` contains `@AGENTS.md` so Claude Code imports the same instructions.
 - `docs/agents/` contains repo workflow, Linear, triage, domain, and runtime
   handoff docs.
 - `.agents/skills/` is the canonical repo-local skill directory.
-- `.claude/skills/` should contain symlinks back to `.agents/skills/`.
 - `.codex/` contains Codex project configuration and hooks.
 - `.cursor/` contains Cursor Background Agent environment and rules.
 
-The `ziw-*` skills are centrally managed and version-pinned in `skills-lock.json`. After
-editing agent workflow files, confirm `.claude/skills/<name>` still resolves to
-`.agents/skills/<name>` (e.g. `ls -la .claude/skills`).
+The `ziw-*` skills are centrally managed and version-pinned in `skills-lock.json`. Do
+not edit generated skill copies in place; update the source and re-sync.
 
 ## CI, Deploy, And Local Runtime
 

@@ -32,13 +32,11 @@ The package manager is pinned in `package.json`.
 
 ## Repo-Local Skills
 
-Canonical skill files live under `.agents/skills`, and `.claude/skills` links
-to those directories for Claude-compatible runtimes. Remote environments should
-preserve those links.
+Canonical skill files live under `.agents/skills`. Claude Code reads
+`CLAUDE.md`, which imports `@AGENTS.md`; do not add `.claude/skills` symlinks.
 
 - `.agents/skills/ziw-implement`
 - `.agents/skills/ziw-orchestrate`
-- `.agents/skills/ziw-review`
 - `.agents/skills/ziw-code-review`
 - `.agents/skills/ziw-pr`
 - `.agents/skills/ziw-triage`
