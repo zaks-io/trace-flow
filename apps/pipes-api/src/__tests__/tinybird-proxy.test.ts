@@ -91,12 +91,16 @@ describe('pipes API Tinybird passthrough', () => {
     expect(upstreamFetch).not.toHaveBeenCalled();
   });
 
-  it('passes invalid-token responses through from Tinybird without caching', async () => {
+  it('passes invalid-token responses through from Tinybird without caching and exposes context', async () => {
     const cache = {
       match: vi.fn().mockResolvedValue(null),
       put: vi.fn(),
     };
-    const upstreamFetch = vi.fn().mockResolvedValue(new Response('forbidden', { status: 403 }));
+    const upstreamFetch = vi.fn().mockResolvedValue(
+      new Response('forbidden for 11111111-1111-1111-1111-111111111111 Bearer secret.value', {
+        status: 403,
+      }),
+    );
     vi.stubGlobal('caches', { default: cache });
     vi.stubGlobal('fetch', upstreamFetch);
 
@@ -109,7 +113,14 @@ describe('pipes API Tinybird passthrough', () => {
     );
 
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'Upstream query failed' });
+    expect(res.headers.get('X-Trace-Flow-Pipe')).toBe('traces_list');
+    expect(res.headers.get('X-Upstream-Status')).toBe('403');
+    expect(await res.json()).toEqual({
+      error: 'Upstream query failed',
+      pipe: 'traces_list',
+      upstream_status: 403,
+      upstream_error: 'forbidden for [redacted-uuid] Bearer [redacted]',
+    });
     expect(cache.put).not.toHaveBeenCalled();
   });
 
@@ -119,7 +130,18 @@ describe('pipes API Tinybird passthrough', () => {
       put: vi.fn(),
     };
     vi.stubGlobal('caches', { default: cache });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('bad gateway', { status: 503 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('bad gateway', {
+          status: 503,
+          headers: {
+            'x-request-id': 'tb-req-1',
+            'x-tb-r': 'release-1',
+          },
+        }),
+      ),
+    );
 
     const res = await pipesApp.fetch(
       new Request('https://pipes.trace-flow.dev/v0/pipes/traces_list.json', {
@@ -130,6 +152,15 @@ describe('pipes API Tinybird passthrough', () => {
     );
 
     expect(res.status).toBe(502);
+    expect(res.headers.get('X-Tinybird-Request-Id')).toBe('tb-req-1');
+    expect(await res.json()).toEqual({
+      error: 'Upstream query failed',
+      pipe: 'traces_list',
+      upstream_status: 503,
+      tinybird_request_id: 'tb-req-1',
+      tinybird_release: 'release-1',
+      upstream_error: 'bad gateway',
+    });
     expect(cache.put).not.toHaveBeenCalled();
   });
 
