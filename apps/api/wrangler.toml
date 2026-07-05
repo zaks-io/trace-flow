@@ -53,8 +53,8 @@ AXIOM_DATASET = "cloudflare"
 BODY_ENCRYPTION_KEY_ID = "v1"
 
 [[env.production.routes]]
-pattern = "raw.trace-flow.dev/*"
-zone_name = "trace-flow.dev"
+pattern = "raw.trace-flow.dev"
+custom_domain = true
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"

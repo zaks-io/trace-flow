@@ -45,8 +45,8 @@ TINYBIRD_API_URL = "https://api.us-west-2.aws.tinybird.co"
 AXIOM_DATASET = "cloudflare"
 
 [[env.production.routes]]
-pattern = "pipes.trace-flow.dev/*"
-zone_name = "trace-flow.dev"
+pattern = "pipes.trace-flow.dev"
+custom_domain = true
 
 [[env.production.ratelimits]]
 name = "PIPES_LIMITER"
