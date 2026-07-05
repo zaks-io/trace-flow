@@ -61,6 +61,8 @@ export const WEB_TINYBIRD_PIPES = [
   'agent_review_unit_costs',
 ] as const;
 
+const WEB_TINYBIRD_PIPE_SET = new Set<string>(WEB_TINYBIRD_PIPES);
+
 export const MCP_TINYBIRD_PIPES = [
   'mcp_traces_list',
   'mcp_trace_detail',
@@ -111,7 +113,14 @@ export function withRowSecurityParams(
   }));
 }
 
-export function buildWebReadScopes(): TinybirdScope[] {
+export function buildWebReadScopes(pipe?: string): TinybirdScope[] {
+  if (pipe !== undefined) {
+    if (!WEB_TINYBIRD_PIPE_SET.has(pipe)) {
+      throw new Error(`Tinybird web pipe is not allowed: ${pipe}`);
+    }
+    return [{ type: 'PIPES:READ', resource: pipe }];
+  }
+
   return WEB_TINYBIRD_PIPES.map((resource) => ({ type: 'PIPES:READ', resource }));
 }
 
@@ -178,13 +187,15 @@ async function getUserRowSecurityParams(
 }
 
 export const generateWebReadToken = action({
-  args: {},
+  args: {
+    pipe: v.optional(v.string()),
+  },
   returns: v.object({
     token: v.string(),
     expiresAt: v.number(),
     name: v.string(),
   }),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     await requireAuthenticated(ctx);
 
     if (!adminToken) {
@@ -195,7 +206,10 @@ export const generateWebReadToken = action({
       throw new Error('TINYBIRD_WORKSPACE_ID environment variable is not set');
     }
 
-    const scopes = withRowSecurityParams(buildWebReadScopes(), await getUserRowSecurityParams(ctx));
+    const scopes = withRowSecurityParams(
+      buildWebReadScopes(args.pipe),
+      await getUserRowSecurityParams(ctx),
+    );
 
     return signTinybirdToken(scopes, {
       ttlSeconds: WEB_READ_TOKEN_TTL_SECONDS,

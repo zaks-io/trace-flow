@@ -29,37 +29,38 @@ describe('fetchTinybirdPipe', () => {
     vi.unstubAllEnvs();
   });
 
-  it('coalesces concurrent token requests for different pipes', async () => {
-    let resolveToken: (value: { token: string; expiresAt: number }) => void = () => {};
-    const tokenPromise = new Promise<{ token: string; expiresAt: number }>((resolve) => {
-      resolveToken = resolve;
-    });
-    const generateWebReadToken = vi.fn(() => tokenPromise);
+  it('mints separate token requests for different pipes', async () => {
+    const generateWebReadToken = vi.fn(({ pipe }: { pipe: string }) =>
+      Promise.resolve(tokenResult(`${pipe}-jwt`)),
+    );
 
-    const first = fetchTinybirdPipe({
-      pipe: 'agent_usage_timeseries',
-      params: { start_time_ms: 1 },
-      generateWebReadToken,
-    });
-    const second = fetchTinybirdPipe({
-      pipe: 'agent_usage_summary',
-      params: { start_time_ms: 2 },
-      generateWebReadToken,
-    });
+    await Promise.all([
+      fetchTinybirdPipe({
+        pipe: 'agent_usage_timeseries',
+        params: { start_time_ms: 1 },
+        generateWebReadToken,
+      }),
+      fetchTinybirdPipe({
+        pipe: 'agent_usage_summary',
+        params: { start_time_ms: 2 },
+        generateWebReadToken,
+      }),
+    ]);
 
-    expect(generateWebReadToken).toHaveBeenCalledTimes(1);
-
-    resolveToken(tokenResult('shared-jwt'));
-    await Promise.all([first, second]);
-
+    expect(generateWebReadToken).toHaveBeenCalledTimes(2);
+    expect(generateWebReadToken).toHaveBeenNthCalledWith(1, { pipe: 'agent_usage_timeseries' });
+    expect(generateWebReadToken).toHaveBeenNthCalledWith(2, { pipe: 'agent_usage_summary' });
     expect(mockFetchPipe).toHaveBeenCalledTimes(2);
     expect(mockFetchPipe).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ pipe: 'agent_usage_timeseries', token: 'shared-jwt' }),
+      expect.objectContaining({
+        pipe: 'agent_usage_timeseries',
+        token: 'agent_usage_timeseries-jwt',
+      }),
     );
     expect(mockFetchPipe).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ pipe: 'agent_usage_summary', token: 'shared-jwt' }),
+      expect.objectContaining({ pipe: 'agent_usage_summary', token: 'agent_usage_summary-jwt' }),
     );
   });
 
@@ -82,6 +83,7 @@ describe('fetchTinybirdPipe', () => {
     });
 
     expect(generateWebReadToken).toHaveBeenCalledTimes(1);
+    expect(generateWebReadToken).toHaveBeenCalledWith({ pipe: 'agent_usage_timeseries' });
 
     resolveToken(tokenResult('shared-jwt'));
     await Promise.all([first, second]);
@@ -108,14 +110,42 @@ describe('fetchTinybirdPipe', () => {
       generateWebReadToken,
     });
     await fetchTinybirdPipe({
-      pipe: 'llm_usage_summary',
+      pipe: 'agent_usage_timeseries',
       generateWebReadToken,
     });
 
     expect(generateWebReadToken).toHaveBeenCalledTimes(1);
     expect(mockFetchPipe).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ pipe: 'llm_usage_summary', token: 'cached-jwt' }),
+      expect.objectContaining({ pipe: 'agent_usage_timeseries', token: 'cached-jwt' }),
+    );
+  });
+
+  it('does not reuse cached tokens across pipes', async () => {
+    const generateWebReadToken = vi.fn(({ pipe }: { pipe: string }) =>
+      Promise.resolve(tokenResult(`${pipe}-jwt`, 60_000)),
+    );
+
+    await fetchTinybirdPipe({
+      pipe: 'agent_usage_timeseries',
+      generateWebReadToken,
+    });
+    await fetchTinybirdPipe({
+      pipe: 'llm_usage_summary',
+      generateWebReadToken,
+    });
+
+    expect(generateWebReadToken).toHaveBeenCalledTimes(2);
+    expect(mockFetchPipe).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        pipe: 'agent_usage_timeseries',
+        token: 'agent_usage_timeseries-jwt',
+      }),
+    );
+    expect(mockFetchPipe).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ pipe: 'llm_usage_summary', token: 'llm_usage_summary-jwt' }),
     );
   });
 
@@ -136,13 +166,13 @@ describe('fetchTinybirdPipe', () => {
     vi.setSystemTime(new Date('2026-06-16T00:00:11Z'));
 
     await fetchTinybirdPipe({
-      pipe: 'llm_usage_summary',
+      pipe: 'agent_usage_timeseries',
       generateWebReadToken,
     });
 
     expect(generateWebReadToken).toHaveBeenCalledTimes(2);
     expect(mockFetchPipe).toHaveBeenLastCalledWith(
-      expect.objectContaining({ pipe: 'llm_usage_summary', token: 'refreshed-jwt' }),
+      expect.objectContaining({ pipe: 'agent_usage_timeseries', token: 'refreshed-jwt' }),
     );
   });
 
