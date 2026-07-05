@@ -28,8 +28,15 @@ const NON_PROD_ORIGINS = [
 
 const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:8788'];
 const ALLOWED_BROWSER_HEADERS = ['Content-Type', 'Authorization', 'Baggage', 'Sentry-Trace'];
+const EXPOSED_BROWSER_HEADERS = [
+  'X-Trace-Flow-Pipe',
+  'X-Upstream-Status',
+  'X-Tinybird-Request-Id',
+  'X-Tinybird-Release',
+];
 const VALID_PIPE_NAME = /^[a-z_][a-z0-9_]*$/;
 const PASSTHROUGH_STATUSES = new Set([400, 401, 403, 404, 429]);
+const UPSTREAM_ERROR_BODY_LIMIT = 2048;
 
 export const pipesApp = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -42,6 +49,7 @@ pipesApp.use('*', async (c, next) => {
     origin: (origin) => (allowed.includes(origin) ? origin : null),
     allowMethods: ['GET', 'OPTIONS'],
     allowHeaders: ALLOWED_BROWSER_HEADERS,
+    exposeHeaders: EXPOSED_BROWSER_HEADERS,
   });
   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
   return mw(c, next);
@@ -161,19 +169,63 @@ async function handleUpstreamError(
   tbResponse: Response,
   pipe: string,
 ): Promise<Response> {
-  await tbResponse.body?.cancel().catch(() => undefined);
+  const upstreamBody = await readUpstreamErrorBody(tbResponse);
+  const tinybirdRequestId = tbResponse.headers.get('x-request-id') ?? undefined;
+  const tinybirdRelease = tbResponse.headers.get('x-tb-r') ?? undefined;
+
   logger.error('pipes_api.tinybird_upstream_error', undefined, {
     status: tbResponse.status,
     pipe,
-    tinybirdRequestId: tbResponse.headers.get('x-request-id') ?? undefined,
-    tinybirdRelease: tbResponse.headers.get('x-tb-r') ?? undefined,
+    tinybirdRequestId,
+    tinybirdRelease,
+    upstreamBody,
   });
+
   const status = PASSTHROUGH_STATUSES.has(tbResponse.status)
     ? tbResponse.status
     : tbResponse.status >= 500
       ? 502
       : 400;
-  return c.json({ error: 'Upstream query failed' }, status);
+  const response = c.json(
+    {
+      error: 'Upstream query failed',
+      pipe,
+      upstream_status: tbResponse.status,
+      tinybird_request_id: tinybirdRequestId,
+      tinybird_release: tinybirdRelease,
+      upstream_error: upstreamBody,
+    },
+    status,
+  );
+
+  response.headers.set('X-Trace-Flow-Pipe', pipe);
+  response.headers.set('X-Upstream-Status', String(tbResponse.status));
+  if (tinybirdRequestId) response.headers.set('X-Tinybird-Request-Id', tinybirdRequestId);
+  if (tinybirdRelease) response.headers.set('X-Tinybird-Release', tinybirdRelease);
+  return response;
+}
+
+async function readUpstreamErrorBody(response: Response): Promise<string> {
+  try {
+    return truncateAndRedact(await response.text(), UPSTREAM_ERROR_BODY_LIMIT);
+  } catch (error) {
+    return `Failed to read upstream error body: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function truncateAndRedact(value: string, limit: number): string {
+  const redacted = value
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted-jwt]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~-]+\b/gi, 'Bearer [redacted]')
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+      '[redacted-uuid]',
+    );
+
+  if (redacted.length <= limit) {
+    return redacted;
+  }
+  return `${redacted.slice(0, limit)}...[truncated ${redacted.length - limit} chars]`;
 }
 
 async function fetchFromTinybird(
