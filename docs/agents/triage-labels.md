@@ -21,6 +21,20 @@ Linear team `TRA`) is the source of truth.
 | --------------- | --------------- | ------------------------------------------------------------- |
 | `remote-cursor` | `remote-cursor` | Safe and intended for Cursor Background Agent implementation. |
 
+## Repo route
+
+| Canonical role | Linear label         | Meaning                                               |
+| -------------- | -------------------- | ----------------------------------------------------- |
+| repo route     | `zaks-io/trace-flow` | Required so issue-assigned workers resolve this repo. |
+
+## Kind
+
+| Linear label | Meaning                                     |
+| ------------ | ------------------------------------------- |
+| `kind-spec`  | Spec or PRD container. Never dispatch.      |
+| `kind-epic`  | Workstream container. Never dispatch.       |
+| `kind-slice` | One-PR implementation ticket. Dispatchable. |
+
 ## Risk
 
 | Linear label              | Meaning                                                        |
@@ -41,6 +55,24 @@ Linear team `TRA`) is the source of truth.
 | `Spike`       | Research/investigation tasks.      |
 | `Hotfix`      | Emergency production fixes.        |
 
+## Review evidence
+
+| Linear label         | Meaning                                                   |
+| -------------------- | --------------------------------------------------------- |
+| `code-review-passed` | Current linked PR head passed the configured review gate. |
+
+## Estimate
+
+Use the Linear estimate field for `kind-slice` tickets. Valid values are `0`,
+`1`, `2`, `4`, `8`, and `16`; split or route to human planning if the work would
+exceed `16`.
+
+## Area and ownership
+
+No area or ownership label is configured as workflow authority. Existing labels
+such as `frontend`, `research`, and `Launch Blocker` are advisory unless the
+issue body or project explicitly makes them part of the route.
+
 When a skill mentions a role, apply the corresponding label in Linear.
 
 Do not substitute a different label silently. If a label does not exist in the
@@ -52,5 +84,10 @@ Do not substitute a different label silently. If a label does not exist in the
   constraints, and verification guidance for an agent to implement one PR.
 - `remote-cursor` is an additional routing label. It is never enough by itself;
   Cursor work requires both `ready-for-agent` and `remote-cursor`.
+- `zaks-io/trace-flow` is required before issue-assigned delegation.
+- `kind-slice` tickets need a Linear estimate before `ready-for-agent`; use the
+  scale `0`, `1`, `2`, `4`, `8`, `16`.
+- `code-review-passed` must name the reviewed PR URL and head SHA in adjacent
+  evidence. Remove it when the PR head changes or blocking findings appear.
 - `ready-for-human` means the issue needs product, security, operational, or
   credential judgment before an agent should implement it.
