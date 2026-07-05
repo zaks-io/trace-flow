@@ -91,12 +91,22 @@ describe('Tinybird web read token scopes', () => {
     );
   });
 
-  it('does not accept caller-provided scopes for web token minting', () => {
+  it('does not accept caller-provided scope arrays for web token minting', () => {
     const buildWithIgnoredArg = buildWebReadScopes as unknown as (scopes: unknown[]) => unknown;
 
-    expect(buildWithIgnoredArg([{ type: 'PIPES:READ', resource: 'not_allowlisted' }])).toEqual(
-      buildWebReadScopes(),
-    );
+    expect(() =>
+      buildWithIgnoredArg([{ type: 'PIPES:READ', resource: 'not_allowlisted' }]),
+    ).toThrow(/not allowed/);
+  });
+
+  it('can mint a single allowlisted web pipe scope', () => {
+    expect(buildWebReadScopes('agent_usage_summary')).toEqual([
+      { type: 'PIPES:READ', resource: 'agent_usage_summary' },
+    ]);
+  });
+
+  it('rejects unknown web pipe scopes', () => {
+    expect(() => buildWebReadScopes('not_allowlisted')).toThrow(/not allowed/);
   });
 
   it('stamps identical row-security fixed params on every web scope', () => {

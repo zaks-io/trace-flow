@@ -1346,7 +1346,7 @@ export declare const api: {
       generateWebReadToken: FunctionReference<
         "action",
         "public",
-        {},
+        { pipe?: string },
         { expiresAt: number; name: string; token: string }
       >;
     };
