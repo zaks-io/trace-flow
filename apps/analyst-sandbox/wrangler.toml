@@ -108,8 +108,8 @@ binding = "MODEL_PRICING"
 id = "45dd0d5e619d44fc831ccab01ed428a4"
 
 [[env.production.routes]]
-pattern = "analyst-sandbox.trace-flow.dev/*"
-zone_name = "trace-flow.dev"
+pattern = "analyst-sandbox.trace-flow.dev"
+custom_domain = true
 
 [[env.production.containers]]
 class_name = "Sandbox"
