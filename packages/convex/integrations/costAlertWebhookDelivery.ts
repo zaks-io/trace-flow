@@ -14,6 +14,12 @@ import {
   type WebhookHeader,
 } from '../costAlertWebhookSecurity';
 
+// Convex actions abort after ~600s; keep per-attempt timeouts tight so a stalled DNS
+// resolver or webhook endpoint cannot consume most of that wall-clock budget.
+const WEBHOOK_DNS_LOOKUP_TIMEOUT_MS = 5_000;
+// Matches other outbound Convex fetch limits (e.g. models.dev import at 15s).
+const WEBHOOK_REQUEST_TIMEOUT_MS = 15_000;
+
 export type WebhookAddressResolver = (hostname: string) => Promise<string[]>;
 export type WebhookRequestSender = (request: PinnedWebhookRequest) => Promise<WebhookResponse>;
 
@@ -105,7 +111,11 @@ export async function resolveWebhookAddresses(hostname: string): Promise<string[
     return [normalized];
   }
 
-  const records = await lookup(normalized, { all: true, verbatim: true });
+  const records = await rejectAfter(
+    lookup(normalized, { all: true, verbatim: true }),
+    WEBHOOK_DNS_LOOKUP_TIMEOUT_MS,
+    `DNS lookup for ${normalized}`,
+  );
   return records.map((record) => normalizeWebhookHostname(record.address));
 }
 
@@ -118,7 +128,7 @@ export async function sendPinnedWebhookRequest({
 }: PinnedWebhookRequest): Promise<WebhookResponse> {
   return new Promise((resolve, reject) => {
     const hostname = normalizeWebhookHostname(url.hostname);
-    const requestOptions: RequestOptions & { servername?: string } = {
+    const requestOptions: RequestOptions & { servername?: string; signal?: AbortSignal } = {
       protocol: url.protocol,
       hostname,
       port: url.port ? Number(url.port) : undefined,
@@ -128,6 +138,7 @@ export async function sendPinnedWebhookRequest({
       lookup: createPinnedLookup(address, family),
       family,
       agent: false,
+      signal: AbortSignal.timeout(WEBHOOK_REQUEST_TIMEOUT_MS),
     };
 
     if (url.protocol === 'https:' && !isIpAddress(hostname)) {
@@ -151,8 +162,29 @@ export async function sendPinnedWebhookRequest({
       },
     );
 
-    request.on('error', reject);
+    request.on('error', (error) => {
+      if (error.name === 'TimeoutError') {
+        reject(new Error(`Webhook request timed out after ${WEBHOOK_REQUEST_TIMEOUT_MS}ms`));
+        return;
+      }
+      reject(error);
+    });
     request.end(body);
+  });
+}
+
+function rejectAfter<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
   });
 }
 
