@@ -150,11 +150,14 @@ export function calculateCost(tokens: LLMTokenUsage, pricing: ModelPricing): Cos
     (cacheReadTokens * cacheReadCostPerMillion) / 1_000_000,
   );
 
-  // Tiered cache write pricing: if 5m/1h breakdown available, price each tier separately
+  // Tiered cache write pricing: if a non-zero 5m/1h breakdown is available, price each tier
+  // separately. Older Claude transcripts report the split as 0/0 while the aggregate is non-zero
+  // (and the agent consumer always sets the split fields to 0), so gate on a positive split rather
+  // than mere presence — otherwise a real cacheCreationTokens total would be priced at $0.
+  const tokens5m = tokens.cacheCreation5mTokens ?? 0;
+  const tokens1h = tokens.cacheCreation1hTokens ?? 0;
   let cacheWriteCostMicrodollars: number;
-  if (tokens.cacheCreation5mTokens !== undefined || tokens.cacheCreation1hTokens !== undefined) {
-    const tokens5m = tokens.cacheCreation5mTokens ?? 0;
-    const tokens1h = tokens.cacheCreation1hTokens ?? 0;
+  if (tokens5m + tokens1h > 0) {
     // Falls back: 1h tier rate → 5m tier rate → prompt rate
     const cost1h = effective.cacheWrite1hCostPerMillion ?? cacheWriteCostPerMillion;
     cacheWriteCostMicrodollars =
