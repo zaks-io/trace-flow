@@ -20,7 +20,11 @@ export function respond(attached: AttachedCapture): Response {
   }
   applySecurityHeaders(headers);
 
-  return new Response(attached.readable, {
+  // Null-body statuses (204/205/304) must not carry a body — constructing a Response with a
+  // non-null stream for those statuses throws. The upstream had nothing to capture anyway.
+  const body = response.body === null ? null : attached.readable;
+
+  return new Response(body, {
     status: response.status,
     statusText: response.statusText,
     headers,
