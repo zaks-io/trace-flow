@@ -747,11 +747,16 @@ async function handlePiRunEvents(request: Request, env: Env): Promise<Response> 
     return jsonResponse({ ok: false, error: 'Invalid events payload' }, { status: 400 });
   }
 
-  await getConvex(env).action(receiveEventsRef, {
-    runId: body.runId as SandboxRunId,
-    token,
-    events: body.events as SandboxRunEventInput[],
-  });
+  try {
+    await getConvex(env).action(receiveEventsRef, {
+      runId: body.runId as SandboxRunId,
+      token,
+      events: body.events as SandboxRunEventInput[],
+    });
+  } catch (error) {
+    console.error('analyst_sandbox.pi_run_events_failed', error);
+    return jsonResponse({ ok: false, error: 'Failed to record events' }, { status: 502 });
+  }
   return jsonResponse({ ok: true });
 }
 
@@ -774,6 +779,14 @@ async function handlePiRunComplete(
   }
   const status = body.status;
 
+  // Verify the run token BEFORE snapshotting, so an unauthenticated caller can't spin up a
+  // Sandbox and write an R2 archive on the strength of a bare (unverified) bearer header.
+  const verified = (await getConvex(env).action(verifyRunRef, {
+    runId: body.runId as SandboxRunId,
+    token,
+  })) as { ok?: boolean };
+  if (!verified.ok) return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+
   // Snapshot /workspace (data + Pi session transcript) to R2 BEFORE teardown, but
   // only for a clean completion — a failed/timed-out run must not clobber the last
   // good snapshot. The serializable handle is stored on the thread by Convex so the
@@ -783,14 +796,19 @@ async function handlePiRunComplete(
     backup = await snapshotWorkspace(env, body.sandboxId);
   }
 
-  await getConvex(env).action(completeRunRef, {
-    runId: body.runId as SandboxRunId,
-    token,
-    status,
-    resultText: body.resultText,
-    error: body.error,
-    backup: backup ?? undefined,
-  });
+  try {
+    await getConvex(env).action(completeRunRef, {
+      runId: body.runId as SandboxRunId,
+      token,
+      status,
+      resultText: body.resultText,
+      error: body.error,
+      backup: backup ?? undefined,
+    });
+  } catch (error) {
+    console.error('analyst_sandbox.pi_run_complete_failed', error);
+    return jsonResponse({ ok: false, error: 'Failed to complete run' }, { status: 502 });
+  }
 
   if (body.sandboxId) {
     const sandbox = getAnalystSandbox(env, body.sandboxId);
@@ -816,14 +834,27 @@ async function handlePiRunCheckpoint(request: Request, env: Env): Promise<Respon
     return jsonResponse({ ok: false, error: 'Invalid checkpoint payload' }, { status: 400 });
   }
 
+  // Verify the run token before doing expensive snapshot work (unauthenticated Sandbox spin-up
+  // and R2 writes would otherwise happen before checkpointRunRef rejects the token).
+  const verified = (await getConvex(env).action(verifyRunRef, {
+    runId: body.runId as SandboxRunId,
+    token,
+  })) as { ok?: boolean };
+  if (!verified.ok) return jsonResponse({ ok: false, error: 'Unauthorized' }, { status: 401 });
+
   const backup = await snapshotWorkspace(env, body.sandboxId);
   if (!backup) return jsonResponse({ ok: false, error: 'Snapshot failed' }, { status: 500 });
 
-  await getConvex(env).action(checkpointRunRef, {
-    runId: body.runId as SandboxRunId,
-    token,
-    backup,
-  });
+  try {
+    await getConvex(env).action(checkpointRunRef, {
+      runId: body.runId as SandboxRunId,
+      token,
+      backup,
+    });
+  } catch (error) {
+    console.error('analyst_sandbox.pi_run_checkpoint_failed', error);
+    return jsonResponse({ ok: false, error: 'Failed to checkpoint run' }, { status: 502 });
+  }
 
   return jsonResponse({ ok: true });
 }
