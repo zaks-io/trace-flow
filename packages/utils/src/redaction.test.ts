@@ -41,6 +41,12 @@ describe('redactText', () => {
     ).toBe('card [REDACTED]');
   });
 
+  it('redacts a Luhn-valid Amex number in 4-6-5 grouping', () => {
+    // 378282246310005 is a well-known Amex test PAN (Luhn-valid).
+    expect(redactText('card 3782 822463 10005 end')).toBe('card [REDACTED] end');
+    expect(redactText('card 3782-822463-10005 end')).toBe('card [REDACTED] end');
+  });
+
   it('does not redact non-Luhn digit runs', () => {
     expect(redactText('id 12345678901234')).toBe('id 12345678901234');
   });

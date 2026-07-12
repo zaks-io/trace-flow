@@ -96,7 +96,16 @@ impl CursorSnapshot {
 
         // `immutable=1` => SQLite assumes the file never changes: no locks, no `-wal` writeback. `mode=ro`
         // is belt-and-suspenders so an accidental write errors instead of mutating the snapshot.
-        let uri = format!("file:{}?immutable=1&mode=ro", copied_main.display());
+        // Percent-encode the URI-significant characters so a path containing `%`, `?`, or `#` (SQLite
+        // decodes the URI path and truncates at `?`/`#`) doesn't open the wrong file or fail. Encode
+        // `%` first to avoid double-encoding the escapes we introduce.
+        let encoded_path = copied_main
+            .display()
+            .to_string()
+            .replace('%', "%25")
+            .replace('?', "%3f")
+            .replace('#', "%23");
+        let uri = format!("file:{encoded_path}?immutable=1&mode=ro");
         let conn = Connection::open_with_flags(
             uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,

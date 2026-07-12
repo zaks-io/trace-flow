@@ -254,9 +254,12 @@ async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool 
                     "sync cycle finished"
                 );
             }
-            // A setup failure (bad client/cursor DB) means the pass never reached ingest; otherwise the
-            // cycle ran and advanced cursors for whatever it processed, so the backfill window is done.
-            let ok = outcome.setup_error.is_none();
+            // Retire the one-time backfill only when the pass fully reached ingest: no setup failure
+            // (bad client/cursor DB) AND no per-source transport failure. A first pass where every
+            // POST failed surfaces as `first_error`, not `setup_error`, and must keep the wider
+            // history window so the next attempt retries it instead of silently skipping days-old
+            // sessions (whose cursors never advanced).
+            let ok = outcome.setup_error.is_none() && outcome.first_error.is_none();
             bus.update(|s| {
                 s.last_sync_at = Some(SystemTime::now());
                 s.sync = match (&outcome.setup_error, &outcome.first_error) {

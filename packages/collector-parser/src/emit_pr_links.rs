@@ -388,8 +388,12 @@ pub fn cursor_pr_link_facts(
     for record in records {
         let event_at = record
             .get("createdAt")
-            .and_then(Value::as_str)
-            .and_then(rfc3339_to_epoch_ms)
+            .and_then(|created| {
+                created
+                    .as_str()
+                    .and_then(rfc3339_to_epoch_ms)
+                    .or_else(|| created.as_i64())
+            })
             .or(ctx.vendor_started_at)
             .unwrap_or(0);
         let source_event_id = bubble_id(record);

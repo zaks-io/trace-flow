@@ -103,7 +103,13 @@ pub fn rfc3339_to_epoch_ms(timestamp: &str) -> Option<i64> {
     let year: i64 = date_parts.next()?.parse().ok()?;
     let month: i64 = date_parts.next()?.parse().ok()?;
     let day: i64 = date_parts.next()?.parse().ok()?;
-    if date_parts.next().is_some() || !is_valid_calendar_date(year, month, day) {
+    // RFC 3339 years are four digits. Bounding the year also keeps the epoch arithmetic below well
+    // within i64 range — an unbounded year (e.g. "300000000-01-01") would otherwise overflow
+    // `days_from_civil`/`day_seconds` and panic in debug or wrap to garbage in release.
+    if !(0..=9999).contains(&year)
+        || date_parts.next().is_some()
+        || !is_valid_calendar_date(year, month, day)
+    {
         return None;
     }
 
@@ -232,6 +238,8 @@ mod tests {
             "2026-05-26T16:38:59+02",       // offset missing minutes
             "2026-05-26T16:38:59+02:00:30", // offset has a seconds component
             "2026-05-26T12:30:60Z",         // `:60` only legal at 23:59
+            "300000000-01-01T00:00:00Z",    // year far outside i64-safe range (would overflow)
+            "10000-01-01T00:00:00Z",        // year beyond 4 digits
         ] {
             assert_eq!(rfc3339_to_epoch_ms(bad), None, "expected None for {bad:?}");
         }

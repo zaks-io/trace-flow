@@ -132,7 +132,11 @@ pub fn claude_tool_facts(records: &[Value], ctx: &SessionContext) -> Vec<AgentTo
             let classification = command.map(classify_command).unwrap_or_default();
             let (command_excerpt, command_dropped) = excerpt(command, COMMAND_EXCERPT_CAP_BYTES);
             let status = status_from_outcome(result.map_or(ToolOutcome::Unknown, |r| r.outcome));
-            let error_source = result.and_then(|r| r.error_text.as_deref());
+            // Only a failed call has error text; on success the folded stderr (e.g. git/curl
+            // progress) is not an error. Mirror the Codex/Cursor emitters and gate on Failure.
+            let error_source = (status == AgentEventStatus::Failure)
+                .then_some(result.and_then(|r| r.error_text.as_deref()))
+                .flatten();
             let error_classification = classify_tool_error(status, error_source);
             let (error_excerpt, error_dropped) = excerpt(error_source, ERROR_EXCERPT_CAP_BYTES);
             let navigation = classify_navigation(command);

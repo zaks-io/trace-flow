@@ -45,6 +45,12 @@ fn host_and_path(remote: &str) -> Option<(&str, &str)> {
         // colon. scp syntax has no port — a non-default port needs an `ssh://` URL — so a numeric
         // first path segment stays part of the path.
         let (host, path) = strip_userinfo(remote).split_once(':')?;
+        // A real scp host has no `/`; if the segment before the colon contains one, this is a local
+        // filesystem path (e.g. `/Users/jane/notes:2026/repo`), not a remote. Reject it so a colon
+        // in a home-dir path can't be forged into a "remote" that leaks the absolute path/username.
+        if host.is_empty() || host.contains('/') {
+            return None;
+        }
         Some((host, path))
     }
 }
@@ -155,6 +161,10 @@ mod tests {
             "https://github.com",  // host but no repo path
             "https://github.com/", // empty path
             "git@github.com:",     // scp host but empty path
+            // Local filesystem paths whose directory names contain a colon must not be forged into
+            // an scp-like "remote" (which would leak the absolute home path/username).
+            "/Users/jane/notes:2026/repo",
+            "/home/user/proj:v2/app",
         ] {
             assert_eq!(normalize_git_remote(raw), "", "for {raw:?}");
         }
