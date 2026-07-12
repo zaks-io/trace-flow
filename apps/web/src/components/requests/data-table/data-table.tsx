@@ -114,7 +114,7 @@ export function DataTable<TData>({
   }, [data, alertSummary, alertFilter]);
 
   // Force re-render when "new" rows age out
-  const [, forceUpdate] = useState(0);
+  const [tick, forceUpdate] = useState(0);
   useEffect(() => {
     const now = new Date();
     const newRowTimestamps = filteredData
@@ -137,7 +137,9 @@ export function DataTable<TData>({
       const timer = setTimeout(() => forceUpdate((n) => n + 1), remainingMs);
       return () => clearTimeout(timer);
     }
-  }, [filteredData]);
+    // `tick` is a dependency so each firing reschedules the timer for the next-oldest new row;
+    // without it only the first (oldest) row would ever age out of the highlight.
+  }, [filteredData, tick]);
 
   const table = useReactTable({
     data: filteredData,

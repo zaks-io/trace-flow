@@ -19,9 +19,18 @@ interface PricingFormData {
 }
 
 function formatMicrodollarsToDisplay(microdollars: number): string {
-  // Convert from microdollars per million to dollars per million
+  // Convert from microdollars per million to dollars per million. Show cents by default but keep
+  // up to 6 decimals so sub-cent per-million prices (e.g. $0.075/M) aren't truncated to $0.07.
   const dollarsPerMillion = microdollars / 1_000_000;
-  return `$${dollarsPerMillion.toFixed(2)}`;
+  const precise = parseFloat(dollarsPerMillion.toFixed(6));
+  const str = Number.isInteger(precise * 100) ? precise.toFixed(2) : String(precise);
+  return `$${str}`;
+}
+
+/** Render a stored microdollars-per-million value for a numeric input without truncating precision. */
+function microToInputValue(microdollars: number | undefined): string {
+  if (!microdollars) return microdollars === 0 ? '0' : '';
+  return String(parseFloat((microdollars / 1_000_000).toFixed(6)));
 }
 
 function displayToDollarsPerMillion(display: string): number {
@@ -287,8 +296,8 @@ export default function Pricing({
                 </label>
                 <input
                   type="number"
-                  step="0.01"
-                  value={(formData.promptCostPerMillion / 1_000_000).toFixed(2)}
+                  step="any"
+                  value={microToInputValue(formData.promptCostPerMillion)}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
@@ -306,8 +315,8 @@ export default function Pricing({
                 </label>
                 <input
                   type="number"
-                  step="0.01"
-                  value={(formData.completionCostPerMillion / 1_000_000).toFixed(2)}
+                  step="any"
+                  value={microToInputValue(formData.completionCostPerMillion)}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
@@ -327,12 +336,8 @@ export default function Pricing({
                 </label>
                 <input
                   type="number"
-                  step="0.01"
-                  value={
-                    formData.cacheReadCostPerMillion
-                      ? (formData.cacheReadCostPerMillion / 1_000_000).toFixed(2)
-                      : ''
-                  }
+                  step="any"
+                  value={microToInputValue(formData.cacheReadCostPerMillion)}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
@@ -351,12 +356,8 @@ export default function Pricing({
                 </label>
                 <input
                   type="number"
-                  step="0.01"
-                  value={
-                    formData.cacheWriteCostPerMillion
-                      ? (formData.cacheWriteCostPerMillion / 1_000_000).toFixed(2)
-                      : ''
-                  }
+                  step="any"
+                  value={microToInputValue(formData.cacheWriteCostPerMillion)}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
@@ -375,12 +376,8 @@ export default function Pricing({
                 </label>
                 <input
                   type="number"
-                  step="0.01"
-                  value={
-                    formData.reasoningCostPerMillion
-                      ? (formData.reasoningCostPerMillion / 1_000_000).toFixed(2)
-                      : ''
-                  }
+                  step="any"
+                  value={microToInputValue(formData.reasoningCostPerMillion)}
                   onChange={(e) =>
                     setFormData({
                       ...formData,

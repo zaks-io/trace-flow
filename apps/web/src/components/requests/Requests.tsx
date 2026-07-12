@@ -64,7 +64,10 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
     if (filters.model) params.model = filters.model;
     if (filters.status) params.status = filters.status;
     if (filters.operation) params.operation = filters.operation;
-    if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
+    // Always forward the search text (parameterized exact TraceId match). Dropping non-hex input
+    // here left the filter visually active while querying unfiltered, so the table showed every
+    // row as if it matched; an impossible TraceId now correctly yields zero rows.
+    if (filters.search) {
       params.search = filters.search;
     }
     if (filters.apiKey) params.api_key_filter = filters.apiKey;

@@ -210,17 +210,27 @@ export default function Alerts({
   const handleToggle = async (id: Id<'alerts'>) => {
     setTogglingId(id);
     setError(null);
-    await toggleAlert({ id });
-    setTogglingId(null);
+    try {
+      await toggleAlert({ id });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update alert');
+    } finally {
+      setTogglingId(null);
+    }
   };
 
   const handleDelete = async (id: Id<'alerts'>) => {
     setDeletingId(id);
     setError(null);
     setSuccess(null);
-    await deleteAlert({ id });
-    setSuccess('Alert deleted successfully');
-    setDeletingId(null);
+    try {
+      await deleteAlert({ id });
+      setSuccess('Alert deleted successfully');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete alert');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const formatCondition = (alert: Alert) => {
