@@ -10,7 +10,7 @@ function queryResult(firstValue: unknown = null, collectValue: unknown[] = []) {
   };
 }
 
-function makeRemoveMemberCtx() {
+function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = null) {
   const caller = {
     _id: 'user_owner',
     tokenIdentifier: 'https://auth.example/|auth0|owner',
@@ -64,6 +64,7 @@ function makeRemoveMemberCtx() {
   const membersQuery = queryResult(callerMembership);
   const apiKeysQuery = queryResult(null, apiKeys);
   const collectorCredentialsQuery = queryResult(null, collectorCredentials);
+  const invitesQuery = queryResult(acceptedInvite);
 
   const dbGet = vi.fn(async (id: string) => {
     if (id === removedMembership._id) return removedMembership;
@@ -87,6 +88,7 @@ function makeRemoveMemberCtx() {
         if (table === 'organizationMembers') return membersQuery;
         if (table === 'apiKeys') return apiKeysQuery;
         if (table === 'collectorCredentials') return collectorCredentialsQuery;
+        if (table === 'invites') return invitesQuery;
         throw new Error(`Unexpected table: ${table}`);
       }),
     },
@@ -145,5 +147,22 @@ describe('auth.users.removeMember', () => {
         { sub: 'auth0|removed' },
       ]),
     );
+  });
+
+  it('expires the accepted invite and clears inviteId so the member is not resurrected on next login', async () => {
+    const invite = { _id: 'invite_1', orgId: 'org_1', status: 'accepted' };
+    const { ctx, removedUser, removedMembership, dbPatch } = makeRemoveMemberCtx(invite);
+    // Tie the user's inviteId to the accepted invite, as the accept flow would.
+    (removedUser as Record<string, unknown>).inviteId = invite._id;
+
+    await (
+      removeMember as unknown as { _handler: (ctx: unknown, args: unknown) => Promise<void> }
+    )._handler(ctx, { memberId: removedMembership._id });
+
+    expect(dbPatch).toHaveBeenCalledWith(invite._id, { status: 'expired' });
+    expect(dbPatch).toHaveBeenCalledWith(removedUser._id, {
+      orgId: undefined,
+      inviteId: undefined,
+    });
   });
 });

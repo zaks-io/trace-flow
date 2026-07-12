@@ -767,10 +767,14 @@ export const recoverStaleMonitors = internalMutation({
     const now = Date.now();
     const staleThreshold = now - 15 * 60 * 1000;
 
-    // Only fetch monitors that are overdue (nextEvaluationAt < staleThreshold)
+    // Only fetch monitors that are overdue (nextEvaluationAt < staleThreshold). Bound the range
+    // from below so deliberately-unscheduled monitors (nextEvaluationAt undefined, which sorts
+    // before all numbers) don't fill the page and starve genuinely stale monitors out of take(50).
     const staleMonitors = await ctx.db
       .query('costAlertMonitors')
-      .withIndex('by_next_evaluation', (q) => q.lt('nextEvaluationAt', staleThreshold))
+      .withIndex('by_next_evaluation', (q) =>
+        q.gt('nextEvaluationAt', 0).lt('nextEvaluationAt', staleThreshold),
+      )
       .take(50);
 
     for (const monitor of staleMonitors) {

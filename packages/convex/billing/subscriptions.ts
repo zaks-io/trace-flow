@@ -390,7 +390,10 @@ export const updateAutoOverageSettings = mutation({
     if (subscription.tier !== 'pro') throw new Error('Auto-topup requires Pro');
     await ctx.db.patch(subscription._id, {
       autoOverage: args.autoOverage,
-      overageCapCents: args.overageCapCents,
+      // Preserve the existing cap when the caller omits it. Patching `undefined` would clear the
+      // spend ceiling, and reserveAutoTopup treats a missing cap as "unlimited" — so a request that
+      // only toggles autoOverage would silently remove the cap and allow unbounded auto-topups.
+      overageCapCents: args.overageCapCents ?? subscription.overageCapCents,
     });
     await scheduleKVSync(ctx, subscription._id);
   },

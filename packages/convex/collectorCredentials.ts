@@ -74,6 +74,14 @@ export const mint = mutation({
 
     await rateLimiter.limit(ctx, 'mintCollectorCredential', { key: user._id, throws: true });
 
+    // Cap the credential lifetime at the mint boundary, mirroring collectorLogin.mintForUser, so a
+    // web/desktop caller can't widen the rotation window past 90 days or mint an already-dead secret.
+    const MAX_CREDENTIAL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    if (args.expiresAt <= nowMs || args.expiresAt > nowMs + MAX_CREDENTIAL_TTL_MS) {
+      throw new Error('Collector Credential expiry must be in the future and within 90 days');
+    }
+
     const secret = generateCollectorSecret();
     const hashedSecret = await hashCollectorSecret(secret);
     const createdAt = Date.now();

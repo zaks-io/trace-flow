@@ -239,7 +239,19 @@ export const removeMember = mutation({
     // Clear the removed user's orgId and revoke their KV mapping
     const removedUser = await ctx.db.get(membership.userId);
     if (removedUser) {
-      await ctx.db.patch(removedUser._id, { orgId: undefined });
+      // Expire the accepted invite that ties this user to the org and drop the matching inviteId.
+      // Otherwise the next login reconciles the still-accepted invite and silently re-activates the
+      // membership we just removed. A genuine re-invite creates a fresh invite, so this is safe.
+      const acceptedInvite = await getAcceptedInviteForEmail(ctx, removedUser.email);
+      const inviteTiesToOrg = acceptedInvite?.orgId === membership.orgId;
+      const clearInviteId =
+        inviteTiesToOrg && removedUser.inviteId === acceptedInvite?._id
+          ? { inviteId: undefined }
+          : {};
+      await ctx.db.patch(removedUser._id, { orgId: undefined, ...clearInviteId });
+      if (acceptedInvite && inviteTiesToOrg) {
+        await ctx.db.patch(acceptedInvite._id, { status: 'expired' });
+      }
       await revokeCredentialsForRemovedUser(ctx, removedUser._id);
       if (removedUser.tokenIdentifier) {
         await scheduleUserOrgRemoval(ctx, removedUser.tokenIdentifier);
@@ -348,8 +360,9 @@ export const getUser = query({
     if (!currentUser) throw new Error('Authentication required');
     const target = await ctx.db.get(args.id);
     if (!target) return null;
-    // Only allow viewing users in the same org
-    if (target.orgId !== currentUser.orgId) return null;
+    // Only allow viewing users in the same org. Guard against two org-less users (both orgId
+    // undefined) matching each other, which would leak profile data across the tenant boundary.
+    if (!currentUser.orgId || target.orgId !== currentUser.orgId) return null;
     return target;
   },
 });
