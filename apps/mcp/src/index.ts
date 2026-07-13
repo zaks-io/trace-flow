@@ -312,6 +312,13 @@ app.post('/mcp', async (c) => {
     );
   }
 
+  if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+    return c.json(
+      createErrorResponse(null, JsonRpcErrorCode.InvalidRequest, 'Invalid JSON-RPC message'),
+      400,
+    );
+  }
+
   if (isNotification(message)) {
     return traceMcpInteraction(message, c.req.header('Mcp-Session-Id'), undefined, () =>
       c.body(null, 204),

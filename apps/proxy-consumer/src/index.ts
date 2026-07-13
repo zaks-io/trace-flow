@@ -183,7 +183,9 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         if (message.body.type === 'otlp') {
           traces = message.body.traces;
           apiKey = message.body.apiKey;
-          messageId = `otlp:${apiKey}:${message.body.receivedAt}:${traces.length}`;
+          // Key on the queue message id (stable across retries, unique per enqueue) so two distinct
+          // OTLP exports from the same key in the same millisecond aren't collapsed as duplicates.
+          messageId = `otlp:${message.id}`;
         } else {
           const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
           traces = buildSpans(message.body, pricing);
@@ -201,8 +203,7 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
         shard.items.push({ messageId, traces, message });
       } catch (error) {
         const requestId = message.body.type === 'otlp' ? undefined : message.body.requestId;
-        const messageId =
-          message.body.type === 'otlp' ? `otlp:${message.body.receivedAt}` : requestId;
+        const messageId = message.body.type === 'otlp' ? `otlp:${message.id}` : requestId;
         const orgId = message.body.type === 'otlp' ? undefined : message.body.orgId;
         const traceId =
           message.body.type === 'otlp' ? message.body.traces[0]?.TraceId : message.body.traceId;

@@ -6,7 +6,7 @@ import {
   type ActionCtx,
 } from '../_generated/server';
 import { v } from 'convex/values';
-import { requireAdmin } from '../auth/users';
+import { requireAdmin, extractSub } from '../auth/users';
 import { requireAuthenticated } from '../auth/auth';
 import { internal } from '../_generated/api';
 import { organizationValidator } from '../validators';
@@ -377,6 +377,7 @@ async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
 
 const deleteBatchCountsValidator = v.object({
   apiKeys: v.number(),
+  collectorCredentials: v.number(),
   usage: v.number(),
   addonPurchases: v.number(),
   membersRemoved: v.number(),
@@ -402,6 +403,7 @@ export const deleteOrgRecordsBatch = internalMutation({
   handler: async (ctx, args) => {
     const counts = {
       apiKeys: 0,
+      collectorCredentials: 0,
       usage: 0,
       addonPurchases: 0,
       membersRemoved: 0,
@@ -424,15 +426,45 @@ export const deleteOrgRecordsBatch = internalMutation({
         counts[key]++;
         ops++;
       }
-      return false;
+      // A batch that consumes the whole page budget may have left more rows behind (a full
+      // take() page), so signal the driver to run again rather than falling through to
+      // hasMore:false and orphaning the remainder.
+      return ops >= PAGE_SIZE;
     }
 
-    // Delete API keys
+    // Delete API keys. Also purge them from the proxy edge KV, or the deleted org's keys keep
+    // authenticating at the edge until their (possibly far-future) expiry.
     const apiKeys = await ctx.db
       .query('apiKeys')
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
       .take(PAGE_SIZE);
-    if (await deleteBatch(apiKeys, 'apiKeys')) return { counts, hasMore: true };
+    for (const apiKey of apiKeys) {
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+      await ctx.db.delete(apiKey._id);
+      await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteKeyFromKV, {
+        key: apiKey.key,
+      });
+      counts.apiKeys++;
+      ops++;
+    }
+    if (apiKeys.length >= PAGE_SIZE) return { counts, hasMore: true };
+
+    // Delete Collector Credentials and purge them from the collector edge KV, otherwise the deleted
+    // org's collectors keep ingesting until their secret's own expiry.
+    const collectorCreds = await ctx.db
+      .query('collectorCredentials')
+      .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+      .take(PAGE_SIZE - ops);
+    for (const cred of collectorCreds) {
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+      await ctx.db.delete(cred._id);
+      await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteCollectorCredFromKV, {
+        hashedSecret: cred.hashedSecret,
+      });
+      counts.collectorCredentials++;
+      ops++;
+    }
+    if (ops >= PAGE_SIZE) return { counts, hasMore: true };
 
     // Delete usage records
     const usageRecords = await ctx.db
@@ -458,6 +490,14 @@ export const deleteOrgRecordsBatch = internalMutation({
 
       if (member.status !== 'removed') {
         await ctx.db.patch(member._id, { status: 'removed', removedAt: Date.now() });
+        // Drop the member's user→org routing entry from KV so it doesn't dangle to the deleted org.
+        const memberUser = await ctx.db.get(member.userId);
+        const sub = memberUser ? extractSub(memberUser.tokenIdentifier) : null;
+        if (sub) {
+          await ctx.scheduler.runAfter(0, internal.integrations.cloudflare.deleteUserOrgFromKV, {
+            sub,
+          });
+        }
         counts.membersRemoved++;
         ops++;
       }
@@ -488,7 +528,9 @@ export const deleteOrgRecordsBatch = internalMutation({
       .take(PAGE_SIZE - ops);
     if (await deleteBatch(invites, 'invites')) return { counts, hasMore: true };
 
-    return { counts, hasMore: false };
+    // The member patch loop increments ops without going through deleteBatch, so re-check the
+    // budget here: a fully-consumed page may have more members/invites still to process.
+    return { counts, hasMore: ops >= PAGE_SIZE };
   },
 });
 

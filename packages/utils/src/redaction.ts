@@ -27,9 +27,11 @@ function normalizeCardDigits(match: string): string {
   return match.replace(/\D/g, '');
 }
 
-// 13–19 digits with optional separators between groups (spaces, dashes)
+// 13–19 digits with optional separators between groups (spaces, dashes). The middle alternative
+// covers Amex's 4-6-5 grouping (e.g. "3782 822463 10005"), which the 4-4-4-4 shape misses; all
+// candidates are still Luhn-gated below.
 const CARD_CANDIDATE_PATTERN =
-  /\b(?:\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{0,7}|\d{13,19})\b/g;
+  /\b(?:\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{0,7}|\d{4}[-\s]\d{6}[-\s]\d{5}|\d{13,19})\b/g;
 
 function redactCreditCards(text: string): string {
   return text.replace(CARD_CANDIDATE_PATTERN, (slice) => {

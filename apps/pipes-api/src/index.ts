@@ -137,10 +137,12 @@ pipesApp.get('/v0/pipes/*', async (c) => {
     return handleUpstreamError(c, logger, tbResponse, pipe);
   }
 
-  const response = pipeResponse(await tbResponse.text(), 'MISS', ttl);
-  c.executionCtx.waitUntil(cache.put(cacheRequest, response.clone()));
+  const body = await tbResponse.text();
+  // The edge cache refuses to store `Cache-Control: private`, so put a copy
+  // with `s-maxage` instead; per-token isolation comes from the cache key.
+  c.executionCtx.waitUntil(cache.put(cacheRequest, cacheableCopy(body, ttl)));
 
-  return response;
+  return pipeResponse(body, 'MISS', ttl);
 });
 
 pipesApp.notFound((c) => c.json({ error: 'Not found' }, 404));
@@ -161,6 +163,17 @@ function pipeResponse(body: string, cacheState: string, ttl?: number): Response 
     headers.set('Vary', 'Authorization');
   }
   return new Response(body, { status: 200, headers });
+}
+
+function cacheableCopy(body: string, ttl: number): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Cache': 'MISS',
+      'Cache-Control': `s-maxage=${ttl}`,
+    },
+  });
 }
 
 async function handleUpstreamError(

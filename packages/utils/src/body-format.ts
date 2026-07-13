@@ -299,9 +299,11 @@ export function mergeSSEEvents(events: ParsedSSEEvent[]): MergedSSEResponse {
         role: choice.role || 'assistant',
         content: choice.content,
         ...(choice.tool_calls.size > 0 && {
-          tool_calls: Array.from(choice.tool_calls.values()).sort(
-            (a, b) => parseInt(a.id || '0') - parseInt(b.id || '0'),
-          ),
+          // Sort by the streaming tool-call index (the map key), not the opaque string id
+          // (e.g. `call_AbC123`) which parseInt turns into NaN, leaving deltas in arrival order.
+          tool_calls: Array.from(choice.tool_calls.entries())
+            .sort(([a], [b]) => a - b)
+            .map(([, toolCall]) => toolCall),
         }),
       },
       finish_reason: choice.finish_reason,

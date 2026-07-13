@@ -61,6 +61,7 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
 
   async addFacts(batch: AgentFactBatch): Promise<AgentFactBatchResult> {
     let acceptedRows = 0;
+    let legacyRows = 0;
     let duplicateRows = 0;
     let repairRows = 0;
     const now = Date.now();
@@ -114,7 +115,10 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
               rowData,
               now,
             );
-            if (batch.writeLegacy) {
+            // Only mirror categories that have a legacy datasource. review_unit_attributions has
+            // no legacy table, so a dual-mode row here would never be drained by flush() and would
+            // wedge the pending count (and thus the flush alarm) forever.
+            if (batch.writeLegacy && (LEGACY_CATEGORIES as Category[]).includes(category)) {
               this.ctx.storage.sql.exec(
                 `INSERT INTO legacy_pending_facts (category, data, created_at_ms)
                  VALUES (?, ?, ?)`,
@@ -122,13 +126,14 @@ class AgentFactBatcherBase extends DurableObject<AgentConsumerEnv> {
                 rowData,
                 now,
               );
+              legacyRows++;
             }
             acceptedRows++;
           }
         }
       });
 
-      this.queuedRows += acceptedRows * (batch.writeLegacy ? 2 : 1);
+      this.queuedRows += acceptedRows + legacyRows;
       if (repairRows > 0) {
         this.logger.warn('agent_fact_batcher.repair_rows_detected', { repairRows });
       }

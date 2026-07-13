@@ -217,9 +217,15 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
     } else {
         // Prime the pipeline up to the concurrency limit.
         for _ in 0..concurrency {
-            match pending.next_batch(store)? {
-                Some(batch) => inflight.push(post_batch(client, batch, cancel)),
-                None => break,
+            match pending.next_batch(store) {
+                Ok(Some(batch)) => inflight.push(post_batch(client, batch, cancel)),
+                Ok(None) => break,
+                // A cursor-store read failure is terminal; drive the orchestrator to its failed
+                // state first so it can't stay stuck in `Syncing` when the caller tears down.
+                Err(err) => {
+                    orchestrator.apply(Trigger::JobFailed);
+                    return Err(err);
+                }
             }
         }
     }
@@ -261,8 +267,13 @@ pub async fn run_sync_cycle_tuned<C: IngestClient>(
             report.aborted_early = true;
             break 'drain;
         }
-        if let Some(batch) = pending.next_batch(store)? {
-            inflight.push(post_batch(client, batch, cancel));
+        match pending.next_batch(store) {
+            Ok(Some(batch)) => inflight.push(post_batch(client, batch, cancel)),
+            Ok(None) => {}
+            Err(err) => {
+                orchestrator.apply(Trigger::JobFailed);
+                return Err(err);
+            }
         }
     }
 

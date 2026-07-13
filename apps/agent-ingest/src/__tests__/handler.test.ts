@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { sha256Hex } from '@trace-flow/utils';
-import type { AgentIngestQueueMessage, AgentToolEventFact } from '@trace-flow/types';
+import type {
+  AgentIngestQueueMessage,
+  AgentMessageFact,
+  AgentToolEventFact,
+} from '@trace-flow/types';
 import { app } from '../index';
 import { __resetPolicyCache, type CompatibilityPolicy } from '../policy';
 import type { AgentIngestEnv } from '../context';
 import type { ClaimStatus } from '../ownership';
-import { envelope, emptyFacts, facts, toolEventFact } from './factories';
+import { envelope, emptyFacts, facts, messageFact, toolEventFact } from './factories';
 
 const CONVEX = 'https://convex.test';
 const SECRET = 'valid-collector-secret';
@@ -242,6 +246,17 @@ describe('POST /v1/ingest', () => {
   it('400s a fact element missing its required fields (per-element shape, before the policy fetch)', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     const bad = envelope({ facts: facts({ tool_events: [{} as unknown as AgentToolEventFact] }) });
+    const res = await post(env, JSON.stringify(bad), authHeaders);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });
+    expect(queueSend).not.toHaveBeenCalled();
+  });
+
+  it('400s a message fact missing event_at (would otherwise crash the consumer)', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    const msg = messageFact() as unknown as Record<string, unknown>;
+    delete msg.event_at;
+    const bad = envelope({ facts: facts({ messages: [msg as unknown as AgentMessageFact] }) });
     const res = await post(env, JSON.stringify(bad), authHeaders);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: 'invalid_envelope' });

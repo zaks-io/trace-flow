@@ -77,11 +77,19 @@ function extractServiceName(resource?: OTLPResource): string {
  * Transforms a single OTLP span to TinybirdTrace format.
  * Keeps timestamps in nanoseconds to align with OTLP spec.
  */
+const NANOSECONDS_PER_DAY = 24 * 60 * 60 * 1_000_000_000;
+
+function retentionExpiresAt(receivedAt: number, tier: string | undefined): number {
+  const retentionDays = tier === 'pro' ? RETENTION_DAYS.pro : RETENTION_DAYS.hobby;
+  return receivedAt + retentionDays * NANOSECONDS_PER_DAY;
+}
+
 function transformSpan(
   span: OTLPSpan,
   resource: OTLPResource | undefined,
   apiKey: string,
   receivedAt: number,
+  tier: string | undefined,
 ): TinybirdTrace {
   const startNano = BigInt(span.startTimeUnixNano);
   const endNano = BigInt(span.endTimeUnixNano);
@@ -114,16 +122,17 @@ function transformSpan(
     'Links.SpanId': [],
     'Links.TraceState': [],
     'Links.Attributes': [],
-    TierAtIngestion: 'hobby',
-    RetentionExpiresAt: receivedAt + RETENTION_DAYS.hobby * 24 * 60 * 60 * 1_000_000_000,
+    TierAtIngestion: tier === 'pro' ? 'pro' : 'hobby',
+    RetentionExpiresAt: retentionExpiresAt(receivedAt, tier),
   };
 
   // Transform events - keep timestamps in nanoseconds
   if (span.events) {
     for (const event of span.events) {
-      const eventTimeNano = event.timeUnixNano
-        ? Number(BigInt(event.timeUnixNano))
-        : Number(startNano);
+      const eventTimeNano =
+        event.timeUnixNano !== undefined && /^-?\d+$/.test(String(event.timeUnixNano))
+          ? Number(BigInt(event.timeUnixNano))
+          : Number(startNano);
       trace['Events.Timestamp'].push(eventTimeNano);
       trace['Events.Name'].push(event.name);
       trace['Events.Attributes'].push(JSON.stringify(attributesToRecord(event.attributes)));
@@ -151,6 +160,7 @@ export function transformOTLPToTraces(
   request: OTLPExportTraceServiceRequest,
   apiKey: string,
   receivedAt: number,
+  tier?: string,
 ): TinybirdTrace[] {
   const traces: TinybirdTrace[] = [];
 
@@ -159,10 +169,29 @@ export function transformOTLPToTraces(
 
     for (const scopeSpan of resourceSpan.scopeSpans) {
       for (const span of scopeSpan.spans) {
-        traces.push(transformSpan(span, resource, apiKey, receivedAt));
+        traces.push(transformSpan(span, resource, apiKey, receivedAt, tier));
       }
     }
   }
 
   return traces;
+}
+
+/**
+ * Re-stamp the billing tier and retention window on already-transformed traces once the org's
+ * recording policy (and therefore its real tier) is known. The initial transform runs before the
+ * policy check so it can count spans; without this a `pro` org's OTLP spans would keep the default
+ * `hobby` tier and expire 23 days early.
+ */
+export function applyTierToTraces(
+  traces: TinybirdTrace[],
+  receivedAt: number,
+  tier: string | undefined,
+): void {
+  const resolvedTier = tier === 'pro' ? 'pro' : 'hobby';
+  const expiresAt = retentionExpiresAt(receivedAt, tier);
+  for (const trace of traces) {
+    trace.TierAtIngestion = resolvedTier;
+    trace.RetentionExpiresAt = expiresAt;
+  }
 }

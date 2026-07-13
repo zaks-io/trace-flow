@@ -403,6 +403,8 @@ describe('queryAgentAnalytics', () => {
   });
 
   it('accepts ISO date ranges', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-11T00:00:00Z'));
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({
         data: [],

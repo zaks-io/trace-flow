@@ -366,7 +366,12 @@ export function generateTraceMarkdown(spans: TraceSpan[]): string {
 
   // Cache info - show as cached/new ratio
   if (summary.cacheReadTokens > 0 || summary.cacheCreationTokens > 0) {
-    const newTokens = Math.max(0, summary.promptTokens - summary.cacheReadTokens);
+    // "New" = uncached input; subtract cache creation too, matching per-call newTokens. Otherwise
+    // creation tokens are double-counted here and also on the separate "Cache Created" row.
+    const newTokens = Math.max(
+      0,
+      summary.promptTokens - summary.cacheReadTokens - summary.cacheCreationTokens,
+    );
     lines.push(
       `| Cache | ${formatNumber(summary.cacheReadTokens)} cached / ${formatNumber(newTokens)} new |`,
     );

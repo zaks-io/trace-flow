@@ -105,20 +105,6 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
     };
   }
 
-  const { decision, usageCheck } = await evaluateRecordingPolicy(
-    c.env,
-    keyData.orgId,
-    1,
-    orgLogger,
-  );
-
-  if (decision.reason === 'internal_error') {
-    orgLogger.error('proxy.tracing_disabled', undefined, {
-      usageStatus: usageCheck.status,
-      usageReason: usageCheck.status === 'error' ? usageCheck.reason : undefined,
-    });
-  }
-
   const contentLength = parseInt(c.req.header('Content-Length') ?? '0', 10);
   if (contentLength > MAX_REQUEST_SIZE) {
     orgLogger.warn('proxy.request_rejected', {
@@ -155,6 +141,23 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
         404,
       ),
     };
+  }
+
+  // Evaluate the recording policy only after the request is known to be well-formed. The usage
+  // check increments the org's consumed units, so running it ahead of the size/route guards would
+  // burn units on requests that are then rejected 413/404 and never recorded.
+  const { decision, usageCheck } = await evaluateRecordingPolicy(
+    c.env,
+    keyData.orgId,
+    1,
+    orgLogger,
+  );
+
+  if (decision.reason === 'internal_error') {
+    orgLogger.error('proxy.tracing_disabled', undefined, {
+      usageStatus: usageCheck.status,
+      usageReason: usageCheck.status === 'error' ? usageCheck.reason : undefined,
+    });
   }
 
   const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';

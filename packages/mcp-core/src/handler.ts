@@ -71,7 +71,7 @@ export async function dispatchToolCall(
   protocolVersion?: string,
   surface: TraceFlowToolSurface = 'mcp',
 ): Promise<JsonRpcResponse> {
-  if (!params.name) {
+  if (!params || typeof params !== 'object' || typeof params.name !== 'string' || !params.name) {
     return createErrorResponse(id, JsonRpcErrorCode.InvalidParams, 'Missing tool name');
   }
 

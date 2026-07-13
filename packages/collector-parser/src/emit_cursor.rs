@@ -57,8 +57,12 @@ fn is_message_bubble(record: &Value) -> bool {
 fn bubble_event_at(record: &Value, ctx: &SessionContext) -> i64 {
     record
         .get("createdAt")
-        .and_then(Value::as_str)
-        .and_then(rfc3339_to_epoch_ms)
+        .and_then(|created| {
+            created
+                .as_str()
+                .and_then(rfc3339_to_epoch_ms)
+                .or_else(|| created.as_i64())
+        })
         .or(ctx.vendor_started_at)
         .unwrap_or(0)
 }

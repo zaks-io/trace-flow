@@ -6,7 +6,7 @@ import { validateApiKey, isAuthError } from '../auth';
 import type { ApiKeyData } from '../auth';
 import { evaluateRecordingPolicy } from '../recordingPolicy';
 import type { TracingDecision } from '../context';
-import { transformOTLPToTraces } from './transform';
+import { applyTierToTraces, transformOTLPToTraces } from './transform';
 import { decodeOTLPProtobuf, readOTLPBody, OTLPProtoDecodeError } from './decode';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
 
@@ -108,6 +108,18 @@ function validateOTLPRequest(request: unknown): ValidationResult {
   return { valid: true };
 }
 
+/**
+ * OTLP timestamps are integer nanoseconds carried as a decimal string (or, loosely, a JSON
+ * number). `transformSpan` feeds them to `BigInt()`, which throws on non-integer numbers
+ * (`1.5`), exponent strings (`"1e18"`), and non-numeric strings (`"abc"`). Validate up front so a
+ * malformed exporter gets a 400 instead of an uncaught 500 the SDK would retry.
+ */
+function isIntegerNano(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isInteger(value);
+  if (typeof value === 'string') return /^-?\d+$/.test(value);
+  return false;
+}
+
 function validateSpan(span: unknown, spanIndex: number): ValidationResult {
   if (!span || typeof span !== 'object') {
     return { valid: false, error: `Span ${spanIndex} must be an object` };
@@ -130,9 +142,21 @@ function validateSpan(span: unknown, spanIndex: number): ValidationResult {
   if (!s.startTimeUnixNano) {
     return { valid: false, error: `Span ${spanIndex}: startTimeUnixNano is required` };
   }
+  if (!isIntegerNano(s.startTimeUnixNano)) {
+    return {
+      valid: false,
+      error: `Span ${spanIndex}: startTimeUnixNano must be an integer nanosecond value`,
+    };
+  }
 
   if (!s.endTimeUnixNano) {
     return { valid: false, error: `Span ${spanIndex}: endTimeUnixNano is required` };
+  }
+  if (!isIntegerNano(s.endTimeUnixNano)) {
+    return {
+      valid: false,
+      error: `Span ${spanIndex}: endTimeUnixNano must be an integer nanosecond value`,
+    };
   }
 
   return { valid: true };
@@ -419,6 +443,9 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     c.executionCtx.waitUntil(orgLogger.flush());
     return c.json(response, 200);
   }
+
+  // The transform stamped a default tier before the org's tier was known; apply the real one now.
+  applyTierToTraces(traces, receivedAtNano, decision.tier);
 
   // Sample only on the success path — rejected tenants don't cost us log volume.
   logPayloadSample(orgLogger, body, contentType, decodedBytes);

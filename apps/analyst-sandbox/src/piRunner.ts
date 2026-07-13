@@ -649,7 +649,7 @@ function buildTraceflowOpenApiDocument() {
 
 function unwrapTraceflowToolResult(result) {
   if (result?.isError) {
-    const message = result.content?.map((part) => part?.text).filter(Boolean).join('\\n') || 'Trace Flow tool failed';
+    const message = result.content?.map((part) => part?.text).filter(Boolean).join('\n') || 'Trace Flow tool failed';
     throw new Error(message);
   }
   const textParts = Array.isArray(result?.content)
@@ -1027,10 +1027,20 @@ async function applyControls() {
     return;
   }
   const next = text.slice(controlOffset);
-  controlOffset = text.length;
-  for (const line of next.split('\n')) {
+  const lines = next.split('\n');
+  // Keep the trailing partial line (no newline yet) buffered for the next poll, so a control file
+  // read mid-rewrite doesn't consume a torn line. Only advance past fully-terminated lines.
+  const trailing = lines.pop() ?? '';
+  controlOffset = text.length - trailing.length;
+  for (const line of lines) {
     if (!line.trim()) continue;
-    const control = JSON.parse(line);
+    let control;
+    try {
+      control = JSON.parse(line);
+    } catch {
+      // A malformed/torn line must not crash the runner (unhandledRejection marks the run failed).
+      continue;
+    }
     await emit({ type: 'control', message: control.action, data: control });
     if (control.action === 'cancel') {
       await session?.abort();

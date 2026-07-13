@@ -50,8 +50,18 @@ export function useOperationsFilters(): OperationsFiltersState {
   }, [trimmedUserId]);
 
   const { startTimeNs, endTimeNs } = useMemo(() => {
-    const rangeMs = TIME_RANGES.find((range) => range.value === timeRange)?.ms ?? 0;
+    const config = TIME_RANGES.find((range) => range.value === timeRange);
+    // Calendar ranges ("This Month"/"Last Month") define getRange() instead of a fixed ms window;
+    // without this branch they collapse to a zero-length window and the page shows no data.
+    if (config?.getRange) {
+      const { start, end } = config.getRange();
+      return {
+        startTimeNs: snapToMinute(start) * 1_000_000,
+        endTimeNs: snapToMinute(end) * 1_000_000,
+      };
+    }
     const now = Date.now();
+    const rangeMs = config?.ms ?? 30 * 24 * 60 * 60 * 1000;
 
     return {
       startTimeNs: snapToMinute(now - rangeMs) * 1_000_000,
