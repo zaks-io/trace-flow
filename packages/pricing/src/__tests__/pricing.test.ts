@@ -393,6 +393,32 @@ describe('pricing', () => {
       expect(cost.cacheWriteCostMicrodollars).toBe(2085);
     });
 
+    it('prices the aggregate when the 5m/1h split is explicitly 0/0 (older Claude transcripts)', () => {
+      // The agent consumer always sets the split fields; older transcripts report 0/0 while the
+      // aggregate is non-zero. This must price the aggregate, not $0.
+      const tokens: LLMTokenUsage = {
+        promptTokens: 1000,
+        completionTokens: 500,
+        cacheCreationTokens: 556,
+        cacheCreation5mTokens: 0,
+        cacheCreation1hTokens: 0,
+      };
+
+      const pricing: ModelPricing = {
+        promptCostPerMillion: 3_000_000,
+        completionCostPerMillion: 15_000_000,
+        cacheWriteCostPerMillion: 3_750_000,
+        cacheWrite1hCostPerMillion: 6_000_000,
+        updatedAt: Date.now(),
+        source: 'manual',
+      };
+
+      const cost = calculateCost(tokens, pricing);
+
+      // Falls back to the aggregate at the 5m rate: 556 * 3.75M / 1M = 2085 (not 0).
+      expect(cost.cacheWriteCostMicrodollars).toBe(2085);
+    });
+
     it('should correctly calculate cost with no cached tokens', () => {
       const tokens: LLMTokenUsage = {
         promptTokens: 1000,
