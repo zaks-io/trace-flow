@@ -4,10 +4,20 @@ import { applySecurityHeaders } from '@trace-flow/utils';
 import { auth0 } from '@/lib/auth0';
 import { clearAuthCookies } from '@/lib/auth-cookies';
 import { buildCsp, buildSentryReportUri, CSP_HEADER_NAME, readOrigin } from '@/lib/csp';
+import { isConvexTokenUsable } from '@/lib/convex-token';
 
 function applyResponseSecurityHeaders(response: NextResponse, csp: string): void {
   applySecurityHeaders(response.headers);
   response.headers.set(CSP_HEADER_NAME, csp);
+}
+
+function redirectToLogin(request: NextRequest, csp: string): NextResponse {
+  const loginUrl = new URL('/auth/login', request.url);
+  loginUrl.searchParams.set('returnTo', `${request.nextUrl.pathname}${request.nextUrl.search}`);
+  const response = NextResponse.redirect(loginUrl);
+  clearAuthCookies(request, response);
+  applyResponseSecurityHeaders(response, csp);
+  return response;
 }
 
 export async function middleware(request: NextRequest) {
@@ -47,11 +57,12 @@ export async function middleware(request: NextRequest) {
 
     if (shouldTouchTokens) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const session = await auth0.getSession(request as any).catch(() => null);
-      if (session) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await auth0.getAccessToken(request as any, response).catch(() => undefined);
+      const session = await auth0.getSession(request as any);
+      if (!isConvexTokenUsable(session?.tokenSet?.idToken)) {
+        return redirectToLogin(request, csp);
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await auth0.getAccessToken(request as any, response).catch(() => undefined);
     }
 
     applyResponseSecurityHeaders(response, csp);
@@ -83,12 +94,7 @@ export async function middleware(request: NextRequest) {
     // Auth0 SDK throws on expired/invalid JWTs instead of treating as "no session"
     // Redirect to login with returnTo for seamless re-authentication
     // See: https://github.com/auth0/nextjs-auth0/issues/2081
-    const loginUrl = new URL('/auth/login', request.url);
-    loginUrl.searchParams.set('returnTo', `${request.nextUrl.pathname}${request.nextUrl.search}`);
-    const response = NextResponse.redirect(loginUrl);
-    clearAuthCookies(request, response);
-    applyResponseSecurityHeaders(response, csp);
-    return response;
+    return redirectToLogin(request, csp);
   }
 }
 

@@ -274,11 +274,6 @@ export const initializeUser = mutation({
       throw new Error('User email is required');
     }
 
-    await rateLimiter.limit(ctx, 'initializeUser', {
-      key: identity.tokenIdentifier,
-      throws: true,
-    });
-
     const userInfo: UserInfo = {
       tokenIdentifier: identity.tokenIdentifier,
       email,
@@ -317,6 +312,11 @@ export const initializeUser = mutation({
 
       return { userId: existingUser._id };
     }
+
+    await rateLimiter.limit(ctx, 'initializeUser', {
+      key: identity.tokenIdentifier,
+      throws: true,
+    });
 
     const acceptedInvite = await getAcceptedInviteForEmail(ctx, userInfo.email);
 
