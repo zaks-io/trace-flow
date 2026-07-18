@@ -166,8 +166,8 @@ SQL >
                         i -> cost_candidates[
                             toUInt64(1) + if(
                                 length(cost_candidates) <= toUInt64(128),
-                                i,
-                                intDiv(i * (length(cost_candidates) - toUInt64(1)), toUInt64(127))
+                                toUInt64(i),
+                                toUInt64(intDiv(toUInt64(i) * (length(cost_candidates) - toUInt64(1)), toUInt64(127)))
                             )
                         ],
                         range(least(length(cost_candidates), toUInt64(128)))
@@ -176,8 +176,8 @@ SQL >
                         i -> ctx_candidates[
                             toUInt64(1) + if(
                                 length(ctx_candidates) <= toUInt64(128),
-                                i,
-                                intDiv(i * (length(ctx_candidates) - toUInt64(1)), toUInt64(127))
+                                toUInt64(i),
+                                toUInt64(intDiv(toUInt64(i) * (length(ctx_candidates) - toUInt64(1)), toUInt64(127)))
                             )
                         ],
                         range(least(length(ctx_candidates), toUInt64(128)))
