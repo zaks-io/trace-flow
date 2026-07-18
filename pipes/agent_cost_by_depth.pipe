@@ -164,23 +164,23 @@ SQL >
                     ctx_candidates,
                     arrayMap(
                         i -> cost_candidates[
-                            1 + if(
-                                length(cost_candidates) <= 128,
+                            toUInt64(1) + if(
+                                length(cost_candidates) <= toUInt64(128),
                                 i,
-                                intDiv(i * (length(cost_candidates) - 1), 127)
+                                intDiv(i * (length(cost_candidates) - toUInt64(1)), toUInt64(127))
                             )
                         ],
-                        range(least(length(cost_candidates), 128))
+                        range(least(length(cost_candidates), toUInt64(128)))
                     ) AS cost_points,
                     arrayMap(
                         i -> ctx_candidates[
-                            1 + if(
-                                length(ctx_candidates) <= 128,
+                            toUInt64(1) + if(
+                                length(ctx_candidates) <= toUInt64(128),
                                 i,
-                                intDiv(i * (length(ctx_candidates) - 1), 127)
+                                intDiv(i * (length(ctx_candidates) - toUInt64(1)), toUInt64(127))
                             )
                         ],
-                        range(least(length(ctx_candidates), 128))
+                        range(least(length(ctx_candidates), toUInt64(128)))
                     ) AS ctx_points
                 FROM (
                     SELECT
