@@ -13,6 +13,7 @@ interface TokenEntry {
 // Module-level cache survives across renders/components.
 const tokenCache = new Map<string, TokenEntry>();
 const tokenRequests = new Map<string, Promise<string>>();
+let tokenMintQueue: Promise<void> = Promise.resolve();
 let tokenCacheEpoch = 0;
 
 const TOKEN_REFRESH_WINDOW_MS = 30 * 1000;
@@ -38,6 +39,15 @@ function isUsableToken(entry: TokenEntry): boolean {
   return entry.expiresAtMs - TOKEN_REFRESH_WINDOW_MS > Date.now();
 }
 
+function enqueueTokenMint<T>(mint: () => Promise<T>): Promise<T> {
+  const request = tokenMintQueue.then(mint);
+  tokenMintQueue = request.then(
+    () => undefined,
+    () => undefined,
+  );
+  return request;
+}
+
 async function getToken(
   pipe: string,
   generateWebReadToken: GenerateWebReadTokenFn,
@@ -53,7 +63,7 @@ async function getToken(
   }
 
   const requestEpoch = tokenCacheEpoch;
-  const request = generateWebReadToken({ pipe })
+  const request = enqueueTokenMint(() => generateWebReadToken({ pipe }))
     .then((result) => {
       const entry = {
         token: result.token,

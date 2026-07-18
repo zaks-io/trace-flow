@@ -31,6 +31,8 @@ const EXPECTED_WEB_PIPES = [
   'operations_leaderboard',
   'llm_usage_by_api_key',
   'llm_cost_forecast',
+  'llm_cost_tail_risk',
+  'llm_token_ratio_drift',
   'operation_user_breakdown',
   'agent_usage_timeseries',
   'agent_usage_summary',
@@ -105,6 +107,13 @@ describe('Tinybird web read token scopes', () => {
       { type: 'PIPES:READ', resource: 'agent_usage_summary' },
     ]);
   });
+
+  it.each(['llm_cost_tail_risk', 'llm_token_ratio_drift'])(
+    'allows the shipped Usage pipe %s',
+    (resource) => {
+      expect(buildWebReadScopes(resource)).toEqual([{ type: 'PIPES:READ', resource }]);
+    },
+  );
 
   it('rejects unknown web pipe scopes', () => {
     expect(() => buildWebReadScopes('not_allowlisted')).toThrow(/not allowed/);
