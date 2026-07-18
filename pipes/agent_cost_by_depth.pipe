@@ -18,10 +18,13 @@ DESCRIPTION >
     2^cost_elasticity". context_elasticity is the same fit on context size (the upstream cause).
 
     Nothing here is a magic cutpoint: depth values are raw stored turn_index; the band/envelope
-    are exact quantiles; the elasticity is the median pairwise slope, not chosen. The only knob is
-    min_depth_samples — turns at a depth observed in fewer than this many conversations are too
-    thin to quantile or fit, so they are excluded from the FIT (not the series) and the series
-    carries sample_count so the UI can fade the thin right tail honestly.
+    are exact quantiles; the elasticity is the median pairwise slope, not chosen. The only
+    user-controlled knob is min_depth_samples — turns at a depth observed in fewer than this many
+    conversations are too thin to quantile or fit, so they are excluded from the FIT (not the
+    series) and the series
+    carries sample_count so the UI can fade the thin right tail honestly. To keep the pairwise
+    calculation bounded for extremely deep conversations, the fit uses an evenly spaced sample of
+    at most 128 eligible depths when more are available; fit_sampled=1 discloses that bounded fit.
 
 NODE turns
 SQL >
@@ -97,19 +100,27 @@ SQL >
     -- §Relationship). OLS has a 0% breakdown point — one runaway-deep, high-cost depth drags the
     -- fitted slope arbitrarily; on heavy-tailed cost that is exactly the failure mode. Theil–Sen
     -- has a ~29.3% breakdown point, so a single outlier depth cannot move the elasticity. The
-    -- point set is one row per charted depth (already sparse-filtered), so the O(d^2) pairwise
-    -- enumeration is trivial. Pairs sharing an x (none here, since x = ln(depth+1) is distinct per
-    -- depth) are skipped as undefined. With fewer than 2 fit points there is no slope to estimate,
-    -- so the elasticity is 0 (flat: the honest default when there is no trend).
+    -- point set is one row per charted depth (already sparse-filtered). Keep at most 128 evenly
+    -- spaced eligible depths in the pairwise enumeration so one pathological conversation cannot
+    -- turn this O(d^2) calculation into an unbounded memory allocation. The sample includes both
+    -- endpoints and fit_sampled discloses when the cap was applied. Pairs sharing an x (none here,
+    -- since x = ln(depth+1) is distinct per depth) are skipped as undefined. With fewer than 2 fit
+    -- points there is no slope to estimate, so the elasticity is 0 (flat: the honest default when
+    -- there is no trend).
     SELECT
         if(length(cost_slopes) >= 1, arrayReduce('medianExact', cost_slopes), 0.) AS cost_elasticity,
         if(length(ctx_slopes) >= 1, arrayReduce('medianExact', ctx_slopes), 0.) AS context_elasticity,
         length(cost_x) AS cost_fit_points,
-        length(ctx_x) AS context_fit_points
+        length(ctx_x) AS context_fit_points,
+        if(length(cost_candidates) > 128 OR length(ctx_candidates) > 128, 1, 0) AS fit_sampled
     FROM (
         SELECT
+            cost_candidates,
+            ctx_candidates,
             cost_x,
+            cost_y,
             ctx_x,
+            ctx_y,
             -- Pairwise slopes (y_j - y_i)/(x_j - x_i) for every i<j with distinct x; their median
             -- is the Theil–Sen estimate. Empty when < 2 fit points -> elasticity falls back to 0.
             -- The median is taken with `medianExact` (exact order statistic), NOT the `median`
@@ -141,11 +152,49 @@ SQL >
             ) AS ctx_slopes
         FROM (
             SELECT
-                groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_x,
-                groupArrayIf(log(cost_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0) AS cost_y,
-                groupArrayIf(log(depth + 1), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_x,
-                groupArrayIf(log(context_p50), sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0) AS ctx_y
-            FROM by_depth
+                cost_candidates,
+                ctx_candidates,
+                arrayMap(point -> point.1, cost_points) AS cost_x,
+                arrayMap(point -> point.2, cost_points) AS cost_y,
+                arrayMap(point -> point.1, ctx_points) AS ctx_x,
+                arrayMap(point -> point.2, ctx_points) AS ctx_y
+            FROM (
+                SELECT
+                    cost_candidates,
+                    ctx_candidates,
+                    arrayMap(
+                        i -> cost_candidates[
+                            toUInt64(1) + if(
+                                length(cost_candidates) <= toUInt64(128),
+                                toUInt64(i),
+                                toUInt64(intDiv(toUInt64(i) * (length(cost_candidates) - toUInt64(1)), toUInt64(127)))
+                            )
+                        ],
+                        range(least(length(cost_candidates), toUInt64(128)))
+                    ) AS cost_points,
+                    arrayMap(
+                        i -> ctx_candidates[
+                            toUInt64(1) + if(
+                                length(ctx_candidates) <= toUInt64(128),
+                                toUInt64(i),
+                                toUInt64(intDiv(toUInt64(i) * (length(ctx_candidates) - toUInt64(1)), toUInt64(127)))
+                            )
+                        ],
+                        range(least(length(ctx_candidates), toUInt64(128)))
+                    ) AS ctx_points
+                FROM (
+                    SELECT
+                        arraySort(groupArrayIf(
+                            (log(depth + 1), log(cost_p50)),
+                            sample_count >= {{ Int64(min_depth_samples, 5) }} AND cost_p50 > 0
+                        )) AS cost_candidates,
+                        arraySort(groupArrayIf(
+                            (log(depth + 1), log(context_p50)),
+                            sample_count >= {{ Int64(min_depth_samples, 5) }} AND context_p50 > 0
+                        )) AS ctx_candidates
+                    FROM by_depth
+                )
+            )
         )
     )
 
@@ -186,6 +235,7 @@ SQL >
         round(f.context_elasticity, 4) AS context_elasticity,
         f.cost_fit_points AS cost_fit_points,
         f.context_fit_points AS context_fit_points,
+        f.fit_sampled AS fit_sampled,
         t.charted_max_depth AS charted_max_depth,
         t.observed_max_depth AS observed_max_depth,
         t.pooled_depth_count AS pooled_depth_count,

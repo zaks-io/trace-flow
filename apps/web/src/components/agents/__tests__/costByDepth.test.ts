@@ -21,6 +21,7 @@ function makeRow(overrides: Partial<AgentCostByDepthRow> = {}): AgentCostByDepth
     context_elasticity: 1,
     cost_fit_points: 6,
     context_fit_points: 6,
+    fit_sampled: 0,
     charted_max_depth: 5,
     observed_max_depth: 5,
     pooled_depth_count: 0,
@@ -48,6 +49,7 @@ describe('buildDepthSeries', () => {
     expect(series!.points[0].contextBand).toBe(5000);
     expect(series!.chartedMaxDepth).toBe(5);
     expect(series!.costElasticity).toBe(1);
+    expect(series!.fitSampled).toBe(false);
     expect(series!.costDoublingFactor).toBeCloseTo(2, 10);
   });
 
@@ -71,6 +73,10 @@ describe('buildDepthSeries', () => {
     // Scalars are lifted from the first row (identical on every pipe row in practice).
     expect(series!.pooledDepthCount).toBe(0);
     expect(series!.observedMaxDepth).toBe(5);
+  });
+
+  it('surfaces when the depth fit was bounded by sampling', () => {
+    expect(buildDepthSeries([makeRow({ fit_sampled: 1 })])!.fitSampled).toBe(true);
   });
 
   it('clamps an inverted band to zero rather than emitting a negative height', () => {

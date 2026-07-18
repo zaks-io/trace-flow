@@ -418,7 +418,7 @@ export interface AgentCostByDepthRow {
   context_p75: number;
   context_p95: number;
   /**
-   * Log-log OLS slope of median per-turn cost on ln(depth+1) over depths with enough samples.
+   * Log-log Theil-Sen slope of median per-turn cost on ln(depth+1) over depths with enough samples.
    * ~0 flat (a few large reads), ~1 linear bloat (history re-paid each turn), >1 accelerating
    * (the runaway/loop signal). Reads as "each doubling of depth multiplies per-turn cost by
    * 2^cost_elasticity". Derived by the fit, not a chosen threshold.
@@ -429,6 +429,8 @@ export interface AgentCostByDepthRow {
   /** Depths that entered the cost / context fit; <2 means no trend was estimable (slope = 0). */
   cost_fit_points: number;
   context_fit_points: number;
+  /** 1 when the bounded Theil-Sen fit sampled more than 128 eligible depths. */
+  fit_sampled: number;
   /**
    * Window-level tail honesty (identical on every row). `charted_max_depth` is the deepest
    * well-sampled depth (the chart's x-extent); `observed_max_depth` is the true deepest turn seen
