@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Bot, X } from 'lucide-react';
@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils';
 import { useRepoDirectory } from '@/hooks/useRepoDirectory';
 import { useAgentFilters } from './useAgentFilters';
 import { useAgentData } from './useAgentData';
-import { AGENT_SOURCES } from './types';
+import { useAgentModelOptions } from './useAgentModelOptions';
+import { AGENT_SOURCES, type AgentUsageGroupBy } from './types';
 import { MultiFilterDropdown } from './MultiFilterDropdown';
 import { AgentBentoGrid } from './AgentBentoGrid';
 import { resolveAttentionThreshold } from './contextHealth';
@@ -46,11 +47,12 @@ export function AgentAnalytics() {
   );
   // The priciest-conversations fetch runs only while the spend-concentration cell is expanded.
   const [spendDetailOpen, setSpendDetailOpen] = useState(false);
+  const [usageGroupBy, setUsageGroupBy] = useState<AgentUsageGroupBy>('repo');
   const {
     timeseries,
     burnSeries,
     priorBurnSeries,
-    repoSeries,
+    usageSeries,
     summary,
     costDistribution,
     costByDepth,
@@ -71,6 +73,7 @@ export function AgentAnalytics() {
     filterParams,
     groupBy,
     granularity: 'auto',
+    usageGroupBy,
     models,
     attentionThresholdTokens,
     spendDetailEnabled: spendDetailOpen,
@@ -92,30 +95,20 @@ export function AgentAnalytics() {
     return [...set];
   }, [repoLabelMap, repos]);
 
-  // Model is high-cardinality and only appears in the data once grouped by model, so
-  // accumulate the values seen across group-by-model fetches to populate the filter.
-  // Guard on groupBy: the hero drill-down also groups by source/repo, whose group_values
-  // are NOT models and would otherwise poison the Model filter list.
-  const [seenModels, setSeenModels] = useState<string[]>([]);
-  useEffect(() => {
-    if (groupBy !== 'model') return;
-    setSeenModels((prev) => {
-      const set = new Set(prev);
-      let changed = false;
-      for (const row of timeseries) {
-        if (row.group_value && !set.has(row.group_value)) {
-          set.add(row.group_value);
-          changed = true;
-        }
-      }
-      return changed ? [...set] : prev;
-    });
-  }, [timeseries, groupBy]);
+  const discoveredModels = useAgentModelOptions(filterParams);
   const modelOptions = useMemo(() => {
-    const set = new Set(seenModels);
+    const set = new Set(discoveredModels);
     for (const m of models) set.add(m);
     return [...set];
-  }, [seenModels, models]);
+  }, [discoveredModels, models]);
+  const toggleUsageGroup = useCallback(
+    (value: string) => {
+      if (usageGroupBy === 'model') toggleModel(value);
+      else if (usageGroupBy === 'source') toggleSource(value);
+      else toggleRepo(value);
+    },
+    [usageGroupBy, toggleModel, toggleRepo, toggleSource],
+  );
 
   const windowDays = Math.max(
     1,
@@ -271,8 +264,10 @@ trace-flow sync --since 7d`}</code>
           burnSeries={burnSeries}
           priorBurnSeries={priorBurnSeries}
           groupedSeries={timeseries}
-          repoSeries={repoSeries}
-          onRepoToggle={toggleRepo}
+          usageSeries={usageSeries}
+          usageGroupBy={usageGroupBy}
+          onUsageGroupByChange={setUsageGroupBy}
+          onUsageGroupToggle={toggleUsageGroup}
           groupBy={groupBy}
           onGroupByChange={setGroupBy}
           costDistribution={costDistribution}

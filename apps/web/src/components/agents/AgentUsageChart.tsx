@@ -22,7 +22,7 @@ import {
   AGENT_METRIC_CONFIG,
   AGENT_METRIC_KEYS,
   AGENT_METRIC_VALUE_KIND,
-  REPO_TOP_N,
+  USAGE_GROUP_TOP_N,
   type AgentChartStyle,
   type AgentGranularity,
   type AgentGroupBy,
@@ -66,7 +66,7 @@ export function AgentUsageChart({
 }) {
   const { chartData, series, config } = useMemo(() => {
     if (groupBy !== 'none') {
-      const topN = groupBy === 'repo' ? REPO_TOP_N : undefined;
+      const topN = groupBy === 'repo' || groupBy === 'model' ? USAGE_GROUP_TOP_N : undefined;
       const { data: wide, groups } = pivotByGroup(data, AGENT_GROUPED_METRIC_KEY[metric], topN);
       const s: Series[] = groups.map((group, i) => ({
         id: `g${i}`,
@@ -117,7 +117,7 @@ export function AgentUsageChart({
   // Legend clicks expose the display name; map it back to the raw value for filtering.
   const nameToValue = new Map(series.map((s) => [s.name, s.value]));
   const handleFilterClick = (value: string) => {
-    // "Other" is an aggregate of many repos, so it is intentionally not filterable.
+    // "Other" is an aggregate of many groups, so it is intentionally not filterable.
     if (clickable && value && value !== OTHER_GROUP) onGroupClick?.(value);
   };
 

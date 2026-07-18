@@ -10,7 +10,7 @@ type AgentFiltersState = {
   /** Multi-select Source IN-list; empty = all sources. Scopes every agent pipe. */
   sources: string[];
   toggleSource: (v: string) => void;
-  /** Multi-select Model IN-list; empty = all models. Scopes the usage surfaces only. */
+  /** Multi-select Model IN-list; empty = all models. Tool-only surfaces cannot honor it. */
   models: string[];
   toggleModel: (v: string) => void;
   /** Multi-select Repo IN-list (repo_fingerprint values); empty = all repos. Scopes every pipe. */
@@ -26,7 +26,7 @@ type AgentFiltersState = {
   /**
    * Shared params for every agent pipe: ms window (agent pipes take ms, not the ns the
    * llm_* pipes use) + the sources IN-list. org_id + retention_days are JWT-stamped.
-   * models is applied per-query (usage surfaces only), not here.
+   * models is applied per-query to model-aware usage and session surfaces, not here.
    */
   filterParams: Record<string, string | number>;
 };

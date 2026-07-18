@@ -34,6 +34,7 @@ const EXPECTED_WEB_PIPES = [
   'operation_user_breakdown',
   'agent_usage_timeseries',
   'agent_usage_summary',
+  'agent_usage_breakdown',
   'agent_session_cost_distribution',
   'agent_cost_by_depth',
   'agent_sessions_browser',

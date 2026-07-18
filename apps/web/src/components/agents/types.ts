@@ -17,6 +17,8 @@ export const AGENT_METRICS: AgentMetric[] = [
 /** In-chart split dimension. Tool Events carry no model, so model is usage-only. */
 export type AgentGroupBy = 'none' | 'source' | 'model' | 'repo';
 
+export type AgentUsageGroupBy = Exclude<AgentGroupBy, 'none'>;
+
 export const AGENT_GROUP_BY: AgentGroupBy[] = ['none', 'source', 'model', 'repo'];
 
 export const AGENT_GROUP_BY_LABEL: Record<AgentGroupBy, string> = {
@@ -26,8 +28,8 @@ export const AGENT_GROUP_BY_LABEL: Record<AgentGroupBy, string> = {
   repo: 'Repo',
 };
 
-/** Repo is high-cardinality, so grouping by repo caps the chart at the top-N series + "Other". */
-export const REPO_TOP_N = 8;
+/** High-cardinality usage splits cap the chart at the top-N series plus "Other". */
+export const USAGE_GROUP_TOP_N = 8;
 
 /** Output of `pipes/agent_repo_directory.pipe` — raw fields the client resolves to a name. */
 export interface AgentRepoDirectoryRow {
@@ -35,6 +37,15 @@ export interface AgentRepoDirectoryRow {
   normalized_git_remote: string;
   repo_path_fallback: string;
   repo_source: string;
+}
+
+/** One ranked dimension row from `pipes/agent_usage_breakdown.pipe`. */
+export interface AgentUsageBreakdownRow {
+  group_value: string;
+  message_count: number;
+  session_count: number;
+  total_tokens: number;
+  cost_usd: number;
 }
 
 /** Stacked area shows composition + total; line un-stacks to compare trends across series. */

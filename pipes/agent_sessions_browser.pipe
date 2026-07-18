@@ -45,6 +45,9 @@ SQL >
         {% if defined(sources) %}
         AND source IN splitByChar(',', {{ String(sources) }})
         {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
+        {% end %}
         {% if defined(repos) %}
         AND repo_fingerprint IN splitByChar(',', {{ String(repos) }})
         {% end %}
