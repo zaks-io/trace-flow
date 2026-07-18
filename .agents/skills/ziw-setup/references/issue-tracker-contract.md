@@ -64,7 +64,7 @@ An issue is ready for Agent Implement only when it is scoped to one PR and
 contains:
 
 - outcome
-- context docs
+- context docs, with spec citations when the work comes from a spec
 - likely files, packages, or artifacts
 - in scope
 - out of scope
@@ -73,6 +73,20 @@ contains:
 - security, privacy, data, or operational invariants
 - dependencies or blockers
 - estimate when repo config stores estimates in the body
+
+The issue body must make the slice boundary explicit. `In scope` names only the
+behavior, files, docs, tests, and workflow state this PR may change.
+`Out of scope` names adjacent outcomes, sibling tickets, broad refactors,
+optional polish, production actions, and follow-up behavior the worker must not
+deliver. A ticket with vague or empty boundaries is not ready for agent handoff.
+
+Spec citations are the traceability unit between specs and slices. When a slice
+implements behavior defined in a repo spec, PRD, or ADR, the context docs
+section must cite the exact sections it implements as resolvable links, such as
+`docs/specs/<file>.md#<section-anchor>`. Acceptance criteria for cited behavior
+must be traceable to those sections. A spec-derived ticket whose citations are
+missing or do not resolve is not ready for agent handoff. Workers and reviewers
+read the cited sections, not the whole spec corpus.
 
 If the work requires multiple PRs, keep it as a container or split it into
 multiple `kind-slice` issues. Do not mark a multi-PR scope as a ready slice.
@@ -105,8 +119,8 @@ a tracker estimate field, estimate labels, a body heading, or no estimates.
   different verified mapping.
 - `ready-for-agent` means no further human refinement is needed before handing
   the issue to an implementation agent. The issue should be scoped to one PR and
-  backed by a complete agent-ready body. It can be present while dependency
-  blockers remain.
+  backed by a complete agent-ready body with concrete in-scope and out-of-scope
+  boundaries. It can be present while dependency blockers remain.
 - A ready `kind-slice` should be in the configured ready state, usually `Todo`,
   even when it is blocked by another ticket. Linear `Backlog` is out of the agent
   work queue, not a dependency holding area. It means the user does not want
@@ -133,7 +147,7 @@ a tracker estimate field, estimate labels, a body heading, or no estimates.
   for Linear Backlog review or backfill. Generic intake cleanup does not include
   Linear Backlog promotion.
 - Startable implementation work is `Todo`, unblocked, labeled `ready-for-agent`,
-  and has a complete agent-ready body.
+  and has a complete agent-ready body with explicit non-goals.
 - Issue-assigned agent work, when supported by the repo, uses the repo-configured
   worker environment label, routing field, or metadata the tracker integration
   needs to select the environment.
@@ -167,6 +181,11 @@ a tracker estimate field, estimate labels, a body heading, or no estimates.
   only with adjacent review evidence that names the PR URL and reviewed head
   SHA. Remove it when the PR head changes, blocking review findings appear, the
   linked PR changes, or the review evidence is missing or stale.
+- The configured code-host human-merge PR label means the PR is ready to merge
+  except for required human merge authority. Apply it only to open non-draft PRs
+  with current clean review evidence, passing required checks, complete or
+  policy-skipped hosted review, matching issue scope, and no unresolved blocking
+  review thread. Clear it when any of those facts changes.
 - Blocked work can keep `ready-for-agent`. Blocker relationships, body blockers,
   or workflow state stop scheduling; they do not redefine readiness metadata.
 - Worker environment labels are approval and routing metadata. They do not say
@@ -260,6 +279,7 @@ When turning roadmaps, specs, ADRs, or plans into issues:
 - extract only explicit capabilities, decisions, constraints, deferred work, and
   dependencies
 - create one-PR implementation slices
+- give each slice one primary outcome and concrete non-goals
 - group by the configured tracker location, milestone, and parent or workstream
   issue
 - apply repo routing, type, risk, area, and readiness labels from config

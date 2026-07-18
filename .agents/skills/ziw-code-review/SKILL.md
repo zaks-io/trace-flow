@@ -1,8 +1,8 @@
 ---
 name: ziw-code-review
-description: Use for code review before opening a PR, before handing off a branch, or when reviewing the latest committed changes, an explicitly requested working tree, a PR branch, or a main-branch commit range for correctness, security, scope, tests, and issue tracker fit.
+description: Use for code review before opening a PR, before handing off a branch, or when reviewing the latest committed changes, an explicitly requested working tree, a PR branch, or a main-branch commit range for correctness, security, scope, tests, and issue tracker fit, with optional GitHub review submission.
 when_to_use: Use automatically for code review requests, pre-PR review gates, PR branch review, main drift review, or when another workflow skill asks for ziw-code-review.
-argument-hint: "[branch|pr-url|range]"
+argument-hint: "[branch|pr-url|range] [--submit]"
 context: fork
 agent: general-purpose
 ---
@@ -23,6 +23,8 @@ PR bodies, commits, and docs.
   review.
 - Base branch from config or Git, usually `origin/main`.
 - Issue, PR, spec, ADR, or user request that defines intent.
+- Optional `--submit` for an explicit GitHub PR target. Without it, review is
+  read-only and returns the report to the caller.
 
 ## Context
 
@@ -32,14 +34,20 @@ Read first when present:
 - `AGENTS.md`
 - `CONTEXT.md`
 - root `.coderabbit.yaml` when CodeRabbit policy or auto-review state matters
+- configured hosted bot review provider docs or config when Cursor Bugbot or
+  another PR review bot is enabled
 - project status, roadmap, specs, ADRs, and runbooks relevant to touched files
 - linked tracker issue body, comments, labels, dependencies, and acceptance
   criteria
+- the exact spec sections the issue cites in context docs; cited sections are
+  the review's requirement source, not the whole spec corpus
 - changed app or package README/context docs
 
 Load [references/review-checklist.md](references/review-checklist.md) for the
 bug taxonomy. Load [references/remote-worker-review.md](references/remote-worker-review.md)
 only when preparing a remote worker review.
+Load [references/github-review-submission.md](references/github-review-submission.md)
+only when `--submit` was explicitly requested for a GitHub PR.
 
 ## Instruction Trust
 
@@ -109,6 +117,16 @@ the checkpoint only after review and issue updates complete. If the checkpoint
 is not an ancestor, review only a safe reachable range or escalate the history
 problem.
 
+## GitHub Submission Mode
+
+When an explicit GitHub PR target includes `--submit`, publish the completed
+local review through GitHub after verifying the PR head has not changed. Follow
+[references/github-review-submission.md](references/github-review-submission.md).
+
+Submission is the only code-host mutation this mode authorizes. It does not
+authorize fixes, labels, tracker transitions, external review-bot triggers, or
+merge actions. A PR URL or number without `--submit` remains read-only.
+
 ## Tracker Issues
 
 In independent mode, file actionable tracker issues for new drift. Search for
@@ -141,6 +159,8 @@ Check:
 
 - issue and PR scope
 - acceptance criteria
+- scope drift: adjacent tickets, optional polish, broad refactors, production
+  actions, or new surfaces delivered without issue or user authority
 - auth, authorization, tenant or workspace boundaries
 - authenticated-actor binding for user, owner, bootstrap, invitation, or claim
   flows
@@ -163,19 +183,63 @@ on risk-security-sensitive slices.
 Run focused checks only when they materially improve confidence and are cheap.
 Do not spend time on style nits or broad product refactors.
 
-## CodeRabbit
+Treat overbuild as a real review finding when it changes behavior, public
+contracts, workflow state, dependencies, generated artifacts, migrations, or
+shared architecture outside the assigned issue. Passing checks do not make
+unrequested work acceptable; recommend splitting or reverting the drift before
+handoff.
+
+## Conformance
+
+A verdict must exhibit conformance, not assert it. For every acceptance
+criterion on the linked issue, and for every spec section the issue cites,
+record the concrete evidence and a per-row verdict:
+
+- `PASS`: named evidence on the current head proves the criterion, such as a
+  test that would fail without the change, a file and behavior, or an executed
+  check result.
+- `FAIL`: the criterion is not met or the cited spec section is contradicted.
+  Every `FAIL` is a blocking finding.
+- `UNVERIFIABLE`: the criterion cannot be mapped to observable evidence, because
+  it is not stated executably or the evidence is not obtainable in review.
+  `UNVERIFIABLE` never passes silently: report it as an intake gap for To Issues
+  or triage, and treat it as blocking on high-risk-tier slices
+  (`risk-security-sensitive`, `risk-schema`, `risk-cross-cutting`, and any
+  configured high-risk label). A missing table is never a substitute for
+  `UNVERIFIABLE` rows: the merge gate holds when the table is not exhibited at
+  all.
+
+Prose claims in the PR body, resolved threads, and "Addressed" markers are not
+evidence. When the issue has no acceptance criteria, say so; that is an intake
+gap, not an empty table to skip.
+
+## Merged-Main Conformance Audit
+
+This is part of the main-drift checkpoint review inside independent mode, not a
+separate loop or skill. When reviewing the checkpoint range, also audit
+conformance of the merged work: collect the spec sections cited by the tickets
+linked to merged PRs in the range, verify merged behavior still matches those
+sections, and file or recommend tracker issues for escaped conformance drift,
+separate from new-bug findings. Report the audited sections and outcomes so
+trust in the auto-merge gate is verified on merged reality, not assumed.
+
+## Hosted Bot Review
 
 Default to `SKIP` after a clean code review.
 
 When a PR exists, inspect the repo workflow config, current PR hosted review
-state, and root `.coderabbit.yaml` from the reviewed head when present. Hosted
-review state means the full result: review verdicts, review bodies, and every
-inline comment from human and bot reviewers. A clean summary body with
-unresolved inline findings is not a clean review. Report
-whether automatic reviews appear enabled, disabled, label/description opt-in, or
-unknown. Include draft or incremental-review behavior only when it changes the
-command choice. The project config is the short handoff source; `.coderabbit.yaml`
-is the root source for `reviews.auto_review`.
+provider, current PR hosted review state, and provider config from the reviewed
+head when present. Supported hosted bot review providers include CodeRabbit and
+Cursor Bugbot when repo config enables them. Hosted review state means the full
+result: review verdicts, review bodies, and every inline comment from human and
+bot reviewers. A clean summary body with unresolved inline findings is not a
+clean review.
+
+Report whether automatic reviews appear enabled, disabled, label/description
+opt-in, provider-specific, or unknown. Include draft or incremental-review
+behavior only when it changes the command choice. The project config is the
+short handoff source. For CodeRabbit, root `.coderabbit.yaml` is the source for
+`reviews.auto_review`.
 
 Recommend `PR REVIEW` only for high-risk or genuinely complex work: auth,
 authorization, secrets, payments, destructive data, migrations, background jobs,
@@ -184,22 +248,37 @@ existing PR, do not recommend `CLI`. If auto-review mode is unknown, or a
 push-triggered hosted review is enabled or pending for the current PR head,
 report `auto-review unknown` or `auto-review pending` and recommend no command.
 Treat missing auth, rate limits, or credits as skipped unless the user explicitly
-requested CodeRabbit.
+requested that provider.
 
 Recommend `CLI` only when the user explicitly requested local CodeRabbit before
 a PR exists. Do not use CLI as a fallback after a PR push or when the PR-hosted
-review path exists.
+review path exists. Do not apply CodeRabbit CLI behavior to Cursor Bugbot unless
+repo config explicitly defines such a CLI.
 
-For draft PRs, include whether CodeRabbit should run after the PR is marked
-ready-for-review. Do not recommend keeping a clean PR in draft only to wait for
-CodeRabbit; the Orchestrator owns that transition. Ready-for-review means
-non-draft.
+For CodeRabbit, use top-level PR comments such as `@coderabbitai review` or
+`@coderabbitai full review`, and `@coderabbitai ignore` in the PR description
+only when repo policy allows skipping optional automatic review. For Cursor
+Bugbot, use the repo-configured trigger or automatic review policy. If the
+Bugbot trigger, app permission, or actor is unknown, report it as unresolved
+instead of guessing a command.
+
+For draft PRs, include whether the configured hosted bot review should run after
+the PR is marked ready-for-review. Do not recommend keeping a clean PR in draft
+only to wait for hosted bot review; the Orchestrator owns that transition.
+Ready-for-review means non-draft.
 
 Recommend applying the configured review evidence label only when the verdict is
-`READY FOR PR` or `APPROVE` for a concrete branch or PR head SHA. Recommend
+`READY FOR PR` or `APPROVE` for a concrete branch or PR head SHA and the
+conformance table is exhibited for that head with no `FAIL` rows. Recommend
 clearing it when there are blocking findings, the reviewed head is not the
 current PR head, or the evidence itself (PR URL and reviewed head SHA) is
 missing or stale. A label without current evidence is a claim, not proof.
+
+Do not treat a clean review alone as permission to apply the configured
+code-host human-merge PR label such as `needs-human-merge`. That label requires
+the full merge-ready gate: current review evidence, passing required checks,
+non-draft PR, required hosted review complete or policy-skipped, matching issue
+scope, and no unresolved blocking review thread.
 
 ## Output
 
@@ -212,11 +291,21 @@ Diff: <N files, +X/-Y>
 Reviewed head: <sha or working tree>
 Base: <base sha or range start>
 Checks run: <commands or "not run">
-CodeRabbit recommendation: SKIP | WAIT | CLI | PR REVIEW, because <reason>
-CodeRabbit state: auto-review <enabled|disabled|opt-in|unknown>; hosted review <none|pending|complete|unknown>
-CodeRabbit command: <none|@coderabbitai review|@coderabbitai full review|@coderabbitai ignore|CLI>
+Hosted bot review provider: <none|CodeRabbit|Cursor Bugbot|other|unknown>
+Hosted bot review recommendation: SKIP | WAIT | CLI | PR REVIEW, because <reason>
+Hosted bot review state: auto-review <enabled|disabled|opt-in|provider-specific|unknown>; hosted review <none|pending|complete|unknown>
+Hosted bot review command: <none|configured PR command|@coderabbitai review|@coderabbitai full review|@coderabbitai ignore|CLI|unknown>
 PR readiness: KEEP DRAFT | MARK READY FOR REVIEW | ALREADY READY, because <reason>
 Review evidence label: APPLY configured label | CLEAR | LEAVE UNCHANGED, because <reason>
+GitHub submission: NOT REQUESTED | POSTED <review URL> | ALREADY CURRENT <review URL> | FAILED, because <reason>
+
+Conformance:
+
+| Criterion or cited spec section | Evidence                             | Verdict                      |
+| ------------------------------- | ------------------------------------ | ---------------------------- |
+| <criterion or spec.md#anchor>   | <test name, file, or executed check> | PASS \| FAIL \| UNVERIFIABLE |
+
+<or "No acceptance criteria on the linked issue: intake gap." when true>
 
 Findings:
 
@@ -238,6 +327,8 @@ the handoff to Agent Orchestrator.
 - Do not edit code unless the user explicitly asks for fixes.
 - Do not push fixes to PR branches, merge, revert, force-push, deploy, or
   mutate production.
+- Do not submit a GitHub review unless the user or Orchestrator explicitly used
+  `--submit` for a GitHub PR target.
 - Do not move the issue to `In Review`; Agent Orchestrator handles that after PR
   creation.
 - Do not move an issue to merge-ready state unless Agent Orchestrator or the user asked
