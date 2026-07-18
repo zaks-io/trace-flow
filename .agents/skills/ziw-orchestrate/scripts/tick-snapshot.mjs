@@ -4,21 +4,31 @@
 // snapshot instead of dozens of tool round-trips.
 //
 // Usage:
-//   node tick-snapshot.mjs [--repo owner/name] [--limit 50] [--linear-team KEY]
+//   node tick-snapshot.mjs [--repo owner/name] [--limit 50] [--linear-team KEY|UUID|NAME] [--linear-states Todo,Triage]
 //
 // GitHub state comes from the `gh` CLI (must be installed and authenticated).
-// Linear state is included only when LINEAR_API_KEY is set and --linear-team
-// is given; otherwise the tracker section reports skipped and the caller uses
-// its tracker tooling as usual. Blocker relations and issue bodies stay on
-// the tracker tools; this snapshot is workflow metadata only.
+// Linear state is included only when --linear-team is given and either
+// LINEAR_API_KEY exists or linear-graphql.mjs setup has stored a local macOS
+// credential; otherwise the tracker section reports skipped and the caller uses
+// its tracker tooling as usual. Full issue bodies stay on the tracker tools;
+// this snapshot carries only workflow metadata and derived file footprints.
 
 import { execFileSync } from "node:child_process";
+
+import { hasLinearCredential, linearGraphqlRequest } from "./linear-graphql.mjs";
+import { loadLinearSnapshot } from "./linear-snapshot.mjs";
 
 const args = process.argv.slice(2);
 const argValue = (flag) => {
   const i = args.indexOf(flag);
   return i >= 0 ? args[i + 1] : undefined;
 };
+const argValues = (flag) =>
+  args.flatMap((arg, index) => {
+    if (arg === flag) return args[index + 1] ? [args[index + 1]] : [];
+    if (arg.startsWith(`${flag}=`)) return [arg.slice(flag.length + 1)];
+    return [];
+  });
 
 const fail = (message) => {
   console.error(`tick-snapshot: ${message}`);
@@ -109,6 +119,11 @@ const latestReviewByAuthor = (reviews) => {
   return Object.fromEntries(byAuthor);
 };
 
+const isDependencyBotAuthor = (login) => {
+  const normalized = String(login ?? "").toLowerCase();
+  return normalized.includes("dependabot") || normalized.includes("renovate");
+};
+
 const raw = gh([
   "api",
   "graphql",
@@ -135,9 +150,13 @@ const prs = (repoData.pullRequests?.nodes ?? []).map((pr) => ({
   number: pr.number,
   title: pr.title,
   url: pr.url,
+  state: "open",
+  open: true,
   author: pr.author?.login ?? null,
   isBot: pr.author?.__typename === "Bot",
+  isDependencyBot: isDependencyBotAuthor(pr.author?.login),
   isDraft: pr.isDraft,
+  draftState: pr.isDraft ? "draft" : "ready-for-review",
   updatedAt: pr.updatedAt,
   headRefName: pr.headRefName,
   headSha: pr.headRefOid,
@@ -153,53 +172,26 @@ const prs = (repoData.pullRequests?.nodes ?? []).map((pr) => ({
 }));
 
 const linearTeam = argValue("--linear-team");
-let linear = { skipped: "no LINEAR_API_KEY or --linear-team; use tracker tooling" };
-if (process.env.LINEAR_API_KEY && linearTeam) {
-  const LINEAR_QUERY = `
-query($team: String!) {
-  issues(first: 100, filter: {
-    team: { key: { eq: $team } },
-    state: { type: { nin: ["completed", "canceled"] } }
-  }) {
-    nodes {
-      identifier title url priority updatedAt
-      state { name type }
-      labels { nodes { name } }
-      assignee { displayName }
-      inverseRelations(first: 20) { nodes { type issue { identifier state { type } } } }
-    }
-  }
-}`;
+const linearStates = [
+  ...new Set(
+    [...argValues("--linear-state"), ...argValues("--linear-states")]
+      .flatMap((value) => String(value).split(","))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  ),
+];
+let linear = {
+  skipped: "no --linear-team or Linear credential; use tracker tooling",
+};
+if (linearTeam && hasLinearCredential()) {
   try {
-    const response = await fetch("https://api.linear.app/graphql", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: process.env.LINEAR_API_KEY,
-      },
-      body: JSON.stringify({ query: LINEAR_QUERY, variables: { team: linearTeam } }),
+    linear = await loadLinearSnapshot({
+      request: linearGraphqlRequest,
+      selector: linearTeam,
+      states: linearStates,
     });
-    const body = await response.json();
-    if (body.errors) throw new Error(body.errors.map((e) => e.message).join("; "));
-    linear = {
-      team: linearTeam,
-      issues: body.data.issues.nodes.map((issue) => ({
-        identifier: issue.identifier,
-        title: issue.title,
-        url: issue.url,
-        state: issue.state?.name,
-        stateType: issue.state?.type,
-        priority: issue.priority,
-        labels: (issue.labels?.nodes ?? []).map((label) => label.name),
-        assignee: issue.assignee?.displayName ?? null,
-        blockedBy: (issue.inverseRelations?.nodes ?? [])
-          .filter((rel) => rel.type === "blocks" && rel.issue?.state?.type !== "completed")
-          .map((rel) => rel.issue.identifier),
-        updatedAt: issue.updatedAt,
-      })),
-    };
   } catch (error) {
-    linear = { error: `Linear query failed: ${error.message}; use tracker tooling` };
+    fail(`Linear query failed: ${error.message}`);
   }
 }
 
@@ -211,8 +203,11 @@ process.stdout.write(
       baseline,
       footprint: {
         openPrCount: repoData.pullRequests?.totalCount ?? prs.length,
-        productPrCount: prs.filter((pr) => !pr.isBot).length,
+        productPrCount: prs.filter((pr) => !pr.isDependencyBot).length,
+        draftPrCount: prs.filter((pr) => pr.isDraft).length,
+        readyForReviewPrCount: prs.filter((pr) => !pr.isDraft).length,
         botPrCount: prs.filter((pr) => pr.isBot).length,
+        dependencyBotPrCount: prs.filter((pr) => pr.isDependencyBot).length,
       },
       prs,
       linear,
