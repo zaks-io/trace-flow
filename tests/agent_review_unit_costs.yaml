@@ -21,3 +21,9 @@
   expected_http_status: 200
   parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000&repos=repo_other
   expected_result: ''
+
+- name: review_unit_costs_respects_model_filter
+  description: model filter excludes the attributed Claude review unit
+  expected_http_status: 200
+  parameters: org_id=org_1c&start_time_ms=1779235200000&end_time_ms=1779408000000&retention_days=20000&models=gpt-5.6-sol
+  expected_result: ''

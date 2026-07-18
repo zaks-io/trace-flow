@@ -13,6 +13,7 @@ SQL >
     SELECT
         session_pk,
         source,
+        model,
         message_count,
         priced_message_count,
         cost_usd,
@@ -21,6 +22,7 @@ SQL >
         SELECT
             session_pk,
             argMaxMerge(source) AS source,
+            argMaxMerge(model) AS model,
             sumMerge(MessageCount) AS message_count,
             sumMerge(PricedMessageCount) AS priced_message_count,
             round(sumMerge(CostUsd), 6) AS cost_usd,
@@ -35,6 +37,9 @@ SQL >
         AND last_event_at < end_dt
         {% if defined(sources) %}
         AND source IN splitByChar(',', {{ String(sources) }})
+        {% end %}
+        {% if defined(models) %}
+        AND model IN splitByChar(',', {{ String(models) }})
         {% end %}
 
 NODE attributed_sessions

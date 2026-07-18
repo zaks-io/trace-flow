@@ -78,12 +78,12 @@ export function BentoCell({
           <Check className="h-3 w-3" />
         </span>
       )}
-      <header className="mb-3 flex items-start justify-between gap-3">
+      <header className="mb-3 flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
           {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
           {toolbar}
           {expandable && (
             <button

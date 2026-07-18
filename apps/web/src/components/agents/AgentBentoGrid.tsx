@@ -21,7 +21,12 @@ import { buildAttentionSignals } from './buildAttentionSignals';
 import { buildBurnRateStats, hasUsableBurnRateBuckets, type BurnRateStats } from './burnRate';
 import { computeDelta } from './delta';
 import { generatedTokenShare } from './agentSessionSizes';
-import { AGENT_GROUP_BY, AGENT_GROUP_BY_LABEL, type AgentGroupBy } from './types';
+import {
+  AGENT_GROUP_BY,
+  AGENT_GROUP_BY_LABEL,
+  type AgentGroupBy,
+  type AgentUsageGroupBy,
+} from './types';
 import type {
   AgentContextHealthRow,
   AgentCostByDepthRow,
@@ -43,8 +48,10 @@ export function AgentBentoGrid({
   burnSeries,
   priorBurnSeries,
   groupedSeries,
-  repoSeries,
-  onRepoToggle,
+  usageSeries,
+  usageGroupBy,
+  onUsageGroupByChange,
+  onUsageGroupToggle,
   groupBy,
   onGroupByChange,
   costDistribution,
@@ -69,10 +76,12 @@ export function AgentBentoGrid({
   priorBurnSeries: AgentTimeseriesRow[];
   /** Time-series fetched with the active `groupBy`; powers the hero drill-down split. */
   groupedSeries: AgentTimeseriesRow[];
-  /** Always-fetched repo-grouped daily series for the "Usage over time" cell. */
-  repoSeries: AgentTimeseriesRow[];
-  /** Toggle a repo into the active Repo filter (legend click-to-filter on the repo chart). */
-  onRepoToggle: (repoFingerprint: string) => void;
+  /** Always-fetched grouped daily series for the "Usage over time" cell. */
+  usageSeries: AgentTimeseriesRow[];
+  usageGroupBy: AgentUsageGroupBy;
+  onUsageGroupByChange: (next: AgentUsageGroupBy) => void;
+  /** Toggle a chart series into the filter matching the active split dimension. */
+  onUsageGroupToggle: (value: string) => void;
   groupBy: AgentGroupBy;
   onGroupByChange: (next: AgentGroupBy) => void;
   costDistribution: AgentCostDistributionRow | null;
@@ -229,8 +238,10 @@ export function AgentBentoGrid({
       {/* Row 1b — usage over time by repo (always visible) + daily active rhythm */}
       <div className="lg:col-span-6 xl:col-span-8">
         <UsageOverTimeCell
-          repoSeries={repoSeries}
-          onRepoToggle={onRepoToggle}
+          usageSeries={usageSeries}
+          groupBy={usageGroupBy}
+          onGroupByChange={onUsageGroupByChange}
+          onGroupToggle={onUsageGroupToggle}
           labelFor={labelFor}
           contextReference={contextFor('usage-over-time', 'Usage over time')}
         />

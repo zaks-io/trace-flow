@@ -13,6 +13,7 @@ import type {
   AgentSessionRow,
   AgentSummaryRow,
   AgentTimeseriesRow,
+  AgentUsageGroupBy,
   FailureLeaderboardRow,
   ToolDeltaRow,
 } from './types';
@@ -25,6 +26,8 @@ type UseAgentDataParams = {
   groupBy: AgentGroupBy;
   /** Bucket size; passed only to the time-series (other surfaces are window totals). */
   granularity: AgentGranularity;
+  /** Split dimension for the always-visible usage-over-time chart. */
+  usageGroupBy: AgentUsageGroupBy;
   /** Model IN-list; scopes message-grain usage/context surfaces only. */
   models: string[];
   attentionThresholdTokens: number;
@@ -61,13 +64,14 @@ export function useAgentData({
   filterParams,
   groupBy,
   granularity,
+  usageGroupBy,
   models,
   attentionThresholdTokens,
   spendDetailEnabled,
 }: UseAgentDataParams) {
   const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', []);
 
-  // Tool events / sessions have no model, so models scopes only message-grain surfaces.
+  // Tool events have no model. Usage and session-grain surfaces do, so they share this scope.
   const usageParams = useMemo(
     () => (models.length > 0 ? { ...filterParams, models: models.join(',') } : filterParams),
     [filterParams, models],
@@ -86,12 +90,11 @@ export function useAgentData({
     [usageParams, timezone],
   );
 
-  // Repo-grouped daily series for the always-visible "Usage over time" cell. Kept separate
-  // from the expand-gated hero `groupBy` state (which also serves source/model) so this cell
-  // always has data without forcing the hero open.
-  const repoSeriesParams = useMemo(
-    () => ({ ...usageParams, group_by: 'repo', granularity: 'day', timezone }),
-    [usageParams, timezone],
+  // Grouped daily series for the always-visible "Usage over time" cell. Kept separate from the
+  // expand-gated hero `groupBy` state so changing this breakdown never forces the hero open.
+  const usageSeriesParams = useMemo(
+    () => ({ ...usageParams, group_by: usageGroupBy, granularity: 'day', timezone }),
+    [usageParams, usageGroupBy, timezone],
   );
 
   const priorBurnSeriesParams = useMemo(
@@ -114,9 +117,9 @@ export function useAgentData({
     params: priorBurnSeriesParams,
   });
 
-  const repoSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
+  const usageSeriesQuery = useTinybirdQuery<TinybirdResponse<AgentTimeseriesRow>>({
     pipe: 'agent_usage_timeseries',
-    params: repoSeriesParams,
+    params: usageSeriesParams,
   });
 
   const summaryQuery = useTinybirdQuery<TinybirdResponse<AgentSummaryRow>>({
@@ -136,11 +139,11 @@ export function useAgentData({
     params: usageParams,
   });
 
-  // Priciest conversations behind the spend-concentration curve. The browser pipe has no model
-  // param, so it scopes by the source/window filters only; fetched only while the cell is open.
+  // Priciest conversations behind the spend-concentration curve; fetched only while the cell is
+  // open and scoped exactly like the curve it explains.
   const topSessionsParams = useMemo(
-    () => ({ ...filterParams, sort: 'cost', limit: SPEND_DETAIL_LIMIT }),
-    [filterParams],
+    () => ({ ...usageParams, sort: 'cost', limit: SPEND_DETAIL_LIMIT }),
+    [usageParams],
   );
 
   const topSessionsQuery = useTinybirdQuery<TinybirdResponse<AgentSessionRow>>({
@@ -151,7 +154,7 @@ export function useAgentData({
 
   const reviewUnitCostsQuery = useTinybirdQuery<TinybirdResponse<AgentReviewUnitCostRow>>({
     pipe: 'agent_review_unit_costs',
-    params: { ...filterParams, limit: 10 },
+    params: { ...usageParams, limit: 10 },
   });
 
   // Repos are the actionable mover unit; the dimension='' total row carries the org baseline.
@@ -201,7 +204,7 @@ export function useAgentData({
   const timeseries = getFreshRows(timeseriesQuery);
   const burnSeries = getFreshRows(burnSeriesQuery);
   const priorBurnSeries = getFreshRows(priorBurnSeriesQuery);
-  const repoSeries = getFreshRows(repoSeriesQuery);
+  const usageSeries = getFreshRows(usageSeriesQuery);
   const failures = getFreshRows(failuresQuery);
   const deltas = getFreshRows(deltaQuery);
 
@@ -209,7 +212,7 @@ export function useAgentData({
     timeseriesQuery.isLoading ||
     burnSeriesQuery.isLoading ||
     priorBurnSeriesQuery.isLoading ||
-    repoSeriesQuery.isLoading ||
+    usageSeriesQuery.isLoading ||
     summaryQuery.isLoading ||
     costDistributionQuery.isLoading ||
     costByDepthQuery.isLoading ||
@@ -224,7 +227,7 @@ export function useAgentData({
     timeseriesQuery.error ??
     burnSeriesQuery.error ??
     priorBurnSeriesQuery.error ??
-    repoSeriesQuery.error ??
+    usageSeriesQuery.error ??
     summaryQuery.error ??
     costDistributionQuery.error ??
     costByDepthQuery.error ??
@@ -254,7 +257,11 @@ export function useAgentData({
     },
     { id: 'notableTotal', label: 'notable changes (total)', error: notableTotalQuery.error },
     { id: 'notableByRepo', label: 'notable changes (by repo)', error: notableByRepoQuery.error },
-    { id: 'repoSeries', label: 'usage by repo', error: repoSeriesQuery.error },
+    {
+      id: 'usageSeries',
+      label: `usage by ${usageGroupBy}`,
+      error: usageSeriesQuery.error,
+    },
     { id: 'burnSeries', label: 'burn rate', error: burnSeriesQuery.error },
     {
       id: 'priorBurnSeries',
@@ -287,7 +294,7 @@ export function useAgentData({
     timeseries,
     burnSeries,
     priorBurnSeries,
-    repoSeries,
+    usageSeries,
     summary,
     costDistribution,
     costByDepth,

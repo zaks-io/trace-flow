@@ -46,3 +46,9 @@
   expected_http_status: 200
   parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&sources=codex
   expected_result: ''
+
+- name: sessions_respects_model_filter
+  description: models=gpt-5.6-sol excludes the Claude sessions
+  expected_http_status: 200
+  parameters: org_id=org_test&start_time_ms=1779235200000&end_time_ms=1779321600000&retention_days=20000&models=gpt-5.6-sol
+  expected_result: ''
