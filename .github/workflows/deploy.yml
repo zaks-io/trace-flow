@@ -462,3 +462,22 @@ jobs:
           else
             echo "All deployments completed successfully"
           fi
+
+  linear-release:
+    name: Sync production release to Linear
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    if: needs.deploy-status.result == 'success'
+    needs: [deploy-status]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Sync production release to Linear
+        uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0.14.5
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
+          include_paths: apps/web/**,apps/proxy/**,apps/proxy-consumer/**,apps/api/**,apps/pipes-api/**,apps/mcp/**,apps/agent-ingest/**,apps/agent-consumer/**,apps/analyst-sandbox/**,packages/convex/**,packages/emails/**,packages/mcp-core/**,packages/types/**,packages/utils/**,packages/tinybird-client/**,packages/otel-conventions/**,packages/spans/**,packages/llm-providers/**,packages/pricing/**,packages/logging/**,datasources/**,pipes/**,scripts/assert-agent-prod-resources.sh,scripts/deploy-agent-tinybird.sh,scripts/ci/export-convex-outputs.sh,.github/workflows/deploy.yml,package.json,bun.lock,turbo.json
