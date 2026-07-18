@@ -36,6 +36,7 @@ interface DepthSeries {
   contextElasticity: number;
   costFitPoints: number;
   contextFitPoints: number;
+  fitSampled: boolean;
   /** Multiplier on per-turn cost for each doubling of depth: 2^costElasticity. */
   costDoublingFactor: number;
   contextDoublingFactor: number;
@@ -79,6 +80,7 @@ export function buildDepthSeries(rows: AgentCostByDepthRow[]): DepthSeries | nul
     contextElasticity: first.context_elasticity,
     costFitPoints: first.cost_fit_points,
     contextFitPoints: first.context_fit_points,
+    fitSampled: first.fit_sampled === 1,
     costDoublingFactor: 2 ** first.cost_elasticity,
     contextDoublingFactor: 2 ** first.context_elasticity,
   };

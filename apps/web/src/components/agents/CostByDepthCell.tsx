@@ -89,6 +89,13 @@ export function CostByDepthCell({
             </span>{' '}
             — the deepest turn reached by at least {formatNumber(series.minDepthSamples)}{' '}
             conversations. The band is p25–p75 of each turn; the faint line is p95.
+            {series.fitSampled && (
+              <>
+                {' '}
+                Theil-Sen slopes use an evenly spaced sample of at most 128 eligible depths to keep
+                the fit bounded for very deep conversations.
+              </>
+            )}
             {series.pooledDepthCount > 0 && (
               <>
                 {' '}

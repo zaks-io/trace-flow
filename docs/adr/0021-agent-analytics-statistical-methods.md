@@ -509,6 +509,8 @@ fixed to bring the live pipeline in line:
 - **Cost/context-by-depth elasticity** (`pipes/agent_cost_by_depth.pipe`) now uses a
   **Theil–Sen** slope (median of pairwise slopes); it previously used OLS
   (`simpleLinearRegression`), which has 0% breakdown on the heavy-tailed cost it fits.
+  The production query bounds the pairwise fit to an evenly spaced sample of at most 128 eligible
+  depths for very deep conversations and exposes `fit_sampled` when that cap is used.
 
 Quantiles are pinned to **`quantileExact`** per the house-estimator exception above (no Type 8
 migration).
