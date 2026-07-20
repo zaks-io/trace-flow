@@ -148,6 +148,7 @@ export function AgentUsageChart({
           tickMargin={4}
         />
         <ChartTooltip
+          itemSorter={(item) => -Number(item.value ?? 0)}
           content={
             <ChartTooltipContent
               labelFormatter={(label: string) =>
