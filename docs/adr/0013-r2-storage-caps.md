@@ -66,7 +66,7 @@ For proxied LLM Requests:
 - The Body Object is not stored.
 - The trace is marked as body omitted with reason `storage_cap_exceeded`.
 
-For agent ingest:
+For Agent Conversation Analytics:
 
 - Parsed facts still enqueue when the request is otherwise valid.
 - Conversation Archive chunks and manifests are not acknowledged at the archive cap; the enrolled Collector retains them in its encrypted Archive Spool and shows a blocked archive state.
@@ -106,7 +106,7 @@ releaseStorage({ orgId, objectKey });
 getStorageBudget({ orgId });
 ```
 
-The Durable Object stores both aggregate counters and object entries. Aggregate counters make the hot decision cheap; object entries make expiration, support inspection, and user-facing storage breakdowns possible. Calls from the proxy and agent ingest Workers are in `waitUntil` paths where possible, but the reservation must complete before the R2 `put` begins because the whole point is to stop the write.
+The Durable Object stores both aggregate counters and object entries. Aggregate counters make the hot decision cheap; object entries make expiration, support inspection, and user-facing storage breakdowns possible. Proxy reservations can run inside the existing `waitUntil` persistence path. Archive API does not acknowledge an upload until its reservation, R2 write, and Archive Session Ledger commit are durable. In both paths, the reservation must complete before the R2 `put` begins because the whole point is to stop the write.
 
 ## Expiration and Reconciliation
 
