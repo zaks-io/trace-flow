@@ -42,7 +42,7 @@ The **Project** is the stable trust anchor above the messy Repo identity layer. 
 
 - **Unattributed by default.** No guessing. Auto-attribution happens only for unambiguous git-remote identity.
 - **Claims are rare, explicit, reversible.** A user claims a Repo into a Project; a Repo can be unassociated or moved. A Repo is atomic — claimed whole, never split across Projects.
-- **Reversibility is bounded by fact retention.** A claim re-aggregates only the affected `(Project, day)` buckets over _retained facts_ (within the **EventAt** horizon, ~1 year). Re-attribution needs only the extracted facts, not the **Raw Transcript** — so the window is the long fact horizon, not the short replay window. Days whose facts have aged out are immutable.
+- **Reversibility is bounded by fact retention.** A claim re-aggregates only the affected `(Project, day)` buckets over _retained facts_ (within the **EventAt** horizon, ~1 year). Re-attribution needs only the extracted facts, not a **Conversation Archive**, so unenrolled Organizations retain the same claim window. Days whose facts have aged out are immutable.
 - **Recompute is scoped, not global.** A claim/move touches one or two Projects' affected days and re-materializes only those.
 
 ## Data Layering

@@ -1,7 +1,7 @@
 # Encryption At Rest
 
-Trace Flow encrypts stored LLM request/response bodies before writing them to Cloudflare R2. Agent raw
-transcript storage is deferred and is not part of the current implementation.
+Trace Flow encrypts stored LLM request/response bodies before writing them to Cloudflare R2.
+Conversation Archive is designed but not part of the current implementation.
 
 ## Current Body Storage Path
 
@@ -76,21 +76,17 @@ Changing `BODY_ENCRYPTION_ROOT_KEY` is a breaking rotation with the current sing
 objects cannot be decrypted with a new root until a future multi-root lookup exists. Prefer key-id
 rotation unless there is a root-key incident.
 
-## Agent Raw Transcript Storage
+## Conversation Archive
 
 Agent Conversation Analytics currently uploads typed facts only. The Rust sync envelope explicitly
 omits `raw_session_bundles`, and Agent Ingest has no R2 binding for raw transcript storage.
 
-Before raw transcript upload ships, the design must add:
-
-- explicit user opt-in, default off
-- R2 binding and lifecycle policy
-- server-side encryption equivalent to or stronger than body object encryption
-- replay-window retention separate from one-year fact retention
-- redaction and access rules for replay/debug tooling
-- production smoke coverage
-
-Do not describe raw transcript R2 storage as live until those pieces exist.
+The accepted target in [ADR 0012](../../docs/adr/0012-agent-conversation-analytics.md) has no generic or
+90-day raw-upload mode. Only an explicitly activated Pro Conversation Archive and separately enrolled
+Collector may upload lossless Archive JSONL. The target uses a dedicated Agent Archive R2 bucket and
+independent, versioned, server-managed Archive Encryption Keys rather than the Body Object root key.
+Archive Chunks, Archive Session Ledgers and manifests, key rotation, owner-only export grants, deletion,
+and production smoke coverage must ship before the archive can be described as live.
 
 ## Tests
 

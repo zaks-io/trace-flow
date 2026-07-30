@@ -100,8 +100,19 @@ The current runtime uses Cloudflare in two ingestion paths.
 - `AGENT_FACT_BATCHER` Durable Object requests/storage for fact dedupe before Tinybird writes
 - `MODEL_PRICING` KV reads for server-side cost calculation
 
-Raw transcript R2 storage is deferred. Do not model agent raw transcript R2 storage until that path
-has an R2 binding, lifecycle policy, and launch decision.
+### Planned Conversation Archive Path
+
+Conversation Archive is accepted but not implemented. Its separate cost model includes:
+
+- Archive API Worker requests and CPU for upload, encryption, export, rotation, and deletion
+- Archive Session Ledger and Storage Budget Durable Object requests and storage
+- R2 Standard storage and Class A writes for immutable 16 MiB Archive Chunks and manifests
+- R2 Class B reads for lossless export and key rotation
+- Convex control-plane and Archive Status projection updates
+
+Pro has a fixed 100 GB archive allowance. At the R2 Standard price verified in ADR 0013, the
+stored-byte ceiling is $1.50 per full month before operations. Do not mix this capacity or cost with
+Proxy Body Object quotas, and do not model one R2 object per transcript record.
 
 ## Sources
 

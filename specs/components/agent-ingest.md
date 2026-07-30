@@ -23,7 +23,7 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 - It does not write Tinybird rows.
 - It does not authenticate user-facing API keys.
 - It does not proxy LLM requests.
-- It does not store raw transcript bundles in R2 in the current implementation. Raw upload is deferred even though the wire contract has optional slots for it.
+- It never stores or forwards raw transcript content. Legacy optional `raw_session_bundles` wire slots are unsupported and slated for removal; the planned lossless path belongs to the separately authorized Archive API.
 
 ## Bindings
 

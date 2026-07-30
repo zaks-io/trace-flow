@@ -4,7 +4,7 @@ Status: superseded by [R2 Storage Caps](./0013-r2-storage-caps.md)
 
 Captured: 2026-05-24
 
-This draft is retained only as historical context. Do not implement the monthly KV-counter quota model below. The accepted decision is [R2 Storage Caps](./0013-r2-storage-caps.md), which uses a live-byte Storage Budget, a strongly consistent Durable Object reservation point, and graceful raw-storage omission instead of rejecting proxied LLM traffic.
+This draft is retained only as historical context. Do not implement the monthly KV-counter quota model or the Agent Ingest transcript path below. The accepted decisions are [R2 Storage Caps](./0013-r2-storage-caps.md), which uses a live-byte Storage Budget and strongly consistent Durable Object reservations, and [Agent Conversation Analytics](./0012-agent-conversation-analytics.md), which gives explicitly enrolled Pro Conversation Archives a separate Archive API, dedicated R2 bucket, and fixed 100 GB capacity.
 
 ## Decision
 

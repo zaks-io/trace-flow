@@ -49,6 +49,16 @@ Trace Flow CLI/Desktop -> Agent Ingest Worker -> agent-ingest Queue
           +-> Collector Credential in COLLECTOR_CREDS KV
 ```
 
+Planned Conversation Archive path:
+
+```text
+Enrolled Trace Flow Desktop -> archive.trace-flow.dev -> encrypted Agent Archive R2
+Owner interactive sign-in -> Archive Export Grant -> archive.trace-flow.dev -> local lossless export
+```
+
+Archive API is deliberately separate from Agent Ingest and Raw API. Agent Ingest remains fact-only;
+Raw API remains proxy-Body-Object-only.
+
 Read path:
 
 ```text
@@ -213,19 +223,20 @@ Collector Credentials are not API keys. They do not appear in API-key filters an
 
 ### Cloudflare Resources
 
-| Resource          | Purpose                                                       | Environment Separation               |
-| ----------------- | ------------------------------------------------------------- | ------------------------------------ |
-| Workers           | Proxy, Proxy Consumer, Agent Ingest, Agent Consumer, API, Web | Env-specific names and bindings      |
-| Queue             | LLM trace message passing                                     | `trace-flow-requests-{env}`          |
-| Queue             | Agent fact message passing                                    | `agent-ingest-{env}`                 |
-| Dead Letter Queue | Failed LLM trace messages                                     | `trace-flow-requests-dlq-{env}`      |
-| Dead Letter Queue | Failed agent fact messages                                    | `agent-ingest-dlq-{env}`             |
-| R2 Bucket         | Request/response body storage                                 | `trace-flow-storage-{env}`           |
-| KV Namespace      | API key validation                                            | `trace-flow-api-keys-{env}`          |
-| KV Namespace      | Model pricing cache                                           | Separate namespace                   |
-| KV Namespace      | Collector Credential lookup                                   | Separate `COLLECTOR_CREDS` namespace |
-| Durable Objects   | Trace batching, agent fact ledger                             | Per-worker instances                 |
-| Rate Limit        | Agent ingest org burst guard                                  | `AGENT_INGEST_LIMITER`               |
+| Resource          | Purpose                                                                            | Environment Separation               |
+| ----------------- | ---------------------------------------------------------------------------------- | ------------------------------------ |
+| Workers           | Proxy, Proxy Consumer, Agent Ingest, Agent Consumer, API, Web; planned Archive API | Env-specific names and bindings      |
+| Queue             | LLM trace message passing                                                          | `trace-flow-requests-{env}`          |
+| Queue             | Agent fact message passing                                                         | `agent-ingest-{env}`                 |
+| Dead Letter Queue | Failed LLM trace messages                                                          | `trace-flow-requests-dlq-{env}`      |
+| Dead Letter Queue | Failed agent fact messages                                                         | `agent-ingest-dlq-{env}`             |
+| R2 Bucket         | Request/response body storage                                                      | `trace-flow-storage-{env}`           |
+| R2 Bucket         | Planned Conversation Archive storage                                               | Dedicated Agent Archive bucket       |
+| KV Namespace      | API key validation                                                                 | `trace-flow-api-keys-{env}`          |
+| KV Namespace      | Model pricing cache                                                                | Separate namespace                   |
+| KV Namespace      | Collector Credential lookup                                                        | Separate `COLLECTOR_CREDS` namespace |
+| Durable Objects   | Trace batching, agent fact ledger                                                  | Per-worker instances                 |
+| Rate Limit        | Agent ingest org burst guard                                                       | `AGENT_INGEST_LIMITER`               |
 
 ### External Services
 

@@ -166,7 +166,7 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 - Tinybird writes
 - User-facing API key auth
 - LLM proxying
-- Raw transcript R2 storage in the current implementation. The wire contract has deferred slots for optional Raw Session Bundles, but collector sync omits them until that path ships.
+- Conversation Archive R2 storage in the current implementation. The existing deferred `raw_session_bundles` wire slots are not the target design and should be removed; Archive JSONL uses the separately enrolled durable archive path defined by ADR 0012.
 
 ### Communication
 
@@ -190,6 +190,36 @@ Defined in `apps/agent-ingest/wrangler.jsonc`:
 ```
 
 Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the production `COLLECTOR_CREDS` namespace, and `agent-ingest-prod`.
+
+## Archive API Worker (Planned)
+
+**Target location**: `apps/archive-api/`
+
+**Production origin**: `https://archive.trace-flow.dev`
+
+**Responsibility**: Serve the complete Conversation Archive data plane without adding transcript
+content or archive key material to Agent Ingest or Raw API.
+
+### What It Owns
+
+- Collector Credential plus Collector Enrollment authorization for archive uploads
+- Pro entitlement and 100 GB archive-cap enforcement
+- Archive Spool upload acknowledgement
+- Session-ledger-controlled Archive Chunk and manifest writes
+- Archive Session Ledger Durable Objects for concurrent upload ordering and retry deduplication
+- Independent versioned Archive Encryption Keys and rotation
+- Short-lived owner Archive Export Grant validation and bounded decrypted export reads
+- Archive Contribution and whole-archive deletion
+- The dedicated Agent Archive R2 bucket
+- Authenticated internal publication of durable acknowledgements, Storage Budget values, and
+  lifecycle transitions to the Convex Archive Status projection
+
+### What It Does NOT Own
+
+- Parsed fact ingest or `AGENT_QUEUE`
+- Tinybird reads, writes, or credentials
+- Proxy Body Objects or `BODY_ENCRYPTION_ROOT_KEY`
+- Analyst Sandbox storage
 
 ## Agent Consumer Worker
 

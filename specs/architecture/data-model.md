@@ -207,7 +207,7 @@ ADR 0019 adds the next derived signal layer (`agent_session_signals`, file-atten
 - Numeric token and cache columns are non-null. Missing source data is represented by `token_coverage` and `cache_coverage`.
 - `cost_usd` is the only nullable metric column because pricing can be missing or coverage can be insufficient.
 - File paths are repo-relative or coarse categories such as `outside_repo`; no stored path should contain a home directory or username.
-- Raw transcript bundles are deferred in the current implementation. The wire contract has optional slots for them, but collector sync omits them until the R2 replay path ships.
+- Agent Ingest is fact-only. Its legacy optional `raw_session_bundles` wire slots are unused and slated for removal; the planned lossless path sends Archive JSONL from an enrolled Collector to the separate Archive API defined by ADR 0012.
 
 ## Convex (User/Config Storage)
 
