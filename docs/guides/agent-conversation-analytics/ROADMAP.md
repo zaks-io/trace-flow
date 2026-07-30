@@ -223,8 +223,10 @@ Build the production desktop app after the CLI proves the ingestion path.
 - ✅ Tauri macOS app under `apps/desktop` (menu-bar tray + a small first-run window).
 - ✅ OS-keychain-backed Collector Credential storage (via the shared `collector-embedder` crate; the
   CLI and desktop link one code path).
-- ✅ First-run source detection, raw-upload opt-in (default off), and an explicit `Start syncing`
-  first-egress gate (the engine starts paused; nothing leaves the machine before the click).
+- ✅ First-run source detection and an explicit `Start syncing` first-egress gate (the engine starts
+  paused; nothing leaves the machine before the click).
+- ☐ Remove the legacy raw-upload toggle and `raw_session_bundles` fact-envelope slots. Lossless
+  transcript upload belongs only to the separately activated and enrolled Pro Conversation Archive.
 - ✅ Pause/resume, run sync, disconnect.
 - ☐ Connected Desktops web surface for list/revoke/status (follow-up PR; backend
   `api.collectorCredentials.list`/`revoke` already exists).
@@ -260,3 +262,37 @@ Add Cursor only after the shared collector/cloud path is production-ready.
 - Cursor rows land through the same production collector path.
 - Cursor is filterable by `source='cursor'`.
 - Dashboard coverage makes Cursor's partial economics explicit.
+
+## P8 - Conversation Archive
+
+### What to build
+
+Build the separately authorized Pro archive defined by ADR 0012. It is not an extension of Agent
+Ingest's fact envelope.
+
+### Required work
+
+- Add Archive Activation, per-Collector Enrollment, contributor ownership, Pro grace, and Archive
+  Export Grant control-plane records and authorization.
+- Add `apps/archive-api` at `archive.trace-flow.dev` with its own Archive Session Ledger Durable
+  Objects, Storage Budget access, Agent Archive R2 bucket, and versioned Archive Encryption Keys.
+- Add lossless Archive JSONL encoding for Claude, Codex, and Cursor, immutable 16 MiB
+  contribution-and-session-scoped chunks, manifests, deterministic retries, and key rotation.
+- Add the fixed 2 GB encrypted Desktop Archive Spool, guided owner activation, member contribution,
+  all-currently-available-history import choice, blocked/frozen states, and owner lossless export.
+- Add contribution deletion, whole-archive crypto-erasure, and 90-day Pro cancellation grace.
+- Add the access-scoped Convex Archive Status projection and persistent `/app/agents` card with
+  server bytes, durable acknowledgement, contributor and Collector counts, timestamped spool/error
+  observations, and grace deadline.
+- Add production authorization, idempotency, lossless round-trip, quota, rotation, deletion, export,
+  and status smoke coverage.
+
+### Done
+
+- The archive-specific outcomes in ADR 0012, ADR 0013, ADR 0015, and ADR 0020 pass end to end against
+  deployed Cloud-Dev resources.
+- Parsed fact sync remains available to every plan and continues during every archive-only failure.
+- No unenrolled or Hobby Collector sends transcript content, and Agent Ingest has no archive binding
+  or side effect.
+- v1 exports the lossless archive only. It creates no normalized training dataset or hosted
+  fine-tuning job.

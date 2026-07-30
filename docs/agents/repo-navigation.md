@@ -31,8 +31,9 @@ For agent workflow or Linear work, also read:
 | `apps/pipes-api`      | Pipes API Worker for Tinybird Pipe passthrough.                                           | Tinybird Pipe forwarding, Pipe Token CORS/cache/rate-limit behavior.              |
 | `apps/web`            | Next.js dashboard on OpenNext/Workers.                                                    | UI, routes, dashboard data views, auth UX, docs pages.                            |
 | `apps/mcp`            | Cloudflare Worker MCP server for agent access to trace data.                              | MCP auth, tool calls, trace-read integration.                                     |
-| `apps/agent-ingest`   | Agent conversation ingest worker.                                                         | Local agent transcript upload, ingest validation, queue enqueue.                  |
+| `apps/agent-ingest`   | Agent conversation ingest worker.                                                         | Parsed agent fact upload, ingest validation, queue enqueue.                       |
 | `apps/agent-consumer` | Agent conversation queue consumer.                                                        | Agent analytics rows, pricing, transcript fact processing.                        |
+| `apps/archive-api`    | Planned Conversation Archive data plane.                                                  | Enrolled lossless upload, R2 storage, owner export, deletion, key rotation.       |
 | `apps/cli`            | User-facing collector CLI.                                                                | Login, source listing, sync, status, disconnect, release packaging.               |
 | `apps/desktop`        | Tauri desktop collector.                                                                  | Tray UX, keychain storage, first-egress gate, desktop sync loop, autostart.       |
 

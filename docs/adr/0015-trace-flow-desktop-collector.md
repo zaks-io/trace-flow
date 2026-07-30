@@ -29,21 +29,23 @@ Otto is not a state lineage. Trace Flow Desktop gets a new Tauri identifier, app
 
 ## Setup And Consent
 
-Login alone does not start syncing. First-run setup shows detected Sources, raw-transcript upload choice, and autostart. Detected Claude, Codex, and Cursor Sources are enabled by default, visible before data egress, and can be disabled before the user clicks **Start syncing**. Sync begins only after the user clicks **Start syncing**.
+Login alone does not start syncing. First-run setup configures parsed fact sync only: it shows detected Sources and autostart, but no raw-transcript upload choice. Detected Claude, Codex, and Cursor Sources are enabled by default, visible before data egress, and can be disabled before the user clicks **Start syncing**. Sync begins only after the user clicks **Start syncing**.
 
 Sources differ in what they yield, which sets implementation expectations. Claude and Codex carry full token, model, and cache economics. Cursor's real store is `state.vscdb` (a VS Code-style SQLite key-value DB, table `cursorDiskKV`, in globalStorage and per-workspace storage), not the `~/.cursor/projects` JSONL or `~/.cursor/acp-sessions` protobuf stores; it carries session-grain model (`composerData:` rows, Cursor-specific labels needing normalization) and sparse message-grain token counts (`bubbleId:` rows, nonzero on ~1% of bubbles), with cache coverage marked missing. So the full cost, token, and cache product is Claude plus Codex; Cursor adds model attribution and partial tokens. The Collector snapshots Cursor's DB before reading and uses `GLOB` prefix scans, never `LIKE`. See [Agent Conversation Analytics](./0012-agent-conversation-analytics.md) Data quality verification.
 
 Default Source paths are platform-specific. On macOS, defaults are `~/.claude/projects`, `~/.codex/sessions`, and `~/Library/Application Support/Cursor/User/{globalStorage,workspaceStorage}`. On Windows, defaults are `%USERPROFILE%\.claude\projects`, `%USERPROFILE%\.codex\sessions`, and `%APPDATA%\Cursor\User\{globalStorage,workspaceStorage}`. Linux defaults are deferred with Linux packaging. Users can add custom Source paths when defaults are wrong; absolute Source paths stay local-only.
 
-Raw Transcript upload is explicit and default-off. Parsed fact sync is the normal analytics path; raw upload enables replay and bounded deeper analysis and remains capped to the raw replay window even during a broader history import.
+Parsed fact sync is the normal analytics path for every Organization. Lossless transcript upload has no separate toggle or 90-day mode: it occurs only after Pro Archive Activation and per-Collector Enrollment.
 
-First-run sync is incremental by default. It records `collector_started_at` when the user clicks **Start syncing** and includes files modified within the preceding 24 hours to catch active sessions. History import is a separate explicit action with v1 presets: 7 days, 30 days, or 1 year. There is no all-history import in v1.
+First-run parsed fact sync is incremental by default. It records `collector_started_at` when the user clicks **Start syncing** and includes files modified within the preceding 24 hours to catch active sessions. Parsed fact history import is a separate explicit action with v1 presets: 7 days, 30 days, or 1 year. Conversation Archive enrollment has its own all-currently-available-history choice because the archive is not bounded by the one-year fact horizon.
 
 Autostart is visible and enabled by default before **Start syncing**. Users can turn it off during setup or later in settings.
 
 ## Runtime Behavior
 
-Trace Flow Desktop is a menu-bar/tray app with a small settings window. The tray shows compact operational status for detected enabled Sources, last sync, pause/resume, run sync/import controls, recent errors, logs, and quit. Settings owns connect/login, raw upload, Source enablement, custom Source paths, autostart, diagnostics export, and dashboard links.
+Trace Flow Desktop is a menu-bar/tray app with a small settings window. The tray shows compact operational status for detected enabled Sources, last sync, pause/resume, run sync/import controls, recent errors, logs, and quit. Settings owns connect/login, Archive enrollment, Source enablement, custom Source paths, autostart, diagnostics export, owner-only Archive Export, and dashboard links.
+
+For the primary case, a Pro owner selects **Enable Conversation Archive** in Settings. One guided flow performs interactive owner authentication, activates the Organization archive, enrolls that Desktop, asks whether to import all currently available history, and starts ongoing archive sync. After activation, another Organization member sees **Contribute this computer** instead; that flow creates only the User and Collector-specific enrollment and history-import choice. Activation and enrollment remain distinct server records even when the owner's flow creates both.
 
 Pause is a full local-work pause: no watcher processing, transcript parsing, git fallback reads, or uploads. Quit cancels loops and exits the app, but does not disable autostart. Disconnect stops work, revokes the Collector Credential, removes Stronghold secrets and unlock material, and leaves non-secret SQLite state unless the user explicitly deletes local data.
 
@@ -51,7 +53,7 @@ Disconnect, Delete Local Data, and Reset App are separate controls. Disconnect r
 
 Trace Flow Desktop runs one sync job at a time. History import pauses watcher dispatch, runs the scoped import, then resumes watching.
 
-The app is quiet by default. Desktop notifications are reserved for action-required failures such as expired auth, sustained inaccessible Source paths, storage/raw-upload budget exhaustion when raw upload is enabled, repeated sync failure, or update-required states.
+The app is quiet by default. Desktop notifications are reserved for action-required failures such as expired auth, sustained inaccessible Source paths, Conversation Archive capacity or spool exhaustion for an enrolled Collector, repeated sync failure, or update-required states.
 
 Source settings are cursor-scoped. Disabling a Source stops watching and syncing it but keeps its local cursor/cache. Re-enabling the same Source path resumes from the existing cursor. Changing a Source path creates a new local cursor namespace for that path and follows the normal incremental/default import rules; it does not reuse the old path's cursor. If a path change broadens scan scope, the settings UI asks for confirmation before applying it.
 
@@ -59,9 +61,13 @@ Source settings are cursor-scoped. Disabling a Source stops watching and syncing
 
 Trace Flow Desktop uses local SQLite, managed through Tauri's SQL plugin with SQLite support, for non-secret durable Collector state: sync cursors, processed file metadata, Source settings, path/worktree-to-remote cache, machine id, parser-version observations, last sync timestamps, and job/status metadata.
 
-SQLite is not a durable upload queue. It does not store pending facts, Raw Transcripts, or command excerpts waiting to upload. If upload fails, the Collector re-reads from Source files later; server-side stable IDs and Tinybird dedupe are authoritative.
+SQLite is not a durable upload queue for parsed facts. If fact upload fails, the Collector re-reads from Source files later; server-side stable IDs and Tinybird dedupe are authoritative.
 
-The v1 SQLite database is not encrypted because it stores non-secret resumable state derived from local files that already exist on disk. Secrets do not live there. SQLite may store absolute paths for local-only cursor/cache lookup, but uploads, logs, support exports, and server facts use repo-relative, redacted, hashed, or coarse path forms.
+Conversation Archive enrollment adds a fixed 2 GB encrypted Archive Spool for Archive JSONL only. The Collector removes spooled records only after durable Archive API acknowledgement; network or archive-cap failures stay pending, and a full spool stops new archive collection loudly without blocking parsed analytics or evicting pending records. The ordinary SQLite cursor database remains unencrypted because it still contains only non-secret resumable metadata. Archive Spool encryption uses locally generated secret material protected by the OS credential store and is separate from the cursor database.
+
+When the Organization reaches its Archive Storage Budget, archive status is blocked and spooled records remain pending until capacity returns. The Collector never treats `storage_cap_exceeded` as archive success, drops pending records, or evicts the oldest conversations automatically.
+
+When Pro entitlement ends, the Collector stops new archive scans and keeps pending encrypted spool data during the 90-day frozen grace. Restoring Pro resumes upload. After Archive API reports terminal grace expiry, the Collector revokes local enrollment state and purges the spool.
 
 Desktop connect mints a hidden Collector Credential scoped to the selected Organization, current User, stable Collector identity, local machine identity, and Collector ingest capabilities. Trace Flow Desktop stores that secret with Tauri Stronghold. Stronghold is unlocked with locally generated secret material protected by the OS credential store/keychain where available, not a hardcoded vault password and not the user's Trace Flow account password. If unlock fails, the user reconnects and gets a replacement Collector Credential.
 
@@ -71,13 +77,17 @@ Trace Flow Desktop supports one active Organization in v1. Switching Organizatio
 
 ## Privacy And Redaction
 
-The Collector redacts early while preserving operational context. Facts keep structured fields for tool names, command families, command program/subcommand, status, exit code, duration, model/token fields, repo-relative paths, target paths, and redacted error detail. Full prompt/response transcript text belongs only to the opt-in Raw Transcript path.
+The Collector redacts early while preserving operational context. Facts keep structured fields for tool names, command families, command program/subcommand, status, exit code, duration, model/token fields, repo-relative paths, target paths, and redacted error detail. Full prompt/response transcript text leaves the machine only through an explicitly enrolled Pro Conversation Archive.
 
 Tool Event facts are structured first, excerpt second. `command_excerpt` is capped at 1 KB, `error_excerpt` at 4 KB, and total excerpt text per Tool Event at 5 KB. Excerpts are redacted supporting detail, not aggregation keys. If redaction detects likely sensitive content but cannot confidently sanitize a field, the Collector drops the field and records redaction metadata instead of uploading it.
 
 Local logs and diagnostics exports are safe to share by default. They exclude raw transcripts, raw command/output blobs, secrets, dropped redaction content, command/error excerpts, and absolute paths unless an explicit local-path option is chosen.
 
 The default diagnostics export includes app version, OS/arch, sync status, recent error classes, Source detection summary, processed file/event counts, last sync timestamps, redaction counters, and configuration toggles.
+
+Archive Export is a separate owner-only operation with the opposite purpose from diagnostics export: it reconstructs the lossless Archive JSONL and Archive Session Manifests into a chosen local directory. Starting or resuming an export requires interactive owner sign-in and a short-lived, single-export Archive Export Grant; the long-lived Collector Credential remains upload-only. The export downloads in bounded chunks, verifies checksums, records local progress, and resumes after interruption without creating a monolithic browser download or a second server-side archive object.
+
+Desktop reports its current archive spool bytes, last archive acknowledgement, and archive error state through the normal authenticated status heartbeat. `/app/agents` displays the latest observation with its timestamp rather than presenting stale local state as live. Desktop remains the control surface; the Web card is the persistent server-side status surface.
 
 File facts store repo-relative paths only. Files outside the primary Repo are dropped or represented by a coarse category such as `outside_repo`, never by an absolute local path.
 
@@ -106,3 +116,14 @@ Every Collector payload includes Trace Flow Desktop version and parser version. 
 ## Consequences
 
 This design favors a privacy-centric desktop product over a generic CLI-first collector. It keeps background behavior easy to reason about, avoids local GitHub/provider auth, makes data egress explicit, and gives the server control over unsafe desktop/parser versions. The trade-off is more desktop-specific product surface and release infrastructure up front, including Stronghold, SQLite migrations, signed updater workflows, and setup UX.
+
+## Done
+
+- Ordinary first-run setup starts only parsed fact sync and contains no raw-transcript upload choice.
+- A Pro owner can complete **Enable Conversation Archive** through interactive authentication; the flow creates Archive Activation, enrolls that Desktop, asks whether to import all currently available history, and starts ongoing archive sync.
+- After Archive Activation, an ordinary member can choose **Contribute this computer** for their own Desktop without receiving Organization-wide archive authority.
+- Each enrolled Desktop keeps at most 2 GB in its encrypted Archive Spool, advances archive progress only after durable Archive API acknowledgement, and never evicts pending records.
+- Archive network failure, capacity blocking, and spool exhaustion do not stop parsed fact sync. The Desktop shows the pending bytes and actionable reason.
+- Restoring Pro during the 90-day frozen grace resumes pending uploads. Terminal grace expiry removes local enrollment state and purges the Archive Spool when the Collector reconnects.
+- An owner can start or resume a lossless Archive Export only after interactive sign-in produces a short-lived, single-export Archive Export Grant. Export resumes at Archive Chunk boundaries, verifies checksums, writes to a chosen directory, and creates no server-side export object.
+- Desktop reports timestamped spool bytes, last acknowledgement, and archive error state so `/app/agents` can distinguish current server state from the last Collector observation.

@@ -4,11 +4,20 @@ The Web app is a Next.js App Router dashboard deployed to Cloudflare Workers thr
 the authenticated read surface for proxied LLM traces, LLM usage, operations, billing, admin tools,
 and Agent Conversation Analytics.
 
+The `/app/agents` surface includes a persistent Conversation Archive status card. It shows the
+server-backed archive lifecycle state, metered bytes against the Pro 100 GB allowance, last durable
+archive acknowledgement, contributor and Collector counts, and the latest timestamped
+Collector-reported spool or error state. Organization owners see all contributions; ordinary members
+see only their own. The card reads an access-scoped Convex Archive Status projection; the browser
+does not receive an Archive Export Grant or call Archive API. Archive management remains in Trace
+Flow Desktop.
+
 ## Responsibilities
 
 - Authenticate users with Auth0 and initialize Convex user/org state.
 - Render trace, request, usage, operation, alert, billing, and admin views.
 - Render `/app/agents` from Tinybird `agent_*` pipes using org-scoped JWTs minted by Convex.
+- Read the Convex Archive Status projection with owner-wide or member-own contribution scope.
 - Fetch request/response bodies from the API Worker with Auth0 bearer tokens.
 - Serve public documentation from `apps/web/public`.
 

@@ -35,9 +35,12 @@ Split the read-side surfaces by secret class:
    This Worker forwards bearer Pipe Tokens to Tinybird, rate-limits requests, logs, and may cache responses. It does not bind R2, KV org membership, Auth0 configuration, `BODY_ENCRYPTION_ROOT_KEY`, or `TINYBIRD_ADMIN_TOKEN`.
 
 3. **`raw.trace-flow.dev` serves sensitive raw-object reads.**
-   This Worker retrieves raw stored artifacts such as Body Objects now and, if shipped later, Raw Session Bundles. It may bind R2, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET`, subscription KV data, and a raw-object rate limiter. It does not bind Tinybird admin credentials or Tinybird query forwarding logic.
+   This Worker retrieves proxy Body Objects. It may bind the proxy-body R2 bucket, `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ACCESS_JWT_SECRET`, subscription KV data, and a raw-object rate limiter. It does not bind the Agent Archive bucket, Archive Encryption Keys, Tinybird admin credentials, or Tinybird query forwarding logic.
 
-4. **Do not preserve `api.trace-flow.dev` as the canonical read-side origin.**
+4. **`archive.trace-flow.dev` is the sole Conversation Archive data-plane boundary.**
+   The planned Archive API accepts enrolled Collector uploads, returns durable archive acknowledgements, streams owner-only lossless exports, and executes contribution or whole-archive deletion. It exclusively binds the Agent Archive R2 bucket and Archive Encryption Key material. Uploads require a Collector Credential plus current Collector Enrollment; reads require a short-lived Archive Export Grant minted after interactive owner authentication. It does not bind proxy Body Object secrets, Tinybird credentials, or agent fact queues.
+
+5. **Do not preserve `api.trace-flow.dev` as the canonical read-side origin.**
    Separate origins make the security model visible in URLs, CSP, Cloudflare bindings, logs, and operational runbooks. Backward-compatible redirects or aliases can exist temporarily if needed, but new Web configuration should use explicit `pipes` and `raw` origins.
 
 ## Target Request Flow
@@ -56,11 +59,17 @@ Web -> Convex action -> short-lived Body Access Token
 Web -> raw.trace-flow.dev/bodies/:requestId -> R2 Body Object
 ```
 
-Future raw transcript flow, if shipped:
+Conversation Archive upload flow:
 
 ```text
-Web -> Convex action -> short-lived raw-object token
-Web -> raw.trace-flow.dev/agent-sessions/:sessionId/raw -> R2 Raw Session Bundle
+Enrolled Desktop -> archive.trace-flow.dev -> encrypted Agent Archive R2 objects
+```
+
+Archive Export flow:
+
+```text
+Desktop -> interactive Convex owner authentication -> short-lived Archive Export Grant
+Desktop -> archive.trace-flow.dev -> bounded decrypted Archive Chunks -> local Archive Export
 ```
 
 ## CSP And Browser Boundary
@@ -72,6 +81,8 @@ The Web app should allow only the exact read origins it needs:
 
 The raw surface can carry stricter headers and CORS behavior than the pipe surface. For example, raw reads should remain non-embeddable, origin-restricted, and privately cached only where explicitly intended.
 
+Archive API is a Desktop-facing API rather than a Web data API, so it is not added to the Web app's CSP. Its upload and export routes use separate credential classes and never accept a Pipe Token or Body Access Token.
+
 ## Consequences
 
 ### Benefits
@@ -80,7 +91,7 @@ The raw surface can carry stricter headers and CORS behavior than the pipe surfa
 - A compromise of the raw-object Worker does not expose the Tinybird admin token.
 - Convex remains the control-plane source of truth for user, Organization, API-key visibility, retention, and Pipe Token minting.
 - The browser, CSP, and Cloudflare bindings reflect the architecture directly.
-- Future raw artifacts can live behind the same sensitive raw-object seam without widening the Pipe Worker.
+- Proxy Body Objects and Conversation Archives each have an explicit, least-privilege data-plane seam without widening the Pipe Worker.
 
 ### Costs
 
@@ -106,7 +117,10 @@ The raw surface can carry stricter headers and CORS behavior than the pipe surfa
 ## Done
 
 - No public Worker binds both raw-object credentials and Tinybird query forwarding.
+- Only Archive API binds the Agent Archive R2 bucket or Archive Encryption Key material.
 - No public Worker binds `TINYBIRD_ADMIN_TOKEN`.
 - Convex remains the only holder of `TINYBIRD_ADMIN_TOKEN` for user Pipe Token minting.
 - Web uses `pipes.trace-flow.dev` for Pipe queries and `raw.trace-flow.dev` for raw-object reads.
-- Tests cover both read surfaces independently.
+- Enrolled Desktop archive traffic and owner Archive Export use `archive.trace-flow.dev`; Agent Ingest remains fact-only.
+- Archive upload accepts only a Collector Credential with current Collector Enrollment. Archive reads accept only a short-lived Archive Export Grant created after interactive owner authentication.
+- Tests cover Pipes API, Raw API, and Archive API authorization and binding boundaries independently.
