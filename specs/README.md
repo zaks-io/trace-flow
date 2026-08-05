@@ -79,6 +79,9 @@ Planned and implemented feature specs.
 - [Stripe Billing](features/stripe-billing.md) - Subscriptions, payments, and usage billing
 - [LLM Usage Reporting](features/llm-usage-reporting.md) - Usage and cost analytics
 - [Signup & Onboarding](features/signup-onboarding.md) - User registration flow
+- [Agent Analytics Query Engine](features/agent-analytics-query-engine.md) - Generic statistical queries over agent facts
+- [Local Agent Monitoring](features/local-agent-monitoring.md) - Near-realtime supervision of concurrent local agents
+- [Multi-Org RBAC](features/multi-org-rbac.md) - Organizations, roles, and access control
 
 ### Integrations
 

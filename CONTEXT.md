@@ -304,8 +304,8 @@ One turn within an **Agent Session**, a single assistant or user record. The gra
 _Avoid_: unqualified "message" (collides with chat-UI message), "turn" alone.
 
 **Tool Event**:
-A single tool invocation inside an **Agent Message**, carrying the tool name, command family (the first one or two tokens of a shell command, e.g. `git commit`), exit code, and success or failure. The grain at which agent failures are measured.
-_Avoid_: "tool call" when you mean its result; not an **LLM Request**.
+A single tool invocation inside an **Agent Message**, carrying the tool name, the command program (the first token of a shell command, e.g. `git`), exit code, and success or failure. The grain at which agent failures are measured.
+_Avoid_: "tool call" when you mean its result; not an **LLM Request**; a two-part "command family" like `git commit` — the family is the program alone, deliberately, so no curated list of programs can drift.
 
 **Agent Capability**:
 A tool, MCP-exposed tool, skill, slash command, or other local extension that a **Source** records as available to or used by an **Agent Session**. Trace Flow only knows about capabilities visible in the Source transcript or Source session metadata.
@@ -459,6 +459,36 @@ _Avoid_: treating it as Source-declared metadata; it is derived from observed fa
 The session-start time a **Source** declares for itself, captured as metadata when the Source provides it (Codex does; Claude, with a UUIDv4 session id, does not). Never used as the retention anchor.
 _Avoid_: conflating with **StartedAt**.
 
+### Local agent monitoring
+
+**Supervisor**:
+The local component that watches **Transcript Files** as they are written and reports live **Agent Session** state, distinct from the **Collector** even though both read the same files and both ship inside **Trace Flow Desktop**. It never uploads facts and never advances the Collector's cursors, so a Supervisor failure cannot stop fact sync and a sync failure cannot blind the live view.
+_Avoid_: "daemon", "watcher" (that is the Supervisor's filesystem mechanism, not the component), folding it into the **Collector**.
+
+**Transcript File**:
+The on-disk artifact a **Source** appends as an **Agent Session** proceeds — a `.jsonl` file for `claude` and `codex`, and no such file for `cursor`, whose records live in a SQLite store. It is the machine-local input both the **Collector** and the **Supervisor** read.
+_Avoid_: bare "transcript" (ambiguous with **Raw Transcript**), "log", "conversation file".
+
+**Checkout**:
+One on-disk working copy of a **Repo**, named by the `worktreeName` slug the **Source** records rather than derived from a path. The unit that makes concurrent local agents distinguishable, because **Repo** deliberately collapses every worktree of one remote into a single identity.
+_Avoid_: treating a Checkout as a **Repo** or a **Provisional Repo**; using it as a fact-table grain (nothing downstream keys on it); reconstructing it from `cwd` when the Source states it directly.
+
+**Session Liveness**:
+The **Supervisor**'s deterministic read of what an **Agent Session** is doing right now, derived only from where the newest **Transcript File** records sit relative to the last completed turn. One of **Working**, **Idle**, or **Stalled**.
+_Avoid_: inferring liveness from the agent's process, from cost, or from message content.
+
+**Working**:
+The **Session Liveness** state where the **Agent Session** has produced records since its last completed turn. The agent is mid-turn and progressing.
+_Avoid_: "running" (every session on the board is running), treating a long turn as abnormal — legitimate turns run many minutes.
+
+**Idle**:
+The **Session Liveness** state where the **Agent Session**'s newest activity is its last completed turn. It deliberately merges "finished the work" and "stopped to ask a question", because both mean the same thing to someone supervising many agents: this one needs a human.
+_Avoid_: reading Idle as "done"; splitting it into done-versus-asking, which is not deterministically knowable from the **Transcript File**.
+
+**Stalled**:
+The **Session Liveness** state where an **Agent Session** is mid-turn but has written nothing for longer than the stall threshold. The only alerting liveness state.
+_Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death); confusing with **Idle**, which is a normal resting state.
+
 ## Relationships
 
 - A **Client** calls the **Proxy**, which forwards to a **Provider** matched by **Route**.
@@ -523,4 +553,6 @@ _Avoid_: conflating with **StartedAt**.
 - **"thread"** was used for both product-owned Analyst conversation history and runtime-managed message storage. _Resolved_: **Analyst Thread** is the Trace Flow-owned conversation record.
 - **"highlight boxes"** was used for Analyst-aware page selection. _Resolved_: use **Context Selection Mode** for the mode and **Page Context Reference** for each selected object.
 - **"session start"** conflated the time we can first observe with the time a Source declares. _Resolved_: **StartedAt** is the earliest observed turn; **EventAt** is the fact retention and partition anchor; **LastEventAt** anchors session-summary retention; **VendorStartedAt** is the Source's own declared start, captured as metadata where available.
+- **"transcript"** was used for both the local `.jsonl` file on disk and the server-encrypted archive artifact, which differ only by the word "Raw". _Resolved_: the machine-local artifact is a **Transcript File**; the server-side lossless archive artifact stays **Raw Transcript**. The code's bare `walk_transcripts` / "transcript root" naming predates this and refers to Transcript Files.
+- **"worktree"** — the live monitoring board must distinguish ~20 concurrent agents running in separate worktrees of the same repository, but **Repo** normalizes to the git remote so every one of them collapses to a single `repo_fingerprint`. _Resolved_: the on-disk working copy is a **Checkout**, a display-and-grouping label only. **Repo** keeps its collapsing behavior and stays the fact-table grain.
 - **"dev"** meant three different things: (a) a Worker named `*-dev`, (b) the everyday "local Workers → cloud data" setup a developer runs, and (c) the fully local no-cloud stack the setup scripts provision by default. This directly caused a developer and an agent to expect data in different places. _Resolved_: a `*-dev` Worker is just the default **Local Workers** config, not a cloud environment; "where my data ends up" for daily development is **Cloud-Dev**; the scripted default is **Self-Contained Local** (for Cursor/CI). Always name which of **Control Plane** / **Data Plane** points at cloud vs local rather than saying "dev" unqualified.
