@@ -100,6 +100,39 @@ Codex gives a **positive** mid-turn signal: an open `task_started` with no match
    divergence detection exists for.
 3. **The difference between "finished" and "asking a question".** Both end a turn and produce
    an identical shape. Session Liveness merges them deliberately (see below).
+4. **Reasoning text.** Both harnesses persist the provider's opaque blob and drop the body.
+   Claude writes 34,778 `thinking` blocks across the local corpus in which the `thinking`
+   string is empty and only a 5-6 KB `signature` survives; 347 of them carry text at all, and
+   those top out at 76 characters because they are the bolded header, not the reasoning
+   (`**Verifying typecheck coverage in tsconfig**`). Codex writes 35,756 `reasoning` response
+   items over 14 days, 100% `encrypted_content` and 0% `content`, plus 4,883 `agent_reasoning`
+   events whose text runs a median of 45 characters and a maximum of 79 — headers again. The
+   consequence: there is no chain of thought on disk to analyze, and no parser change can
+   recover one. What does exist is a **header stream**, and only on Codex.
+
+## Reasoning headers, and why no judge
+
+The header stream is worth capturing and is not worth judging.
+
+Capturing it is cheap and deterministic: roughly 223 KB per 14 days of developer activity on
+Codex, one short line per reasoning step, stating what the agent believed it was doing between
+tool calls. That is the one signal the transcript otherwise lacks — everything else records
+what happened, never what was intended. It redacts through the existing `redact_field` path
+like any other excerpt and rides the existing fact tables. Today the collector captures
+reasoning **token counts** and never reasoning text, so this is an additive fact, not a
+schema fight.
+
+Two things stop it from being a headline feature. It is **Codex-only** — Claude yields
+essentially nothing, so any UI built on it would be blank for half the fleet. And headers are
+an outline, not an argument: a judge reading "Verifying typecheck coverage" learns strictly
+less than a judge reading the tool calls and diffs that follow it, which are already captured
+in full and already cross-machine.
+
+So an LLM judge, if one is ever justified, reads the **Conversation Archive** and the agent
+fact tables, not the reasoning stream. That is a separate feature with its own gate: per the
+standing rule, anything that burns tokens on a schedule ships with an eval harness, cost
+tracking, and an agreed kill threshold before it runs once. v1 succeeds if capture is provably
+complete, and a judge is not capture.
 
 ## Principles (non-negotiable)
 
