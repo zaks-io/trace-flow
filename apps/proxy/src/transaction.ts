@@ -9,6 +9,7 @@ import type {
 import type { ResolvedRoute } from '@trace-flow/llm-providers';
 import type { Logger } from '@trace-flow/logging';
 import { getCurrentTimestamp, redactText, redactValue } from '@trace-flow/utils';
+import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import { parseError } from './parsers/errors';
 import { writeRequestAnalytics, writeSkippedAnalytics } from './analytics';
 import { captureStream, chunksToString } from './streaming/capture';
@@ -292,6 +293,7 @@ export async function persistTransaction(
       inputMessages: redactedInputMessages,
       tier,
       orgId: transaction.orgId,
+      sentryTraceContext: currentSentryTraceContext(),
     });
 
     try {

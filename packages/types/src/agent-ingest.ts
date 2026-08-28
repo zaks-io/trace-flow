@@ -22,6 +22,8 @@
  *    where the source has no value, and the consumer maps that to `0` + coverage columns at rest.
  */
 
+import type { SentryTraceContext } from './sentry';
+
 export type AgentSource = 'claude' | 'codex' | 'cursor';
 
 /** Token coverage for the row's source data (ADR "Data model" → coverage columns). */
@@ -360,4 +362,6 @@ export interface AgentIngestQueueMessage {
   facts: AgentIngestQueueFacts;
   /** Worker enqueue time (epoch ms); the consumer uses it as the `IngestedAt` version column. */
   enqueued_at: number;
+  /** Ingest Worker's own Sentry trace, so the consumer's work joins the ingest request. */
+  sentry_trace_context?: SentryTraceContext;
 }

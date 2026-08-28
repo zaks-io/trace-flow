@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
@@ -461,6 +462,7 @@ export default Sentry.withSentry(
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
     tracesSampleRate: 1.0,
     sendDefaultPii: false,
+    tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
   }),
   app,
 );

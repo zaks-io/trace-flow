@@ -20,7 +20,8 @@
     "@trace-flow/logging": "workspace:*",
     "@trace-flow/pricing": "workspace:*",
     "@trace-flow/tinybird-client": "workspace:*",
-    "@trace-flow/types": "workspace:*"
+    "@trace-flow/types": "workspace:*",
+    "@trace-flow/utils": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.10",

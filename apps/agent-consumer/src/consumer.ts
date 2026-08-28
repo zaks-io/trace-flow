@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/cloudflare';
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { insertRows } from '@trace-flow/tinybird-client';
+import { continueQueueTrace, groupBySentryTrace } from '@trace-flow/utils/sentry-tracing';
 import type { AgentConsumerEnv } from './context';
 import {
   CATEGORIES,
@@ -259,30 +260,49 @@ export async function processAgentBatch(
   const acc = emptyAccumulator();
   const wellFormed: Message<unknown>[] = [];
 
-  try {
-    for (const message of batch.messages) {
-      try {
-        if (!isQueueMessage(message.body)) {
-          logger.error('agent_consumer.message_malformed', undefined, { messageId: message.id });
-          Sentry.captureMessage('agent_consumer.message_malformed', {
-            level: 'error',
-            tags: { operation: 'guard' },
-            extra: { messageId: message.id },
-          });
-          message.retry();
-          continue;
-        }
-        await accumulateMessage(message.body, acc, cache);
-        wellFormed.push(message);
-      } catch (error) {
-        logger.error('agent_consumer.message_process_failed', error, { messageId: message.id });
-        Sentry.captureException(error, {
+  const accumulate = async (message: Message<unknown>): Promise<void> => {
+    try {
+      if (!isQueueMessage(message.body)) {
+        logger.error('agent_consumer.message_malformed', undefined, { messageId: message.id });
+        Sentry.captureMessage('agent_consumer.message_malformed', {
           level: 'error',
-          tags: { operation: 'accumulate' },
+          tags: { operation: 'guard' },
           extra: { messageId: message.id },
         });
         message.retry();
+        return;
       }
+      await accumulateMessage(message.body, acc, cache);
+      wellFormed.push(message);
+    } catch (error) {
+      logger.error('agent_consumer.message_process_failed', error, { messageId: message.id });
+      Sentry.captureException(error, {
+        level: 'error',
+        tags: { operation: 'accumulate' },
+        extra: { messageId: message.id },
+      });
+      message.retry();
+    }
+  };
+
+  try {
+    // Agent Ingest chunks one HTTP request into up to a hundred queue messages, so group by the
+    // producing trace: one `queue.process` transaction continuing that ingest request rather than one
+    // per message. The Tinybird flush below spans the whole batch and stays under the batch's own
+    // transaction.
+    const groups = groupBySentryTrace(batch.messages, (message) =>
+      isQueueMessage(message.body) ? message.body.sentry_trace_context : undefined,
+    );
+    for (const group of groups) {
+      await continueQueueTrace(
+        group.traceContext,
+        { queueName: batch.queue, messageCount: group.messages.length },
+        async () => {
+          for (const message of group.messages) {
+            await accumulate(message);
+          }
+        },
+      );
     }
 
     if (wellFormed.length === 0) {

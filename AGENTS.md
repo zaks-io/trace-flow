@@ -79,6 +79,7 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 - **Agent ingest auth**: Collector Credentials are separate from API keys; they live in Convex, sync to `COLLECTOR_CREDS`, and cannot call the Proxy
 - **Read-side secret boundary**: `apps/pipes-api` forwards Convex-minted Pipe Tokens and never binds raw-object credentials or `TINYBIRD_ADMIN_TOKEN`; `apps/api` reads Body Objects and never contains Tinybird Pipe forwarding.
 - **Agent fact ledger**: `AGENT_FACT_BATCHER` dedupes by stable fact identity before Tinybird insert; same-key changed facts become repair signals
+- **Sentry distributed tracing**: Cloudflare Queues carry no headers, so producers copy their trace into the message body as `sentry_trace_context` and consumers `continueTrace` one `queue.process` transaction per producing trace (`@trace-flow/utils/sentry-tracing`). Durable Object RPC needs `enableRpcTracePropagation: true` on both the calling Worker and the DO; the values must match or DO methods see a stray trailing argument. Every Sentry-instrumented Worker sets `tracePropagationTargets` so trace headers never reach LLM providers, Tinybird, or Convex.
 
 ## Deployment
 

@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
+import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import type {
   AgentIngestEnvelope,
   AgentIngestQueueFacts,
@@ -203,6 +204,9 @@ export async function handleIngest(c: Context<{ Bindings: AgentIngestEnv }>): Pr
         collector_credential_id: credential.collectorCredentialId,
       },
       enqueued_at: Date.now(),
+      // Carried on every chunk so the consumer's work joins this ingest request's trace. `chunkFacts`
+      // sizes each message from `base`, so the extra bytes stay inside the per-message byte budget.
+      sentry_trace_context: currentSentryTraceContext(),
     };
     const messages = chunkFacts(base, owned);
 

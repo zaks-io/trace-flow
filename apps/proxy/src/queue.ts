@@ -8,6 +8,7 @@ import type {
   InputMessage,
   ToolExecution,
   SubscriptionTier,
+  SentryTraceContext,
 } from '@trace-flow/types';
 import { extractProviderFromUrl } from '@trace-flow/utils';
 
@@ -52,6 +53,7 @@ export function createQueueMessage(params: {
   toolExecutions?: ToolExecution[];
   tier?: SubscriptionTier;
   orgId?: string;
+  sentryTraceContext?: SentryTraceContext;
 }): QueueMessage {
   const {
     requestId,
@@ -80,6 +82,7 @@ export function createQueueMessage(params: {
     toolExecutions,
     tier,
     orgId,
+    sentryTraceContext,
   } = params;
 
   const provider = extractProviderFromUrl(targetUrl);
@@ -150,6 +153,10 @@ export function createQueueMessage(params: {
 
   if (operationName) {
     queueMessage.operationName = operationName;
+  }
+
+  if (sentryTraceContext?.['sentry-trace']) {
+    queueMessage.sentry_trace_context = sentryTraceContext;
   }
 
   if (inputMessages && inputMessages.length > 0) {

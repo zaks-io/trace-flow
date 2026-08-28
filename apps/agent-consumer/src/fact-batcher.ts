@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import { insertRows } from '@trace-flow/tinybird-client';
@@ -351,7 +352,11 @@ export const AgentFactBatcher = Sentry.instrumentDurableObjectWithSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 0.1,
+    tracesSampleRate: 1.0,
+    tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    // Must match the calling Worker: the stub appends a trailing metadata argument that only an
+    // RPC-instrumented Durable Object strips back off before the method sees its args.
+    enableRpcTracePropagation: true,
   }),
   AgentFactBatcherBase,
 );
