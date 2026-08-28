@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import type { OTLPQueueMessage, QueueMessageUnion } from '@trace-flow/types';
 import { getCurrentTimestamp } from '@trace-flow/utils';
+import { currentSentryTraceContext } from '@trace-flow/utils/sentry-tracing';
 import { axiomConfigFromEnv, createWorkerLogger, type Logger } from '@trace-flow/logging';
 import { validateApiKey, isAuthError } from '../auth';
 import type { ApiKeyData } from '../auth';
@@ -455,6 +456,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     apiKey,
     traces,
     receivedAt: receivedAtNano,
+    sentry_trace_context: currentSentryTraceContext(),
   };
 
   c.executionCtx.waitUntil(

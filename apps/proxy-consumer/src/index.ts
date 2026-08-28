@@ -1,4 +1,10 @@
+import * as Sentry from '@sentry/cloudflare';
 import type { QueueMessageUnion, TinybirdTrace, QueueMessage } from '@trace-flow/types';
+import {
+  TRACE_FLOW_PROPAGATION_TARGETS,
+  continueQueueTrace,
+  groupBySentryTrace,
+} from '@trace-flow/utils/sentry-tracing';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import {
   TraceBatcher,
@@ -173,48 +179,61 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
 
   const failedMessages: Message<QueueMessageUnion>[] = [];
 
-  try {
-    for (const message of batch.messages) {
-      try {
-        let traces: TinybirdTrace[];
-        let apiKey: string;
-        let messageId: string;
+  const processMessage = async (message: Message<QueueMessageUnion>): Promise<void> => {
+    try {
+      let traces: TinybirdTrace[];
+      let apiKey: string;
+      let messageId: string;
 
-        if (message.body.type === 'otlp') {
-          traces = message.body.traces;
-          apiKey = message.body.apiKey;
-          // Key on the queue message id (stable across retries, unique per enqueue) so two distinct
-          // OTLP exports from the same key in the same millisecond aren't collapsed as duplicates.
-          messageId = `otlp:${message.id}`;
-        } else {
-          const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
-          traces = buildSpans(message.body, pricing);
-          apiKey = message.body.apiKey;
-          messageId = `llm:${message.body.requestId}`;
-        }
-
-        const shardId = calculateShardId(apiKey, numShards);
-
-        if (!shardedMessages.has(shardId)) {
-          shardedMessages.set(shardId, { items: [] });
-        }
-
-        const shard = shardedMessages.get(shardId)!;
-        shard.items.push({ messageId, traces, message });
-      } catch (error) {
-        const requestId = message.body.type === 'otlp' ? undefined : message.body.requestId;
-        const messageId = message.body.type === 'otlp' ? `otlp:${message.id}` : requestId;
-        const orgId = message.body.type === 'otlp' ? undefined : message.body.orgId;
-        const traceId =
-          message.body.type === 'otlp' ? message.body.traces[0]?.TraceId : message.body.traceId;
-        logger
-          .child({ traceId, requestId, orgId })
-          .error('consumer.message_process_failed', error, {
-            messageId,
-            orgId,
-          });
-        failedMessages.push(message);
+      if (message.body.type === 'otlp') {
+        traces = message.body.traces;
+        apiKey = message.body.apiKey;
+        // Key on the queue message id (stable across retries, unique per enqueue) so two distinct
+        // OTLP exports from the same key in the same millisecond aren't collapsed as duplicates.
+        messageId = `otlp:${message.id}`;
+      } else {
+        const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
+        traces = buildSpans(message.body, pricing);
+        apiKey = message.body.apiKey;
+        messageId = `llm:${message.body.requestId}`;
       }
+
+      const shardId = calculateShardId(apiKey, numShards);
+
+      if (!shardedMessages.has(shardId)) {
+        shardedMessages.set(shardId, { items: [] });
+      }
+
+      const shard = shardedMessages.get(shardId)!;
+      shard.items.push({ messageId, traces, message });
+    } catch (error) {
+      const requestId = message.body.type === 'otlp' ? undefined : message.body.requestId;
+      const messageId = message.body.type === 'otlp' ? `otlp:${message.id}` : requestId;
+      const orgId = message.body.type === 'otlp' ? undefined : message.body.orgId;
+      const traceId =
+        message.body.type === 'otlp' ? message.body.traces[0]?.TraceId : message.body.traceId;
+      logger.child({ traceId, requestId, orgId }).error('consumer.message_process_failed', error, {
+        messageId,
+        orgId,
+      });
+      failedMessages.push(message);
+    }
+  };
+
+  try {
+    // One `queue.process` transaction per producing request, continuing the Proxy's trace, so the
+    // pricing + span-building work shows up under the LLM request that captured it. The Durable
+    // Object flush below is genuinely batch-level and stays under this batch's own transaction.
+    for (const group of groupBySentryTrace(batch.messages, (m) => m.body.sentry_trace_context)) {
+      await continueQueueTrace(
+        group.traceContext,
+        { queueName: batch.queue, messageCount: group.messages.length },
+        async () => {
+          for (const message of group.messages) {
+            await processMessage(message);
+          }
+        },
+      );
     }
 
     const shardPromises = Array.from(shardedMessages.entries()).map(async ([shardId, shard]) => {
@@ -352,15 +371,41 @@ async function runTraceBatcherHealthCheck(
   }
 }
 
-export default {
-  async queue(batch: MessageBatch<QueueMessageUnion>, env: Env): Promise<void> {
-    // Note: @sentry/cloudflare doesn't have init() for queue handlers.
-    // Errors are captured via Sentry.captureException() in processQueueBatch.
-    // The TraceBatcher Durable Object is fully instrumented with Sentry.
+// The `_ctx` parameters are unused here but declared so the type mirrors the deployed call:
+// `withSentry` flushes spans through `ctx.waitUntil`, and throws if a caller omits it.
+const handler = {
+  async queue(
+    batch: MessageBatch<QueueMessageUnion>,
+    env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
     await processQueueBatch(batch, env);
   },
 
-  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+  async scheduled(
+    controller: ScheduledController,
+    env: Env,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
     await runTraceBatcherHealthCheck(env, controller.cron);
   },
 };
+
+/**
+ * `withSentry` instruments both the `queue` and `scheduled` handlers and initializes the client per
+ * invocation. It also proxies `env`, which is what makes the `TRACE_BATCHER` stub propagate the trace
+ * into the Durable Object. `enableRpcTracePropagation` must match the value the DO itself is
+ * instrumented with, because the stub appends a trailing metadata argument that only an
+ * RPC-instrumented DO strips back off.
+ */
+export default Sentry.withSentry<Env, QueueMessageUnion, unknown, typeof handler>(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    release: env.CF_VERSION_METADATA?.id,
+    environment: env.SENTRY_ENVIRONMENT ?? 'development',
+    tracesSampleRate: 1.0,
+    tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    enableRpcTracePropagation: true,
+  }),
+  handler,
+);

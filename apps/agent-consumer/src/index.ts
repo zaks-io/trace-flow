@@ -12,6 +12,7 @@
  * retry them rather than letting them escape, so they would otherwise never reach Sentry).
  */
 import * as Sentry from '@sentry/cloudflare';
+import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import type { AgentConsumerEnv } from './context';
 import { processAgentBatch } from './consumer';
 
@@ -31,7 +32,9 @@ export default Sentry.withSentry(
     dsn: env.SENTRY_DSN,
     release: env.CF_VERSION_METADATA?.id,
     environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 0.1,
+    tracesSampleRate: 1.0,
+    tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
+    enableRpcTracePropagation: true,
   }),
   handler,
 );

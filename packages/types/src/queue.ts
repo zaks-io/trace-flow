@@ -9,6 +9,7 @@ import type {
   InputMessage,
   ToolExecution,
 } from './llm';
+import type { SentryTraceContext } from './sentry';
 import type { SSEStreamData } from './sse';
 
 export interface QueueMessage {
@@ -37,6 +38,8 @@ export interface QueueMessage {
   tier?: SubscriptionTier;
   /** Organization ID for tier lookup */
   orgId?: string;
+  /** Proxy's own Sentry trace, so the consumer's work joins the request that captured it. */
+  sentry_trace_context?: SentryTraceContext;
 }
 
 export interface TinybirdTrace {
@@ -75,6 +78,8 @@ export interface OTLPQueueMessage {
   apiKey: string;
   traces: TinybirdTrace[];
   receivedAt: number;
+  /** Proxy's own Sentry trace, so the consumer's work joins the export request that received it. */
+  sentry_trace_context?: SentryTraceContext;
 }
 
 /**

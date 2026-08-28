@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./sentry-tracing": "./src/sentry-tracing.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit",
@@ -14,6 +15,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@sentry/cloudflare": "^10.53.1",
     "@trace-flow/types": "workspace:*",
     "eventsource-parser": "^3.0.8"
   },

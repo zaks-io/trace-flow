@@ -3,6 +3,7 @@ export * from './llm';
 export * from './sse';
 export * from './storage';
 export * from './queue';
+export * from './sentry';
 export * from './agent-ingest';
 export * from './feedback';
 export * from './body-access';

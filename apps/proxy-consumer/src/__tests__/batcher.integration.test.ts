@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type * as SentryCloudflare from '@sentry/cloudflare';
 import { env as workerEnv } from 'cloudflare:workers';
 import { runInDurableObject } from 'cloudflare:test';
 import type { TraceBatcherInstance, MessageTraceBatchItem, MessageTraceResult } from '../batcher';
@@ -19,6 +20,16 @@ const env = workerEnv as unknown as {
 vi.mock('../tinybird', () => ({
   insertIntoTinybird: vi.fn().mockResolvedValue(undefined),
   insertIntoTinybirdWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Run the batcher unwrapped. Sentry's RPC instrumentation ends every call with a
+// `waitUntil(client.flush())`, and the flush drains on a real timer that the fake timers below
+// never advance, so the DO invocation would never settle. Trace propagation is the SDK's
+// behavior, not this DO's logic.
+vi.mock('@sentry/cloudflare', async (importOriginal) => ({
+  ...(await importOriginal<typeof SentryCloudflare>()),
+  instrumentDurableObjectWithSentry: <T>(_options: unknown, DurableObjectClass: T): T =>
+    DurableObjectClass,
 }));
 
 /**

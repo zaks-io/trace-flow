@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { env, runInDurableObject } from 'cloudflare:test';
+import type * as SentryCloudflare from '@sentry/cloudflare';
+import { createExecutionContext, env, runInDurableObject } from 'cloudflare:test';
 import type { QueueMessage } from '@trace-flow/types';
 import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
@@ -13,6 +14,16 @@ import { createMockTrace } from './fixtures';
 vi.mock('../tinybird', () => ({
   insertIntoTinybird: vi.fn().mockResolvedValue(undefined),
   insertIntoTinybirdWithRetry: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Run the batcher unwrapped. Sentry's RPC instrumentation ends every Durable Object call with a
+// `waitUntil(client.flush())`, and the flush drains on a real timer that this file's fake timers
+// never advance, so the DO invocation would never settle. Trace propagation is the SDK's behavior,
+// not this handler's logic.
+vi.mock('@sentry/cloudflare', async (importOriginal) => ({
+  ...(await importOriginal<typeof SentryCloudflare>()),
+  instrumentDurableObjectWithSentry: <T>(_options: unknown, DurableObjectClass: T): T =>
+    DurableObjectClass,
 }));
 
 describe('Queue Handler Integration', () => {
@@ -95,7 +106,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.value).toBe(true);
   });
@@ -129,7 +140,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(batch.messages.length).toBe(20);
   });
@@ -163,7 +174,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(analyticsSpy).not.toHaveBeenCalled();
   });
@@ -186,7 +197,7 @@ describe('Queue Handler Integration', () => {
 
     vi.advanceTimersByTime(11 * 60 * 1000);
 
-    await worker.scheduled(createScheduledController(), env);
+    await worker.scheduled(createScheduledController(), env, createExecutionContext());
 
     expect(analyticsSpy).toHaveBeenCalledTimes(3);
 
@@ -274,7 +285,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(retryCalled.value).toBe(true);
     expect(ackCalled.value).toBe(false);
@@ -309,7 +320,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.value).toBe(true);
   });
@@ -358,7 +369,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.first).toBe(true);
     expect(ackCalled.second).toBe(true);
@@ -405,7 +416,7 @@ describe('Queue Handler Integration', () => {
 
     env.TRACE_BATCHER.get = () => mockDOStub;
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     env.TRACE_BATCHER.get = originalGet;
 
@@ -443,7 +454,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(batch.messages.length).toBe(5);
   });
@@ -461,7 +472,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
   });
 
   it('should handle messages with SSE timing data', async () => {
@@ -507,7 +518,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.value).toBe(true);
   });
@@ -547,7 +558,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.value).toBe(true);
   });
@@ -588,7 +599,7 @@ describe('Queue Handler Integration', () => {
       },
     };
 
-    await worker.queue(batch, env);
+    await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.value).toBe(true);
   });

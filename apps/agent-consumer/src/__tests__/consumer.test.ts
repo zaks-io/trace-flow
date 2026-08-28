@@ -6,9 +6,15 @@ import { processAgentBatch } from '../consumer';
 
 // withSentry initializes the client in the deployed Worker; here we mock the capture surface so the
 // error paths (insert failure, contract drift) can assert they report rather than fail silently.
+// `continueTrace` / `startSpan` run their callback inline so the batch loop's queue transaction is a
+// no-op wrapper under test.
 vi.mock('@sentry/cloudflare', () => ({
   captureException: vi.fn(),
   captureMessage: vi.fn(),
+  continueTrace: <T>(_context: unknown, callback: () => T): T => callback(),
+  startSpan: <T>(_options: unknown, callback: () => T): T => callback(),
+  SEMANTIC_ATTRIBUTE_SENTRY_ORIGIN: 'sentry.origin',
+  SEMANTIC_ATTRIBUTE_SENTRY_SOURCE: 'sentry.source',
 }));
 import {
   batchOf,
