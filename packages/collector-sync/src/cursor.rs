@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS cursor_meta (
 
 const META_REPLAY_BACKFILL_NEEDED: &str = "replay_backfill_needed";
 const META_LEGACY_CURSOR_REPAIR_DONE: &str = "legacy_cursor_repair_done";
+const META_LAST_COMPLETE_SYNC_AT_MS: &str = "last_complete_sync_at_ms";
 
 /// How far one transcript file has been ingested. The four fields the discovery pass needs to decide
 /// whether a file is unchanged since the last successful upload.
@@ -141,6 +142,8 @@ pub enum CursorStoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("cursor store serialization error")]
     Serialize(#[from] serde_json::Error),
+    #[error("cursor store meta `{key}` holds unparseable value `{value}`")]
+    CorruptMeta { key: &'static str, value: String },
 }
 
 /// Durable cursor store for one Organization. Open with [`CursorStore::open`] (or
@@ -216,6 +219,27 @@ impl CursorStore {
             params![self.org_id, META_REPLAY_BACKFILL_NEEDED],
         )?;
         Ok(())
+    }
+
+    /// When the last sync pass that finished with no failures started (epoch ms), or `None` before
+    /// any such pass. Embedders resume their incremental window from here so the time the collector
+    /// spent not running is rescanned rather than skipped.
+    pub fn last_complete_sync_at_ms(&self) -> Result<Option<i64>, CursorStoreError> {
+        let Some(value) = self.get_meta(META_LAST_COMPLETE_SYNC_AT_MS)? else {
+            return Ok(None);
+        };
+        value
+            .parse()
+            .map(Some)
+            .map_err(|_| CursorStoreError::CorruptMeta {
+                key: META_LAST_COMPLETE_SYNC_AT_MS,
+                value,
+            })
+    }
+
+    /// Record that a sync pass which started at `at_ms` finished with no failures.
+    pub fn mark_complete_sync(&self, at_ms: i64) -> Result<(), CursorStoreError> {
+        self.set_meta(META_LAST_COMPLETE_SYNC_AT_MS, &at_ms.to_string())
     }
 
     fn count_rows(&self, table: &str) -> Result<i64, CursorStoreError> {
@@ -634,6 +658,34 @@ mod tests {
             byte_offset: offset,
             content_hash_head: format!("sha256:{offset}"),
         }
+    }
+
+    #[test]
+    fn last_complete_sync_is_none_until_marked_then_round_trips() {
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        assert_eq!(store.last_complete_sync_at_ms().unwrap(), None);
+        store.mark_complete_sync(1_716_000_000_000).unwrap();
+        assert_eq!(
+            store.last_complete_sync_at_ms().unwrap(),
+            Some(1_716_000_000_000)
+        );
+        store.mark_complete_sync(1_716_000_005_000).unwrap();
+        assert_eq!(
+            store.last_complete_sync_at_ms().unwrap(),
+            Some(1_716_000_005_000)
+        );
+    }
+
+    #[test]
+    fn a_corrupt_last_complete_sync_value_is_an_error_not_a_default() {
+        let store = CursorStore::open_in_memory("org_1").unwrap();
+        store
+            .set_meta(META_LAST_COMPLETE_SYNC_AT_MS, "not-a-timestamp")
+            .unwrap();
+        assert!(matches!(
+            store.last_complete_sync_at_ms(),
+            Err(CursorStoreError::CorruptMeta { .. })
+        ));
     }
 
     #[test]

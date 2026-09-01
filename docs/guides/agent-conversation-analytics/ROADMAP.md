@@ -223,8 +223,10 @@ Build the production desktop app after the CLI proves the ingestion path.
 - ✅ Tauri macOS app under `apps/desktop` (menu-bar tray + a small first-run window).
 - ✅ OS-keychain-backed Collector Credential storage (via the shared `collector-embedder` crate; the
   CLI and desktop link one code path).
-- ✅ First-run source detection and an explicit `Start syncing` first-egress gate (the engine starts
-  paused; nothing leaves the machine before the click).
+- ✅ First-run source detection and an explicit `Start syncing` first-egress gate (a fresh install
+  starts paused; nothing leaves the machine before the click). The authorization persists across
+  relaunches, and the incremental window resumes from the last complete sync so downtime is
+  rescanned rather than skipped.
 - ☐ Remove the legacy raw-upload toggle and `raw_session_bundles` fact-envelope slots. Lossless
   transcript upload belongs only to the separately activated and enrolled Pro Conversation Archive.
 - ✅ Pause/resume, run sync, disconnect.

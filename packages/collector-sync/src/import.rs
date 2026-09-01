@@ -7,12 +7,16 @@
 
 //! Which transcript files a sync pass should include, expressed as an **mtime cutoff**.
 //!
-//! Two entry points, both from the ADR's first-run setup:
+//! Three entry points:
 //!
 //! - [`ImportWindow::first_incremental`] — the default first scan. It includes files modified within
 //!   the 24h *before* `collector_started_at`, the active-session grace window that catches
 //!   conversations already in progress at install without turning first run into a historical
 //!   import. Older files are out of scope until the user runs an explicit history import.
+//! - [`ImportWindow::resume_incremental`] — every later incremental scan. The same grace window, but
+//!   measured back from the last *complete* sync rather than from now, so files changed while the
+//!   collector was not running (a relaunch, a closed laptop, a paused app) stay in scope instead of
+//!   being skipped forever.
 //! - [`ImportWindow::history`] — an explicit backfill for one of three presets ([`HistoryPreset`]).
 //!   v1 has no "all history" import; the 1-year preset matches the fact-retention horizon, so
 //!   importing older-than-retention data would be wasted.
@@ -58,6 +62,18 @@ impl ImportWindow {
     pub fn first_incremental(collector_started_at_ms: i64) -> Self {
         Self {
             cutoff_ms: collector_started_at_ms - GRACE_WINDOW_MS,
+        }
+    }
+
+    /// An incremental scan that resumes from the last complete sync: the grace window before
+    /// `last_complete_sync_at_ms`, not before `now_ms`, so downtime between syncs is covered. Floored
+    /// at the 1-year retention horizon, past which ingestion would not keep the data anyway. A
+    /// watermark in the future (clock skew) is clamped to `now_ms` so it can never exclude fresh files.
+    pub fn resume_incremental(last_complete_sync_at_ms: i64, now_ms: i64) -> Self {
+        let resumed_from = last_complete_sync_at_ms.min(now_ms) - GRACE_WINDOW_MS;
+        let retention_floor = now_ms - HistoryPreset::LastYear.duration_ms();
+        Self {
+            cutoff_ms: resumed_from.max(retention_floor),
         }
     }
 
@@ -107,6 +123,34 @@ mod tests {
         let w = ImportWindow::first_incremental(T);
         assert!(w.includes(w.cutoff_ms() as f64));
         assert!(!w.includes(w.cutoff_ms() as f64 - 1.0));
+    }
+
+    #[test]
+    fn resume_incremental_reaches_back_to_the_grace_before_the_last_complete_sync() {
+        let thirteen_days_ago = T - 13 * MS_PER_DAY;
+        let w = ImportWindow::resume_incremental(thirteen_days_ago, T);
+        assert_eq!(w.cutoff_ms(), thirteen_days_ago - GRACE_WINDOW_MS);
+        // A file edited 10 days ago, while the collector was down, is back in scope.
+        assert!(w.includes((T - 10 * MS_PER_DAY) as f64));
+    }
+
+    #[test]
+    fn resume_incremental_is_floored_at_the_retention_horizon() {
+        let two_years_ago = T - 730 * MS_PER_DAY;
+        let w = ImportWindow::resume_incremental(two_years_ago, T);
+        assert_eq!(
+            w.cutoff_ms(),
+            ImportWindow::history(HistoryPreset::LastYear, T).cutoff_ms()
+        );
+    }
+
+    #[test]
+    fn resume_incremental_never_trusts_a_future_watermark() {
+        let w = ImportWindow::resume_incremental(T + MS_PER_DAY, T);
+        assert_eq!(
+            w.cutoff_ms(),
+            ImportWindow::first_incremental(T).cutoff_ms()
+        );
     }
 
     #[test]
