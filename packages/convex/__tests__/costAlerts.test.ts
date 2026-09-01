@@ -108,6 +108,12 @@ describe('cost alert helpers', () => {
     );
   });
 
+  it('rejects webhook URLs in the Teredo IPv6 prefix', async () => {
+    await expect(
+      assertCostAlertWebhookDeliveryTarget('http://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]/hook'),
+    ).rejects.toThrow('private or link-local');
+  });
+
   it('rejects webhook hostnames that resolve to private addresses before fetch', async () => {
     let fetched = false;
 
