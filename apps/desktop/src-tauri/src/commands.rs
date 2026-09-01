@@ -161,7 +161,10 @@ pub async fn run_sync(
 }
 
 #[tauri::command]
-pub fn disconnect(bus: State<'_, AppStateBus>) -> Result<(), String> {
+pub fn disconnect(
+    bus: State<'_, AppStateBus>,
+    handle: State<'_, EngineHandle>,
+) -> Result<(), String> {
     let paths = Paths::resolve().map_err(|e| format!("{e:#}"))?;
     if let Some(conn) = paths.load_connection().map_err(|e| format!("{e:#}"))? {
         keychain::delete(&conn.org_id).map_err(|e| format!("{e:#}"))?;
@@ -169,6 +172,10 @@ pub fn disconnect(bus: State<'_, AppStateBus>) -> Result<(), String> {
             .clear_connection_only()
             .map_err(|e| format!("{e:#}"))?;
     }
+    // Removing the credential removes egress authorization too. The engine persists that bit, so
+    // without this a relaunch would come back "watching" with nothing to sync as, and every tick
+    // would warn "not connected" until the user paused by hand. Reconnecting re-authorizes explicitly.
+    handle.send(EngineCommand::Pause);
     engine::refresh_connection(&bus);
     Ok(())
 }

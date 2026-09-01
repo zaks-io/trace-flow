@@ -17,6 +17,7 @@ mod error;
 mod logging;
 mod menu;
 mod paths;
+mod settings;
 mod state;
 mod tray;
 
@@ -81,9 +82,12 @@ pub fn run() {
             app.manage(bus.clone());
             refresh_autostart(app.handle(), &bus);
 
-            // The background sync engine. Starts paused — nothing leaves the machine until the user
-            // clicks "Start syncing" in the window or the tray.
-            let engine_handle: EngineHandle = engine::spawn(bus.clone());
+            // The background sync engine. On a fresh install it starts paused — nothing leaves the
+            // machine until the user clicks "Start syncing" in the window or the tray. That choice is
+            // persisted, so a relaunch resumes syncing without another click.
+            let settings_file =
+                crate::settings::SettingsFile::at(&paths::app_config_dir(app.handle())?);
+            let engine_handle: EngineHandle = engine::spawn(bus.clone(), settings_file);
             app.manage(engine_handle);
 
             // The single login seam, shared by every command and the tray (one in-flight guard).

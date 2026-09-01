@@ -20,8 +20,13 @@ detection, the sync drive loop, prod endpoint defaults), so the CLI and the desk
   single-task and **not `Send`** (its cursor connection + upload concurrency live on one task), so each
   cycle runs on a dedicated blocking thread with a current-thread runtime, exactly like the CLI's
   `block_on`. Only the `Send` outcome crosses back to the command loop.
-- **First-egress gate** - the engine starts **paused**. Nothing is read for upload or POSTed until the
-  user clicks _Start syncing_. Source detection (file counts) is read-only and runs without resuming.
+- **First-egress gate** - on a fresh install the engine starts **paused**. Nothing is read for upload
+  or POSTed until the user clicks _Start syncing_. Source detection (file counts) is read-only and runs
+  without resuming. The choice is persisted in the app config dir (`settings.json`), so a relaunch
+  (login autostart, an update) comes back syncing and runs a catch-up cycle immediately.
+- **Catch-up after downtime** - the incremental window is measured back from the last complete sync
+  recorded in the cursor DB, not from now, so files edited while the app was closed are still picked
+  up (up to the 1-year retention horizon).
 - **Credential storage** - the OS keychain (via `collector-embedder::keychain`, service
   `trace-flow-collector`). Never argv, config, or logs.
 

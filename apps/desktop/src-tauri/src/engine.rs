@@ -10,10 +10,14 @@
 //! [`collector_embedder::sync::run`] the CLI calls, so redaction, cursor advance-only-on-2xx, and
 //! batching are identical across both embedders.
 //!
-//! **First-egress gate (TRA-115 AC #2):** the engine starts `paused`. Nothing is read for upload and
-//! nothing is POSTed until the user explicitly authorizes it — either `StartSyncing` (resume + one-time
-//! backfill) or `SyncNow` (resume + one incremental cycle). Detecting sources (file counts) is
-//! read-only and does not require resuming.
+//! **First-egress gate (TRA-115 AC #2):** on a fresh install the engine starts `paused`. Nothing is
+//! read for upload and nothing is POSTed until the user explicitly authorizes it — either
+//! `StartSyncing` (resume + one-time backfill) or `SyncNow` (resume + one incremental cycle).
+//! Detecting sources (file counts) is read-only and does not require resuming.
+//!
+//! That authorization is persisted in [`SettingsFile`] and honoured on relaunch: an app that was
+//! syncing when it quit (or was restarted by login autostart) comes back syncing and runs a cycle at
+//! once. Before this, every relaunch silently reset to paused and weeks of transcripts went unsynced.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -22,6 +26,7 @@ use collector_embedder::keychain;
 use collector_embedder::sync::{self, Window};
 use tokio::sync::mpsc;
 
+use crate::settings::{Settings, SettingsFile};
 use crate::state::{AppStateBus, ConnectionState, SourceCounts, SyncStatus};
 
 /// How often the engine runs an incremental cycle while resumed.
@@ -33,14 +38,14 @@ const FIRST_BACKFILL: &str = "7d";
 /// Commands the UI (tray menu or window) sends the engine.
 #[derive(Debug, Clone)]
 pub enum EngineCommand {
-    /// "Start syncing": authorize egress and run the one-time `7d` history backfill, then stay resumed
-    /// in incremental watch mode. The backfill runs only once per process; a later `StartSyncing`
-    /// (e.g. after a Pause) just resumes incremental watching.
+    /// "Start syncing": authorize egress and run a pass immediately, then stay resumed in incremental
+    /// watch mode. The first pass to reach ingest is the one-time `7d` history backfill (recorded in
+    /// settings); every later pass is incremental.
     StartSyncing,
-    /// "Sync now": authorize egress if needed and run one incremental cycle immediately, then stay
-    /// resumed in watch mode. It unpauses first, so unlike the old run-now path it never silently
-    /// no-ops on a paused engine. (Connecting, if not yet connected, happens in the command layer
-    /// before this is sent, since the device flow needs a browser + loopback listener.)
+    /// "Sync now": the same as `StartSyncing`, offered from the tray while already syncing. It
+    /// unpauses first, so unlike the old run-now path it never silently no-ops on a paused engine.
+    /// (Connecting, if not yet connected, happens in the command layer before this is sent, since the
+    /// device flow needs a browser + loopback listener.)
     SyncNow,
     /// Resume the loop without forcing a backfill.
     Resume,
@@ -69,25 +74,37 @@ impl EngineHandle {
 /// hook, which runs on a thread with no active tokio runtime, so `tokio::spawn` would panic. Tauri's
 /// runtime is initialised on demand and lives for the app, and `run_loop`'s `interval`/`select!` run
 /// inside it on the tokio reactor.
-pub fn spawn(bus: AppStateBus) -> EngineHandle {
+pub fn spawn(bus: AppStateBus, settings_file: SettingsFile) -> EngineHandle {
     let (tx, rx) = mpsc::unbounded_channel();
-    tauri::async_runtime::spawn(run_loop(rx, bus));
+    tauri::async_runtime::spawn(run_loop(rx, bus, settings_file));
     EngineHandle { tx }
 }
 
-async fn run_loop(mut rx: mpsc::UnboundedReceiver<EngineCommand>, bus: AppStateBus) {
-    let mut paused = true;
-    let mut raw_upload = false;
-    // Whether the one-time history backfill has run this process. `StartSyncing` does the 7d backfill
-    // only on the first authorize; later StartSyncing / unpause clicks just resume incremental syncing
-    // (cursors would skip already-synced files anyway, but a 7d rescan every unpause is wasteful).
-    let mut has_backfilled = false;
+async fn run_loop(
+    mut rx: mpsc::UnboundedReceiver<EngineCommand>,
+    bus: AppStateBus,
+    settings_file: SettingsFile,
+) {
+    let mut settings = load_settings(&settings_file);
     let mut ticker = tokio::time::interval(TICK);
-    // The first tick fires immediately; skip it so a paused engine does nothing on startup.
+    // The first tick fires immediately; skip it so a paused engine does nothing on startup. A
+    // resumed engine runs its own catch-up cycle below instead of waiting a full tick.
     ticker.tick().await;
 
+    bus.update(|s| {
+        s.raw_upload = settings.raw_upload;
+        if settings.syncing {
+            s.sync = SyncStatus::Idle;
+        }
+    });
     refresh_connection(&bus);
     refresh_sources(&bus);
+
+    if settings.syncing {
+        tracing::info!("sync authorized before relaunch; resuming");
+        run_authorized_cycle(&bus, &mut settings).await;
+        persist(&settings_file, &settings);
+    }
 
     loop {
         tokio::select! {
@@ -95,42 +112,73 @@ async fn run_loop(mut rx: mpsc::UnboundedReceiver<EngineCommand>, bus: AppStateB
                 let Some(cmd) = cmd else { break };
                 match cmd {
                     EngineCommand::SetRawUpload(value) => {
-                        raw_upload = value;
+                        settings.raw_upload = value;
                         bus.update(|s| s.raw_upload = value);
                     }
                     EngineCommand::Pause => {
-                        paused = true;
+                        settings.syncing = false;
                         bus.update(|s| s.sync = SyncStatus::Paused);
                     }
                     EngineCommand::Resume => {
-                        paused = false;
+                        settings.syncing = true;
                         set_idle(&bus);
                     }
-                    EngineCommand::StartSyncing => {
-                        paused = false;
-                        let window = if has_backfilled {
-                            Window::Incremental
-                        } else {
-                            sync::window_from_since(FIRST_BACKFILL).unwrap_or(Window::Incremental)
-                        };
-                        // Only retire the one-time backfill once a cycle actually reached ingest; a
-                        // failed first pass keeps the wider history window so the next click retries it.
-                        if run_cycle(&bus, raw_upload, window).await && !has_backfilled {
-                            has_backfilled = true;
-                        }
-                    }
-                    EngineCommand::SyncNow => {
-                        paused = false;
-                        let _ = run_cycle(&bus, raw_upload, Window::Incremental).await;
+                    EngineCommand::StartSyncing | EngineCommand::SyncNow => {
+                        settings.syncing = true;
+                        // Persist the authorization before the (possibly long) pass so a quit
+                        // mid-backfill still comes back syncing.
+                        persist(&settings_file, &settings);
+                        run_authorized_cycle(&bus, &mut settings).await;
                     }
                 }
+                persist(&settings_file, &settings);
             }
             _ = ticker.tick() => {
-                if !paused {
-                    let _ = run_cycle(&bus, raw_upload, Window::Incremental).await;
+                if settings.syncing {
+                    let before = settings;
+                    run_authorized_cycle(&bus, &mut settings).await;
+                    if settings != before {
+                        persist(&settings_file, &settings);
+                    }
                 }
             }
         }
+    }
+}
+
+/// One authorized pass. Until the one-time history backfill has actually reached ingest, every pass
+/// (a click, a tick, a relaunch catch-up) uses the wider `FIRST_BACKFILL` window, so a first backfill
+/// that failed (network down, then a relaunch) is retried rather than quietly replaced by an
+/// incremental pass that would leave the older sessions unsynced.
+async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) {
+    let window = if settings.backfilled {
+        Window::Incremental
+    } else {
+        sync::window_from_since(FIRST_BACKFILL).unwrap_or(Window::Incremental)
+    };
+    if run_cycle(bus, settings.raw_upload, window).await {
+        settings.backfilled = true;
+    }
+}
+
+/// Unreadable settings (a corrupt file) fall back to the paused defaults, but loudly: the error lands
+/// in the tray's recent-errors list, and the engine stays `Paused` so the tray offers "Start syncing",
+/// the click that actually recovers.
+fn load_settings(file: &SettingsFile) -> Settings {
+    match file.load() {
+        Ok(settings) => settings,
+        Err(err) => {
+            tracing::error!(error = %err, "settings unreadable; starting paused, start syncing again");
+            Settings::default()
+        }
+    }
+}
+
+/// A failed write must not stop the current process from syncing; it only means the next relaunch may
+/// start paused, so log it where the tray's error list will surface it.
+fn persist(file: &SettingsFile, settings: &Settings) {
+    if let Err(err) = file.save(settings) {
+        tracing::error!(error = %err, "failed to save settings");
     }
 }
 

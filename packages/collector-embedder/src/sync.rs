@@ -9,10 +9,12 @@
 //! wires those together against a real [`CollectorApiClient`] and a per-org SQLite [`CursorStore`].
 //!
 //! One pass per Source: walk the root, narrow to in-window changed files, assemble each into a
-//! `SyncUnit`, then run one cycle. The window is `first_incremental` for `sync` (the 24h active-session
-//! grace) or a `HistoryPreset` for `import`/`--since`. Batch ids are minted per POST from a process
-//! counter seeded by the wall clock so they are unique within a run without needing `Date.now()` at the
-//! cursor seam.
+//! `SyncUnit`, then run one cycle. The window is the 24h active-session grace for `sync`, measured
+//! back from the last complete pass recorded in the cursor store (or from now on the very first pass),
+//! or a `HistoryPreset` for `import`/`--since`. A pass that finishes with no failures records its start
+//! time as the new watermark, so time the collector spent not running is rescanned, never skipped.
+//! Batch ids are minted per POST from a process counter seeded by the wall clock so they are unique
+//! within a run without needing `Date.now()` at the cursor seam.
 
 use std::path::Path;
 
@@ -40,16 +42,20 @@ const ASSEMBLY_CONCURRENCY: usize = 16;
 /// How far back a sync reaches.
 #[derive(Debug, Clone, Copy)]
 pub enum Window {
-    /// The default first scan: the 24h active-session grace ending now.
+    /// The default scan: the 24h active-session grace before the last complete pass (or before now,
+    /// when no pass has completed yet).
     Incremental,
     /// An explicit history backfill of one preset.
     History(HistoryPreset),
 }
 
 impl Window {
-    fn import_window(self, now_ms: i64) -> ImportWindow {
+    fn import_window(self, now_ms: i64, last_complete_sync_at_ms: Option<i64>) -> ImportWindow {
         match self {
-            Window::Incremental => ImportWindow::first_incremental(now_ms),
+            Window::Incremental => match last_complete_sync_at_ms {
+                Some(last) => ImportWindow::resume_incremental(last, now_ms),
+                None => ImportWindow::first_incremental(now_ms),
+            },
             Window::History(preset) => ImportWindow::history(preset, now_ms),
         }
     }
@@ -111,6 +117,10 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
     } else {
         cfg.window
     };
+    let last_complete_sync_at_ms = store
+        .last_complete_sync_at_ms()
+        .context("read last complete sync")?;
+    let window = window.import_window(cfg.now_ms, last_complete_sync_at_ms);
 
     let cache = GitRemoteCache::new();
     let mut batch_seq: u64 = cfg.now_ms.max(0) as u64;
@@ -125,11 +135,17 @@ pub async fn run(cfg: RunConfig<'_>) -> Result<Vec<(AgentSource, SourceReport)>>
         let report = run_source(&client, &store, &cache, source, &cfg, window, &mut mint).await?;
         reports.push((source, report));
     }
-    if needs_replay_backfill
-        && reports
-            .iter()
-            .all(|(_, report)| report.failed == 0 && !report.aborted_early)
-    {
+    let complete = reports
+        .iter()
+        .all(|(_, report)| report.failed == 0 && !report.aborted_early);
+    if complete {
+        // The pass started at `now_ms`; anything modified after that is caught by the next pass's
+        // grace window. A pass with failures keeps the old watermark so the failed files stay in scope.
+        store
+            .mark_complete_sync(cfg.now_ms)
+            .context("record complete sync")?;
+    }
+    if needs_replay_backfill && complete {
         store
             .mark_replay_backfill_complete()
             .context("mark replay backfill complete")?;
@@ -150,11 +166,10 @@ async fn run_source(
     cache: &GitRemoteCache,
     source: AgentSource,
     cfg: &RunConfig<'_>,
-    window: Window,
+    window: ImportWindow,
     mint: &mut dyn FnMut() -> String,
 ) -> Result<SourceReport> {
     let mut report = SourceReport::default();
-    let window = window.import_window(cfg.now_ms);
 
     // Two source shapes: JSONL sources (Claude, Codex) walk a `.jsonl` root and assemble per file; the
     // Cursor source reads its `state.vscdb` SQLite store and assembles per composer. Both produce the
@@ -229,8 +244,15 @@ async fn assemble_jsonl_units(
         match result {
             Ok(unit) => units.push(unit),
             // A file that fails to read is skipped this pass; its cursor never advanced, so it is
-            // retried next pass. One unreadable transcript must not strand the whole Source.
-            Err(_) => report.failed += 1,
+            // retried next pass. One unreadable transcript must not strand the whole Source, but it
+            // does keep the pass incomplete (no watermark advance), so it must be visible: a stable
+            // class, never the path or the transcript. An ingest error class, if one follows, wins.
+            Err(_) => {
+                report.failed += 1;
+                report
+                    .first_error
+                    .get_or_insert_with(|| "unreadable transcript".to_string());
+            }
         }
     }
     Ok(units)
@@ -302,10 +324,24 @@ mod tests {
     }
 
     #[test]
-    fn incremental_window_is_the_24h_grace_ending_now() {
+    fn first_incremental_window_is_the_24h_grace_ending_now() {
         let now = 1_779_840_000_000;
-        let w = Window::Incremental.import_window(now);
-        // first_incremental cuts at now - 24h.
+        let w = Window::Incremental.import_window(now, None);
         assert_eq!(w.cutoff_ms(), now - 24 * 60 * 60 * 1000);
+    }
+
+    #[test]
+    fn later_incremental_windows_resume_from_the_last_complete_sync() {
+        let now = 1_779_840_000_000;
+        let thirteen_days = 13 * 24 * 60 * 60 * 1000;
+        let w = Window::Incremental.import_window(now, Some(now - thirteen_days));
+        assert_eq!(w.cutoff_ms(), now - thirteen_days - 24 * 60 * 60 * 1000);
+    }
+
+    #[test]
+    fn history_windows_ignore_the_watermark() {
+        let now = 1_779_840_000_000;
+        let w = Window::History(HistoryPreset::Last7Days).import_window(now, Some(now - 1));
+        assert_eq!(w.cutoff_ms(), now - 7 * 24 * 60 * 60 * 1000);
     }
 }

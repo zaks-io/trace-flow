@@ -62,7 +62,8 @@ enum Command {
     },
     /// Parse, redact, and upload local transcripts to Trace Flow.
     Sync {
-        /// How far back to scan: 24h (default incremental), 7d, 30d, or 1y (history import).
+        /// How far back to scan: 24h (default incremental; resumes from the last complete sync),
+        /// 7d, 30d, or 1y (history import).
         #[arg(long, default_value = "24h")]
         since: String,
     },
