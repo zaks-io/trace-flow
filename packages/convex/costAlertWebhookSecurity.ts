@@ -206,6 +206,8 @@ function isBlockedIpv6Address(address: bigint): boolean {
   if ((first & 0xffc0) === 0xfe80) return true;
   if ((first & 0xff00) === 0xff00) return true;
   if (first === 0x0100 && second === 0) return true;
+  // Teredo embeds an obfuscated IPv4 address, so block its full prefix.
+  if (first === 0x2001 && second === 0x0000) return true;
   if (first === 0x2001 && second === 0x0db8) return true;
   if (first === 0x2002) return true;
 
