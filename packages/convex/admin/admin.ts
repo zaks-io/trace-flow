@@ -282,6 +282,7 @@ const deleteResultValidator = v.object({
   ),
   convexDeleted: v.object({
     apiKeys: v.number(),
+    collectorCredentials: v.number(),
     usage: v.number(),
     addonPurchases: v.number(),
     membersRemoved: v.number(),
@@ -314,6 +315,7 @@ export const deleteOrgDataScheduled = internalAction({
         tinybirdResults: empty,
         convexDeleted: {
           apiKeys: 0,
+          collectorCredentials: 0,
           usage: 0,
           addonPurchases: 0,
           membersRemoved: 0,
@@ -339,6 +341,7 @@ async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
   // 2. Delete Convex records in paginated batches to stay under mutation limits
   const convexDeleted = {
     apiKeys: 0,
+    collectorCredentials: 0,
     usage: 0,
     addonPurchases: 0,
     membersRemoved: 0,
