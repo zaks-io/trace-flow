@@ -31,6 +31,7 @@ export declare const api: {
             addonPurchases: number;
             alerts: number;
             apiKeys: number;
+            collectorCredentials: number;
             invites: number;
             mcpRefreshTokens: number;
             mcpSessions: number;
@@ -1408,6 +1409,7 @@ export declare const internal: {
             addonPurchases: number;
             alerts: number;
             apiKeys: number;
+            collectorCredentials: number;
             invites: number;
             mcpRefreshTokens: number;
             mcpSessions: number;
@@ -1432,6 +1434,7 @@ export declare const internal: {
             addonPurchases: number;
             alerts: number;
             apiKeys: number;
+            collectorCredentials: number;
             invites: number;
             mcpRefreshTokens: number;
             mcpSessions: number;
