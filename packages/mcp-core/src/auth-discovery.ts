@@ -1,15 +1,17 @@
-import { MCP_ENDPOINT_URL, SITE_URL } from './server-card';
+import { MCP_ENDPOINT_URL } from './server-card';
 
 export const AUTH_MD_PATH = '/auth.md';
 export const PROTECTED_RESOURCE_METADATA_PATH = '/.well-known/oauth-protected-resource';
 
 export const MCP_AUTHORIZATION_SERVER_URL = 'https://connect.trace-flow.dev';
-export const MCP_SCOPES_SUPPORTED = ['openid', 'profile', 'email'] as const;
+export const MCP_PROTECTED_RESOURCE_METADATA_URL = new URL(
+  PROTECTED_RESOURCE_METADATA_PATH,
+  MCP_ENDPOINT_URL,
+).toString();
 
 export interface ProtectedResourceMetadata {
   resource: string;
   authorization_servers: string[];
-  scopes_supported: string[];
   bearer_methods_supported: ['header'];
   resource_name: string;
 }
@@ -21,7 +23,6 @@ export function buildProtectedResourceMetadata(
   return {
     resource,
     authorization_servers: [authorizationServer.replace(/\/+$/, '')],
-    scopes_supported: [...MCP_SCOPES_SUPPORTED],
     bearer_methods_supported: ['header'],
     resource_name: 'Trace Flow MCP',
   };
@@ -33,14 +34,12 @@ This document is for AI agents and API clients connecting to the Trace Flow MCP 
 
 ## Discover
 
-1. Fetch \`${SITE_URL}${PROTECTED_RESOURCE_METADATA_PATH}\`.
+1. Fetch \`${MCP_PROTECTED_RESOURCE_METADATA_URL}\`.
 2. Read \`authorization_servers\` from that document.
 3. Fetch \`${MCP_AUTHORIZATION_SERVER_URL}/.well-known/oauth-authorization-server\`, the metadata URL for the advertised authorization server.
 4. Use the endpoints and methods in that metadata. Do not probe registration with a test POST during passive discovery.
 
 Protected resource: \`${MCP_ENDPOINT_URL}\`
-
-Supported scopes: ${MCP_SCOPES_SUPPORTED.map((scope) => `\`${scope}\``).join(', ')}
 
 ## Register an OAuth client
 

@@ -1,17 +1,12 @@
-import {
-  buildProtectedResourceMetadata,
-  MCP_AUTHORIZATION_SERVER_URL,
-  MCP_ENDPOINT_URL,
-} from '@trace-flow/mcp-core';
+import { MCP_PROTECTED_RESOURCE_METADATA_URL } from '@trace-flow/mcp-core';
 
 export function GET(): Response {
-  return Response.json(
-    buildProtectedResourceMetadata(MCP_ENDPOINT_URL, MCP_AUTHORIZATION_SERVER_URL),
-    {
-      headers: {
-        'Cache-Control': 'public, max-age=300, s-maxage=300',
-        'Access-Control-Allow-Origin': '*',
-      },
+  return new Response(null, {
+    status: 307,
+    headers: {
+      Location: MCP_PROTECTED_RESOURCE_METADATA_URL,
+      'Cache-Control': 'public, max-age=300, s-maxage=300',
+      'Access-Control-Allow-Origin': '*',
     },
-  );
+  });
 }

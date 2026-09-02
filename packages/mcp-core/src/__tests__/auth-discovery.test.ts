@@ -3,6 +3,7 @@ import {
   AUTH_MD,
   buildProtectedResourceMetadata,
   MCP_AUTHORIZATION_SERVER_URL,
+  MCP_PROTECTED_RESOURCE_METADATA_URL,
 } from '../auth-discovery';
 import { MCP_ENDPOINT_URL } from '../server-card';
 
@@ -11,7 +12,6 @@ describe('Auth.md discovery', () => {
     expect(buildProtectedResourceMetadata(MCP_ENDPOINT_URL, MCP_AUTHORIZATION_SERVER_URL)).toEqual({
       resource: 'https://mcp.trace-flow.dev/mcp',
       authorization_servers: ['https://connect.trace-flow.dev'],
-      scopes_supported: ['openid', 'profile', 'email'],
       bearer_methods_supported: ['header'],
       resource_name: 'Trace Flow MCP',
     });
@@ -19,7 +19,10 @@ describe('Auth.md discovery', () => {
 
   it('gives agents a complete registration and credential-use procedure', () => {
     expect(AUTH_MD).toMatch(/^# .*auth\.md/im);
-    expect(AUTH_MD).toContain('https://trace-flow.dev/.well-known/oauth-protected-resource');
+    expect(MCP_PROTECTED_RESOURCE_METADATA_URL).toBe(
+      'https://mcp.trace-flow.dev/.well-known/oauth-protected-resource',
+    );
+    expect(AUTH_MD).toContain(MCP_PROTECTED_RESOURCE_METADATA_URL);
     expect(AUTH_MD).toContain(
       'https://connect.trace-flow.dev/.well-known/oauth-authorization-server',
     );

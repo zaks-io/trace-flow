@@ -12,17 +12,13 @@ describe('Auth.md routes', () => {
     expect(await response.text()).toBe(AUTH_MD);
   });
 
-  it('serves the canonical MCP protected-resource metadata with CORS', async () => {
+  it('redirects to the canonical MCP protected-resource metadata with CORS', () => {
     const response = getProtectedResourceMetadata();
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(307);
+    expect(response.headers.get('Location')).toBe(
+      'https://mcp.trace-flow.dev/.well-known/oauth-protected-resource',
+    );
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
-    expect(await response.json()).toEqual({
-      resource: 'https://mcp.trace-flow.dev/mcp',
-      authorization_servers: ['https://connect.trace-flow.dev'],
-      scopes_supported: ['openid', 'profile', 'email'],
-      bearer_methods_supported: ['header'],
-      resource_name: 'Trace Flow MCP',
-    });
   });
 });
