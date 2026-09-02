@@ -110,7 +110,9 @@ describe('public discovery middleware', () => {
   it.each([
     '/llms.txt',
     '/agents.md',
+    '/auth.md',
     '/.well-known/api-catalog',
+    '/.well-known/oauth-protected-resource',
     '/.well-known/mcp/server-card.json',
     '/.well-known/ai-catalog.json',
     '/docs/mcp.md',

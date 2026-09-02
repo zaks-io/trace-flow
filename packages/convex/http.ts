@@ -17,7 +17,7 @@ import * as oauthModule from './mcp/oauth';
 import * as tokensModule from './mcp/tokens';
 import { getPublicJwk } from './mcp/keys';
 import { createMcpBackend } from './mcp/backend';
-import { JWKS_PATH } from '@trace-flow/mcp-core';
+import { JWKS_PATH, MCP_SCOPES_SUPPORTED } from '@trace-flow/mcp-core';
 import type Stripe from 'stripe';
 import { UNITS_PER_ADDON } from '@trace-flow/types';
 import { mapStripeStatusToInternal } from './billing/subscriptions';
@@ -602,7 +602,7 @@ export function createApp(
       grant_types_supported: ['authorization_code', 'refresh_token'],
       token_endpoint_auth_methods_supported: ['none'],
       code_challenge_methods_supported: ['S256'],
-      scopes_supported: ['openid', 'profile', 'email'],
+      scopes_supported: [...MCP_SCOPES_SUPPORTED],
     });
   });
 

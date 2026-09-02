@@ -50,6 +50,7 @@ describe('MCP worker auth discovery', () => {
     expect(await res.json()).toEqual({
       resource: 'http://localhost/mcp',
       authorization_servers: [CONNECT_ORIGIN],
+      scopes_supported: ['openid', 'profile', 'email'],
       bearer_methods_supported: ['header'],
       resource_name: 'Trace Flow MCP',
     });
