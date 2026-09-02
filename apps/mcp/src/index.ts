@@ -11,6 +11,8 @@ import {
   SERVER_CARD_MEDIA_TYPE,
   SERVER_CARD_PATH,
   buildServerCard,
+  buildProtectedResourceMetadata,
+  PROTECTED_RESOURCE_METADATA_PATH,
   isRequest,
   isNotification,
   isInitializeParams,
@@ -50,7 +52,6 @@ interface Variables {
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource';
 const OAUTH_METADATA_PATH = '/.well-known/oauth-authorization-server';
 const MCP_SSE_HEARTBEAT_MS = 15_000;
 
@@ -105,7 +106,7 @@ function mcpResourceUrl(req: Request): string {
 }
 
 function protectedResourceUrl(req: Request): string {
-  return new URL(PROTECTED_RESOURCE_PATH, req.url).toString();
+  return new URL(PROTECTED_RESOURCE_METADATA_PATH, req.url).toString();
 }
 
 function bearerChallenge(req: Request, error?: string): string {
@@ -262,13 +263,13 @@ function mcpSseResponse(c: {
 
 app.get('/healthz', (c) => c.json({ status: 'ok' }));
 
-app.get(PROTECTED_RESOURCE_PATH, (c) =>
-  c.json({
-    resource: mcpResourceUrl(c.req.raw),
-    authorization_servers: [normalizeOrigin(c.env.CONNECT_BASE_URL)],
-    bearer_methods_supported: ['header'],
-    resource_name: 'Trace Flow MCP',
-  }),
+app.get(PROTECTED_RESOURCE_METADATA_PATH, (c) =>
+  c.json(
+    buildProtectedResourceMetadata(
+      mcpResourceUrl(c.req.raw),
+      normalizeOrigin(c.env.CONNECT_BASE_URL),
+    ),
+  ),
 );
 
 // Public, unauthenticated discovery metadata, at the location the spec reserves.

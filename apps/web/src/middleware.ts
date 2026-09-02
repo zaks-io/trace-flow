@@ -39,7 +39,9 @@ export async function middleware(request: NextRequest) {
   const isPublicMachineReadablePath =
     pathname === '/llms.txt' ||
     pathname === '/agents.md' ||
+    pathname === '/auth.md' ||
     pathname === API_CATALOG_PATH ||
+    pathname === '/.well-known/oauth-protected-resource' ||
     pathname === '/.well-known/mcp/server-card.json' ||
     pathname === '/.well-known/ai-catalog.json' ||
     pathname.startsWith('/.well-known/agent-skills/') ||

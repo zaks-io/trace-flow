@@ -1,5 +1,6 @@
 export * from './protocol';
 export * from './server-card';
+export * from './auth-discovery';
 export * from './backend';
 export * from './jwt';
 export { type TinybirdScope, type TokenMinter, type ToolCtx, queryPipe } from './tinybird';
