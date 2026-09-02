@@ -97,3 +97,38 @@ describe('protected app middleware', () => {
     expect(mockedClearAuthCookies).not.toHaveBeenCalled();
   });
 });
+
+// The bypass hands back a response the route handler marks publicly cacheable, so
+// anything that reaches auth0 here can leak a rotated session cookie into a shared
+// cache. Exact-match paths only: a prefix match would exempt everything beneath it.
+describe('public discovery middleware', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedAuth0.middleware.mockResolvedValue(NextResponse.next());
+  });
+
+  it.each([
+    '/llms.txt',
+    '/agents.md',
+    '/.well-known/mcp/server-card.json',
+    '/.well-known/ai-catalog.json',
+    '/docs/mcp.md',
+  ])('serves %s without touching the session', async (path) => {
+    const response = await middleware(request(path));
+
+    expect(response.status).toBe(200);
+    expect(mockedAuth0.middleware).not.toHaveBeenCalled();
+    expect(mockedAuth0.getSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/.well-known/mcp/server-card.json/extra',
+    '/.well-known/mcp',
+    '/.well-known/ai-catalog.json.bak',
+    '/docs/mcp',
+  ])('does not extend the bypass to %s', async (path) => {
+    await middleware(request(path));
+
+    expect(mockedAuth0.middleware).toHaveBeenCalledOnce();
+  });
+});

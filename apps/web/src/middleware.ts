@@ -35,12 +35,14 @@ export async function middleware(request: NextRequest) {
   // nonce via `headers().get('x-nonce')` and apply it to inline scripts.
   request.headers.set('x-nonce', nonce);
 
-  const isPublicMarkdownPath =
+  const isPublicDiscoveryPath =
     pathname === '/llms.txt' ||
     pathname === '/agents.md' ||
+    pathname === '/.well-known/mcp/server-card.json' ||
+    pathname === '/.well-known/ai-catalog.json' ||
     (pathname.startsWith('/docs/') && pathname.endsWith('.md'));
 
-  if (isPublicMarkdownPath) {
+  if (isPublicDiscoveryPath) {
     const response = NextResponse.next();
     applyResponseSecurityHeaders(response, csp);
     return response;

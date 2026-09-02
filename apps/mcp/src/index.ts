@@ -8,6 +8,9 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
   MCP_SERVER_INFO,
   MCP_SERVER_CAPABILITIES,
+  SERVER_CARD_MEDIA_TYPE,
+  SERVER_CARD_PATH,
+  buildServerCard,
   isRequest,
   isNotification,
   isInitializeParams,
@@ -266,6 +269,22 @@ app.get(PROTECTED_RESOURCE_PATH, (c) =>
     bearer_methods_supported: ['header'],
     resource_name: 'Trace Flow MCP',
   }),
+);
+
+// Public, unauthenticated discovery metadata, at the location the spec reserves.
+// This copy is origin-derived: it advertises whichever host served it, so a card
+// fetched from preview or dev never points at production. The site-wide copies in
+// `apps/web` are the opposite, and always name the canonical production endpoint.
+app.get(
+  SERVER_CARD_PATH,
+  (c) =>
+    new Response(JSON.stringify(buildServerCard(mcpResourceUrl(c.req.raw))), {
+      headers: {
+        'Content-Type': SERVER_CARD_MEDIA_TYPE,
+        // Deploys have no purge step, so the TTL is the whole invalidation story.
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
+      },
+    }),
 );
 
 app.get(OAUTH_METADATA_PATH, (c) => proxyConnect(c, OAUTH_METADATA_PATH));
