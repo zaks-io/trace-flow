@@ -40,6 +40,8 @@ export async function middleware(request: NextRequest) {
     pathname === '/llms.txt' ||
     pathname === '/agents.md' ||
     pathname === API_CATALOG_PATH ||
+    pathname === '/.well-known/mcp/server-card.json' ||
+    pathname === '/.well-known/ai-catalog.json' ||
     (pathname.startsWith('/docs/') && pathname.endsWith('.md'));
 
   if (isPublicMachineReadablePath) {

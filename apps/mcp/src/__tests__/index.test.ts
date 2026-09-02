@@ -55,6 +55,20 @@ describe('MCP worker auth discovery', () => {
     });
   });
 
+  it('serves an unauthenticated server card for its own origin', async () => {
+    const res = await SELF.fetch('http://localhost/mcp/server-card');
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('application/mcp-server-card+json');
+
+    const card = (await res.json()) as {
+      remotes: { url: string }[];
+      transport: { endpoint: string };
+    };
+    expect(card.remotes[0]?.url).toBe('http://localhost/mcp');
+    expect(card.transport.endpoint).toBe('http://localhost/mcp');
+  });
+
   it('401s missing auth with a protected-resource challenge', async () => {
     const res = await SELF.fetch('http://localhost/mcp', {
       method: 'POST',
