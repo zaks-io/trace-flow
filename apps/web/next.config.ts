@@ -8,7 +8,7 @@ import { generateDocsContent } from './scripts/generate-docs-content';
 // on Cloudflare Workers.
 generateDocsContent();
 
-void initOpenNextCloudflareForDev();
+void initOpenNextCloudflareForDev({ remoteBindings: false });
 
 const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
 

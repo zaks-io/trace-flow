@@ -6,8 +6,10 @@ import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing
 export { DOQueueHandler, DOShardedTagCache, BucketCachePurge } from '../.open-next/worker.js';
 
 import openNextHandler from '../.open-next/worker.js';
+import { negotiateMarkdown, type MarkdownConverter } from './markdown-negotiation';
 
 interface Env {
+  AI: MarkdownConverter;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
   CF_VERSION_METADATA?: { id: string };
@@ -40,7 +42,8 @@ export default Sentry.withSentry(
       });
       const start = Date.now();
       try {
-        const response = await openNextHandler.fetch(request, env, ctx);
+        const htmlResponse = await openNextHandler.fetch(request, env, ctx);
+        const response = await negotiateMarkdown(request, htmlResponse, env.AI);
         logger.info('web.request_complete', {
           status: response.status,
           latencyMs: Date.now() - start,

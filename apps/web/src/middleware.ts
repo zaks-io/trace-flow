@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { applySecurityHeaders } from '@trace-flow/utils';
+import { API_CATALOG_PATH } from '@/lib/api-catalog';
 import { auth0 } from '@/lib/auth0';
 import { clearAuthCookies } from '@/lib/auth-cookies';
 import { buildCsp, buildSentryReportUri, CSP_HEADER_NAME, readOrigin } from '@/lib/csp';
@@ -35,14 +36,15 @@ export async function middleware(request: NextRequest) {
   // nonce via `headers().get('x-nonce')` and apply it to inline scripts.
   request.headers.set('x-nonce', nonce);
 
-  const isPublicDiscoveryPath =
+  const isPublicMachineReadablePath =
     pathname === '/llms.txt' ||
     pathname === '/agents.md' ||
+    pathname === API_CATALOG_PATH ||
     pathname === '/.well-known/mcp/server-card.json' ||
     pathname === '/.well-known/ai-catalog.json' ||
     (pathname.startsWith('/docs/') && pathname.endsWith('.md'));
 
-  if (isPublicDiscoveryPath) {
+  if (isPublicMachineReadablePath) {
     const response = NextResponse.next();
     applyResponseSecurityHeaders(response, csp);
     return response;
