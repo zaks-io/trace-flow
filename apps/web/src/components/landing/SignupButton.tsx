@@ -12,7 +12,7 @@ export function SignupButton({ isWaitlistMode }: SignupButtonProps) {
     return (
       <div className="flex flex-col items-center gap-3">
         <p className="text-sm text-muted-foreground">
-          We&apos;re in limited rollout. Join the waitlist for early access.
+          A small group of teams is testing Trace Flow now.
         </p>
         <WaitlistForm />
       </div>
@@ -21,14 +21,12 @@ export function SignupButton({ isWaitlistMode }: SignupButtonProps) {
 
   return (
     <div className="flex flex-col items-center gap-3">
-      <p className="text-sm text-muted-foreground">
-        Free tier — 25K traces/month. No credit card required.
-      </p>
+      <p className="text-sm text-muted-foreground">Already invited to the private alpha?</p>
       <Link
         href="/auth/login"
         className="glow-primary inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-8 text-sm font-medium text-primary-foreground ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
-        Get Started Free
+        Open your dashboard
       </Link>
     </div>
   );

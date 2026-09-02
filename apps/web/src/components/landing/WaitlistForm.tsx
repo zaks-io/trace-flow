@@ -73,7 +73,7 @@ export function WaitlistForm() {
         </svg>
         <span className="text-sm font-medium text-primary">
           {confirmed
-            ? "You're already on the list \u2014 we'll be in touch!"
+            ? "You're already on the list. We'll be in touch."
             : "You're already on the list! Check your email for the confirmation link."}
         </span>
       </div>
@@ -97,7 +97,7 @@ export function WaitlistForm() {
           disabled={status === 'submitting'}
           className="glow-primary inline-flex h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
         >
-          {status === 'submitting' ? 'Joining...' : 'Join Waitlist'}
+          {status === 'submitting' ? 'Requesting...' : 'Request alpha access'}
         </button>
       </div>
       {status === 'error' && (

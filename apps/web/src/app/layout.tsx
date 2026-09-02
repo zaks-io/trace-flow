@@ -17,22 +17,22 @@ const firaCode = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: 'Trace Flow — LLM Observability Proxy',
+  title: 'Trace Flow | Observability for models and coding agents',
   description:
-    'Drop-in proxy for OpenAI, Anthropic, Google, and more. Capture request metadata, token usage, cost estimates, and debuggable body samples.',
+    'Follow LLM requests and local coding-agent sessions in one place. Trace Flow is currently in private alpha.',
   openGraph: {
-    title: 'Trace Flow — LLM Observability Proxy',
+    title: 'Trace Flow | Observability for models and coding agents',
     description:
-      'Know what your LLM calls cost. Drop-in proxy with unified cost visibility across all providers.',
+      'See cost, context growth, tool reliability, and model usage across LLM requests and coding-agent sessions.',
     url: 'https://trace-flow.dev',
     siteName: 'Trace Flow',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Trace Flow — LLM Observability Proxy',
+    title: 'Trace Flow | Observability for models and coding agents',
     description:
-      'Know what your LLM calls cost. Drop-in proxy with unified cost visibility across all providers.',
+      'See cost, context growth, tool reliability, and model usage across LLM requests and coding-agent sessions.',
   },
 };
 
