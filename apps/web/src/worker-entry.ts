@@ -6,6 +6,7 @@ import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing
 export { DOQueueHandler, DOShardedTagCache, BucketCachePurge } from '../.open-next/worker.js';
 
 import openNextHandler from '../.open-next/worker.js';
+import { addHomepageDiscoveryLinks } from './homepage-discovery';
 import { negotiateMarkdown, type MarkdownConverter } from './markdown-negotiation';
 
 interface Env {
@@ -43,7 +44,8 @@ export default Sentry.withSentry(
       const start = Date.now();
       try {
         const htmlResponse = await openNextHandler.fetch(request, env, ctx);
-        const response = await negotiateMarkdown(request, htmlResponse, env.AI);
+        const negotiatedResponse = await negotiateMarkdown(request, htmlResponse, env.AI);
+        const response = addHomepageDiscoveryLinks(request, negotiatedResponse);
         logger.info('web.request_complete', {
           status: response.status,
           latencyMs: Date.now() - start,
