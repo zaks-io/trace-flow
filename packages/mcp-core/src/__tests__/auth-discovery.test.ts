@@ -26,6 +26,8 @@ describe('Auth.md discovery', () => {
     expect(AUTH_MD).toContain('POST https://connect.trace-flow.dev/mcp/register');
     expect(AUTH_MD).toContain('code_challenge_method=S256');
     expect(AUTH_MD).toContain('Authorization: Bearer <access_token>');
+    expect(AUTH_MD).toContain('refresh_token');
     expect(AUTH_MD).toContain('Do not probe registration with a test POST');
+    expect(AUTH_MD).not.toContain('agent_auth');
   });
 });

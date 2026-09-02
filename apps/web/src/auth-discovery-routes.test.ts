@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AUTH_MD } from '@trace-flow/mcp-core';
 import { GET as getAuthMd } from './app/auth.md/route';
 import { GET as getProtectedResourceMetadata } from './app/.well-known/oauth-protected-resource/route';
 
@@ -8,7 +9,7 @@ describe('Auth.md routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8');
-    expect(await response.text()).toMatch(/^# .*auth\.md/im);
+    expect(await response.text()).toBe(AUTH_MD);
   });
 
   it('serves the canonical MCP protected-resource metadata with CORS', async () => {
