@@ -1,6 +1,8 @@
 ---
 name: trace-flow-observability
 description: Loads project context (Worker names, KV/R2/queue IDs, Tinybird datasources, Axiom dataset, MCP servers) for investigating Trace Flow production and dev systems. Use when debugging a prod issue, querying logs or metrics, inspecting a trace, checking deploys, or needing any service ID for this monorepo. Triggers include "check sentry", "axiom logs", "what's the dataset", "look at the trace", "production issue", "queue stuck", "consumer error", "tinybird query", "cf worker logs".
+metadata:
+  internal: true
 ---
 
 # Trace Flow Observability Context

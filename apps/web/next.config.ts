@@ -2,11 +2,16 @@ import type { NextConfig } from 'next';
 import { withSentryConfig } from '@sentry/nextjs';
 import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 import { generateDocsContent } from './scripts/generate-docs-content';
+import { generateAgentSkills } from './scripts/generate-agent-skills';
 
 // Bundle docs/*.md into JS at build time. The /docs/[slug] page reads from
 // the generated module, so there is no fs/fetch/ASSETS dependency at runtime
 // on Cloudflare Workers.
 generateDocsContent();
+
+// Bundle skills/*/SKILL.md plus a digest of their exact bytes, so the discovery
+// index and the artifacts it points at are generated from one read.
+generateAgentSkills();
 
 void initOpenNextCloudflareForDev({ remoteBindings: false });
 

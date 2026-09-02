@@ -126,6 +126,12 @@ The proxy automatically captures request/response bodies, token usage, performan
 
 **For complete integration guide, see [agents.md](./apps/web/public/agents.md).**
 
+Coding agents can install the same guidance as a skill:
+
+```bash
+npx skills add zaks-io/trace-flow --skill trace-flow
+```
+
 Related design notes:
 
 - [Agent Conversation Analytics](./docs/adr/0012-agent-conversation-analytics.md) - data model and ingestion design for local AI agent conversation analytics in Trace Flow.
