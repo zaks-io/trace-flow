@@ -12,13 +12,19 @@ export function FooterCTA({ isWaitlistMode }: FooterCTAProps) {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-border to-transparent" />
 
       <div className="mx-auto max-w-2xl px-6 text-center">
-        <h2 className="mb-6 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-          Start tracking your LLM costs
-          <br />
-          <span className="text-primary">in 5 minutes.</span>
+        <div className="mb-5 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
+          Private alpha
+        </div>
+        <h2 className="mb-5 text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
+          Your AI systems already leave a trail.
+          <span className="block text-primary">Trace Flow makes it useful.</span>
         </h2>
+        <p className="mx-auto mb-8 max-w-lg text-base leading-7 text-muted-foreground">
+          We&apos;re working directly with early testers while the collector, agent analytics, and
+          alerting workflows settle into their final shape.
+        </p>
 
-        <div className="mb-12">
+        <div className="mb-14">
           <SignupButton isWaitlistMode={isWaitlistMode} />
         </div>
 

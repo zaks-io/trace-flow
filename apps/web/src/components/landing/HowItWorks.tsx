@@ -1,44 +1,40 @@
 const STEPS = [
   {
     step: '1',
-    title: 'Point your SDK',
-    description: (
-      <>
-        Set your base URL to{' '}
-        <code className="font-mono text-primary">
-          gateway.trace-flow.dev/{'{'}
-          <em>provider</em>
-          {'}'}/
-        </code>
-      </>
-    ),
+    title: 'Capture at the right boundary',
+    description:
+      'Route model calls through the edge proxy. Private testers can also connect local Claude and Codex sessions.',
   },
   {
     step: '2',
-    title: 'Add one header',
-    description: (
-      <>
-        Include <code className="font-mono text-primary">X-Trace-Flow-Api-Key</code> with your API
-        key.
-      </>
-    ),
+    title: 'Keep the work moving',
+    description:
+      'Responses keep streaming while traces, costs, and redacted agent facts are processed off the response path.',
   },
   {
     step: '3',
-    title: 'See everything',
-    description: 'Cost, tokens, latency, and full request/response bodies in the dashboard.',
+    title: 'Investigate the pattern',
+    description:
+      'Filter by provider, model, source, or repository. Compare changes across request and session views.',
   },
 ];
 
 export function HowItWorks() {
   return (
-    <section className="relative bg-card/30 py-24">
+    <section className="relative bg-background py-24 sm:py-32">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-border to-transparent" />
-      <div className="mx-auto max-w-3xl px-6">
+      <div className="mx-auto max-w-5xl px-6">
         <div className="mb-16 text-center">
-          <h2 className="mb-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Up and running in minutes.
+          <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
+            The signal path
+          </div>
+          <h2 className="mb-4 text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
+            Observe the work without getting in its way.
           </h2>
+          <p className="mx-auto max-w-2xl text-lg leading-8 text-muted-foreground">
+            Trace Flow keeps collection separate from the product path, then gives every signal the
+            same place to land.
+          </p>
         </div>
 
         <div className="relative grid gap-12 sm:grid-cols-3 sm:gap-8">
@@ -51,8 +47,8 @@ export function HowItWorks() {
                 <div className="absolute inset-0 rounded-full bg-primary/5" />
                 <span className="relative">{step}</span>
               </div>
-              <h3 className="mb-2 font-mono text-sm font-semibold text-foreground">{title}</h3>
-              <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
+              <h3 className="mb-2 text-sm font-semibold text-foreground">{title}</h3>
+              <p className="text-sm leading-6 text-muted-foreground">{description}</p>
             </div>
           ))}
         </div>

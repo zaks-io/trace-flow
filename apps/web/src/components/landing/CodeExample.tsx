@@ -219,7 +219,7 @@ function CodeBlock({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col">
+    <div className="min-w-0 flex flex-col">
       <div className="mb-2 font-mono text-xs uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
@@ -247,10 +247,10 @@ export function CodeExample() {
       <div className="mx-auto max-w-5xl px-6">
         <div className="mb-12 text-center">
           <h2 className="mb-3 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Three lines to integrate.
+            Keep your SDK. Change the route.
           </h2>
           <p className="text-lg text-muted-foreground">
-            Add a base URL and a header. That&apos;s it.
+            The proxy path starts with a base URL and one Trace Flow header.
           </p>
         </div>
 

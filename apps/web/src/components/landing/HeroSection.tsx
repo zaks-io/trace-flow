@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { FlowingTraces } from './FlowingTraces';
+import { AgentAnalyticsPreview } from './AgentAnalyticsPreview';
 import { SignupButton } from './SignupButton';
 
 interface HeroSectionProps {
@@ -8,79 +9,83 @@ interface HeroSectionProps {
 
 export function HeroSection({ isWaitlistMode }: HeroSectionProps) {
   return (
-    <section className="relative flex min-h-[90vh] flex-col items-center justify-center overflow-hidden bg-background">
-      {/* Grid background */}
+    <section className="relative overflow-hidden bg-background pb-20 pt-6 sm:pb-28">
       <div className="bg-grid-pattern pointer-events-none absolute inset-0 opacity-[0.03]" />
-
-      {/* Flowing traces */}
-      <div className="pointer-events-none absolute inset-0 opacity-60">
+      <div className="pointer-events-none absolute inset-0 opacity-35">
         <FlowingTraces />
       </div>
-
-      {/* Radial gradient overlay */}
       <div className="bg-radial-fade pointer-events-none absolute inset-0" />
+      <div className="pointer-events-none absolute left-1/2 top-40 h-[480px] w-[760px] -translate-x-1/2 rounded-full bg-primary/5 blur-[120px]" />
 
-      {/* Warm ambient glow behind content */}
-      <div className="pointer-events-none absolute top-1/3 left-1/2 h-[500px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/3 blur-[100px]" />
-
-      {/* Hero content */}
-      <div className="relative z-10 mx-auto max-w-2xl px-6 text-center">
-        {/* Badge */}
-        <div className="mb-8 inline-flex animate-hero-fade items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5">
-          <svg
-            className="h-4 w-4 text-primary"
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
-          </svg>
-          <span className="font-mono text-sm text-primary">LLM Observability</span>
-        </div>
-
-        {/* Headline */}
-        <h1 className="delay-150 animate-hero-fade mb-6 text-4xl font-bold tracking-tight text-foreground sm:text-5xl md:text-6xl">
-          Know what your
-          <br />
-          <span className="text-primary">LLM calls cost.</span>
-        </h1>
-
-        {/* Subheadline */}
-        <p className="delay-300 animate-hero-fade mx-auto mb-10 max-w-lg text-lg leading-relaxed text-muted-foreground sm:text-xl">
-          Drop-in proxy for OpenAI, Anthropic, Google, and more. Capture token usage, cost
-          estimates, and encrypted body samples without blocking the response path.
-        </p>
-
-        {/* CTA */}
-        <div className="delay-450 animate-hero-fade flex flex-col items-center gap-5">
-          <SignupButton isWaitlistMode={isWaitlistMode} />
-          <Link
-            href="/docs"
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md px-6 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <svg
-              className="h-4 w-4"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 7v14" />
-              <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
-            </svg>
-            View Docs
+      <div className="relative z-10 mx-auto max-w-7xl px-5 sm:px-8">
+        <nav
+          className="mb-20 flex items-center justify-between sm:mb-24"
+          aria-label="Main navigation"
+        >
+          <Link href="/" className="flex items-center gap-3 font-mono text-sm font-semibold">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-primary/35 bg-primary/10 text-primary">
+              <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path
+                  d="M3 12h4l2.2-7 5.2 14 2.2-7H21"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+            Trace Flow
           </Link>
+          <div className="flex items-center gap-1 sm:gap-3">
+            <Link
+              href="/docs"
+              className="rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Docs
+            </Link>
+            <Link
+              href="/auth/login"
+              className="rounded-md border border-border bg-card/70 px-3 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/30 hover:bg-card sm:px-4"
+            >
+              Sign in
+            </Link>
+          </div>
+        </nav>
+
+        <div className="mx-auto mb-14 max-w-4xl text-center sm:mb-16">
+          <div className="mb-7 inline-flex animate-hero-fade items-center gap-2 rounded-full border border-primary/25 bg-primary/8 px-3.5 py-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_var(--primary)]" />
+            <span className="font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-primary">
+              Private alpha
+            </span>
+          </div>
+
+          <h1 className="delay-150 animate-hero-fade text-balance text-4xl font-semibold tracking-[-0.045em] text-foreground sm:text-6xl lg:text-7xl">
+            See what your models and
+            <span className="block text-primary">coding agents are doing.</span>
+          </h1>
+
+          <p className="delay-300 animate-hero-fade mx-auto mt-7 max-w-2xl text-balance text-lg leading-8 text-muted-foreground sm:text-xl">
+            Trace Flow puts model requests and coding sessions in one observability workspace, so
+            you can find cost growth, context pressure, and unreliable tools before they become
+            expensive habits.
+          </p>
+
+          <div className="delay-450 animate-hero-fade mt-9 flex flex-col items-center gap-4">
+            <SignupButton isWaitlistMode={isWaitlistMode} />
+            <Link
+              href="#product"
+              className="text-sm font-medium text-muted-foreground underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-primary"
+            >
+              Explore the alpha dashboard
+            </Link>
+          </div>
+        </div>
+        <div className="relative mx-auto max-w-6xl animate-dashboard-reveal">
+          <div className="absolute -inset-4 rounded-[2rem] bg-primary/5 blur-3xl" />
+          <AgentAnalyticsPreview />
         </div>
       </div>
-
-      {/* Bottom fade into next section */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-linear-to-t from-background to-transparent" />
     </section>
   );

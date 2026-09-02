@@ -2,9 +2,8 @@ import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth0';
 import { HeroSection } from '@/components/landing/HeroSection';
 import { CodeExample } from '@/components/landing/CodeExample';
-import { FeaturesGrid } from '@/components/landing/FeaturesGrid';
+import { ProductShowcase } from '@/components/landing/ProductShowcase';
 import { HowItWorks } from '@/components/landing/HowItWorks';
-import { PricingSection } from '@/components/landing/PricingSection';
 import { FooterCTA } from '@/components/landing/FooterCTA';
 
 export default async function HomePage() {
@@ -18,10 +17,9 @@ export default async function HomePage() {
   return (
     <main>
       <HeroSection isWaitlistMode={isWaitlistMode} />
-      <CodeExample />
-      <FeaturesGrid />
+      <ProductShowcase />
       <HowItWorks />
-      <PricingSection />
+      <CodeExample />
       <FooterCTA isWaitlistMode={isWaitlistMode} />
     </main>
   );
