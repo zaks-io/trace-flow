@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Trace Flow'
+  short_description: 'Instrument LLM calls and query trace data'
+  default_prompt: 'Use $trace-flow to wire this app through the Trace Flow gateway or to investigate its trace data.'

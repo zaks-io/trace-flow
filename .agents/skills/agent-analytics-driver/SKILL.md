@@ -1,6 +1,8 @@
 ---
 name: agent-analytics-driver
 description: Autonomously advances the Agent Conversation Analytics build defined in docs/guides/agent-conversation-analytics/ROADMAP.md. One invocation does exactly one safe unit of work (claim -> implement -> verify -> local code-review -> commit), and opens a PR to main (never self-merges) at phase boundaries. Use when the user wants to "keep working the agent-analytics plan", "drive the roadmap", "build the next agent-analytics task", or run this under /goal or /loop. Scoped to Phases 0-4; hands off Phases 5-6 (Tauri GUI + signed release).
+metadata:
+  internal: true
 ---
 
 # Agent Analytics Driver
