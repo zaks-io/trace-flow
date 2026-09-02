@@ -21,20 +21,75 @@ const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;
 
-interface GeneratedSkill {
+interface SkillFrontmatter {
   name: string;
   description: string;
+}
+
+interface GeneratedSkill extends SkillFrontmatter {
   content: string;
   digest: string;
 }
 
 function readFrontmatterField(frontmatter: string, field: string, source: string): string {
-  const match = new RegExp(`^${field}:[ \\t]*(.+)$`, 'm').exec(frontmatter);
-  const value = match?.[1]?.trim().replace(/^(['"])(.*)\1$/, '$2');
-  if (!value) {
+  const lines = frontmatter.split('\n');
+  const start = lines.findIndex((line) => line.startsWith(`${field}:`));
+  if (start === -1) {
     throw new Error(`${source}: frontmatter is missing a "${field}" field`);
   }
+
+  const first = lines[start].slice(field.length + 1).trim();
+  if (first.startsWith('|') || first.startsWith('>')) {
+    throw new Error(`${source}: "${field}" is a YAML block scalar; use a plain or quoted scalar`);
+  }
+
+  // A plain scalar folds across more-indented continuation lines. Join them
+  // instead of reading the first line, which would publish a truncated value.
+  const parts = [first];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!/^\s/.test(line) || line.trim() === '') break;
+    parts.push(line.trim());
+  }
+
+  const value = parts
+    .join(' ')
+    .trim()
+    .replace(/^(['"])([\s\S]*)\1$/, '$2');
+  if (!value) {
+    throw new Error(`${source}: frontmatter field "${field}" is empty`);
+  }
   return value;
+}
+
+export function parseSkillFrontmatter(
+  content: string,
+  expectedName: string,
+  source: string,
+): SkillFrontmatter {
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(content)?.[1];
+  if (!frontmatter) {
+    throw new Error(`${source}: missing YAML frontmatter`);
+  }
+
+  const name = readFrontmatterField(frontmatter, 'name', source);
+  const description = readFrontmatterField(frontmatter, 'description', source);
+
+  if (name !== expectedName) {
+    throw new Error(
+      `${source}: frontmatter name "${name}" does not match directory "${expectedName}"`,
+    );
+  }
+  if (name.length > MAX_NAME_LENGTH || !NAME_PATTERN.test(name)) {
+    throw new Error(`${source}: name "${name}" is not a valid discovery skill name`);
+  }
+  if (description.length > MAX_DESCRIPTION_LENGTH) {
+    throw new Error(
+      `${source}: description is ${description.length} characters, over the ${MAX_DESCRIPTION_LENGTH} limit`,
+    );
+  }
+
+  return { name, description };
 }
 
 function readSkill(dirName: string): GeneratedSkill {
@@ -48,29 +103,8 @@ function readSkill(dirName: string): GeneratedSkill {
     throw new Error(`${source}: not valid UTF-8, so the digest cannot describe the served bytes`);
   }
 
-  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(content)?.[1];
-  if (!frontmatter) {
-    throw new Error(`${source}: missing YAML frontmatter`);
-  }
-
-  const name = readFrontmatterField(frontmatter, 'name', source);
-  const description = readFrontmatterField(frontmatter, 'description', source);
-
-  if (name !== dirName) {
-    throw new Error(`${source}: frontmatter name "${name}" does not match directory "${dirName}"`);
-  }
-  if (name.length > MAX_NAME_LENGTH || !NAME_PATTERN.test(name)) {
-    throw new Error(`${source}: name "${name}" is not a valid discovery skill name`);
-  }
-  if (description.length > MAX_DESCRIPTION_LENGTH) {
-    throw new Error(
-      `${source}: description is ${description.length} characters, over the ${MAX_DESCRIPTION_LENGTH} limit`,
-    );
-  }
-
   return {
-    name,
-    description,
+    ...parseSkillFrontmatter(content, dirName, source),
     content,
     digest: `sha256:${createHash('sha256').update(raw).digest('hex')}`,
   };
