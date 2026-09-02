@@ -1,2 +1,7 @@
 User-agent: *
-Disallow: /
+Allow: /
+Disallow: /api/
+Disallow: /app/
+Disallow: /auth/
+
+Sitemap: https://trace-flow.dev/sitemap.xml
