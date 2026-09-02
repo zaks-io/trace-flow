@@ -37,7 +37,7 @@ export function ProductShowcase() {
                     LLM requests
                   </div>
                   <h3 className="mt-2 text-xl font-semibold tracking-tight sm:text-2xl">
-                    Every provider, one cost model
+                    Supported providers, one cost model
                   </h3>
                 </div>
                 <span className="rounded-full border border-border bg-card px-3 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
