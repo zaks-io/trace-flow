@@ -49,7 +49,7 @@ app.doc('/openapi.json', {
     version: '1.0.0',
     description: 'OpenTelemetry trace ingestion API for observability and analytics.',
   },
-  servers: [{ url: 'https://trace-flow.dev', description: 'Production' }],
+  servers: [{ url: 'https://gateway.trace-flow.dev', description: 'Production' }],
   tags: [{ name: 'Traces', description: 'OpenTelemetry trace ingestion endpoints' }],
   security: [{ apiKey: [] }],
 });
