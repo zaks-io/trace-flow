@@ -10,6 +10,13 @@ export const API_CATALOG_PATH = '/.well-known/api-catalog';
 export const API_CATALOG_CONTENT_TYPE =
   'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"';
 
+export const HOMEPAGE_DISCOVERY_LINK_HEADER = [
+  `<${API_CATALOG_PATH}>; rel="api-catalog"; type="application/linkset+json"`,
+  '<https://gateway.trace-flow.dev/openapi.json>; rel="service-desc"; type="application/json"',
+  '</docs/sdk-reference.md>; rel="service-doc"; type="text/markdown"',
+  '</llms.txt>; rel="describedby"; type="text/plain"',
+].join(', ');
+
 const GATEWAY_URL = 'https://gateway.trace-flow.dev';
 const MCP_URL = 'https://mcp.trace-flow.dev';
 
