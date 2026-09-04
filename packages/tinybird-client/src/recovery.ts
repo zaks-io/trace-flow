@@ -259,7 +259,7 @@ export class TinybirdRecoveryStore {
       records.push(record);
       bytes += recordBytes;
     }
-    const lastId = records.at(-1)?.id ?? null;
+    const lastId = records[records.length - 1]?.id ?? null;
     const hasMore = rows.some((row) => lastId === null || row.id > lastId);
     return { records, nextAfterId: hasMore ? lastId : null };
   }
