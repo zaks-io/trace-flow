@@ -113,5 +113,21 @@ el('disconnect').addEventListener('click', async () => {
   await refresh();
 });
 
+el('update').addEventListener('click', async () => {
+  const button = el('update');
+  button.disabled = true;
+  button.textContent = 'Checking for updates…';
+  msg('Checking for the latest version…');
+  try {
+    const result = await invoke('update_to_latest');
+    msg(`Trace Flow Desktop ${result.currentVersion} is up to date.`);
+  } catch (err) {
+    msg(`Update failed: ${err}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Update to latest';
+  }
+});
+
 refresh();
 setInterval(refresh, 4000);

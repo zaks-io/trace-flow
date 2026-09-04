@@ -1,6 +1,16 @@
 name: Desktop Release
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/desktop-release.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'package.json'
+      - 'bun.lock'
+      - 'packages/collector-*/**'
+      - 'apps/desktop/**'
   workflow_dispatch:
     inputs:
       platform:
@@ -20,12 +30,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ inputs.platform }}
+  group: desktop-release-${{ inputs.platform || 'both' }}
   cancel-in-progress: false
 
 env:
-  GH_RELEASE_LATEST_URL: https://github.com/zaks-io/trace-flow/releases/latest/download/traceflow-desktop-latest.json
+  R2_BUCKET: static
   RUST_BACKTRACE: 1
+  UPDATE_ROOT: https://downloads.zaks.sh/trace-flow/desktop
 
 jobs:
   setup:
@@ -34,18 +45,31 @@ jobs:
     timeout-minutes: 5
     outputs:
       include: ${{ steps.matrix.outputs.include }}
-      version: ${{ steps.matrix.outputs.version }}
+      platform: ${{ steps.platform.outputs.platform }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      - id: matrix
+      - id: platform
         env:
-          PLATFORM: ${{ inputs.platform }}
+          PLATFORM: ${{ inputs.platform || 'both' }}
         run: |
           set -euo pipefail
-          version=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          case "$PLATFORM" in
+            both|macos|windows) echo "platform=$PLATFORM" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::unsupported desktop platform: $PLATFORM"
+              exit 1
+              ;;
+          esac
+
+      - id: matrix
+        env:
+          PLATFORM: ${{ steps.platform.outputs.platform }}
+        run: |
+          set -euo pipefail
           macos='{"name":"macos","runner":"blacksmith-6vcpu-macos-latest","target":"aarch64-apple-darwin"}'
           windows='{"name":"windows","runner":"blacksmith-4vcpu-windows-2025","target":"x86_64-pc-windows-msvc"}'
           case "$PLATFORM" in
@@ -53,10 +77,58 @@ jobs:
             windows) include="[$windows]" ;;
             *) include="[$macos,$windows]" ;;
           esac
-          {
-            echo "include=$include"
-            echo "version=$version"
-          } >> "$GITHUB_OUTPUT"
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
+      - id: version
+        name: Resolve desktop release version
+        run: |
+          set -euo pipefail
+          base_version=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          if [[ ! "$base_version" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]]; then
+            echo "::error::desktop version must be plain major.minor.patch semver, got: $base_version"
+            exit 1
+          fi
+
+          build_number="$GITHUB_RUN_NUMBER"
+          if [ "$build_number" -gt 65535 ]; then
+            echo "::error::GitHub run number $build_number exceeds the Windows patch version limit"
+            exit 1
+          fi
+
+          version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${build_number}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved desktop release version $version."
+
+      - name: Validate desktop release version
+        if: steps.platform.outputs.platform == 'both' && github.ref == 'refs/heads/main'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          manifest_file=$(mktemp)
+          trap 'rm -f "$manifest_file"' EXIT
+
+          http_code=$(curl -sS -L \
+            -w '%{http_code}' \
+            -o "$manifest_file" \
+            "${UPDATE_ROOT}/latest.json")
+
+          if [ "$http_code" = "404" ]; then
+            echo "No published desktop manifest found; allowing the first release."
+            exit 0
+          fi
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::failed to fetch the published desktop manifest; HTTP $http_code"
+            exit 1
+          fi
+
+          remote_version=$(jq -er '.version' "$manifest_file")
+          highest=$(printf '%s\n%s\n' "$remote_version" "$VERSION" | sort -V | tail -n1)
+          if [ "$VERSION" = "$remote_version" ] || [ "$highest" != "$VERSION" ]; then
+            echo "::error::desktop version $VERSION must be newer than published version $remote_version"
+            exit 1
+          fi
+          echo "Desktop release version $VERSION is newer than $remote_version."
 
   build:
     name: Build (${{ matrix.name }})
@@ -129,6 +201,7 @@ jobs:
       - name: Write release Tauri config
         shell: bash
         env:
+          DESKTOP_VERSION: ${{ needs.setup.outputs.version }}
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
         run: |
           set -euo pipefail
@@ -142,6 +215,7 @@ jobs:
 
             const configPath = "apps/desktop/src-tauri/tauri.conf.json";
             const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+            config.version = process.env.DESKTOP_VERSION;
             config.bundle = {
               ...(config.bundle ?? {}),
               targets: "all",
@@ -150,7 +224,7 @@ jobs:
             config.plugins = {
               ...(config.plugins ?? {}),
               updater: {
-                endpoints: [process.env.GH_RELEASE_LATEST_URL],
+                endpoints: [`${process.env.UPDATE_ROOT}/latest.json`],
                 pubkey: process.env.TAURI_UPDATER_PUBLIC_KEY,
                 windows: { installMode: "passive" },
               },
@@ -199,23 +273,27 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish GitHub Release
+    name: Publish to R2
     needs: [setup, build]
-    if: inputs.platform == 'both'
+    if: needs.setup.outputs.platform == 'both' && github.ref == 'refs/heads/main'
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     timeout-minutes: 15
-    permissions:
-      contents: write
+    environment: Production
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       RELEASE_NOTES: ${{ inputs.release_notes }}
       VERSION: ${{ needs.setup.outputs.version }}
-      RELEASE_TAG: traceflow-desktop-v${{ needs.setup.outputs.version }}
-      RELEASE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -248,21 +326,62 @@ jobs:
               exit 1
             fi
           done
-          mkdir -p release-assets
-          cp "$DMG_FILE" release-assets/traceflow-desktop-macos-arm64.dmg
-          cp "$DARWIN_BUNDLE" release-assets/traceflow-desktop-macos-arm64.app.tar.gz
-          cp "${DARWIN_BUNDLE}.sig" release-assets/traceflow-desktop-macos-arm64.app.tar.gz.sig
-          cp "$WIN_BUNDLE" release-assets/traceflow-desktop-windows-x64-setup.exe
-          cp "${WIN_BUNDLE}.sig" release-assets/traceflow-desktop-windows-x64-setup.exe.sig
-          cp "$MSI_FILE" release-assets/traceflow-desktop-windows-x64.msi
           {
-            echo "dmg_file=release-assets/traceflow-desktop-macos-arm64.dmg"
-            echo "darwin_bundle=release-assets/traceflow-desktop-macos-arm64.app.tar.gz"
-            echo "darwin_name=traceflow-desktop-macos-arm64.app.tar.gz"
-            echo "windows_bundle=release-assets/traceflow-desktop-windows-x64-setup.exe"
-            echo "windows_name=traceflow-desktop-windows-x64-setup.exe"
-            echo "msi_file=release-assets/traceflow-desktop-windows-x64.msi"
+            echo "dmg_file=$DMG_FILE"
+            echo "darwin_bundle=$DARWIN_BUNDLE"
+            echo "darwin_name=$(basename "$DARWIN_BUNDLE")"
+            echo "windows_bundle=$WIN_BUNDLE"
+            echo "windows_name=$(basename "$WIN_BUNDLE")"
+            echo "msi_file=$MSI_FILE"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Upload versioned artifacts
+        env:
+          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
+          DARWIN_BUNDLE: ${{ steps.meta.outputs.darwin_bundle }}
+          MSI_FILE: ${{ steps.meta.outputs.msi_file }}
+          WIN_BUNDLE: ${{ steps.meta.outputs.windows_bundle }}
+        run: |
+          set -euo pipefail
+          destination="${R2_BUCKET}/trace-flow/desktop/${VERSION}"
+          upload() {
+            local source=$1
+            local content_type=$2
+            bunx wrangler r2 object put \
+              "${destination}/$(basename "$source")" \
+              --remote \
+              --file "$source" \
+              --content-type "$content_type" \
+              --cache-control 'public, max-age=31536000, immutable' \
+              --force
+          }
+          upload "$DMG_FILE" application/x-apple-diskimage
+          upload "$DARWIN_BUNDLE" application/gzip
+          upload "${DARWIN_BUNDLE}.sig" text/plain
+          upload "$WIN_BUNDLE" application/vnd.microsoft.portable-executable
+          upload "${WIN_BUNDLE}.sig" text/plain
+          upload "$MSI_FILE" application/x-msi
+
+      - name: Publish latest installers
+        env:
+          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
+          WIN_BUNDLE: ${{ steps.meta.outputs.windows_bundle }}
+        run: |
+          set -euo pipefail
+          bunx wrangler r2 object put \
+            "${R2_BUCKET}/trace-flow/desktop/latest/trace-flow-desktop.dmg" \
+            --remote \
+            --file "$DMG_FILE" \
+            --content-type application/x-apple-diskimage \
+            --cache-control 'no-cache, max-age=0' \
+            --force
+          bunx wrangler r2 object put \
+            "${R2_BUCKET}/trace-flow/desktop/latest/trace-flow-desktop-setup.exe" \
+            --remote \
+            --file "$WIN_BUNDLE" \
+            --content-type application/vnd.microsoft.portable-executable \
+            --cache-control 'no-cache, max-age=0' \
+            --force
 
       - name: Build desktop updater manifest
         env:
@@ -279,7 +398,7 @@ jobs:
           DARWIN_SIG=$(cat "${DARWIN_BUNDLE}.sig")
           WIN_SIG=$(cat "${WINDOWS_BUNDLE}.sig")
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+          base_url="${UPDATE_ROOT}/${VERSION}"
           jq -n \
             --arg v "$VERSION" \
             --arg notes "$notes" \
@@ -291,45 +410,34 @@ jobs:
             '{version:$v, notes:$notes, pub_date:$date, platforms:{
               "darwin-aarch64":{signature:$darwin_sig, url:$darwin_url},
               "windows-x86_64":{signature:$win_sig, url:$win_url}
-            }}' > traceflow-desktop-latest.json
-          jq . traceflow-desktop-latest.json
+          }}' > latest.json
+          jq . latest.json
 
-      - name: Create draft GitHub Release
-        env:
-          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
-          DARWIN_BUNDLE: ${{ steps.meta.outputs.darwin_bundle }}
-          MSI_FILE: ${{ steps.meta.outputs.msi_file }}
-          WIN_BUNDLE: ${{ steps.meta.outputs.windows_bundle }}
+      - name: Publish updater manifest
         run: |
           set -euo pipefail
-          notes="$RELEASE_NOTES"
-          if [ -z "$notes" ]; then
-            notes="Trace Flow Desktop ${VERSION}"
-          fi
-          printf '%s\n' "$notes" > release-notes.txt
-          title="Trace Flow Desktop ${VERSION}"
+          bunx wrangler r2 object put \
+            "${R2_BUCKET}/trace-flow/desktop/latest.json" \
+            --remote \
+            --file latest.json \
+            --content-type application/json \
+            --cache-control 'no-cache, max-age=0' \
+            --force
 
-          # Always a DRAFT: nothing is published, nothing is immutable, no git
-          # tag is created. GitHub only creates the tag (RELEASE_TAG, at
-          # RELEASE_SHA) when you hit "Publish release" in the UI. Re-running
-          # replaces the prior draft for this version so they don't pile up.
-          existing=$(gh release list --json name,isDraft,tagName \
-            --jq ".[] | select(.name == \"$title\" and .isDraft) | .tagName" || true)
-          if [ -n "$existing" ]; then
-            gh release delete "$existing" --yes || true
-          fi
-
-          gh release create "$RELEASE_TAG" \
-            --draft \
-            --target "$RELEASE_SHA" \
-            --title "$title" \
-            --notes-file release-notes.txt \
-            "$DMG_FILE" \
-            "$DARWIN_BUNDLE" \
-            "${DARWIN_BUNDLE}.sig" \
-            "$WIN_BUNDLE" \
-            "${WIN_BUNDLE}.sig" \
-            "$MSI_FILE" \
-            traceflow-desktop-latest.json
-
-          echo "::notice::Draft release '$title' created. Download the installers from the draft to test. Hit 'Publish release' in the GitHub UI when you're ready to ship."
+      - name: Verify public update channel
+        run: |
+          set -euo pipefail
+          manifest_file=$(mktemp)
+          trap 'rm -f "$manifest_file"' EXIT
+          curl -fsSL \
+            "${UPDATE_ROOT}/latest.json?run=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+            -o "$manifest_file"
+          jq -e --arg version "$VERSION" '
+            .version == $version and
+            (.platforms["darwin-aarch64"].signature | length > 0) and
+            (.platforms["windows-x86_64"].signature | length > 0)
+          ' "$manifest_file" >/dev/null
+          jq -r '.platforms[].url' "$manifest_file" | while IFS= read -r url; do
+            curl -fsSIL "$url" >/dev/null
+          done
+          echo "Published and verified Trace Flow Desktop ${VERSION}."

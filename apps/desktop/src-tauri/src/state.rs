@@ -60,12 +60,27 @@ pub struct RecentError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum UpdateStatus {
+    #[default]
+    Idle,
+    Checking,
+    Installing {
+        version: String,
+    },
+    UpToDate {
+        version: String,
+    },
+    Failed,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppState {
     pub connection: ConnectionState,
     pub sync: SyncStatus,
     pub sources: SourceCounts,
     pub autostart: bool,
+    pub update: UpdateStatus,
     pub last_sync_at: Option<SystemTime>,
     pub recent_errors: Vec<RecentError>,
 }

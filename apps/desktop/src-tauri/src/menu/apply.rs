@@ -4,7 +4,7 @@
 use tauri::Runtime;
 
 use crate::menu::MenuHandles;
-use crate::state::{AppState, ConnectionState, SyncStatus};
+use crate::state::{AppState, ConnectionState, SyncStatus, UpdateStatus};
 
 /// Update every menu item from a state snapshot. Best-effort: a failed set is ignored, not fatal —
 /// the next state change repaints the whole menu, so a dropped single update self-heals.
@@ -42,4 +42,17 @@ pub fn apply_state<R: Runtime>(handles: &MenuHandles<R>, state: &AppState) {
     let _ = handles.action_pause.set_text(pause_label);
 
     let _ = handles.autostart.set_checked(state.autostart);
+
+    let update_label = match &state.update {
+        UpdateStatus::Idle => "Update to latest".to_string(),
+        UpdateStatus::Checking => "Checking for updates\u{2026}".to_string(),
+        UpdateStatus::Installing { version } => format!("Installing {version}\u{2026}"),
+        UpdateStatus::UpToDate { version } => format!("Up to date \u{00B7} {version}"),
+        UpdateStatus::Failed => "Update failed \u{00B7} Retry".to_string(),
+    };
+    let _ = handles.action_update.set_text(update_label);
+    let _ = handles.action_update.set_enabled(!matches!(
+        &state.update,
+        UpdateStatus::Checking | UpdateStatus::Installing { .. }
+    ));
 }
