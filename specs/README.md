@@ -1,15 +1,18 @@
 # Trace Flow Specs
 
-Architectural decisions, technology choices, and contextual information for the Trace Flow LLM observability platform.
+Architectural decisions, technology choices, and contextual information for Trace Flow's model API
+and coding-agent observability platform.
 
 ## Quick Reference
 
-**What is Trace Flow?** An LLM observability platform that captures requests/responses from AI providers, stores them as OpenTelemetry traces, and displays analytics in a dashboard.
+**What is Trace Flow?** A private-alpha observability platform for proxied model API requests and
+locally collected coding-agent sessions. It stores model calls as OpenTelemetry spans and agent
+activity as redacted typed facts, then exposes both through the dashboard and MCP.
 
 **Core Stack:**
 
 - **Runtime**: Cloudflare Workers (edge deployment)
-- **Storage**: R2 (bodies), Tinybird/ClickHouse (traces), Convex (users/config)
+- **Storage**: R2 (Body Objects), Tinybird/ClickHouse (traces and agent facts), Convex (control plane)
 - **Queue**: Cloudflare Queues (async processing)
 - **Frontend**: Next.js + React + Shadcn + Tailwind
 - **Auth**: Auth0 + Convex JWT tokens
@@ -25,7 +28,7 @@ Client → Proxy Worker → LLM Provider
               ↓
       Tinybird otel_*
               ↓
-    Web Dashboard ← API Worker (bodies)
+    Web Dashboard ← Pipes API (queries) + Raw API (bodies)
 
 Collector CLI/Desktop → Agent Ingest Worker → Agent Queue
                               ↓
@@ -34,7 +37,12 @@ Collector CLI/Desktop → Agent Ingest Worker → Agent Queue
                       Tinybird agent_*
                               ↓
                          /app/agents
+
+MCP → Convex OAuth → Pipes API → Tinybird
 ```
+
+`apps/archive-api` is a disabled Conversation Archive authorization scaffold. It has no persistence,
+production configuration, or deployed origin.
 
 ## Documentation
 
@@ -71,6 +79,10 @@ What each part of the system does.
 - [Web](components/web.md) - Dashboard frontend
 - [Convex](components/convex.md) - Backend services
 
+Pipes API, MCP, and Analyst Sandbox are implemented services but do not yet have standalone files in
+`specs/components/`. Their current boundaries are defined in [CONTEXT.md](../CONTEXT.md),
+[AGENTS.md](../AGENTS.md), and the source entrypoints under `apps/`.
+
 ### Features
 
 Planned and implemented feature specs.
@@ -97,3 +109,4 @@ How we connect to external services.
 - [CLAUDE.md](../CLAUDE.md) - Development commands and patterns
 - [SETUP.md](../SETUP.md) - Cloudflare resources setup
 - [agents.md](../apps/web/public/agents.md) - Integration guide for AI agents
+- [Collector guide](../apps/web/public/docs/collector.md) - Desktop/CLI sources, privacy, and status

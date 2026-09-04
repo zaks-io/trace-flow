@@ -1,10 +1,14 @@
 # Proxy Worker
 
-The Proxy Worker is the entry point for all LLM requests flowing through Trace Flow. It operates as a transparent streaming proxy that captures request/response data for observability without adding latency to the client experience.
+The Proxy Worker is the entry point for model requests and direct OTLP exports. It streams provider
+responses while capturing observability data, then makes accepted captures durable before reporting
+terminal success.
 
 ## What It Does
 
-The proxy receives HTTP requests destined for LLM providers, forwards them immediately, and streams responses back to clients in real-time. Simultaneously, it captures request and response bodies for storage and analysis. The critical design principle is that observability operations never block the client response.
+The proxy forwards provider requests immediately and streams response chunks as they arrive. It also
+captures transaction metadata and optional bodies. The stream can start before persistence, but its
+terminal byte and EOF wait until the R2 delivery envelope exists.
 
 ## Request Flow
 
@@ -12,8 +16,11 @@ The proxy receives HTTP requests destined for LLM providers, forwards them immed
 2. Proxy validates the API key against KV namespace
 3. Request is forwarded to the target provider
 4. Response streams back to client immediately
-5. Request/response bodies are stored in R2 asynchronously
-6. Metadata is enqueued for processing by the Proxy Consumer
+5. A versioned delivery envelope containing metadata and the optional encrypted Body Object is stored
+   under `trace-deliveries/`
+6. The response reaches terminal EOF after durable intake
+7. A small envelope reference is enqueued for Proxy Consumer; a scheduled sweep republishes stale
+   references
 
 ## Provider Routing
 
@@ -43,13 +50,14 @@ For response streaming, the proxy creates a TransformStream that passes chunks t
 - First token timestamp (TTFT) for streaming latency metrics
 - Total response size with truncation at 20MB to prevent OOM
 
-The transform never blocks the client response. All captured data is processed after the response completes.
+The transform forwards chunks immediately. It holds terminal EOF until durable intake succeeds, so a
+captured response is not reported complete while its only recovery copy is still in memory.
 
-## The waitUntil Pattern
+## Durable intake and `waitUntil`
 
-All storage and queueing operations happen inside `c.executionCtx.waitUntil()`. This Cloudflare Workers API allows the proxy to return the response immediately while continuing to execute async operations. The worker stays alive until all waitUntil promises resolve.
-
-This pattern is essential for low-latency proxying. Even if R2 storage is slow or the queue is backed up, clients experience no additional latency.
+R2 delivery-envelope creation is the acceptance boundary and gates terminal success. Queue
+publication, stale-envelope sweeps, skipped-exchange bookkeeping, and log flushing use
+`c.executionCtx.waitUntil()` so they may outlive the handler without becoming the only durable copy.
 
 ## SSE Streaming Support
 
@@ -62,11 +70,14 @@ For Server-Sent Events (SSE) responses (`Content-Type: text/event-stream`), the 
 
 ## R2 Storage
 
-Request and response bodies are stored together in R2 with consistent key naming:
+Request and response bodies are encrypted together inside the pending delivery envelope. Proxy
+Consumer later copies that encrypted payload to the canonical Body Object key:
 
+- Pending delivery: `trace-deliveries/{environment-namespace}-{uuid}`
 - Combined body payload: `bodies/{requestId}`
 
-Each request gets a unique ID, so bodies are never overwritten even when multiple requests share the same trace ID. Storage failures are handled gracefully; the queue message is still sent without stored body data.
+When body storage is omitted, the envelope contains metadata only. A failed envelope write is a
+retryable intake failure, not a body-less queue success.
 
 Body objects are encrypted before storage using `BODY_ENCRYPTION_ROOT_KEY`, `BODY_ENCRYPTION_KEY_ID`,
 and the owning organization id. The Proxy refuses to store bodies when the encryption context is
@@ -74,13 +85,9 @@ missing.
 
 ## Queue Message Structure
 
-After capturing data, the proxy enqueues a message containing:
-
-- Request and response metadata (provider, status, timestamps)
-- Parsed token usage from response body or SSE events
-- Error details if the response was an error
-- SSE stream data for streaming responses
-- W3C trace context (traceparent, tracestate, baggage)
+After capture, the proxy enqueues `TraceDeliveryMessage`: a version marker, the R2 envelope key, and
+optional Sentry trace context. Request metadata, tokens, errors, SSE data, W3C context, and the optional
+encrypted Body Object remain in the referenced envelope.
 
 ## W3C Trace Context Support
 
@@ -98,11 +105,11 @@ In addition to LLM proxying, the worker exposes a `/v1/traces` endpoint for dire
 
 ## Bindings
 
-| Binding         | Type         | Purpose                               |
-| --------------- | ------------ | ------------------------------------- |
-| `REQUEST_QUEUE` | Queue        | Sends captured data to Proxy Consumer |
-| `STORAGE`       | R2 Bucket    | Stores request/response bodies        |
-| `API_KEYS`      | KV Namespace | Validates API keys                    |
+| Binding         | Type         | Purpose                                     |
+| --------------- | ------------ | ------------------------------------------- |
+| `REQUEST_QUEUE` | Queue        | Sends delivery references to Proxy Consumer |
+| `STORAGE`       | R2 Bucket    | Stores pending delivery envelopes           |
+| `API_KEYS`      | KV Namespace | Validates API keys                          |
 
 Secrets and variables:
 
@@ -122,5 +129,5 @@ API key validation and billing status KV reads use a two-layer cache (module-sco
 - `apps/proxy/src/providers.ts` - Provider routing configuration
 - `apps/proxy/src/streaming/capture.ts` - Stream duplication and capture logic
 - `apps/proxy/src/streaming/sse.ts` - SSE event parsing
-- `apps/proxy/src/queue.ts` - Queue message construction
-- `apps/proxy/src/storage.ts` - R2 storage operations
+- `apps/proxy/src/delivery.ts` - delivery-envelope storage, publication, and sweep
+- `apps/proxy/src/transaction.ts` - transaction construction and durable intake

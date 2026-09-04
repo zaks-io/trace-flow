@@ -1,6 +1,9 @@
 # AGENTS.md
 
-LLM observability platform on Cloudflare Workers. Seven workers: **Proxy** (streaming LLM capture), **Proxy Consumer** (LLM queue to Tinybird), **Agent Ingest** (collector fact intake), **Agent Consumer** (agent queue to Tinybird), **Pipes API** (Tinybird Pipe forwarding), **Raw API** (R2 Body Object retrieval), **Web** (Next.js dashboard via OpenNext).
+Model API and coding-agent observability platform on Cloudflare Workers. Production deploys nine
+services: **Proxy**, **Proxy Consumer**, **Agent Ingest**, **Agent Consumer**, **Pipes API**, **Raw
+API**, **MCP**, **Analyst Sandbox**, and **Web**. `apps/archive-api` is a disabled Conversation
+Archive authorization scaffold with no persistence or production environment.
 
 Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web/public/agents.md)
 
@@ -9,11 +12,15 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 ### LLM Request Path
 
 1. Proxy receives LLM request via route paths (`/openai/*`, `/anthropic/*`, `/openrouter/*`, `/groq/*`, `/google/*`)
-2. `tee()` duplicates request stream — one for proxying, one for R2 capture
+2. `tee()` duplicates the request stream: one branch for proxying and one for capture
 3. `TransformStream` captures response chunks while streaming back to client
-4. `c.executionCtx.waitUntil()` defers R2 storage + queue enqueue (non-blocking)
-5. Proxy Consumer processes queue batches → sends OTel traces to Tinybird
-6. Web fetches trace metadata through Pipes API, bodies through Raw API
+4. Proxy stores an encrypted delivery envelope under `trace-deliveries/` before a captured response
+   reaches terminal EOF; the envelope includes the Body Object when body storage is enabled
+5. Queue messages carry a small delivery reference; publication and scheduled republishing run in
+   `c.executionCtx.waitUntil()`
+6. Proxy Consumer loads the envelope, copies its encrypted body to `bodies/{requestId}`, durably
+   stages the OTel spans, then removes the delivery envelope and acknowledges the queue message
+7. Web fetches trace metadata through Pipes API and bodies through Raw API
 
 ### Agent Conversation Path
 
@@ -27,7 +34,9 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 **Why `tee()`**: CF Workers streams are read-once. Both streams MUST be consumed or the Worker hangs.
 
-**Why `waitUntil()`**: Without it, the Worker terminates before async ops complete → data loss. Response returns immediately for low latency.
+**Why `waitUntil()`**: Queue publication, scheduled recovery, logging, and skipped-exchange work must
+outlive the request handler. Durable R2 intake itself gates the terminal byte/EOF for captured
+responses; it is not a best-effort background write.
 
 ## Development Gotchas
 
@@ -72,9 +81,11 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 - **Shared types**: `@trace-flow/types` — defines contract between workers
 - **Shared utils**: `@trace-flow/utils`
-- **R2 keys**: `bodies/${requestId}` (single object with request + response)
+- **R2 keys**: pending delivery envelopes live under `trace-deliveries/`; after consumer handoff,
+  `bodies/${requestId}` holds the single encrypted request + response Body Object
 - **Stream handling**: Always `tee()`, both streams must be consumed
-- **Queue consumer**: Must call `message.ack()` after processing
+- **Queue consumer**: Call `message.ack()` only after durable staging succeeds and any referenced
+  delivery envelope has completed handoff
 - **OTel**: Proxy Consumer uses `@microlabs/otel-cf-workers`
 - **Agent ingest auth**: Collector Credentials are separate from API keys; they live in Convex, sync to `COLLECTOR_CREDS`, and cannot call the Proxy
 - **Read-side secret boundary**: `apps/pipes-api` forwards Convex-minted Pipe Tokens and never binds raw-object credentials or `TINYBIRD_ADMIN_TOKEN`; `apps/api` reads Body Objects and never contains Tinybird Pipe forwarding.
@@ -83,7 +94,11 @@ Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web
 
 ## Deployment
 
-**NEVER deploy production manually** — GitHub Actions deploys on merge to `main`. Convex deploys first and exports both `.convex.cloud` and `.convex.site` URLs through `GITHUB_OUTPUT`; Web and Analyst Sandbox consume the `.cloud` URL, while Proxy, Agent Ingest, and MCP consume the `.site` URL. Workers deploy in parallel where their dependencies allow; the Tinybird schema deploys before the proxy/agent consumers (schema → consumers) so a consumer never ships ahead of the live schema.
+**NEVER deploy production manually.** GitHub Actions deploys on merge to `main`. Convex deploys
+first and exports both `.convex.cloud` and `.convex.site` URLs through `GITHUB_OUTPUT`; Web and
+Analyst Sandbox consume the `.cloud` URL, while Proxy, Agent Ingest, and MCP consume the `.site` URL.
+The Tinybird schema deploys before the proxy/agent consumers. Proxy Consumer deploys before Proxy so
+the consumer can read every queued delivery-reference version before producers emit it.
 
 - Dev deploy: `bun run deploy:dev`
 - PRs get automatic preview environments (see `.github/workflows/preview.yml`)

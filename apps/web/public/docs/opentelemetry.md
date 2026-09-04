@@ -5,7 +5,7 @@ Set up your own tracer for custom spans, events, and attributes, then link LLM c
 ## 1) Install dependencies
 
 ```bash
-npm install @opentelemetry/api @opentelemetry/sdk-trace-base \
+npm install @opentelemetry/api @opentelemetry/sdk-node \
   @opentelemetry/exporter-trace-otlp-http \
   @opentelemetry/resources @opentelemetry/semantic-conventions
 ```
@@ -14,9 +14,9 @@ npm install @opentelemetry/api @opentelemetry/sdk-trace-base \
 
 ```typescript
 import { trace } from '@opentelemetry/api';
-import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 
 const exporter = new OTLPTraceExporter({
@@ -24,12 +24,12 @@ const exporter = new OTLPTraceExporter({
   headers: { 'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY! },
 });
 
-const provider = new BasicTracerProvider({
-  resource: new Resource({ [ATTR_SERVICE_NAME]: 'my-service' }),
+const sdk = new NodeSDK({
+  resource: resourceFromAttributes({ [ATTR_SERVICE_NAME]: 'my-service' }),
+  traceExporter: exporter,
 });
 
-provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-provider.register();
+sdk.start();
 
 export const tracer = trace.getTracer('my-service');
 ```
@@ -51,7 +51,7 @@ async function handleRequest(request: Request) {
     httpSpan.end();
 
     const llmSpan = tracer.startSpan('llm-call');
-    llmSpan.setAttribute('gen_ai.request.model', 'gpt-5');
+    llmSpan.setAttribute('gen_ai.request.model', process.env.OPENAI_MODEL!);
     llmSpan.end();
 
     rootSpan.setStatus({ code: SpanStatusCode.OK });
@@ -75,7 +75,7 @@ async function handleUserRequest(userMessage: string) {
     propagation.inject(context.active(), traceHeaders);
 
     const result = await generateText({
-      model: openai('gpt-5'),
+      model: openai(process.env.OPENAI_MODEL!),
       prompt: userMessage,
       headers: {
         ...traceHeaders,
@@ -89,17 +89,17 @@ async function handleUserRequest(userMessage: string) {
 }
 ```
 
-## 5) Serverless flush pattern
+## 5) Shut down cleanly
 
 ```typescript
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const response = await handleRequest(request);
-    ctx.waitUntil(provider.forceFlush());
-    return response;
-  },
-};
+process.once('SIGTERM', () => {
+  void sdk.shutdown();
+});
 ```
+
+Initialize this module before application code so libraries acquire the configured global tracer.
+For a serverless runtime, use that runtime's supported OpenTelemetry integration and lifecycle hook
+instead of copying the Node process example.
 
 ## Endpoint reference
 

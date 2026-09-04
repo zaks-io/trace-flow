@@ -1,8 +1,13 @@
 # Quick Start
 
-Get end-to-end LLM observability in minutes. Trace Flow links user events, API calls, LLM requests, tool calls, and final responses in one trace timeline.
+This guide connects model API traffic to Trace Flow. Gateway requests produce LLM spans and safe
+event metadata. Add W3C trace context or export application spans over OTLP when you want those LLM
+spans joined to the rest of an application trace.
 
-If you use Cursor, Claude Code, or another coding agent, you can also hand it [`/agents.md`](https://trace-flow.dev/agents.md) and let it wire the integration into your repo.
+To observe the coding agent itself, install the separate
+[coding-agent collector](https://trace-flow.dev/docs/collector). If you want an agent to wire your
+application's model calls through the gateway, give it
+[`/agents.md`](https://trace-flow.dev/agents.md).
 
 ## 1) Add your env vars
 
@@ -41,7 +46,7 @@ const openai = createOpenAI({
 import { generateText } from 'ai';
 
 const result = await generateText({
-  model: openai('gpt-5'),
+  model: openai(process.env.OPENAI_MODEL!),
   prompt: 'Plan a weekend trip to Portland.',
 });
 ```
@@ -58,7 +63,7 @@ const parentSpan = tracer.startSpan('user-request');
 const ctx = parentSpan.spanContext();
 
 const result = await generateText({
-  model: openai('gpt-5'),
+  model: openai(process.env.OPENAI_MODEL!),
   prompt: userMessage,
   headers: {
     traceparent: `00-${ctx.traceId}-${ctx.spanId}-01`,
@@ -77,16 +82,17 @@ parentSpan.end();
 | `traceparent`          | W3C format | Optional. Join an existing trace        |
 | `baggage`              | W3C format | Optional. Add filterable trace metadata |
 
-## What gets tracked
+## What can be tracked
 
-- Request and response bodies
-- Token usage (input, output, cached, reasoning)
-- Timing metrics (latency, time to first token)
+- Request and response bodies when recording is enabled and body storage is not omitted
+- Token usage reported by the provider, including cached or reasoning tokens where available
+- Timing metrics, including time to first token for streaming responses
 - Model/provider metadata and finish reason
 - Errors and status codes
 
 ## Next docs
 
 - [AI Agents](/docs/agents)
+- [Coding-Agent Collector](/docs/collector)
 - [SDK Reference](/docs/sdk-reference)
 - [OpenTelemetry](/docs/opentelemetry)

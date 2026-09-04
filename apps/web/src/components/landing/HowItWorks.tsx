@@ -3,7 +3,7 @@ const STEPS = [
     step: '1',
     title: 'Capture at the right boundary',
     description:
-      'Route model calls through the edge proxy. Private testers can also connect local Claude and Codex sessions.',
+      'Route model calls through the edge proxy. Private testers can also connect local Claude Code, Codex CLI, and macOS Cursor sessions.',
   },
   {
     step: '2',

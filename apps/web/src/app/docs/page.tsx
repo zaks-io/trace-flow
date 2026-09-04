@@ -17,8 +17,8 @@ export default function DocsIndexPage() {
           Trace Flow Docs
         </h1>
         <p className="max-w-2xl text-lg text-muted-foreground">
-          Learn how to integrate Trace Flow into your applications. Send traces, monitor LLM usage,
-          and gain insights into your AI workflows.
+          Connect model API traffic or the local coding-agent collector, then investigate both with
+          the dashboard and MCP.
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
@@ -42,8 +42,9 @@ export default function DocsIndexPage() {
         <div className="rounded-2xl border border-primary/20 bg-primary/5 p-6">
           <h2 className="text-lg font-semibold text-foreground">New workspace?</h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Start with Quick Start if you want to wire the integration by hand. If you use Cursor or
-            Claude Code, open <code>/agents.md</code> first and let your coding agent do the setup.
+            Start with Quick Start for model API traffic. For local Claude Code, Codex CLI, or
+            Cursor activity, use the Coding-Agent Collector guide. If an agent is wiring the gateway
+            into a repository, give it <code>/agents.md</code>.
           </p>
         </div>
       </section>

@@ -94,8 +94,9 @@ export function ProductShowcase() {
               See where long sessions go off course
             </h3>
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              The private alpha parses Claude and Codex sessions locally, redacts excerpts, and
-              turns them into bounded analytics instead of uploading a raw transcript by default.
+              The private alpha parses Claude Code, Codex CLI, and macOS Cursor sessions locally,
+              redacts excerpts, and turns them into bounded analytics instead of uploading a raw
+              transcript by default.
             </p>
             <div className="mt-8 space-y-5">
               <Capability
@@ -119,7 +120,7 @@ export function ProductShowcase() {
                 <div>
                   <div className="text-xs font-medium">Collector in private testing</div>
                   <div className="mt-1 text-[10px] text-muted-foreground">
-                    Claude and Codex today. Cursor is not supported yet.
+                    Claude Code, Codex CLI, and Cursor on macOS.
                   </div>
                 </div>
               </div>

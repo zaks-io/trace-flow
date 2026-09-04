@@ -1,108 +1,32 @@
 # Trace Flow
 
-LLM request proxy and analytics platform built on Cloudflare Workers.
+Observability for model API traffic and local coding-agent sessions, built on Cloudflare Workers,
+Convex, Tinybird, R2, and a local Rust collector.
 
-## Architecture
+Trace Flow is in private alpha. The model gateway is live. Agent Conversation Analytics has a
+working collector, production-shaped cloud ingestion implementation, dashboard, and desktop updater
+distribution, but remains launch-gated until the production checks in the
+[Agent Conversation Analytics roadmap](./docs/guides/agent-conversation-analytics/ROADMAP.md) are
+complete.
 
-The primary observability runtime contains seven Cloudflare Workers across two ingestion paths:
+## What Trace Flow observes
 
-- **Proxy** (`apps/proxy`) - LLM request proxy that logs requests and enqueues them for processing
-- **Proxy Consumer** (`apps/proxy-consumer`) - Queue consumer that writes LLM traces to Tinybird
-- **Agent Ingest** (`apps/agent-ingest`) - Collector intake worker for local AI-agent transcript facts
-- **Agent Consumer** (`apps/agent-consumer`) - Queue consumer that prices and writes agent facts to Tinybird
-- **Pipes API** (`apps/pipes-api`) - Forwards Convex-minted Tinybird Pipe Tokens to Tinybird
-- **Raw API** (`apps/api`) - Provides R2 access for fetching request/response bodies
-- **Web** (`apps/web`) - Next.js analytics dashboard (Cloudflare Workers via OpenNext)
+### Model API requests
 
-### How It Works
+Applications keep their provider SDK and provider API key, point the SDK at the Trace Flow gateway,
+and add an organization-scoped Trace Flow API key. The gateway streams the provider response back to
+the caller while it captures timing, token usage, estimated cost, trace context, and optional request
+and response bodies.
 
-When a client sends a request to your LLM API endpoint, the Cloudflare Worker acts as an edge proxy. The Worker receives the call, extracts any tracing headers (such as those for distributed tracing or observability), and immediately begins streaming the response from the upstream LLM provider back to the user. This streaming approach supports low-latency, token-by-token delivery as responses are generated.
+Supported providers:
 
-**Supported Providers**: OpenAI, Anthropic, Google Gemini, OpenRouter, and Groq.
-
-While streaming the response, the Worker accumulates the necessary observability metadata, such as timing, request/response bodies, and trace context. Once the response is fully streamed, the Worker asynchronously sends this metadata and trace data to a Cloudflare Queue. This ensures that the user-facing proxy remains fast and that any downstream processing does not block the user experience.
-
-The Cloudflare Queue acts as a buffer and decouples the ingestion workload from the rest of the pipeline. The Proxy Consumer processes messages from the queue, handling retries and error cases as needed. This worker is responsible for writing the finalized trace, request, and response metadata into ClickHouse for long-term storage and analytics.
-
-Agent Conversation Analytics uses a separate Collector path. The local collector in the CLI or desktop
-app parses supported agent transcripts into typed facts, authenticates with a hidden Collector
-Credential, and posts to the Agent Ingest Worker. Agent Ingest validates the credential, checks
-collector compatibility, rate-limits by organization, re-redacts free-text fields, claims session
-ownership in Convex, and chunks facts onto the agent queue. Agent Consumer drains that queue, prices
-message facts from the shared model-pricing KV catalog, dedupes through the `AGENT_FACT_BATCHER`
-Durable Object ledger, and writes the `agent_*` Tinybird datasources used by `/app/agents`.
-
-Agent analytics is still not production-ready until the production gates in
-[docs/guides/agent-conversation-analytics](./docs/guides/agent-conversation-analytics/README.md)
-are complete.
-
-### Key Features
-
-- **Low-latency user experience** - Streaming responses are delivered immediately without blocking on observability data processing
-- **High throughput** - Queue-based architecture handles traffic spikes and scales automatically
-- **Durable delivery** - Accepted traces remain in durable storage until handoff; failed or uncertain writes remain available for recovery. See [delivery guarantees and recovery](docs/guides/trace-delivery-recovery.md).
-- **Distributed tracing support** - Captures and propagates trace context for end-to-end observability
-- **Async body storage** - Request/response bodies are stored in R2 asynchronously to minimize latency
-
-### Additional Components
-
-The platform includes several production-oriented capabilities:
-
-- **Error handling and retry logic** - Queue consumer implements robust error handling with automatic retries
-- **Authentication** - Secure key management and authenticated gateway features protect your LLM endpoints
-- **Monitoring** - Built-in observability for Workers and Queues ensures production reliability
-- **Data retention and privacy** - Configurable policies for observability data lifecycle management
-
-## Structure
-
-```
-trace-flow/
-├── packages/
-│   ├── types/               # Shared TypeScript types
-│   ├── utils/               # Shared utilities
-│   └── collector-*          # Shared Rust collector crates
-└── apps/
-    ├── proxy/               # LLM proxy worker
-    ├── proxy-consumer/      # Queue consumer worker
-    ├── agent-ingest/        # Agent collector ingest worker
-    ├── agent-consumer/      # Agent fact queue consumer worker
-    ├── api/                 # Raw API worker for R2 Body Object access
-    ├── pipes-api/           # Pipes API worker for Tinybird Pipe forwarding
-    ├── mcp/                 # MCP worker for agent access to trace data
-    ├── web/                 # Next.js dashboard (Cloudflare Workers via OpenNext)
-    ├── cli/                 # Collector CLI
-    └── desktop/             # Tauri desktop collector
-```
-
-## Setup
-
-Install dependencies:
-
-```bash
-bun install
-```
-
-Initialize husky:
-
-```bash
-bun run prepare
-```
-
-## Using the Proxy
-
-The Trace Flow proxy uses route-based paths to forward requests to LLM providers. Simply point your SDK to the gateway URL with the appropriate provider path.
-
-**Gateway**: `https://gateway.trace-flow.dev`
-
-| Provider   | Gateway Path       | Proxies To                            |
-| ---------- | ------------------ | ------------------------------------- |
-| OpenAI     | `/openai/v1/*`     | `api.openai.com/v1/*`                 |
-| Anthropic  | `/anthropic/v1/*`  | `api.anthropic.com/v1/*`              |
-| Google     | `/google/v1beta/*` | `generativelanguage.googleapis.com/*` |
-| OpenRouter | `/openrouter/v1/*` | `openrouter.ai/api/v1/*`              |
-| Groq       | `/groq/v1/*`       | `api.groq.com/openai/v1/*`            |
-
-### Quick Start
+| Provider   | Base URL                                       |
+| ---------- | ---------------------------------------------- |
+| OpenAI     | `https://gateway.trace-flow.dev/openai/v1`     |
+| Anthropic  | `https://gateway.trace-flow.dev/anthropic/v1`  |
+| Google     | `https://gateway.trace-flow.dev/google/v1beta` |
+| OpenRouter | `https://gateway.trace-flow.dev/openrouter/v1` |
+| Groq       | `https://gateway.trace-flow.dev/groq/v1`       |
 
 ```typescript
 import { createOpenAI } from '@ai-sdk/openai';
@@ -116,204 +40,158 @@ const openai = createOpenAI({
   },
 });
 
-const { text } = await generateText({
-  model: openai('gpt-5'),
+const result = await generateText({
+  model: openai(process.env.OPENAI_MODEL!),
   prompt: 'Hello, world!',
 });
 ```
 
-The proxy automatically captures request/response bodies, token usage, performance metrics, errors, and streaming events.
+Use `X-Trace-Flow-Omit-Body: true` when you want metrics and trace metadata without storing request
+or response bodies. See the [Quick Start](https://trace-flow.dev/docs/quick-start) and
+[SDK Reference](https://trace-flow.dev/docs/sdk-reference) for complete examples.
 
-**For complete integration guide, see [agents.md](./apps/web/public/agents.md).**
+### Coding-agent sessions
 
-Coding agents can install the same guidance as a skill:
+The local collector reads supported agent stores, emits redacted typed facts, and uploads them with a
+Collector Credential that is separate from gateway API keys. The dashboard reports cost, tokens,
+context pressure, tool reliability, repository activity, and directly linked review-unit estimates.
 
-```bash
-npx skills add zaks-io/trace-flow --skill trace-flow
+Current sources are Claude Code, Codex CLI, and Cursor on macOS. The desktop app gates the first
+upload behind an explicit **Start syncing** action. Raw transcripts are not uploaded by this path.
+
+- [Collector guide](https://trace-flow.dev/docs/collector)
+- [CLI source and development notes](./apps/cli/README.md)
+- [Desktop architecture and release notes](./apps/desktop/README.md)
+
+## Runtime
+
+The repository contains nine services deployed by the production workflow and one disabled Archive
+API scaffold:
+
+| Component       | Location               | Responsibility                                                         |
+| --------------- | ---------------------- | ---------------------------------------------------------------------- |
+| Proxy           | `apps/proxy`           | Streams provider calls; durably stages transactions and OTLP spans     |
+| Proxy Consumer  | `apps/proxy-consumer`  | Prices and writes LLM spans to Tinybird                                |
+| Agent Ingest    | `apps/agent-ingest`    | Authenticates and validates collector fact envelopes                   |
+| Agent Consumer  | `apps/agent-consumer`  | Deduplicates, prices, and writes agent facts to Tinybird               |
+| Pipes API       | `apps/pipes-api`       | Forwards Convex-minted, query-scoped Pipe Tokens to Tinybird           |
+| Raw API         | `apps/api`             | Authorizes and decrypts R2 Body Object reads                           |
+| MCP             | `apps/mcp`             | Exposes org-scoped trace and agent analytics tools over OAuth          |
+| Analyst Sandbox | `apps/analyst-sandbox` | Runs isolated, stateful analysis jobs                                  |
+| Web             | `apps/web`             | Next.js dashboard deployed through OpenNext                            |
+| Archive API     | `apps/archive-api`     | Disabled authorization scaffold; persistence and production are absent |
+
+Convex owns users, organizations, API keys, Collector Credentials, subscriptions, session ownership,
+and scoped Tinybird token minting. The Rust workspace contains the CLI, desktop shell, parsers, sync
+engine, and Conversation Archive contracts.
+
+### Data flow
+
+```text
+Application -> Proxy -> provider
+                  |-> R2 delivery envelope -> request queue reference
+                                                |-> Proxy Consumer -> Tinybird + R2 Body Object
+
+CLI/Desktop -> Agent Ingest -> agent queue -> Agent Consumer -> Tinybird
+
+Web/MCP -> Convex-scoped authorization -> Pipes API / Raw API -> Tinybird / R2
 ```
 
-Related design notes:
+The proxy consumes both sides of each `ReadableStream.tee()`. Accepted traces remain in an R2 delivery
+envelope until the Proxy Consumer completes durable handoff; failed or uncertain Tinybird writes stay
+available for reconciliation. Queue consumers acknowledge messages only after their durable write
+path succeeds. See [delivery guarantees and recovery](./docs/guides/trace-delivery-recovery.md).
 
-- [Agent Conversation Analytics](./docs/adr/0012-agent-conversation-analytics.md) - data model and ingestion design for local AI agent conversation analytics in Trace Flow.
-- [Otto Extraction Reference](./docs/adr/0017-otto-extraction-reference.md) - source files and modules to consult when extracting Collector code from Otto.
+## Repository map
+
+```text
+apps/                 Cloudflare Workers, Next.js Web, Collector CLI, Desktop
+packages/             Shared TypeScript packages, Convex backend, Rust collector crates
+datasources/          Tinybird datasource definitions
+materializations/     Tinybird materialized views
+pipes/                Tinybird query endpoints
+tests/                Tinybird data-project tests
+docs/adr/             Accepted architecture decisions
+docs/guides/          Operational and feature guides
+scripts/dev/          Reproducible local environment and verification commands
+specs/                Component and feature specifications
+```
+
+The canonical domain vocabulary is in [CONTEXT.md](./CONTEXT.md). The current service boundaries are
+documented in [ADR 0020](./docs/adr/0020-read-side-secret-boundaries.md).
 
 ## Development
 
-### Agent-Ready Local Environment
+Requirements:
 
-The reusable local environment contract lives in `scripts/dev/` and is shared by humans, Cursor
-background agents, and other coding agents:
+- Bun 1.3.x, pinned by `packageManager`
+- Node.js 24
+- Rust toolchain for collector or desktop work
+- Docker and the Tinybird CLI for the self-contained local data plane
+
+Install the workspace and prepare the local environment:
 
 ```bash
 scripts/dev/install.sh
 scripts/dev/start.sh
-scripts/dev/smoke.sh
-scripts/dev/verify.sh
 ```
 
-`scripts/dev/start.sh` starts Tinybird Local, builds the Tinybird project against it, and generates
-ignored local `.dev.vars` / `.env.local` files when they do not already exist. Cursor delegates to the
-same scripts through `.cursor/environment.json`.
-
-No cloud Tinybird token is required for local setup. Tinybird Local still requires a bearer token for
-its HTTP API, but `scripts/dev/start.sh` discovers or generates that local token automatically.
-
-`scripts/dev/smoke.sh` seeds a local API key, posts an OTLP trace through the local Worker stack, and
-queries Tinybird for the captured trace. It will start `scripts/dev/workers.sh` for the run when the
-Worker server is not already listening on port 8787. Agent-ingest production verification uses the
-separate smoke harness in
-[docs/guides/agent-conversation-analytics/runbook.md](./docs/guides/agent-conversation-analytics/runbook.md).
-
-See [docs/agents/local-environment.md](./docs/agents/local-environment.md) for the full contract.
-
-### Full Local Stack (Recommended)
-
-Run the six non-Web Workers together with shared local R2, queues, KV, and Durable Objects:
+Run the long-lived processes in separate terminals:
 
 ```bash
-# Terminal 1: Proxy, Proxy Consumer, API, Agent Ingest, Agent Consumer
-bun run dev:all
-
-# Terminal 2: Convex backend (watch mode)
-bunx convex dev
-
-# Terminal 3: Web UI
-cd apps/web && bun run dev
+scripts/dev/convex.sh
+scripts/dev/workers.sh
+scripts/dev/web.sh
 ```
 
-### Running Workers Together
+`scripts/dev/workers.sh` starts the six core data-plane Workers together so local queues, KV, R2,
+and Durable Objects share one persisted state directory. Web, Convex, MCP, Analyst Sandbox, and the
+disabled Archive API are not part of that multi-Worker process.
 
-To test Worker-to-Worker bindings locally without the helper script:
+The scripts default to **Self-Contained Local**: local Workers, Convex local, and Tinybird Local. For
+the normal **Cloud-Dev** workflow, point the local Web and collector at the deployed cloud-dev
+endpoints. Do not assume a Worker whose configured name ends in `-dev` is a separate cloud
+environment. See [Local Agent Environment](./docs/agents/local-environment.md) and the environment
+definitions in [CONTEXT.md](./CONTEXT.md).
+
+### Verification
 
 ```bash
-wrangler dev \
-  -c apps/proxy/wrangler.toml \
-  -c apps/proxy-consumer/wrangler.toml \
-  -c apps/api/wrangler.toml \
-  -c apps/pipes-api/wrangler.toml \
-  -c apps/agent-ingest/wrangler.jsonc \
-  -c apps/agent-consumer/wrangler.jsonc \
-  --persist-to .wrangler/state
+scripts/dev/smoke.sh          # local proxy -> queue -> Tinybird path
+scripts/dev/verify.sh         # Tinybird build/tests, type-check, tests
+scripts/dev/verify.sh full    # plus lint and TypeScript build
+cargo test --workspace --locked
 ```
 
-This runs the proxy and agent ingestion paths in one process so local queues and storage bindings are
-shared.
-
-### Running Web Worker
-
-The web worker uses Next.js and requires Convex backend:
+The JavaScript workspace uses Turborepo:
 
 ```bash
-# Terminal 1: Start Convex backend
-bunx convex dev
-
-# Terminal 2: Start web UI
-cd apps/web && bun run dev
-```
-
-On first run, Convex will prompt you to login and create a project.
-
-Create `apps/web/.env.local`:
-
-```bash
-NEXT_PUBLIC_CONVEX_URL=https://your-deployment-url.convex.cloud
-NEXT_PUBLIC_API_URL=http://localhost:8788
-NEXT_PUBLIC_PIPES_API_URL=http://localhost:8788
-NEXT_PUBLIC_RAW_API_URL=http://localhost:8788
-NEXT_PUBLIC_AUTH0_DOMAIN=your-auth0-domain
-NEXT_PUBLIC_AUTH0_CLIENT_ID=your-auth0-client-id
-```
-
-### Running Workers Individually
-
-You can also run workers separately:
-
-```bash
-# Proxy only
-cd apps/proxy && bun run dev
-
-# Proxy Consumer only
-cd apps/proxy-consumer && bun run dev
-
-# Raw API only
-cd apps/api && bun run dev
-
-# Pipes API only
-cd apps/pipes-api && bun run dev
-
-# Agent Ingest only
-cd apps/agent-ingest && bun run dev
-
-# Agent Consumer only
-cd apps/agent-consumer && bun run dev
-
-# Web only (still requires Convex)
-cd apps/web && bun run dev
-```
-
-## Building
-
-Build all workers:
-
-```bash
+bun run type-check
+bun run test
+bun run lint
 bun run build
 ```
 
+## Public entry points
+
+- Product and dashboard: <https://trace-flow.dev>
+- Human docs: <https://trace-flow.dev/docs>
+- Agent bootstrap: <https://trace-flow.dev/agents.md>
+- LLM documentation index: <https://trace-flow.dev/llms.txt>
+- Gateway: <https://gateway.trace-flow.dev>
+- MCP: <https://mcp.trace-flow.dev/mcp>
+- Desktop downloads: [macOS arm64](https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop.dmg) · [Windows x64](https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop-setup.exe)
+
+The Conversation Archive origin is intentionally absent. `apps/archive-api` currently implements a
+fail-closed authorization boundary only and is not deployed.
+
 ## Deployment
 
-### Production (Automated)
+Production deploys run through `.github/workflows/deploy.yml` after changes land on `main`. The
+workflow validates TypeScript, Rust, and Tinybird; deploys Convex; deploys the Tinybird schema before
+both consumers; then deploys Web, Proxy, Proxy Consumer, Raw API, Pipes API, MCP, Agent Ingest, Agent
+Consumer, and Analyst Sandbox according to their dependencies.
 
-Production deployments are automated via GitHub Actions. When code is merged to `main`, the workflow:
+`apps/archive-api` is excluded from production deployment. Do not manually deploy production.
 
-1. Runs CI checks (format, lint, type-check, test, build)
-2. Deploys Convex and exports `.convex.cloud` / `.convex.site` URLs for dependent Workers
-3. Deploys the Tinybird schema before the proxy and agent consumers
-4. Deploys Cloudflare Workers with dependency ordering: proxy, proxy-consumer, API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
-
-See `.github/workflows/deploy.yml` for the full workflow.
-
-### Environments
-
-The project has two environments:
-
-- **Development** - Default environment for local testing and `deploy:dev`
-- **Production** - Deployed automatically on merge to `main`
-
-### Development Deployment
-
-```bash
-# Deploy all workers to development
-bun run deploy:dev
-
-# Deploy individual workers to dev
-cd apps/proxy && bun run deploy:dev
-```
-
-## Configuration
-
-### Cloudflare Resources
-
-Before deploying, you need to create Cloudflare resources.
-
-**See [SETUP.md](./SETUP.md) for detailed setup instructions.**
-
-Quick overview:
-
-1. **Queues** - `trace-flow-requests-*` for LLM traces and `agent-ingest-*` for agent facts, each with DLQs
-2. **R2 Bucket** - `trace-flow-storage-*` for encrypted request/response bodies
-3. **KV Namespaces** - API keys, model pricing, and Collector Credential lookup
-4. **Durable Objects** - usage tracking, trace batching, and agent fact dedupe
-5. **Tinybird** - trace and agent datasources, materializations, pipes, and JWT-scoped reads
-
-## Tech Stack
-
-- **Runtime**: Cloudflare Workers
-- **Package Manager**: Bun
-- **Monorepo**: Turborepo
-- **Frontend**: Next.js (Cloudflare Workers via OpenNext)
-- **Backend**: Convex
-- **Analytics**: Tinybird (ClickHouse)
-- **Storage**: Cloudflare R2
-- **Language**: TypeScript
-- **Linting**: ESLint + Prettier
-- **Git Hooks**: Husky + lint-staged
+See [SETUP.md](./SETUP.md) for resource ownership, secrets, and environment-specific setup.

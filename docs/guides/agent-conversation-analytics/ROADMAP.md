@@ -11,17 +11,17 @@ Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
 
 ## Current Truth
 
-| Area                     | Current state                                                                                                                                                    | Production gap                                                                                                                                                |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Types / parser libraries | Claude and Codex parser/sync crates exist and are invoked by the CLI/Desktop collector path. Cursor returns no facts.                                            | Cursor remains unsupported until P7.                                                                                                                          |
-| Cloud ingest             | Prod env blocks bind prod queue/DLQ/KV; `deploy.yml` deploys `--env production` behind a dev-resource guard; Tinybird prod gate + smoke harness exist (TRA-110). | Pending: deploy from `main`, Worker secrets, prod Convex env (`CLOUDFLARE_COLLECTOR_CREDS_NAMESPACE_ID`), prod Tinybird schema deploy, and a green smoke run. |
-| Credentials              | Convex can mint hidden Collector Credentials, sync them to KV, and the CLI/Desktop paths can store/use them locally.                                             | Needs production release evidence and revoke/list UX polish.                                                                                                  |
-| Queue / consumer         | Dev queue and consumer can process E2E harness data; production config exists for ingest queue, DLQ, consumer, and dedupe DO.                                    | No green production queue/DLQ/consumer verification from a real collector.                                                                                    |
-| Tinybird                 | Agent datasources and pipes exist; deploy workflow runs the schema before proxy/agent consumers.                                                                 | Needs green production deploy and smoke evidence for the agent tables.                                                                                        |
-| Dashboard                | `/app/agents` exists and has chart/table surfaces.                                                                                                               | Needs live authenticated walkthrough and honest empty/setup/data states before launch.                                                                        |
-| Observability            | Logging/Sentry hooks and a runbook exist.                                                                                                                        | Live alerts are not provisioned as a verified production gate.                                                                                                |
-| CI                       | TS packages have CI coverage.                                                                                                                                    | Rust collector workspace has no required CI job.                                                                                                              |
-| Product distribution     | CLI (`trace-flow`, TRA-112) and a macOS menu-bar desktop app (`apps/desktop`, TRA-115) ship the production collector path.                                       | No signed desktop release and no Connected Desktops web UX yet (P6 follow-ups).                                                                               |
+| Area                     | Current state                                                                                                                                                     | Production gap                                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Types / parser libraries | Claude Code, Codex CLI, and macOS Cursor parsers are invoked by the shared CLI/Desktop sync path. Cursor snapshots `state.vscdb` read-only and emits typed facts. | Cursor still needs a normal-user production sync and dashboard verification; Windows/Linux Cursor paths are not implemented. |
+| Cloud ingest             | The production workflow has deployed the prod Agent Ingest/Consumer configs, Tinybird schema, Convex control plane, and dev-resource guard from `main`.           | No green normal-user collector smoke proves credential minting, queue/consumer delivery, and dashboard visibility together.  |
+| Credentials              | Convex can mint hidden Collector Credentials, sync them to KV, and the CLI/Desktop paths can store/use them locally.                                              | Needs production release evidence and revoke/list UX polish.                                                                 |
+| Queue / consumer         | Dev queue and consumer can process E2E harness data; production config exists for ingest queue, DLQ, consumer, and dedupe DO.                                     | No green production queue/DLQ/consumer verification from a real collector.                                                   |
+| Tinybird                 | Agent datasources and pipes exist; the production schema deploy is green and runs before proxy/agent consumers.                                                   | Needs a normal-user collector smoke proving production agent rows and read pipes together.                                   |
+| Dashboard                | `/app/agents` exists and has chart/table surfaces.                                                                                                                | Needs live authenticated walkthrough and honest empty/setup/data states before launch.                                       |
+| Observability            | Logging/Sentry hooks and a runbook exist.                                                                                                                         | Live alerts are not provisioned as a verified production gate.                                                               |
+| CI                       | CI requires Cargo fmt, check, tests, and clippy for the Rust workspace; deploy also builds the CLI. Tinybird and production-binding checks are present.           | The required post-deploy normal-user agent pipeline smoke and documentation status guard are not established here.           |
+| Product distribution     | macOS arm64 and Windows x64 installers publish with signed updater artifacts through a manifest-last channel. The CLI builds from source.                         | The tagged CLI installer has no published GitHub Release asset, and Connected Desktops web UX is still absent.               |
 
 ## Non-Negotiable Rules
 
@@ -31,7 +31,8 @@ Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
   consumer Worker.
 - `main` deploys must not deploy dev-named resources under a production environment.
 - "Done" means production-verifiable, not locally demonstrable.
-- Cursor support is not implied until Cursor rows land through the same production path.
+- Cursor's implemented reader is not production proof. Completion still requires its rows to land
+  through the normal collector path and appear in the dashboard.
 
 ## Production Board
 
@@ -41,10 +42,10 @@ Status legend: `☐ todo` · `🚧 in progress` · `✅ done` · `⛔ blocked`
 | P1  | Production cloud ingest path                | 🚧 in progress | P0         | Prod ingest Worker, queue, DLQ, KV, rate limit, consumer, Tinybird schema, secrets, and smoke test are live.    |
 | P2  | Production collector CLI                    | 🚧 in progress | P1         | A user runs `trace-flow login` then `trace-flow sync --since 7d` and data appears in `/app/agents`.             |
 | P3  | Dashboard truth and live walkthrough        | ☐ todo         | P1, P2     | `/app/agents` accurately shows empty/setup/data states and is verified with authenticated production-like data. |
-| P4  | CI and release guardrails                   | ☐ todo         | P0         | Rust workspace, CLI build, Worker deploy, Tinybird deploy check, and live smoke block PR/merge failures.        |
+| P4  | CI and release guardrails                   | 🚧 in progress | P0         | Rust workspace, CLI build, Worker deploy, Tinybird deploy check, and live smoke block PR/merge failures.        |
 | P5  | Production observability                    | ☐ todo         | P1         | DLQ, consumer errors, ingest auth failures, and priced-coverage regressions alert with tested runbook paths.    |
 | P6  | Desktop MVP                                 | 🚧 in progress | P2, P4     | Installable macOS app connects, stores credential securely, gates first egress, syncs, pauses, and disconnects. |
-| P7  | Cursor source support                       | ☐ todo         | P2, P4     | Cursor `state.vscdb` facts land through the same collector/cloud path and are filterable by source.             |
+| P7  | Cursor source support                       | 🚧 in progress | P2, P4     | Cursor `state.vscdb` facts land through the same collector/cloud path and are filterable by source.             |
 
 ## Linear Tracking
 
@@ -116,8 +117,8 @@ the fastest production path that proves users can ingest without admin-only tool
   - mints a hidden Collector Credential through Convex
   - stores the secret in OS keychain/keyring
 - `trace-flow sources list`
-  - shows detected Claude and Codex paths
-  - marks Cursor as unsupported until P7
+  - shows detected Claude Code and Codex CLI transcript stores without absolute home paths
+  - reports the macOS Cursor state store as ready when present
 - `trace-flow sync --since 24h|7d|30d|1y`
   - reads local transcripts
   - redacts and assembles facts
@@ -131,13 +132,14 @@ the fastest production path that proves users can ingest without admin-only tool
 
 ### Done
 
-- A normal user can sync Claude/Codex without receiving any admin token.
+- A normal user can sync Claude Code, Codex CLI, and macOS Cursor without receiving any admin token.
 - CLI logs never print secrets, absolute home paths, transcript text, command excerpts, or Tinybird
   credentials.
 - Failed uploads do not advance cursors.
 - Re-running sync is idempotent before Tinybird through local fact checksums and the server-side fact
   ledger.
-- The CLI can be installed from a release artifact or documented package command.
+- The CLI can be installed from a release artifact or documented package command. This remains open:
+  the source build exists, but the tagged public installer asset is absent.
 
 ## P3 - Dashboard Truth And Live Walkthrough
 
@@ -149,17 +151,17 @@ merge gate.
 ### Required work
 
 - Empty state must say no collector has synced yet and point to the production CLI once P2 ships.
-- Show source coverage: Claude, Codex, Cursor unsupported/not connected/synced.
+- Show source coverage for Claude Code, Codex CLI, and Cursor as not connected or synced.
 - Show last ingested time and last successful sync per collector/source when available.
 - Keep cost labeled as estimated and show priced-token coverage.
-- Remove or gate any Cursor marketing until P7 lands.
+- Keep Cursor copy scoped to macOS and private-alpha verification until P7 completes.
 - Add an authenticated browser walkthrough against a real org with agent data.
 
 ### Done
 
 - A new org with no data gets an honest setup state.
-- An org with CLI-ingested Claude/Codex data sees charts and tables.
-- Cursor appears only as unsupported or absent until real Cursor rows exist.
+- An org with collector-ingested Claude Code, Codex CLI, or Cursor data sees charts and tables.
+- Cursor appears as synced only after real Cursor rows exist for the selected window.
 - Browser verification covers metric switcher, source/model/repo filters, session table pagination,
   and tool reliability.
 
@@ -171,13 +173,14 @@ Prevent this class of failure from merging again.
 
 ### Required work
 
-- Add required Rust CI:
-  - `cargo fmt --check`
-  - `cargo clippy --workspace --all-targets -- -D warnings`
-  - `cargo test --workspace`
-- Add CLI build/test job once `apps/cli` exists.
-- Add Tinybird deploy check to release workflows.
-- Add config assertions that production deploys cannot bind dev queues/KV/worker names.
+- ✅ Add required Rust CI:
+  - `cargo fmt --all -- --check`
+  - `cargo check --workspace --locked`
+  - `cargo test --workspace --locked`
+  - `cargo clippy --workspace --all-targets --locked -- -D warnings`
+- ✅ Add CLI build/test coverage.
+- ✅ Add Tinybird deploy checks to CI and the production workflow.
+- ✅ Add config assertions that production deploys cannot bind dev queues/KV/worker names.
 - Add live smoke as a required post-deploy job for production agent pipeline changes.
 - Add docs status lint that fails if a task says production-ready while its gate is still absent.
 
@@ -232,7 +235,7 @@ Build the production desktop app after the CLI proves the ingestion path.
 - ✅ Pause/resume, run sync, disconnect.
 - ☐ Connected Desktops web surface for list/revoke/status (follow-up PR; backend
   `api.collectorCredentials.list`/`revoke` already exists).
-- ☐ Signed macOS arm64 release workflow (follow-up PR; needs Apple signing + Tauri updater secrets).
+- ✅ Signed macOS arm64 and Windows x64 release workflow with manifest-last public updater publishing.
 
 ### Done
 
@@ -240,24 +243,26 @@ Build the production desktop app after the CLI proves the ingestion path.
   sync continues if autostart is enabled.
 - Revoking a desktop stops future ingest without changing existing Agent Session identity.
 
-> The app, keychain storage, egress gate, and sync engine landed in the TRA-115 desktop PR. The
-> Connected Desktops web surface and the signed release workflow are tracked as the remaining P6
-> follow-ups; this row stays `in progress` (not production-ready) until they land.
+> The app, keychain storage, egress gate, sync engine, and signed updater channel are implemented.
+> Connected Desktops and the normal-user production walkthrough remain open, so this row stays in
+> progress.
 
 ## P7 - Cursor Source Support
 
 ### What to build
 
-Add Cursor only after the shared collector/cloud path is production-ready.
+Finish production verification for the implemented macOS Cursor reader.
 
 ### Required work
 
-- Snapshot `state.vscdb` read-only.
-- Use `GLOB` prefix scans, not `LIKE`.
-- Parse `composerData:` sessions and `bubbleId:` messages.
-- Classify sparse token coverage honestly.
-- Normalize Cursor model labels where possible.
-- Add canary fixtures for schema drift and snapshot inconsistency.
+- ✅ Snapshot `state.vscdb` read-only.
+- ✅ Use `GLOB` prefix scans, not `LIKE`.
+- ✅ Parse `composerData:` sessions and `bubbleId:` messages.
+- ✅ Classify sparse token coverage honestly.
+- ✅ Normalize Cursor model labels where possible.
+- ✅ Add canary fixtures for schema drift and snapshot inconsistency.
+- ☐ Verify a normal-user Cursor sync through production Agent Ingest, the queue/consumer, Tinybird,
+  and `/app/agents`.
 
 ### Done
 

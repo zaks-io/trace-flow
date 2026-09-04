@@ -1,6 +1,10 @@
 # Worker Architecture
 
-The primary observability runtime is split into six Cloudflare Workers, each with a focused responsibility. This document explains why we chose this separation and how those workers communicate. The repo also has an MCP Worker for agent access to trace data; it is a separate read-side integration, not part of the proxy or collector ingestion paths.
+The core model and agent data planes are split into six Cloudflare Workers: Proxy, Proxy Consumer,
+Agent Ingest, Agent Consumer, Pipes API, and Raw API. Production also deploys Web, MCP, and Analyst
+Sandbox Workers. `apps/archive-api` is a disabled authorization scaffold with no persistence or
+production environment. This document explains why these responsibilities are separated and how the
+core Workers communicate.
 
 ## Why Separate Workers?
 
@@ -26,8 +30,8 @@ Splitting into focused workers provides isolation, independent scaling, and clea
 - API key authentication via KV namespace lookup
 - Request/response body capture during streaming
 - SSE parsing for streaming responses (time-to-first-token, content blocks)
-- R2 storage of bodies
-- Queue message creation and send
+- Durable R2 delivery-envelope storage, including the encrypted Body Object when enabled
+- Queue delivery-reference creation, publication, and scheduled republishing
 
 ### What It Does NOT Own
 
@@ -41,7 +45,7 @@ Splitting into focused workers provides isolation, independent scaling, and clea
 - **Inbound**: HTTP requests from clients (SDKs, agents)
 - **Outbound**:
   - HTTP to LLM providers (OpenAI, Anthropic, etc.)
-  - R2 for body storage
+  - R2 for durable delivery envelopes
   - Cloudflare Queue for async processing
   - KV for API key validation
 
@@ -49,7 +53,9 @@ Splitting into focused workers provides isolation, independent scaling, and clea
 
 The proxy is stateless and scales horizontally. Each request is independent. The main constraint is the 30-second execution limit for Workers, but LLM streaming responses rarely exceed this.
 
-**Performance-critical path**: Everything from request receipt to response streaming. All observability operations happen in `waitUntil()` after the response completes.
+**Performance-critical path**: Everything from request receipt through response streaming. The stream
+starts without waiting for analytics, but its terminal EOF waits for durable R2 intake. Queue
+publication and recovery continue through `waitUntil()`.
 
 ### Configuration
 
@@ -79,6 +85,7 @@ id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 
 - Queue consumption and message acknowledgment
 - Trace transformation (queue message to OpenTelemetry format)
+- Delivery-envelope retrieval, canonical encrypted Body Object copy, and envelope completion
 - Cost calculation using model pricing from KV
 - OpenRouter pricing auto-fetch for unknown models
 - Durable Object coordination for batch accumulation
@@ -86,7 +93,7 @@ id = "30c9a31ff3af4b408b4d64b8ecfa98a5"
 
 ### What It Does NOT Own
 
-- R2 body reading (bodies are stored by proxy, read by API worker)
+- Body decryption or user-facing body reads (handled by Raw API)
 - Real-time processing guarantees (batching introduces latency)
 - User-facing APIs
 - Agent conversation facts
@@ -300,7 +307,8 @@ Production uses `trace-flow-agent-consumer`, `agent-ingest-prod`, `agent-ingest-
 
 ### What It Does NOT Own
 
-- Body storage (handled by proxy)
+- Delivery-envelope creation (handled by Proxy) and canonical Body Object handoff (handled by Proxy
+  Consumer)
 - Trace queries (handled by frontend to Tinybird directly)
 - User management
 - Agent analytics ingest
@@ -357,8 +365,8 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 - **Inbound**: Browser requests
 - **Outbound**:
   - Convex for user data, API keys, collector credentials, alerts, and Tinybird JWTs
-  - Tinybird for trace and agent queries
-  - API worker for body retrieval
+  - Pipes API for trace and agent queries
+  - Raw API for body retrieval
 
 ### Deployment Architecture
 
@@ -372,25 +380,19 @@ The web worker uses `@opennextjs/cloudflare` to compile Next.js for the Cloudfla
 
 ### Queue Messages (Proxy to Proxy Consumer)
 
-The proxy enqueues structured messages containing all captured data:
+The proxy stores the captured data in R2 and enqueues a small reference:
 
 ```typescript
-interface QueueMessage {
-  requestId: string;
-  apiKey: string;
-  targetUrl: string;
-  timing: {
-    requestStart: number;
-    requestSent: number;
-    firstTokenReceived?: number;
-    responseComplete: number;
-  };
-  tokens?: { promptTokens?: number; completionTokens?: number };
-  sseStreamData?: SSEStreamData;
+interface TraceDeliveryMessage {
+  type: 'delivery';
+  key: `trace-deliveries/${string}`;
+  sentry_trace_context?: SentryTraceContext;
 }
 ```
 
-The proxy consumer transforms this into OpenTelemetry traces, adding computed fields like cost.
+The referenced `TraceDeliveryEnvelope` contains the transaction metadata and optional encrypted Body
+Object. Proxy Consumer resolves it before building OpenTelemetry spans. Legacy inline LLM and OTLP
+messages remain readable during the delivery-reference cutover.
 
 ### Agent Queue Messages (Agent Ingest to Agent Consumer)
 
@@ -418,17 +420,20 @@ The ingest worker stamps tenancy and final row identities. The collector never s
 
 ### R2 Keys (Proxy to API)
 
-Bodies are stored with predictable keys:
+Pending and completed objects have separate keys:
 
-- Combined payload: `bodies/{requestId}`
+- Pending envelope: `trace-deliveries/{environment-namespace}-{uuid}`
+- Completed combined Body Object: `bodies/{requestId}`
 
-The API worker reconstructs this key from the `requestId` parameter.
+Proxy creates the pending envelope. Proxy Consumer copies the already encrypted body to its completed
+key before removing the envelope. Raw API reconstructs only the completed key from `requestId`.
 
 ### Shared Types
 
 The `@trace-flow/types` package defines interfaces used across worker boundaries, ensuring type safety across queue boundaries:
 
-- `QueueMessage`: Raw capture data from proxy
+- `TraceDeliveryEnvelope` / `TraceDeliveryMessage`: durable Proxy-to-Consumer handoff
+- `QueueMessageUnion`: delivery references plus legacy inline message variants
 - `TinybirdTrace`: OpenTelemetry-format trace for storage
 - `SSEStreamData`: Parsed SSE events and timing
 - `AgentIngestEnvelope`: Collector upload contract
@@ -438,16 +443,19 @@ The `@trace-flow/types` package defines interfaces used across worker boundaries
 
 ### Proxy Failures
 
-- Observability failures are caught and logged; they never affect the client response
-- R2 storage failures result in queue messages without body keys
-- Queue send failures are logged; traces are lost (acceptable tradeoff for latency)
+- A durable R2 intake failure returns a retryable error or fails the captured response before terminal
+  EOF instead of claiming success
+- Queue publication failures leave the delivery envelope in R2; the scheduled sweep republishes it
+- Client disconnects, termination before durable intake, and capture-size limits remain explicit
+  boundaries rather than unconditional delivery guarantees
 
 ### Proxy Consumer Failures
 
 - Message processing failures trigger retry via `message.retry()`
 - After `max_retries` (5), messages go to dead-letter queue
-- Tinybird insertion failures trigger retry with exponential backoff
-- Durable Object persists unflushed traces in SQLite across restarts
+- Durable Object persists pending, rejected, and uncertain Tinybird writes in SQLite
+- Only responses documented as definitely not written are automatically retried; ambiguous outcomes
+  require reconciliation so a non-idempotent append is not duplicated
 
 ### Agent Ingest Failures
 

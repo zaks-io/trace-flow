@@ -16,18 +16,19 @@ LLM request path:
 ```text
 Client/SDK -> Proxy Worker -> LLM Provider
                  |
-                 | waitUntil()
+                 | durable intake before terminal EOF
                  v
-          R2 Body Objects + trace-flow-requests Queue
-                                  |
-                                  v
-                         Proxy Consumer Worker
-                                  |
-                                  v
-                         TraceBatcher Durable Object
-                                  |
-                                  v
-                         Tinybird otel_* tables
+          R2 Trace Delivery Envelope
+                 |
+                 | queue reference + scheduled recovery
+                 v
+          Proxy Consumer Worker
+             |              |
+             v              v
+      R2 Body Object   TraceBatcher Durable Object
+                             |
+                             v
+                    Tinybird otel_* tables
 ```
 
 Agent conversation path:
@@ -62,9 +63,9 @@ Raw API remains proxy-Body-Object-only.
 Read path:
 
 ```text
-Web Dashboard -> Convex -> Tinybird JWTs -> Tinybird Pipes
-Web Dashboard -> API Worker -> R2 Body Objects
-Web Dashboard -> /app/agents -> Tinybird agent_* Pipes
+Web Dashboard -> Convex -> Pipe Token -> Pipes API -> Tinybird Pipes
+Web Dashboard -> Convex -> Body Access Token -> Raw API -> R2 Body Objects
+MCP -> Convex OAuth/JWT -> Pipes API -> Tinybird Pipes
 ```
 
 ## Core Design Principles
@@ -75,7 +76,10 @@ The proxy worker streams responses to clients immediately while capturing data a
 
 - **Stream duplication**: Using `ReadableStream.tee()` to duplicate the request body
 - **Transform streams**: Capturing response chunks without blocking the stream
-- **Deferred processing**: All storage and queue operations happen in `c.executionCtx.waitUntil()`, which runs after the response completes
+- **Durable intake**: the response may stream immediately, but captured responses do not reach
+  terminal EOF until the R2 delivery envelope exists
+- **Deferred publication**: queue publication and recovery run through `c.executionCtx.waitUntil()`;
+  the R2 envelope remains available if publication is lost or uncertain
 
 ### Queue-Based Decoupling
 
@@ -223,20 +227,20 @@ Collector Credentials are not API keys. They do not appear in API-key filters an
 
 ### Cloudflare Resources
 
-| Resource          | Purpose                                                                            | Environment Separation               |
-| ----------------- | ---------------------------------------------------------------------------------- | ------------------------------------ |
-| Workers           | Proxy, Proxy Consumer, Agent Ingest, Agent Consumer, API, Web; planned Archive API | Env-specific names and bindings      |
-| Queue             | LLM trace message passing                                                          | `trace-flow-requests-{env}`          |
-| Queue             | Agent fact message passing                                                         | `agent-ingest-{env}`                 |
-| Dead Letter Queue | Failed LLM trace messages                                                          | `trace-flow-requests-dlq-{env}`      |
-| Dead Letter Queue | Failed agent fact messages                                                         | `agent-ingest-dlq-{env}`             |
-| R2 Bucket         | Request/response body storage                                                      | `trace-flow-storage-{env}`           |
-| R2 Bucket         | Planned Conversation Archive storage                                               | Dedicated Agent Archive bucket       |
-| KV Namespace      | API key validation                                                                 | `trace-flow-api-keys-{env}`          |
-| KV Namespace      | Model pricing cache                                                                | Separate namespace                   |
-| KV Namespace      | Collector Credential lookup                                                        | Separate `COLLECTOR_CREDS` namespace |
-| Durable Objects   | Trace batching, agent fact ledger                                                  | Per-worker instances                 |
-| Rate Limit        | Agent ingest org burst guard                                                       | `AGENT_INGEST_LIMITER`               |
+| Resource          | Purpose                                                                                                                           | Environment Separation               |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Workers           | Proxy, Proxy Consumer, Agent Ingest, Agent Consumer, Pipes API, Raw API, MCP, Analyst Sandbox, Web; disabled Archive API scaffold | Env-specific names and bindings      |
+| Queue             | LLM trace message passing                                                                                                         | `trace-flow-requests-{env}`          |
+| Queue             | Agent fact message passing                                                                                                        | `agent-ingest-{env}`                 |
+| Dead Letter Queue | Failed LLM trace messages                                                                                                         | `trace-flow-requests-dlq-{env}`      |
+| Dead Letter Queue | Failed agent fact messages                                                                                                        | `agent-ingest-dlq-{env}`             |
+| R2 Bucket         | Request/response body storage                                                                                                     | `trace-flow-storage-{env}`           |
+| R2 Bucket         | Planned Conversation Archive storage                                                                                              | Dedicated Agent Archive bucket       |
+| KV Namespace      | API key validation                                                                                                                | `trace-flow-api-keys-{env}`          |
+| KV Namespace      | Model pricing cache                                                                                                               | Separate namespace                   |
+| KV Namespace      | Collector Credential lookup                                                                                                       | Separate `COLLECTOR_CREDS` namespace |
+| Durable Objects   | Trace batching, agent fact ledger                                                                                                 | Per-worker instances                 |
+| Rate Limit        | Agent ingest org burst guard                                                                                                      | `AGENT_INGEST_LIMITER`               |
 
 ### External Services
 
