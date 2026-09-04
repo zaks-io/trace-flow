@@ -277,8 +277,9 @@ Ingest's fact envelope.
 - Add Archive Activation, per-Collector Enrollment, contributor ownership, Pro grace, and Archive
   Export Grant control-plane records and authorization.
 - Add `apps/archive-api` at `archive.trace-flow.dev` with its own Archive Session Ledger Durable
-  Objects, Storage Budget access, US-jurisdiction R2 Standard bucket, and versioned Archive Encryption
-  Keys. The first release exposes no archive-region selector.
+  Objects, Storage Budget access, R2 Standard bucket using Cloudflare's fixed `us` jurisdiction, and
+  versioned Archive Encryption Keys. The first release exposes no archive-region selector and its R2
+  binding and access path use `jurisdiction: "us"`.
 - Add first-release lossless Archive JSONL encoding, payload content hashes, chained record hashes, and
   completed-scan checkpoints for Claude and Codex append-oriented JSONL through complete byte offsets.
 - Show Cursor as unsupported for archive capture. Add its deterministically ordered, content-hashed
@@ -324,7 +325,7 @@ Ingest's fact envelope.
   Store actor and target identifiers, timestamps, outcomes, counts, and applicable manifest roots without
   raw content, paths, secrets, or per-chunk events.
 - Update the Terms and Privacy Policy before launch to cover lossless organization-owned transcript
-  collection, US storage and processing, enrollment consent, retention, export, deletion, and the fact
+  collection, Cloudflare R2 `us` jurisdiction storage and processing, enrollment consent, retention, export, deletion, and the fact
   that archive enrollment does not authorize training. Final legal language requires counsel review.
 - Add production authorization, idempotency, lossless round-trip, quota, rotation, deletion, export,
   and status smoke coverage.
