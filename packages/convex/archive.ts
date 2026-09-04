@@ -225,6 +225,12 @@ export const enroll = mutation({
       enrollmentId,
     );
     if (!claimedByKey.created) {
+      if (
+        claimedByKey.enrollment.userId !== user._id ||
+        claimedByKey.enrollment.collectorCredentialId !== credential._id
+      ) {
+        throw new Error('Enrollment idempotency key is already bound to another Collector');
+      }
       if (!consentSourcesMatch(claimedByKey.enrollment.authorizedSources, sources)) {
         throw new Error('Enrollment idempotency key does not match the original consent');
       }

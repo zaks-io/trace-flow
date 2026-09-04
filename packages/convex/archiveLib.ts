@@ -28,7 +28,11 @@ export type ArchiveWriteDenialReason =
   | 'source_unauthorized';
 
 export type ArchiveEnrollmentDecision =
-  'create' | 'replay' | 'renew' | 'conflict' | 'already_enrolled';
+  | 'create'
+  | 'replay'
+  | 'renew'
+  | 'conflict'
+  | 'already_enrolled';
 
 export const ARCHIVE_IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 

@@ -347,7 +347,10 @@ const otherSources = [{ source: 'codex' as const, historyChoice: 'all_history' a
 function enrollInput(
   collectorCredentialId: string,
   overrides: {
-    authorizedSources?: typeof sources;
+    authorizedSources?: {
+      source: 'claude' | 'codex';
+      historyChoice: 'new_only' | 'all_history';
+    }[];
     idempotencyKey?: string;
   } = {},
 ) {
