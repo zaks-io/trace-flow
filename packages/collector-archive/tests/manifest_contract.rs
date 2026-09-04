@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use collector_archive::{
-    scan_claude_jsonl, ArchiveChain, ArchiveSource, ChunkByteRange, ManifestElement,
+    scan_claude_jsonl, sha256, ArchiveChain, ArchiveSource, ChunkByteRange, ManifestElement,
     MAX_CHUNK_BYTES,
 };
 
@@ -149,5 +149,46 @@ fn manifest_wire_rejects_unsupported_versions_during_deserialization() {
             non_contiguous_sequence
         )
         .is_err()
+    );
+
+    let mut top_level_session = serde_json::to_value(&manifest).unwrap();
+    top_level_session["source_session_id"] = serde_json::json!("other-session");
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(top_level_session)
+            .is_err()
+    );
+
+    let mut nested_session = serde_json::to_value(&manifest).unwrap();
+    nested_session["elements"][1]["checkpoint"]["source_session_id"] =
+        serde_json::json!("other-session");
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(nested_session)
+            .is_err()
+    );
+
+    let mut nested_source = serde_json::to_value(&manifest).unwrap();
+    nested_source["elements"][1]["checkpoint"]["source"] = serde_json::json!("codex");
+    nested_source["elements"][1]["checkpoint"]["source_transcript_part_id"] =
+        serde_json::json!("codex:part:primary");
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(nested_source).is_err()
+    );
+
+    let mut non_empty_chain_head = serde_json::to_value(&manifest).unwrap();
+    non_empty_chain_head["chain_head"] = serde_json::to_value(sha256(b"wrong")).unwrap();
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(non_empty_chain_head)
+            .is_err()
+    );
+
+    let empty_chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
+    let empty_manifest =
+        collector_archive::ArchiveSessionManifest::from_chain(1, &empty_chain, &BTreeMap::new())
+            .unwrap();
+    let mut empty_chain_head = serde_json::to_value(&empty_manifest).unwrap();
+    empty_chain_head["chain_head"] = serde_json::to_value(sha256(b"wrong")).unwrap();
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(empty_chain_head)
+            .is_err()
     );
 }

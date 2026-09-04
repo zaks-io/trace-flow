@@ -6,7 +6,7 @@ use crate::chain::{ArchiveChain, ChainError};
 use crate::elements::ChainElement;
 use crate::types::{
     ArchiveError, ArchiveSource, CompletedScanCheckpoint, Sha256Digest, ARCHIVE_FORMAT_VERSION,
-    CHAIN_HASH_VERSION, MAX_CHUNK_BYTES,
+    CHAIN_HASH_VERSION, GENESIS_CHAIN_HASH, MAX_CHUNK_BYTES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +227,17 @@ impl ArchiveSessionManifest {
         if self.element_count != self.elements.len() as u64 {
             return Err(ManifestError::ElementCountMismatch);
         }
+        let expected_chain_head = self
+            .elements
+            .last()
+            .map(|element| match element {
+                ManifestElement::Record { chain_hash, .. }
+                | ManifestElement::Checkpoint { chain_hash, .. } => *chain_hash,
+            })
+            .unwrap_or(GENESIS_CHAIN_HASH);
+        if self.chain_head != expected_chain_head {
+            return Err(ManifestError::ChainHeadMismatch);
+        }
         for (expected_sequence, element) in self.elements.iter().enumerate() {
             let sequence = match element {
                 ManifestElement::Record { chain_sequence, .. }
@@ -265,6 +276,11 @@ impl ArchiveSessionManifest {
                     ..
                 } => {
                     checkpoint.validate()?;
+                    if checkpoint.source != self.source
+                        || checkpoint.source_session_id != self.source_session_id
+                    {
+                        return Err(ManifestError::CheckpointScopeMismatch);
+                    }
                     byte_range.validate()?;
                 }
             }
@@ -337,6 +353,15 @@ mod tests {
 
     #[test]
     fn to_bytes_revalidates_manifest_state_before_serializing() {
+        let mut manifest = valid_manifest();
+        manifest.element_count = 0;
+        assert!(matches!(
+            manifest.to_bytes(),
+            Err(ArchiveError::InvalidManifest(_))
+        ));
+    }
+
+    fn valid_manifest() -> ArchiveSessionManifest {
         let scan =
             crate::jsonl::scan_claude_jsonl("session-1", b"{\"uuid\":\"r1\"}\n", 10, None).unwrap();
         let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
@@ -359,8 +384,47 @@ mod tests {
                 },
             ),
         ]);
-        let mut manifest = ArchiveSessionManifest::from_chain(1, &chain, &ranges).unwrap();
-        manifest.element_count = 0;
+        ArchiveSessionManifest::from_chain(1, &chain, &ranges).unwrap()
+    }
+
+    #[test]
+    fn to_bytes_rejects_internally_contradictory_commitments() {
+        let mut manifest = valid_manifest();
+        manifest.source_session_id = "other-session".to_string();
+        assert!(matches!(
+            manifest.to_bytes(),
+            Err(ArchiveError::InvalidManifest(_))
+        ));
+
+        let mut manifest = valid_manifest();
+        if let ManifestElement::Checkpoint { checkpoint, .. } = &mut manifest.elements[1] {
+            checkpoint.source_session_id = "other-session".to_string();
+        }
+        assert!(matches!(
+            manifest.to_bytes(),
+            Err(ArchiveError::InvalidManifest(_))
+        ));
+
+        let mut manifest = valid_manifest();
+        if let ManifestElement::Checkpoint { checkpoint, .. } = &mut manifest.elements[1] {
+            checkpoint.source = ArchiveSource::Codex;
+            checkpoint.source_transcript_part_id = "codex:part:primary".to_string();
+        }
+        assert!(matches!(
+            manifest.to_bytes(),
+            Err(ArchiveError::InvalidManifest(_))
+        ));
+
+        let mut manifest = valid_manifest();
+        manifest.chain_head = crate::types::sha256(b"wrong");
+        assert!(matches!(
+            manifest.to_bytes(),
+            Err(ArchiveError::InvalidManifest(_))
+        ));
+
+        let chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
+        let mut manifest = ArchiveSessionManifest::from_chain(1, &chain, &BTreeMap::new()).unwrap();
+        manifest.chain_head = crate::types::sha256(b"wrong");
         assert!(matches!(
             manifest.to_bytes(),
             Err(ArchiveError::InvalidManifest(_))
@@ -382,6 +446,10 @@ pub enum ManifestError {
     UnexpectedByteRange,
     #[error("manifest element count does not match its elements")]
     ElementCountMismatch,
+    #[error("manifest checkpoint scope does not match its top-level session")]
+    CheckpointScopeMismatch,
+    #[error("manifest chain head does not match its final element")]
+    ChainHeadMismatch,
     #[error("manifest chain sequence expected {expected}, found {actual}")]
     ElementSequenceMismatch { expected: u64, actual: u64 },
     #[error("manifest does not match the canonical archive chain")]
