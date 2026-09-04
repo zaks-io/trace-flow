@@ -286,7 +286,7 @@ Ingest's fact envelope.
 - Show Cursor as unsupported for archive capture. Add its deterministically ordered, content-hashed
   mutable `cursorDiskKV` snapshot path after the first archive release rather than making it a release
   gate.
-- Add immutable 16 MiB contribution-and-session-scoped chunks, manifests that map content chains and
+- Add immutable 1.5 MiB contribution-and-session-scoped chunks, manifests that map content chains and
   checkpoints to byte ranges, deterministic retries, and key rotation.
 - Add session-scoped integrity failure handling that rejects without acknowledgement, preserves pending
   spool and suspect server evidence, blocks only the affected session until explicit repair, and keeps

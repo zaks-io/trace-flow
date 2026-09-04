@@ -6,14 +6,14 @@ import {
   unwrapArchiveEncryptionKey,
 } from '@trace-flow/utils';
 
-const ARCHIVE_CHUNK_BYTES = 16 * 1024 * 1024;
+const ARCHIVE_CHUNK_BYTES = 1.5 * 1024 * 1024;
 const CONCURRENT_CHUNKS = 2;
-const HEADROOM_BYTES = 16 * 1024 * 1024;
+const MEMORY_RESERVE_BYTES = 16 * 1024 * 1024;
 const WRAPPING_SECRET = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const ORG_ID = 'org_archive_memory';
 
 describe('Conversation Archive workerd memory', () => {
-  it('round-trips two concurrent 16 MiB chunks with live isolate headroom', async () => {
+  it('round-trips two concurrent 1.5 MiB chunks with a live memory reserve', async () => {
     const wrappedKey = await createArchiveEncryptionKeyVersion({
       orgId: ORG_ID,
       keyVersion: 1,
@@ -24,8 +24,8 @@ describe('Conversation Archive workerd memory', () => {
       keyVersion: 1,
       wrappingSecretBase64: WRAPPING_SECRET,
     });
-    const headroom = new Uint8Array(HEADROOM_BYTES);
-    headroom.fill(0xa5);
+    const memoryReserve = new Uint8Array(MEMORY_RESERVE_BYTES);
+    memoryReserve.fill(0xa5);
 
     const results = await Promise.all(
       Array.from({ length: CONCURRENT_CHUNKS }, async (_, index) => {
@@ -52,7 +52,7 @@ describe('Conversation Archive workerd memory', () => {
     );
 
     expect(results).toEqual([true, true]);
-    expect(headroom[0]).toBe(0xa5);
-    expect(headroom[HEADROOM_BYTES - 1]).toBe(0xa5);
+    expect(memoryReserve[0]).toBe(0xa5);
+    expect(memoryReserve[MEMORY_RESERVE_BYTES - 1]).toBe(0xa5);
   }, 60_000);
 });

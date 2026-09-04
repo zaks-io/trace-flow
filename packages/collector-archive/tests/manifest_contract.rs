@@ -6,6 +6,11 @@ use collector_archive::{
 };
 
 #[test]
+fn archive_chunk_limit_is_one_and_a_half_mebibytes() {
+    assert_eq!(MAX_CHUNK_BYTES, 1_572_864);
+}
+
+#[test]
 fn manifest_is_deterministic_and_preserves_checkpoint_ranges() {
     let scan = scan_claude_jsonl("session-1", b"{\"uuid\":\"r1\"}\n", 10, None).unwrap();
     let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
