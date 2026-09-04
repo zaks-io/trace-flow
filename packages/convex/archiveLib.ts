@@ -311,6 +311,13 @@ export function assertArchiveMutationAllowed(input: {
   if (!input.serverEnabled) {
     throw new Error('Conversation Archive is not enabled');
   }
+  assertArchiveAuthorityReductionAllowed(input);
+}
+
+export function assertArchiveAuthorityReductionAllowed(input: {
+  org: { deletedAt?: number; deletionStartedAt?: number } | null | undefined;
+  activation: { status: ArchiveActivationStatus } | null;
+}): void {
   if (isOrganizationDeleted(input.org)) throw new Error('Organization not found');
   if (isOrganizationDeletionStarted(input.org) || input.activation?.status === 'deleting') {
     throw new Error('Conversation Archive is deleting');
@@ -745,7 +752,7 @@ export async function invalidateArchiveEnrollment(
 
   const org = await ctx.db.get(enrollment.orgId);
   const activation = await getArchiveActivation(ctx, enrollment.orgId);
-  assertArchiveMutationAllowed({ org, activation, serverEnabled: isArchiveServerEnabled() });
+  assertArchiveAuthorityReductionAllowed({ org, activation });
 
   const enrollmentStatus: ArchiveEnrollmentStatus =
     reason === 'owner_revoked'

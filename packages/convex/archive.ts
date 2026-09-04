@@ -355,12 +355,7 @@ export const unenroll = mutation({
   args: { enrollmentId: v.id('archiveEnrollments') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { user, org } = await requireCurrentOrgUser(ctx);
-    assertArchiveMutationAllowed({
-      org,
-      activation: await getArchiveActivation(ctx, user.orgId),
-      serverEnabled: isArchiveServerEnabled(),
-    });
+    const { user } = await requireCurrentOrgUser(ctx);
     const enrollment = await ctx.db.get(args.enrollmentId);
     if (enrollment?.orgId !== user.orgId || enrollment.userId !== user._id) {
       throw new Error('Enrollment not found');
@@ -375,11 +370,6 @@ export const revokeEnrollment = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const { user, org, membership } = await requireCurrentOrgUser(ctx);
-    assertArchiveMutationAllowed({
-      org,
-      activation: await getArchiveActivation(ctx, user.orgId),
-      serverEnabled: isArchiveServerEnabled(),
-    });
     if (org.ownerId !== user._id || membership.role !== 'owner') {
       throw new Error('Only the organization owner can revoke enrollments');
     }

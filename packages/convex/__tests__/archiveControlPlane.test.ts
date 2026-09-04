@@ -6,6 +6,7 @@ import {
   ARCHIVE_ENABLED_ENV,
   ARCHIVE_GRACE_MS,
   ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS,
+  assertArchiveAuthorityReductionAllowed,
   assertHeartbeatObservedAt,
   assertArchiveMutationAllowed,
   beginArchiveDeletion,
@@ -391,6 +392,24 @@ describe('archive control-plane pure functions', () => {
         serverEnabled: true,
       }),
     ).not.toThrow();
+    expect(() =>
+      assertArchiveAuthorityReductionAllowed({
+        org: {},
+        activation: { status: 'active' },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertArchiveAuthorityReductionAllowed({
+        org: null,
+        activation: { status: 'active' },
+      }),
+    ).toThrow('Organization not found');
+    expect(() =>
+      assertArchiveAuthorityReductionAllowed({
+        org: { deletionStartedAt: 1 },
+        activation: { status: 'active' },
+      }),
+    ).toThrow('deleting');
   });
 
   it('denies writes when the server gate, entitlement, or enrollment is closed', () => {
@@ -877,6 +896,51 @@ describe('archive control plane', () => {
     await expect(
       world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect()),
     ).resolves.toHaveLength(2);
+  });
+
+  it('allows user unenrollment while the archive gate is disabled', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    disableArchive();
+    await owner.mutation(api.archive.unenroll, { enrollmentId: enrolled.enrollmentId });
+    expect((await world.t.run(async (ctx) => ctx.db.get(enrolled.enrollmentId)))?.status).toBe(
+      'unenrolled',
+    );
+
+    enableArchive();
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'enrollment_invalid' });
+  });
+
+  it('allows owner revocation while the archive gate is disabled', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
+
+    disableArchive();
+    await owner.mutation(api.archive.revokeEnrollment, { enrollmentId: enrolled.enrollmentId });
+    expect((await world.t.run(async (ctx) => ctx.db.get(enrolled.enrollmentId)))?.status).toBe(
+      'revoked',
+    );
+
+    enableArchive();
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.memberCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'enrollment_invalid' });
   });
 
   it('fails when the same idempotency key is reused with a different consent payload', async () => {
