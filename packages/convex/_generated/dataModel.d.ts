@@ -411,6 +411,31 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  archiveEncryptionKeyVersions: {
+    document: {
+      createdAt: number;
+      keyVersion: number;
+      orgId: Id<"organizations">;
+      wrappedKey: string;
+      _id: Id<"archiveEncryptionKeyVersions">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "createdAt"
+      | "keyVersion"
+      | "orgId"
+      | "wrappedKey";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+      by_org_version: ["orgId", "keyVersion", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   archiveEnrollments: {
     document: {
       authorizedSources: Array<{

@@ -592,4 +592,15 @@ export default defineSchema({
     .index('by_org_id', ['orgId'])
     .index('by_contribution', ['contributionId'])
     .index('by_org_contribution_session', ['orgId', 'contributionId', 'source', 'sourceSessionId']),
+
+  // Archive API key custody stores only wrapping-secret-protected key material.
+  // The Agent Archive bucket never contains key records, and no public query exposes them.
+  archiveEncryptionKeyVersions: defineTable({
+    orgId: v.id('organizations'),
+    keyVersion: v.number(),
+    wrappedKey: v.string(),
+    createdAt: v.number(),
+  })
+    .index('by_org_version', ['orgId', 'keyVersion'])
+    .index('by_org_id', ['orgId']),
 });
