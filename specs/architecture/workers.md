@@ -191,18 +191,24 @@ Defined in `apps/agent-ingest/wrangler.jsonc`:
 
 Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the production `COLLECTOR_CREDS` namespace, and `agent-ingest-prod`.
 
-## Archive API Worker
+## Archive API Worker (Planned)
 
-**Location**: `apps/archive-api/`
+**Target location**: `apps/archive-api/`
 
 **Production origin**: `https://archive.trace-flow.dev`
 
-**Responsibility**: Serve the complete Conversation Archive data plane without adding transcript
-content or archive key material to Agent Ingest or Raw API.
+**Current scaffold**: Authorization-boundary Worker only. Uploads require an active
+Collector Credential plus a current Convex enrollment and Source decision. Export and
+deletion routes exist as fail-closed Archive Export Grant placeholders. Authorized
+uploads return `501 persistence_not_implemented`. This slice does not persist archive
+data, mint grants, write R2, run ledgers, encrypt, provision routes, or enable
+production.
 
-### What It Owns
+**Target responsibility**: Serve the complete Conversation Archive data plane without
+adding transcript content or archive key material to Agent Ingest or Raw API.
 
-- Collector Credential plus Collector Enrollment authorization for archive uploads
+### Planned ownership (not shipped)
+
 - Pro entitlement and 100 GB archive-cap enforcement
 - Archive Spool upload acknowledgement
 - Session-ledger-controlled Archive Chunk and manifest writes
