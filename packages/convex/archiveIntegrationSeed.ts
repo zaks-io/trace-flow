@@ -90,6 +90,12 @@ export const cleanupConcurrentEnrollment = internalMutation({
     const organization = await ctx.db.get(orgId);
     assertSeededArchiveIntegrationOrg(organization);
     for (const row of await ctx.db
+      .query('archiveAuditEvents')
+      .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+      .collect()) {
+      await ctx.db.delete(row._id);
+    }
+    for (const row of await ctx.db
       .query('archiveSessionIntegrity')
       .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
       .collect()) {

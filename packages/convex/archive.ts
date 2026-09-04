@@ -12,6 +12,11 @@ import {
   archiveSupportedSourceValidator,
 } from './validators';
 import {
+  activationOperationId,
+  appendArchiveAuditEvent,
+  enrollmentOperationId,
+} from './archiveAuditLib';
+import {
   ARCHIVE_CAP_BYTES,
   applyCollectorHeartbeat,
   assertArchiveMutationAllowed,
@@ -172,6 +177,18 @@ export const activate = mutation({
       capBytes: ARCHIVE_CAP_BYTES,
       now,
     });
+    await appendArchiveAuditEvent(ctx, {
+      orgId: org._id,
+      actorKind: 'user',
+      actorUserId: user._id,
+      action: 'activation',
+      outcome: 'success',
+      operationId: activationOperationId(org._id),
+      targetKind: 'activation',
+      targetId: activationId,
+      activationId,
+      now,
+    });
     return { activationId, created: true };
   },
 });
@@ -303,6 +320,19 @@ export const enroll = mutation({
       });
     }
 
+    await appendArchiveAuditEvent(ctx, {
+      orgId: user.orgId,
+      actorKind: 'user',
+      actorUserId: user._id,
+      action: 'enrollment',
+      outcome: 'success',
+      operationId: await enrollmentOperationId(user.orgId, idempotencyKey),
+      targetKind: 'enrollment',
+      targetId: enrollmentId,
+      enrollmentId,
+      contributionId: contribution._id,
+      now,
+    });
     return {
       enrollmentId,
       contributionId: contribution._id,
@@ -360,7 +390,7 @@ export const unenroll = mutation({
     if (enrollment?.orgId !== user.orgId || enrollment.userId !== user._id) {
       throw new Error('Enrollment not found');
     }
-    await invalidateArchiveEnrollment(ctx, enrollment, 'user_unenrolled', Date.now());
+    await invalidateArchiveEnrollment(ctx, enrollment, 'user_unenrolled', Date.now(), user._id);
     return null;
   },
 });
@@ -377,7 +407,7 @@ export const revokeEnrollment = mutation({
     if (enrollment?.orgId !== user.orgId) {
       throw new Error('Enrollment not found');
     }
-    await invalidateArchiveEnrollment(ctx, enrollment, 'owner_revoked', Date.now());
+    await invalidateArchiveEnrollment(ctx, enrollment, 'owner_revoked', Date.now(), user._id);
     return null;
   },
 });

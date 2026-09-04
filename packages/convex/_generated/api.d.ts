@@ -745,6 +745,50 @@ export declare const api: {
       null
     >;
   };
+  archiveAudit: {
+    listEvents: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _id: Id<"archiveAuditEvents">;
+        action:
+          | "activation"
+          | "enrollment"
+          | "revocation"
+          | "export_grant_issuance"
+          | "export_completed"
+          | "export_failed"
+          | "deletion"
+          | "key_rotation"
+          | "integrity_failure"
+          | "operator_repair_attempt"
+          | "operator_repair_outcome";
+        activationId?: Id<"archiveActivations">;
+        actorKind: "user" | "archive_api" | "operator";
+        actorUserId?: Id<"users">;
+        contributionId?: Id<"archiveContributions">;
+        enrollmentId?: Id<"archiveEnrollments">;
+        manifestRootHash?: string;
+        occurredAt: number;
+        operationId: string;
+        orgId: Id<"organizations">;
+        outcome: "success" | "failure";
+        relevantCount?: number;
+        source?: "claude" | "codex";
+        sourceSessionId?: string;
+        targetId?: string;
+        targetKind?:
+          | "activation"
+          | "enrollment"
+          | "contribution"
+          | "export"
+          | "archive"
+          | "encryption_key"
+          | "session";
+      }>
+    >;
+  };
   auth: {
     auth: {
       isAuthenticatedQuery: FunctionReference<"query", "public", {}, boolean>;
@@ -2140,6 +2184,99 @@ export declare const internal: {
       "internal",
       { keyVersion: number; orgId: Id<"organizations">; wrappedKey: string },
       Id<"archiveEncryptionKeyVersions">
+    >;
+  };
+  archiveAuditInternal: {
+    appendSemanticEvent: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        action:
+          | "export_grant_issuance"
+          | "export_completed"
+          | "export_failed"
+          | "deletion"
+          | "key_rotation"
+          | "integrity_failure"
+          | "operator_repair_attempt"
+          | "operator_repair_outcome";
+        binding:
+          | {
+              activationId: Id<"archiveActivations">;
+              kind: "activation";
+            }
+          | {
+              enrollmentId: Id<"archiveEnrollments">;
+              kind: "enrollment";
+            }
+          | {
+              contributionId: Id<"archiveContributions">;
+              kind: "contribution";
+            }
+          | {
+              collectorCredentialId: Id<"collectorCredentials">;
+              kind: "collector_credential";
+            };
+        expectedOrgId?: Id<"organizations">;
+        manifestRootHash?: string;
+        operationId: string;
+        outcome: "success" | "failure";
+        relevantCount?: number;
+        source?: "claude" | "codex";
+        sourceSessionId?: string;
+        targetId?: string;
+        targetKind?:
+          | "activation"
+          | "enrollment"
+          | "contribution"
+          | "export"
+          | "archive"
+          | "encryption_key"
+          | "session";
+      },
+      { created: boolean; eventId: Id<"archiveAuditEvents"> }
+    >;
+    listEventsForOrg: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      Array<{
+        _id: Id<"archiveAuditEvents">;
+        action:
+          | "activation"
+          | "enrollment"
+          | "revocation"
+          | "export_grant_issuance"
+          | "export_completed"
+          | "export_failed"
+          | "deletion"
+          | "key_rotation"
+          | "integrity_failure"
+          | "operator_repair_attempt"
+          | "operator_repair_outcome";
+        activationId?: Id<"archiveActivations">;
+        actorKind: "user" | "archive_api" | "operator";
+        actorUserId?: Id<"users">;
+        contributionId?: Id<"archiveContributions">;
+        enrollmentId?: Id<"archiveEnrollments">;
+        manifestRootHash?: string;
+        occurredAt: number;
+        operationId: string;
+        orgId: Id<"organizations">;
+        outcome: "success" | "failure";
+        relevantCount?: number;
+        source?: "claude" | "codex";
+        sourceSessionId?: string;
+        targetId?: string;
+        targetKind?:
+          | "activation"
+          | "enrollment"
+          | "contribution"
+          | "export"
+          | "archive"
+          | "encryption_key"
+          | "session";
+      }>
     >;
   };
   auth: {

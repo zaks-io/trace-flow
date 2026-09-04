@@ -603,4 +603,53 @@ export default defineSchema({
   })
     .index('by_org_version', ['orgId', 'keyVersion'])
     .index('by_org_id', ['orgId']),
+
+  // Append-only metadata trail for semantic Conversation Archive operations.
+  // Never stores transcript content, commands, payloads, paths, or secrets.
+  archiveAuditEvents: defineTable({
+    orgId: v.id('organizations'),
+    actorKind: v.union(v.literal('user'), v.literal('archive_api'), v.literal('operator')),
+    actorUserId: v.optional(v.id('users')),
+    action: v.union(
+      v.literal('activation'),
+      v.literal('enrollment'),
+      v.literal('revocation'),
+      v.literal('export_grant_issuance'),
+      v.literal('export_completed'),
+      v.literal('export_failed'),
+      v.literal('deletion'),
+      v.literal('key_rotation'),
+      v.literal('integrity_failure'),
+      v.literal('operator_repair_attempt'),
+      v.literal('operator_repair_outcome'),
+    ),
+    outcome: v.union(v.literal('success'), v.literal('failure')),
+    occurredAt: v.number(),
+    operationId: v.string(),
+    targetKind: v.optional(
+      v.union(
+        v.literal('activation'),
+        v.literal('enrollment'),
+        v.literal('contribution'),
+        v.literal('export'),
+        v.literal('archive'),
+        v.literal('encryption_key'),
+        v.literal('session'),
+      ),
+    ),
+    targetId: v.optional(v.string()),
+    enrollmentId: v.optional(v.id('archiveEnrollments')),
+    contributionId: v.optional(v.id('archiveContributions')),
+    activationId: v.optional(v.id('archiveActivations')),
+    source: v.optional(v.union(v.literal('claude'), v.literal('codex'))),
+    sourceSessionId: v.optional(v.string()),
+    relevantCount: v.optional(v.number()),
+    manifestRootHash: v.optional(v.string()),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_org_occurred_at', ['orgId', 'occurredAt'])
+    .index('by_org_operation_id', ['orgId', 'operationId'])
+    .index('by_org_operation_outcome', ['orgId', 'operationId', 'outcome'])
+    .index('by_org_operation_action_outcome', ['orgId', 'operationId', 'action', 'outcome'])
+    .index('by_org_action', ['orgId', 'action']),
 });

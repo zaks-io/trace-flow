@@ -542,6 +542,7 @@ export const deleteOrgRecordsBatch = internalMutation({
     // Delete Conversation Archive control-plane rows. Counts stay on the existing
     // public shape; these deletes only consume the page budget.
     const archiveTables = [
+      'archiveAuditEvents',
       'archiveSessionIntegrity',
       'archiveEnrollments',
       'archiveEnrollmentSlots',

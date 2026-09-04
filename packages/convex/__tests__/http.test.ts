@@ -1095,6 +1095,196 @@ describe('convex/http.ts', () => {
     });
   });
 
+  describe('POST /archive-api/audit-events', () => {
+    const ORG_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
+    const ENROLLMENT_ID = 'm57axc8sefsfp6k28nx6c481js806pwv';
+
+    beforeEach(() => {
+      vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');
+    });
+
+    it('rejects a missing shared secret', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/audit-events',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            binding: { kind: 'enrollment', enrollmentId: ENROLLMENT_ID },
+            action: 'export_completed',
+            outcome: 'success',
+            operationId: 'export:1',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(401);
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+
+    it('rejects caller-supplied actor or tenant substitution', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/audit-events',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            binding: { kind: 'enrollment', enrollmentId: ENROLLMENT_ID },
+            action: 'export_completed',
+            outcome: 'success',
+            operationId: 'export:1',
+            actorUserId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+            orgId: ORG_ID,
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({
+        error: 'Caller-supplied actor or tenant substitution is not allowed',
+      });
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+
+    it('rejects transcript fields and per-chunk event types', async () => {
+      const app = createApp(deps);
+      const transcript = await app.request(
+        'http://localhost/archive-api/audit-events',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            binding: { kind: 'enrollment', enrollmentId: ENROLLMENT_ID },
+            action: 'export_completed',
+            outcome: 'success',
+            operationId: 'export:1',
+            transcript: 'user said hello',
+          }),
+        },
+        ctx,
+      );
+      expect(transcript.status).toBe(400);
+      await expect(transcript.json()).resolves.toEqual({
+        error: 'Archive audit events cannot store transcript',
+      });
+
+      const chunk = await app.request(
+        'http://localhost/archive-api/audit-events',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            binding: { kind: 'enrollment', enrollmentId: ENROLLMENT_ID },
+            action: 'chunk_upload',
+            outcome: 'success',
+            operationId: 'chunk:1',
+          }),
+        },
+        ctx,
+      );
+      expect(chunk.status).toBe(400);
+      await expect(chunk.json()).resolves.toEqual({
+        error: 'Per-chunk archive audit events are not recorded',
+      });
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+
+    it('logs and rejects malformed and non-object JSON before forwarding', async () => {
+      const logs = captureConsoleLogs();
+      try {
+        const app = createApp(deps);
+        const malformed = await app.request(
+          'http://localhost/archive-api/audit-events',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer archive-secret',
+            },
+            body: '{not-json',
+          },
+          ctx,
+        );
+        expect(malformed.status).toBe(400);
+        await expect(malformed.json()).resolves.toEqual({ error: 'Invalid audit event' });
+        expect(logs.text()).toContain('convex.archive_audit_rejected');
+        expect(logs.text()).toContain('"reason":"malformed_json"');
+
+        const nonObject = await app.request(
+          'http://localhost/archive-api/audit-events',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer archive-secret',
+            },
+            body: JSON.stringify(['export_completed']),
+          },
+          ctx,
+        );
+        expect(nonObject.status).toBe(400);
+        await expect(nonObject.json()).resolves.toEqual({ error: 'Invalid audit event' });
+        expect(logs.text()).toContain('"reason":"non_object_json"');
+        expect(ctx.runMutation).not.toHaveBeenCalled();
+      } finally {
+        logs.restore();
+      }
+    });
+
+    it('forwards a valid semantic event without trusting caller actor or time', async () => {
+      ctx.runMutation.mockResolvedValueOnce({ eventId: 'event-1', created: true });
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/audit-events',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            binding: { kind: 'enrollment', enrollmentId: ENROLLMENT_ID },
+            expectedOrgId: ORG_ID,
+            action: 'key_rotation',
+            outcome: 'success',
+            operationId: 'rotate:1',
+            targetKind: 'encryption_key',
+            targetId: 'key-v2',
+            relevantCount: 4,
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ eventId: 'event-1', created: true });
+      expect(ctx.runMutation).toHaveBeenCalledOnce();
+      expect(ctx.runMutation.mock.calls[0]?.[1]).toEqual({
+        binding: { kind: 'enrollment', enrollmentId: ENROLLMENT_ID },
+        expectedOrgId: ORG_ID,
+        action: 'key_rotation',
+        outcome: 'success',
+        operationId: 'rotate:1',
+        targetKind: 'encryption_key',
+        targetId: 'key-v2',
+        relevantCount: 4,
+        manifestRootHash: undefined,
+        source: undefined,
+        sourceSessionId: undefined,
+      });
+    });
+  });
+
   describe('MCP backend shared-secret routes', () => {
     const SECRET = 'mcp-backend-secret';
     const USER_ID = 'user_1';
