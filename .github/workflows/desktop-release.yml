@@ -111,7 +111,7 @@ jobs:
           http_code=$(curl -sS -L \
             -w '%{http_code}' \
             -o "$manifest_file" \
-            "${UPDATE_ROOT}/latest.json")
+            "${UPDATE_ROOT}/latest.json?run=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}")
 
           if [ "$http_code" = "404" ]; then
             echo "No published desktop manifest found; allowing the first release."
@@ -280,8 +280,6 @@ jobs:
     timeout-minutes: 15
     environment: Production
     env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       RELEASE_NOTES: ${{ inputs.release_notes }}
       VERSION: ${{ needs.setup.outputs.version }}
     steps:
@@ -337,6 +335,8 @@ jobs:
 
       - name: Upload versioned artifacts
         env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
           DARWIN_BUNDLE: ${{ steps.meta.outputs.darwin_bundle }}
           MSI_FILE: ${{ steps.meta.outputs.msi_file }}
@@ -364,6 +364,8 @@ jobs:
 
       - name: Publish latest installers
         env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
           WIN_BUNDLE: ${{ steps.meta.outputs.windows_bundle }}
         run: |
@@ -414,6 +416,9 @@ jobs:
           jq . latest.json
 
       - name: Publish updater manifest
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
           bunx wrangler r2 object put \
