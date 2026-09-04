@@ -59,6 +59,13 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
       logger,
     );
     if (!decision.allowed) {
+      logger.warn('archive_api.policy_denied', {
+        reason: decision.reason,
+        source,
+        orgId: auth.credential.orgId,
+        userId: auth.credential.userId,
+        collectorId: auth.credential.collectorId,
+      });
       const status = decision.reason === 'policy_unavailable' ? 503 : 403;
       return c.json({ error: 'forbidden', reason: decision.reason }, status);
     }

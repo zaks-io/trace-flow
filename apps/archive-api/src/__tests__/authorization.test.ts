@@ -167,6 +167,44 @@ describe('Archive API authorization', () => {
     expect(await res.json()).toMatchObject({ reason: 'source_unauthorized' });
   });
 
+  it('logs a live Convex policy denial without credentials or request body', async () => {
+    const bodyMarker = 'RAW_UPLOAD_BODY_must_never_enter_logs';
+    const lines: string[] = [];
+    const collect = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    const spies = [
+      vi.spyOn(console, 'log').mockImplementation(collect),
+      vi.spyOn(console, 'info').mockImplementation(collect),
+      vi.spyOn(console, 'warn').mockImplementation(collect),
+      vi.spyOn(console, 'error').mockImplementation(collect),
+      vi.spyOn(console, 'debug').mockImplementation(collect),
+    ];
+    try {
+      interceptAuthorize({ allowed: false, reason: 'source_unauthorized' });
+      const res = await fetchRoute(makeEnv(await validCredEntries()), '/v1/archive/uploads', {
+        method: 'POST',
+        headers: { ...collectorHeaders, 'X-Trace-Flow-Archive-Source': 'codex' },
+        body: bodyMarker,
+      });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ reason: 'source_unauthorized' });
+
+      const text = lines.join('\n');
+      expect(text).toContain('archive_api.policy_denied');
+      expect(text).toContain('"reason":"source_unauthorized"');
+      expect(text).toContain('"orgId":"k57axc8sefsfp6k28nx6c481js806pwv"');
+      expect(text).toContain('"userId":"j57axc8sefsfp6k28nx6c481js806pwv"');
+      expect(text).toContain('"collectorId":"collector-1"');
+      expect(text).toContain('"source":"codex"');
+      expect(text).not.toContain(SECRET);
+      expect(text).not.toContain(bodyMarker);
+      expect(text).not.toContain(await sha256Hex(SECRET));
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
   it('rejects cross-Organization and cross-User tenancy mismatches from Convex', async () => {
     interceptAuthorize({ allowed: false, reason: 'not_enrolled' });
     const res = await fetchRoute(
