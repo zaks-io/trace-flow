@@ -1200,6 +1200,48 @@ describe('convex/http.ts', () => {
       expect(ctx.runMutation).not.toHaveBeenCalled();
     });
 
+    it('logs and rejects malformed and non-object JSON before forwarding', async () => {
+      const logs = captureConsoleLogs();
+      try {
+        const app = createApp(deps);
+        const malformed = await app.request(
+          'http://localhost/archive-api/audit-events',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer archive-secret',
+            },
+            body: '{not-json',
+          },
+          ctx,
+        );
+        expect(malformed.status).toBe(400);
+        await expect(malformed.json()).resolves.toEqual({ error: 'Invalid audit event' });
+        expect(logs.text()).toContain('convex.archive_audit_rejected');
+        expect(logs.text()).toContain('"reason":"malformed_json"');
+
+        const nonObject = await app.request(
+          'http://localhost/archive-api/audit-events',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer archive-secret',
+            },
+            body: JSON.stringify(['export_completed']),
+          },
+          ctx,
+        );
+        expect(nonObject.status).toBe(400);
+        await expect(nonObject.json()).resolves.toEqual({ error: 'Invalid audit event' });
+        expect(logs.text()).toContain('"reason":"non_object_json"');
+        expect(ctx.runMutation).not.toHaveBeenCalled();
+      } finally {
+        logs.restore();
+      }
+    });
+
     it('forwards a valid semantic event without trusting caller actor or time', async () => {
       ctx.runMutation.mockResolvedValueOnce({ eventId: 'event-1', created: true });
       const app = createApp(deps);

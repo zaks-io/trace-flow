@@ -1428,21 +1428,25 @@ export function createApp(
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    let body: Record<string, unknown>;
-    try {
-      const parsed: unknown = await c.req.json();
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        return c.json({ error: 'Invalid audit event' }, 400);
-      }
-      body = parsed as Record<string, unknown>;
-    } catch {
-      return c.json({ error: 'Invalid audit event' }, 400);
-    }
-
     const logger = getRequestLogger(c.req.raw, {
       operation: 'archive_audit_append',
       ...requestTraceContext,
     });
+
+    let body: Record<string, unknown>;
+    try {
+      const parsed: unknown = await c.req.json();
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        logger.warn('convex.archive_audit_rejected', { reason: 'non_object_json' });
+        await logger.flush();
+        return c.json({ error: 'Invalid audit event' }, 400);
+      }
+      body = parsed as Record<string, unknown>;
+    } catch {
+      logger.warn('convex.archive_audit_rejected', { reason: 'malformed_json' });
+      await logger.flush();
+      return c.json({ error: 'Invalid audit event' }, 400);
+    }
 
     let serialized: ReturnType<typeof serializeArchiveApiAuditInput>;
     try {

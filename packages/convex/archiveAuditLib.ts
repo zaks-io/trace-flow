@@ -137,8 +137,16 @@ export function activationOperationId(orgId: string): string {
   return `activation:${orgId}`;
 }
 
-export function enrollmentOperationId(orgId: string, idempotencyKey: string): string {
-  return `enrollment:${orgId}:${idempotencyKey}`;
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function enrollmentOperationId(
+  orgId: string,
+  idempotencyKey: string,
+): Promise<string> {
+  return `enrollment:${orgId}:${await sha256Hex(idempotencyKey)}`;
 }
 
 export function revocationOperationId(enrollmentId: string): string {
@@ -326,6 +334,19 @@ export function decideAuditAppend(input: {
   return 'append';
 }
 
+export function isArchiveAuditEventVisibleToMember(input: {
+  viewerUserId: string;
+  actorUserId?: string;
+  enrollmentUserId?: string;
+  contributionUserId?: string;
+}): boolean {
+  return (
+    input.actorUserId === input.viewerUserId ||
+    input.enrollmentUserId === input.viewerUserId ||
+    input.contributionUserId === input.viewerUserId
+  );
+}
+
 export async function appendArchiveAuditEvent(
   ctx: MutationCtx,
   event: {
@@ -351,8 +372,12 @@ export async function appendArchiveAuditEvent(
   const now = event.now ?? Date.now();
   const existingSuccess = await ctx.db
     .query('archiveAuditEvents')
-    .withIndex('by_org_operation_outcome', (q) =>
-      q.eq('orgId', event.orgId).eq('operationId', operationId).eq('outcome', 'success'),
+    .withIndex('by_org_operation_action_outcome', (q) =>
+      q
+        .eq('orgId', event.orgId)
+        .eq('operationId', operationId)
+        .eq('action', event.action)
+        .eq('outcome', 'success'),
     )
     .first();
 

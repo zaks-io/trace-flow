@@ -326,7 +326,7 @@ export const enroll = mutation({
       actorUserId: user._id,
       action: 'enrollment',
       outcome: 'success',
-      operationId: enrollmentOperationId(user.orgId, idempotencyKey),
+      operationId: await enrollmentOperationId(user.orgId, idempotencyKey),
       targetKind: 'enrollment',
       targetId: enrollmentId,
       enrollmentId,

@@ -650,5 +650,6 @@ export default defineSchema({
     .index('by_org_occurred_at', ['orgId', 'occurredAt'])
     .index('by_org_operation_id', ['orgId', 'operationId'])
     .index('by_org_operation_outcome', ['orgId', 'operationId', 'outcome'])
+    .index('by_org_operation_action_outcome', ['orgId', 'operationId', 'action', 'outcome'])
     .index('by_org_action', ['orgId', 'action']),
 });

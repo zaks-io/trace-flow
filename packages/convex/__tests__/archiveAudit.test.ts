@@ -5,7 +5,9 @@ import { ARCHIVE_ENABLED_ENV } from '../archiveLib';
 import {
   ARCHIVE_API_AUDIT_ACTIONS,
   decideAuditAppend,
+  enrollmentOperationId,
   serializeArchiveApiAuditInput,
+  validateAuditOperationId,
 } from '../archiveAuditLib';
 import { initConvexTest, type ArchiveTestConvex } from './convexTest.setup';
 
@@ -13,9 +15,11 @@ interface SeededWorld {
   t: ArchiveTestConvex;
   owner: { _id: Id<'users'>; tokenIdentifier: string; orgId: Id<'organizations'> };
   member: { _id: Id<'users'>; tokenIdentifier: string; orgId: Id<'organizations'> };
+  memberB: { _id: Id<'users'>; tokenIdentifier: string; orgId: Id<'organizations'> };
   otherOwner: { _id: Id<'users'>; tokenIdentifier: string; orgId: Id<'organizations'> };
   ownerCred: Id<'collectorCredentials'>;
   memberCred: Id<'collectorCredentials'>;
+  memberBCred: Id<'collectorCredentials'>;
 }
 
 function enableArchive() {
@@ -43,6 +47,11 @@ async function seedWorld(): Promise<SeededWorld> {
       email: 'member@example.com',
       enabled: true,
     });
+    const memberBId = await ctx.db.insert('users', {
+      tokenIdentifier: 'https://auth.example/|auth0|member-b',
+      email: 'member-b@example.com',
+      enabled: true,
+    });
     const otherOwnerId = await ctx.db.insert('users', {
       tokenIdentifier: 'https://auth.example/|auth0|other',
       email: 'other@example.com',
@@ -56,6 +65,7 @@ async function seedWorld(): Promise<SeededWorld> {
     });
     await ctx.db.patch(ownerId, { orgId });
     await ctx.db.patch(memberId, { orgId });
+    await ctx.db.patch(memberBId, { orgId });
     await ctx.db.patch(otherOwnerId, { orgId: otherOrgId });
 
     await ctx.db.insert('organizationMembers', {
@@ -67,6 +77,12 @@ async function seedWorld(): Promise<SeededWorld> {
     await ctx.db.insert('organizationMembers', {
       orgId,
       userId: memberId,
+      role: 'member',
+      status: 'active',
+    });
+    await ctx.db.insert('organizationMembers', {
+      orgId,
+      userId: memberBId,
       role: 'member',
       status: 'active',
     });
@@ -116,8 +132,26 @@ async function seedWorld(): Promise<SeededWorld> {
       status: 'active',
       expiresAt: Date.now() + 60_000,
     });
+    const memberBCred = await ctx.db.insert('collectorCredentials', {
+      hashedSecret: 'hash-member-b',
+      orgId,
+      userId: memberBId,
+      collectorId: 'collector-member-b',
+      status: 'active',
+      expiresAt: Date.now() + 60_000,
+    });
 
-    return { ownerId, memberId, otherOwnerId, orgId, otherOrgId, ownerCred, memberCred };
+    return {
+      ownerId,
+      memberId,
+      memberBId,
+      otherOwnerId,
+      orgId,
+      otherOrgId,
+      ownerCred,
+      memberCred,
+      memberBCred,
+    };
   });
 
   return {
@@ -132,6 +166,11 @@ async function seedWorld(): Promise<SeededWorld> {
       tokenIdentifier: 'https://auth.example/|auth0|member',
       orgId: ids.orgId,
     },
+    memberB: {
+      _id: ids.memberBId,
+      tokenIdentifier: 'https://auth.example/|auth0|member-b',
+      orgId: ids.orgId,
+    },
     otherOwner: {
       _id: ids.otherOwnerId,
       tokenIdentifier: 'https://auth.example/|auth0|other',
@@ -139,6 +178,7 @@ async function seedWorld(): Promise<SeededWorld> {
     },
     ownerCred: ids.ownerCred,
     memberCred: ids.memberCred,
+    memberBCred: ids.memberBCred,
   };
 }
 
@@ -200,6 +240,18 @@ describe('archive audit serializer', () => {
     expect(() => serializeArchiveApiAuditInput({ ...valid, occurredAt: 1 })).toThrow(
       'substitution',
     );
+  });
+
+  it('derives a path-safe enrollment operation identity from slash-compatible keys', async () => {
+    const slashed = await enrollmentOperationId('org_1', 'device/consent-1');
+    const backslashed = await enrollmentOperationId('org_1', 'device\\consent-1');
+    expect(slashed).not.toContain('/');
+    expect(slashed).not.toContain('\\');
+    expect(backslashed).not.toContain('/');
+    expect(backslashed).not.toContain('\\');
+    expect(slashed).not.toBe(backslashed);
+    expect(validateAuditOperationId(slashed)).toBe(slashed);
+    expect(await enrollmentOperationId('org_1', 'device/consent-1')).toBe(slashed);
   });
 
   it('does not treat user lifecycle actions as Archive API event types', () => {
@@ -492,5 +544,153 @@ describe('archive audit control plane', () => {
     });
     expect(scoped.every((event) => event.orgId === world.owner.orgId)).toBe(true);
     expect(scoped.some((event) => event.orgId === world.otherOwner.orgId)).toBe(false);
+  });
+
+  it('lets owners see the org trail while members see only their own audit metadata', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    const memberB = asUser(world, world.memberB);
+
+    await owner.mutation(api.archive.activate, {});
+    const enrollmentA = await member.mutation(api.archive.enroll, {
+      collectorCredentialId: world.memberCred,
+      authorizedSources: sources,
+      idempotencyKey: 'consent-member-a',
+    });
+    const enrollmentB = await memberB.mutation(api.archive.enroll, {
+      collectorCredentialId: world.memberBCred,
+      authorizedSources: sources,
+      idempotencyKey: 'consent-member-b',
+    });
+    await world.t.mutation(internal.archiveAuditInternal.appendSemanticEvent, {
+      binding: { kind: 'enrollment', enrollmentId: enrollmentB.enrollmentId },
+      action: 'integrity_failure',
+      outcome: 'failure',
+      operationId: 'integrity:member-b:session-1',
+      targetKind: 'session',
+      targetId: 'session-member-b',
+      source: 'claude',
+      sourceSessionId: 'session-member-b',
+    });
+
+    const ownerEvents = await owner.query(api.archiveAudit.listEvents, {});
+    const memberEvents = await member.query(api.archiveAudit.listEvents, {});
+    const memberBEvents = await memberB.query(api.archiveAudit.listEvents, {});
+
+    expect(ownerEvents.some((event) => event.enrollmentId === enrollmentA.enrollmentId)).toBe(true);
+    expect(ownerEvents.some((event) => event.enrollmentId === enrollmentB.enrollmentId)).toBe(true);
+    expect(ownerEvents.some((event) => event.sourceSessionId === 'session-member-b')).toBe(true);
+
+    expect(memberEvents.every((event) => event.actorUserId !== world.memberB._id)).toBe(true);
+    expect(memberEvents.every((event) => event.enrollmentId !== enrollmentB.enrollmentId)).toBe(
+      true,
+    );
+    expect(memberEvents.every((event) => event.contributionId !== enrollmentB.contributionId)).toBe(
+      true,
+    );
+    expect(memberEvents.every((event) => event.sourceSessionId !== 'session-member-b')).toBe(true);
+    expect(memberEvents.some((event) => event.enrollmentId === enrollmentA.enrollmentId)).toBe(
+      true,
+    );
+    expect(memberEvents.some((event) => event.actorUserId === world.member._id)).toBe(true);
+
+    expect(memberBEvents.every((event) => event.actorUserId !== world.member._id)).toBe(true);
+    expect(memberBEvents.every((event) => event.enrollmentId !== enrollmentA.enrollmentId)).toBe(
+      true,
+    );
+    expect(
+      memberBEvents.every((event) => event.contributionId !== enrollmentA.contributionId),
+    ).toBe(true);
+    expect(memberBEvents.some((event) => event.enrollmentId === enrollmentB.enrollmentId)).toBe(
+      true,
+    );
+    expect(memberBEvents.some((event) => event.sourceSessionId === 'session-member-b')).toBe(true);
+  });
+
+  it('enrolls with slash and backslash-compatible accepted keys without rolling back', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+
+    const slashed = await member.mutation(api.archive.enroll, {
+      collectorCredentialId: world.memberCred,
+      authorizedSources: sources,
+      idempotencyKey: 'device/consent-1',
+    });
+    expect(slashed.created).toBe(true);
+    const slashedReplay = await member.mutation(api.archive.enroll, {
+      collectorCredentialId: world.memberCred,
+      authorizedSources: sources,
+      idempotencyKey: 'device/consent-1',
+    });
+    expect(slashedReplay.created).toBe(false);
+    expect(slashedReplay.enrollmentId).toBe(slashed.enrollmentId);
+
+    const backslashed = await owner.mutation(api.archive.enroll, {
+      collectorCredentialId: world.ownerCred,
+      authorizedSources: sources,
+      idempotencyKey: 'device\\consent-1',
+    });
+    expect(backslashed.created).toBe(true);
+
+    const events = await owner.query(api.archiveAudit.listEvents, {});
+    const enrollmentEvents = events.filter((event) => event.action === 'enrollment');
+    expect(enrollmentEvents).toHaveLength(2);
+    expect(enrollmentEvents.every((event) => !event.operationId.includes('/'))).toBe(true);
+    expect(enrollmentEvents.every((event) => !event.operationId.includes('\\'))).toBe(true);
+  });
+
+  it('replays later-action success without duplicating when two actions share an operation id', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrollment = await owner.mutation(api.archive.enroll, {
+      collectorCredentialId: world.ownerCred,
+      authorizedSources: sources,
+      idempotencyKey: 'consent-shared-op',
+    });
+
+    const grant = await world.t.mutation(internal.archiveAuditInternal.appendSemanticEvent, {
+      binding: { kind: 'enrollment', enrollmentId: enrollment.enrollmentId },
+      action: 'export_grant_issuance',
+      outcome: 'success',
+      operationId: 'export:shared-1',
+      targetKind: 'export',
+      targetId: 'export-shared-1',
+    });
+    const completed = await world.t.mutation(internal.archiveAuditInternal.appendSemanticEvent, {
+      binding: { kind: 'enrollment', enrollmentId: enrollment.enrollmentId },
+      action: 'export_completed',
+      outcome: 'success',
+      operationId: 'export:shared-1',
+      targetKind: 'export',
+      targetId: 'export-shared-1',
+    });
+    const completedRetry = await world.t.mutation(
+      internal.archiveAuditInternal.appendSemanticEvent,
+      {
+        binding: { kind: 'enrollment', enrollmentId: enrollment.enrollmentId },
+        action: 'export_completed',
+        outcome: 'success',
+        operationId: 'export:shared-1',
+        targetKind: 'export',
+        targetId: 'export-shared-1',
+      },
+    );
+
+    expect(grant.created).toBe(true);
+    expect(completed.created).toBe(true);
+    expect(completedRetry.created).toBe(false);
+    expect(completedRetry.eventId).toBe(completed.eventId);
+    expect(completed.eventId).not.toBe(grant.eventId);
+
+    const events = await owner.query(api.archiveAudit.listEvents, {});
+    expect(events.filter((event) => event.action === 'export_grant_issuance')).toHaveLength(1);
+    expect(events.filter((event) => event.action === 'export_completed')).toHaveLength(1);
   });
 });
