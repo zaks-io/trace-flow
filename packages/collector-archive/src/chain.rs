@@ -83,10 +83,15 @@ impl ArchiveChain {
         observation: &ArchiveObservation,
     ) -> Result<bool, ChainError> {
         observation.validate()?;
-        self.validate_observation_scope(observation.source, &observation.source_session_id)?;
+        self.validate_observation_scope(
+            observation.source,
+            &observation.source_session_id,
+            &observation.source_transcript_part_id,
+        )?;
         let key_exists = self.elements.iter().any(|element| {
             matches!(element, ChainElement::Record(record)
-                if record.source_record_identity == observation.source_record_identity
+                if record.source_transcript_part_id == observation.source_transcript_part_id
+                    && record.source_record_identity == observation.source_record_identity
                     && record.content_sha256 == observation.content_sha256)
         });
         if key_exists {
@@ -100,6 +105,7 @@ impl ArchiveChain {
             chain_hash_version: observation.chain_hash_version,
             source: observation.source,
             source_session_id: observation.source_session_id.clone(),
+            source_transcript_part_id: observation.source_transcript_part_id.clone(),
             source_record_identity: observation.source_record_identity.clone(),
             observed_at: observation.observed_at,
             payload_encoding: observation.payload_encoding,
@@ -130,8 +136,24 @@ impl ArchiveChain {
         {
             return Err(ChainError::CheckpointDoesNotDescribeScan);
         }
-        if let Some(previous) = self.latest_checkpoint() {
-            if scan.prior_checkpoint.as_ref() != Some(previous) {
+        if let Some(previous) = self
+            .latest_checkpoint_for_part(&scan.checkpoint.source_transcript_part_id)
+            .cloned()
+        {
+            if scan.checkpoint.same_logical_position(&previous) && scan.prior_checkpoint.is_none() {
+                if scan
+                    .observations
+                    .iter()
+                    .all(|observation| self.has_record_version(observation))
+                {
+                    return Ok(CommitReport {
+                        appended_records: 0,
+                        appended_checkpoint: false,
+                    });
+                }
+                return Err(ChainError::MissingHistoricalPrefixProof);
+            }
+            if scan.prior_checkpoint.as_ref() != Some(&previous) {
                 return Err(ChainError::MissingHistoricalPrefixProof);
             }
             if scan.checkpoint.last_complete_byte_offset < previous.last_complete_byte_offset {
@@ -179,6 +201,7 @@ impl ArchiveChain {
                         chain_hash_version: record.chain_hash_version,
                         source: record.source,
                         source_session_id: record.source_session_id.clone(),
+                        source_transcript_part_id: record.source_transcript_part_id.clone(),
                         source_record_identity: record.source_record_identity.clone(),
                         observed_at: record.observed_at,
                         payload_encoding: record.payload_encoding,
@@ -204,6 +227,8 @@ impl ArchiveChain {
                     checkpoint.checkpoint.validate()?;
                     if checkpoint.source != self.source
                         || checkpoint.source_session_id != self.source_session_id
+                        || checkpoint.source_transcript_part_id
+                            != checkpoint.checkpoint.source_transcript_part_id
                         || checkpoint.checkpoint.source != self.source
                         || checkpoint.checkpoint.source_session_id != self.source_session_id
                         || checkpoint.archive_format_version
@@ -240,7 +265,14 @@ impl ArchiveChain {
         }
         for observation in &scan.observations {
             observation.validate()?;
-            self.validate_observation_scope(observation.source, &observation.source_session_id)?;
+            self.validate_observation_scope(
+                observation.source,
+                &observation.source_session_id,
+                &observation.source_transcript_part_id,
+            )?;
+            if observation.source_transcript_part_id != scan.checkpoint.source_transcript_part_id {
+                return Err(ChainError::ScopeMismatch);
+            }
         }
         Ok(())
     }
@@ -249,21 +281,23 @@ impl ArchiveChain {
         &self,
         source: ArchiveSource,
         source_session_id: &str,
+        source_transcript_part_id: &str,
     ) -> Result<(), ChainError> {
         if source != self.source || source_session_id != self.source_session_id {
+            return Err(ChainError::ScopeMismatch);
+        }
+        if source_transcript_part_id.is_empty() {
             return Err(ChainError::ScopeMismatch);
         }
         Ok(())
     }
 
     fn should_append_checkpoint(&self, checkpoint: &CompletedScanCheckpoint) -> bool {
-        let Some(previous) = self.latest_checkpoint() else {
+        let Some(previous) = self.latest_checkpoint_for_part(&checkpoint.source_transcript_part_id)
+        else {
             return true;
         };
-        checkpoint.last_complete_byte_offset > previous.last_complete_byte_offset
-            || checkpoint.record_count > previous.record_count
-            || checkpoint.complete_prefix_sha256 != previous.complete_prefix_sha256
-            || checkpoint.last_source_record_identity != previous.last_source_record_identity
+        !checkpoint.same_logical_position(previous)
     }
 
     fn append_checkpoint(&mut self, checkpoint: CompletedScanCheckpoint) -> Result<(), ChainError> {
@@ -274,6 +308,7 @@ impl ArchiveChain {
             chain_hash_version: checkpoint.chain_hash_version,
             source: checkpoint.source,
             source_session_id: checkpoint.source_session_id.clone(),
+            source_transcript_part_id: checkpoint.source_transcript_part_id.clone(),
             checkpoint,
             chain_sequence: sequence,
             previous_chain_hash,
@@ -282,6 +317,32 @@ impl ArchiveChain {
         committed.chain_hash = checkpoint_chain_hash(previous_chain_hash, sequence, &committed);
         self.elements.push(ChainElement::Checkpoint(committed));
         Ok(())
+    }
+
+    pub fn latest_checkpoint_for_part(
+        &self,
+        source_transcript_part_id: &str,
+    ) -> Option<&CompletedScanCheckpoint> {
+        self.elements
+            .iter()
+            .rev()
+            .find_map(|element| match element {
+                ChainElement::Checkpoint(checkpoint)
+                    if checkpoint.source_transcript_part_id == source_transcript_part_id =>
+                {
+                    Some(&checkpoint.checkpoint)
+                }
+                _ => None,
+            })
+    }
+
+    fn has_record_version(&self, observation: &ArchiveObservation) -> bool {
+        self.elements.iter().any(|element| {
+            matches!(element, ChainElement::Record(record)
+                if record.source_transcript_part_id == observation.source_transcript_part_id
+                    && record.source_record_identity == observation.source_record_identity
+                    && record.content_sha256 == observation.content_sha256)
+        })
     }
 }
 

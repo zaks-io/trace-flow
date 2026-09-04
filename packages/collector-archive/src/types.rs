@@ -68,10 +68,10 @@ fn parse_digest(value: &str) -> Result<Sha256Digest, ArchiveError> {
         return Err(ArchiveError::InvalidDigest);
     }
     let mut bytes = [0; 32];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        let pair_start = index * 2;
-        *byte = (hex_value(hex.as_bytes()[pair_start]) << 4)
-            | hex_value(hex.as_bytes()[pair_start + 1]);
+    let (pairs, remainder) = hex.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    for (index, pair) in pairs.iter().enumerate() {
+        bytes[index] = (hex_value(pair[0]) << 4) | hex_value(pair[1]);
     }
     Ok(Sha256Digest(bytes))
 }
@@ -133,6 +133,8 @@ pub enum ArchiveError {
     InvalidBase64,
     #[error("payload content hash does not match its exact bytes")]
     ContentHashMismatch,
+    #[error("archive checkpoint wrapper does not match its nested checkpoint")]
+    CheckpointWrapperMismatch,
     #[error("JSONL record at byte offset {offset} is not valid JSON")]
     InvalidJsonlRecord { offset: u64 },
     #[error("archive JSON serialization failed")]
@@ -173,12 +175,37 @@ pub(crate) fn validate_identifier(value: &str, field: &'static str) -> Result<()
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) fn validate_transcript_part_id(
+    source: ArchiveSource,
+    value: &str,
+) -> Result<(), ArchiveError> {
+    let valid = match source {
+        ArchiveSource::Claude => {
+            value == "claude:part:parent"
+                || value
+                    .strip_prefix("claude:part:sha256:")
+                    .is_some_and(|hex| {
+                        hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    })
+        }
+        ArchiveSource::Codex => value == "codex:part:primary",
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ArchiveError::InvalidIdentifier {
+            field: "source_transcript_part_id",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArchiveObservation {
-    pub archive_format_version: u16,
-    pub chain_hash_version: u16,
+    pub(crate) archive_format_version: u16,
+    pub(crate) chain_hash_version: u16,
     pub source: ArchiveSource,
     pub source_session_id: String,
+    pub(crate) source_transcript_part_id: String,
     pub source_record_identity: String,
     pub observed_at: i64,
     pub payload_encoding: crate::encoding::PayloadEncoding,
@@ -187,6 +214,10 @@ pub struct ArchiveObservation {
 }
 
 impl ArchiveObservation {
+    pub fn source_transcript_part_id(&self) -> &str {
+        &self.source_transcript_part_id
+    }
+
     pub fn new(
         source: ArchiveSource,
         source_session_id: impl Into<String>,
@@ -194,9 +225,29 @@ impl ArchiveObservation {
         observed_at: i64,
         payload_bytes: &[u8],
     ) -> Result<Self, ArchiveError> {
+        Self::new_with_transcript_part(
+            source,
+            default_transcript_part_id(source),
+            source_session_id,
+            source_record_identity,
+            observed_at,
+            payload_bytes,
+        )
+    }
+
+    pub(crate) fn new_with_transcript_part(
+        source: ArchiveSource,
+        source_transcript_part_id: impl Into<String>,
+        source_session_id: impl Into<String>,
+        source_record_identity: impl Into<String>,
+        observed_at: i64,
+        payload_bytes: &[u8],
+    ) -> Result<Self, ArchiveError> {
+        let source_transcript_part_id = source_transcript_part_id.into();
         let source_session_id = source_session_id.into();
         let source_record_identity = source_record_identity.into();
         validate_identifier(&source_session_id, "source_session_id")?;
+        validate_identifier(&source_transcript_part_id, "source_transcript_part_id")?;
         validate_identifier(&source_record_identity, "source_record_identity")?;
         let encoded = crate::encoding::EncodedPayload::from_bytes(payload_bytes);
         Ok(Self {
@@ -204,6 +255,7 @@ impl ArchiveObservation {
             chain_hash_version: CHAIN_HASH_VERSION,
             source,
             source_session_id,
+            source_transcript_part_id,
             source_record_identity,
             observed_at,
             payload_encoding: encoded.encoding,
@@ -215,6 +267,8 @@ impl ArchiveObservation {
     pub fn validate(&self) -> Result<(), ArchiveError> {
         validate_versions(self.archive_format_version, self.chain_hash_version)?;
         validate_identifier(&self.source_session_id, "source_session_id")?;
+        validate_identifier(&self.source_transcript_part_id, "source_transcript_part_id")?;
+        validate_transcript_part_id(self.source, &self.source_transcript_part_id)?;
         validate_identifier(&self.source_record_identity, "source_record_identity")?;
         let encoded = crate::encoding::EncodedPayload {
             encoding: self.payload_encoding,
@@ -239,12 +293,13 @@ impl ArchiveObservation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CompletedScanCheckpoint {
-    pub archive_format_version: u16,
-    pub chain_hash_version: u16,
+    pub(crate) archive_format_version: u16,
+    pub(crate) chain_hash_version: u16,
     pub source: ArchiveSource,
     pub source_session_id: String,
+    pub(crate) source_transcript_part_id: String,
     pub record_count: u64,
     pub last_source_record_identity: Option<String>,
     pub last_complete_byte_offset: u64,
@@ -254,9 +309,15 @@ pub struct CompletedScanCheckpoint {
 }
 
 impl CompletedScanCheckpoint {
+    pub fn source_transcript_part_id(&self) -> &str {
+        &self.source_transcript_part_id
+    }
+
     pub fn validate(&self) -> Result<(), ArchiveError> {
         validate_versions(self.archive_format_version, self.chain_hash_version)?;
         validate_identifier(&self.source_session_id, "source_session_id")?;
+        validate_identifier(&self.source_transcript_part_id, "source_transcript_part_id")?;
+        validate_transcript_part_id(self.source, &self.source_transcript_part_id)?;
         if let Some(identity) = &self.last_source_record_identity {
             validate_identifier(identity, "last_source_record_identity")?;
         }
@@ -271,5 +332,100 @@ impl CompletedScanCheckpoint {
             });
         }
         Ok(())
+    }
+
+    pub(crate) fn same_logical_position(&self, other: &Self) -> bool {
+        self.archive_format_version == other.archive_format_version
+            && self.chain_hash_version == other.chain_hash_version
+            && self.source == other.source
+            && self.source_session_id == other.source_session_id
+            && self.source_transcript_part_id == other.source_transcript_part_id
+            && self.record_count == other.record_count
+            && self.last_source_record_identity == other.last_source_record_identity
+            && self.last_complete_byte_offset == other.last_complete_byte_offset
+            && self.complete_prefix_sha256 == other.complete_prefix_sha256
+    }
+}
+
+pub(crate) fn default_transcript_part_id(source: ArchiveSource) -> String {
+    match source {
+        ArchiveSource::Claude => "claude:part:parent".to_string(),
+        ArchiveSource::Codex => "codex:part:primary".to_string(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ArchiveObservationWire {
+    archive_format_version: u16,
+    chain_hash_version: u16,
+    source: ArchiveSource,
+    source_session_id: String,
+    source_transcript_part_id: String,
+    source_record_identity: String,
+    observed_at: i64,
+    payload_encoding: crate::encoding::PayloadEncoding,
+    payload: String,
+    content_sha256: Sha256Digest,
+}
+
+impl<'de> Deserialize<'de> for ArchiveObservation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ArchiveObservationWire::deserialize(deserializer)?;
+        let observation = Self {
+            archive_format_version: wire.archive_format_version,
+            chain_hash_version: wire.chain_hash_version,
+            source: wire.source,
+            source_session_id: wire.source_session_id,
+            source_transcript_part_id: wire.source_transcript_part_id,
+            source_record_identity: wire.source_record_identity,
+            observed_at: wire.observed_at,
+            payload_encoding: wire.payload_encoding,
+            payload: wire.payload,
+            content_sha256: wire.content_sha256,
+        };
+        observation.validate().map_err(de::Error::custom)?;
+        Ok(observation)
+    }
+}
+
+#[derive(Deserialize)]
+struct CompletedScanCheckpointWire {
+    archive_format_version: u16,
+    chain_hash_version: u16,
+    source: ArchiveSource,
+    source_session_id: String,
+    source_transcript_part_id: String,
+    record_count: u64,
+    last_source_record_identity: Option<String>,
+    last_complete_byte_offset: u64,
+    observed_file_size: u64,
+    complete_prefix_sha256: Sha256Digest,
+    first_observed_at: i64,
+}
+
+impl<'de> Deserialize<'de> for CompletedScanCheckpoint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = CompletedScanCheckpointWire::deserialize(deserializer)?;
+        let checkpoint = Self {
+            archive_format_version: wire.archive_format_version,
+            chain_hash_version: wire.chain_hash_version,
+            source: wire.source,
+            source_session_id: wire.source_session_id,
+            source_transcript_part_id: wire.source_transcript_part_id,
+            record_count: wire.record_count,
+            last_source_record_identity: wire.last_source_record_identity,
+            last_complete_byte_offset: wire.last_complete_byte_offset,
+            observed_file_size: wire.observed_file_size,
+            complete_prefix_sha256: wire.complete_prefix_sha256,
+            first_observed_at: wire.first_observed_at,
+        };
+        checkpoint.validate().map_err(de::Error::custom)?;
+        Ok(checkpoint)
     }
 }

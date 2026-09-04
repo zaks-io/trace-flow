@@ -1,11 +1,13 @@
 use collector_archive::{
-    scan_claude_jsonl, scan_codex_jsonl, ArchiveChain, ArchiveError, ArchiveObservation,
-    ArchiveSource, ChainElement, PayloadEncoding,
+    scan_claude_jsonl, scan_claude_jsonl_part, scan_codex_jsonl, sha256, ArchiveChain,
+    ArchiveError, ArchiveObservation, ArchiveSource, ChainElement, PayloadEncoding,
 };
 use collector_contracts::AgentSource;
 
 const CLAUDE_FIXTURE: &[u8] = include_bytes!("fixtures/claude.jsonl");
 const CODEX_FIXTURE: &[u8] = include_bytes!("fixtures/codex.jsonl");
+const CLAUDE_PARENT_FIXTURE: &[u8] = include_bytes!("fixtures/claude-parent.jsonl");
+const CLAUDE_SUBAGENT_FIXTURE: &[u8] = include_bytes!("fixtures/claude-subagent.jsonl");
 
 #[test]
 fn claude_fixture_round_trips_exact_source_record_bytes() {
@@ -39,7 +41,12 @@ fn codex_fixture_round_trips_exact_source_record_bytes() {
 
 #[test]
 fn exact_byte_fixtures_use_lf_record_delimiters() {
-    for fixture in [CLAUDE_FIXTURE, CODEX_FIXTURE] {
+    for fixture in [
+        CLAUDE_FIXTURE,
+        CODEX_FIXTURE,
+        CLAUDE_PARENT_FIXTURE,
+        CLAUDE_SUBAGENT_FIXTURE,
+    ] {
         assert!(!fixture
             .split(|byte| *byte == b'\n')
             .any(|line| line.ends_with(b"\r")));
@@ -52,7 +59,11 @@ fn jsonl_record_payload_excludes_only_the_line_terminator() {
     let scan = scan_claude_jsonl("session-1", raw, 10, None).unwrap();
     assert_eq!(
         scan.observations[0].payload_bytes().unwrap(),
-        &raw[..raw.len() - 2]
+        &raw[..raw.len() - 1]
+    );
+    assert_eq!(
+        scan.observations[0].content_sha256,
+        sha256(&raw[..raw.len() - 1])
     );
     assert_eq!(scan.checkpoint.last_complete_byte_offset, raw.len() as u64);
 }
@@ -151,6 +162,80 @@ fn scans_deduplicate_unchanged_rescans_and_extend_on_append() {
 }
 
 #[test]
+fn second_collector_can_dedupe_an_unchanged_scan_without_prefix_proof() {
+    let bytes = b"{\"uuid\":\"r1\",\"value\":1}\n";
+    let first = scan_claude_jsonl("session-1", bytes, 10, None).unwrap();
+    let second = scan_claude_jsonl("session-1", bytes, 11, None).unwrap();
+    let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
+    chain.commit_scan(&first).unwrap();
+
+    let report = chain.commit_scan(&second).unwrap();
+    assert_eq!(report.appended_records, 0);
+    assert!(!report.appended_checkpoint);
+    assert_eq!(chain.elements.len(), 2);
+
+    let appended = b"{\"uuid\":\"r1\",\"value\":1}\n{\"uuid\":\"r2\"}\n";
+    let unproved_append = scan_claude_jsonl("session-1", appended, 12, None).unwrap();
+    assert!(matches!(
+        chain.commit_scan(&unproved_append),
+        Err(collector_archive::ChainError::MissingHistoricalPrefixProof)
+    ));
+}
+
+#[test]
+fn claude_parent_and_subagent_parts_have_independent_checkpoints_and_appends() {
+    let parent = scan_claude_jsonl("session-1", CLAUDE_PARENT_FIXTURE, 10, None).unwrap();
+    let subagent =
+        scan_claude_jsonl_part("session-1", "agent-001", CLAUDE_SUBAGENT_FIXTURE, 10, None)
+            .unwrap();
+    assert_ne!(
+        parent.checkpoint.source_transcript_part_id(),
+        subagent.checkpoint.source_transcript_part_id()
+    );
+    assert_ne!(
+        parent.observations[0].source_record_identity,
+        subagent.observations[0].source_record_identity
+    );
+    assert!(!subagent.observations[0]
+        .source_transcript_part_id()
+        .contains("agent-001"));
+
+    let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
+    chain.commit_scan(&parent).unwrap();
+    chain.commit_scan(&subagent).unwrap();
+
+    let mut parent_bytes = CLAUDE_PARENT_FIXTURE.to_vec();
+    parent_bytes.extend_from_slice(br#"{"content":"parent append"}"#);
+    parent_bytes.push(b'\n');
+    let parent_append = scan_claude_jsonl(
+        "session-1",
+        &parent_bytes,
+        11,
+        chain.latest_checkpoint_for_part(parent.checkpoint.source_transcript_part_id()),
+    )
+    .unwrap();
+    let parent_report = chain.commit_scan(&parent_append).unwrap();
+    assert_eq!(parent_report.appended_records, 1);
+    assert!(parent_report.appended_checkpoint);
+
+    let mut subagent_bytes = CLAUDE_SUBAGENT_FIXTURE.to_vec();
+    subagent_bytes.extend_from_slice(br#"{"content":"subagent append"}"#);
+    subagent_bytes.push(b'\n');
+    let subagent_append = scan_claude_jsonl_part(
+        "session-1",
+        "agent-001",
+        &subagent_bytes,
+        11,
+        chain.latest_checkpoint_for_part(subagent.checkpoint.source_transcript_part_id()),
+    )
+    .unwrap();
+    let subagent_report = chain.commit_scan(&subagent_append).unwrap();
+    assert_eq!(subagent_report.appended_records, 1);
+    assert!(subagent_report.appended_checkpoint);
+    chain.verify().unwrap();
+}
+
+#[test]
 fn trailing_partial_is_excluded_then_becomes_a_record_when_completed() {
     let partial = b"{\"uuid\":\"r1\"}\n{\"uuid\":\"r2\"";
     let first = scan_claude_jsonl("session-1", partial, 10, None).unwrap();
@@ -208,13 +293,27 @@ fn cursor_is_rejected_as_an_unsupported_archive_source() {
 
 #[test]
 fn unsupported_versions_and_private_paths_are_rejected() {
-    let mut observation =
+    let observation =
         ArchiveObservation::new(ArchiveSource::Claude, "session-1", "record-1", 10, b"x").unwrap();
-    observation.archive_format_version = 99;
-    assert!(matches!(
-        observation.validate(),
-        Err(ArchiveError::UnsupportedArchiveFormatVersion(99))
-    ));
+    for field in ["archive_format_version", "chain_hash_version"] {
+        let mut observation_wire = serde_json::to_value(&observation).unwrap();
+        observation_wire[field] = serde_json::json!(99);
+        let error = serde_json::from_value::<ArchiveObservation>(observation_wire).unwrap_err();
+        assert!(error.to_string().contains("version 99"));
+    }
+
+    let checkpoint = scan_claude_jsonl("session-1", b"{\"uuid\":\"r1\"}\n", 10, None)
+        .unwrap()
+        .checkpoint;
+    for field in ["archive_format_version", "chain_hash_version"] {
+        let mut checkpoint_wire = serde_json::to_value(&checkpoint).unwrap();
+        checkpoint_wire[field] = serde_json::json!(99);
+        let error =
+            serde_json::from_value::<collector_archive::CompletedScanCheckpoint>(checkpoint_wire)
+                .unwrap_err();
+        assert!(error.to_string().contains("version 99"));
+    }
+
     assert!(matches!(
         ArchiveObservation::new(
             ArchiveSource::Claude,
@@ -231,15 +330,22 @@ fn unsupported_versions_and_private_paths_are_rejected() {
     let scan = scan_claude_jsonl("session-1", b"{\"uuid\":\"r1\"}\n", 10, None).unwrap();
     let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
     chain.commit_scan(&scan).unwrap();
-    if let ChainElement::Checkpoint(checkpoint) = &mut chain.elements[1] {
-        checkpoint.archive_format_version = 99;
+    for field in ["archive_format_version", "chain_hash_version"] {
+        let mut checkpoint_wire = serde_json::to_value(&chain.elements[1]).unwrap();
+        checkpoint_wire[field] = serde_json::json!(99);
+        let error = ArchiveChain::from_jsonl(
+            ArchiveSource::Claude,
+            "session-1",
+            &serde_json::to_vec(&checkpoint_wire).unwrap(),
+        )
+        .unwrap_err();
+        match error {
+            collector_archive::ChainError::Archive(ArchiveError::Serialization(error)) => {
+                assert!(error.to_string().contains("version 99"));
+            }
+            other => panic!("unexpected chain parse error: {other:?}"),
+        }
     }
-    assert!(matches!(
-        chain.verify(),
-        Err(collector_archive::ChainError::Archive(
-            ArchiveError::UnsupportedArchiveFormatVersion(99)
-        ))
-    ));
 }
 
 #[test]

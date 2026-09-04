@@ -17,7 +17,9 @@ pub use chain::{ArchiveChain, ChainError, CommitReport};
 pub use elements::{ArchiveRecord, ChainElement, CommittedScanCheckpoint};
 pub use encoding::{EncodedPayload, PayloadEncoding};
 pub use framing::hash_framed;
-pub use jsonl::{scan_claude_jsonl, scan_codex_jsonl, scan_jsonl, JsonlError, JsonlScan};
+pub use jsonl::{
+    scan_claude_jsonl, scan_claude_jsonl_part, scan_codex_jsonl, scan_jsonl, JsonlError, JsonlScan,
+};
 pub use manifest::{ArchiveSessionManifest, ChunkByteRange, ManifestElement, ManifestError};
 pub use types::{
     sha256, validate_versions, ArchiveError, ArchiveObservation, ArchiveSource,

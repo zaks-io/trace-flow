@@ -93,3 +93,39 @@ fn manifest_rejects_ranges_outside_or_overlapping_a_chunk() {
         collector_archive::ArchiveSessionManifest::from_chain(1, &chain, &overlapping).is_err()
     );
 }
+
+#[test]
+fn manifest_wire_rejects_unsupported_versions_during_deserialization() {
+    let scan = scan_claude_jsonl("session-1", b"{\"uuid\":\"r1\"}\n", 10, None).unwrap();
+    let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
+    chain.commit_scan(&scan).unwrap();
+    let ranges = BTreeMap::from([
+        (
+            0,
+            ChunkByteRange {
+                chunk_id: "chunk-000".to_string(),
+                start: 0,
+                end: 20,
+            },
+        ),
+        (
+            1,
+            ChunkByteRange {
+                chunk_id: "chunk-000".to_string(),
+                start: 20,
+                end: 40,
+            },
+        ),
+    ]);
+    let manifest =
+        collector_archive::ArchiveSessionManifest::from_chain(1, &chain, &ranges).unwrap();
+    for field in ["archive_format_version", "chain_hash_version"] {
+        let mut wire = serde_json::to_value(&manifest).unwrap();
+        wire[field] = serde_json::json!(99);
+        let result = serde_json::from_value::<collector_archive::ArchiveSessionManifest>(wire);
+        assert!(matches!(
+            result,
+            Err(error) if error.to_string().contains("version 99")
+        ));
+    }
+}

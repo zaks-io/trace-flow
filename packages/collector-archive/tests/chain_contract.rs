@@ -31,11 +31,11 @@ fn canonical_chain_jsonl_round_trips_and_preserves_raw_payload() {
     }
     assert_eq!(
         chain.elements[0].chain_hash().to_string(),
-        "sha256:58ea3a56e8343e00e6b8cd483008bc428f74868de1abdcbe7d40b1d81239f35e"
+        "sha256:ae716524ed2d7742978482be64bb1f0725eedf488f4d62e7b5eb5d061bf8866a"
     );
     assert_eq!(
         chain.elements[1].chain_hash().to_string(),
-        "sha256:863a3b3f3dbc6cf68f89b9e49290b2983848f5041d57664c8d8d5924d3a0d9ed"
+        "sha256:0cff9a034db6e43240594464866ddc1dd8cbb71114b57c4f2eec4e67d5867882"
     );
     let restored = ArchiveChain::from_jsonl(ArchiveSource::Claude, "session-1", &encoded).unwrap();
     assert_eq!(restored, chain);

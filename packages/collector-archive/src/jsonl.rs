@@ -2,10 +2,13 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+use crate::hash_framed;
 use crate::types::{
-    sha256, ArchiveError, ArchiveObservation, ArchiveSource, CompletedScanCheckpoint,
-    ARCHIVE_FORMAT_VERSION, CHAIN_HASH_VERSION,
+    default_transcript_part_id, sha256, ArchiveError, ArchiveObservation, ArchiveSource,
+    CompletedScanCheckpoint, ARCHIVE_FORMAT_VERSION, CHAIN_HASH_VERSION,
 };
+
+const CLAUDE_TRANSCRIPT_PART_DOMAIN: &[u8] = b"trace-flow/archive/claude-transcript-part/v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonlScan {
@@ -28,9 +31,29 @@ pub fn scan_claude_jsonl(
     observed_at: i64,
     prior_checkpoint: Option<&CompletedScanCheckpoint>,
 ) -> Result<JsonlScan, JsonlError> {
-    scan_jsonl(
+    scan_jsonl_with_part(
         ArchiveSource::Claude,
         source_session_id,
+        default_transcript_part_id(ArchiveSource::Claude),
+        bytes,
+        observed_at,
+        prior_checkpoint,
+        claude_identity,
+    )
+}
+
+pub fn scan_claude_jsonl_part(
+    source_session_id: impl Into<String>,
+    transcript_part_identity: impl AsRef<str>,
+    bytes: &[u8],
+    observed_at: i64,
+    prior_checkpoint: Option<&CompletedScanCheckpoint>,
+) -> Result<JsonlScan, JsonlError> {
+    let source_transcript_part_id = claude_transcript_part_id(transcript_part_identity.as_ref())?;
+    scan_jsonl_with_part(
+        ArchiveSource::Claude,
+        source_session_id,
+        source_transcript_part_id,
         bytes,
         observed_at,
         prior_checkpoint,
@@ -44,9 +67,10 @@ pub fn scan_codex_jsonl(
     observed_at: i64,
     prior_checkpoint: Option<&CompletedScanCheckpoint>,
 ) -> Result<JsonlScan, JsonlError> {
-    scan_jsonl(
+    scan_jsonl_with_part(
         ArchiveSource::Codex,
         source_session_id,
+        default_transcript_part_id(ArchiveSource::Codex),
         bytes,
         observed_at,
         prior_checkpoint,
@@ -62,9 +86,35 @@ pub fn scan_jsonl(
     prior_checkpoint: Option<&CompletedScanCheckpoint>,
     identity: fn(&Value, usize, &mut HashMap<String, usize>) -> String,
 ) -> Result<JsonlScan, JsonlError> {
+    scan_jsonl_with_part(
+        source,
+        source_session_id,
+        default_transcript_part_id(source),
+        bytes,
+        observed_at,
+        prior_checkpoint,
+        identity,
+    )
+}
+
+fn scan_jsonl_with_part(
+    source: ArchiveSource,
+    source_session_id: impl Into<String>,
+    source_transcript_part_id: String,
+    bytes: &[u8],
+    observed_at: i64,
+    prior_checkpoint: Option<&CompletedScanCheckpoint>,
+    identity: fn(&Value, usize, &mut HashMap<String, usize>) -> String,
+) -> Result<JsonlScan, JsonlError> {
     let source_session_id = source_session_id.into();
     if let Some(previous) = prior_checkpoint {
-        validate_historical_prefix(source, &source_session_id, bytes, previous)?;
+        validate_historical_prefix(
+            source,
+            &source_session_id,
+            &source_transcript_part_id,
+            bytes,
+            previous,
+        )?;
     }
     let complete_offset = complete_prefix_offset(bytes)?;
     let lines = complete_lines(&bytes[..complete_offset])?;
@@ -73,9 +123,13 @@ pub fn scan_jsonl(
         .iter()
         .enumerate()
         .map(|(record_index, line)| {
-            let record_identity = identity(&line.value, record_index, &mut seen_ids);
-            ArchiveObservation::new(
+            let record_identity = format!(
+                "{source_transcript_part_id}:{}",
+                identity(&line.value, record_index, &mut seen_ids)
+            );
+            ArchiveObservation::new_with_transcript_part(
                 source,
+                source_transcript_part_id.clone(),
                 source_session_id.clone(),
                 record_identity,
                 observed_at,
@@ -88,6 +142,7 @@ pub fn scan_jsonl(
         chain_hash_version: CHAIN_HASH_VERSION,
         source,
         source_session_id,
+        source_transcript_part_id,
         record_count: observations.len() as u64,
         last_source_record_identity: observations
             .last()
@@ -136,8 +191,7 @@ fn complete_lines(bytes: &[u8]) -> Result<Vec<CompleteLine<'_>>, JsonlError> {
         if *byte != b'\n' {
             continue;
         }
-        let line_end = index - usize::from(index > line_start && bytes[index - 1] == b'\r');
-        let line = &bytes[line_start..line_end];
+        let line = &bytes[line_start..index];
         add_line(&mut lines, line_start, line)?;
         line_start = index + 1;
     }
@@ -167,11 +221,15 @@ fn add_line<'a>(
 fn validate_historical_prefix(
     source: ArchiveSource,
     source_session_id: &str,
+    source_transcript_part_id: &str,
     bytes: &[u8],
     previous: &CompletedScanCheckpoint,
 ) -> Result<(), JsonlError> {
     previous.validate()?;
-    if previous.source != source || previous.source_session_id != source_session_id {
+    if previous.source != source
+        || previous.source_session_id != source_session_id
+        || previous.source_transcript_part_id != source_transcript_part_id
+    {
         return Err(JsonlError::CheckpointSourceMismatch);
     }
     let offset = previous.last_complete_byte_offset as usize;
@@ -182,6 +240,16 @@ fn validate_historical_prefix(
         return Err(JsonlError::HistoricalPrefixChanged);
     }
     Ok(())
+}
+
+fn claude_transcript_part_id(raw_identity: &str) -> Result<String, JsonlError> {
+    if raw_identity.is_empty() {
+        return Err(JsonlError::Archive(ArchiveError::InvalidIdentifier {
+            field: "transcript_part_identity",
+        }));
+    }
+    let digest = hash_framed(CLAUDE_TRANSCRIPT_PART_DOMAIN, &[raw_identity.as_bytes()]);
+    Ok(format!("claude:part:{digest}"))
 }
 
 fn claude_identity(

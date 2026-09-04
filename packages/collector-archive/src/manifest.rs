@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 
 use crate::chain::{ArchiveChain, ChainError};
 use crate::elements::ChainElement;
@@ -36,6 +36,7 @@ impl ChunkByteRange {
 pub enum ManifestElement {
     Record {
         chain_sequence: u64,
+        source_transcript_part_id: String,
         source_record_identity: String,
         content_sha256: Sha256Digest,
         chain_hash: Sha256Digest,
@@ -49,10 +50,10 @@ pub enum ManifestElement {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArchiveSessionManifest {
-    pub archive_format_version: u16,
-    pub chain_hash_version: u16,
+    pub(crate) archive_format_version: u16,
+    pub(crate) chain_hash_version: u16,
     pub source: ArchiveSource,
     pub source_session_id: String,
     pub generation: u64,
@@ -84,6 +85,7 @@ impl ArchiveSessionManifest {
                 Ok(match element {
                     ChainElement::Record(record) => ManifestElement::Record {
                         chain_sequence: sequence,
+                        source_transcript_part_id: record.source_transcript_part_id.clone(),
                         source_record_identity: record.source_record_identity.clone(),
                         content_sha256: record.content_sha256,
                         chain_hash: record.chain_hash,
@@ -113,6 +115,7 @@ impl ArchiveSessionManifest {
     }
 
     pub fn verify_against_chain(&self, chain: &ArchiveChain) -> Result<(), ManifestError> {
+        self.validate_wire()?;
         chain.verify()?;
         if self.archive_format_version != ARCHIVE_FORMAT_VERSION
             || self.chain_hash_version != CHAIN_HASH_VERSION
@@ -132,6 +135,7 @@ impl ArchiveSessionManifest {
                 (
                     ManifestElement::Record {
                         chain_sequence,
+                        source_transcript_part_id,
                         source_record_identity,
                         content_sha256,
                         chain_hash,
@@ -140,6 +144,7 @@ impl ArchiveSessionManifest {
                     ChainElement::Record(record),
                 ) if *chain_sequence == expected_sequence as u64
                     && *chain_sequence == record.chain_sequence
+                    && source_transcript_part_id == &record.source_transcript_part_id
                     && source_record_identity == &record.source_record_identity
                     && *content_sha256 == record.content_sha256
                     && *chain_hash == record.chain_hash =>
@@ -180,6 +185,78 @@ impl ArchiveSessionManifest {
             ManifestElement::Checkpoint { checkpoint, .. } => Some(checkpoint),
             ManifestElement::Record { .. } => None,
         })
+    }
+
+    fn validate_wire(&self) -> Result<(), ManifestError> {
+        crate::types::validate_versions(self.archive_format_version, self.chain_hash_version)?;
+        crate::types::validate_identifier(&self.source_session_id, "source_session_id")?;
+        for element in &self.elements {
+            match element {
+                ManifestElement::Record {
+                    source_transcript_part_id,
+                    source_record_identity,
+                    byte_range,
+                    ..
+                } => {
+                    crate::types::validate_transcript_part_id(
+                        self.source,
+                        source_transcript_part_id,
+                    )?;
+                    crate::types::validate_identifier(
+                        source_transcript_part_id,
+                        "source_transcript_part_id",
+                    )?;
+                    crate::types::validate_identifier(
+                        source_record_identity,
+                        "source_record_identity",
+                    )?;
+                    byte_range.validate()?;
+                }
+                ManifestElement::Checkpoint {
+                    checkpoint,
+                    byte_range,
+                    ..
+                } => {
+                    checkpoint.validate()?;
+                    byte_range.validate()?;
+                }
+            }
+        }
+        validate_ordered_ranges(&self.elements)?;
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+struct ArchiveSessionManifestWire {
+    archive_format_version: u16,
+    chain_hash_version: u16,
+    source: ArchiveSource,
+    source_session_id: String,
+    generation: u64,
+    element_count: u64,
+    chain_head: Sha256Digest,
+    elements: Vec<ManifestElement>,
+}
+
+impl<'de> Deserialize<'de> for ArchiveSessionManifest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ArchiveSessionManifestWire::deserialize(deserializer)?;
+        let manifest = Self {
+            archive_format_version: wire.archive_format_version,
+            chain_hash_version: wire.chain_hash_version,
+            source: wire.source,
+            source_session_id: wire.source_session_id,
+            generation: wire.generation,
+            element_count: wire.element_count,
+            chain_head: wire.chain_head,
+            elements: wire.elements,
+        };
+        manifest.validate_wire().map_err(de::Error::custom)?;
+        Ok(manifest)
     }
 }
 
