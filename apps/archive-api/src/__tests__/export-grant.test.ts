@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { authenticateArchiveExportGrant } from '../export-grant';
+import { authenticateArchiveExportGrant, type ArchiveExportGrant } from '../export-grant';
+
+function exampleGrant(): ArchiveExportGrant {
+  return {
+    orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+    exportId: 'export-1',
+    actorUserId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+    issuedAt: 1,
+    expiresAt: 2,
+  };
+}
 
 describe('Archive Export Grant placeholder', () => {
   it('fails closed when no grant is present', () => {
@@ -14,6 +24,7 @@ describe('Archive Export Grant placeholder', () => {
       ok: false,
       reason: 'grant_unavailable',
     });
+    expect(exampleGrant().exportId).toBe('export-1');
   });
 
   it('rejects Pipe Tokens, Body Access Tokens, API Keys, and browser sessions', () => {

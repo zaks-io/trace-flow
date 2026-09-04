@@ -17,6 +17,9 @@
     },
     "apps/proxy": {},
     "apps/proxy-consumer": {},
+    "apps/archive-api": {
+      "ignoreDependencies": ["wrangler"]
+    },
     "apps/web": {
       "entry": ["open-next.config.ts"],
       "ignoreDependencies": ["postcss"],
