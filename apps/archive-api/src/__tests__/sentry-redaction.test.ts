@@ -20,11 +20,19 @@ function makeKv(): KVNamespace {
   return { get: async () => null } as unknown as KVNamespace;
 }
 
+function makeEnvStorage(): R2Bucket {
+  return {} as R2Bucket;
+}
+
 function makeEnv(): ArchiveApiEnv {
   return {
     COLLECTOR_CREDS: makeKv(),
     CONVEX_SITE_URL: CONVEX,
     ARCHIVE_API_SHARED_SECRET: 'archive-shared-secret',
+    ARCHIVE_STORAGE: makeEnvStorage(),
+    ARCHIVE_SESSION_LEDGER: {} as DurableObjectNamespace,
+    ARCHIVE_KEY_VERSION: '1',
+    ARCHIVE_KEY_WRAPPING_SECRET: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
     SENTRY_DSN,
   };
 }

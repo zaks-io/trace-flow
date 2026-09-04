@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { sha256Hex } from '@trace-flow/utils';
+import {
+  createArchiveEncryptionKeyVersion,
+  serializeArchiveWrappedKeyVersion,
+  sha256Hex,
+} from '@trace-flow/utils';
 import { app } from '../index';
 import type { ArchiveApiEnv } from '../context';
 import { __resetArchivePolicyCache } from '../enrollment';
@@ -13,6 +17,14 @@ function makeKv(entries: Record<string, string>): KVNamespace {
   return {
     get: async (key: string) => entries[key] ?? null,
   } as unknown as KVNamespace;
+}
+
+function makeEnvStorage(): R2Bucket {
+  return {} as R2Bucket;
+}
+
+function makeLedger(): DurableObjectNamespace {
+  return {} as DurableObjectNamespace;
 }
 
 async function validCredEntries(
@@ -36,11 +48,16 @@ function makeEnv(creds: Record<string, string> = {}): ArchiveApiEnv {
     COLLECTOR_CREDS: makeKv(creds),
     CONVEX_SITE_URL: CONVEX,
     ARCHIVE_API_SHARED_SECRET: SHARED,
+    ARCHIVE_STORAGE: makeEnvStorage(),
+    ARCHIVE_SESSION_LEDGER: makeLedger(),
+    ARCHIVE_KEY_VERSION: '1',
+    ARCHIVE_KEY_WRAPPING_SECRET: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
   };
 }
 
 let authorizeResponder: ((req: Request, body: string) => Response | Promise<Response>) | null =
   null;
+let keyResponder: (() => Response | Promise<Response>) | null = null;
 
 function interceptAuthorize(body: unknown, status = 200): void {
   authorizeResponder = () =>
@@ -58,6 +75,10 @@ function installFetchMock(): void {
     ) {
       if (!authorizeResponder) throw new Error(`unexpected fetch (no authorize stub): ${req.url}`);
       return authorizeResponder(req, await req.text());
+    }
+    if (req.method === 'POST' && url.origin === CONVEX && url.pathname === '/archive-api/key') {
+      if (!keyResponder) throw new Error(`unexpected fetch (no key stub): ${req.url}`);
+      return keyResponder();
     }
     throw new Error(`unexpected fetch: ${req.method} ${req.url}`);
   });
@@ -80,6 +101,7 @@ describe('Archive API authorization', () => {
   beforeEach(() => {
     __resetArchivePolicyCache();
     authorizeResponder = null;
+    keyResponder = null;
     installFetchMock();
   });
 
@@ -242,7 +264,7 @@ describe('Archive API authorization', () => {
       method: 'POST',
       headers: collectorHeaders,
     });
-    expect(first.status).toBe(501);
+    expect(first.status).toBe(400);
 
     interceptAuthorize({ allowed: false, reason: 'enrollment_invalid' });
     const afterUnenroll = await fetchRoute(env, '/v1/archive/uploads', {
@@ -251,6 +273,47 @@ describe('Archive API authorization', () => {
     });
     expect(afterUnenroll.status).toBe(403);
     expect(await afterUnenroll.json()).toMatchObject({ reason: 'enrollment_invalid' });
+  });
+
+  it('rechecks live enrollment after key preparation before persistence', async () => {
+    const env = makeEnv(await validCredEntries());
+    let authorizationCalls = 0;
+    authorizeResponder = () => {
+      authorizationCalls += 1;
+      return new Response(
+        JSON.stringify(
+          authorizationCalls === 1
+            ? {
+                allowed: true,
+                enrollmentId: 'enr_1',
+                contributionId: 'con_1',
+                orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+                userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+                collectorId: 'collector-1',
+                collectorCredentialId: 'cred_1',
+              }
+            : { allowed: false, reason: 'credential_revoked' },
+        ),
+      );
+    };
+    const wrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+        keyVersion: 1,
+        wrappingSecretBase64: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+      }),
+    );
+    keyResponder = () =>
+      new Response(JSON.stringify({ keyVersion: 1, wrappedKey }), { status: 200 });
+
+    const res = await fetchRoute(env, '/v1/archive/uploads', {
+      method: 'POST',
+      headers: { ...collectorHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_session_id: 'session-1', observations: [], checkpoint: {} }),
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ reason: 'credential_revoked' });
+    expect(authorizationCalls).toBe(2);
   });
 
   it('fails closed when Convex is unavailable and no current cache exists', async () => {
@@ -287,7 +350,7 @@ describe('Archive API authorization', () => {
           headers: collectorHeaders,
         })
       ).status,
-    ).toBe(501);
+    ).toBe(400);
 
     interceptAuthorize({ allowed: false, reason });
     const afterInvalidation = await fetchRoute(env, '/v1/archive/uploads', {
@@ -326,7 +389,7 @@ describe('Archive API authorization', () => {
           headers: collectorHeaders,
         })
       ).status,
-    ).toBe(501);
+    ).toBe(400);
 
     authorizeResponder = () => {
       throw new Error('convex down');
@@ -384,7 +447,7 @@ describe('Archive API authorization', () => {
     }
   });
 
-  it('authorizes an enrolled upload without persisting archive data', async () => {
+  it('rejects an enrolled upload with an invalid persistence payload', async () => {
     interceptAuthorize({
       allowed: true,
       enrollmentId: 'enr_1',
@@ -399,7 +462,77 @@ describe('Archive API authorization', () => {
       headers: collectorHeaders,
       body: '{"payload":"must-not-be-logged-or-stored"}',
     });
-    expect(res.status).toBe(501);
-    expect(await res.json()).toEqual({ error: 'persistence_not_implemented' });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_upload' });
   });
+
+  it('rejects an oversized upload before key custody or ledger access', async () => {
+    interceptAuthorize({
+      allowed: true,
+      enrollmentId: 'enr_1',
+      contributionId: 'con_1',
+      orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+      userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+      collectorId: 'collector-1',
+      collectorCredentialId: 'cred_1',
+    });
+    const res = await fetchRoute(makeEnv(await validCredEntries()), '/v1/archive/uploads', {
+      method: 'POST',
+      headers: collectorHeaders,
+      body: JSON.stringify({
+        source_session_id: 'session-1',
+        padding: 'x'.repeat(8 * 1024 * 1024),
+      }),
+    });
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'upload_too_large' });
+  });
+
+  it.each(['session-\ud800', 'session-\udc00'])(
+    'rejects a lone surrogate source session id before key custody or ledger access',
+    async (sourceSessionId) => {
+      interceptAuthorize({
+        allowed: true,
+        enrollmentId: 'enr_1',
+        contributionId: 'con_1',
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+        userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+        collectorId: 'collector-1',
+        collectorCredentialId: 'cred_1',
+      });
+      const res = await fetchRoute(makeEnv(await validCredEntries()), '/v1/archive/uploads', {
+        method: 'POST',
+        headers: collectorHeaders,
+        body: JSON.stringify({ source_session_id: sourceSessionId, observations: [] }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid_upload' });
+      expect(globalThis.fetch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['contribution-\ud800', 'contribution-\udc00'])(
+    'rejects a lone surrogate server-derived contribution before key custody or ledger access',
+    async (contributionId) => {
+      interceptAuthorize({
+        allowed: true,
+        enrollmentId: 'enr_1',
+        contributionId,
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+        userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+        collectorId: 'collector-1',
+        collectorCredentialId: 'cred_1',
+      });
+      const res = await fetchRoute(makeEnv(await validCredEntries()), '/v1/archive/uploads', {
+        method: 'POST',
+        headers: collectorHeaders,
+      });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        error: 'archive_unavailable',
+        reason: 'policy_malformed',
+      });
+      expect(globalThis.fetch).toHaveBeenCalledOnce();
+    },
+  );
 });

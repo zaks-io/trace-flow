@@ -25,11 +25,11 @@ Introduce one org-scoped storage-budget service across the isolated R2 buckets u
 
 Usage in one pool cannot consume capacity in the other. Pro includes 100 GB of archive capacity. v1 has no separate archive purchase or capacity upgrade.
 
-| Object class               | Bucket        | Prefix                                                                                 | Default retention      | Counts toward cap |
-| -------------------------- | ------------- | -------------------------------------------------------------------------------------- | ---------------------- | ----------------- |
-| Proxy Body Object          | Proxy storage | `bodies/{orgId}/{requestId}`                                                           | 30 days                | yes               |
-| Conversation Archive Chunk | Agent Archive | `archive/{orgId}/contributions/{userId}/sessions/{sessionPk}/chunks/{chunkHash}`       | Paid archive retention | yes               |
-| Archive Session Manifest   | Agent Archive | `archive/{orgId}/contributions/{userId}/sessions/{sessionPk}/manifests/{manifestHash}` | Paid archive retention | yes               |
+| Object class               | Bucket        | Prefix                                                                                                  | Default retention      | Counts toward cap |
+| -------------------------- | ------------- | ------------------------------------------------------------------------------------------------------- | ---------------------- | ----------------- |
+| Proxy Body Object          | Proxy storage | `bodies/{orgId}/{requestId}`                                                                            | 30 days                | yes               |
+| Conversation Archive Chunk | Agent Archive | `archive/{orgPk}/contributions/{contributionPk}/sessions/{source}/{sessionPk}/chunks/{chunkHash}`       | Paid archive retention | yes               |
+| Archive Session Manifest   | Agent Archive | `archive/{orgPk}/contributions/{contributionPk}/sessions/{source}/{sessionPk}/manifests/{manifestHash}` | Paid archive retention | yes               |
 
 The Agent Archive is a dedicated R2 Standard bucket, isolated from Proxy Body Objects and Analyst backups and bound only to Archive API at `archive.trace-flow.dev`. Archive JSONL records are losslessly compressed into immutable Archive Chunks of up to 1.5 MiB so object-operation cost scales with bytes rather than messages while the envelope path stays within the measured Worker memory contract. Chunks and manifests are encrypted with an independent, versioned Archive Encryption Key for their Organization before R2 receives them; provider-managed R2 encryption is an additional layer. Rotation moves new writes to the new key version immediately and re-encrypts existing objects in the background. Chunks are Agent Session and Archive Contribution-scoped: repeated scans deduplicate through the Archive Session Ledger, while physical payloads are never shared across contributors. Organization scoping prevents one tenant from inferring or referencing another tenant's records, while contribution scoping keeps deletion free of shared-object reference counting.
 

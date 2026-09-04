@@ -1,28 +1,21 @@
 use std::collections::HashMap;
 
+use base64::Engine;
 use serde_json::Value;
 
-use crate::hash_framed;
+use crate::archive_wire::JsonlScan;
+use crate::framing::{hash_framed, source_prefix_chain_hash};
+use crate::jsonl_prefix::{complete_lines, complete_prefix_offset, validate_historical_prefix};
 use crate::types::{
     default_transcript_part_id, sha256, ArchiveError, ArchiveObservation, ArchiveSource,
     CompletedScanCheckpoint, ARCHIVE_FORMAT_VERSION, CHAIN_HASH_VERSION,
 };
 
 const CLAUDE_TRANSCRIPT_PART_DOMAIN: &[u8] = b"trace-flow/archive/claude-transcript-part/v1";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JsonlScan {
-    pub observations: Vec<ArchiveObservation>,
-    pub checkpoint: CompletedScanCheckpoint,
-    /// The scanner verified this historical checkpoint against the source bytes before returning.
-    /// It is local proof for the chain builder and is not serialized or uploaded as source data.
-    pub prior_checkpoint: Option<CompletedScanCheckpoint>,
-}
-
 #[derive(Debug, Clone)]
-struct CompleteLine<'a> {
-    bytes: &'a [u8],
-    value: Value,
+pub(crate) struct JsonlLine<'a> {
+    pub(crate) bytes: &'a [u8],
+    pub(crate) value: Value,
 }
 
 pub fn scan_claude_jsonl(
@@ -119,7 +112,7 @@ fn scan_jsonl_with_part(
     let complete_offset = complete_prefix_offset(bytes)?;
     let lines = complete_lines(&bytes[..complete_offset])?;
     let mut seen_ids = HashMap::new();
-    let observations = lines
+    let all_observations = lines
         .iter()
         .enumerate()
         .map(|(record_index, line)| {
@@ -137,109 +130,60 @@ fn scan_jsonl_with_part(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let record_count = all_observations.len() as u64;
+    if let Some(previous) = prior_checkpoint {
+        if record_count < previous.record_count {
+            return Err(JsonlError::HistoricalRecordCountRegressed);
+        }
+    }
+    let prior_offset = prior_checkpoint
+        .map(|checkpoint| checkpoint.last_complete_byte_offset as usize)
+        .unwrap_or(0);
+    let appended_bytes = &bytes[prior_offset..complete_offset];
+    let prefix_chain_sha256 = match prior_checkpoint {
+        Some(previous) if appended_bytes.is_empty() => previous.prefix_chain_sha256,
+        _ => source_prefix_chain_hash(
+            prior_checkpoint.map(|checkpoint| checkpoint.prefix_chain_sha256),
+            appended_bytes,
+        ),
+    };
     let checkpoint = CompletedScanCheckpoint {
         archive_format_version: ARCHIVE_FORMAT_VERSION,
         chain_hash_version: CHAIN_HASH_VERSION,
         source,
         source_session_id,
         source_transcript_part_id,
-        record_count: observations.len() as u64,
-        last_source_record_identity: observations
+        record_count,
+        last_source_record_identity: all_observations
             .last()
             .map(|observation| observation.source_record_identity.clone()),
         last_complete_byte_offset: complete_offset as u64,
         observed_file_size: bytes.len() as u64,
         complete_prefix_sha256: sha256(&bytes[..complete_offset]),
+        prefix_chain_sha256,
         first_observed_at: prior_checkpoint
             .map(|checkpoint| checkpoint.first_observed_at)
             .unwrap_or(observed_at),
     };
     checkpoint.validate()?;
+    let observations = all_observations
+        .into_iter()
+        .skip(
+            prior_checkpoint
+                .map(|previous| previous.record_count as usize)
+                .unwrap_or(0),
+        )
+        .collect();
     Ok(JsonlScan {
         observations,
         checkpoint,
         prior_checkpoint: prior_checkpoint.cloned(),
+        append_proof: prior_checkpoint.map(|previous| crate::types::ArchiveAppendProof {
+            prior_prefix_chain_sha256: previous.prefix_chain_sha256,
+            appended_prefix_base64: base64::engine::general_purpose::STANDARD
+                .encode(&bytes[previous.last_complete_byte_offset as usize..complete_offset]),
+        }),
     })
-}
-
-fn complete_prefix_offset(bytes: &[u8]) -> Result<usize, JsonlError> {
-    let Some(last_newline) = bytes.iter().rposition(|byte| *byte == b'\n') else {
-        return if bytes.is_empty() || serde_json::from_slice::<Value>(bytes).is_ok() {
-            Ok(bytes.len())
-        } else {
-            Ok(0)
-        };
-    };
-    let newline_end = last_newline + 1;
-    if bytes[newline_end..].is_empty() {
-        return Ok(newline_end);
-    }
-    if bytes[newline_end..].iter().all(u8::is_ascii_whitespace) {
-        return Ok(bytes.len());
-    }
-    if serde_json::from_slice::<Value>(&bytes[newline_end..]).is_ok() {
-        Ok(bytes.len())
-    } else {
-        Ok(newline_end)
-    }
-}
-
-fn complete_lines(bytes: &[u8]) -> Result<Vec<CompleteLine<'_>>, JsonlError> {
-    let mut lines = Vec::new();
-    let mut line_start = 0;
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte != b'\n' {
-            continue;
-        }
-        let line = &bytes[line_start..index];
-        add_line(&mut lines, line_start, line)?;
-        line_start = index + 1;
-    }
-    if line_start < bytes.len() {
-        add_line(&mut lines, line_start, &bytes[line_start..])?;
-    }
-    Ok(lines)
-}
-
-fn add_line<'a>(
-    lines: &mut Vec<CompleteLine<'a>>,
-    offset: usize,
-    bytes: &'a [u8],
-) -> Result<(), JsonlError> {
-    if bytes.iter().all(u8::is_ascii_whitespace) {
-        return Ok(());
-    }
-    let value = serde_json::from_slice(bytes).map_err(|_| {
-        JsonlError::Archive(ArchiveError::InvalidJsonlRecord {
-            offset: offset as u64,
-        })
-    })?;
-    lines.push(CompleteLine { bytes, value });
-    Ok(())
-}
-
-fn validate_historical_prefix(
-    source: ArchiveSource,
-    source_session_id: &str,
-    source_transcript_part_id: &str,
-    bytes: &[u8],
-    previous: &CompletedScanCheckpoint,
-) -> Result<(), JsonlError> {
-    previous.validate()?;
-    if previous.source != source
-        || previous.source_session_id != source_session_id
-        || previous.source_transcript_part_id != source_transcript_part_id
-    {
-        return Err(JsonlError::CheckpointSourceMismatch);
-    }
-    let offset = previous.last_complete_byte_offset as usize;
-    if bytes.len() < offset {
-        return Err(JsonlError::HistoricalPrefixShortened);
-    }
-    if sha256(&bytes[..offset]) != previous.complete_prefix_sha256 {
-        return Err(JsonlError::HistoricalPrefixChanged);
-    }
-    Ok(())
 }
 
 fn claude_transcript_part_id(raw_identity: &str) -> Result<String, JsonlError> {
@@ -297,6 +241,10 @@ pub enum JsonlError {
     HistoricalPrefixShortened,
     #[error("the JSONL source changed before its completed checkpoint")]
     HistoricalPrefixChanged,
+    #[error("the JSONL source record count moved backwards")]
+    HistoricalRecordCountRegressed,
+    #[error("the source bytes do not contain the complete checkpoint prefix")]
+    WirePrefixUnavailable,
 }
 
 #[cfg(test)]

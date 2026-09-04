@@ -198,18 +198,26 @@ Defined in `apps/agent-ingest/wrangler.jsonc`:
 
 Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the production `COLLECTOR_CREDS` namespace, and `agent-ingest-prod`.
 
-## Archive API Worker (Planned)
+## Archive API Worker (Development Slice)
 
 **Target location**: `apps/archive-api/`
 
 **Production origin**: `https://archive.trace-flow.dev`
 
-**Current scaffold**: Authorization-boundary Worker only. Uploads require an active
-Collector Credential plus a current Convex enrollment and Source decision. Export and
-deletion routes exist as fail-closed Archive Export Grant placeholders. Authorized
-uploads return `501 persistence_not_implemented`. This slice does not persist archive
-data, mint grants, write R2, run ledgers, encrypt, provision routes, or enable
-production.
+**Current implementation**: Uploads require an active Collector Credential plus a
+current Convex enrollment and Source decision. The Worker derives the Organization,
+contribution, Source, and Agent Session scope, retrieves the wrapped Organization
+Archive Encryption Key, and commits through the Archive Session Ledger Durable Object.
+The ledger validates source observations and completed-scan checkpoints, retains
+changed identity versions, writes verified encrypted losslessly compressed chunks and
+manifest generations to the dedicated development Agent Archive R2 bucket, and
+returns a durable acknowledgement. Request JSON is bounded to 8 MiB so collectors
+flush before a session or sync grows beyond the Worker memory envelope. Ledger and
+manifest history is read and extended through bounded durable pages; there is no
+lifetime record or checkpoint cap. Export and deletion routes remain fail-closed Archive
+Export Grant placeholders. Storage-budget enforcement, repair, export, deletion,
+lifecycle, rotation, production resources, and production enablement remain out of
+scope for this slice.
 
 **Target responsibility**: Serve the complete Conversation Archive data plane without
 adding transcript content or archive key material to Agent Ingest or Raw API.
@@ -218,12 +226,9 @@ adding transcript content or archive key material to Agent Ingest or Raw API.
 
 - Pro entitlement and 100 GB archive-cap enforcement
 - Archive Spool upload acknowledgement
-- Session-ledger-controlled Archive Chunk and manifest writes
-- Archive Session Ledger Durable Objects for concurrent upload ordering and retry deduplication
 - Independent versioned Archive Encryption Keys and rotation
 - Short-lived owner Archive Export Grant validation and bounded decrypted export reads
 - Archive Contribution and whole-archive deletion
-- The dedicated Agent Archive R2 bucket
 - Authenticated internal publication of durable acknowledgements, Storage Budget values, and
   lifecycle transitions to the Convex Archive Status projection
 
