@@ -30,6 +30,10 @@ async function seedOrganizations() {
   return { t, ...ids };
 }
 
+function base64Bytes(length: number): string {
+  return btoa(String.fromCharCode(...new Uint8Array(length)));
+}
+
 describe('archive key metadata internal boundary', () => {
   it('stores opaque wrapped versions per Organization and supports idempotent replay', async () => {
     const { t, orgA, orgB } = await seedOrganizations();
@@ -54,6 +58,26 @@ describe('archive key metadata internal boundary', () => {
         wrappingSecretBase64: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
       }),
     );
+    const validWrappedKeyRecord = JSON.parse(wrappedKey) as Record<string, unknown>;
+    for (const ciphertextBytes of [47, 49]) {
+      const malformedWrappedKey = JSON.stringify({
+        ...validWrappedKeyRecord,
+        ciphertext: base64Bytes(ciphertextBytes),
+      });
+      await expect(
+        t.mutation(internal.archiveKeysInternal.storeVersion, {
+          orgId: orgA,
+          keyVersion: 1,
+          wrappedKey: malformedWrappedKey,
+        }),
+      ).rejects.toThrow('Archive cryptographic operation failed');
+      await expect(
+        t.query(internal.archiveKeysInternal.getVersion, {
+          orgId: orgA,
+          keyVersion: 1,
+        }),
+      ).resolves.toBeNull();
+    }
     await expect(
       t.mutation(internal.archiveKeysInternal.storeVersion, {
         orgId: orgA,

@@ -3,6 +3,7 @@ const ARCHIVE_ALGORITHM = 'AES-GCM' as const;
 const ARCHIVE_KEY_BYTES = 32;
 const ARCHIVE_NONCE_BYTES = 12;
 const ARCHIVE_AUTH_TAG_BYTES = 16;
+const ARCHIVE_WRAPPED_KEY_CIPHERTEXT_BYTES = ARCHIVE_KEY_BYTES + ARCHIVE_AUTH_TAG_BYTES;
 
 export const ARCHIVE_KEY_WRAPPING_SECRET_BINDING = 'ARCHIVE_KEY_WRAPPING_SECRET' as const;
 
@@ -177,7 +178,7 @@ function validateWrappedKey(value: unknown): asserts value is ArchiveWrappedKeyV
   const nonce = decodeBase64(record.nonce);
   if (nonce.byteLength !== ARCHIVE_NONCE_BYTES) fail();
   const ciphertext = decodeBase64(record.ciphertext);
-  if (ciphertext.byteLength < ARCHIVE_AUTH_TAG_BYTES) fail();
+  if (ciphertext.byteLength !== ARCHIVE_WRAPPED_KEY_CIPHERTEXT_BYTES) fail();
 }
 
 export function serializeArchiveWrappedKeyVersion(wrappedKey: ArchiveWrappedKeyVersion): string {

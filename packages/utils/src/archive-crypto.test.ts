@@ -3,6 +3,7 @@ import {
   createArchiveEncryptionKeyVersion,
   decryptArchiveObject,
   encryptArchiveObject,
+  parseArchiveWrappedKeyVersion,
   type ArchiveObjectEnvelope,
   unwrapArchiveEncryptionKey,
 } from './archive-crypto';
@@ -20,6 +21,10 @@ type ArchiveMetadataPatch = Partial<
 
 function fixedBytes(start: number, length: number): Uint8Array {
   return Uint8Array.from({ length }, (_, index) => start + index);
+}
+
+function base64Bytes(length: number): string {
+  return btoa(String.fromCharCode(...new Uint8Array(length)));
 }
 
 function mockRandomValues(...values: Uint8Array[]) {
@@ -101,6 +106,21 @@ describe('Conversation Archive cryptography', () => {
     ).resolves.toEqual(PLAINTEXT);
     await expect(crypto.subtle.exportKey('raw', key)).rejects.toThrow();
   });
+
+  it.each([47, 49])(
+    'rejects a canonical wrapped-key record with %s ciphertext bytes',
+    async (ciphertextBytes) => {
+      const { wrappedKey } = await makeFixture();
+      const malformed = JSON.stringify({
+        ...wrappedKey,
+        ciphertext: base64Bytes(ciphertextBytes),
+      });
+
+      expect(() =>
+        parseArchiveWrappedKeyVersion(malformed, { orgId: ORG_ID, keyVersion: 7 }),
+      ).toThrow('Archive cryptographic operation failed');
+    },
+  );
 
   const metadataTamperCases: [string, ArchiveMetadataPatch, ArchiveMetadataPatch][] = [
     ['organization', { orgId: OTHER_ORG_ID }, { orgId: OTHER_ORG_ID }],
