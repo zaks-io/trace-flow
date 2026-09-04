@@ -9,6 +9,7 @@ import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
+import { useAnalyticsKeyFilter } from '@/hooks/useAnalyticsKeyFilter';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -31,7 +32,7 @@ interface AlertSpansResponse {
 
 interface TracesProps {
   preloadedAlerts: Preloaded<typeof api.alerts.listEnabled>;
-  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.listAnalytics>;
 }
 
 export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProps) {
@@ -56,7 +57,16 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
-  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key), [apiKeys]);
+  const apiKeyOptions = useMemo(() => Array.from(apiKeyMap.keys()), [apiKeyMap]);
+  const { identifier: apiKeyFilter, error: apiKeyFilterError } = useAnalyticsKeyFilter(
+    filters.apiKey,
+  );
+
+  useEffect(() => {
+    if (filters.apiKey && apiKeyFilter && filters.apiKey !== apiKeyFilter) {
+      setFilter('apiKey', apiKeyFilter);
+    }
+  }, [filters.apiKey, apiKeyFilter, setFilter]);
 
   const pipeParams = useMemo(() => {
     const params: Record<string, string | number | undefined> = {
@@ -69,19 +79,21 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     if (filters.search && /^[a-f0-9]+$/i.test(filters.search)) {
       params.search = filters.search;
     }
-    if (filters.apiKey) params.api_key_filter = filters.apiKey;
+    if (filters.apiKey) params.api_key_filter = apiKeyFilter ?? '__PENDING_ANALYTICS_KEY__';
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }
     return params;
-  }, [filters, isLiveMode, latestReceivedAt]);
+  }, [filters, isLiveMode, latestReceivedAt, apiKeyFilter]);
 
   const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
     pipe: 'traces_grouped',
     params: pipeParams,
+    enabled: (!filters.apiKey || Boolean(apiKeyFilter)) && !apiKeyFilterError,
     pollInterval: isLiveMode ? 10000 : undefined,
     staleTime: 0,
   });
+  const displayError = error ?? apiKeyFilterError;
 
   // Reset state when filters change
   useEffect(() => {
@@ -212,13 +224,13 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
   }, [alertSpansData, alerts]);
 
   useEffect(() => {
-    if (error && isLiveMode) {
+    if (displayError && isLiveMode) {
       setAutoStoppedLiveMode(true);
       setIsLiveMode(false);
-    } else if (!error) {
+    } else if (!displayError) {
       setAutoStoppedLiveMode(false);
     }
-  }, [error, isLiveMode]);
+  }, [displayError, isLiveMode]);
 
   const getRowId = useCallback((row: SpanGroupRow): string => row.TraceId as string, []);
 
@@ -248,11 +260,11 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
         <h1 className="text-sm font-medium text-foreground">Traces</h1>
       </PageToolbar>
 
-      {error && (
+      {displayError && (
         <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <p className="text-sm text-destructive">{error.message}</p>
+              <p className="text-sm text-destructive">{displayError.message}</p>
               {autoStoppedLiveMode && (
                 <span className="text-xs text-destructive/70">Live mode stopped.</span>
               )}

@@ -57,7 +57,7 @@ const METRIC_META = {
 export function UsageAnalytics({
   preloadedApiKeys,
 }: {
-  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.listAnalytics>;
 }) {
   const billingSummary = useQuery(api.billing.subscriptions.getBillingSummaryForCurrentUser);
   const [timeRange, setTimeRange] = useState<TimeRange>('this-month');
@@ -258,7 +258,7 @@ export function UsageAnalytics({
   const providerOptions = Array.from(seenProviders.current);
   const modelOptions = Array.from(seenModels.current);
   const operationOptions = Array.from(seenOperations.current);
-  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key), [apiKeys]);
+  const apiKeyOptions = useMemo(() => Array.from(apiKeyMap.keys()), [apiKeyMap]);
   const MetricIcon = METRIC_META[metric].icon;
 
   // The cost-distribution card characterizes ONE slice. Surface which dimension is active so the

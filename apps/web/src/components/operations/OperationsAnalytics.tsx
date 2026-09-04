@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
-import { api } from '@trace-flow/convex/_generated/api';
+import { type api } from '@trace-flow/convex/_generated/api';
 import { Layers } from 'lucide-react';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
 import { PageToolbar } from '@/components/shared/PageToolbar';
@@ -19,7 +19,7 @@ import { OperationDetailPanel } from './OperationDetailPanel';
 export function OperationsAnalytics({
   preloadedApiKeys,
 }: {
-  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.listAnalytics>;
 }) {
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
@@ -79,12 +79,8 @@ export function OperationsAnalytics({
   }, [operations, operationFilter]);
 
   const apiKeyOptions = useMemo(
-    () =>
-      sortFilterOptions(
-        apiKeys.map((k) => k.key),
-        apiKeyMap,
-      ),
-    [apiKeys, apiKeyMap],
+    () => sortFilterOptions(Array.from(apiKeyMap.keys()), apiKeyMap),
+    [apiKeyMap],
   );
 
   function handleSort(key: typeof sortKey) {

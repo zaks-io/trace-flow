@@ -327,20 +327,25 @@ describe('cost alert helpers', () => {
     );
   });
 
-  it('scopes API keys correctly', () => {
+  it('scopes analytics key identifiers without returning credentials', async () => {
     expect(buildApiKeyParam([])).toBe('__NO_KEYS__');
-    expect(
-      resolveScopedApiKeys({ apiKeyIds: ['api_2'] }, [
-        { _id: 'api_1', key: 'key-1' },
-        { _id: 'api_2', key: 'key-2' },
-      ]),
-    ).toEqual(['key-2']);
-    expect(
-      resolveScopedApiKeys({}, [
-        { _id: 'api_1', key: 'key-1' },
-        { _id: 'api_2', key: 'key-2' },
-      ]),
-    ).toEqual(['key-1', 'key-2']);
+    const selected = await resolveScopedApiKeys({ apiKeyIds: ['api_2'] }, [
+      { _id: 'api_1', key: 'key-1' },
+      { _id: 'api_2', key: 'key-2' },
+    ]);
+    const all = await resolveScopedApiKeys({}, [
+      { _id: 'api_1', key: 'key-1' },
+      { _id: 'api_2', key: 'key-2' },
+    ]);
+
+    expect(selected).toEqual([
+      'sha256:7c36b0a9dedde119c75165957c6c9c187e65df1ee5db87c4c58ad503ad88cbe3',
+    ]);
+    expect(all).toEqual([
+      'sha256:be2974546978e3739e6d6da85c4be9f334ce32df2b9fd4b6ff1b55c0d57e9d44',
+      'sha256:7c36b0a9dedde119c75165957c6c9c187e65df1ee5db87c4c58ad503ad88cbe3',
+    ]);
+    expect(all.join(',')).not.toContain('key-');
   });
 
   it('builds alert pipe params with API-key and dimension narrowing filters', () => {

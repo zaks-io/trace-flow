@@ -1,10 +1,11 @@
 import type { Context } from 'hono';
 import type { Logger } from '@trace-flow/logging';
 import type { SubscriptionKVData } from '@trace-flow/types';
-import { sha256Hex } from '@trace-flow/utils';
+import { analyticsKeyId } from '@trace-flow/utils';
 import { getCached, invalidate } from './cache';
 
 export interface ApiKeyData {
+  analyticsKeyId: string;
   expiresAt: number;
   createdAt: number;
   orgId: string;
@@ -34,7 +35,8 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
 
   // Cache the parsed ApiKeyData (not the raw JSON string) to skip JSON.parse on hits.
   // Corrupt/missing keys resolve to null. Expired keys are cached, then invalidated on first access.
-  const cacheKey = `apikey:${await sha256Hex(apiKey)}`;
+  const identifier = await analyticsKeyId(apiKey);
+  const cacheKey = `apikey:${identifier}`;
   const parsed = await getCached<ApiKeyData | null>(cacheKey, async () => {
     const raw = await c.env.API_KEYS.get(apiKey);
     if (!raw) return null;
@@ -68,7 +70,7 @@ export async function validateApiKey<E extends { API_KEYS: KVNamespace }>(
     );
   }
 
-  return parsed;
+  return { ...parsed, analyticsKeyId: identifier };
 }
 
 export function isAuthError(result: Response | ApiKeyData): result is Response {

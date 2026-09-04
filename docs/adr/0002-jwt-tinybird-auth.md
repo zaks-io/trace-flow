@@ -2,6 +2,12 @@
 
 Trace Flow's dashboard queries Tinybird directly from the browser using short-lived JWT tokens. This document explains why we chose this architecture over a backend proxy and how we implement row-level security.
 
+Credential isolation update (2026-09-04): `ApiKey` and `api_keys` now carry
+`sha256:<lowercase digest>` analytics identifiers. They must not contain raw API
+credentials. Production read pipes also normalize historical raw-key rows and
+previously issued token parameters. See the
+[credential isolation release and remediation guide](../guides/analytics-credentials.md).
+
 ## The Problem
 
 The dashboard needs to display real-time trace analytics: request counts, token usage, latency distributions, and individual trace details. The simplest approach would be to proxy all queries through our backend:
@@ -70,11 +76,11 @@ SELECT * FROM otel_trace_spans
 WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
 ```
 
-When generating a JWT, Convex fetches API keys visible to the user (`listForUser`, same as the dashboard) and injects them as `fixed_params`:
+When generating a JWT, Convex fetches API keys visible to the user (`listForUser`, same scope as the dashboard), derives analytics identifiers, and injects those as `fixed_params`:
 
 ```typescript
 const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
-const apiKeyString = joinSanitizedApiKeys(apiKeys);
+const apiKeyString = await joinAnalyticsKeyIds(apiKeys);
 
 const scopesWithApiKeys = args.scopes.map((scope) => ({
   ...scope,

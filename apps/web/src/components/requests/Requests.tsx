@@ -10,6 +10,7 @@ import { useColumnVisibility } from '@/hooks/useColumnVisibility';
 import { useTableFilters } from '@/hooks/useTableFilters';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { useApiKeyMap } from '@/hooks/useApiKeyMap';
+import { useAnalyticsKeyFilter } from '@/hooks/useAnalyticsKeyFilter';
 import { PageToolbar } from '@/components/shared/PageToolbar';
 import { SetupCallout } from '@/components/onboarding/SetupCallout';
 import { RequestDetailSidePanel } from '@/components/requests/RequestDetailSidePanel';
@@ -32,7 +33,7 @@ function getRequestId(row: RequestRow): string | undefined {
 
 interface RequestsProps {
   preloadedAlerts: Preloaded<typeof api.alerts.listEnabled>;
-  preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+  preloadedApiKeys: Preloaded<typeof api.apiKeys.listAnalytics>;
 }
 
 export default function Requests({ preloadedAlerts, preloadedApiKeys }: RequestsProps) {
@@ -55,8 +56,17 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
   const { options: filterOptions, loading: filterOptionsLoading } = useFilterOptions();
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
   const apiKeyMap = useApiKeyMap(apiKeys);
-  const apiKeyOptions = useMemo(() => apiKeys.map((k) => k.key), [apiKeys]);
+  const apiKeyOptions = useMemo(() => Array.from(apiKeyMap.keys()), [apiKeyMap]);
+  const { identifier: apiKeyFilter, error: apiKeyFilterError } = useAnalyticsKeyFilter(
+    filters.apiKey,
+  );
   const alerts = usePreloadedQuery(preloadedAlerts);
+
+  useEffect(() => {
+    if (filters.apiKey && apiKeyFilter && filters.apiKey !== apiKeyFilter) {
+      setFilter('apiKey', apiKeyFilter);
+    }
+  }, [filters.apiKey, apiKeyFilter, setFilter]);
 
   const pipeParams = useMemo(() => {
     const params: Record<string, string | number | undefined> = { limit: 100 };
@@ -70,19 +80,21 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
     if (filters.search) {
       params.search = filters.search;
     }
-    if (filters.apiKey) params.api_key_filter = filters.apiKey;
+    if (filters.apiKey) params.api_key_filter = apiKeyFilter ?? '__PENDING_ANALYTICS_KEY__';
     if (isLiveMode && latestReceivedAt !== null) {
       params.after_received_at = latestReceivedAt;
     }
     return params;
-  }, [filters, isLiveMode, latestReceivedAt]);
+  }, [filters, isLiveMode, latestReceivedAt, apiKeyFilter]);
 
   const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
     pipe: 'traces_list',
     params: pipeParams,
+    enabled: (!filters.apiKey || Boolean(apiKeyFilter)) && !apiKeyFilterError,
     pollInterval: isLiveMode ? 10000 : undefined,
     staleTime: 0,
   });
+  const displayError = error ?? apiKeyFilterError;
 
   // useEffect (not useLayoutEffect) is safe here because the data-processing
   // effect below guards on dataUpdatedAt, preventing stale data from rendering.
@@ -168,13 +180,13 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
   }, [requests, alerts]);
 
   useEffect(() => {
-    if (error && isLiveMode) {
+    if (displayError && isLiveMode) {
       setAutoStoppedLiveMode(true);
       setIsLiveMode(false);
-    } else if (!error) {
+    } else if (!displayError) {
       setAutoStoppedLiveMode(false);
     }
-  }, [error, isLiveMode]);
+  }, [displayError, isLiveMode]);
 
   if (loading && requests.length === 0) {
     return (
@@ -196,12 +208,12 @@ export default function Requests({ preloadedAlerts, preloadedApiKeys }: Requests
         <h1 className="text-sm font-medium text-foreground">Requests</h1>
       </PageToolbar>
 
-      {error && (
+      {displayError && (
         <div className="mb-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
           <div className="flex items-start justify-between">
             <div>
               <h3 className="mb-2 font-semibold text-destructive">Error loading requests</h3>
-              <p className="text-sm text-destructive/80">{error.message}</p>
+              <p className="text-sm text-destructive/80">{displayError.message}</p>
               {autoStoppedLiveMode && (
                 <p className="mt-2 text-sm text-destructive/80">
                   Live mode has been stopped due to the error.

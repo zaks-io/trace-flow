@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/cloudflare';
+import { normalizeAnalyticsKey } from '@trace-flow/utils';
 import type { QueueMessageUnion, TinybirdTrace, QueueMessage } from '@trace-flow/types';
 import {
   TRACE_FLOW_PROPAGATION_TARGETS,
@@ -182,23 +183,22 @@ async function processQueueBatch(batch: MessageBatch<QueueMessageUnion>, env: En
   const processMessage = async (message: Message<QueueMessageUnion>): Promise<void> => {
     try {
       let traces: TinybirdTrace[];
-      let apiKey: string;
+      const apiKey = await normalizeAnalyticsKey(message.body.apiKey);
       let messageId: string;
 
       if (message.body.type === 'otlp') {
-        traces = message.body.traces;
-        apiKey = message.body.apiKey;
+        traces = message.body.traces.map((trace) => ({ ...trace, ApiKey: apiKey }));
         // Key on the queue message id (stable across retries, unique per enqueue) so two distinct
         // OTLP exports from the same key in the same millisecond aren't collapsed as duplicates.
         messageId = `otlp:${message.id}`;
       } else {
         const pricing = await getPricingForMessage(message.body, env.MODEL_PRICING);
-        traces = buildSpans(message.body, pricing);
-        apiKey = message.body.apiKey;
+        traces = buildSpans({ ...message.body, apiKey }, pricing);
         messageId = `llm:${message.body.requestId}`;
       }
 
-      const shardId = calculateShardId(apiKey, numShards);
+      // Keep pre-cutover queue retries on the shard that owns their message ledger.
+      const shardId = calculateShardId(message.body.apiKey, numShards);
 
       if (!shardedMessages.has(shardId)) {
         shardedMessages.set(shardId, { items: [] });

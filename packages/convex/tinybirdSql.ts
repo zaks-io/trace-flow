@@ -1,8 +1,11 @@
-export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { ANALYTICS_KEY_PATTERN } from '@trace-flow/utils';
 
-export function sanitizeApiKeys(keys: string[]): string[] {
-  return keys.filter((key) => UUID_PATTERN.test(key));
+export function sanitizeAnalyticsKeyIds(ids: string[]): string[] {
+  return ids.filter((id) => ANALYTICS_KEY_PATTERN.test(id));
 }
+
+export const NORMALIZED_API_KEY_SQL =
+  "if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey)))))";
 
 export function sqlStringLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;

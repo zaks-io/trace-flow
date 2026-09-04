@@ -23,8 +23,10 @@ function UsageLoadingState() {
 
 export default function Usage({
   preloadedApiKeys,
+  preloadedAnalyticsApiKeys,
 }: {
   preloadedApiKeys: Preloaded<typeof api.apiKeys.list>;
+  preloadedAnalyticsApiKeys: Preloaded<typeof api.apiKeys.listAnalytics>;
 }) {
   const sessionContext = useQuery(api.app.sessionContext);
   const apiKeys = usePreloadedQuery(preloadedApiKeys);
@@ -57,7 +59,7 @@ export default function Usage({
   }
 
   if (onboardingCompleted || tinybirdHasTraces) {
-    return <UsageAnalytics preloadedApiKeys={preloadedApiKeys} />;
+    return <UsageAnalytics preloadedApiKeys={preloadedAnalyticsApiKeys} />;
   }
 
   return (

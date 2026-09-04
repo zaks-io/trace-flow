@@ -7,7 +7,7 @@
 - name: model_approval_detects_unapproved_and_unpriced_pairs
   description: model approval alert returns safe grouped fields without bodies
   expected_http_status: 200
-  parameters: api_keys=key_model_guard&api_key_filter=key_model_guard&baggage_operation=model-guard&approved_provider_models=7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f,ce078399a3fb50ce4c0007cfc27234465067543fb2bc8772830ab05121981c03&zero_cost_provider_models=ce078399a3fb50ce4c0007cfc27234465067543fb2bc8772830ab05121981c03&start_time_ns=1779840089000000000&end_time_ns=1779840093000000000&retention_days=3650
+  parameters: api_keys=sha256:45f21e550c2475fb60ba8224ac6c91d31cd2a047510faaa60ccab588dbd27c38&api_key_filter=sha256:45f21e550c2475fb60ba8224ac6c91d31cd2a047510faaa60ccab588dbd27c38&baggage_operation=model-guard&approved_provider_models=7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f,ce078399a3fb50ce4c0007cfc27234465067543fb2bc8772830ab05121981c03&zero_cost_provider_models=ce078399a3fb50ce4c0007cfc27234465067543fb2bc8772830ab05121981c03&start_time_ns=1779840089000000000&end_time_ns=1779840093000000000&retention_days=3650
   expected_result: |
     {"provider":"google","model":"gemini-2.5-pro","request_count":1,"token_count":450,"total_cost_usd":0.03,"unapproved_request_count":1,"unpriced_request_count":0,"first_seen_ns":1779840091000000000,"last_seen_ns":1779840091000000000,"sample_trace_id":"t_model_unapproved","sample_span_id":"s_model_unapproved"}
     {"provider":"openai","model":"gpt-4o-mini","request_count":1,"token_count":400,"total_cost_usd":0,"unapproved_request_count":0,"unpriced_request_count":1,"first_seen_ns":1779840090000000000,"last_seen_ns":1779840090000000000,"sample_trace_id":"t_model_unpriced","sample_span_id":"s_model_unpriced"}
@@ -15,17 +15,17 @@
 - name: model_approval_api_key_scope_isolates
   description: api_keys fixed-param scope prevents a different api_key_filter from returning rows
   expected_http_status: 200
-  parameters: api_keys=key_model_guard&api_key_filter=key_other&approved_provider_models=7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f&start_time_ns=1779840089000000000&end_time_ns=1779840093000000000&retention_days=3650
+  parameters: api_keys=sha256:45f21e550c2475fb60ba8224ac6c91d31cd2a047510faaa60ccab588dbd27c38&api_key_filter=sha256:8a876aaf86d3ee01b61c028863136830d26de5634c3831c905a8f0995bd98333&approved_provider_models=7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f&start_time_ns=1779840089000000000&end_time_ns=1779840093000000000&retention_days=3650
   expected_result: ''
 
 - name: model_approval_excludes_end_time_boundary
   description: end_time_ns is an exclusive upper bound for anomaly scans
   expected_http_status: 200
-  parameters: api_keys=key_model_boundary&api_key_filter=key_model_boundary&baggage_operation=model-boundary&start_time_ns=1779840092000000000&end_time_ns=1779840093000000000&retention_days=3650
+  parameters: api_keys=sha256:1645b48141ec66e4760f8172a81b136dbf60c411204eac4be87ed424ec08c478&api_key_filter=sha256:1645b48141ec66e4760f8172a81b136dbf60c411204eac4be87ed424ec08c478&baggage_operation=model-boundary&start_time_ns=1779840092000000000&end_time_ns=1779840093000000000&retention_days=3650
   expected_result: ''
 
 - name: model_approval_allows_approved_priced_mixed_case_pair
   description: approved and priced mixed-case telemetry does not produce an anomaly
   expected_http_status: 200
-  parameters: api_keys=key_model_guard&api_key_filter=key_model_guard&baggage_operation=model-guard&approved_provider_models=7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f&start_time_ns=1779840092500000000&end_time_ns=1779840093500000000&retention_days=3650
+  parameters: api_keys=sha256:45f21e550c2475fb60ba8224ac6c91d31cd2a047510faaa60ccab588dbd27c38&api_key_filter=sha256:45f21e550c2475fb60ba8224ac6c91d31cd2a047510faaa60ccab588dbd27c38&baggage_operation=model-guard&approved_provider_models=7129e9c18989d1089a9d8ca67a0bae38d6ba0852e824523ae81e09923e35325f&start_time_ns=1779840092500000000&end_time_ns=1779840093500000000&retention_days=3650
   expected_result: ''

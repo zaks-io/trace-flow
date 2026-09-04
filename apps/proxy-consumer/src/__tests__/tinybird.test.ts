@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { insertIntoTinybird, insertIntoTinybirdWithRetry } from '../tinybird';
 import type { TinybirdTrace } from '@trace-flow/types';
+import { analyticsKeyId } from '@trace-flow/utils';
 
 describe('insertIntoTinybird', () => {
   const mockTrace: TinybirdTrace = {
@@ -76,7 +77,8 @@ describe('insertIntoTinybird', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     const trace1 = { ...mockTrace, TraceId: 'trace-1' };
-    const trace2 = { ...mockTrace, TraceId: 'trace-2' };
+    const identifier = await analyticsKeyId(mockTrace.ApiKey);
+    const trace2 = { ...mockTrace, TraceId: 'trace-2', ApiKey: identifier };
 
     await insertIntoTinybird(
       [trace1, trace2],
@@ -91,6 +93,11 @@ describe('insertIntoTinybird', () => {
     expect(body).toContain('"TraceId":"trace-1"');
     expect(body).toContain('"TraceId":"trace-2"');
     expect(body.split('\n').length).toBe(2);
+    expect(body).not.toContain(mockTrace.ApiKey);
+    expect(body.split('\n').map((line) => JSON.parse(line).ApiKey)).toEqual([
+      identifier,
+      identifier,
+    ]);
   });
 
   it('should URL encode datasource name', async () => {

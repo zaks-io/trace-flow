@@ -28,7 +28,10 @@ SQL >
     FROM llm_request_facts
     WHERE ReceivedAt >= start_ns
         AND ReceivedAt <= end_ns
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(provider) %}
         AND Provider = {{ String(provider) }}
@@ -43,7 +46,10 @@ SQL >
         AND StatusCode = {{ String(status) }}
         {% end %}
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
 
 NODE distribution

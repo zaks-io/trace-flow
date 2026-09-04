@@ -5,6 +5,8 @@ import type { QueueMessage } from '@trace-flow/types';
 import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
 import { createMockTrace } from './fixtures';
+import { analyticsKeyId } from '@trace-flow/utils';
+import { calculateShardId } from '../sharding';
 
 // The batcher's flush calls insertIntoTinybirdWithRetry, which does a real
 // fetch to TINYBIRD_HOST. Tests must never touch the network, and the batcher
@@ -78,6 +80,7 @@ describe('Queue Handler Integration', () => {
   });
 
   it('should process single message and route to correct shard', async () => {
+    env.NUM_SHARDS = 97;
     const message = createMockQueueMessage('test-1', 'api-key-123');
     const ackCalled = { value: false };
 
@@ -109,6 +112,18 @@ describe('Queue Handler Integration', () => {
     await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.value).toBe(true);
+    const identifier = await analyticsKeyId(message.apiKey);
+    const originalShard = calculateShardId(message.apiKey, 97);
+    expect(originalShard).not.toBe(calculateShardId(identifier, 97));
+    const stub = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName(`batcher-${originalShard}`));
+    const ledgerKeys: string[] = await runInDurableObject(stub, (_instance, state) =>
+      [...state.storage.sql.exec<{ trace_key: string }>('SELECT trace_key FROM trace_ledger')].map(
+        (row) => row.trace_key,
+      ),
+    );
+    expect(ledgerKeys.length).toBeGreaterThan(0);
+    expect(ledgerKeys.every((key) => key.includes(identifier))).toBe(true);
+    expect(JSON.stringify(ledgerKeys)).not.toContain(message.apiKey);
   });
 
   it('should distribute messages across shards by API key', async () => {

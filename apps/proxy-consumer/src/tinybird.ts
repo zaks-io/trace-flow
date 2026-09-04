@@ -1,4 +1,5 @@
 import type { TinybirdTrace } from '@trace-flow/types';
+import { normalizeAnalyticsKey } from '@trace-flow/utils';
 import { insertRows, shouldRetryTinybirdInsert } from '@trace-flow/tinybird-client';
 
 const MAX_RETRIES = 1;
@@ -16,33 +17,36 @@ export async function insertIntoTinybird(
   datasource: string,
   host: string,
 ): Promise<void> {
-  const rows = traces.map((trace) => {
-    const {
-      'Events.Timestamp': eventsTimestamp,
-      'Events.Name': eventsName,
-      'Events.Attributes': eventsAttributes,
-      'Links.TraceId': linksTraceId,
-      'Links.SpanId': linksSpanId,
-      'Links.TraceState': linksTraceState,
-      'Links.Attributes': linksAttributes,
-      ...rest
-    } = trace;
+  const rows = await Promise.all(
+    traces.map(async (trace) => {
+      const {
+        'Events.Timestamp': eventsTimestamp,
+        'Events.Name': eventsName,
+        'Events.Attributes': eventsAttributes,
+        'Links.TraceId': linksTraceId,
+        'Links.SpanId': linksSpanId,
+        'Links.TraceState': linksTraceState,
+        'Links.Attributes': linksAttributes,
+        ...rest
+      } = trace;
 
-    return {
-      ...rest,
-      Events: {
-        Timestamp: eventsTimestamp,
-        Name: eventsName,
-        Attributes: eventsAttributes,
-      },
-      Links: {
-        TraceId: linksTraceId,
-        SpanId: linksSpanId,
-        TraceState: linksTraceState,
-        Attributes: linksAttributes,
-      },
-    };
-  });
+      return {
+        ...rest,
+        ApiKey: await normalizeAnalyticsKey(trace.ApiKey),
+        Events: {
+          Timestamp: eventsTimestamp,
+          Name: eventsName,
+          Attributes: eventsAttributes,
+        },
+        Links: {
+          TraceId: linksTraceId,
+          SpanId: linksSpanId,
+          TraceState: linksTraceState,
+          Attributes: linksAttributes,
+        },
+      };
+    }),
+  );
 
   await insertRows(rows, tinybirdToken, datasource, host);
 }
