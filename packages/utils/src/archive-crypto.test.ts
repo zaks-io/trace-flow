@@ -13,6 +13,10 @@ const OTHER_WRAPPING_SECRET = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const ORG_ID = 'org_archive_a';
 const OTHER_ORG_ID = 'org_archive_b';
 const OBJECT_KEY = 'archive/org_archive_a/contribution_a/session_a/chunk-0001';
+const MALFORMED_ORG_ID = 'org_\uD800';
+const REPLACEMENT_ORG_ID = 'org_\uFFFD';
+const MALFORMED_OBJECT_KEY = 'archive/\uD800/chunk';
+const REPLACEMENT_OBJECT_KEY = 'archive/\uFFFD/chunk';
 const PLAINTEXT = new TextEncoder().encode('{"records":[{"content":"private archive"}]}');
 
 type ArchiveMetadataPatch = Partial<
@@ -39,18 +43,24 @@ function mockRandomValues(...values: Uint8Array[]) {
   });
 }
 
-async function makeFixture() {
-  mockRandomValues(fixedBytes(1, 32), fixedBytes(101, 12), fixedBytes(201, 12));
+async function makeKeyFixture(orgId = ORG_ID) {
+  mockRandomValues(fixedBytes(1, 32), fixedBytes(101, 12));
   const wrappedKey = await createArchiveEncryptionKeyVersion({
-    orgId: ORG_ID,
+    orgId,
     keyVersion: 7,
     wrappingSecretBase64: WRAPPING_SECRET,
   });
   const key = await unwrapArchiveEncryptionKey(wrappedKey, {
-    orgId: ORG_ID,
+    orgId,
     keyVersion: 7,
     wrappingSecretBase64: WRAPPING_SECRET,
   });
+  return { wrappedKey, key };
+}
+
+async function makeFixture() {
+  const { wrappedKey, key } = await makeKeyFixture();
+  mockRandomValues(fixedBytes(201, 12));
   const envelope = await encryptArchiveObject(PLAINTEXT, {
     key,
     orgId: ORG_ID,
@@ -121,6 +131,40 @@ describe('Conversation Archive cryptography', () => {
       ).toThrow('Archive cryptographic operation failed');
     },
   );
+
+  it('rejects the object-key lone-surrogate alias before authenticated decrypt', async () => {
+    const { key } = await makeKeyFixture();
+    mockRandomValues(fixedBytes(201, 12));
+    const envelope = await encryptArchiveObject(PLAINTEXT, {
+      key,
+      orgId: ORG_ID,
+      objectKey: REPLACEMENT_OBJECT_KEY,
+      objectClass: 'chunk',
+      keyVersion: 7,
+    });
+
+    await expect(
+      decryptArchiveObject(envelope, {
+        key,
+        orgId: ORG_ID,
+        objectKey: MALFORMED_OBJECT_KEY,
+        objectClass: 'chunk',
+        keyVersion: 7,
+      }),
+    ).rejects.toThrow('Archive cryptographic operation failed');
+  });
+
+  it('rejects the Organization lone-surrogate alias before wrapped-key unwrap', async () => {
+    const { wrappedKey } = await makeKeyFixture(REPLACEMENT_ORG_ID);
+
+    await expect(
+      unwrapArchiveEncryptionKey(wrappedKey, {
+        orgId: MALFORMED_ORG_ID,
+        keyVersion: 7,
+        wrappingSecretBase64: WRAPPING_SECRET,
+      }),
+    ).rejects.toThrow('Archive cryptographic operation failed');
+  });
 
   const metadataTamperCases: [string, ArchiveMetadataPatch, ArchiveMetadataPatch][] = [
     ['organization', { orgId: OTHER_ORG_ID }, { orgId: OTHER_ORG_ID }],
