@@ -49,6 +49,18 @@ interface ArchiveObjectEncryptionOptions extends ArchiveObjectMetadata {
   key: CryptoKey;
 }
 
+interface DecodedArchiveWrappedKeyVersion {
+  record: ArchiveWrappedKeyVersion;
+  nonceBytes: Uint8Array;
+  ciphertextBytes: Uint8Array;
+}
+
+interface DecodedArchiveObjectEnvelope {
+  record: ArchiveObjectEnvelope;
+  nonceBytes: Uint8Array;
+  ciphertextBytes: Uint8Array;
+}
+
 const ARCHIVE_CRYPTO_ERROR = 'Archive cryptographic operation failed';
 
 function fail(): never {
@@ -56,34 +68,72 @@ function fail(): never {
 }
 
 function encodeBase64(bytes: Uint8Array): string {
-  const chunkSize = 0x8000;
-  let binary = '';
+  const chunkSize = 0x7ffe;
+  const encodedChunks: string[] = [];
 
   for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    encodedChunks.push(btoa(String.fromCharCode(...bytes.subarray(i, i + chunkSize))));
   }
 
-  return btoa(binary);
+  return encodedChunks.join('');
+}
+
+function base64Digit(codeUnit: number): number {
+  if (codeUnit >= 0x41 && codeUnit <= 0x5a) return codeUnit - 0x41;
+  if (codeUnit >= 0x61 && codeUnit <= 0x7a) return codeUnit - 0x47;
+  if (codeUnit >= 0x30 && codeUnit <= 0x39) return codeUnit + 0x04;
+  if (codeUnit === 0x2b) return 0x3e;
+  if (codeUnit === 0x2f) return 0x3f;
+  return -1;
 }
 
 function decodeBase64(value: unknown): Uint8Array {
-  if (typeof value !== 'string' || value.length === 0) fail();
+  if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) fail();
 
-  try {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const decodedLength = (value.length / 4) * 3 - padding;
+  const bytes = new Uint8Array(decodedLength);
+  let outputOffset = 0;
+
+  for (let inputOffset = 0; inputOffset < value.length; inputOffset += 4) {
+    const a = base64Digit(value.charCodeAt(inputOffset));
+    const b = base64Digit(value.charCodeAt(inputOffset + 1));
+    const cCodeUnit = value.charCodeAt(inputOffset + 2);
+    const dCodeUnit = value.charCodeAt(inputOffset + 3);
+    const c = cCodeUnit === 0x3d ? -1 : base64Digit(cCodeUnit);
+    const d = dCodeUnit === 0x3d ? -1 : base64Digit(dCodeUnit);
+    const isFinalQuartet = inputOffset + 4 === value.length;
+
+    if (a < 0 || b < 0) fail();
+    bytes[outputOffset++] = (a << 2) | (b >> 4);
+
+    if (c < 0) {
+      if (!isFinalQuartet || cCodeUnit !== 0x3d || dCodeUnit !== 0x3d || (b & 0x0f) !== 0) {
+        fail();
+      }
+      continue;
     }
-    if (encodeBase64(bytes) !== value) fail();
-    return bytes;
-  } catch {
-    fail();
+
+    bytes[outputOffset++] = (b << 4) | (c >> 2);
+    if (d < 0) {
+      if (!isFinalQuartet || dCodeUnit !== 0x3d || (c & 0x03) !== 0) fail();
+      continue;
+    }
+
+    bytes[outputOffset++] = (c << 6) | d;
   }
+
+  if (outputOffset !== decodedLength) fail();
+  return bytes;
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function asCryptoBuffer(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  if (!(bytes.buffer instanceof ArrayBuffer)) fail();
+  return bytes as Uint8Array<ArrayBuffer>;
 }
 
 function validateText(value: unknown): asserts value is string {
@@ -170,7 +220,7 @@ async function importWrappingKey(options: ArchiveWrappingOptions): Promise<Crypt
   try {
     return await crypto.subtle.importKey(
       'raw',
-      toArrayBuffer(secret),
+      asCryptoBuffer(secret),
       { name: ARCHIVE_ALGORITHM },
       false,
       ['encrypt', 'decrypt'],
@@ -182,22 +232,35 @@ async function importWrappingKey(options: ArchiveWrappingOptions): Promise<Crypt
   }
 }
 
-function validateWrappedKey(value: unknown): asserts value is ArchiveWrappedKeyVersion {
+function decodeWrappedKey(value: unknown): DecodedArchiveWrappedKeyVersion {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) fail();
   const record = value as Record<string, unknown>;
   validateExactKeys(record, ['v', 'alg', 'orgId', 'keyVersion', 'nonce', 'ciphertext']);
   if (record.v !== ARCHIVE_CRYPTO_VERSION || record.alg !== ARCHIVE_ALGORITHM) fail();
   validateText(record.orgId);
   validateKeyVersion(record.keyVersion);
-  const nonce = decodeBase64(record.nonce);
-  if (nonce.byteLength !== ARCHIVE_NONCE_BYTES) fail();
-  const ciphertext = decodeBase64(record.ciphertext);
-  if (ciphertext.byteLength !== ARCHIVE_WRAPPED_KEY_CIPHERTEXT_BYTES) fail();
+  if (typeof record.nonce !== 'string' || typeof record.ciphertext !== 'string') fail();
+  const nonceBytes = decodeBase64(record.nonce);
+  if (nonceBytes.byteLength !== ARCHIVE_NONCE_BYTES) fail();
+  const ciphertextBytes = decodeBase64(record.ciphertext);
+  if (ciphertextBytes.byteLength !== ARCHIVE_WRAPPED_KEY_CIPHERTEXT_BYTES) fail();
+
+  return {
+    record: {
+      v: ARCHIVE_CRYPTO_VERSION,
+      alg: ARCHIVE_ALGORITHM,
+      orgId: record.orgId,
+      keyVersion: record.keyVersion,
+      nonce: record.nonce,
+      ciphertext: record.ciphertext,
+    },
+    nonceBytes,
+    ciphertextBytes,
+  };
 }
 
 export function serializeArchiveWrappedKeyVersion(wrappedKey: ArchiveWrappedKeyVersion): string {
-  validateWrappedKey(wrappedKey);
-  return JSON.stringify(wrappedKey);
+  return JSON.stringify(decodeWrappedKey(wrappedKey).record);
 }
 
 export function parseArchiveWrappedKeyVersion(
@@ -208,16 +271,21 @@ export function parseArchiveWrappedKeyVersion(
     validateMetadata(expected);
     if (typeof serialized !== 'string' || serialized.length === 0) fail();
     const parsed: unknown = JSON.parse(serialized);
-    validateWrappedKey(parsed);
-    if (parsed.orgId !== expected.orgId || parsed.keyVersion !== expected.keyVersion) fail();
-    if (JSON.stringify(parsed) !== serialized) fail();
-    return parsed;
+    const decoded = decodeWrappedKey(parsed);
+    if (
+      decoded.record.orgId !== expected.orgId ||
+      decoded.record.keyVersion !== expected.keyVersion
+    ) {
+      fail();
+    }
+    if (JSON.stringify(decoded.record) !== serialized) fail();
+    return decoded.record;
   } catch {
     fail();
   }
 }
 
-function validateEnvelope(value: unknown): asserts value is ArchiveObjectEnvelope {
+function decodeEnvelope(value: unknown): DecodedArchiveObjectEnvelope {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) fail();
   const record = value as Record<string, unknown>;
   validateExactKeys(record, [
@@ -235,10 +303,26 @@ function validateEnvelope(value: unknown): asserts value is ArchiveObjectEnvelop
   validateText(record.objectKey);
   if (record.objectClass !== 'chunk' && record.objectClass !== 'manifest') fail();
   validateKeyVersion(record.keyVersion);
-  const nonce = decodeBase64(record.nonce);
-  if (nonce.byteLength !== ARCHIVE_NONCE_BYTES) fail();
-  const ciphertext = decodeBase64(record.ciphertext);
-  if (ciphertext.byteLength < ARCHIVE_AUTH_TAG_BYTES) fail();
+  if (typeof record.nonce !== 'string' || typeof record.ciphertext !== 'string') fail();
+  const nonceBytes = decodeBase64(record.nonce);
+  if (nonceBytes.byteLength !== ARCHIVE_NONCE_BYTES) fail();
+  const ciphertextBytes = decodeBase64(record.ciphertext);
+  if (ciphertextBytes.byteLength < ARCHIVE_AUTH_TAG_BYTES) fail();
+
+  return {
+    record: {
+      v: ARCHIVE_CRYPTO_VERSION,
+      alg: ARCHIVE_ALGORITHM,
+      orgId: record.orgId,
+      objectKey: record.objectKey,
+      objectClass: record.objectClass,
+      keyVersion: record.keyVersion,
+      nonce: record.nonce,
+      ciphertext: record.ciphertext,
+    },
+    nonceBytes,
+    ciphertextBytes,
+  };
 }
 
 export async function createArchiveEncryptionKeyVersion(
@@ -254,11 +338,11 @@ export async function createArchiveEncryptionKeyVersion(
       const ciphertext = await crypto.subtle.encrypt(
         {
           name: ARCHIVE_ALGORITHM,
-          iv: toArrayBuffer(nonce),
+          iv: asCryptoBuffer(nonce),
           additionalData: archiveKeyWrappingAad(options),
         },
         wrappingKey,
-        toArrayBuffer(rawKey),
+        asCryptoBuffer(rawKey),
       );
 
       return {
@@ -282,22 +366,25 @@ export async function unwrapArchiveEncryptionKey(
   options: ArchiveWrappingOptions & ArchiveMetadata,
 ): Promise<CryptoKey> {
   try {
-    validateWrappedKey(wrappedKey);
+    const decoded = decodeWrappedKey(wrappedKey);
     validateMetadata(options);
-    if (wrappedKey.orgId !== options.orgId || wrappedKey.keyVersion !== options.keyVersion) fail();
+    if (
+      decoded.record.orgId !== options.orgId ||
+      decoded.record.keyVersion !== options.keyVersion
+    ) {
+      fail();
+    }
 
     const wrappingKey = await importWrappingKey(options);
-    const nonce = decodeBase64(wrappedKey.nonce);
-    const ciphertext = decodeBase64(wrappedKey.ciphertext);
     const rawKey = new Uint8Array(
       await crypto.subtle.decrypt(
         {
           name: ARCHIVE_ALGORITHM,
-          iv: toArrayBuffer(nonce),
+          iv: asCryptoBuffer(decoded.nonceBytes),
           additionalData: archiveKeyWrappingAad(options),
         },
         wrappingKey,
-        toArrayBuffer(ciphertext),
+        asCryptoBuffer(decoded.ciphertextBytes),
       ),
     );
 
@@ -305,7 +392,7 @@ export async function unwrapArchiveEncryptionKey(
       if (rawKey.byteLength !== ARCHIVE_KEY_BYTES) fail();
       return await crypto.subtle.importKey(
         'raw',
-        toArrayBuffer(rawKey),
+        asCryptoBuffer(rawKey),
         { name: ARCHIVE_ALGORITHM },
         false,
         ['encrypt', 'decrypt'],
@@ -328,11 +415,11 @@ export async function encryptArchiveObject(
     const ciphertext = await crypto.subtle.encrypt(
       {
         name: ARCHIVE_ALGORITHM,
-        iv: toArrayBuffer(nonce),
+        iv: asCryptoBuffer(nonce),
         additionalData: archiveObjectAad(options),
       },
       options.key,
-      toArrayBuffer(plaintext),
+      asCryptoBuffer(plaintext),
     );
 
     return {
@@ -355,28 +442,27 @@ export async function decryptArchiveObject(
   options: ArchiveObjectEncryptionOptions,
 ): Promise<Uint8Array> {
   try {
-    validateEnvelope(envelope);
+    const decoded = decodeEnvelope(envelope);
+    const record = decoded.record;
     validateObjectMetadata(options);
     if (
-      envelope.orgId !== options.orgId ||
-      envelope.objectKey !== options.objectKey ||
-      envelope.objectClass !== options.objectClass ||
-      envelope.keyVersion !== options.keyVersion
+      record.orgId !== options.orgId ||
+      record.objectKey !== options.objectKey ||
+      record.objectClass !== options.objectClass ||
+      record.keyVersion !== options.keyVersion
     ) {
       fail();
     }
 
-    const nonce = decodeBase64(envelope.nonce);
-    const ciphertext = decodeBase64(envelope.ciphertext);
     return new Uint8Array(
       await crypto.subtle.decrypt(
         {
           name: ARCHIVE_ALGORITHM,
-          iv: toArrayBuffer(nonce),
+          iv: asCryptoBuffer(decoded.nonceBytes),
           additionalData: archiveObjectAad(options),
         },
         options.key,
-        toArrayBuffer(ciphertext),
+        asCryptoBuffer(decoded.ciphertextBytes),
       ),
     );
   } catch {
