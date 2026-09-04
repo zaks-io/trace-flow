@@ -365,6 +365,7 @@ export const reportHeartbeat = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const { user } = await requireCurrentOrgUser(ctx);
+    await requireArchiveWritable(ctx, user.orgId);
     const credential = await requireBoundCollectorCredential(ctx, args.collectorCredentialId, user);
     const slot = await getEnrollmentSlot(ctx, user.orgId, credential._id);
     if (!slot) throw new Error('Enrollment not found');

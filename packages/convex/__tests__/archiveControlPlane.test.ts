@@ -1516,6 +1516,13 @@ describe('archive control plane', () => {
       status: 'active',
     });
 
+    await expect(
+      owner.mutation(api.archive.reportHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 1,
+        observedAt: 9,
+      }),
+    ).rejects.toThrow('deleting');
     expect(
       await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
         collectorCredentialId: world.ownerCred,
