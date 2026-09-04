@@ -400,8 +400,6 @@ export const beginOrgDeletion = internalMutation({
   args: { orgId: v.id('organizations') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const org = await ctx.db.get(args.orgId);
-    if (!org) throw new Error('Organization not found');
     await beginArchiveDeletion(ctx, args.orgId, Date.now());
     return null;
   },
@@ -603,7 +601,10 @@ export const finalizeOrgDeletion = internalMutation({
     // Mark org as deleted
     const org = await ctx.db.get(args.orgId);
     if (org) {
-      await ctx.db.patch(args.orgId, { deletedAt: Date.now() });
+      await ctx.db.patch(args.orgId, {
+        deletionStartedAt: undefined,
+        deletedAt: Date.now(),
+      });
     }
   },
 });

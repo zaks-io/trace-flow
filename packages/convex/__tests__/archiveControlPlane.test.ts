@@ -16,6 +16,7 @@ import {
   decideWriteAuthorization,
   isActiveProSubscription,
   isArchiveServerEnabled,
+  isOrganizationDeletionStarted,
   nextActivationStatusForEntitlement,
   pickOldestDocument,
   projectLifecycle,
@@ -344,6 +345,8 @@ describe('archive control-plane pure functions', () => {
   it('treats a missing organization as deleted for archive writes', () => {
     expect(isOrganizationDeleted(null)).toBe(true);
     expect(isOrganizationDeleted(undefined)).toBe(true);
+    expect(isOrganizationDeletionStarted({ deletionStartedAt: 1 })).toBe(true);
+    expect(isOrganizationDeletionStarted({})).toBe(false);
     expect(isOrganizationDeleted({ deletedAt: 1 })).toBe(true);
     expect(isOrganizationDeleted({})).toBe(false);
     expect(() =>
@@ -364,6 +367,13 @@ describe('archive control-plane pure functions', () => {
       assertArchiveMutationAllowed({
         org: {},
         activation: { status: 'deleting' },
+        serverEnabled: true,
+      }),
+    ).toThrow('deleting');
+    expect(() =>
+      assertArchiveMutationAllowed({
+        org: { deletionStartedAt: 1 },
+        activation: { status: 'active' },
         serverEnabled: true,
       }),
     ).toThrow('deleting');
@@ -449,6 +459,24 @@ describe('archive control-plane pure functions', () => {
 });
 
 describe('archive control plane', () => {
+  it('blocks first activation after deletion starts before any archive activation exists', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+
+    await world.t.mutation(internal.admin.admin.beginOrgDeletion, {
+      orgId: world.owner.orgId,
+    });
+    expect(await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId))).toMatchObject({
+      deletionStartedAt: expect.any(Number),
+    });
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect()),
+    ).resolves.toHaveLength(0);
+
+    await expect(owner.mutation(api.archive.activate, {})).rejects.toThrow('deleting');
+  });
+
   it('lets only an authenticated owner atomically create Archive Activation', async () => {
     enableArchive();
     const world = await seedWorld();
@@ -1578,6 +1606,121 @@ describe('archive control plane', () => {
         sourceSessionId: 'sess-during-org-delete',
       }),
     ).rejects.toThrow('deleting');
+  });
+
+  it('denies archive writes while deletion persists until final org deletion', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await world.t.mutation(internal.admin.admin.beginOrgDeletion, {
+      orgId: world.owner.orgId,
+    });
+    const deleting = await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId));
+    expect(deleting?.deletionStartedAt).toEqual(expect.any(Number));
+    expect(deleting?.deletedAt).toBeUndefined();
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+    await expect(
+      owner.mutation(api.archive.reportHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 1,
+        observedAt: 9,
+      }),
+    ).rejects.toThrow('deleting');
+
+    await world.t.mutation(internal.admin.admin.finalizeOrgDeletion, {
+      orgId: world.owner.orgId,
+    });
+    const finalized = await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId));
+    expect(finalized?.deletedAt).toEqual(expect.any(Number));
+    expect(finalized?.deletionStartedAt).toBeUndefined();
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+    await expect(
+      world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 2,
+        observedAt: 10,
+      }),
+    ).rejects.toThrow('Organization not found');
+  });
+
+  it('persists the deletion marker while archive rows are removed in batches', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await world.t.run(async (ctx) => {
+      for (let index = 0; index < 501; index++) {
+        await ctx.db.insert('apiKeys', {
+          key: `archive-batch-${index}`,
+          expiresAt: Date.now() + 60_000,
+          orgId: world.owner.orgId,
+          userId: world.owner._id,
+          name: 'batch-test',
+        });
+      }
+    });
+
+    await world.t.mutation(internal.admin.admin.beginOrgDeletion, {
+      orgId: world.owner.orgId,
+    });
+    const marker = (await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId)))!
+      .deletionStartedAt;
+    expect(marker).toEqual(expect.any(Number));
+
+    let batches = 0;
+    let batch = await world.t.mutation(internal.admin.admin.deleteOrgRecordsBatch, {
+      orgId: world.owner.orgId,
+    });
+    batches++;
+    expect(batch.hasMore).toBe(true);
+    expect(
+      (await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId)))?.deletionStartedAt,
+    ).toBe(marker);
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+
+    while (batch.hasMore) {
+      batch = await world.t.mutation(internal.admin.admin.deleteOrgRecordsBatch, {
+        orgId: world.owner.orgId,
+      });
+      batches++;
+    }
+    expect(batches).toBeGreaterThan(1);
+    expect(
+      (await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId)))?.deletionStartedAt,
+    ).toBe(marker);
+    expect(await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId))).not.toMatchObject({
+      deletedAt: expect.any(Number),
+    });
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect()),
+    ).resolves.toHaveLength(0);
+
+    await world.t.mutation(internal.admin.admin.finalizeOrgDeletion, {
+      orgId: world.owner.orgId,
+    });
+    expect(
+      (await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId)))?.deletionStartedAt,
+    ).toBe(undefined);
   });
 
   it('lets public collector heartbeats continue while the archive is frozen', async () => {

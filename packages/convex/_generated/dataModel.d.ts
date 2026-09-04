@@ -1122,6 +1122,7 @@ export type DataModel = {
   organizations: {
     document: {
       deletedAt?: number;
+      deletionStartedAt?: number;
       name: string;
       onboardingCompletedAt?: number;
       ownerId: Id<"users">;
@@ -1133,6 +1134,7 @@ export type DataModel = {
       | "_creationTime"
       | "_id"
       | "deletedAt"
+      | "deletionStartedAt"
       | "name"
       | "onboardingCompletedAt"
       | "ownerId"

@@ -66,6 +66,7 @@ export declare const api: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -806,6 +807,7 @@ export declare const api: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -2093,6 +2095,7 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -2107,6 +2110,7 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -2715,6 +2719,7 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;

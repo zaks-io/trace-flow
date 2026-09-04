@@ -75,11 +75,14 @@ async function requireArchiveWritable(
     throw new Error('Conversation Archive is not enabled');
   }
   const activation = await getArchiveActivation(ctx, orgId);
+  const org = await ctx.db.get(orgId);
+  assertArchiveMutationAllowed({
+    org,
+    activation,
+    serverEnabled: isArchiveServerEnabled(),
+  });
   if (!activation) {
     throw new Error('Conversation Archive is not activated');
-  }
-  if (activation.status === 'deleting') {
-    throw new Error('Conversation Archive is deleting');
   }
   if (activation.status === 'frozen') {
     throw new Error('Conversation Archive is frozen');
@@ -132,6 +135,12 @@ export const activate = mutation({
   }),
   handler: async (ctx) => {
     const { user, org } = await requireOrgOwner(ctx);
+    const existing = await getArchiveActivation(ctx, org._id);
+    assertArchiveMutationAllowed({
+      org,
+      activation: existing,
+      serverEnabled: isArchiveServerEnabled(),
+    });
     if (!isArchiveServerEnabled()) {
       throw new Error('Conversation Archive is not enabled');
     }
@@ -140,7 +149,6 @@ export const activate = mutation({
       throw new Error('Active Pro entitlement is required');
     }
 
-    const existing = await getArchiveActivation(ctx, org._id);
     if (existing) {
       return { activationId: existing._id, created: false };
     }
@@ -347,7 +355,12 @@ export const unenroll = mutation({
   args: { enrollmentId: v.id('archiveEnrollments') },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { user } = await requireCurrentOrgUser(ctx);
+    const { user, org } = await requireCurrentOrgUser(ctx);
+    assertArchiveMutationAllowed({
+      org,
+      activation: await getArchiveActivation(ctx, user.orgId),
+      serverEnabled: isArchiveServerEnabled(),
+    });
     const enrollment = await ctx.db.get(args.enrollmentId);
     if (enrollment?.orgId !== user.orgId || enrollment.userId !== user._id) {
       throw new Error('Enrollment not found');
@@ -362,6 +375,11 @@ export const revokeEnrollment = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const { user, org, membership } = await requireCurrentOrgUser(ctx);
+    assertArchiveMutationAllowed({
+      org,
+      activation: await getArchiveActivation(ctx, user.orgId),
+      serverEnabled: isArchiveServerEnabled(),
+    });
     if (org.ownerId !== user._id || membership.role !== 'owner') {
       throw new Error('Only the organization owner can revoke enrollments');
     }

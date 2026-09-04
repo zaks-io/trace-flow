@@ -297,8 +297,14 @@ export function isOrganizationDeleted(org: { deletedAt?: number } | null | undef
   return org == null || org.deletedAt !== undefined;
 }
 
+export function isOrganizationDeletionStarted(
+  org: { deletionStartedAt?: number } | null | undefined,
+): boolean {
+  return org?.deletionStartedAt !== undefined;
+}
+
 export function assertArchiveMutationAllowed(input: {
-  org: { deletedAt?: number } | null;
+  org: { deletedAt?: number; deletionStartedAt?: number } | null;
   activation: { status: ArchiveActivationStatus } | null;
   serverEnabled: boolean;
 }): void {
@@ -306,7 +312,7 @@ export function assertArchiveMutationAllowed(input: {
     throw new Error('Conversation Archive is not enabled');
   }
   if (isOrganizationDeleted(input.org)) throw new Error('Organization not found');
-  if (input.activation?.status === 'deleting') {
+  if (isOrganizationDeletionStarted(input.org) || input.activation?.status === 'deleting') {
     throw new Error('Conversation Archive is deleting');
   }
 }
@@ -335,6 +341,12 @@ export async function beginArchiveDeletion(
   orgId: Id<'organizations'>,
   now: number,
 ): Promise<void> {
+  const org = await ctx.db.get(orgId);
+  if (!org || isOrganizationDeleted(org)) throw new Error('Organization not found');
+  if (!isOrganizationDeletionStarted(org)) {
+    await ctx.db.patch(orgId, { deletionStartedAt: now });
+  }
+
   const activation = await getArchiveActivation(ctx, orgId);
   if (!activation) return;
   if (activation.status !== 'deleting') {
@@ -630,6 +642,9 @@ export async function syncArchiveLifecycleForEntitlement(
   subscription: { tier: string; status: string } | null,
   now: number,
 ): Promise<void> {
+  const org = await ctx.db.get(orgId);
+  if (!org || isOrganizationDeleted(org) || isOrganizationDeletionStarted(org)) return;
+
   const activation = await getArchiveActivation(ctx, orgId);
   if (!activation) return;
   if (activation.status === 'deleting') return;
@@ -727,6 +742,10 @@ export async function invalidateArchiveEnrollment(
   now: number,
 ): Promise<void> {
   if (enrollment.status !== 'active') return;
+
+  const org = await ctx.db.get(enrollment.orgId);
+  const activation = await getArchiveActivation(ctx, enrollment.orgId);
+  assertArchiveMutationAllowed({ org, activation, serverEnabled: isArchiveServerEnabled() });
 
   const enrollmentStatus: ArchiveEnrollmentStatus =
     reason === 'owner_revoked'

@@ -48,6 +48,7 @@ export const organizationValidator = v.object({
   ownerId: v.id('users'),
   stripeCustomerId: v.optional(v.string()),
   onboardingCompletedAt: v.optional(v.number()),
+  deletionStartedAt: v.optional(v.number()),
   deletedAt: v.optional(v.number()),
 });
 

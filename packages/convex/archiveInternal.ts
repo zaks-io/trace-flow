@@ -11,6 +11,7 @@ import {
   applyCollectorHeartbeat,
   assertArchiveMutationAllowed,
   isOrganizationDeleted,
+  isOrganizationDeletionStarted,
   assertVersionedUpdate,
   decideVersionedUpdate,
   decideWriteAuthorization,
@@ -55,7 +56,7 @@ export const authorizeArchiveWrite = internalQuery({
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.collectorCredentialId);
     const org = credential ? await ctx.db.get(credential.orgId) : null;
-    if (credential && isOrganizationDeleted(org)) {
+    if (credential && (isOrganizationDeleted(org) || isOrganizationDeletionStarted(org))) {
       return { allowed: false as const, reason: 'deleting' as const };
     }
     const activation = credential ? await getArchiveActivation(ctx, credential.orgId) : null;
@@ -106,12 +107,12 @@ export const applyServerStatus = internalMutation({
     const org = await ctx.db.get(credential.orgId);
 
     const activation = await getArchiveActivation(ctx, credential.orgId);
-    if (!activation) throw new Error('Conversation Archive is not activated');
     assertArchiveMutationAllowed({
       org,
       activation,
       serverEnabled: isArchiveServerEnabled(),
     });
+    if (!activation) throw new Error('Conversation Archive is not activated');
 
     const now = Date.now();
     const existing = await getArchiveStatusRow(ctx, credential.orgId);
@@ -293,6 +294,9 @@ export const syncLifecycleForOrg = internalMutation({
   args: { orgId: v.id('organizations') },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.orgId);
+    if (!org || isOrganizationDeleted(org) || isOrganizationDeletionStarted(org)) return null;
+
     const subscription = await ctx.db
       .query('subscriptions')
       .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))

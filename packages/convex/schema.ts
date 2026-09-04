@@ -25,6 +25,8 @@ export default defineSchema({
     ownerId: v.id('users'),
     stripeCustomerId: v.optional(v.string()),
     onboardingCompletedAt: v.optional(v.number()),
+    // Durable whole-organization deletion gate. Cleared only when finalization marks the org deleted.
+    deletionStartedAt: v.optional(v.number()),
     deletedAt: v.optional(v.number()),
   })
     .index('by_owner_id', ['ownerId'])
