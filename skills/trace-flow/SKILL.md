@@ -1,16 +1,17 @@
 ---
 name: trace-flow
-description: Route an app's LLM calls through the Trace Flow gateway and read the captured traces, spans, cost/latency rollups, and agent analytics through the Trace Flow MCP server. Use when adding LLM observability to a repo, debugging a failed or slow LLM call, chasing a token or cost spike, or attributing spend to a workflow, model, or user.
+description: Route an app's LLM calls through the Trace Flow gateway, connect the private-alpha coding-agent collector, and read traces, spans, cost/latency rollups, and agent analytics through MCP. Use when adding observability to a repo, debugging a failed or slow model call, chasing a token or cost spike, or attributing spend to a workflow, model, repo, or coding-agent session.
 ---
 
 # Trace Flow
 
-Trace Flow captures LLM traffic at a gateway and serves it back over MCP. Two halves:
+Trace Flow has two write paths and one agent-facing read path:
 
-- **Write:** point the app at `https://gateway.trace-flow.dev/{provider}`. The gateway streams the response through untouched and captures bodies, tokens, timing, cost, and errors out of band.
+- **Model requests:** point the app at `https://gateway.trace-flow.dev/{provider}`. The gateway streams the response through untouched and captures bodies, tokens, timing, cost, and errors out of band.
+- **Coding-agent sessions:** Trace Flow Desktop parses Claude Code, Codex CLI, and macOS Cursor stores locally, redacts excerpts, and uploads typed facts. This path is private-alpha and uses a Collector Credential, not a gateway API key.
 - **Read:** `https://mcp.trace-flow.dev/mcp` exposes traces, spans, events, usage rollups, and agent analytics as tools.
 
-API keys: <https://trace-flow.dev/app/api-keys>. Docs: `/docs/quick-start`, `/docs/sdk-reference`, `/docs/opentelemetry`, `/docs/mcp` on <https://trace-flow.dev>.
+API keys: <https://trace-flow.dev/app/api-keys>. Docs: `/docs/quick-start`, `/docs/collector`, `/docs/sdk-reference`, `/docs/opentelemetry`, `/docs/mcp` on <https://trace-flow.dev>.
 
 ## Instrument an app
 
@@ -41,6 +42,18 @@ const openai = createOpenAI({
 Everything after `/{provider}` is forwarded verbatim, so any endpoint the provider serves works, streaming included. Native SDKs work the same way: set the SDK's base URL and default headers.
 
 If the repo has an `.mcp.json` or equivalent, merge the `trace-flow` server in; never rewrite the file.
+
+## Connect coding-agent sessions
+
+Use the desktop update channel for a normal private-alpha collector install:
+
+- macOS arm64: <https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop.dmg>
+- Windows x64: <https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop-setup.exe>
+
+The user signs in through the browser, then explicitly selects **Start syncing**. Source detection is
+local and read-only before that action. Claude Code and Codex CLI are supported on the desktop targets;
+Cursor is currently supported on macOS. Do not tell users to pipe `/install.sh` into a shell because
+the CLI has no published installer asset.
 
 ## Trace context
 
@@ -114,7 +127,7 @@ Rules that save wasted calls:
 
 ## Agent analytics
 
-If the org runs the Trace Flow collector, coding-agent conversations (Claude, Codex, Cursor) are queryable too.
+If the org runs the private-alpha Trace Flow collector, Claude Code, Codex CLI, and macOS Cursor conversations are queryable too. The collector guide at <https://trace-flow.dev/docs/collector.md> owns installation, supported-source, and privacy details.
 
 Call `describe_agent_analytics` first. It returns the allowed views, filter keys, view-specific parameters, and the org's actual `sources`, `models`, and `repo_fingerprints` for the window. Repo fingerprints are opaque hashes, so guessing them is wasted effort.
 

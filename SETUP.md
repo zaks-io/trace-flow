@@ -7,7 +7,9 @@ This file is the setup map. For architecture details, read `specs/architecture/o
 
 ## Local Development
 
-Use the scripted local contract:
+The scripted contract provisions **Self-Contained Local**. It does not connect to a Cloud-Dev data
+plane unless you explicitly supply the Cloud-Dev endpoints and tokens described in
+`docs/agents/local-environment.md`.
 
 ```bash
 scripts/dev/install.sh
@@ -34,6 +36,9 @@ scripts/dev/verify.sh
 - `apps/agent-ingest`
 - `apps/agent-consumer`
 
+It does not start Web, Convex, MCP, Analyst Sandbox, or Archive API. Archive API is an intentionally
+disabled authorization scaffold with no persistence or production environment.
+
 Run Convex and Web separately:
 
 ```bash
@@ -41,21 +46,25 @@ scripts/dev/convex.sh
 scripts/dev/web.sh
 ```
 
-See `docs/agents/local-environment.md` for the environment vocabulary and script switches.
+For day-to-day Cloud-Dev collector testing, run Web locally but point the collector at the deployed
+cloud `-dev` Agent Ingest Worker and the Convex Cloud dev site. The collector embeds production URLs,
+so both `TRACE_FLOW_INGEST_URL` and `TRACE_FLOW_CONVEX_SITE_URL` must be set for Cloud-Dev. See
+`docs/agents/local-environment.md` and `CONTEXT.md` for the exact environment vocabulary and script
+switches.
 
 ## Cloudflare Resources
 
 The production runtime uses these Cloudflare resource families:
 
-| Resource         | LLM request path                                     | Agent conversation path                                    |
-| ---------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
-| Workers          | `proxy`, `proxy-consumer`, `pipes-api`, `api`, `web` | `agent-ingest`, `agent-consumer`, `analyst-sandbox`, `web` |
-| Queues           | `trace-flow-requests-*` + DLQ                        | `agent-ingest-*` + DLQ                                     |
-| R2               | `trace-flow-storage-*` body bucket                   | sandbox workspace backups                                  |
-| KV               | `API_KEYS`, `MODEL_PRICING`                          | `COLLECTOR_CREDS`, `MODEL_PRICING`                         |
-| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`                     | `AGENT_FACT_BATCHER`, `Sandbox`                            |
-| Rate limiters    | org, IP, API read, token refresh budgets             | `AGENT_INGEST_LIMITER`                                     |
-| Analytics Engine | proxy/consumer operational metrics                   | Worker logs and Sentry for now                             |
+| Resource         | Model request path                          | Agent conversation path                        | Shared/read path                                    |
+| ---------------- | ------------------------------------------- | ---------------------------------------------- | --------------------------------------------------- |
+| Workers          | `proxy`, `proxy-consumer`                   | `agent-ingest`, `agent-consumer`               | `web`, `pipes-api`, `api`, `mcp`, `analyst-sandbox` |
+| Queues           | `trace-flow-requests-*` + DLQ               | `agent-ingest-*` + DLQ                         | None                                                |
+| R2               | `trace-flow-storage-*` Body Objects         | None in fact ingest; sandbox workspace backups | Archive bucket is not enabled                       |
+| KV               | `API_KEYS`, `MODEL_PRICING`                 | `COLLECTOR_CREDS`, `MODEL_PRICING`             | None                                                |
+| Durable Objects  | `USAGE_TRACKER`, `TRACE_BATCHER`            | `AGENT_FACT_BATCHER`                           | `Sandbox`                                           |
+| Rate limiters    | org and IP ingest limits                    | `AGENT_INGEST_LIMITER`                         | read and token-refresh limits                       |
+| Analytics Engine | proxy and consumer operational measurements | Worker logs and Sentry                         | Worker logs and Sentry                              |
 
 The agent production resource IDs and smoke-test contract live in
 `docs/guides/agent-conversation-analytics/provisioned-resources.md` and
@@ -98,6 +107,10 @@ Set secrets through the owning platform only. Do not commit them.
 | `agent-consumer`  | `TINYBIRD_TOKEN`, `SENTRY_DSN`                                                    |
 | `analyst-sandbox` | `ANALYST_SANDBOX_SHARED_SECRET`, `OPENROUTER_API_KEY`                             |
 
+`archive-api` is not a production service and has no production secret setup. Its development-only
+authorization scaffold expects `ARCHIVE_API_SHARED_SECRET` and `SENTRY_DSN`; do not provision it as
+if archive persistence were available.
+
 ### Convex Environment
 
 Convex owns user/org state, API keys, Collector Credentials, compatibility policy, session ownership,
@@ -125,8 +138,13 @@ The workflow:
 1. runs CI checks
 2. deploys Convex and exports `.convex.cloud` / `.convex.site` URLs through `GITHUB_OUTPUT`
 3. deploys Tinybird schema before consumer Workers
-4. deploys proxy, proxy-consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
+4. deploys Proxy, Proxy Consumer, Pipes API, Raw API, MCP, Web, Agent Ingest, Agent Consumer, and Analyst Sandbox
 5. fails agent deploys if production config resolves to dev queues or KV namespaces
+
+The workflow does not deploy Archive API. Desktop distribution is handled independently by
+`.github/workflows/desktop-release.yml`. It signs and notarizes the macOS arm64 app, builds the
+Windows x64 installer, signs both platforms' updater artifacts with Tauri, and publishes the updater
+manifest last.
 
 Never manually deploy production without explicit approval.
 
@@ -139,6 +157,7 @@ Use the narrowest verification that covers the change:
 - `scripts/dev/verify.sh full` for lint and build as well
 - `scripts/agent-ingest-smoke.sh` only for the explicit agent-ingest smoke contract described in the runbook
 
-Agent Conversation Analytics is not production-ready until the roadmap gates are green, including a
-normal user collector flow, production queue/consumer smoke, dashboard truth states, Rust CI, and live
-observability alerts.
+Agent Conversation Analytics is not production-ready until the roadmap gates are green. The Rust CI,
+CLI build, Cursor reader, signed desktop updater, and production-shaped Worker configuration exist in
+the repo. A normal-user production sync, authenticated dashboard walkthrough, and live observability
+evidence remain separate gates and must not be inferred from those implementations.

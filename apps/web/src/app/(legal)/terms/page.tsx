@@ -4,7 +4,8 @@ import { Section } from '../components';
 
 export const metadata: Metadata = {
   title: 'Terms of Service',
-  description: 'Terms of Service for Trace Flow, an LLM observability platform by Zaks.io LLC.',
+  description:
+    'Terms of Service for Trace Flow, a model and coding-agent observability platform by Zaks.io LLC.',
 };
 
 export default function TermsPage() {
@@ -17,22 +18,25 @@ export default function TermsPage() {
         <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
           Terms of Service
         </h1>
-        <p className="font-mono text-[11px] text-muted-foreground/50">Effective March 9, 2026</p>
+        <p className="font-mono text-[11px] text-muted-foreground/50">
+          Effective September 4, 2026
+        </p>
       </header>
 
       <div className="rounded-md border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed text-primary">
-        <strong className="font-semibold">Beta Service.</strong> Trace Flow is currently in beta.
-        Features, policies, and data retention may change. This service is not recommended for
-        production workloads.
+        <strong className="font-semibold">Private alpha.</strong> Features, policies, and data
+        retention may change. This service is not recommended for production workloads.
       </div>
 
       <div className="space-y-8">
         <Section number={1} title="Service Description">
           <p>
-            Trace Flow (&ldquo;the Service&rdquo;) is an LLM observability proxy operated by Zaks.io
-            LLC (&ldquo;we&rdquo;, &ldquo;us&rdquo;). The Service captures metadata and
-            request/response data from LLM API calls and presents it through dashboards, analytics,
-            and debugging tools.
+            Trace Flow (&ldquo;the Service&rdquo;) is a model and coding-agent observability
+            platform operated by Zaks.io LLC (&ldquo;we&rdquo;, &ldquo;us&rdquo;). The Service
+            captures metadata and optional request and response bodies from model API calls. When a
+            user enables the separate local collector, it also receives redacted typed facts derived
+            from supported coding-agent sessions. Trace Flow presents this data through dashboards,
+            analytics, MCP, and debugging tools.
           </p>
         </Section>
 

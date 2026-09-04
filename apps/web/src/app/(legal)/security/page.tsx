@@ -5,7 +5,7 @@ import { Section } from '../components';
 export const metadata: Metadata = {
   title: 'Security',
   description:
-    'How Trace Flow protects your data — AES-256-GCM encryption at rest, PII redaction before storage, tenant-scoped keys, and body-storage opt-out.',
+    'How Trace Flow protects your data with encrypted body storage, pattern-based redaction, tenant-scoped access, and a body-storage opt-out.',
 };
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -37,7 +37,9 @@ export default function SecurityPage() {
           Legal &middot; Security
         </p>
         <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Security</h1>
-        <p className="font-mono text-[11px] text-muted-foreground/50">Effective May 11, 2026</p>
+        <p className="font-mono text-[11px] text-muted-foreground/50">
+          Effective September 4, 2026
+        </p>
       </header>
 
       <div className="space-y-8">
@@ -94,14 +96,14 @@ export default function SecurityPage() {
           <p>The current ruleset targets common categories of sensitive data, including:</p>
           <ul className="list-disc space-y-1 pl-5 marker:text-muted-foreground/30">
             <li>Email addresses and phone numbers</li>
-            <li>Government identifiers and financial account numbers</li>
+            <li>US Social Security numbers and Luhn-valid payment card numbers</li>
             <li>IP addresses</li>
             <li>Bearer tokens and credential-like fields in structured payloads</li>
           </ul>
           <p>
             Redaction applies to request bodies, response bodies, streaming message data, structured
             input messages, response metadata, and error payloads. Pattern matching is best-effort
-            and is not a substitute for keeping sensitive data out of prompts where possible — use
+            and is not a substitute for keeping sensitive data out of prompts where possible. Use
             the body-storage opt-out below for requests you know contain regulated content.
           </p>
         </Section>
@@ -116,7 +118,22 @@ export default function SecurityPage() {
           </p>
         </Section>
 
-        <Section number={6} title="Tenant isolation">
+        <Section number={6} title="Coding-agent collector">
+          <p>
+            The collector discovers and parses supported coding-agent stores locally. A fresh
+            desktop install begins paused, and no agent facts are uploaded until the user selects{' '}
+            <strong className="font-medium text-foreground">Start syncing</strong>. The normal
+            analytics path uploads typed facts and redacted excerpts, not raw transcripts.
+          </p>
+          <p>
+            Collector Credentials are separate from gateway API keys. The normal desktop and CLI
+            paths store them in the operating system keychain. Agent Ingest authenticates the
+            credential, enforces organization ownership, and re-redacts free-text excerpts before
+            queueing facts.
+          </p>
+        </Section>
+
+        <Section number={7} title="Tenant isolation">
           <p>Data is scoped to the owning organization at every layer:</p>
           <ul className="list-disc space-y-1 pl-5 marker:text-muted-foreground/30">
             <li>
@@ -136,7 +153,7 @@ export default function SecurityPage() {
           </ul>
         </Section>
 
-        <Section number={7} title="Authentication">
+        <Section number={8} title="Authentication">
           <p>
             User identity is handled by{' '}
             <strong className="font-medium text-foreground">Auth0</strong>. Sessions are managed
@@ -152,15 +169,16 @@ export default function SecurityPage() {
             The <Code>X-Trace-Flow-Api-Key</Code> header is stripped from the request before it is
             forwarded upstream. Your provider API keys (<Code>Authorization</Code>,{' '}
             <Code>x-api-key</Code>) pass through to authenticate with the upstream LLM provider and
-            are not stored.
+            are not written to Trace Flow&apos;s application database, analytics tables, or stored
+            request and response bodies.
           </p>
         </Section>
 
-        <Section number={8} title="Data retention">
+        <Section number={9} title="Data retention">
           <p>
             Body retention is tier-based: Hobby and Pro plans have different access windows. When
-            the API worker is asked for a body that falls outside the caller&apos;s current
-            retention window, it returns HTTP 410 with{' '}
+            Raw API is asked for a body that falls outside the caller&apos;s current retention
+            window, it returns HTTP 410 with{' '}
             <Code>Bodies expired under current retention policy</Code>, regardless of whether the
             underlying R2 object is still present.
           </p>
@@ -173,7 +191,7 @@ export default function SecurityPage() {
           </p>
         </Section>
 
-        <Section number={9} title="Sub-processors">
+        <Section number={10} title="Sub-processors">
           <p>
             We rely on the following providers to operate the Service. Each handles a distinct slice
             of your data.
@@ -203,13 +221,13 @@ export default function SecurityPage() {
                 ],
                 [
                   'Sentry',
-                  'Error tracking (may include redacted request metadata)',
+                  'Performance monitoring, error tracking, and masked website session replay',
                   'https://sentry.io/security/',
                 ],
                 [
                   'LaunchDarkly',
                   'Feature flag evaluation and rollout targeting',
-                  'https://launchdarkly.com/trust/',
+                  'https://launchdarkly.com/security/',
                 ],
               ] as const
             ).map(([name, desc, url]) => (
@@ -223,7 +241,7 @@ export default function SecurityPage() {
           </ul>
         </Section>
 
-        <Section number={10} title="Reporting a vulnerability">
+        <Section number={11} title="Reporting a vulnerability">
           <p>
             If you believe you have found a security issue in Trace Flow, please email{' '}
             <a href="mailto:security@trace-flow.dev" className="text-primary hover:underline">

@@ -17,7 +17,8 @@ Gateway base URL: `https://gateway.trace-flow.dev`
 ## Required headers
 
 - `X-Trace-Flow-Api-Key`: your Trace Flow API key
-- `Authorization`: your upstream provider API key
+- Your provider's normal authentication. The SDK examples below set the provider API key and let
+  each SDK choose its required `Authorization`, `x-api-key`, or Google authentication format.
 
 ## Vercel AI SDK: OpenAI
 
@@ -32,7 +33,7 @@ const openai = createOpenAI({
 });
 
 const result = await generateText({
-  model: openai('gpt-5'),
+  model: openai(process.env.OPENAI_MODEL!),
   prompt: 'Hello, world!',
 });
 ```
@@ -50,7 +51,7 @@ const anthropic = createAnthropic({
 });
 
 const result = await generateText({
-  model: anthropic('claude-sonnet-4-20250514'),
+  model: anthropic(process.env.ANTHROPIC_MODEL!),
   prompt: 'Hello, world!',
 });
 ```
@@ -68,7 +69,7 @@ const google = createGoogleGenerativeAI({
 });
 
 const result = await generateText({
-  model: google('gemini-2.5-flash'),
+  model: google(process.env.GOOGLE_MODEL!),
   prompt: 'Hello, world!',
 });
 ```
@@ -86,7 +87,7 @@ const openrouter = createOpenAI({
 });
 
 const result = await generateText({
-  model: openrouter('anthropic/claude-sonnet-4'),
+  model: openrouter(process.env.OPENROUTER_MODEL!),
   prompt: 'Hello, world!',
 });
 ```
@@ -104,7 +105,7 @@ const groq = createOpenAI({
 });
 
 const result = await generateText({
-  model: groq('llama-3.3-70b-versatile'),
+  model: groq(process.env.GROQ_MODEL!),
   prompt: 'Hello, world!',
 });
 ```
@@ -131,7 +132,7 @@ curl -X POST https://gateway.trace-flow.dev/openai/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "X-Trace-Flow-Api-Key: $TRACE_FLOW_API_KEY" \
   -d '{
-    "model": "gpt-5",
+    "model": "'$OPENAI_MODEL'",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```

@@ -47,7 +47,7 @@ export function ApiKeyQuickStart({
     : 'Generating your default API key...';
 
   const envFileSnippet = apiKey
-    ? `TRACE_FLOW_API_KEY=${apiKey}\nOPENAI_API_KEY=your-provider-key`
+    ? `TRACE_FLOW_API_KEY=${apiKey}\nOPENAI_API_KEY=your-provider-key\nOPENAI_MODEL=your-openai-model`
     : 'TRACE_FLOW_API_KEY=...';
 
   return (

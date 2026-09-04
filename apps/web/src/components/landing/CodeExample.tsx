@@ -39,7 +39,7 @@ const client = new Anthropic({
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  baseURL: 'https://gateway.trace-flow.dev/anthropic',
+  baseURL: 'https://gateway.trace-flow.dev/anthropic/v1',
   defaultHeaders: {
     'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
   },
@@ -48,23 +48,21 @@ const client = new Anthropic({
   },
   {
     name: 'Google',
-    before: `import { GoogleGenAI } from '@google/genai';
+    before: `import { createGoogleGenerativeAI } from '@ai-sdk/google';
 
-const ai = new GoogleGenAI({
+const google = createGoogleGenerativeAI({
   apiKey: process.env.GEMINI_API_KEY,
 });`,
-    after: `import { GoogleGenAI } from '@google/genai';
+    after: `import { createGoogleGenerativeAI } from '@ai-sdk/google';
 
-const ai = new GoogleGenAI({
+const google = createGoogleGenerativeAI({
   apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    baseUrl: 'https://gateway.trace-flow.dev/google',
-    headers: {
-      'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
-    },
+  baseURL: 'https://gateway.trace-flow.dev/google/v1beta',
+  headers: {
+    'X-Trace-Flow-Api-Key': process.env.TRACE_FLOW_API_KEY,
   },
 });`,
-    highlightLines: [4, 5, 6, 7, 8, 9],
+    highlightLines: [4, 5, 6, 7],
   },
   {
     name: 'OpenRouter',
@@ -108,12 +106,12 @@ const client = new Groq({
     before: `curl https://api.openai.com/v1/chat/completions \\
   -H "Authorization: Bearer $OPENAI_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "gpt-4o", "messages": [...]}'`,
+  -d '{"model": "'$OPENAI_MODEL'", "messages": [...]}'`,
     after: `curl https://gateway.trace-flow.dev/openai/v1/chat/completions \\
   -H "Authorization: Bearer $OPENAI_API_KEY" \\
   -H "X-Trace-Flow-Api-Key: $TRACE_FLOW_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "gpt-4o", "messages": [...]}'`,
+  -d '{"model": "'$OPENAI_MODEL'", "messages": [...]}'`,
     highlightLines: [0, 2],
   },
 ];

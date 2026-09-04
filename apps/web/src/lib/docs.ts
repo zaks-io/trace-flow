@@ -39,6 +39,13 @@ const DOCS: DocDefinition[] = [
     filePath: 'agents.md',
   },
   {
+    slug: 'collector',
+    title: 'Coding-Agent Collector',
+    description:
+      'Install the desktop collector, understand supported sources, and review its local parsing and privacy boundaries.',
+    tag: 'Collector',
+  },
+  {
     slug: 'mcp',
     title: 'MCP Server',
     description:

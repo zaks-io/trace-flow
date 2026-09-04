@@ -1,75 +1,99 @@
 # Trace Flow Collector CLI (`trace-flow`)
 
-User-facing collector binary: `login`, `sources list`, `sync`, `status`, `disconnect`.
+The command-line collector reads local coding-agent stores, converts them into redacted typed facts,
+and syncs those facts to Agent Ingest with a Collector Credential stored in the OS keychain.
 
-Install the currently published CLI:
+Supported sources:
+
+- Claude Code: `~/.claude/projects`
+- Codex CLI: `~/.codex/sessions`
+- Cursor on macOS: the global `state.vscdb` store, opened read-only through a snapshot
+
+Raw transcripts do not leave the machine through the fact-ingest path.
+
+## Build from source
+
+The tagged CLI installer referenced by the old `/install.sh` route is not currently published. Build
+the CLI from this repository, or use the signed desktop app described in
+[`apps/desktop/README.md`](../desktop/README.md).
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://trace-flow.dev/install.sh | sh
+cargo build -p trace-flow-cli --locked
+cargo run -p trace-flow-cli -- sources list
 ```
 
-Build from the repo root:
+## Commands
 
-```sh
-cargo build -p trace-flow-cli
-cargo run -p trace-flow-cli -- login
+```text
+trace-flow login
+trace-flow sources list
+trace-flow sync [--since 24h|7d|30d|1y]
+trace-flow status
+trace-flow disconnect
 ```
 
-## Zero-config production use
+- `login` opens the browser device flow and stores the resulting Collector Credential in the OS
+  keychain.
+- `sources list` reports supported stores and counts without printing absolute home paths.
+- `sync` parses, redacts, and uploads facts. Its default `24h` incremental window resumes from the
+  last complete sync watermark so time spent offline is not silently skipped.
+- `status` prints connection and source state without secrets.
+- `disconnect` revokes local material and removes the org-scoped cursor state.
 
-`login` and `sync` default to the production Convex site and ingest collector. No environment
-variables are required for normal use:
+Production URLs are embedded as defaults:
 
 ```sh
 trace-flow login
 trace-flow sync --since 7d
 ```
 
-The production defaults are wired, but Agent Conversation Analytics is still launch-gated by
-`docs/guides/agent-conversation-analytics/ROADMAP.md`. Treat this CLI as the collector path under
-verification until the production smoke, dashboard truth states, CI, and observability gates are
-green.
+Agent Conversation Analytics is still private-alpha software. A working binary and production
+defaults do not establish that the complete normal-user production flow has passed every gate in the
+[roadmap](../../docs/guides/agent-conversation-analytics/ROADMAP.md).
 
-## Environment variables
+## Environment overrides
 
-| Variable                      | Required | Default                                  | Purpose                                                    |
-| ----------------------------- | -------- | ---------------------------------------- | ---------------------------------------------------------- |
-| `TRACE_FLOW_CONVEX_SITE_URL`  | No       | `https://laudable-bison-427.convex.site` | Convex **site** origin for the device login flow           |
-| `TRACE_FLOW_INGEST_URL`       | No       | `https://collector.trace-flow.dev`       | Ingest Worker base URL for `sync` POSTs                    |
-| `TRACE_FLOW_COLLECTOR_SECRET` | No       | —                                        | Headless/CI override instead of the OS keychain credential |
+| Variable                      | Default                                  | Purpose                                           |
+| ----------------------------- | ---------------------------------------- | ------------------------------------------------- |
+| `TRACE_FLOW_CONVEX_SITE_URL`  | `https://laudable-bison-427.convex.site` | Convex site origin for the browser device flow    |
+| `TRACE_FLOW_INGEST_URL`       | `https://collector.trace-flow.dev`       | Agent Ingest origin used by `sync`                |
+| `TRACE_FLOW_COLLECTOR_SECRET` | OS keychain                              | Headless or CI credential override                |
+| `TRACE_FLOW_STATE_DIR`        | OS application config directory          | Connection state and per-org sync cursor location |
 
-If set, each variable overrides the production default. Use overrides for **local** or **cloud-dev**
-workflows (for example `http://127.0.0.1:8787` for a local ingest Worker, or your cloud-dev Convex
-site URL).
+For Cloud-Dev, override both endpoint variables with the deployed cloud `-dev` Agent Ingest origin
+and the Convex Cloud dev **site** origin. A bare collector launch targets production. Use
+`127.0.0.1:8787` only for the explicitly self-contained local Worker stack; it is not Cloud-Dev.
 
-Optional state relocation (tests and advanced setups):
+Copy `.env.example` only as a development starting point. Never commit a Collector Credential.
 
-| Variable               | Purpose                                                                  |
-| ---------------------- | ------------------------------------------------------------------------ |
-| `TRACE_FLOW_STATE_DIR` | Directory for connection state and sync cursors (default: OS config dir) |
+## Verification
 
-Copy `.env.example` as a starting point for dev overrides only — do not commit real secrets.
-
-## Release
-
-CLI releases are manual GitHub Actions runs. For a real release, create and push the version tag
-first, then dispatch from that tag:
+From the repository root:
 
 ```sh
-git tag trace-flow-cli-v0.1.1
-git push origin trace-flow-cli-v0.1.1
-gh workflow run cli-release.yml --ref trace-flow-cli-v0.1.1 -f tag=trace-flow-cli-v0.1.1
+cargo fmt --all -- --check
+cargo check --workspace --locked
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo run -p trace-flow-cli -- sources list
 ```
 
-Use `tag=dry-run` to build release artifacts without creating a GitHub Release. CLI releases are
-optional downloads and never own the repository Latest channel. The workflow publishes only the
-versioned release; `/install.sh` redirects to the current versioned CLI installer because repository
-immutable releases make mutable `*-latest` release tags unusable.
+The same Cargo checks are required by `.github/workflows/ci.yml` and the production deploy gate.
 
-Required repository secrets for signed macOS CLI artifacts:
+## Release workflow
 
-| Secret                          | Purpose                           |
-| ------------------------------- | --------------------------------- |
-| `CODESIGN_CERTIFICATE`          | Base64 Developer ID `.p12`        |
-| `CODESIGN_CERTIFICATE_PASSWORD` | Password for the `.p12`           |
-| `CODESIGN_IDENTITY`             | Developer ID Application identity |
+`.github/workflows/cli-release.yml` builds versioned release artifacts from a matching
+`trace-flow-cli-v*` tag. The repository currently has the `trace-flow-cli-v0.1.1` tag but no published
+GitHub Release asset, which is why public docs must not advertise `/install.sh` as an available
+installer.
+
+When publishing a new release, push the version tag first and dispatch the workflow from that tag:
+
+```sh
+git tag trace-flow-cli-v0.1.2
+git push origin trace-flow-cli-v0.1.2
+gh workflow run cli-release.yml --ref trace-flow-cli-v0.1.2 -f tag=trace-flow-cli-v0.1.2
+```
+
+Use `tag=dry-run` to build without creating a GitHub Release. Required macOS signing secrets are
+`CODESIGN_CERTIFICATE`, `CODESIGN_CERTIFICATE_PASSWORD`, and `CODESIGN_IDENTITY`.

@@ -16,18 +16,19 @@ LLM request path:
 ```text
 Client/SDK -> Proxy Worker -> LLM Provider
                  |
-                 | waitUntil()
+                 | durable intake before terminal EOF
                  v
-          R2 Body Objects + trace-flow-requests Queue
-                                  |
-                                  v
-                         Proxy Consumer Worker
-                                  |
-                                  v
-                         TraceBatcher Durable Object
-                                  |
-                                  v
-                         Tinybird otel_* tables
+          R2 Trace Delivery Envelope
+                 |
+                 | queue reference + scheduled recovery
+                 v
+          Proxy Consumer Worker
+             |              |
+             v              v
+      R2 Body Object   TraceBatcher Durable Object
+                             |
+                             v
+                    Tinybird otel_* tables
 ```
 
 Agent conversation path:
@@ -62,9 +63,9 @@ Raw API remains proxy-Body-Object-only.
 Read path:
 
 ```text
-Web Dashboard -> Convex -> Tinybird JWTs -> Tinybird Pipes
-Web Dashboard -> API Worker -> R2 Body Objects
-Web Dashboard -> /app/agents -> Tinybird agent_* Pipes
+Web Dashboard -> Convex -> Pipe Token -> Pipes API -> Tinybird Pipes
+Web Dashboard -> Convex -> Body Access Token -> Raw API -> R2 Body Objects
+MCP -> Convex OAuth/JWT -> Pipes API -> Tinybird Pipes
 ```
 
 ## Core Design Principles
@@ -75,7 +76,10 @@ The proxy worker streams responses to clients immediately while capturing data a
 
 - **Stream duplication**: Using `ReadableStream.tee()` to duplicate the request body
 - **Transform streams**: Capturing response chunks without blocking the stream
-- **Deferred processing**: All storage and queue operations happen in `c.executionCtx.waitUntil()`, which runs after the response completes
+- **Durable intake**: the response may stream immediately, but captured responses do not reach
+  terminal EOF until the R2 delivery envelope exists
+- **Deferred publication**: queue publication and recovery run through `c.executionCtx.waitUntil()`;
+  the R2 envelope remains available if publication is lost or uncertain
 
 ### Queue-Based Decoupling
 
@@ -104,8 +108,9 @@ When a client sends an LLM request through the proxy:
 1. **Authentication**: Validate API key against KV namespace
 2. **Route resolution**: Map path prefix, such as `/openai/`, to provider base URL
 3. **Stream duplication**: Split request body into proxy stream and capture stream
-4. **Forward request**: Send to LLM provider, stream response back immediately
-5. **Async capture**: In `waitUntil()`, store bodies to R2 and enqueue metadata
+4. **Forward request**: Send to the LLM provider and stream all but the terminal response byte
+5. **Durable intake**: Capture the complete response and persist its R2 delivery envelope
+6. **Deferred publication**: Release terminal EOF and publish the envelope reference through `waitUntil()`
 
 The proxy handles both streaming (SSE) and non-streaming responses, extracting timing metrics like time-to-first-token from SSE events.
 
@@ -151,35 +156,30 @@ The agent consumer receives queue batches and:
 
 The web dashboard queries trace and agent data:
 
-1. **JWT generation**: Convex generates short-lived Tinybird JWTs with row-level security
-2. **Direct queries**: Frontend queries Tinybird directly
-3. **Body retrieval**: When viewing trace details, fetch bodies from API worker
-4. **Agent analytics**: `/app/agents` reads `agent_*` pipes using org-scoped Tinybird JWTs
+1. **Scoped authorization**: Convex mints short-lived Pipe Tokens and Body Access Tokens
+2. **Trace queries**: Frontend sends Pipe Tokens to Pipes API, which forwards queries to Tinybird
+3. **Body retrieval**: Frontend sends request-scoped Body Access Tokens to Raw API
+4. **Agent analytics**: `/app/agents` reads org-scoped `agent_*` pipes through Pipes API
 
 ## Key Architectural Patterns
 
 ### Streaming With Capture
 
 ```typescript
-// Duplicate request body for proxy and capture
-const [streamToProxy, streamToCapture] = request.body?.tee() ?? [null, null];
+const validated = await validateRequest(c);
+const forwarded = await forwardToUpstream(c, validated);
+const attached = attachCapture(forwarded);
 
-// Forward to provider immediately
-const response = await fetch(targetUrl, { body: streamToProxy });
+const durableCapture = async () => {
+  const drained = await drainCapture(attached);
+  const transaction = buildTransaction(drained, logger);
+  const persisted = await persistTransaction(c.env, transaction, options);
+  c.executionCtx.waitUntil(enqueuePersistedTransaction(c.env, persisted, logger));
+  attached.capture.release();
+};
 
-// Capture response while streaming to client
-const { readable, writable } = new TransformStream({
-  transform(chunk, controller) {
-    capturedChunks.push(chunk);
-    controller.enqueue(chunk);
-  },
-});
-response.body.pipeTo(writable);
-
-// Defer storage and queue operations
-c.executionCtx.waitUntil(storeAndEnqueue());
-
-return new Response(readable, { headers: response.headers });
+c.executionCtx.waitUntil(durableCapture());
+return respond(attached);
 ```
 
 ### Sharded Trace Batching
@@ -206,7 +206,7 @@ Exact duplicate rows are skipped before Tinybird. Same fact identity with change
 
 ### Row-Level Security
 
-Tinybird JWT tokens include `fixed_params` that restrict query results. LLM trace scopes use API keys. Agent scopes use org identity.
+Pipe Tokens include `fixed_params` that restrict query results. LLM trace scopes use API keys. Agent scopes use org identity.
 
 ```typescript
 const scopesWithApiKeys = args.scopes.map((scope) => ({
@@ -223,20 +223,20 @@ Collector Credentials are not API keys. They do not appear in API-key filters an
 
 ### Cloudflare Resources
 
-| Resource          | Purpose                                                                            | Environment Separation               |
-| ----------------- | ---------------------------------------------------------------------------------- | ------------------------------------ |
-| Workers           | Proxy, Proxy Consumer, Agent Ingest, Agent Consumer, API, Web; planned Archive API | Env-specific names and bindings      |
-| Queue             | LLM trace message passing                                                          | `trace-flow-requests-{env}`          |
-| Queue             | Agent fact message passing                                                         | `agent-ingest-{env}`                 |
-| Dead Letter Queue | Failed LLM trace messages                                                          | `trace-flow-requests-dlq-{env}`      |
-| Dead Letter Queue | Failed agent fact messages                                                         | `agent-ingest-dlq-{env}`             |
-| R2 Bucket         | Request/response body storage                                                      | `trace-flow-storage-{env}`           |
-| R2 Bucket         | Planned Conversation Archive storage                                               | Dedicated Agent Archive bucket       |
-| KV Namespace      | API key validation                                                                 | `trace-flow-api-keys-{env}`          |
-| KV Namespace      | Model pricing cache                                                                | Separate namespace                   |
-| KV Namespace      | Collector Credential lookup                                                        | Separate `COLLECTOR_CREDS` namespace |
-| Durable Objects   | Trace batching, agent fact ledger                                                  | Per-worker instances                 |
-| Rate Limit        | Agent ingest org burst guard                                                       | `AGENT_INGEST_LIMITER`               |
+| Resource          | Purpose                                                                                                                           | Environment Separation               |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Workers           | Proxy, Proxy Consumer, Agent Ingest, Agent Consumer, Pipes API, Raw API, MCP, Analyst Sandbox, Web; disabled Archive API scaffold | Env-specific names and bindings      |
+| Queue             | LLM trace message passing                                                                                                         | `trace-flow-requests-{env}`          |
+| Queue             | Agent fact message passing                                                                                                        | `agent-ingest-{env}`                 |
+| Dead Letter Queue | Failed LLM trace messages                                                                                                         | `trace-flow-requests-dlq-{env}`      |
+| Dead Letter Queue | Failed agent fact messages                                                                                                        | `agent-ingest-dlq-{env}`             |
+| R2 Bucket         | Request/response body storage                                                                                                     | `trace-flow-storage-{env}`           |
+| R2 Bucket         | Planned Conversation Archive storage                                                                                              | Dedicated Agent Archive bucket       |
+| KV Namespace      | API key validation                                                                                                                | `trace-flow-api-keys-{env}`          |
+| KV Namespace      | Model pricing cache                                                                                                               | Separate namespace                   |
+| KV Namespace      | Collector Credential lookup                                                                                                       | Separate `COLLECTOR_CREDS` namespace |
+| Durable Objects   | Trace batching, agent fact ledger                                                                                                 | Per-worker instances                 |
+| Rate Limit        | Agent ingest org burst guard                                                                                                      | `AGENT_INGEST_LIMITER`               |
 
 ### External Services
 

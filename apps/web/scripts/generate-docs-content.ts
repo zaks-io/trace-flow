@@ -16,6 +16,7 @@ const DOC_FILES: Array<{ slug: string; filePath: string }> = [
   { slug: 'sdk-reference', filePath: 'docs/sdk-reference.md' },
   { slug: 'opentelemetry', filePath: 'docs/opentelemetry.md' },
   { slug: 'agents', filePath: 'agents.md' },
+  { slug: 'collector', filePath: 'docs/collector.md' },
   { slug: 'mcp', filePath: 'docs/mcp.md' },
 ];
 

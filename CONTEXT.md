@@ -1,6 +1,9 @@
 # Trace Flow
 
-LLM observability platform. The proxy captures upstream LLM calls at the edge, asynchronously persists bodies to R2 and metadata to Tinybird, and serves a dashboard against both. This file fixes the vocabulary used across `apps/` and `packages/`; ADRs in `docs/adr/` record the decisions behind it.
+Model API and coding-agent observability platform. The proxy captures upstream LLM calls at the edge,
+durably stages accepted deliveries in R2, and sends metadata to Tinybird through a queue consumer. The
+dashboard reads Tinybird analytics and encrypted R2 Body Objects. This file fixes the vocabulary used
+across `apps/` and `packages/`; ADRs in `docs/adr/` record the decisions behind it.
 
 ## Language
 
@@ -23,8 +26,17 @@ The R2 object at `bodies/{requestId}` holding request + response bodies (encrypt
 _Avoid_: "body blob", "stored payload".
 
 **Queue Message**:
-Lightweight metadata sent from proxy to consumer. Two variants: `LLMQueueMessage` (proxy path) and `OTLPQueueMessage` (OTLP ingest path), unioned as `QueueMessageUnion`.
+The queue transport from Proxy to Proxy Consumer. New writes use a small `TraceDeliveryMessage`
+reference to a durable **Trace Delivery Envelope**; legacy `LLMQueueMessage` and `OTLPQueueMessage`
+variants remain readable during cutover. All variants are unioned as `QueueMessageUnion`.
 _Avoid_: "queue payload", "trace event".
+
+**Trace Delivery Envelope**:
+The versioned R2 object under `trace-deliveries/` that holds one accepted transaction's metadata and,
+unless body storage was omitted, its already encrypted Body Object. It remains until Proxy Consumer
+durably stages the spans and copies the Body Object to `bodies/{requestId}`. A scheduled Proxy sweep
+republishes stale references.
+_Avoid_: "temporary body", "queue payload", assuming queue publication is the durability boundary.
 
 **Trace**:
 The top-level OTel grouping identified by a `TraceId`. May contain many Spans.
@@ -46,7 +58,8 @@ One of four roles a Span plays within a Trace. The Proxy Consumer emits each var
 ### Workers and stages
 
 **Proxy**:
-`apps/proxy`. Edge worker that streams LLM Requests to providers and emits Body Objects + Queue Messages.
+`apps/proxy`. Edge worker that streams LLM Requests to providers and durably stages Trace Delivery
+Envelopes before publishing Queue Message references.
 
 **Proxy Consumer**:
 `apps/proxy-consumer`. Queue consumer that turns Queue Messages into Spans and forwards them to Trace Shards.
@@ -89,7 +102,13 @@ _Avoid_: "frontend", "dashboard worker".
 **Pipeline Stage**:
 One of the proxy's four named handler stages: **validateRequest** → **forwardToUpstream** → **attachCapture** → **respond**. The first three return refined records (`ValidatedRequest`, `ForwardedExchange`, `AttachedCapture`) that compose the prior by inclusion — `attached.forwarded.validated.keyData.orgId` traces back to where it was set. `respond` consumes `AttachedCapture` and returns the client `Response`. There is no single shared context object.
 
-Post-response (inside `c.executionCtx.waitUntil`), the captured exchange is drained into a `DrainedCapture`, a **Transaction** is built from it via `buildTransaction()`, and `persistTransaction()` writes the **Body Object**, sends the **Queue Message**, and records analytics. The skip path (`recordSkippedExchange`) is separate — it cancels the capture stream and writes skip analytics without producing a Transaction.
+For a captured response, the exchange is drained into a `DrainedCapture`, a **Transaction** is built
+through `buildTransaction()`, and `persistTransaction()` writes a durable **Trace Delivery Envelope**.
+Streaming responses can begin immediately, but terminal EOF waits for that R2 write. Queue publication
+continues in `c.executionCtx.waitUntil()`, and a scheduled sweep republishes stale envelope references.
+Proxy Consumer copies the encrypted **Body Object** to its canonical key, durably stages the spans,
+then deletes the envelope. The skip path (`recordSkippedExchange`) is separate: it cancels the capture
+stream and writes skip analytics without producing a Transaction.
 
 **Recording Policy**:
 The module (`apps/proxy/src/recordingPolicy.ts`) that owns the billing + usage + decision dance. Both ingress paths (proxy and OTLP) call `evaluateRecordingPolicy(env, orgId, count)` and switch on `decision.reason` instead of sequencing `checkBillingStatus` → skip rule → `checkUsage` → combinator themselves. Emits a `TracingDecision` (`record: boolean` + `reason`) plus the underlying `UsageCheckResult`. The skip rule (suspended/canceled/no-subscription short-circuit usage) lives here so both paths agree.
@@ -500,8 +519,10 @@ _Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death
 ## Relationships
 
 - A **Client** calls the **Proxy**, which forwards to a **Provider** matched by **Route**.
-- The **Proxy** writes one **Body Object** to R2 and sends one **Queue Message** per **LLM Request**.
-- The **Proxy Consumer** receives **Queue Message** batches, builds **Spans**, and hands them to a **Trace Shard**.
+- The **Proxy** writes one durable **Trace Delivery Envelope** and publishes a reference for each
+  accepted **LLM Request** or OTLP export.
+- The **Proxy Consumer** loads referenced envelopes, copies canonical **Body Objects**, builds
+  **Spans**, and hands them to a **Trace Shard** before completing the envelope.
 - A **Trace Shard** flushes accumulated **Spans** into the `otel_trace_spans` **Datasource**.
 - The **Web** app reads **Spans** through Tinybird **Pipes** via the **Pipes API Worker** (using a **Pipe Token**) and fetches **Body Objects** through the **Raw API Worker**.
 - **Trace Flow Analyst** conversations happen in the **Analyst Sidebar** and are represented by creator-private **Analyst Threads**, which use the **Analyst Runtime** to answer user questions through approved **Analyst Tools**.
@@ -542,8 +563,10 @@ _Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death
 
 ## Example dialogue
 
-> **Dev:** "When the Proxy captures a streaming response, does it write the Body Object before sending the Queue Message?"
-> **Domain expert:** "Both happen inside `waitUntil`. Order isn't guaranteed, but the Proxy Consumer doesn't need the Body Object — only the Web app does, and that's much later. The Queue Message and Body Object share a `requestId` so they can be joined on read."
+> **Dev:** "When the Proxy captures a streaming response, what is durable before the Queue Message is sent?"
+> **Domain expert:** "The Proxy stores a Trace Delivery Envelope in R2 before the response reaches
+> terminal EOF. The queue carries only its reference. Proxy Consumer reads that envelope, copies the
+> encrypted Body Object to `bodies/{requestId}`, durably stages the spans, then removes the envelope."
 >
 > **Dev:** "If a Hobby user's Retention Window is 7 days, does the Span disappear from Tinybird at 7 days?"
 > **Domain expert:** "No. `RetentionExpiresAt` is stamped at write-time, but the row stays. We filter on it at read-time using the caller's current Tier, so an upgrade widens visibility for already-stored Spans. The Body Object has its own lifecycle (30 days, R2-managed) independent of Span retention."

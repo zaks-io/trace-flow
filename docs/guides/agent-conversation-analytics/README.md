@@ -11,19 +11,22 @@ What exists today:
 - agent ingestion contracts and Cloudflare Worker code
 - dev and production-configured queue/consumer wiring
 - Tinybird `agent_*` datasources and read pipes
-- Rust parser/sync libraries for Claude and Codex
+- Rust parser/sync libraries for Claude Code, Codex CLI, and macOS Cursor
 - user-facing `trace-flow` CLI code path for login, source listing, sync, status, and disconnect
-- macOS Tauri desktop Collector code path using the shared collector embedder
+- macOS/Windows Tauri desktop Collector code path using the shared collector embedder
+- published macOS arm64 and Windows x64 installers with signed updater artifacts and a manifest-last
+  channel
+- required Rust workspace CI and a release-gated CLI build
 - Convex Collector Credential mint/revoke/KV sync and Agent Session ownership claims
 - `/app/agents` dashboard surfaces
 
 What does not exist today:
 
 - a green production smoke proving the normal-user collector path end to end
-- signed, distributed desktop release with updater path
+- a published CLI installer artifact; the tagged `/install.sh` target currently resolves to no release
 - Connected Desktops web surface for list/revoke/status
 - live production observability gates
-- Cursor ingestion
+- normal-user production verification for macOS Cursor ingestion
 - launch-level dashboard truth states for empty/setup/data flows
 - final release evidence that a normal user can sync local transcripts without operator setup
 
@@ -34,7 +37,7 @@ The feature is production-ready only when a normal Trace Flow user can:
 1. Install or run a collector.
 2. Authenticate through Trace Flow.
 3. Mint a hidden Collector Credential.
-4. Sync Claude and Codex transcripts through the cloud ingest Worker.
+4. Sync a supported Claude Code, Codex CLI, or macOS Cursor source through the cloud ingest Worker.
 5. Have the queue and consumer process those facts server-side.
 6. See the data in `/app/agents`.
 7. Revoke the collector.
@@ -51,7 +54,8 @@ Rules:
 - A task is `✅ done` only when its "Done" section is verifiably true.
 - Dev-only harnesses can support implementation, but cannot satisfy production acceptance.
 - Keep Linear tickets and docs aligned before assigning agent work.
-- Do not advertise Cursor or desktop support before those paths ship.
+- Keep Cursor copy scoped to macOS and private-alpha verification until its normal-user production
+  walkthrough passes.
 
 ## Authoritative Design Docs
 

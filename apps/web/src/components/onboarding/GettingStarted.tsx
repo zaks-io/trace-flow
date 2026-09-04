@@ -39,7 +39,7 @@ function buildSampleRequestSnippet(): string {
     '});',
     '',
     'const result = await generateText({',
-    "  model: openai('gpt-5'),",
+    '  model: openai(process.env.OPENAI_MODEL!),',
     "  prompt: 'Say hello from Trace Flow.',",
     '});',
     '',

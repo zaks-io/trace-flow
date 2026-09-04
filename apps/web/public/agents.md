@@ -1,6 +1,13 @@
-# Trace Flow Gateway
+# Trace Flow Agent Guide
 
-LLM observability: user events -> API calls -> LLM requests -> tool calls -> final response.
+Trace Flow has two inputs:
+
+1. The gateway observes an application's model API requests.
+2. The local collector observes Claude Code, Codex CLI, and Cursor sessions.
+
+Use the gateway instructions below when the user asks you to integrate Trace Flow into a codebase.
+Use the [collector guide](https://trace-flow.dev/docs/collector.md) when the user wants to observe
+their coding-agent sessions. Do not confuse a gateway API key with a Collector Credential.
 
 **Gateway:** `https://gateway.trace-flow.dev`  
 **API Keys:** https://trace-flow.dev/app/api-keys  
@@ -23,6 +30,7 @@ Always preserve the provider's normal API key and add Trace Flow alongside it.
 ```bash
 TRACE_FLOW_API_KEY=...
 OPENAI_API_KEY=...
+OPENAI_MODEL=your-openai-model
 ```
 
 ## Quick Start
@@ -44,7 +52,7 @@ const openai = createOpenAI({
 });
 
 const result = await generateText({
-  model: openai('gpt-5'),
+  model: openai(process.env.OPENAI_MODEL!),
   prompt: 'Hello',
 });
 ```
@@ -116,20 +124,29 @@ const traceHeaders: Record<string, string> = {};
 propagation.inject(context.active(), traceHeaders);
 
 await generateText({
-  model: openai('gpt-5'),
+  model: openai(process.env.OPENAI_MODEL!),
   prompt: message,
   headers: traceHeaders,
 });
 ```
 
-## What gets tracked
+## What can be tracked
 
-- Token usage (prompt, completion, cached, reasoning)
-- Latency and time to first token
+- Token usage reported by the provider, including cached or reasoning tokens where available
+- Latency and time to first token for streaming responses
 - Model/provider metadata and finish reason
-- Request/response bodies
+- Request/response bodies when recording is enabled and body storage is not omitted
 - Errors and status codes
 - Cost estimates
+
+## Coding-agent collector
+
+The collector is a separate local application. It parses supported stores locally, redacts excerpts,
+and uploads typed facts with an OS-keychain-backed Collector Credential. It does not send raw
+transcripts through the normal analytics path.
+
+Current sources are Claude Code, Codex CLI, and Cursor on macOS. Signed desktop downloads and the CLI
+source workflow are documented at <https://trace-flow.dev/docs/collector.md>.
 
 ## Privacy mode: skip body storage
 
@@ -146,4 +163,5 @@ Metrics are still captured; only request and response bodies are omitted.
 - https://trace-flow.dev/docs/quick-start
 - https://trace-flow.dev/docs/sdk-reference
 - https://trace-flow.dev/docs/opentelemetry
+- https://trace-flow.dev/docs/collector
 - https://trace-flow.dev/docs/mcp

@@ -12,10 +12,11 @@ function buildLlmsTxt(siteUrl: string) {
 
   return `# Trace Flow
 
-> Trace Flow is an LLM observability platform for tracing requests, token usage, latency, and costs across providers.
+> Trace Flow observes model API requests and local coding-agent sessions in one private-alpha workspace.
 
 Use this file as your starting point. Fetch only the linked documentation you need for the current task.
-If you are integrating Trace Flow into a codebase, read /agents.md first, then fetch /docs/quick-start.md for env vars and the first traced request.
+For model API integration, read /agents.md first, then fetch /docs/quick-start.md for env vars and the first traced request.
+For local Claude Code, Codex CLI, or Cursor analytics, fetch /docs/collector.md.
 
 ## Core Documentation
 
