@@ -208,7 +208,19 @@ fn second_collector_can_dedupe_an_unchanged_scan_without_prefix_proof() {
     assert_eq!(chain.elements.len(), 2);
 
     let appended = b"{\"uuid\":\"r1\",\"value\":1}\n{\"uuid\":\"r2\"}\n";
-    let unproved_append = scan_claude_jsonl("session-1", appended, 12, None).unwrap();
+    let second_append =
+        scan_claude_jsonl("session-1", appended, 12, Some(&second.checkpoint)).unwrap();
+    let second_append_report = chain.commit_scan(&second_append).unwrap();
+    assert_eq!(second_append_report.appended_records, 1);
+    assert!(second_append_report.appended_checkpoint);
+
+    let stale_winner =
+        scan_claude_jsonl("session-1", appended, 13, Some(&first.checkpoint)).unwrap();
+    let stale_winner_report = chain.commit_scan(&stale_winner).unwrap();
+    assert_eq!(stale_winner_report.appended_records, 0);
+    assert!(!stale_winner_report.appended_checkpoint);
+
+    let unproved_append = scan_claude_jsonl("session-1", b"{\"uuid\":\"r3\"}\n", 14, None).unwrap();
     assert!(matches!(
         chain.commit_scan(&unproved_append),
         Err(collector_archive::ChainError::MissingHistoricalPrefixProof)
@@ -266,6 +278,16 @@ fn claude_parent_and_subagent_parts_have_independent_checkpoints_and_appends() {
     assert_eq!(subagent_report.appended_records, 1);
     assert!(subagent_report.appended_checkpoint);
     chain.verify().unwrap();
+}
+
+#[test]
+fn transcript_part_digest_must_use_lowercase_hex() {
+    let scan = scan_claude_jsonl_part("session-1", "agent-001", CLAUDE_SUBAGENT_FIXTURE, 10, None)
+        .unwrap();
+    let mut wire = serde_json::to_value(&scan.checkpoint).unwrap();
+    wire["source_transcript_part_id"] =
+        serde_json::json!(format!("claude:part:sha256:{}", "A".repeat(64)));
+    assert!(serde_json::from_value::<collector_archive::CompletedScanCheckpoint>(wire).is_err());
 }
 
 #[test]

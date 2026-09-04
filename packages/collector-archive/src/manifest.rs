@@ -205,6 +205,8 @@ impl ArchiveSessionManifest {
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, ArchiveError> {
+        self.validate_wire()
+            .map_err(|error| ArchiveError::InvalidManifest(error.to_string()))?;
         Ok(serde_json::to_vec(self)?)
     }
 
@@ -327,6 +329,43 @@ fn validate_ordered_ranges(elements: &[ManifestElement]) -> Result<(), ManifestE
         previous_end = range.end;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_bytes_revalidates_manifest_state_before_serializing() {
+        let scan =
+            crate::jsonl::scan_claude_jsonl("session-1", b"{\"uuid\":\"r1\"}\n", 10, None).unwrap();
+        let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
+        chain.commit_scan(&scan).unwrap();
+        let ranges = BTreeMap::from([
+            (
+                0,
+                ChunkByteRange {
+                    chunk_id: "chunk-000".to_string(),
+                    start: 0,
+                    end: 1,
+                },
+            ),
+            (
+                1,
+                ChunkByteRange {
+                    chunk_id: "chunk-000".to_string(),
+                    start: 1,
+                    end: 2,
+                },
+            ),
+        ]);
+        let mut manifest = ArchiveSessionManifest::from_chain(1, &chain, &ranges).unwrap();
+        manifest.element_count = 0;
+        assert!(matches!(
+            manifest.to_bytes(),
+            Err(ArchiveError::InvalidManifest(_))
+        ));
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

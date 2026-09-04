@@ -137,6 +137,8 @@ pub enum ArchiveError {
     NonCanonicalPayloadEncoding,
     #[error("archive checkpoint wrapper does not match its nested checkpoint")]
     CheckpointWrapperMismatch,
+    #[error("archive session manifest is invalid: {0}")]
+    InvalidManifest(String),
     #[error("JSONL record at byte offset {offset} is not valid JSON")]
     InvalidJsonlRecord { offset: u64 },
     #[error("archive JSON serialization failed")]
@@ -187,7 +189,10 @@ pub(crate) fn validate_transcript_part_id(
                 || value
                     .strip_prefix("claude:part:sha256:")
                     .is_some_and(|hex| {
-                        hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        hex.len() == 64
+                            && hex
+                                .bytes()
+                                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
                     })
         }
         ArchiveSource::Codex => value == "codex:part:primary",

@@ -140,7 +140,7 @@ impl ArchiveChain {
             .latest_checkpoint_for_part(&scan.checkpoint.source_transcript_part_id)
             .cloned()
         {
-            if scan.checkpoint.same_logical_position(&previous) && scan.prior_checkpoint.is_none() {
+            if scan.checkpoint.same_logical_position(&previous) {
                 if scan
                     .observations
                     .iter()
@@ -153,7 +153,10 @@ impl ArchiveChain {
                 }
                 return Err(ChainError::MissingHistoricalPrefixProof);
             }
-            if scan.prior_checkpoint.as_ref() != Some(&previous) {
+            let Some(prior_checkpoint) = scan.prior_checkpoint.as_ref() else {
+                return Err(ChainError::MissingHistoricalPrefixProof);
+            };
+            if !prior_checkpoint.same_logical_position(&previous) {
                 return Err(ChainError::MissingHistoricalPrefixProof);
             }
             if scan.checkpoint.last_complete_byte_offset < previous.last_complete_byte_offset {
