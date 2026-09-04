@@ -133,6 +133,8 @@ pub enum ArchiveError {
     InvalidBase64,
     #[error("payload content hash does not match its exact bytes")]
     ContentHashMismatch,
+    #[error("payload encoding is not canonical for its exact bytes")]
+    NonCanonicalPayloadEncoding,
     #[error("archive checkpoint wrapper does not match its nested checkpoint")]
     CheckpointWrapperMismatch,
     #[error("JSONL record at byte offset {offset} is not valid JSON")]
@@ -274,8 +276,12 @@ impl ArchiveObservation {
             encoding: self.payload_encoding,
             value: self.payload.clone(),
         };
-        if encoded.content_sha256()? != self.content_sha256 {
+        let bytes = encoded.decode()?;
+        if sha256(&bytes) != self.content_sha256 {
             return Err(ArchiveError::ContentHashMismatch);
+        }
+        if crate::encoding::EncodedPayload::from_bytes(&bytes) != encoded {
+            return Err(ArchiveError::NonCanonicalPayloadEncoding);
         }
         Ok(())
     }

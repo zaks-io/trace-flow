@@ -29,13 +29,15 @@ fn canonical_chain_jsonl_round_trips_and_preserves_raw_payload() {
     } else {
         panic!("first chain element must be a record");
     }
+    // Frozen v1 hash vectors. A changed value is a wire-contract break; bump
+    // CHAIN_HASH_VERSION instead of regenerating these expected digests.
     assert_eq!(
         chain.elements[0].chain_hash().to_string(),
-        "sha256:ae716524ed2d7742978482be64bb1f0725eedf488f4d62e7b5eb5d061bf8866a"
+        "sha256:01893501e31104a203f048c833ba70416de97b27c24f6b5bb5f25a2960061a9f"
     );
     assert_eq!(
         chain.elements[1].chain_hash().to_string(),
-        "sha256:0cff9a034db6e43240594464866ddc1dd8cbb71114b57c4f2eec4e67d5867882"
+        "sha256:47dcc58c6af9c66d782820c816f491baab6577770b544fe60d4e31a427dc9398"
     );
     let restored = ArchiveChain::from_jsonl(ArchiveSource::Claude, "session-1", &encoded).unwrap();
     assert_eq!(restored, chain);

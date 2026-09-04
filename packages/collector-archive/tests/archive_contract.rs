@@ -84,6 +84,18 @@ fn non_utf8_payload_uses_base64_without_changing_content_hash() {
 }
 
 #[test]
+fn payload_encoding_must_be_canonical_for_exact_bytes() {
+    let observation =
+        ArchiveObservation::new(ArchiveSource::Claude, "session-1", "record-1", 10, b"utf8")
+            .unwrap();
+    let mut wire = serde_json::to_value(&observation).unwrap();
+    wire["payload_encoding"] = serde_json::json!("base64");
+    wire["payload"] = serde_json::json!("dXRmOA==");
+    let error = serde_json::from_value::<ArchiveObservation>(wire).unwrap_err();
+    assert!(error.to_string().contains("canonical"));
+}
+
+#[test]
 fn source_identity_is_part_of_the_record_scope_even_for_equal_payloads() {
     let first =
         ArchiveObservation::new(ArchiveSource::Claude, "session-1", "record-1", 10, b"same")
@@ -95,6 +107,27 @@ fn source_identity_is_part_of_the_record_scope_even_for_equal_payloads() {
     assert!(chain.commit_observation(&first).unwrap());
     assert!(chain.commit_observation(&second).unwrap());
     assert_eq!(chain.elements.len(), 2);
+}
+
+#[test]
+fn claude_identity_namespaces_keep_stable_and_positional_records_distinct() {
+    let scan = scan_claude_jsonl(
+        "session-1",
+        b"{\"content\":\"fallback\"}\n{\"uuid\":\"line\"}\n",
+        10,
+        None,
+    )
+    .unwrap();
+    assert_ne!(
+        scan.observations[0].source_record_identity,
+        scan.observations[1].source_record_identity
+    );
+    assert!(scan.observations[0]
+        .source_record_identity
+        .ends_with(":claude:index:0"));
+    assert!(scan.observations[1]
+        .source_record_identity
+        .ends_with(":claude:id:line:0"));
 }
 
 #[test]
@@ -317,7 +350,7 @@ fn unsupported_versions_and_private_paths_are_rejected() {
     assert!(matches!(
         ArchiveObservation::new(
             ArchiveSource::Claude,
-            "/Users/isaac/session",
+            "/Users/example/session",
             "record-1",
             10,
             b"x"
@@ -355,9 +388,13 @@ fn modifying_inserting_or_reordering_chain_elements_breaks_verification() {
     let second =
         ArchiveObservation::new(ArchiveSource::Claude, "session-1", "record-2", 10, b"two")
             .unwrap();
+    let third =
+        ArchiveObservation::new(ArchiveSource::Claude, "session-1", "record-3", 10, b"three")
+            .unwrap();
     let mut chain = ArchiveChain::new(ArchiveSource::Claude, "session-1").unwrap();
     chain.commit_observation(&first).unwrap();
     chain.commit_observation(&second).unwrap();
+    chain.commit_observation(&third).unwrap();
     let clean = chain.clone();
     clean.verify().unwrap();
 
@@ -374,4 +411,19 @@ fn modifying_inserting_or_reordering_chain_elements_breaks_verification() {
     let mut inserted = chain.clone();
     inserted.elements.insert(1, chain.elements[0].clone());
     assert!(inserted.verify().is_err());
+
+    let committed_head = chain.chain_head();
+    let committed_count = chain.elements.len();
+    // A suffix deletion leaves a self-consistent prefix. Detection requires the
+    // externally committed head or element count.
+    let mut suffix_removed = chain.clone();
+    suffix_removed.elements.pop();
+    suffix_removed.verify().unwrap();
+    assert_ne!(suffix_removed.chain_head(), committed_head);
+    assert_ne!(suffix_removed.elements.len(), committed_count);
+
+    // A middle deletion breaks the next element's previous-chain link.
+    let mut middle_removed = chain.clone();
+    middle_removed.elements.remove(1);
+    assert!(middle_removed.verify().is_err());
 }

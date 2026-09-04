@@ -54,15 +54,47 @@ pub enum ManifestElement {
 pub struct ArchiveSessionManifest {
     pub(crate) archive_format_version: u16,
     pub(crate) chain_hash_version: u16,
-    pub source: ArchiveSource,
-    pub source_session_id: String,
-    pub generation: u64,
-    pub element_count: u64,
-    pub chain_head: Sha256Digest,
-    pub elements: Vec<ManifestElement>,
+    source: ArchiveSource,
+    source_session_id: String,
+    generation: u64,
+    element_count: u64,
+    chain_head: Sha256Digest,
+    elements: Vec<ManifestElement>,
 }
 
 impl ArchiveSessionManifest {
+    pub fn archive_format_version(&self) -> u16 {
+        self.archive_format_version
+    }
+
+    pub fn chain_hash_version(&self) -> u16 {
+        self.chain_hash_version
+    }
+
+    pub fn source(&self) -> ArchiveSource {
+        self.source
+    }
+
+    pub fn source_session_id(&self) -> &str {
+        &self.source_session_id
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn element_count(&self) -> u64 {
+        self.element_count
+    }
+
+    pub fn chain_head(&self) -> Sha256Digest {
+        self.chain_head
+    }
+
+    pub fn elements(&self) -> &[ManifestElement] {
+        &self.elements
+    }
+
     pub fn from_chain(
         generation: u64,
         chain: &ArchiveChain,
@@ -190,7 +222,20 @@ impl ArchiveSessionManifest {
     fn validate_wire(&self) -> Result<(), ManifestError> {
         crate::types::validate_versions(self.archive_format_version, self.chain_hash_version)?;
         crate::types::validate_identifier(&self.source_session_id, "source_session_id")?;
-        for element in &self.elements {
+        if self.element_count != self.elements.len() as u64 {
+            return Err(ManifestError::ElementCountMismatch);
+        }
+        for (expected_sequence, element) in self.elements.iter().enumerate() {
+            let sequence = match element {
+                ManifestElement::Record { chain_sequence, .. }
+                | ManifestElement::Checkpoint { chain_sequence, .. } => *chain_sequence,
+            };
+            if sequence != expected_sequence as u64 {
+                return Err(ManifestError::ElementSequenceMismatch {
+                    expected: expected_sequence as u64,
+                    actual: sequence,
+                });
+            }
             match element {
                 ManifestElement::Record {
                     source_transcript_part_id,
@@ -296,6 +341,10 @@ pub enum ManifestError {
     InvalidByteRange,
     #[error("manifest has an unexpected number of byte ranges")]
     UnexpectedByteRange,
+    #[error("manifest element count does not match its elements")]
+    ElementCountMismatch,
+    #[error("manifest chain sequence expected {expected}, found {actual}")]
+    ElementSequenceMismatch { expected: u64, actual: u64 },
     #[error("manifest does not match the canonical archive chain")]
     Mismatch,
 }

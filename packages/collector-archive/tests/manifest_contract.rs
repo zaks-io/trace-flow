@@ -30,9 +30,9 @@ fn manifest_is_deterministic_and_preserves_checkpoint_ranges() {
     ]);
     let manifest =
         collector_archive::ArchiveSessionManifest::from_chain(3, &chain, &ranges).unwrap();
-    assert_eq!(manifest.elements.len(), 2);
+    assert_eq!(manifest.elements().len(), 2);
     assert!(matches!(
-        manifest.elements[0],
+        manifest.elements()[0],
         ManifestElement::Record { .. }
     ));
     assert_eq!(manifest.checkpoints().count(), 1);
@@ -128,4 +128,26 @@ fn manifest_wire_rejects_unsupported_versions_during_deserialization() {
             Err(error) if error.to_string().contains("version 99")
         ));
     }
+
+    let mut wrong_count = serde_json::to_value(&manifest).unwrap();
+    wrong_count["element_count"] = serde_json::json!(1);
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(wrong_count).is_err()
+    );
+
+    let mut wrong_sequence = serde_json::to_value(&manifest).unwrap();
+    wrong_sequence["elements"][0]["chain_sequence"] = serde_json::json!(1);
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(wrong_sequence)
+            .is_err()
+    );
+
+    let mut non_contiguous_sequence = serde_json::to_value(&manifest).unwrap();
+    non_contiguous_sequence["elements"][1]["chain_sequence"] = serde_json::json!(3);
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(
+            non_contiguous_sequence
+        )
+        .is_err()
+    );
 }

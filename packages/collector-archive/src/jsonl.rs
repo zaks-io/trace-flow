@@ -257,6 +257,8 @@ fn claude_identity(
     record_index: usize,
     seen_ids: &mut HashMap<String, usize>,
 ) -> String {
+    // These v1 namespaces are finalized before archive persistence exists; a
+    // future derivation change requires a CHAIN_HASH_VERSION bump.
     let stable_id = value
         .get("uuid")
         .or_else(|| value.get("id"))
@@ -269,11 +271,11 @@ fn claude_identity(
     match stable_id {
         Some(id) => {
             let occurrence = seen_ids.entry(id.to_string()).or_insert(0);
-            let identity = format!("claude:{id}:{occurrence}");
+            let identity = format!("claude:id:{id}:{occurrence}");
             *occurrence += 1;
             identity
         }
-        None => format!("claude:line:{record_index}"),
+        None => format!("claude:index:{record_index}"),
     }
 }
 
