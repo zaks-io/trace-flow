@@ -38,6 +38,15 @@ fn codex_fixture_round_trips_exact_source_record_bytes() {
 }
 
 #[test]
+fn exact_byte_fixtures_use_lf_record_delimiters() {
+    for fixture in [CLAUDE_FIXTURE, CODEX_FIXTURE] {
+        assert!(!fixture
+            .split(|byte| *byte == b'\n')
+            .any(|line| line.ends_with(b"\r")));
+    }
+}
+
+#[test]
 fn jsonl_record_payload_excludes_only_the_line_terminator() {
     let raw = b"{\"uuid\":\"r1\",\"value\":1}\r\n";
     let scan = scan_claude_jsonl("session-1", raw, 10, None).unwrap();

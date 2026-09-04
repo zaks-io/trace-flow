@@ -68,8 +68,10 @@ fn parse_digest(value: &str) -> Result<Sha256Digest, ArchiveError> {
         return Err(ArchiveError::InvalidDigest);
     }
     let mut bytes = [0; 32];
-    for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
-        bytes[index] = (hex_value(pair[0]) << 4) | hex_value(pair[1]);
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        let pair_start = index * 2;
+        *byte = (hex_value(hex.as_bytes()[pair_start]) << 4)
+            | hex_value(hex.as_bytes()[pair_start + 1]);
     }
     Ok(Sha256Digest(bytes))
 }
