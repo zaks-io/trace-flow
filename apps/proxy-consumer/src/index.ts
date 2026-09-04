@@ -260,7 +260,7 @@ async function stageSingleQueueBody(
   env: Env,
 ): Promise<void> {
   const resolved = await resolveQueueItem(body, messageId, env);
-  if (!resolved) return;
+  if (!resolved) throw new Error('Delivery envelope is missing; replay was not staged');
   const traces = await buildDeliveryTraces(resolved.payload, env);
   const result = await getTraceBatcher(
     env,

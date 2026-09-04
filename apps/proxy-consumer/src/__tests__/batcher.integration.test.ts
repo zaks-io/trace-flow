@@ -352,6 +352,28 @@ describe('TraceBatcher logic', () => {
     );
   });
 
+  it('excludes blocked recovery rows from the age of healthy queued work', async () => {
+    await addTraces([{ messageId: 'old-blocked', traces: [createMockTrace('old-blocked')] }]);
+    vi.mocked(insertIntoTinybirdWithRetry).mockRejectedValueOnce(
+      new TinybirdInsertError(400, 'rejected'),
+    );
+    await forceFlush();
+    expect(await getStats()).toMatchObject({
+      queuedTraces: 0,
+      blockedRecoveryRows: 1,
+      oldestQueuedTraceTime: null,
+    });
+
+    vi.setSystemTime(new Date('2024-01-02T00:00:00.000Z'));
+    const freshTime = Date.now();
+    await addTraces([{ messageId: 'fresh-healthy', traces: [createMockTrace('fresh-healthy')] }]);
+    expect(await getStats()).toMatchObject({
+      queuedTraces: 1,
+      blockedRecoveryRows: 1,
+      oldestQueuedTraceTime: freshTime,
+    });
+  });
+
   it('keeps the oldest queued trace timestamp across later inserts', async () => {
     const firstInsertTime = Date.now();
     await addTraces([{ messageId: 'msg-a', traces: [createMockTrace('t-a')] }]);

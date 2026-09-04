@@ -6,7 +6,7 @@ import type { QueueMessage, TraceDeliveryEnvelope, TraceDeliveryMessage } from '
 import { buildTraceDeliveryKey } from '@trace-flow/utils';
 import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
-import { runTraceBatcherHealthCheck } from '../index';
+import { runTraceBatcherHealthCheck, TraceRecovery } from '../index';
 import { createMockTrace } from './fixtures';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { calculateShardId } from '../sharding';
@@ -178,6 +178,26 @@ describe('Queue Handler Integration', () => {
     const storedBody = await env.STORAGE.get(bodyKey);
     expect(storedBody?.customMetadata).toEqual({ orgId: 'org-1' });
     expect(await storedBody?.json()).toEqual(envelope.body?.encryptedPayload);
+  });
+
+  it('leaves an explicit DLQ replay blocked when its envelope is missing', async () => {
+    env.NUM_SHARDS = 1000;
+    const batcher = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName('batcher-999'));
+    const key = buildTraceDeliveryKey('missing-replay-envelope');
+    const record = await batcher.preserveDlq(
+      JSON.stringify({ messageId: 'missing-replay', body: { type: 'delivery', key } }),
+      JSON.stringify({ reason: 'dead_letter_queue_delivery' }),
+      key,
+    );
+    const recovery = new TraceRecovery(createExecutionContext(), env);
+    await expect(
+      recovery.replayDlq('999', { recoveryId: record.id, reason: 'Verify missing envelope' }),
+    ).rejects.toThrow('Delivery envelope is missing; replay was not staged');
+    expect(await batcher.getRecovery(record.id)).toMatchObject({
+      state: 'blocked',
+      resolution: null,
+    });
+    expect(await batcher.getStats()).toMatchObject({ queuedTraces: 0 });
   });
 
   it('keeps the delivery outbox when the canonical body copy fails', async () => {

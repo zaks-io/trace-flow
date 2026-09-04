@@ -521,7 +521,7 @@ class TraceBatcherBase extends DurableObject<Env> {
     );
   }
 
-  private countHealthyTraces(): number {
+  private healthyTraceCondition(): string {
     const targets = tinybirdWriteTargets(this.env);
     const clauses = targets.map(
       (target) => `(${target.sentColumn} IS NULL AND NOT EXISTS (
@@ -530,9 +530,14 @@ class TraceBatcherBase extends DurableObject<Env> {
           AND r.state IN ('in_flight', 'blocked')
       ))`,
     );
-    if (clauses.length === 0) return 0;
+    return clauses.join(' OR ') || '0';
+  }
+
+  private countHealthyTraces(): number {
     return this.durableState.storage.sql
-      .exec<{ count: number }>(`SELECT COUNT(*) AS count FROM traces WHERE ${clauses.join(' OR ')}`)
+      .exec<{
+        count: number;
+      }>(`SELECT COUNT(*) AS count FROM traces WHERE ${this.healthyTraceCondition()}`)
       .one().count;
   }
 
@@ -664,7 +669,7 @@ class TraceBatcherBase extends DurableObject<Env> {
     if (this.traceCount > 0) {
       const oldestTraceRows = [
         ...this.durableState.storage.sql.exec<{ oldest_queued_trace_time: number | null }>(
-          'SELECT MIN(timestamp) as oldest_queued_trace_time FROM traces',
+          `SELECT MIN(timestamp) AS oldest_queued_trace_time FROM traces WHERE ${this.healthyTraceCondition()}`,
         ),
       ];
       oldestQueuedTraceTime = oldestTraceRows[0]?.oldest_queued_trace_time ?? null;
