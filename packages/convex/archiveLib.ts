@@ -27,7 +27,10 @@ export type ArchiveWriteDenialReason =
   | 'deleting'
   | 'source_unauthorized';
 
-export type ArchiveEnrollmentDecision = 'create' | 'replay' | 'renew';
+export type ArchiveEnrollmentDecision =
+  'create' | 'replay' | 'renew' | 'conflict' | 'already_enrolled';
+
+export const ARCHIVE_IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 
 export interface ArchiveSourceAuthorizationInput {
   source: ArchiveSupportedSource;
@@ -48,12 +51,62 @@ export function archiveGraceDeadlineAt(now: number): number {
   return now + ARCHIVE_GRACE_MS;
 }
 
-export function decideEnrollmentAction(
-  currentEnrollment: { status: ArchiveEnrollmentStatus } | null,
-): ArchiveEnrollmentDecision {
-  if (currentEnrollment === null) return 'create';
-  if (currentEnrollment.status === 'active') return 'replay';
-  return 'renew';
+export function validateEnrollmentIdempotencyKey(key: string): string {
+  if (key.trim().length === 0) {
+    throw new Error('Enrollment idempotency key is required');
+  }
+  if (key !== key.trim()) {
+    throw new Error('Enrollment idempotency key must not include leading or trailing whitespace');
+  }
+  if (key.length > ARCHIVE_IDEMPOTENCY_KEY_MAX_LENGTH) {
+    throw new Error('Enrollment idempotency key is too long');
+  }
+  return key;
+}
+
+export function consentSourcesMatch(
+  existing: { source: string; historyChoice: string }[],
+  requested: ArchiveSourceAuthorizationInput[],
+): boolean {
+  if (existing.length !== requested.length) return false;
+  const normalize = (rows: { source: string; historyChoice: string }[]) =>
+    [...rows]
+      .map((row) => `${row.source}:${row.historyChoice}`)
+      .sort()
+      .join('|');
+  return normalize(existing) === normalize(requested);
+}
+
+export function decideEnrollmentAction(input: {
+  existingByKey: {
+    userId: string;
+    collectorCredentialId: string;
+    authorizedSources: { source: string; historyChoice: string }[];
+  } | null;
+  currentEnrollment: { status: ArchiveEnrollmentStatus } | null;
+  request: {
+    userId: string;
+    collectorCredentialId: string;
+    authorizedSources: ArchiveSourceAuthorizationInput[];
+  };
+}): ArchiveEnrollmentDecision {
+  if (input.existingByKey) {
+    if (
+      input.existingByKey.userId !== input.request.userId ||
+      input.existingByKey.collectorCredentialId !== input.request.collectorCredentialId
+    ) {
+      return 'conflict';
+    }
+    if (
+      !consentSourcesMatch(input.existingByKey.authorizedSources, input.request.authorizedSources)
+    ) {
+      return 'conflict';
+    }
+    return 'replay';
+  }
+  if (input.currentEnrollment?.status === 'active') return 'already_enrolled';
+  if (input.currentEnrollment) return 'renew';
+  return 'create';
 }
 
 export function validateAuthorizedSources(
@@ -201,6 +254,36 @@ export async function getContributionForUser(
     .withIndex('by_org_user', (q) => q.eq('orgId', orgId).eq('userId', userId))
     .collect();
   return pickOldestDocument(rows);
+}
+
+export async function getEnrollmentByIdempotencyKey(
+  ctx: QueryCtx | MutationCtx,
+  orgId: Id<'organizations'>,
+  idempotencyKey: string,
+): Promise<Doc<'archiveEnrollments'> | null> {
+  const rows = await ctx.db
+    .query('archiveEnrollments')
+    .withIndex('by_org_idempotency_key', (q) =>
+      q.eq('orgId', orgId).eq('idempotencyKey', idempotencyKey),
+    )
+    .collect();
+  return pickOldestDocument(rows);
+}
+
+export async function claimEnrollmentByIdempotencyKey(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  idempotencyKey: string,
+  enrollmentId: Id<'archiveEnrollments'>,
+): Promise<{ enrollment: Doc<'archiveEnrollments'>; created: boolean }> {
+  const rows = await ctx.db
+    .query('archiveEnrollments')
+    .withIndex('by_org_idempotency_key', (q) =>
+      q.eq('orgId', orgId).eq('idempotencyKey', idempotencyKey),
+    )
+    .collect();
+  const winner = (await keepOldestDocuments(ctx, rows))!;
+  return { enrollment: winner, created: winner._id === enrollmentId };
 }
 
 export async function claimArchiveActivation(

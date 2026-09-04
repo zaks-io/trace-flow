@@ -445,6 +445,7 @@ export type DataModel = {
       collectorId: string;
       contributionId: Id<"archiveContributions">;
       createdAt: number;
+      idempotencyKey: string;
       invalidatedAt?: number;
       invalidationReason?: "user_unenrolled" | "owner_revoked" | "member_removed";
       localError?: string;
@@ -467,6 +468,7 @@ export type DataModel = {
       | "collectorId"
       | "contributionId"
       | "createdAt"
+      | "idempotencyKey"
       | "invalidatedAt"
       | "invalidationReason"
       | "localError"
@@ -482,6 +484,7 @@ export type DataModel = {
       by_contribution: ["contributionId", "_creationTime"];
       by_org_collector: ["orgId", "collectorCredentialId", "_creationTime"];
       by_org_id: ["orgId", "_creationTime"];
+      by_org_idempotency_key: ["orgId", "idempotencyKey", "_creationTime"];
       by_user_id: ["userId", "_creationTime"];
     };
     searchIndexes: {};

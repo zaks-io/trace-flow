@@ -644,6 +644,7 @@ export declare const api: {
         collectorId: string;
         contributionId: Id<"archiveContributions">;
         createdAt: number;
+        idempotencyKey: string;
         invalidatedAt?: number;
         invalidationReason?: "user_unenrolled" | "owner_revoked" | "member_removed";
         localError?: string;
@@ -663,6 +664,7 @@ export declare const api: {
           source: "claude" | "codex";
         }>;
         collectorCredentialId: Id<"collectorCredentials">;
+        idempotencyKey: string;
       },
       {
         contributionId: Id<"archiveContributions">;

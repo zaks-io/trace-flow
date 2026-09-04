@@ -496,13 +496,15 @@ export default defineSchema({
     .index('by_user_id', ['userId'])
     .index('by_org_user', ['orgId', 'userId']),
 
-  // Per-Collector consent. Re-enrollment inserts a new row; revoked rows are never revived.
+  // Per-Collector consent. Re-enrollment inserts a new row with a new
+  // idempotency key; revoked rows are never revived by a delayed old attempt.
   archiveEnrollments: defineTable({
     orgId: v.id('organizations'),
     userId: v.id('users'),
     collectorCredentialId: v.id('collectorCredentials'),
     collectorId: v.string(),
     contributionId: v.id('archiveContributions'),
+    idempotencyKey: v.string(),
     authorizedSources: v.array(
       v.object({
         source: v.union(v.literal('claude'), v.literal('codex')),
@@ -533,7 +535,8 @@ export default defineSchema({
     .index('by_user_id', ['userId'])
     .index('by_collector_credential', ['collectorCredentialId'])
     .index('by_org_collector', ['orgId', 'collectorCredentialId'])
-    .index('by_contribution', ['contributionId']),
+    .index('by_contribution', ['contributionId'])
+    .index('by_org_idempotency_key', ['orgId', 'idempotencyKey']),
 
   // OCC first-writer slot so concurrent first enrollments produce one current row.
   archiveEnrollmentSlots: defineTable({

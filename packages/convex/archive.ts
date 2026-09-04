@@ -15,12 +15,15 @@ import {
   ARCHIVE_CAP_BYTES,
   claimArchiveActivation,
   claimContributionForUser,
+  claimEnrollmentByIdempotencyKey,
   claimEnrollmentSlot,
+  consentSourcesMatch,
   countActiveEnrollments,
   decideEnrollmentAction,
   ensureArchiveStatusRow,
   getArchiveActivation,
   getArchiveStatusRow,
+  getEnrollmentByIdempotencyKey,
   getEnrollmentSlot,
   invalidateArchiveEnrollment,
   isActiveProSubscription,
@@ -31,6 +34,7 @@ import {
   requireActiveMembership,
   sourceAlreadyAuthorized,
   validateAuthorizedSources,
+  validateEnrollmentIdempotencyKey,
 } from './archiveLib';
 
 async function requireCurrentOrgUser(ctx: Parameters<typeof requireEnabledUser>[0]) {
@@ -148,6 +152,7 @@ export const enroll = mutation({
   args: {
     collectorCredentialId: v.id('collectorCredentials'),
     authorizedSources: v.array(archiveSourceAuthorizationInputValidator),
+    idempotencyKey: v.string(),
   },
   returns: v.object({
     enrollmentId: v.id('archiveEnrollments'),
@@ -159,18 +164,41 @@ export const enroll = mutation({
     await requireArchiveWritable(ctx, user.orgId);
     const credential = await requireBoundCollectorCredential(ctx, args.collectorCredentialId, user);
     const sources = validateAuthorizedSources(args.authorizedSources);
+    const idempotencyKey = validateEnrollmentIdempotencyKey(args.idempotencyKey);
     const now = Date.now();
 
+    const existingByKey = await getEnrollmentByIdempotencyKey(ctx, user.orgId, idempotencyKey);
     const slot = await repairEnrollmentSlots(ctx, user.orgId, credential._id);
     const current = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
-    const decision = decideEnrollmentAction(current);
+    const decision = decideEnrollmentAction({
+      existingByKey,
+      currentEnrollment: current,
+      request: {
+        userId: user._id,
+        collectorCredentialId: credential._id,
+        authorizedSources: sources,
+      },
+    });
 
-    if (decision === 'replay' && current) {
+    if (decision === 'replay' && existingByKey) {
       return {
-        enrollmentId: current._id,
-        contributionId: current.contributionId,
+        enrollmentId: existingByKey._id,
+        contributionId: existingByKey.contributionId,
         created: false,
       };
+    }
+    if (decision === 'conflict') {
+      if (
+        existingByKey &&
+        (existingByKey.userId !== user._id ||
+          existingByKey.collectorCredentialId !== credential._id)
+      ) {
+        throw new Error('Enrollment idempotency key is already bound to another Collector');
+      }
+      throw new Error('Enrollment idempotency key does not match the original consent');
+    }
+    if (decision === 'already_enrolled') {
+      throw new Error('Collector is already enrolled');
     }
 
     const contribution = await claimContributionForUser(ctx, user.orgId, user._id, now);
@@ -181,6 +209,7 @@ export const enroll = mutation({
       collectorCredentialId: credential._id,
       collectorId: credential.collectorId,
       contributionId: contribution._id,
+      idempotencyKey,
       authorizedSources: sources.map((source) => ({
         ...source,
         authorizedAt: now,
@@ -189,14 +218,35 @@ export const enroll = mutation({
       createdAt: now,
     });
 
+    const claimedByKey = await claimEnrollmentByIdempotencyKey(
+      ctx,
+      user.orgId,
+      idempotencyKey,
+      enrollmentId,
+    );
+    if (!claimedByKey.created) {
+      if (!consentSourcesMatch(claimedByKey.enrollment.authorizedSources, sources)) {
+        throw new Error('Enrollment idempotency key does not match the original consent');
+      }
+      await refreshArchiveStatusCounts(ctx, user.orgId, now);
+      return {
+        enrollmentId: claimedByKey.enrollment._id,
+        contributionId: claimedByKey.enrollment.contributionId,
+        created: false,
+      };
+    }
+
     if (slot) {
       await ctx.db.patch(slot._id, { currentEnrollmentId: enrollmentId });
     } else {
       const claimed = await claimEnrollmentSlot(ctx, user.orgId, credential._id, enrollmentId);
       if (!claimed.created) {
-        await ctx.db.delete(enrollmentId);
         const winner = await ctx.db.get(claimed.enrollmentId);
         if (!winner) throw new Error('Enrollment not found');
+        if (winner.idempotencyKey !== idempotencyKey) {
+          await ctx.db.delete(enrollmentId);
+          throw new Error('Collector is already enrolled');
+        }
         await refreshArchiveStatusCounts(ctx, user.orgId, now);
         return {
           enrollmentId: winner._id,

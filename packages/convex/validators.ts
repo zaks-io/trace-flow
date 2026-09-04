@@ -283,6 +283,7 @@ export const archiveEnrollmentValidator = v.object({
   collectorCredentialId: v.id('collectorCredentials'),
   collectorId: v.string(),
   contributionId: v.id('archiveContributions'),
+  idempotencyKey: v.string(),
   authorizedSources: v.array(archiveAuthorizedSourceValidator),
   status: archiveEnrollmentStatusValidator,
   createdAt: v.number(),
