@@ -10,38 +10,84 @@ on:
   pull_request_review:
     types: [submitted]
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  checks: write
-  actions: read
-  id-token: write
+  contents: read
 
 jobs:
+  authorize:
+    name: Check automation caller
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.permission.outputs.allowed }}
+    steps:
+      - uses: actions/github-script@v9
+        id: permission
+        with:
+          script: |
+            core.setOutput('allowed', 'false');
+            // Preserve the shared workflows' explicit integration bot allowlist.
+            const allowedBots = ['blacksmith-sh[bot]', 'useotto[bot]'];
+            if (context.eventName !== 'issues') allowedBots.push('useotto-dev[bot]');
+            if (context.payload.sender?.type === 'Bot') {
+              core.setOutput('allowed', String(allowedBots.includes(context.actor)));
+              return;
+            }
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo,
+                username: context.actor,
+              });
+              core.setOutput('allowed', String(['admin', 'write'].includes(data.permission)));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.notice('Caller has no repository write access; automation skipped.');
+            }
+
   # General Claude assistant for comments (excludes /review and issues)
   claude:
+    needs: [authorize]
     if: |
+      needs.authorize.outputs.allowed == 'true' &&
       github.event_name != 'issues' &&
       !contains(github.event.comment.body, '/review')
-    uses: zaks-io/claude-code-action/.github/workflows/claude.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    uses: zaks-io/claude-code-action/.github/workflows/claude.yml@3c9d5703b1d7ed27fdd5a0b89ec494bf7ea2af55
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
   # Issue triage with Linear integration
   triage:
-    if: github.event_name == 'issues' && github.event.action == 'opened'
-    uses: zaks-io/claude-code-action/.github/workflows/issue-triage.yml@main
+    needs: [authorize]
+    if: needs.authorize.outputs.allowed == 'true' && github.event_name == 'issues' && github.event.action == 'opened'
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+      id-token: write
+    uses: zaks-io/claude-code-action/.github/workflows/issue-triage.yml@3c9d5703b1d7ed27fdd5a0b89ec494bf7ea2af55
     secrets:
       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       linear_api_token: ${{ secrets.LINEAR_API_KEY }}
 
   # Code review via /review comment on a PR
   review:
+    needs: [authorize]
     if: |
+      needs.authorize.outputs.allowed == 'true' &&
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '/review')
-    uses: zaks-io/claude-code-action/.github/workflows/code-review.yml@main
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+      id-token: write
+      actions: read
+    uses: zaks-io/claude-code-action/.github/workflows/code-review.yml@3c9d5703b1d7ed27fdd5a0b89ec494bf7ea2af55
     with:
       trigger_type: comment
     secrets:

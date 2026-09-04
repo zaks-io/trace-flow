@@ -149,6 +149,7 @@ jobs:
               - '.prettierignore'
               - 'tsconfig.json'
             workflows:
+              - 'scripts/ci/workflow-permissions.test.mjs'
               - '.github/workflows/**'
             tinybird:
               - 'datasources/**'
@@ -169,11 +170,13 @@ jobs:
     if: needs.changes.outputs.workflows == 'true'
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+      - uses: oven-sh/setup-bun@v2
+      - name: Test workflow permissions
+        run: bun test scripts/ci/workflow-permissions.test.mjs
       - uses: devops-actions/actionlint@v0.1.12
 
   # Tinybird's recommended CI pattern (docs: forward/test-and-deploy/deployments/cicd): build + fixture
@@ -223,6 +226,12 @@ jobs:
       # generates a temporary deploy tree that preserves legacy rollback resources without restoring
       # legacy copy pipes, so this catches incompatible changes without requiring cleanup approval.
       - name: Tinybird deploy --check (trace_flow_prod)
+        # Keep local schema validation available to contributors without cloud secrets.
+        if: >-
+          github.event_name == 'push' ||
+          (github.event.pull_request.head.repo.full_name == github.repository &&
+           github.event.pull_request.user.login != 'dependabot[bot]' &&
+           github.actor != 'dependabot[bot]')
         run: ./scripts/deploy-agent-tinybird.sh --check
         env:
           TB_TARGET_WORKSPACE: trace_flow_prod
