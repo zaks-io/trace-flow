@@ -293,11 +293,15 @@ export function resolveServerLifecycle(
   return requested;
 }
 
+export function isOrganizationDeleted(org: { deletedAt?: number } | null | undefined): boolean {
+  return org == null || org.deletedAt !== undefined;
+}
+
 export function assertArchiveMutationAllowed(input: {
-  orgDeleted?: boolean;
+  org: { deletedAt?: number } | null;
   activation: { status: ArchiveActivationStatus } | null;
 }): void {
-  if (input.orgDeleted) throw new Error('Organization not found');
+  if (isOrganizationDeleted(input.org)) throw new Error('Organization not found');
   if (input.activation?.status === 'deleting') {
     throw new Error('Conversation Archive is deleting');
   }

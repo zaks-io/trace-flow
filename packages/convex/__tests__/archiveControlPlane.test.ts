@@ -7,8 +7,10 @@ import {
   ARCHIVE_GRACE_MS,
   ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS,
   assertHeartbeatObservedAt,
+  assertArchiveMutationAllowed,
   beginArchiveDeletion,
   consentSourcesMatch,
+  isOrganizationDeleted,
   decideEnrollmentAction,
   decideVersionedUpdate,
   decideWriteAuthorization,
@@ -336,6 +338,37 @@ describe('archive control-plane pure functions', () => {
     expect(resolveServerLifecycle('frozen', 'deleting')).toBe('deleting');
     expect(resolveServerLifecycle('deleting', 'active')).toBe('deleting');
     expect(resolveServerLifecycle('active', 'blocked')).toBe('blocked');
+  });
+
+  it('treats a missing organization as deleted for archive writes', () => {
+    expect(isOrganizationDeleted(null)).toBe(true);
+    expect(isOrganizationDeleted(undefined)).toBe(true);
+    expect(isOrganizationDeleted({ deletedAt: 1 })).toBe(true);
+    expect(isOrganizationDeleted({})).toBe(false);
+    expect(() =>
+      assertArchiveMutationAllowed({
+        org: null,
+        activation: { status: 'active' },
+      }),
+    ).toThrow('Organization not found');
+    expect(() =>
+      assertArchiveMutationAllowed({
+        org: { deletedAt: 1 },
+        activation: { status: 'active' },
+      }),
+    ).toThrow('Organization not found');
+    expect(() =>
+      assertArchiveMutationAllowed({
+        org: {},
+        activation: { status: 'deleting' },
+      }),
+    ).toThrow('deleting');
+    expect(() =>
+      assertArchiveMutationAllowed({
+        org: {},
+        activation: { status: 'active' },
+      }),
+    ).not.toThrow();
   });
 
   it('denies writes when the server gate, entitlement, or enrollment is closed', () => {
@@ -1511,5 +1544,50 @@ describe('archive control plane', () => {
         sourceSessionId: 'sess-during-org-delete',
       }),
     ).rejects.toThrow('deleting');
+  });
+
+  it('rejects archive writes when the organization document is gone', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await world.t.run(async (ctx) => {
+      await ctx.db.delete(world.owner.orgId);
+    });
+    expect(await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId))).toBeNull();
+    expect(
+      (await world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect()))[0]?.status,
+    ).toBe('active');
+
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatus, {
+        collectorCredentialId: world.ownerCred,
+        revision: 11,
+        storedBytes: 1,
+        lifecycle: 'active',
+      }),
+    ).rejects.toThrow('Organization not found');
+    await expect(
+      world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 1,
+        observedAt: 11,
+      }),
+    ).rejects.toThrow('Organization not found');
+    await expect(
+      world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+        sourceSessionId: 'sess-after-org-row-gone',
+      }),
+    ).rejects.toThrow('Organization not found');
   });
 });

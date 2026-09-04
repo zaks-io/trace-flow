@@ -10,6 +10,7 @@ import {
   ARCHIVE_CAP_BYTES,
   applyCollectorHeartbeat,
   assertArchiveMutationAllowed,
+  isOrganizationDeleted,
   assertVersionedUpdate,
   decideVersionedUpdate,
   decideWriteAuthorization,
@@ -53,6 +54,10 @@ export const authorizeArchiveWrite = internalQuery({
   ),
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.collectorCredentialId);
+    const org = credential ? await ctx.db.get(credential.orgId) : null;
+    if (credential && isOrganizationDeleted(org)) {
+      return { allowed: false as const, reason: 'deleting' as const };
+    }
     const activation = credential ? await getArchiveActivation(ctx, credential.orgId) : null;
     const subscription = credential
       ? await ctx.db
@@ -103,7 +108,7 @@ export const applyServerStatus = internalMutation({
     const activation = await getArchiveActivation(ctx, credential.orgId);
     if (!activation) throw new Error('Conversation Archive is not activated');
     assertArchiveMutationAllowed({
-      orgDeleted: Boolean(org?.deletedAt),
+      org,
       activation,
     });
 
@@ -180,7 +185,7 @@ export const reportCollectorHeartbeat = internalMutation({
     const org = await ctx.db.get(credential.orgId);
     const activation = await getArchiveActivation(ctx, credential.orgId);
     assertArchiveMutationAllowed({
-      orgDeleted: Boolean(org?.deletedAt),
+      org,
       activation,
     });
     const slot = await getEnrollmentSlot(ctx, credential.orgId, credential._id);
@@ -216,7 +221,7 @@ export const upsertSessionIntegrity = internalMutation({
     const org = await ctx.db.get(credential.orgId);
     const activation = await getArchiveActivation(ctx, credential.orgId);
     assertArchiveMutationAllowed({
-      orgDeleted: Boolean(org?.deletedAt),
+      org,
       activation,
     });
     const slot = await getEnrollmentSlot(ctx, credential.orgId, credential._id);
