@@ -79,7 +79,7 @@ _Avoid_: "API Worker" when discussing Body Object retrieval.
 _Avoid_: "backend".
 
 **Archive API**:
-The planned `apps/archive-api` Worker at `https://archive.trace-flow.dev`. It is the sole public data-plane boundary for **Conversation Archive** upload, durable acknowledgement, owner export, and deletion. It exclusively binds the Agent Archive R2 bucket and **Archive Encryption Key** material. Uploads require a **Collector Credential** plus valid **Collector Enrollment**; reads require an **Archive Export Grant**. It does not bind proxy Body Object secrets, Tinybird credentials, or agent fact queues.
+The planned `apps/archive-api` Worker at `https://archive.trace-flow.dev`. It is the sole public data-plane boundary for **Conversation Archive** upload, durable acknowledgement, owner export, and deletion. It exclusively binds the Agent Archive R2 Standard bucket, which uses Cloudflare's fixed `us` jurisdiction in the first release; its R2 binding and access path specify `jurisdiction: "us"`. P8 must use a current Cloudflare API or client version that supports this jurisdiction rather than substituting a non-binding location hint. It also binds **Archive Encryption Key** material. Uploads require a **Collector Credential** plus valid **Collector Enrollment**; reads require an **Archive Export Grant**. It does not bind proxy Body Object secrets, Tinybird credentials, or agent fact queues.
 _Avoid_: extending **Agent Ingest** or the **Raw API Worker** with transcript storage, "Archive Worker" when referring to the product.
 
 **Web**:
@@ -380,39 +380,47 @@ A point-in-time personal provider subscription, quota, credit, or rate-limit obs
 _Avoid_: mixing with **Agent Message** token usage or **Pull Request Authoring Cost**; storing raw provider account emails as identity.
 
 **Raw Transcript**:
-The server-encrypted, lossless source content for one **Agent Session**, represented as **Archive JSONL** and uploaded only by an explicitly enrolled Pro **Conversation Archive**. It includes the exact Source transcript records, Cursor row values, and subagent parts needed to replay that Agent Session, not unrelated Source store contents. It is the replay source for re-deriving facts server-side when the parser improves and the substrate for lossless export or future organization-owned model improvement. Trace Flow never stores Raw Transcripts for unenrolled Collectors or Hobby Organizations.
+The server-encrypted, lossless source content for one **Agent Session**, represented by stored **Archive JSONL** records and uploaded as versioned **Archive Observation JSONL** only by an explicitly enrolled Pro **Conversation Archive**. It includes the exact Source transcript records, Cursor row values, and subagent parts needed to replay that Agent Session, not unrelated Source store contents. It is the replay source for re-deriving facts server-side when the parser improves and the substrate for lossless export or future organization-owned model improvement. Trace Flow never stores Raw Transcripts for unenrolled Collectors or Hobby Organizations.
 _Avoid_: "conversation dump"; not a fact table and not an **Agent Session**.
 
 **Archive JSONL**:
-The canonical lossless interchange format whose records wrap exact Source-native transcript payloads with their Source identity, provenance, and content hash.
+The canonical lossless interchange format whose stored records wrap exact Source-native transcript payloads with their Source identity, provenance, content hash, and the Archive Session Ledger-assigned previous and current content-chain hashes. Its versioned Archive Observation JSONL upload shape carries the same Source payload and content hash without server-assigned chain fields; the ledger adds those fields after deduplication. Both shapes carry immutable archive and hash version discriminators, and stored records also carry hashed **Archive Scan Checkpoints**.
 _Avoid_: a normalized training schema, model-specific chat templates, rewriting native payloads into a common message shape.
+
+**Archive Scan Checkpoint**:
+A deterministic Source observation submitted by a Collector and appended to the canonical content chain by the Archive Session Ledger. For append-oriented Claude and Codex JSONL, it proves the archived chain is complete through the recorded last-complete byte offset at that observation, not that the Agent Session can never append again. For mutable Cursor storage, it closes one consistently read, deterministically ordered snapshot of the selected `cursorDiskKV` records. Repeated observations of the same Source position and content deduplicate.
+_Avoid_: "conversation closed", treating JSONL EOF as permanent, using Cursor bubble count or newest timestamp as archive-integrity proof.
 
 **Archive Chunk**:
 An immutable, losslessly compressed group of new **Archive JSONL** records from one **Archive Contribution** and **Agent Session**, encrypted as one R2 object. Its **Archive Session Manifest** maps each record's content hash to its chunk and byte range so export retains record-level identity without paying for one object operation per record.
 _Avoid_: one R2 object per message, a mutable session bundle, packing records from multiple contributors together, treating the chunk as the canonical record identity.
 
 **Archive Session Manifest**:
-An ordered description of the **Archive JSONL** records observed for one **Agent Session** at a point in time.
+An ordered description of the **Archive JSONL** records and **Archive Scan Checkpoints** observed for one **Agent Session** at a point in time. It maps content-chain hashes to immutable chunk byte ranges so an export can verify payload integrity, ordering, and completed Source observations.
 _Avoid_: copying shared record payloads into every session snapshot.
 
 **Archive Session Ledger**:
-The Archive API Durable Object keyed by Organization, Archive Contribution, Source, and Agent Session. It serializes concurrent Collector observations, deduplicates stable record identity plus content hash, treats changed same-identity content as a new version, and acknowledges only after deterministic Archive Chunk and immutable Archive Session Manifest keys are durable.
+The Archive API Durable Object keyed by Organization, Archive Contribution, Source, and Agent Session. It serializes concurrent Collector observations, verifies payload hashes and Source-specific scan checkpoints, deduplicates stable record identity plus content hash, assigns the canonical content-chain order and hashes, retains a changed same-identity Cursor value as a new observation, and acknowledges only after deterministic Archive Chunk and immutable Archive Session Manifest keys are durable. An integrity failure blocks only that session until operator repair verifies the existing chain and exact deterministic commit or pending batch, while preserving its last verified chain and any already-written suspect objects.
 _Avoid_: using R2 listing as a transaction lock, query-time duplicate cleanup, one Organization-wide ledger.
+
+**Archive Audit Event**:
+An append-only Convex control-plane record of a semantic archive authorization, export, deletion, key rotation, integrity failure, or operator repair action and outcome. It records actor and target identifiers, server time, counts, and an applicable manifest root hash without transcript content, commands, decrypted payloads, absolute local paths, secrets, or one event per transferred chunk.
+_Avoid_: treating the audit trail as proof against malicious Trace Flow operators, logging raw archive content, per-chunk access noise.
 
 **Training Segment**:
 A future derived sequence of **Archive JSONL** records matching the context actually visible to a model between Source compaction boundaries. Training Segment generation is not a v1 **Conversation Archive** output.
 _Avoid_: flattening pre-compaction records and post-compaction responses into one fictional context.
 
 **Conversation Archive**:
-An **Organization**-owned Pro capability and opt-in corpus of lossless **Raw Transcripts** kept under **Paid Archive Retention** for that Organization's future reuse, including possible personal model improvement. Pro includes 100 GB of fixed archive capacity; v1 has no separate archive purchase or capacity upgrade.
-_Avoid_: "training corpus" (archive retention does not authorize Trace Flow to train on it), "permanent storage".
+An **Organization**-owned Pro capability and opt-in corpus of lossless **Raw Transcripts** kept under **Paid Archive Retention** for that Organization's future reuse, including possible personal model improvement. Pro includes 100 GB of fixed archive capacity; v1 has no separate archive purchase or capacity upgrade. The first release stores and processes archive content through the Cloudflare R2 `us` jurisdiction and offers no region selector.
+_Avoid_: "training corpus" (archive enrollment does not authorize training; a later Organization-specific training feature requires separate authorization), "permanent storage".
 
 **Archive Encryption Key**:
 A versioned, server-managed encryption key owned by one **Organization** and used only for that Organization's **Conversation Archive**.
 _Avoid_: the shared Body Object root key, a user-held zero-knowledge key.
 
 **Archive Contribution**:
-The **Raw Transcripts** one **User** contributes to an Organization's **Conversation Archive**, maintained separately so that User can view its status and control future collection.
+The **Raw Transcripts** one **User** contributes to an Organization's **Conversation Archive**, maintained separately so that User can view its status and control future collection. Removing the User revokes future collection and purges that User's unacknowledged Desktop spool on its next connection, but acknowledged records remain Organization-owned until the Archive Steward deletes the contribution or archive.
 _Avoid_: treating the archive as an unattributed organization-wide blob, sharing physical chunks across contributors.
 
 **Archive Activation**:
@@ -420,11 +428,11 @@ The explicit **Archive Steward** action that enables a Pro Organization's **Conv
 _Avoid_: treating Organization approval as permission to collect from a User's machine.
 
 **Collector Enrollment**:
-The explicit **User** action that authorizes one **Collector** to contribute ongoing **Raw Transcript** sync and chooses whether to import all currently available history. For the owner, it is the second step of **Enable Conversation Archive**; future contributors use **Contribute this computer** after Archive Activation already exists.
+The explicit **User** action that authorizes one of that User's **Collectors** and named archive Source types to contribute ongoing **Raw Transcript** sync and chooses whether to start with new conversations or import all currently available history. Starting with new conversations permanently excludes every Agent Session present in the Collector's pre-capture baseline, even when it receives later records; a later-discovered session with pre-enrollment or ambiguous history is excluded too. All-history enrollment protects newly created conversations first, then backfills baseline sessions from most recently active to oldest while preserving Source order within each session, and remains incomplete until every eligible session checkpoint is durably acknowledged. A newly supported Source is off until the User explicitly adds it and chooses that Source's history boundary. For the owner, enrollment is the second step of **Enable Conversation Archive**. After Archive Activation, any current Organization member may use **Contribute this computer** for their own Collector without another owner-approval step. Unenrollment or owner revocation permits no final upload and purges the enrollment's unacknowledged spool and local progress when Desktop learns of it; resuming requires a new enrollment and history choice.
 _Avoid_: silently enrolling a Collector during normal setup, "raw upload toggle".
 
 **Archive Spool**:
-The fixed 2 GB, encrypted local queue where one enrolled **Collector** keeps **Archive JSONL** until the **Archive API** acknowledges durable storage. At the limit, archive collection pauses loudly while parsed fact sync continues; the Collector never evicts pending records.
+The fixed 2 GB, encrypted local queue where one enrolled **Collector** keeps versioned **Archive Observation JSONL** until the **Archive API** acknowledges durable storage. At the limit, archive collection pauses loudly while parsed fact sync continues; the Collector never evicts pending records.
 _Avoid_: advancing archive progress before acknowledgement, using the spool for parsed analytics facts.
 
 **Archive Steward**:
@@ -432,7 +440,7 @@ The owning Organization's owner, who can access, administer, delete, and export 
 _Avoid_: granting archive-wide access or export authority to ordinary Organization members.
 
 **Archive Export**:
-An owner-only, resumable Trace Flow Desktop operation that reconstructs lossless **Archive JSONL** and **Archive Session Manifests** incrementally in a chosen local directory. It does not create a second server-side archive object and is distinct from the sanitized diagnostics export.
+An owner-only, resumable Trace Flow Desktop operation that reconstructs a chosen local directory containing a top-level archive manifest plus per-session **Archive JSONL** and **Archive Session Manifests**. It verifies each Agent Session while writing, is directly consumable by local tools or a future investigation harness, and does not create a ZIP or second server-side archive object. A failed session remains identified in the top-level manifest and makes the export incomplete rather than being silently skipped. It is distinct from the sanitized diagnostics export.
 _Avoid_: browser-generating one large download, persisting a normalized training dataset, using a **Collector Credential** as archive-read authority.
 
 **Archive Export Grant**:
@@ -501,7 +509,7 @@ _Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death
 - The **Collector** parses local **Source** transcripts into agent facts and uploads them to **Agent Ingest** with a **Collector Credential**.
 - **Agent Ingest** validates the upload, claims **Agent Session** ownership through Convex, and sends agent fact messages to the agent queue.
 - **Agent Consumer** prices, dedupes, and writes agent facts to `agent_*` **Datasources** for `/app/agents`.
-- An enrolled **Collector** uploads **Archive JSONL** to the **Archive API**, which owns encryption, archive-capacity reservation, R2 persistence, and durable acknowledgement; **Agent Ingest** never carries transcript content.
+- An enrolled **Collector** uploads versioned **Archive Observation JSONL** to the **Archive API**, which owns chain assignment, encryption, archive-capacity reservation, R2 persistence, and durable acknowledgement; **Agent Ingest** never carries transcript content.
 - An **Organization** owns its user-facing **API Keys** and hidden **Collector Credentials**, and has exactly one **Subscription Tier**; the Tier determines the **Retention Window** stamped onto each **Span**.
 - An **Organization** may own one **Conversation Archive**, which contains many **Raw Transcripts**.
 - A **Conversation Archive** contains one **Archive Contribution** per contributing **User**; the **Archive Steward** can access and export all contributions while ordinary members can see status only for their own.
@@ -511,18 +519,18 @@ _Avoid_: "hung" or "crashed" (the Supervisor observes silence, not process death
 - Removing a contributing **User** from an **Organization** stops future archive sync but leaves their existing **Archive Contribution** in the Organization's **Conversation Archive**.
 - **Archive Activation** must occur before any **Collector Enrollment** in an **Organization**.
 - Every **Collector** requires its own **Collector Enrollment** before it uploads **Raw Transcripts** to a **Conversation Archive**.
-- The Pro owner's **Enable Conversation Archive** Desktop flow creates **Archive Activation**, enrolls that Desktop, asks whether to import all currently available history, and then starts ongoing archive sync.
+- The Pro owner's **Enable Conversation Archive** Desktop flow creates **Archive Activation**, enrolls that Desktop, asks whether to start with new conversations or import all currently available history, and then starts ongoing archive sync.
 - After **Archive Activation**, another member's Desktop offers **Contribute this computer** and records only that User's per-Collector consent and history-import choice.
-- An enrolled **Collector** removes **Archive JSONL** from its **Archive Spool** only after the **Conversation Archive** acknowledges durable storage.
+- An enrolled **Collector** removes **Archive Observation JSONL** from its **Archive Spool** only after the **Conversation Archive** acknowledges durable storage.
 - Each enrolled **Collector** has a fixed 2 GB **Archive Spool**; reaching it pauses archive collection with an action-required error while parsed fact sync continues.
-- When an **Organization** exhausts its archive capacity, its **Collectors** retain pending **Archive JSONL** in their **Archive Spools** until capacity returns; neither the Collector nor archive silently drops or automatically evicts conversations.
+- When an **Organization** exhausts its archive capacity, its **Collectors** retain pending **Archive Observation JSONL** in their **Archive Spools** until capacity returns; neither the Collector nor archive silently drops or automatically evicts conversations.
 - Pro includes one **Conversation Archive** with its own fixed 100 GB capacity; proxy Body Object usage cannot consume that capacity, and v1 has no separate archive purchase or additional archive capacity.
 - Losing Pro stops new archive collection and starts a 90-day frozen grace period for owner export or restoring Pro; grace expiry destroys its **Archive Encryption Keys** before R2 object deletion.
 - During the Pro grace period, enrolled **Collectors** stop new archive scans but keep pending encrypted **Archive Spool** data; restoring Pro resumes upload, while terminal grace expiry causes the next connected Collector to purge its spool and enrollment state.
 - A **Conversation Archive** preserves **Raw Transcripts** losslessly and v1 exports that same lossless representation; sanitization and normalization belong only to future derived exporters.
 - An **Archive Steward** runs an **Archive Export** through Trace Flow Desktop; the export resumes at archive-chunk boundaries and writes directly to a chosen local directory without creating a server-side export copy.
 - An **Archive Export** requires a fresh **Archive Export Grant**; **Collector Credentials** remain upload-only and never authorize archive reads.
-- `/app/agents` shows persistent **Archive Status**. The **Archive Steward** sees Organization totals and all contributors; an ordinary member sees only their own contribution and enrolled Collectors.
+- `/app/agents` shows persistent **Archive Status**, including server-authoritative integrity failures and repair outcomes per affected session without transcript content. The **Archive Steward** sees Organization totals and all contributors; an ordinary member sees only their own contribution and enrolled Collectors.
 - A **Raw Transcript** comprises Source-native **Archive JSONL** records ordered by one or more **Archive Session Manifests** and physically packed into immutable **Archive Chunks**.
 - Within one **Archive Contribution**, identical **Archive JSONL** payloads share one content identity, while distinct Source record identities remain distinct even when their payloads match. v1 does not physically deduplicate across contributors.
 - The **Archive API** routes every session upload through its **Archive Session Ledger**; a lost response or repeated scan reuses deterministic object keys and returns the prior acknowledgement instead of duplicating storage.
