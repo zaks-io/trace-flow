@@ -15,8 +15,13 @@ const OTHER_ORG_ID = 'org_archive_b';
 const OBJECT_KEY = 'archive/org_archive_a/contribution_a/session_a/chunk-0001';
 const MALFORMED_ORG_ID = 'org_\uD800';
 const REPLACEMENT_ORG_ID = 'org_\uFFFD';
+const UNPAIRED_LOW_SURROGATE_ORG_ID = 'org_\uDC00';
 const MALFORMED_OBJECT_KEY = 'archive/\uD800/chunk';
 const REPLACEMENT_OBJECT_KEY = 'archive/\uFFFD/chunk';
+const TRAILING_MALFORMED_OBJECT_KEY = 'archive/chunk-\uD800';
+const TRAILING_REPLACEMENT_OBJECT_KEY = 'archive/chunk-\uFFFD';
+const PAIRED_SURROGATE_ORG_ID = 'org_\uD83D\uDE00';
+const PAIRED_SURROGATE_OBJECT_KEY = 'archive/chunk-\uD83D\uDE00';
 const PLAINTEXT = new TextEncoder().encode('{"records":[{"content":"private archive"}]}');
 
 type ArchiveMetadataPatch = Partial<
@@ -142,9 +147,10 @@ describe('Conversation Archive cryptography', () => {
       objectClass: 'chunk',
       keyVersion: 7,
     });
+    const relabeledEnvelope = { ...envelope, objectKey: MALFORMED_OBJECT_KEY };
 
     await expect(
-      decryptArchiveObject(envelope, {
+      decryptArchiveObject(relabeledEnvelope, {
         key,
         orgId: ORG_ID,
         objectKey: MALFORMED_OBJECT_KEY,
@@ -156,14 +162,70 @@ describe('Conversation Archive cryptography', () => {
 
   it('rejects the Organization lone-surrogate alias before wrapped-key unwrap', async () => {
     const { wrappedKey } = await makeKeyFixture(REPLACEMENT_ORG_ID);
+    const relabeledWrappedKey = { ...wrappedKey, orgId: MALFORMED_ORG_ID };
 
     await expect(
-      unwrapArchiveEncryptionKey(wrappedKey, {
+      unwrapArchiveEncryptionKey(relabeledWrappedKey, {
         orgId: MALFORMED_ORG_ID,
         keyVersion: 7,
         wrappingSecretBase64: WRAPPING_SECRET,
       }),
     ).rejects.toThrow('Archive cryptographic operation failed');
+  });
+
+  it('rejects a trailing high-surrogate object-key alias before authenticated decrypt', async () => {
+    const { key } = await makeKeyFixture();
+    mockRandomValues(fixedBytes(201, 12));
+    const envelope = await encryptArchiveObject(PLAINTEXT, {
+      key,
+      orgId: ORG_ID,
+      objectKey: TRAILING_REPLACEMENT_OBJECT_KEY,
+      objectClass: 'chunk',
+      keyVersion: 7,
+    });
+    const relabeledEnvelope = { ...envelope, objectKey: TRAILING_MALFORMED_OBJECT_KEY };
+
+    await expect(
+      decryptArchiveObject(relabeledEnvelope, {
+        key,
+        orgId: ORG_ID,
+        objectKey: TRAILING_MALFORMED_OBJECT_KEY,
+        objectClass: 'chunk',
+        keyVersion: 7,
+      }),
+    ).rejects.toThrow('Archive cryptographic operation failed');
+  });
+
+  it('rejects an unpaired low surrogate before constructing authenticated metadata', async () => {
+    await expect(
+      createArchiveEncryptionKeyVersion({
+        orgId: UNPAIRED_LOW_SURROGATE_ORG_ID,
+        keyVersion: 7,
+        wrappingSecretBase64: WRAPPING_SECRET,
+      }),
+    ).rejects.toThrow('Archive cryptographic operation failed');
+  });
+
+  it('accepts valid paired surrogates in Organization and object metadata', async () => {
+    const { key } = await makeKeyFixture(PAIRED_SURROGATE_ORG_ID);
+    mockRandomValues(fixedBytes(201, 12));
+    const envelope = await encryptArchiveObject(PLAINTEXT, {
+      key,
+      orgId: PAIRED_SURROGATE_ORG_ID,
+      objectKey: PAIRED_SURROGATE_OBJECT_KEY,
+      objectClass: 'chunk',
+      keyVersion: 7,
+    });
+
+    await expect(
+      decryptArchiveObject(envelope, {
+        key,
+        orgId: PAIRED_SURROGATE_ORG_ID,
+        objectKey: PAIRED_SURROGATE_OBJECT_KEY,
+        objectClass: 'chunk',
+        keyVersion: 7,
+      }),
+    ).resolves.toEqual(PLAINTEXT);
   });
 
   const metadataTamperCases: [string, ArchiveMetadataPatch, ArchiveMetadataPatch][] = [
