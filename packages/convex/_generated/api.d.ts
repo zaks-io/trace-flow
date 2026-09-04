@@ -2036,6 +2036,7 @@ export declare const internal: {
       {
         collectorId: string;
         hashedSecret: string;
+        now: number;
         orgId: Id<"organizations">;
         source: "claude" | "codex";
         userId: Id<"users">;

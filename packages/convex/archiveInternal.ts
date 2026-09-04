@@ -24,6 +24,7 @@ import {
   invalidateArchiveEnrollmentsForUser,
   isActiveProSubscription,
   isArchiveServerEnabled,
+  isCollectorCredentialExpired,
   pickOldestDocument,
   projectLifecycle,
   resolveServerLifecycle,
@@ -143,6 +144,7 @@ export const authorizeArchiveWriteByHashedSecret = internalQuery({
     orgId: v.id('organizations'),
     userId: v.id('users'),
     collectorId: v.string(),
+    now: v.number(),
   },
   returns: archiveWriteAuthorizationWithTenancyValidator,
   handler: async (ctx, args) => {
@@ -159,6 +161,9 @@ export const authorizeArchiveWriteByHashedSecret = internalQuery({
       credential.collectorId !== args.collectorId
     ) {
       return { allowed: false as const, reason: 'not_enrolled' as const };
+    }
+    if (isCollectorCredentialExpired(credential, args.now)) {
+      return { allowed: false as const, reason: 'credential_revoked' as const };
     }
 
     const decision = await authorizeArchiveWriteForCredential(ctx, credential, args.source);

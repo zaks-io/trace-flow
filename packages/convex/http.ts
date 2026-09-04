@@ -1390,6 +1390,7 @@ export function createApp(
         orgId: body.orgId as Id<'organizations'>,
         userId: body.userId as Id<'users'>,
         collectorId: body.collectorId,
+        now: Date.now(),
       },
     );
 

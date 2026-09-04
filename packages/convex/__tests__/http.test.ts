@@ -1076,6 +1076,22 @@ describe('convex/http.ts', () => {
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toEqual({ allowed: false, reason: 'not_enrolled' });
       expect(ctx.runQuery).toHaveBeenCalledOnce();
+      const queryArgs = ctx.runQuery.mock.calls[0]?.[1] as {
+        hashedSecret: string;
+        source: string;
+        orgId: string;
+        userId: string;
+        collectorId: string;
+        now: number;
+      };
+      expect(queryArgs).toMatchObject({
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: ORG_ID,
+        userId: USER_ID,
+        collectorId: 'collector-owner',
+      });
+      expect(queryArgs.now).toBeGreaterThan(0);
     });
   });
 

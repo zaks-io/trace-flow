@@ -16,6 +16,7 @@ import {
   decideVersionedUpdate,
   decideWriteAuthorization,
   isActiveProSubscription,
+  isCollectorCredentialExpired,
   isArchiveServerEnabled,
   isOrganizationDeletionStarted,
   nextActivationStatusForEntitlement,
@@ -445,6 +446,12 @@ describe('archive control-plane pure functions', () => {
       allowed: false,
       reason: 'source_unauthorized',
     });
+  });
+
+  it('treats a Collector Credential as expired at or after expiresAt', () => {
+    expect(isCollectorCredentialExpired({ expiresAt: 10 }, 10)).toBe(true);
+    expect(isCollectorCredentialExpired({ expiresAt: 10 }, 11)).toBe(true);
+    expect(isCollectorCredentialExpired({ expiresAt: 10 }, 9)).toBe(false);
   });
 
   it('treats exact versioned replays as no-ops and rejects stale or conflicting updates', () => {
@@ -1961,6 +1968,7 @@ describe('archive control plane', () => {
         orgId: world.owner.orgId,
         userId: world.owner._id,
         collectorId: 'collector-owner',
+        now: Date.now(),
       },
     );
     expect(allowed).toMatchObject({
@@ -1979,6 +1987,7 @@ describe('archive control plane', () => {
         orgId: world.owner.orgId,
         userId: world.member._id,
         collectorId: 'collector-owner',
+        now: Date.now(),
       },
     );
     expect(crossUser).toEqual({ allowed: false, reason: 'not_enrolled' });
@@ -1991,6 +2000,7 @@ describe('archive control plane', () => {
         orgId: world.otherOwner.orgId,
         userId: world.owner._id,
         collectorId: 'collector-owner',
+        now: Date.now(),
       },
     );
     expect(crossOrg).toEqual({ allowed: false, reason: 'not_enrolled' });
@@ -2012,8 +2022,33 @@ describe('archive control plane', () => {
         orgId: world.owner.orgId,
         userId: world.owner._id,
         collectorId: 'collector-owner',
+        now: Date.now(),
       },
     );
     expect(denied).toEqual({ allowed: false, reason: 'enrollment_invalid' });
+  });
+
+  it('rejects a hashed-secret write when the Collector Credential has expired', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await world.t.run(async (ctx) => {
+      await ctx.db.patch(world.ownerCred, { expiresAt: 1_000 });
+    });
+
+    const denied = await world.t.query(
+      internal.archiveInternal.authorizeArchiveWriteByHashedSecret,
+      {
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: world.owner.orgId,
+        userId: world.owner._id,
+        collectorId: 'collector-owner',
+        now: 1_000,
+      },
+    );
+    expect(denied).toEqual({ allowed: false, reason: 'credential_revoked' });
   });
 });
