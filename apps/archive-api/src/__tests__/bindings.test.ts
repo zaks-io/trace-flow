@@ -3,12 +3,10 @@ import { env } from 'cloudflare:test';
 import {
   ARCHIVE_API_WRANGLER_CONTRACT,
   FORBIDDEN_ARCHIVE_API_BINDINGS,
-  type ArchiveApiEnv,
   type ArchiveApiEnvHasNoForbiddenBindings,
 } from '../context';
 
-const _noForbiddenOnEnv: ArchiveApiEnvHasNoForbiddenBindings = true;
-void _noForbiddenOnEnv;
+const noForbiddenOnEnv: ArchiveApiEnvHasNoForbiddenBindings = true;
 
 function contractBindingNames(): string[] {
   return [
@@ -44,9 +42,6 @@ describe('Archive API bindings', () => {
   });
 
   it('types Archive API env without the forbidden secret classes', () => {
-    type ForbiddenOnEnv = keyof ArchiveApiEnv & (typeof FORBIDDEN_ARCHIVE_API_BINDINGS)[number];
-    type AssertNone = [ForbiddenOnEnv] extends [never] ? true : false;
-    const none: AssertNone = true;
-    expect(none).toBe(true);
+    expect(noForbiddenOnEnv).toBe(true);
   });
 });

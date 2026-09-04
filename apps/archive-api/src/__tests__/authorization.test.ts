@@ -131,6 +131,17 @@ describe('Archive API authorization', () => {
     expect(await res.json()).toMatchObject({ reason: 'expired' });
   });
 
+  it('rejects a Convex-expired credential when the KV identity is still valid', async () => {
+    interceptAuthorize({ allowed: false, reason: 'credential_revoked' });
+    const res = await fetchRoute(makeEnv(await validCredEntries()), '/v1/archive/uploads', {
+      method: 'POST',
+      headers: collectorHeaders,
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ reason: 'credential_revoked' });
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+  });
+
   it('rejects Pipe Tokens, Body Access Tokens, API Keys, and browser sessions on upload', async () => {
     const env = makeEnv(await validCredEntries());
     const cases: Record<string, string>[] = [

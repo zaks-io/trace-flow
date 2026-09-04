@@ -2033,9 +2033,26 @@ describe('archive control plane', () => {
     const world = await seedWorld();
     const owner = asUser(world, world.owner);
     await owner.mutation(api.archive.activate, {});
-    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
     await world.t.run(async (ctx) => {
       await ctx.db.patch(world.ownerCred, { expiresAt: 1_000 });
+    });
+
+    const unexpired = await world.t.query(
+      internal.archiveInternal.authorizeArchiveWriteByHashedSecret,
+      {
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: world.owner.orgId,
+        userId: world.owner._id,
+        collectorId: 'collector-owner',
+        now: 999,
+      },
+    );
+    expect(unexpired).toMatchObject({
+      allowed: true,
+      contributionId: enrolled.contributionId,
+      collectorCredentialId: world.ownerCred,
     });
 
     const denied = await world.t.query(
