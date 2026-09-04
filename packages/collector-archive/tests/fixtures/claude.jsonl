@@ -1,0 +1,2 @@
+{"uuid":"claude-record-001","type":"user","sessionId":"claude-session-001","message":{"role":"user","content":"Inspect src/lib.rs"}}
+{"uuid":"claude-record-002","type":"assistant","sessionId":"claude-session-001","message":{"id":"msg-001","role":"assistant","content":[{"type":"text","text":"I will inspect it."}]}}
