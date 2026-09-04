@@ -351,3 +351,90 @@ export const archiveStatusProjectionValidator = v.object({
   contributions: v.array(archiveStatusContributionValidator),
   integritySessions: v.array(archiveSessionIntegrityValidator),
 });
+
+export const archiveAuditActionValidator = v.union(
+  v.literal('activation'),
+  v.literal('enrollment'),
+  v.literal('revocation'),
+  v.literal('export_grant_issuance'),
+  v.literal('export_completed'),
+  v.literal('export_failed'),
+  v.literal('deletion'),
+  v.literal('key_rotation'),
+  v.literal('integrity_failure'),
+  v.literal('operator_repair_attempt'),
+  v.literal('operator_repair_outcome'),
+);
+
+export const archiveApiAuditActionValidator = v.union(
+  v.literal('export_grant_issuance'),
+  v.literal('export_completed'),
+  v.literal('export_failed'),
+  v.literal('deletion'),
+  v.literal('key_rotation'),
+  v.literal('integrity_failure'),
+  v.literal('operator_repair_attempt'),
+  v.literal('operator_repair_outcome'),
+);
+
+export const archiveAuditOutcomeValidator = v.union(v.literal('success'), v.literal('failure'));
+
+export const archiveAuditActorKindValidator = v.union(
+  v.literal('user'),
+  v.literal('archive_api'),
+  v.literal('operator'),
+);
+
+export const archiveAuditTargetKindValidator = v.union(
+  v.literal('activation'),
+  v.literal('enrollment'),
+  v.literal('contribution'),
+  v.literal('export'),
+  v.literal('archive'),
+  v.literal('encryption_key'),
+  v.literal('session'),
+);
+
+export const archiveAuditBindingValidator = v.union(
+  v.object({
+    kind: v.literal('activation'),
+    activationId: v.id('archiveActivations'),
+  }),
+  v.object({
+    kind: v.literal('enrollment'),
+    enrollmentId: v.id('archiveEnrollments'),
+  }),
+  v.object({
+    kind: v.literal('contribution'),
+    contributionId: v.id('archiveContributions'),
+  }),
+  v.object({
+    kind: v.literal('collector_credential'),
+    collectorCredentialId: v.id('collectorCredentials'),
+  }),
+);
+
+export const archiveAuditEventValidator = v.object({
+  _id: v.id('archiveAuditEvents'),
+  orgId: v.id('organizations'),
+  actorKind: archiveAuditActorKindValidator,
+  actorUserId: v.optional(v.id('users')),
+  action: archiveAuditActionValidator,
+  outcome: archiveAuditOutcomeValidator,
+  occurredAt: v.number(),
+  operationId: v.string(),
+  targetKind: v.optional(archiveAuditTargetKindValidator),
+  targetId: v.optional(v.string()),
+  enrollmentId: v.optional(v.id('archiveEnrollments')),
+  contributionId: v.optional(v.id('archiveContributions')),
+  activationId: v.optional(v.id('archiveActivations')),
+  source: v.optional(archiveSupportedSourceValidator),
+  sourceSessionId: v.optional(v.string()),
+  relevantCount: v.optional(v.number()),
+  manifestRootHash: v.optional(v.string()),
+});
+
+export const archiveAuditAppendResultValidator = v.object({
+  eventId: v.id('archiveAuditEvents'),
+  created: v.boolean(),
+});

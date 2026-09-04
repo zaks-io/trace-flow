@@ -258,6 +258,7 @@ export const removeMember = mutation({
         orgId: membership.orgId,
         userId: removedUser._id,
         reason: 'member_removed',
+        actorUserId: caller._id,
       });
       if (removedUser.tokenIdentifier) {
         await scheduleUserOrgRemoval(ctx, removedUser.tokenIdentifier);

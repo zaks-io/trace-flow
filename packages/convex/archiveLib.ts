@@ -1,5 +1,6 @@
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import type { Doc, Id, TableNames } from './_generated/dataModel';
+import { appendArchiveAuditEvent, revocationOperationId } from './archiveAuditLib';
 
 export const ARCHIVE_SUPPORTED_SOURCES = ['claude', 'codex'] as const;
 export type ArchiveSupportedSource = (typeof ARCHIVE_SUPPORTED_SOURCES)[number];
@@ -708,6 +709,7 @@ export async function invalidateArchiveEnrollmentsForUser(
     orgId: Id<'organizations'>;
     userId: Id<'users'>;
     reason: ArchiveInvalidationReason;
+    actorUserId?: Id<'users'>;
     now?: number;
   },
 ): Promise<void> {
@@ -732,6 +734,19 @@ export async function invalidateArchiveEnrollmentsForUser(
       invalidatedAt: now,
       invalidationReason: args.reason,
     });
+    await appendArchiveAuditEvent(ctx, {
+      orgId: enrollment.orgId,
+      actorKind: 'user',
+      actorUserId: args.actorUserId ?? args.userId,
+      action: 'revocation',
+      outcome: 'success',
+      operationId: revocationOperationId(enrollment._id),
+      targetKind: 'enrollment',
+      targetId: enrollment._id,
+      enrollmentId: enrollment._id,
+      contributionId: enrollment.contributionId,
+      now,
+    });
   }
 
   const contribution = await getContributionForUser(ctx, args.orgId, args.userId);
@@ -754,6 +769,7 @@ export async function invalidateArchiveEnrollment(
   enrollment: Doc<'archiveEnrollments'>,
   reason: ArchiveInvalidationReason,
   now: number,
+  actorUserId: Id<'users'>,
 ): Promise<void> {
   if (enrollment.status !== 'active') return;
 
@@ -772,6 +788,19 @@ export async function invalidateArchiveEnrollment(
     status: enrollmentStatus,
     invalidatedAt: now,
     invalidationReason: reason,
+  });
+  await appendArchiveAuditEvent(ctx, {
+    orgId: enrollment.orgId,
+    actorKind: 'user',
+    actorUserId,
+    action: 'revocation',
+    outcome: 'success',
+    operationId: revocationOperationId(enrollment._id),
+    targetKind: 'enrollment',
+    targetId: enrollment._id,
+    enrollmentId: enrollment._id,
+    contributionId: enrollment.contributionId,
+    now,
   });
 
   const remaining = await ctx.db

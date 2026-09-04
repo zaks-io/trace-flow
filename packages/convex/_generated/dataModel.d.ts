@@ -385,6 +385,81 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  archiveAuditEvents: {
+    document: {
+      action:
+        | "activation"
+        | "enrollment"
+        | "revocation"
+        | "export_grant_issuance"
+        | "export_completed"
+        | "export_failed"
+        | "deletion"
+        | "key_rotation"
+        | "integrity_failure"
+        | "operator_repair_attempt"
+        | "operator_repair_outcome";
+      activationId?: Id<"archiveActivations">;
+      actorKind: "user" | "archive_api" | "operator";
+      actorUserId?: Id<"users">;
+      contributionId?: Id<"archiveContributions">;
+      enrollmentId?: Id<"archiveEnrollments">;
+      manifestRootHash?: string;
+      occurredAt: number;
+      operationId: string;
+      orgId: Id<"organizations">;
+      outcome: "success" | "failure";
+      relevantCount?: number;
+      source?: "claude" | "codex";
+      sourceSessionId?: string;
+      targetId?: string;
+      targetKind?:
+        | "activation"
+        | "enrollment"
+        | "contribution"
+        | "export"
+        | "archive"
+        | "encryption_key"
+        | "session";
+      _id: Id<"archiveAuditEvents">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "action"
+      | "activationId"
+      | "actorKind"
+      | "actorUserId"
+      | "contributionId"
+      | "enrollmentId"
+      | "manifestRootHash"
+      | "occurredAt"
+      | "operationId"
+      | "orgId"
+      | "outcome"
+      | "relevantCount"
+      | "source"
+      | "sourceSessionId"
+      | "targetId"
+      | "targetKind";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_action: ["orgId", "action", "_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+      by_org_occurred_at: ["orgId", "occurredAt", "_creationTime"];
+      by_org_operation_id: ["orgId", "operationId", "_creationTime"];
+      by_org_operation_outcome: [
+        "orgId",
+        "operationId",
+        "outcome",
+        "_creationTime",
+      ];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   archiveContributions: {
     document: {
       createdAt: number;
