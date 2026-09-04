@@ -5,6 +5,7 @@ import {
   ARCHIVE_CAP_BYTES,
   ARCHIVE_ENABLED_ENV,
   ARCHIVE_GRACE_MS,
+  beginArchiveDeletion,
   consentSourcesMatch,
   decideEnrollmentAction,
   decideVersionedUpdate,
@@ -14,6 +15,7 @@ import {
   nextActivationStatusForEntitlement,
   pickOldestDocument,
   projectLifecycle,
+  resolveServerLifecycle,
   validateAuthorizedSources,
   validateEnrollmentIdempotencyKey,
 } from '../archiveLib';
@@ -328,6 +330,10 @@ describe('archive control-plane pure functions', () => {
     ).toBe('blocked');
     expect(ARCHIVE_CAP_BYTES).toBe(100 * 1024 * 1024 * 1024);
     expect(ARCHIVE_GRACE_MS).toBe(90 * 24 * 60 * 60 * 1000);
+    expect(resolveServerLifecycle('frozen', 'active')).toBe('frozen');
+    expect(resolveServerLifecycle('frozen', 'deleting')).toBe('deleting');
+    expect(resolveServerLifecycle('deleting', 'active')).toBe('deleting');
+    expect(resolveServerLifecycle('active', 'blocked')).toBe('blocked');
   });
 
   it('denies writes when the server gate, entitlement, or enrollment is closed', () => {
@@ -1258,5 +1264,171 @@ describe('archive control plane', () => {
     const stillDeleting = await world.t.run(async (ctx) => ctx.db.get(activation._id));
     expect(stillDeleting?.status).toBe('deleting');
     expect(stillDeleting?.graceDeadlineAt).toBeUndefined();
+  });
+
+  it('does not let applyServerStatus overwrite entitlement-derived frozen or deleting', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'canceled' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
+      collectorCredentialId: world.ownerCred,
+      revision: 2,
+      storedBytes: 12,
+      lastDurableAcknowledgedAt: 222,
+      lifecycle: 'active',
+    });
+    const frozenStatus = await owner.query(api.archive.getStatus, {});
+    expect(frozenStatus.lifecycle).toBe('frozen');
+    expect(frozenStatus.storedBytes).toBe(12);
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'frozen' });
+
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'active' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
+      collectorCredentialId: world.ownerCred,
+      revision: 3,
+      lifecycle: 'deleting',
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatus, {
+        collectorCredentialId: world.ownerCred,
+        revision: 4,
+        lifecycle: 'active',
+      }),
+    ).rejects.toThrow('deleting');
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+    expect((await owner.query(api.archive.getStatus, {})).lifecycle).toBe('deleting');
+  });
+
+  it('revalidates credential, enrollment, and Source before session integrity writes', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await expect(
+      world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+        collectorCredentialId: world.ownerCred,
+        source: 'codex',
+        sourceSessionId: 'sess-unauthorized',
+      }),
+    ).rejects.toThrow('Source is not authorized');
+
+    await owner.mutation(api.archive.unenroll, { enrollmentId: enrolled.enrollmentId });
+    await expect(
+      world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+        sourceSessionId: 'sess-after-unenroll',
+      }),
+    ).rejects.toThrow('Enrollment is not active');
+    expect(
+      await world.t.run(async (ctx) => ctx.db.query('archiveSessionIntegrity').collect()),
+    ).toHaveLength(0);
+
+    await owner.mutation(
+      api.archive.enroll,
+      enrollInput(world.ownerCred, { idempotencyKey: `consent:${world.ownerCred}:renew` }),
+    );
+    await world.t.run(async (ctx) => {
+      await ctx.db.patch(world.ownerCred, { status: 'revoked' });
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+        sourceSessionId: 'sess-revoked',
+      }),
+    ).rejects.toThrow('Collector Credential is not active');
+  });
+
+  it('rejects archive writes after org deletion marks the archive deleting', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await world.t.run(async (ctx) => {
+      await ctx.db.insert('apiKeys', {
+        key: 'org-delete-pending',
+        expiresAt: Date.now() + 60_000,
+        orgId: world.owner.orgId,
+        userId: world.owner._id,
+        name: 'pending',
+      });
+      await beginArchiveDeletion(ctx, world.owner.orgId, Date.now());
+    });
+    expect(
+      (await world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect()))[0]?.status,
+    ).toBe('deleting');
+    expect(await world.t.run(async (ctx) => ctx.db.get(world.ownerCred))).toMatchObject({
+      status: 'active',
+    });
+
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatus, {
+        collectorCredentialId: world.ownerCred,
+        revision: 9,
+        storedBytes: 1,
+        lifecycle: 'active',
+      }),
+    ).rejects.toThrow('deleting');
+    await expect(
+      world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 1,
+        observedAt: 9,
+      }),
+    ).rejects.toThrow('deleting');
+    await expect(
+      world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+        sourceSessionId: 'sess-during-org-delete',
+      }),
+    ).rejects.toThrow('deleting');
   });
 });

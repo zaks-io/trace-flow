@@ -272,6 +272,25 @@ export function projectLifecycle(input: {
   return 'active';
 }
 
+export function resolveServerLifecycle(
+  activationStatus: ArchiveActivationStatus,
+  requested: ArchiveLifecycle,
+): ArchiveLifecycle {
+  if (activationStatus === 'deleting') return 'deleting';
+  if (activationStatus === 'frozen' && requested !== 'deleting') return 'frozen';
+  return requested;
+}
+
+export function assertArchiveMutationAllowed(input: {
+  orgDeleted?: boolean;
+  activation: { status: ArchiveActivationStatus } | null;
+}): void {
+  if (input.orgDeleted) throw new Error('Organization not found');
+  if (input.activation?.status === 'deleting') {
+    throw new Error('Conversation Archive is deleting');
+  }
+}
+
 export function pickOldestDocument<T extends { _creationTime: number }>(rows: T[]): T | null {
   if (rows.length === 0) return null;
   return rows.reduce((oldest, row) => (row._creationTime < oldest._creationTime ? row : oldest));
@@ -289,6 +308,22 @@ async function keepOldestDocuments<T extends { _id: Id<TableNames>; _creationTim
     }
   }
   return winner;
+}
+
+export async function beginArchiveDeletion(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  now: number,
+): Promise<void> {
+  const activation = await getArchiveActivation(ctx, orgId);
+  if (!activation) return;
+  if (activation.status !== 'deleting') {
+    await ctx.db.patch(activation._id, { status: 'deleting' });
+  }
+  const status = await getArchiveStatusRow(ctx, orgId);
+  if (status && status.lifecycle !== 'deleting') {
+    await ctx.db.patch(status._id, { lifecycle: 'deleting', updatedAt: now });
+  }
 }
 
 export async function getArchiveActivation(

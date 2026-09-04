@@ -14,6 +14,7 @@ import { getStripeClient } from '../billing/stripe';
 import { scheduleKVSync } from '../billing/subscriptions';
 import { ensureOrgHasSubscription } from '../auth/organizations';
 import { TIER_CONFIG } from '@trace-flow/types';
+import { beginArchiveDeletion } from '../archiveLib';
 import type { Id } from '../_generated/dataModel';
 
 async function requireAdminAction(ctx: ActionCtx) {
@@ -416,6 +417,8 @@ export const deleteOrgRecordsBatch = internalMutation({
       mcpRefreshTokens: 0,
     };
     let ops = 0;
+
+    await beginArchiveDeletion(ctx, args.orgId, Date.now());
 
     // Helper: delete up to remaining budget from a query
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -9,9 +9,11 @@ import {
 import {
   ARCHIVE_CAP_BYTES,
   applyCollectorHeartbeat,
+  assertArchiveMutationAllowed,
   assertVersionedUpdate,
   decideVersionedUpdate,
   decideWriteAuthorization,
+  enrollmentAllowsSource,
   ensureArchiveStatusRow,
   getArchiveActivation,
   getArchiveStatusRow,
@@ -21,6 +23,7 @@ import {
   isArchiveServerEnabled,
   pickOldestDocument,
   projectLifecycle,
+  resolveServerLifecycle,
   serverStatusPayloadEquals,
   syncArchiveLifecycleForEntitlement,
 } from './archiveLib';
@@ -95,22 +98,28 @@ export const applyServerStatus = internalMutation({
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.collectorCredentialId);
     if (!credential) throw new Error('Collector Credential not found');
+    const org = await ctx.db.get(credential.orgId);
 
     const activation = await getArchiveActivation(ctx, credential.orgId);
     if (!activation) throw new Error('Conversation Archive is not activated');
+    assertArchiveMutationAllowed({
+      orgDeleted: Boolean(org?.deletedAt),
+      activation,
+    });
 
     const now = Date.now();
     const existing = await getArchiveStatusRow(ctx, credential.orgId);
     const storedBytes = args.storedBytes ?? existing?.storedBytes ?? 0;
     const lastDurableAcknowledgedAt =
       args.lastDurableAcknowledgedAt ?? existing?.lastDurableAcknowledgedAt;
-    const lifecycle =
+    const requested =
       args.lifecycle ??
       projectLifecycle({
         activation: { status: activation.status },
         storedBytes,
         capBytes: activation.capBytes,
       });
+    const lifecycle = resolveServerLifecycle(activation.status, requested);
     const incoming = { storedBytes, lastDurableAcknowledgedAt, lifecycle };
     const decision = decideVersionedUpdate({
       storedVersion: existing?.serverRevision,
@@ -168,6 +177,12 @@ export const reportCollectorHeartbeat = internalMutation({
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.collectorCredentialId);
     if (!credential) throw new Error('Collector Credential not found');
+    const org = await ctx.db.get(credential.orgId);
+    const activation = await getArchiveActivation(ctx, credential.orgId);
+    assertArchiveMutationAllowed({
+      orgDeleted: Boolean(org?.deletedAt),
+      activation,
+    });
     const slot = await getEnrollmentSlot(ctx, credential.orgId, credential._id);
     if (!slot) throw new Error('Enrollment not found');
     const enrollment = await ctx.db.get(slot.currentEnrollmentId);
@@ -195,9 +210,24 @@ export const upsertSessionIntegrity = internalMutation({
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.collectorCredentialId);
     if (!credential) throw new Error('Collector Credential not found');
+    if (credential.status !== 'active') {
+      throw new Error('Collector Credential is not active');
+    }
+    const org = await ctx.db.get(credential.orgId);
+    const activation = await getArchiveActivation(ctx, credential.orgId);
+    assertArchiveMutationAllowed({
+      orgDeleted: Boolean(org?.deletedAt),
+      activation,
+    });
     const slot = await getEnrollmentSlot(ctx, credential.orgId, credential._id);
     const enrollment = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
     if (!enrollment) throw new Error('Enrollment not found');
+    if (enrollment.status !== 'active') {
+      throw new Error('Enrollment is not active');
+    }
+    if (!enrollmentAllowsSource(enrollment, args.source)) {
+      throw new Error('Source is not authorized');
+    }
 
     const now = Date.now();
     const existingRows = await ctx.db
