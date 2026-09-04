@@ -1,5 +1,6 @@
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalMutation, internalQuery, type QueryCtx } from './_generated/server';
 import { v } from 'convex/values';
+import type { Doc, Id } from './_generated/dataModel';
 import {
   archiveLifecycleValidator,
   archiveSessionIntegrityValidator,
@@ -23,71 +24,156 @@ import {
   invalidateArchiveEnrollmentsForUser,
   isActiveProSubscription,
   isArchiveServerEnabled,
+  isCollectorCredentialExpired,
   pickOldestDocument,
   projectLifecycle,
   resolveServerLifecycle,
   serverStatusPayloadEquals,
   syncArchiveLifecycleForEntitlement,
+  type ArchiveSupportedSource,
+  type ArchiveWriteDenialReason,
 } from './archiveLib';
+
+const archiveWriteAuthorizationResultValidator = v.union(
+  v.object({
+    allowed: v.literal(true),
+    enrollmentId: v.id('archiveEnrollments'),
+    contributionId: v.id('archiveContributions'),
+    authorizedSources: v.array(
+      v.object({
+        source: archiveSupportedSourceValidator,
+        historyChoice: v.union(v.literal('new_only'), v.literal('all_history')),
+        authorizedAt: v.number(),
+      }),
+    ),
+  }),
+  v.object({
+    allowed: v.literal(false),
+    reason: archiveWriteDenialReasonValidator,
+  }),
+);
+
+const archiveWriteAuthorizationWithTenancyValidator = v.union(
+  v.object({
+    allowed: v.literal(true),
+    enrollmentId: v.id('archiveEnrollments'),
+    contributionId: v.id('archiveContributions'),
+    authorizedSources: v.array(
+      v.object({
+        source: archiveSupportedSourceValidator,
+        historyChoice: v.union(v.literal('new_only'), v.literal('all_history')),
+        authorizedAt: v.number(),
+      }),
+    ),
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    collectorId: v.string(),
+    collectorCredentialId: v.id('collectorCredentials'),
+  }),
+  v.object({
+    allowed: v.literal(false),
+    reason: archiveWriteDenialReasonValidator,
+  }),
+);
+
+async function authorizeArchiveWriteForCredential(
+  ctx: QueryCtx,
+  credential: Doc<'collectorCredentials'> | null,
+  source: ArchiveSupportedSource,
+): Promise<
+  | {
+      allowed: true;
+      enrollmentId: Id<'archiveEnrollments'>;
+      contributionId: Id<'archiveContributions'>;
+      authorizedSources: Doc<'archiveEnrollments'>['authorizedSources'];
+    }
+  | { allowed: false; reason: ArchiveWriteDenialReason }
+> {
+  const org = credential ? await ctx.db.get(credential.orgId) : null;
+  if (credential && (isOrganizationDeleted(org) || isOrganizationDeletionStarted(org))) {
+    return { allowed: false as const, reason: 'deleting' as const };
+  }
+  const activation = credential ? await getArchiveActivation(ctx, credential.orgId) : null;
+  const subscription = credential
+    ? await ctx.db
+        .query('subscriptions')
+        .withIndex('by_org_id', (q) => q.eq('orgId', credential.orgId))
+        .first()
+    : null;
+  const slot =
+    credential && activation
+      ? await getEnrollmentSlot(ctx, credential.orgId, credential._id)
+      : null;
+  const enrollment = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
+
+  const decision = decideWriteAuthorization({
+    serverEnabled: isArchiveServerEnabled(),
+    activation: activation ? { status: activation.status } : null,
+    subscription,
+    credential,
+    enrollment,
+    source,
+  });
+  if (!decision.allowed) return decision;
+  if (!enrollment) return { allowed: false as const, reason: 'not_enrolled' as const };
+
+  return {
+    allowed: true as const,
+    enrollmentId: enrollment._id,
+    contributionId: enrollment.contributionId,
+    authorizedSources: enrollment.authorizedSources,
+  };
+}
 
 export const authorizeArchiveWrite = internalQuery({
   args: {
     collectorCredentialId: v.id('collectorCredentials'),
     source: archiveSupportedSourceValidator,
   },
-  returns: v.union(
-    v.object({
-      allowed: v.literal(true),
-      enrollmentId: v.id('archiveEnrollments'),
-      contributionId: v.id('archiveContributions'),
-      authorizedSources: v.array(
-        v.object({
-          source: archiveSupportedSourceValidator,
-          historyChoice: v.union(v.literal('new_only'), v.literal('all_history')),
-          authorizedAt: v.number(),
-        }),
-      ),
-    }),
-    v.object({
-      allowed: v.literal(false),
-      reason: archiveWriteDenialReasonValidator,
-    }),
-  ),
+  returns: archiveWriteAuthorizationResultValidator,
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.collectorCredentialId);
-    const org = credential ? await ctx.db.get(credential.orgId) : null;
-    if (credential && (isOrganizationDeleted(org) || isOrganizationDeletionStarted(org))) {
-      return { allowed: false as const, reason: 'deleting' as const };
+    return authorizeArchiveWriteForCredential(ctx, credential, args.source);
+  },
+});
+
+export const authorizeArchiveWriteByHashedSecret = internalQuery({
+  args: {
+    hashedSecret: v.string(),
+    source: archiveSupportedSourceValidator,
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    collectorId: v.string(),
+    now: v.number(),
+  },
+  returns: archiveWriteAuthorizationWithTenancyValidator,
+  handler: async (ctx, args) => {
+    const credential = await ctx.db
+      .query('collectorCredentials')
+      .withIndex('by_hashed_secret', (q) => q.eq('hashedSecret', args.hashedSecret))
+      .unique();
+    if (credential == null) {
+      return { allowed: false as const, reason: 'not_enrolled' as const };
     }
-    const activation = credential ? await getArchiveActivation(ctx, credential.orgId) : null;
-    const subscription = credential
-      ? await ctx.db
-          .query('subscriptions')
-          .withIndex('by_org_id', (q) => q.eq('orgId', credential.orgId))
-          .first()
-      : null;
-    const slot =
-      credential && activation
-        ? await getEnrollmentSlot(ctx, credential.orgId, credential._id)
-        : null;
-    const enrollment = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
+    if (
+      credential.orgId !== args.orgId ||
+      credential.userId !== args.userId ||
+      credential.collectorId !== args.collectorId
+    ) {
+      return { allowed: false as const, reason: 'not_enrolled' as const };
+    }
+    if (isCollectorCredentialExpired(credential, args.now)) {
+      return { allowed: false as const, reason: 'credential_revoked' as const };
+    }
 
-    const decision = decideWriteAuthorization({
-      serverEnabled: isArchiveServerEnabled(),
-      activation: activation ? { status: activation.status } : null,
-      subscription,
-      credential,
-      enrollment,
-      source: args.source,
-    });
+    const decision = await authorizeArchiveWriteForCredential(ctx, credential, args.source);
     if (!decision.allowed) return decision;
-    if (!enrollment) return { allowed: false as const, reason: 'not_enrolled' as const };
-
     return {
-      allowed: true as const,
-      enrollmentId: enrollment._id,
-      contributionId: enrollment.contributionId,
-      authorizedSources: enrollment.authorizedSources,
+      ...decision,
+      orgId: credential.orgId,
+      userId: credential.userId,
+      collectorId: credential.collectorId,
+      collectorCredentialId: credential._id,
     };
   },
 });

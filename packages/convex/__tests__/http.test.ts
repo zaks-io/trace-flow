@@ -19,6 +19,26 @@ function createMockCtx(): MockCtx {
 }
 
 // Factory for creating mock dependencies
+function captureConsoleLogs(): { text: () => string; restore: () => void } {
+  const lines: string[] = [];
+  const collect = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  const spies = [
+    vi.spyOn(console, 'log').mockImplementation(collect),
+    vi.spyOn(console, 'info').mockImplementation(collect),
+    vi.spyOn(console, 'warn').mockImplementation(collect),
+    vi.spyOn(console, 'error').mockImplementation(collect),
+    vi.spyOn(console, 'debug').mockImplementation(collect),
+  ];
+  return {
+    text: () => lines.join('\n'),
+    restore: () => {
+      for (const spy of spies) spy.mockRestore();
+    },
+  };
+}
+
 function createMockDeps(): HttpDeps {
   return {
     oauth: {
@@ -931,6 +951,147 @@ describe('convex/http.ts', () => {
       await expect(res.json()).resolves.toEqual({ error: 'Invalid user id' });
       expect(ctx.runQuery).toHaveBeenCalledOnce();
       expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /archive-api/authorize-write', () => {
+    const ORG_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
+    const USER_ID = 'j57axc8sefsfp6k28nx6c481js806pwv';
+
+    beforeEach(() => {
+      vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');
+    });
+
+    it('rejects a missing shared secret', async () => {
+      const logs = captureConsoleLogs();
+      try {
+        const app = createApp(deps);
+        const res = await app.request(
+          'http://localhost/archive-api/authorize-write',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              hashedSecret: 'hash-owner',
+              source: 'claude',
+              orgId: ORG_ID,
+              userId: USER_ID,
+              collectorId: 'collector-owner',
+            }),
+          },
+          ctx,
+        );
+        expect(res.status).toBe(401);
+        expect(ctx.runQuery).not.toHaveBeenCalled();
+        expect(logs.text()).toContain('convex.archive_authorize_shared_secret_invalid');
+        expect(logs.text()).toContain('"reason":"missing"');
+      } finally {
+        logs.restore();
+      }
+    });
+
+    it('rejects a Pipe Token bearer that is not the Archive API shared secret', async () => {
+      const probe = 'pipe-token-must-never-enter-logs';
+      const logs = captureConsoleLogs();
+      try {
+        const app = createApp(deps);
+        const res = await app.request(
+          'http://localhost/archive-api/authorize-write',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${probe}`,
+            },
+            body: JSON.stringify({
+              hashedSecret: 'hash-owner',
+              source: 'claude',
+              orgId: ORG_ID,
+              userId: USER_ID,
+              collectorId: 'collector-owner',
+            }),
+          },
+          ctx,
+        );
+        expect(res.status).toBe(401);
+        expect(ctx.runQuery).not.toHaveBeenCalled();
+        expect(logs.text()).toContain('convex.archive_authorize_shared_secret_invalid');
+        expect(logs.text()).toContain('"reason":"invalid"');
+        expect(logs.text()).not.toContain(probe);
+        expect(logs.text()).not.toContain(`Bearer ${probe}`);
+      } finally {
+        logs.restore();
+      }
+    });
+
+    it('rejects malformed organization ids before Convex validators run', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/authorize-write',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            hashedSecret: 'hash-owner',
+            source: 'claude',
+            orgId: 'org_dev_smoke',
+            userId: USER_ID,
+            collectorId: 'collector-owner',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: 'Invalid organization id' });
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
+    it('forwards a valid request to the hashed-secret authorize query', async () => {
+      ctx.runQuery.mockResolvedValueOnce({
+        allowed: false,
+        reason: 'not_enrolled',
+      });
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/authorize-write',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            hashedSecret: 'hash-owner',
+            source: 'claude',
+            orgId: ORG_ID,
+            userId: USER_ID,
+            collectorId: 'collector-owner',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ allowed: false, reason: 'not_enrolled' });
+      expect(ctx.runQuery).toHaveBeenCalledOnce();
+      const queryArgs = ctx.runQuery.mock.calls[0]?.[1] as {
+        hashedSecret: string;
+        source: string;
+        orgId: string;
+        userId: string;
+        collectorId: string;
+        now: number;
+      };
+      expect(queryArgs).toMatchObject({
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: ORG_ID,
+        userId: USER_ID,
+        collectorId: 'collector-owner',
+      });
+      expect(queryArgs.now).toBeGreaterThan(0);
     });
   });
 

@@ -153,6 +153,13 @@ export function enrollmentAllowsSource(
   );
 }
 
+export function isCollectorCredentialExpired(
+  credential: { expiresAt: number },
+  now: number,
+): boolean {
+  return credential.expiresAt <= now;
+}
+
 export function decideWriteAuthorization(input: {
   serverEnabled: boolean;
   activation: { status: ArchiveActivationStatus } | null;
