@@ -860,4 +860,43 @@ describe('archive control plane', () => {
     });
     expect(allowed).toMatchObject({ allowed: true, enrollmentId: first.enrollmentId });
   });
+
+  it('keeps deleting terminal when entitlement syncs again', async () => {
+    enableArchive();
+    const world = seedWorld();
+    const ownerCtx = world.driver.ctx(identity(world.owner));
+    await call(activate, ownerCtx, {});
+    await call(enroll, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      authorizedSources: sources,
+    });
+    await call(applyServerStatus, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      lifecycle: 'deleting',
+    });
+
+    const activation = (await world.driver.query('archiveActivations').collect())[0]!;
+    expect(activation.status).toBe('deleting');
+    expect(
+      await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+        collectorCredentialId: world.ownerCred,
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+
+    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
+    expect(world.driver.get(activation._id)?.status).toBe('deleting');
+    expect(
+      await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+        collectorCredentialId: world.ownerCred,
+      }),
+    ).toEqual({ allowed: false, reason: 'deleting' });
+
+    const subscription = (await world.driver.query('subscriptions').collect()).find(
+      (row) => row.orgId === world.owner.orgId,
+    )!;
+    world.driver.patch(subscription._id, { status: 'canceled' });
+    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
+    expect(world.driver.get(activation._id)?.status).toBe('deleting');
+    expect(world.driver.get(activation._id)?.graceDeadlineAt).toBeUndefined();
+  });
 });

@@ -385,6 +385,7 @@ export async function syncArchiveLifecycleForEntitlement(
 ): Promise<void> {
   const activation = await getArchiveActivation(ctx, orgId);
   if (!activation) return;
+  if (activation.status === 'deleting') return;
 
   const entitled = isActiveProSubscription(subscription);
   if (entitled) {
