@@ -33,6 +33,19 @@ export default tseslint.config(
     },
   },
   {
+    files: ['**/*.{js,jsx,mjs,cjs,ts,tsx}'],
+    rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 1000,
+          skipBlankLines: true,
+          skipComments: true,
+        },
+      ],
+    },
+  },
+  {
     files: ['next.config.ts', 'open-next.config.ts', 'postcss.config.mjs'],
     languageOptions: {
       globals: {

@@ -39,6 +39,14 @@ export default tseslint.config(
       'no-var': 'error',
       'object-shorthand': ['error', 'always'],
       'prefer-template': 'error',
+      'max-lines': [
+        'error',
+        {
+          max: 1000,
+          skipBlankLines: true,
+          skipComments: true,
+        },
+      ],
     },
   },
   {
