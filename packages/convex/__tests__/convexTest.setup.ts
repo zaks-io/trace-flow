@@ -1,4 +1,3 @@
-/// <reference types="vite/client" />
 import { convexTest, type TestConvex } from 'convex-test';
 import type { GenericSchema, SchemaDefinition } from 'convex/server';
 import schema from '../schema';
@@ -6,7 +5,11 @@ import agent from '@convex-dev/agent/test';
 import rateLimiter from '@convex-dev/rate-limiter/test';
 import launchdarkly from '@convex-dev/launchdarkly/test';
 
-const modules = import.meta.glob(['../**/*.*s', '!../__tests__/**']);
+const modules = (
+  import.meta as ImportMeta & {
+    glob: (pattern: string | string[]) => Record<string, () => Promise<unknown>>;
+  }
+).glob(['../**/*.*s', '!../__tests__/**']);
 
 export type ArchiveTestConvex = ReturnType<typeof initConvexTest>;
 

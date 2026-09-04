@@ -48,7 +48,7 @@ async function seedWorld(
   status: 'active' | 'grace' | 'canceled' = 'active',
 ): Promise<SeededWorld> {
   const t = initConvexTest();
-  return await t.run(async (ctx) => {
+  const ids = await t.run(async (ctx) => {
     const ownerId = await ctx.db.insert('users', {
       tokenIdentifier: 'https://auth.example/|auth0|owner',
       email: 'owner@example.com',
@@ -142,14 +142,11 @@ async function seedWorld(
     });
 
     return {
-      t,
-      owner: { _id: ownerId, tokenIdentifier: 'https://auth.example/|auth0|owner', orgId },
-      member: { _id: memberId, tokenIdentifier: 'https://auth.example/|auth0|member', orgId },
-      otherOwner: {
-        _id: otherOwnerId,
-        tokenIdentifier: 'https://auth.example/|auth0|other',
-        orgId: otherOrgId,
-      },
+      ownerId,
+      memberId,
+      otherOwnerId,
+      orgId,
+      otherOrgId,
       ownerCred,
       memberCred,
       foreignCred,
@@ -157,6 +154,30 @@ async function seedWorld(
       memberMembership,
     };
   });
+
+  return {
+    t,
+    owner: {
+      _id: ids.ownerId,
+      tokenIdentifier: 'https://auth.example/|auth0|owner',
+      orgId: ids.orgId,
+    },
+    member: {
+      _id: ids.memberId,
+      tokenIdentifier: 'https://auth.example/|auth0|member',
+      orgId: ids.orgId,
+    },
+    otherOwner: {
+      _id: ids.otherOwnerId,
+      tokenIdentifier: 'https://auth.example/|auth0|other',
+      orgId: ids.otherOrgId,
+    },
+    ownerCred: ids.ownerCred,
+    memberCred: ids.memberCred,
+    foreignCred: ids.foreignCred,
+    ownerMembership: ids.ownerMembership,
+    memberMembership: ids.memberMembership,
+  };
 }
 
 function asUser(world: SeededWorld, user: { tokenIdentifier: string }) {
