@@ -7,6 +7,7 @@ import { createOrgWithDefaultBilling, ensureOrgHasSubscription } from './organiz
 import { getCurrentUser, requireEnabledUser } from './userHelpers';
 import { userValidator } from '../validators';
 import { rateLimiter } from '../rateLimits';
+import { invalidateArchiveEnrollmentsForUser } from '../archiveLib';
 
 type AuthContext = QueryCtx | MutationCtx;
 
@@ -253,6 +254,11 @@ export const removeMember = mutation({
         await ctx.db.patch(acceptedInvite._id, { status: 'expired' });
       }
       await revokeCredentialsForRemovedUser(ctx, removedUser._id);
+      await invalidateArchiveEnrollmentsForUser(ctx, {
+        orgId: membership.orgId,
+        userId: removedUser._id,
+        reason: 'member_removed',
+      });
       if (removedUser.tokenIdentifier) {
         await scheduleUserOrgRemoval(ctx, removedUser.tokenIdentifier);
       }

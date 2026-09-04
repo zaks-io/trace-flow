@@ -524,6 +524,29 @@ export const deleteOrgRecordsBatch = internalMutation({
       if (await deleteBatch(tokens, 'mcpRefreshTokens')) return { counts, hasMore: true };
     }
 
+    // Delete Conversation Archive control-plane rows. Counts stay on the existing
+    // public shape; these deletes only consume the page budget.
+    const archiveTables = [
+      'archiveSessionIntegrity',
+      'archiveEnrollments',
+      'archiveEnrollmentSlots',
+      'archiveContributions',
+      'archiveStatuses',
+      'archiveActivations',
+    ] as const;
+    for (const table of archiveTables) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+        .take(PAGE_SIZE - ops);
+      for (const row of rows) {
+        if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+        await ctx.db.delete(row._id);
+        ops++;
+      }
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+    }
+
     // Delete invites
     const invites = await ctx.db
       .query('invites')

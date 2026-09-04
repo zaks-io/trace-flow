@@ -467,4 +467,114 @@ export default defineSchema({
     updatedByUserId: v.optional(v.id('users')),
     updatedAt: v.number(),
   }).index('by_updated_at', ['updatedAt']),
+
+  // Organization-scoped Conversation Archive activation. One live row per org.
+  // Records the 100 GB cap and 90-day grace deadline without storing objects.
+  archiveActivations: defineTable({
+    orgId: v.id('organizations'),
+    activatedByUserId: v.id('users'),
+    activatedAt: v.number(),
+    capBytes: v.number(),
+    status: v.union(v.literal('active'), v.literal('frozen'), v.literal('deleting')),
+    graceDeadlineAt: v.optional(v.number()),
+  }).index('by_org_id', ['orgId']),
+
+  // One contribution per User per Organization. Survives enrollment invalidation
+  // so acknowledged content stays Organization-owned until owner deletion.
+  archiveContributions: defineTable({
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    createdAt: v.number(),
+    status: v.union(
+      v.literal('active'),
+      v.literal('unenrolled'),
+      v.literal('revoked'),
+      v.literal('member_removed'),
+    ),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_user_id', ['userId'])
+    .index('by_org_user', ['orgId', 'userId']),
+
+  // Per-Collector consent. Re-enrollment inserts a new row; revoked rows are never revived.
+  archiveEnrollments: defineTable({
+    orgId: v.id('organizations'),
+    userId: v.id('users'),
+    collectorCredentialId: v.id('collectorCredentials'),
+    collectorId: v.string(),
+    contributionId: v.id('archiveContributions'),
+    authorizedSources: v.array(
+      v.object({
+        source: v.union(v.literal('claude'), v.literal('codex')),
+        historyChoice: v.union(v.literal('new_only'), v.literal('all_history')),
+        authorizedAt: v.number(),
+      }),
+    ),
+    status: v.union(
+      v.literal('active'),
+      v.literal('unenrolled'),
+      v.literal('revoked'),
+      v.literal('member_removed'),
+    ),
+    createdAt: v.number(),
+    invalidatedAt: v.optional(v.number()),
+    invalidationReason: v.optional(
+      v.union(
+        v.literal('user_unenrolled'),
+        v.literal('owner_revoked'),
+        v.literal('member_removed'),
+      ),
+    ),
+    pendingSpoolBytes: v.optional(v.number()),
+    localError: v.optional(v.string()),
+    localObservedAt: v.optional(v.number()),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_user_id', ['userId'])
+    .index('by_collector_credential', ['collectorCredentialId'])
+    .index('by_org_collector', ['orgId', 'collectorCredentialId'])
+    .index('by_contribution', ['contributionId']),
+
+  // OCC first-writer slot so concurrent first enrollments produce one current row.
+  archiveEnrollmentSlots: defineTable({
+    orgId: v.id('organizations'),
+    collectorCredentialId: v.id('collectorCredentials'),
+    currentEnrollmentId: v.id('archiveEnrollments'),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_org_collector', ['orgId', 'collectorCredentialId']),
+
+  // Access-scoped Archive Status projection. Archive API owns durable fields;
+  // collector heartbeats never write this row.
+  archiveStatuses: defineTable({
+    orgId: v.id('organizations'),
+    lifecycle: v.union(
+      v.literal('not_enabled'),
+      v.literal('active'),
+      v.literal('blocked'),
+      v.literal('frozen'),
+      v.literal('deleting'),
+    ),
+    storedBytes: v.number(),
+    capBytes: v.number(),
+    lastDurableAcknowledgedAt: v.optional(v.number()),
+    enrolledContributorCount: v.number(),
+    enrolledCollectorCount: v.number(),
+    graceDeadlineAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_org_id', ['orgId']),
+
+  // Server-authoritative integrity state per affected Agent Session. No transcript content.
+  archiveSessionIntegrity: defineTable({
+    orgId: v.id('organizations'),
+    contributionId: v.id('archiveContributions'),
+    source: v.union(v.literal('claude'), v.literal('codex')),
+    sourceSessionId: v.string(),
+    errorClass: v.optional(v.string()),
+    repairOutcome: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index('by_org_id', ['orgId'])
+    .index('by_contribution', ['contributionId'])
+    .index('by_org_session', ['orgId', 'source', 'sourceSessionId']),
 });

@@ -357,6 +357,202 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  archiveActivations: {
+    document: {
+      activatedAt: number;
+      activatedByUserId: Id<"users">;
+      capBytes: number;
+      graceDeadlineAt?: number;
+      orgId: Id<"organizations">;
+      status: "active" | "frozen" | "deleting";
+      _id: Id<"archiveActivations">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "activatedAt"
+      | "activatedByUserId"
+      | "capBytes"
+      | "graceDeadlineAt"
+      | "orgId"
+      | "status";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  archiveContributions: {
+    document: {
+      createdAt: number;
+      orgId: Id<"organizations">;
+      status: "active" | "unenrolled" | "revoked" | "member_removed";
+      userId: Id<"users">;
+      _id: Id<"archiveContributions">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "createdAt"
+      | "orgId"
+      | "status"
+      | "userId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+      by_org_user: ["orgId", "userId", "_creationTime"];
+      by_user_id: ["userId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  archiveEnrollmentSlots: {
+    document: {
+      collectorCredentialId: Id<"collectorCredentials">;
+      currentEnrollmentId: Id<"archiveEnrollments">;
+      orgId: Id<"organizations">;
+      _id: Id<"archiveEnrollmentSlots">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "collectorCredentialId"
+      | "currentEnrollmentId"
+      | "orgId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_collector: ["orgId", "collectorCredentialId", "_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  archiveEnrollments: {
+    document: {
+      authorizedSources: Array<{
+        authorizedAt: number;
+        historyChoice: "new_only" | "all_history";
+        source: "claude" | "codex";
+      }>;
+      collectorCredentialId: Id<"collectorCredentials">;
+      collectorId: string;
+      contributionId: Id<"archiveContributions">;
+      createdAt: number;
+      invalidatedAt?: number;
+      invalidationReason?: "user_unenrolled" | "owner_revoked" | "member_removed";
+      localError?: string;
+      localObservedAt?: number;
+      orgId: Id<"organizations">;
+      pendingSpoolBytes?: number;
+      status: "active" | "unenrolled" | "revoked" | "member_removed";
+      userId: Id<"users">;
+      _id: Id<"archiveEnrollments">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "authorizedSources"
+      | "authorizedSources.authorizedAt"
+      | "authorizedSources.historyChoice"
+      | "authorizedSources.source"
+      | "collectorCredentialId"
+      | "collectorId"
+      | "contributionId"
+      | "createdAt"
+      | "invalidatedAt"
+      | "invalidationReason"
+      | "localError"
+      | "localObservedAt"
+      | "orgId"
+      | "pendingSpoolBytes"
+      | "status"
+      | "userId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_collector_credential: ["collectorCredentialId", "_creationTime"];
+      by_contribution: ["contributionId", "_creationTime"];
+      by_org_collector: ["orgId", "collectorCredentialId", "_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+      by_user_id: ["userId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  archiveSessionIntegrity: {
+    document: {
+      contributionId: Id<"archiveContributions">;
+      errorClass?: string;
+      orgId: Id<"organizations">;
+      repairOutcome?: string;
+      source: "claude" | "codex";
+      sourceSessionId: string;
+      updatedAt: number;
+      _id: Id<"archiveSessionIntegrity">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "contributionId"
+      | "errorClass"
+      | "orgId"
+      | "repairOutcome"
+      | "source"
+      | "sourceSessionId"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_contribution: ["contributionId", "_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+      by_org_session: ["orgId", "source", "sourceSessionId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  archiveStatuses: {
+    document: {
+      capBytes: number;
+      enrolledCollectorCount: number;
+      enrolledContributorCount: number;
+      graceDeadlineAt?: number;
+      lastDurableAcknowledgedAt?: number;
+      lifecycle: "not_enabled" | "active" | "blocked" | "frozen" | "deleting";
+      orgId: Id<"organizations">;
+      storedBytes: number;
+      updatedAt: number;
+      _id: Id<"archiveStatuses">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "capBytes"
+      | "enrolledCollectorCount"
+      | "enrolledContributorCount"
+      | "graceDeadlineAt"
+      | "lastDurableAcknowledgedAt"
+      | "lifecycle"
+      | "orgId"
+      | "storedBytes"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   collectorCompatibilityPolicy: {
     document: {
       denylistedVersions: Array<string>;

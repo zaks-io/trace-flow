@@ -17,6 +17,7 @@ import { getStripeClient, getProPriceId, getAddonPriceId, appUrl } from './strip
 import { subscriptionValidator } from '../validators';
 import { ensureOrgHasSubscription } from '../auth/organizations';
 import { isProSubscriptionEnabled } from '../integrations/launchdarkly';
+import { syncArchiveLifecycleForEntitlement } from '../archiveLib';
 import {
   getCurrentBillingPeriod,
   getSubscriptionByOrgId,
@@ -173,6 +174,8 @@ export const setTier = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
+    const next = await ctx.db.get(subscription._id);
+    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });
 
@@ -678,6 +681,8 @@ export const upsertStripeSubscriptionState = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
+    const next = await ctx.db.get(subscription._id);
+    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });
 
@@ -806,6 +811,8 @@ export const revertToHobby = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
+    const next = await ctx.db.get(subscription._id);
+    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });
 
@@ -846,5 +853,7 @@ export const transitionGraceToSuspended = internalMutation({
     });
 
     await scheduleKVSync(ctx, subscription._id);
+    const next = await ctx.db.get(subscription._id);
+    await syncArchiveLifecycleForEntitlement(ctx, args.orgId, next, Date.now());
   },
 });

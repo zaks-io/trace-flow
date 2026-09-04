@@ -223,3 +223,127 @@ export const costAlertMonitorValidator = v.object({
   lastEvaluatedAt: v.optional(v.number()),
   lastError: v.optional(v.string()),
 });
+
+export const archiveSupportedSourceValidator = v.union(v.literal('claude'), v.literal('codex'));
+
+export const archiveHistoryChoiceValidator = v.union(
+  v.literal('new_only'),
+  v.literal('all_history'),
+);
+
+export const archiveAuthorizedSourceValidator = v.object({
+  source: archiveSupportedSourceValidator,
+  historyChoice: archiveHistoryChoiceValidator,
+  authorizedAt: v.number(),
+});
+
+export const archiveEnrollmentStatusValidator = v.union(
+  v.literal('active'),
+  v.literal('unenrolled'),
+  v.literal('revoked'),
+  v.literal('member_removed'),
+);
+
+export const archiveInvalidationReasonValidator = v.union(
+  v.literal('user_unenrolled'),
+  v.literal('owner_revoked'),
+  v.literal('member_removed'),
+);
+
+export const archiveActivationStatusValidator = v.union(
+  v.literal('active'),
+  v.literal('frozen'),
+  v.literal('deleting'),
+);
+
+export const archiveLifecycleValidator = v.union(
+  v.literal('not_enabled'),
+  v.literal('active'),
+  v.literal('blocked'),
+  v.literal('frozen'),
+  v.literal('deleting'),
+);
+
+export const archiveActivationValidator = v.object({
+  _id: v.id('archiveActivations'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  activatedByUserId: v.id('users'),
+  activatedAt: v.number(),
+  capBytes: v.number(),
+  status: archiveActivationStatusValidator,
+  graceDeadlineAt: v.optional(v.number()),
+});
+
+export const archiveEnrollmentValidator = v.object({
+  _id: v.id('archiveEnrollments'),
+  _creationTime: v.number(),
+  orgId: v.id('organizations'),
+  userId: v.id('users'),
+  collectorCredentialId: v.id('collectorCredentials'),
+  collectorId: v.string(),
+  contributionId: v.id('archiveContributions'),
+  authorizedSources: v.array(archiveAuthorizedSourceValidator),
+  status: archiveEnrollmentStatusValidator,
+  createdAt: v.number(),
+  invalidatedAt: v.optional(v.number()),
+  invalidationReason: v.optional(archiveInvalidationReasonValidator),
+  pendingSpoolBytes: v.optional(v.number()),
+  localError: v.optional(v.string()),
+  localObservedAt: v.optional(v.number()),
+});
+
+export const archiveSourceAuthorizationInputValidator = v.object({
+  source: archiveSupportedSourceValidator,
+  historyChoice: archiveHistoryChoiceValidator,
+});
+
+export const archiveWriteDenialReasonValidator = v.union(
+  v.literal('server_disabled'),
+  v.literal('not_activated'),
+  v.literal('not_enrolled'),
+  v.literal('enrollment_invalid'),
+  v.literal('credential_revoked'),
+  v.literal('not_pro'),
+  v.literal('frozen'),
+  v.literal('deleting'),
+  v.literal('source_unauthorized'),
+);
+
+export const archiveStatusCollectorValidator = v.object({
+  enrollmentId: v.id('archiveEnrollments'),
+  collectorId: v.string(),
+  collectorCredentialId: v.id('collectorCredentials'),
+  status: archiveEnrollmentStatusValidator,
+  authorizedSources: v.array(archiveAuthorizedSourceValidator),
+  pendingSpoolBytes: v.optional(v.number()),
+  localError: v.optional(v.string()),
+  localObservedAt: v.optional(v.number()),
+});
+
+export const archiveStatusContributionValidator = v.object({
+  userId: v.id('users'),
+  contributionId: v.id('archiveContributions'),
+  status: archiveEnrollmentStatusValidator,
+  collectors: v.array(archiveStatusCollectorValidator),
+});
+
+export const archiveSessionIntegrityValidator = v.object({
+  source: archiveSupportedSourceValidator,
+  sourceSessionId: v.string(),
+  errorClass: v.optional(v.string()),
+  repairOutcome: v.optional(v.string()),
+  updatedAt: v.number(),
+});
+
+export const archiveStatusProjectionValidator = v.object({
+  lifecycle: archiveLifecycleValidator,
+  capBytes: v.number(),
+  storedBytes: v.union(v.number(), v.null()),
+  lastDurableAcknowledgedAt: v.union(v.number(), v.null()),
+  enrolledContributorCount: v.number(),
+  enrolledCollectorCount: v.number(),
+  graceDeadlineAt: v.union(v.number(), v.null()),
+  contributions: v.array(archiveStatusContributionValidator),
+  integritySessions: v.array(archiveSessionIntegrityValidator),
+});
