@@ -27,6 +27,7 @@ pub struct MenuHandles<R: Runtime> {
     pub src_claude: MenuItem<R>,
     pub src_codex: MenuItem<R>,
     pub action_pause: MenuItem<R>,
+    pub action_update: MenuItem<R>,
     pub autostart: CheckMenuItem<R>,
 }
 
@@ -56,6 +57,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
 
     let open_dashboard = action("open_dashboard", "Open dashboard").map_err(tauri_err)?;
     let open_logs = action("open_logs", "Open logs").map_err(tauri_err)?;
+    let action_update = action("action_update", "Update to latest").map_err(tauri_err)?;
     let quit = action("quit", "Quit Trace Flow Desktop").map_err(tauri_err)?;
 
     let sep = || PredefinedMenuItem::separator(app).map_err(tauri_err);
@@ -74,6 +76,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
         .item(&autostart)
         .item(&open_dashboard)
         .item(&open_logs)
+        .item(&action_update)
         .item(&sep()?)
         .item(&quit)
         .build()
@@ -84,6 +87,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> Result<(Menu<R>, MenuHandle
         src_claude,
         src_codex,
         action_pause,
+        action_update,
         autostart,
     };
     Ok((menu, handles))

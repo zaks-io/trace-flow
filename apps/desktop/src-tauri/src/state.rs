@@ -60,12 +60,28 @@ pub struct RecentError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum UpdateStatus {
+    #[default]
+    Idle,
+    Checking,
+    Installing {
+        version: String,
+    },
+    UpToDate {
+        version: String,
+    },
+    Failed,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppState {
     pub connection: ConnectionState,
     pub sync: SyncStatus,
     pub sources: SourceCounts,
     pub autostart: bool,
+    pub update: UpdateStatus,
     pub last_sync_at: Option<SystemTime>,
     pub recent_errors: Vec<RecentError>,
 }
@@ -97,5 +113,25 @@ impl AppStateBus {
 impl Default for AppStateBus {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateStatus;
+
+    #[test]
+    fn update_status_has_a_stable_window_contract() {
+        assert_eq!(
+            serde_json::to_value(UpdateStatus::Checking).unwrap(),
+            serde_json::json!({ "status": "checking" })
+        );
+        assert_eq!(
+            serde_json::to_value(UpdateStatus::Installing {
+                version: "1.2.3".to_string(),
+            })
+            .unwrap(),
+            serde_json::json!({ "status": "installing", "version": "1.2.3" })
+        );
     }
 }

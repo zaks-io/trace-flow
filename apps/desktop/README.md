@@ -49,22 +49,33 @@ Rust gates (run by the workspace `rust` CI job): `bun run rust:fmt`, `rust:check
 
 ## Release
 
-Desktop releases are manual GitHub Actions runs. For a real release, create and push the version tag
-first, then dispatch from that tag:
+Desktop releases run automatically when desktop or shared Collector code lands on `main`. CI builds,
+signs, and notarizes both platforms, then publishes the updater artifacts to the public R2 download
+channel. The manifest is written last, so a partial upload never becomes the current release.
+
+The version is generated as `{configured major}.{configured minor}.{GitHub run number}`. This keeps
+every published build newer than the previous one without a version-bump commit. CI rejects a release
+whose generated version is not newer than the published manifest.
+
+Use a manual run for a rebuild or a platform-only test:
 
 ```sh
-git tag traceflow-desktop-v0.1.1
-git push origin traceflow-desktop-v0.1.1
-gh workflow run desktop-release.yml --ref traceflow-desktop-v0.1.1 -f platform=both -f tag=traceflow-desktop-v0.1.1
+gh workflow run desktop-release.yml --ref main -f platform=both -f release_notes='Release notes'
 ```
 
-Defaults:
+Only a `both` run from `main` publishes. Single-platform runs build signed CI artifacts without
+changing the public update channel.
 
-- tag: `traceflow-desktop-v{version}` from `src-tauri/tauri.conf.json`
-- GitHub Latest: desktop releases own the repository Latest channel
-- updater manifest: `traceflow-desktop-latest.json` from the repository Latest release
-- macOS artifact names: `traceflow-desktop-macos-arm64.*`
-- Windows artifact names: `traceflow-desktop-windows-x64.*`
+Published paths:
+
+- updater manifest: `https://downloads.zaks.sh/trace-flow/desktop/latest.json`
+- current macOS installer: `https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop.dmg`
+- current Windows installer: `https://downloads.zaks.sh/trace-flow/desktop/latest/trace-flow-desktop-setup.exe`
+- immutable updater artifacts: `https://downloads.zaks.sh/trace-flow/desktop/{version}/...`
+
+Builds installed before the updater plugin shipped need one manual install from the current installer
+link. After that, **Update to latest** in the window or tray installs signed updates and restarts the
+app.
 
 Required repository secrets:
 
@@ -80,6 +91,9 @@ Required repository secrets:
 | `TAURI_UPDATER_PUBLIC_KEY`           | Public key embedded in release Tauri config |
 | `TAURI_SIGNING_PRIVATE_KEY`          | Private key for Tauri updater artifacts     |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the Tauri updater private key  |
+
+The `Production` GitHub environment must also provide `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN`. The token needs write access to the existing `static` R2 bucket.
 
 ## Follow-up work (not in this MVP)
 
