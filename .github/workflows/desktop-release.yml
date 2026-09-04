@@ -99,37 +99,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Resolved desktop release version $version."
 
-      - name: Validate desktop release version
-        if: steps.platform.outputs.platform == 'both' && github.ref == 'refs/heads/main'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          manifest_file=$(mktemp)
-          trap 'rm -f "$manifest_file"' EXIT
-
-          http_code=$(curl -sS -L \
-            -w '%{http_code}' \
-            -o "$manifest_file" \
-            "${UPDATE_ROOT}/latest.json?run=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}")
-
-          if [ "$http_code" = "404" ]; then
-            echo "No published desktop manifest found; allowing the first release."
-            exit 0
-          fi
-          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "::error::failed to fetch the published desktop manifest; HTTP $http_code"
-            exit 1
-          fi
-
-          remote_version=$(jq -er '.version' "$manifest_file")
-          highest=$(printf '%s\n%s\n' "$remote_version" "$VERSION" | sort -V | tail -n1)
-          if [ "$VERSION" = "$remote_version" ] || [ "$highest" != "$VERSION" ]; then
-            echo "::error::desktop version $VERSION must be newer than published version $remote_version"
-            exit 1
-          fi
-          echo "Desktop release version $VERSION is newer than $remote_version."
-
   build:
     name: Build (${{ matrix.name }})
     needs: setup
@@ -327,11 +296,39 @@ jobs:
           {
             echo "dmg_file=$DMG_FILE"
             echo "darwin_bundle=$DARWIN_BUNDLE"
-            echo "darwin_name=$(basename "$DARWIN_BUNDLE")"
+            echo "darwin_name=trace-flow-desktop-macos-arm64.app.tar.gz"
             echo "windows_bundle=$WIN_BUNDLE"
-            echo "windows_name=$(basename "$WIN_BUNDLE")"
+            echo "windows_name=trace-flow-desktop-windows-x64-setup.exe"
             echo "msi_file=$MSI_FILE"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Validate desktop release version
+        run: |
+          set -euo pipefail
+          manifest_file=$(mktemp)
+          trap 'rm -f "$manifest_file"' EXIT
+
+          http_code=$(curl -sS -L \
+            -w '%{http_code}' \
+            -o "$manifest_file" \
+            "${UPDATE_ROOT}/latest.json?run=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}")
+
+          if [ "$http_code" = "404" ]; then
+            echo "No published desktop manifest found; allowing the first release."
+            exit 0
+          fi
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::failed to fetch the published desktop manifest; HTTP $http_code"
+            exit 1
+          fi
+
+          remote_version=$(jq -er '.version' "$manifest_file")
+          highest=$(printf '%s\n%s\n' "$remote_version" "$VERSION" | sort -V | tail -n1)
+          if [ "$VERSION" = "$remote_version" ] || [ "$highest" != "$VERSION" ]; then
+            echo "::error::desktop version $VERSION must be newer than published version $remote_version"
+            exit 1
+          fi
+          echo "Desktop release version $VERSION is newer than $remote_version."
 
       - name: Upload versioned artifacts
         env:
@@ -346,21 +343,22 @@ jobs:
           destination="${R2_BUCKET}/trace-flow/desktop/${VERSION}"
           upload() {
             local source=$1
-            local content_type=$2
+            local name=$2
+            local content_type=$3
             bunx wrangler r2 object put \
-              "${destination}/$(basename "$source")" \
+              "${destination}/${name}" \
               --remote \
               --file "$source" \
               --content-type "$content_type" \
               --cache-control 'public, max-age=31536000, immutable' \
               --force
           }
-          upload "$DMG_FILE" application/x-apple-diskimage
-          upload "$DARWIN_BUNDLE" application/gzip
-          upload "${DARWIN_BUNDLE}.sig" text/plain
-          upload "$WIN_BUNDLE" application/vnd.microsoft.portable-executable
-          upload "${WIN_BUNDLE}.sig" text/plain
-          upload "$MSI_FILE" application/x-msi
+          upload "$DMG_FILE" trace-flow-desktop-macos-arm64.dmg application/x-apple-diskimage
+          upload "$DARWIN_BUNDLE" trace-flow-desktop-macos-arm64.app.tar.gz application/gzip
+          upload "${DARWIN_BUNDLE}.sig" trace-flow-desktop-macos-arm64.app.tar.gz.sig text/plain
+          upload "$WIN_BUNDLE" trace-flow-desktop-windows-x64-setup.exe application/vnd.microsoft.portable-executable
+          upload "${WIN_BUNDLE}.sig" trace-flow-desktop-windows-x64-setup.exe.sig text/plain
+          upload "$MSI_FILE" trace-flow-desktop-windows-x64.msi application/x-msi
 
       - name: Publish latest installers
         env:
