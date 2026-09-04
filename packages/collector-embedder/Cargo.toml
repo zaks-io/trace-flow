@@ -2,7 +2,7 @@
 name = "collector-embedder"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "Trace Flow Collector embedder: login, keychain, connection state, source detection, and the sync drive loop shared by the CLI and the desktop app"
 
 [dependencies]

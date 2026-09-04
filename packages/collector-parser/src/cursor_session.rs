@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. Cursor stores no per-session `cwd` (composerData.cwd is null), so unlike
 // the Claude/Codex session readers there is no working directory to resolve a repo from — attribution
 // is reconstructed from the file paths the session's tools touched. Trace Flow owns the contract, IDs,

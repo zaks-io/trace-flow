@@ -1,5 +1,13 @@
 # Coding-Agent Collector
 
+These examples refer to Zaks.io's company deployment and require access. Trace Flow is internal
+development tooling shared as source, with no service availability or support commitment. For a
+fork, substitute your own endpoints and credentials. Requests and uploaded activity go to the
+configured deployment; use synthetic data when testing.
+
+Agent Conversation Analytics is not production-ready. The repository roadmap tracks the remaining
+production checks; downloadable builds do not establish readiness.
+
 Trace Flow's private-alpha collector turns local coding-agent activity into cost, token, context,
 tool, repository, and review analytics in `/app/agents`.
 

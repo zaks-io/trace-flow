@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code: otto-sync resolved a remote URL but never normalized one (it stored the
 // raw `remote.origin.url`), so this canonicalizer has no otto equivalent. Trace Flow owns the contract,
 // IDs, pricing, redaction, and storage around this code.

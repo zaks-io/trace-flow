@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/normalize.rs `normalize_agent_file_path` (~/src/otto,
 // 2026-05-25). Reworked for Trace Flow's stricter rule: a stored file path is either repo-relative
 // or the `outside_repo` sentinel — never the `~/`-prefixed fallback otto keeps, and never an

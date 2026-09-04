@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. otto had useful Codex capability hints (`base_instructions`, `dynamic_tools`)
 // but no normalized upload contract, no Tinybird table, and no coverage semantics (ADR "Capability
 // Snapshots"). Trace Flow defines that contract here: passive, conversation-only capture of

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the tray menu. Adapted from otto-desktop's menu builder, trimmed to the agent
 // collector surface (no provider-usage rows).
 

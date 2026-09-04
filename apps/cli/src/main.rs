@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI (`trace-flow`). A thin clap + stdout shim over `collector-embedder`, the
 // shared embedder the desktop app also links (Linear TRA-112, TRA-115).
 

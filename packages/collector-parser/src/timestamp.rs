@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Replaces otto-parser/src/parser/normalize.rs `timestamp_ms` (~/src/otto, 2026-05-25), which leaned on
 // `chrono::DateTime::parse_from_rfc3339`. Trace Flow drops the dependency: `chrono` is not in the
 // workspace lock, the parser crate keeps a deliberately tiny pinned dependency surface (it is the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the menu-bar Collector. Adapted from otto-desktop's lib.rs.
 
 //! The desktop Collector (TRA-115).

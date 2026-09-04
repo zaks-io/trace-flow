@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI: detected transcript sources.
 
 //! Where each [`AgentSource`]'s local transcripts live, and which ones are present on this box.

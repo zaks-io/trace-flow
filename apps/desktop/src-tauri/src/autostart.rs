@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: "Start at login", with a macOS-specific LaunchAgent writer.
 
 //! Cross-platform facade over autostart so the tray and setup code stay platform-agnostic.

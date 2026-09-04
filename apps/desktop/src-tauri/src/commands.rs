@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the Tauri command surface the first-run/settings window invokes.
 
 //! The IPC the window calls. Every command is a thin wrapper over `collector-embedder` + the

@@ -2,7 +2,7 @@
 name = "collector-archive"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "Lossless Claude and Codex Conversation Archive contracts."
 
 [dependencies]

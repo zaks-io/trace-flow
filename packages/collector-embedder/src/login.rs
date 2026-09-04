@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI: browser device-flow login.
 
 //! `trace-flow login` — the browser device flow that mints a Collector Credential.

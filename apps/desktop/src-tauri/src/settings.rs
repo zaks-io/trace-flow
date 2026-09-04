@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the engine's persisted choices.
 
 //! The user's sync choices, persisted across relaunches.

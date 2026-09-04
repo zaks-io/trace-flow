@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. Codex stores session identity + git facts in a single `session_meta`
 // record's `payload`, unlike Claude (which repeats `sessionId`/`cwd`/`gitBranch` on every line). This
 // is the Codex counterpart to `claude_session`. Trace Flow owns the contract, IDs, pricing, redaction,

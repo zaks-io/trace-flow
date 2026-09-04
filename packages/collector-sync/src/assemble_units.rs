@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. This is the sync-layer equivalent of otto-sync engine.rs's per-file ->
 // upload-unit step (~/src/otto, 2026-05-25), but it targets the local SQLite-cursor model — a `SyncUnit`
 // the drive loop POSTs plus a `FileCursor` it advances only on a `2xx` — instead of otto's

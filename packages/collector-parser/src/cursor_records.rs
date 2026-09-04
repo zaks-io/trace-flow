@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. The one place that knows the shape of a Cursor `bubbleId:` record, so the
 // four Cursor emitters read it through named accessors instead of each re-deriving the `cursorDiskKV`
 // JSON layout. Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.

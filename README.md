@@ -1,13 +1,18 @@
 # Trace Flow
 
-Observability for model API traffic and local coding-agent sessions, built on Cloudflare Workers,
-Convex, Tinybird, R2, and a local Rust collector.
+Trace Flow is Zaks.io's internal development tooling for inspecting model API requests and local
+coding-agent sessions. We are sharing the source under [Apache-2.0](./LICENSE) because it may be
+useful to other builders working on similar problems.
 
-Trace Flow is in private alpha. The model gateway is live. Agent Conversation Analytics has a
-working collector, production-shaped cloud ingestion implementation, dashboard, and desktop updater
-distribution, but remains launch-gated until the production checks in the
-[Agent Conversation Analytics roadmap](./docs/guides/agent-conversation-analytics/ROADMAP.md) are
-complete.
+This is an early, company-specific project. Expect rough edges, changing APIs, and setup work.
+It is not a supported observability service or a turnkey self-hosted package. Maintenance follows
+our internal needs; there is no support SLA or release schedule.
+
+The model gateway is used internally. Agent Conversation Analytics has collector, ingestion,
+dashboard, and desktop implementations, but is not production-ready until the checks in the
+[roadmap](./docs/guides/agent-conversation-analytics/ROADMAP.md) are complete. Conversation Archive
+is unfinished and its API is disabled. Roadmaps and specifications describe intended work, not
+necessarily working features.
 
 ## What Trace Flow observes
 
@@ -18,7 +23,7 @@ and add an organization-scoped Trace Flow API key. The gateway streams the provi
 the caller while it captures timing, token usage, estimated cost, trace context, and optional request
 and response bodies.
 
-Supported providers:
+Implemented provider routes:
 
 | Provider   | Base URL                                       |
 | ---------- | ---------------------------------------------- |
@@ -129,6 +134,13 @@ Requirements:
 - Rust toolchain for collector or desktop work
 - Docker and the Tinybird CLI for the self-contained local data plane
 
+The configuration and CI workflows contain Zaks.io resource names, domains, and deployment IDs.
+A fork needs its own service accounts, resources, secrets, and deployment configuration. Review
+`.mcp.json` and `.codex/config.toml` before enabling the checked-in agent connections; they point to
+company services. The
+collector defaults to company endpoints; set `TRACE_FLOW_INGEST_URL` and
+`TRACE_FLOW_CONVEX_SITE_URL` before using it with your own deployment.
+
 Install the workspace and prepare the local environment:
 
 ```bash
@@ -172,9 +184,12 @@ bun run lint
 bun run build
 ```
 
-## Public entry points
+## Company deployment
 
-- Product and dashboard: <https://trace-flow.dev>
+These URLs belong to the company deployment. Publishing the source does not grant access to it or
+promise availability. Use your own endpoints and credentials for an independent deployment.
+
+- Dashboard: <https://trace-flow.dev>
 - Human docs: <https://trace-flow.dev/docs>
 - Agent bootstrap: <https://trace-flow.dev/agents.md>
 - LLM documentation index: <https://trace-flow.dev/llms.txt>
@@ -195,3 +210,16 @@ Consumer, and Analyst Sandbox according to their dependencies.
 `apps/archive-api` is excluded from production deployment. Do not manually deploy production.
 
 See [SETUP.md](./SETUP.md) for resource ownership, secrets, and environment-specific setup.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development and contribution expectations, and
+[SECURITY.md](./SECURITY.md) for private vulnerability reporting. Do not include real prompts,
+transcripts, credentials, or customer data in issues and pull requests.
+
+## License
+
+Original project code and documentation are licensed under the [Apache License, Version 2.0](./LICENSE).
+See [NOTICE](./NOTICE) and [third-party notices](./THIRD_PARTY_NOTICES.md) for attribution.
+Third-party components retain their own licenses.
+The license does not grant rights to company or provider trademarks.

@@ -2,7 +2,7 @@
 name = "collector-api-client"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "HTTP client for the Trace Flow agent Collector ingest worker."
 
 [dependencies]

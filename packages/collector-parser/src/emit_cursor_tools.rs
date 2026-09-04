@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. One unpriced `AgentToolEventFact` per Cursor `toolFormerData` block, with a
 // structurally-classified shell command and redacted capped excerpts only. Trace Flow owns the contract,
 // IDs, pricing, redaction, and storage around this code.

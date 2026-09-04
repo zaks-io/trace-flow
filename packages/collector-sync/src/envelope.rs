@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code: otto-sync assembled its upload payload inline against otto's own wire
 // types (engine.rs, ~/src/otto); the `AgentIngestEnvelope` contract is Trace Flow's own. Trace Flow
 // owns the contract, IDs, pricing, redaction, and storage around this code.

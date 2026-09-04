@@ -1,6 +1,11 @@
 # Quick Start
 
-This guide connects model API traffic to Trace Flow. Gateway requests produce LLM spans and safe
+These examples refer to Zaks.io's company deployment and require access. Trace Flow is internal
+development tooling shared as source, with no service availability or support commitment. For a
+fork, substitute your own endpoints and credentials. Requests and uploaded activity go to the
+configured deployment; use synthetic data when testing.
+
+This guide connects model API traffic to Trace Flow. Gateway requests produce LLM spans and
 event metadata. Add W3C trace context or export application spans over OTLP when you want those LLM
 spans joined to the rest of an application trace.
 

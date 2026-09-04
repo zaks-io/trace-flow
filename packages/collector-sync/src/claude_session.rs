@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. The Claude record field names read here (`sessionId`, `timestamp`, `cwd`,
 // `gitBranch`, `agentId`) match what otto-parser/src/parser/claude_code/mod.rs reads
 // (~/src/otto, 2026-05-25), but otto read them per-event inside its parser; here the sync layer

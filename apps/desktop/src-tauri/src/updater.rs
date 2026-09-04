@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: signed in-app updates from the public desktop release channel.
 
 use serde::Serialize;

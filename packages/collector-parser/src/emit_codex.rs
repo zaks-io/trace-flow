@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/codex_cli/mod.rs message emission (~/src/otto, 2026-05-25).
 // Reworked: otto builds one priced event per `message` record and threads a renumbering turn counter;
 // Trace Flow emits one unpriced `AgentMessageFact` per segmented turn (see `codex_turns`), ships tokens

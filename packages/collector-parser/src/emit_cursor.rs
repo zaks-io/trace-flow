@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code (otto parsed Cursor's legacy `~/.cursor/projects` JSONL, not the current
 // `state.vscdb`; this targets the SQLite store). One unpriced `AgentMessageFact` per conversational turn,
 // tokens + session-grain model only — pricing and model normalization are server-side. Trace Flow owns

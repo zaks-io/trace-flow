@@ -77,5 +77,6 @@
     "typescript-eslint": "^8.59.3",
     "vitest": "^4.1.6",
     "wrangler": "^4.88.0"
-  }
+  },
+  "license": "Apache-2.0"
 }

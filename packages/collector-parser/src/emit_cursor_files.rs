@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. One unpriced `AgentFileEventFact` per Cursor file-tool call, with the
 // touched path relativized against the session's repo root (repo-relative or the `outside_repo`
 // sentinel, never a home dir/username). Trace Flow owns the contract, IDs, pricing, redaction, and

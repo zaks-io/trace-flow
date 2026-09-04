@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/claude_code/mod.rs (~/src/otto, 2026-05-25). Reworked: otto
 // fingerprints and emits one fact *per JSONL record* (key includes the record's timestamp and
 // content hash), so the several records Claude Code writes for a single `message.id` each carry the

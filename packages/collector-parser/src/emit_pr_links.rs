@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. otto extracted no pull-request links; this is the passive, local-evidence
 // PR attribution input the ADR ("Repo and pull request attribution") calls for. Trace Flow owns the
 // contract, IDs, pricing, redaction, and storage around this code.

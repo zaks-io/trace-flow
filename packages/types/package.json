@@ -16,5 +16,6 @@
     "@types/node": "^24.12.3",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6"
-  }
+  },
+  "license": "Apache-2.0"
 }

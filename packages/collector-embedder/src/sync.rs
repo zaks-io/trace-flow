@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI: the sync embedder over collector-sync.
 
 //! The CLI's sync embedder.

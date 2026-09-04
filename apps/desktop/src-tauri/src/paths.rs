@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: app config + log directory resolution. Adapted from otto-desktop's paths.rs.
 
 //! Where the desktop app keeps its own files (logs, and the Tauri app-config dir).

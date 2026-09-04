@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: drive tray-menu updates off the state bus.
 
 use std::sync::Arc;

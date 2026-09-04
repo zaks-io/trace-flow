@@ -1,5 +1,10 @@
 # SDK Reference
 
+These examples refer to Zaks.io's company deployment and require access. Trace Flow is internal
+development tooling shared as source, with no service availability or support commitment. For a
+fork, substitute your own endpoints and credentials. Requests and uploaded activity go to the
+configured deployment; use synthetic data when testing.
+
 Copy-paste provider examples for Trace Flow gateway.
 
 Gateway base URL: `https://gateway.trace-flow.dev`

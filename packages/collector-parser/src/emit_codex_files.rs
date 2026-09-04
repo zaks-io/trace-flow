@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/codex_cli/blocks.rs `extract_patch_files` + the apply_patch arm
 // of `codex_tool_use` (~/src/otto, 2026-05-25). Reworked: otto attached touched paths to its normalized
 // tool event; Trace Flow emits a standalone unpriced `AgentFileEventFact` per file the patch touches,

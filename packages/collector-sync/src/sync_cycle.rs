@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. otto-sync ran its upload loop inline in engine.rs (~/src/otto) against
 // otto's own wire types and a server-side cursor; this is Trace Flow's own cycle, composed over the
 // landed envelope assembler, SQLite cursor store, and orchestrator, behind a client trait so it

@@ -37,5 +37,6 @@
     "@vitest/coverage-v8": "^4.1.6",
     "convex-test": "0.0.54",
     "vitest": "^4.1.6"
-  }
+  },
+  "license": "Apache-2.0"
 }

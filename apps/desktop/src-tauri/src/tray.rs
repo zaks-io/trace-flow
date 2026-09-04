@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the tray icon and its menu-event dispatch.
 
 use tauri::{menu::Menu, tray::TrayIconBuilder, AppHandle, Manager, Runtime};
