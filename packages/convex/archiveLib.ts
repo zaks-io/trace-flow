@@ -332,6 +332,14 @@ export async function refreshArchiveStatusCounts(
   });
 }
 
+export function nextActivationStatusForEntitlement(
+  current: ArchiveActivationStatus,
+  entitled: boolean,
+): ArchiveActivationStatus {
+  if (current === 'deleting') return 'deleting';
+  return entitled ? 'active' : 'frozen';
+}
+
 export async function ensureArchiveStatusRow(
   ctx: MutationCtx,
   args: {
@@ -345,15 +353,15 @@ export async function ensureArchiveStatusRow(
   const existing = await getArchiveStatusRow(ctx, args.orgId);
   const counts = await countActiveEnrollments(ctx, args.orgId);
   if (existing) {
+    // Enrollment and count refresh must not overwrite Archive API-owned
+    // lifecycle, stored bytes, or last durable acknowledgement.
     const patch: {
-      lifecycle: ArchiveLifecycle;
       capBytes: number;
       enrolledContributorCount: number;
       enrolledCollectorCount: number;
       updatedAt: number;
       graceDeadlineAt?: number;
     } = {
-      lifecycle: args.lifecycle,
       capBytes: args.capBytes,
       ...counts,
       updatedAt: args.now,
@@ -377,6 +385,23 @@ export async function ensureArchiveStatusRow(
   });
 }
 
+async function applyEntitlementLifecycle(
+  ctx: MutationCtx,
+  args: {
+    orgId: Id<'organizations'>;
+    lifecycle: ArchiveLifecycle;
+    capBytes: number;
+    graceDeadlineAt?: number | null;
+    now: number;
+  },
+): Promise<void> {
+  const statusId = await ensureArchiveStatusRow(ctx, args);
+  await ctx.db.patch(statusId, {
+    lifecycle: args.lifecycle,
+    updatedAt: args.now,
+  });
+}
+
 export async function syncArchiveLifecycleForEntitlement(
   ctx: MutationCtx,
   orgId: Id<'organizations'>,
@@ -388,15 +413,17 @@ export async function syncArchiveLifecycleForEntitlement(
   if (activation.status === 'deleting') return;
 
   const entitled = isActiveProSubscription(subscription);
-  if (entitled) {
+  const nextStatus = nextActivationStatusForEntitlement(activation.status, entitled);
+  if (nextStatus === 'deleting') return;
+
+  if (nextStatus === 'active') {
     const status = await getArchiveStatusRow(ctx, orgId);
     const storedBytes = status?.storedBytes ?? 0;
-    const nextStatus: ArchiveActivationStatus = 'active';
     await ctx.db.patch(activation._id, {
       status: nextStatus,
       graceDeadlineAt: undefined,
     });
-    await ensureArchiveStatusRow(ctx, {
+    await applyEntitlementLifecycle(ctx, {
       orgId,
       lifecycle: projectLifecycle({
         activation: { status: nextStatus },
@@ -415,7 +442,7 @@ export async function syncArchiveLifecycleForEntitlement(
     status: 'frozen',
     graceDeadlineAt,
   });
-  await ensureArchiveStatusRow(ctx, {
+  await applyEntitlementLifecycle(ctx, {
     orgId,
     lifecycle: 'frozen',
     capBytes: activation.capBytes,

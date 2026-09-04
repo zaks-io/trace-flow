@@ -24,6 +24,7 @@ import {
   decideWriteAuthorization,
   isActiveProSubscription,
   isArchiveServerEnabled,
+  nextActivationStatusForEntitlement,
   pickOldestDocument,
   projectLifecycle,
   validateAuthorizedSources,
@@ -382,6 +383,13 @@ describe('archive control-plane pure functions', () => {
     const newer = { _id: 'b', _creationTime: 2 };
     expect(pickOldestDocument([newer, older])).toEqual(older);
     expect(pickOldestDocument([])).toBeNull();
+  });
+
+  it('keeps deleting terminal when entitlement later changes', () => {
+    expect(nextActivationStatusForEntitlement('deleting', true)).toBe('deleting');
+    expect(nextActivationStatusForEntitlement('deleting', false)).toBe('deleting');
+    expect(nextActivationStatusForEntitlement('frozen', true)).toBe('active');
+    expect(nextActivationStatusForEntitlement('active', false)).toBe('frozen');
   });
 
   it('projects blocked at the recorded 100 GB cap', () => {
@@ -818,6 +826,50 @@ describe('archive control plane', () => {
     expect(status.storedBytes).toBe(ARCHIVE_CAP_BYTES);
     expect(status.lastDurableAcknowledgedAt).toBe(999);
     expect(status.enrolledCollectorCount).toBe(2);
+  });
+
+  it('preserves deleting through billing sync after entitlement is regained', async () => {
+    enableArchive();
+    const world = seedWorld();
+    const ownerCtx = world.driver.ctx(identity(world.owner));
+    await call(activate, ownerCtx, {});
+    await call(enroll, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      authorizedSources: sources,
+    });
+    await call(applyServerStatus, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      storedBytes: 50,
+      lastDurableAcknowledgedAt: 111,
+      lifecycle: 'deleting',
+    });
+
+    const deniedWhileDeleting = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      source: 'claude',
+    });
+    expect(deniedWhileDeleting).toEqual({ allowed: false, reason: 'deleting' });
+
+    const subscription = (await world.driver.query('subscriptions').collect()).find(
+      (row) => row.orgId === world.owner.orgId,
+    )!;
+    world.driver.patch(subscription._id, { status: 'canceled' });
+    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
+    world.driver.patch(subscription._id, { status: 'active' });
+    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
+
+    const activation = (await world.driver.query('archiveActivations').collect())[0]!;
+    expect(activation.status).toBe('deleting');
+    const status = await call<StatusResult>(getStatus, ownerCtx, {});
+    expect(status.lifecycle).toBe('deleting');
+    expect(status.storedBytes).toBe(50);
+    expect(status.lastDurableAcknowledgedAt).toBe(111);
+
+    const stillDenied = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      source: 'claude',
+    });
+    expect(stillDenied).toEqual({ allowed: false, reason: 'deleting' });
   });
 
   it('repairs duplicate enrollment slots without throwing on later reads', async () => {
