@@ -3,6 +3,14 @@ import { insertIntoTinybird, insertIntoTinybirdWithRetry } from '../tinybird';
 import type { TinybirdTrace } from '@trace-flow/types';
 import { analyticsKeyId } from '@trace-flow/utils';
 
+function successfulInsert(rows: number) {
+  return {
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(JSON.stringify({ successful_rows: rows, quarantined_rows: 0 })),
+  };
+}
+
 describe('insertIntoTinybird', () => {
   const mockTrace: TinybirdTrace = {
     ReceivedAt: 1700000000000000000,
@@ -41,11 +49,7 @@ describe('insertIntoTinybird', () => {
   });
 
   it('should successfully insert traces', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve(''),
-    });
+    const mockFetch = vi.fn().mockResolvedValue(successfulInsert(1));
     vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybird(
@@ -57,7 +61,7 @@ describe('insertIntoTinybird', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
-      'https://api.tinybird.co/v0/events?name=otel_trace_spans',
+      'https://api.tinybird.co/v0/events?name=otel_trace_spans&wait=true',
       expect.objectContaining({
         method: 'POST',
         headers: {
@@ -69,11 +73,7 @@ describe('insertIntoTinybird', () => {
   });
 
   it('should format traces as NDJSON', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve(''),
-    });
+    const mockFetch = vi.fn().mockResolvedValue(successfulInsert(2));
     vi.stubGlobal('fetch', mockFetch);
 
     const trace1 = { ...mockTrace, TraceId: 'trace-1' };
@@ -101,11 +101,7 @@ describe('insertIntoTinybird', () => {
   });
 
   it('should URL encode datasource name', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve(''),
-    });
+    const mockFetch = vi.fn().mockResolvedValue(successfulInsert(1));
     vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybird(
@@ -118,7 +114,7 @@ describe('insertIntoTinybird', () => {
     const call = mockFetch.mock.calls[0];
     const url = call?.[0] as string;
     expect(url).toContain('otel%20traces%20with%20spaces');
-    expect(url).not.toContain('wait=true');
+    expect(url).toContain('wait=true');
   });
 
   it('should throw error on non-ok response', async () => {
@@ -131,7 +127,7 @@ describe('insertIntoTinybird', () => {
 
     await expect(
       insertIntoTinybird([mockTrace], 'test-token', 'otel_trace_spans', 'https://api.tinybird.co'),
-    ).rejects.toThrow('Tinybird insert failed: 400 Bad request error');
+    ).rejects.toMatchObject({ status: 400, reason: 'http', responseText: 'Bad request error' });
   });
 
   it('should handle 401 unauthorized', async () => {
@@ -149,7 +145,7 @@ describe('insertIntoTinybird', () => {
         'otel_trace_spans',
         'https://api.tinybird.co',
       ),
-    ).rejects.toThrow('Tinybird insert failed: 401 Unauthorized');
+    ).rejects.toMatchObject({ status: 401, reason: 'http', responseText: 'Unauthorized' });
   });
 
   it('should handle 500 server error', async () => {
@@ -162,15 +158,11 @@ describe('insertIntoTinybird', () => {
 
     await expect(
       insertIntoTinybird([mockTrace], 'test-token', 'otel_trace_spans', 'https://api.tinybird.co'),
-    ).rejects.toThrow('Tinybird insert failed: 500 Internal server error');
+    ).rejects.toMatchObject({ status: 500, reason: 'http', responseText: 'Internal server error' });
   });
 
   it('should use custom host', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve(''),
-    });
+    const mockFetch = vi.fn().mockResolvedValue(successfulInsert(1));
     vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybird(
@@ -183,15 +175,11 @@ describe('insertIntoTinybird', () => {
     const call = mockFetch.mock.calls[0];
     const url = call?.[0] as string;
     expect(url).toContain('http://localhost:7181/v0/events');
-    expect(url).not.toContain('wait=true');
+    expect(url).toContain('wait=true');
   });
 
   it('should handle multiple traces', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve(''),
-    });
+    const mockFetch = vi.fn().mockResolvedValue(successfulInsert(10));
     vi.stubGlobal('fetch', mockFetch);
 
     const traces = Array.from({ length: 10 }, (_, i) => ({
@@ -256,11 +244,7 @@ describe('insertIntoTinybirdWithRetry', () => {
   });
 
   it('should succeed on first attempt', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve(''),
-    });
+    const mockFetch = vi.fn().mockResolvedValue(successfulInsert(1));
     vi.stubGlobal('fetch', mockFetch);
 
     await insertIntoTinybirdWithRetry(
@@ -291,7 +275,7 @@ describe('insertIntoTinybirdWithRetry', () => {
         'https://api.tinybird.co',
         mockDelay,
       ),
-    ).rejects.toThrow('Tinybird insert failed: 500 Server error');
+    ).rejects.toMatchObject({ status: 500, reason: 'http', responseText: 'Server error' });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockDelay).not.toHaveBeenCalled();
@@ -315,7 +299,11 @@ describe('insertIntoTinybirdWithRetry', () => {
         'https://api.tinybird.co',
         mockDelay,
       ),
-    ).rejects.toThrow('Tinybird insert failed: 422 Partial ingestion error');
+    ).rejects.toMatchObject({
+      status: 422,
+      reason: 'http',
+      responseText: 'Partial ingestion error',
+    });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockDelay).not.toHaveBeenCalled();
@@ -339,7 +327,7 @@ describe('insertIntoTinybirdWithRetry', () => {
         'https://api.tinybird.co',
         mockDelay,
       ),
-    ).rejects.toThrow('Tinybird insert failed: 400 Bad request error');
+    ).rejects.toMatchObject({ status: 400, reason: 'http', responseText: 'Bad request error' });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockDelay).not.toHaveBeenCalled();

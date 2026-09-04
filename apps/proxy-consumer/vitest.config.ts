@@ -15,6 +15,11 @@ export default defineConfig({
             maxRetries: 5,
             deadLetterQueue: 'trace-flow-requests-dlq-dev',
           },
+          'trace-flow-requests-dlq-dev': {
+            maxBatchSize: 10,
+            maxBatchTimeout: 5,
+            maxRetries: 5,
+          },
         },
       },
     }),

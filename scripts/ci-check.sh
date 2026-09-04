@@ -13,5 +13,6 @@ export AUTH0_CLIENT_ID="${AUTH0_CLIENT_ID:-test-client-id}"
 export AUTH0_SECRET="${AUTH0_SECRET:-test-secret-at-least-32-characters-long}"
 export AUTH0_CLIENT_SECRET="${AUTH0_CLIENT_SECRET:-test}"
 export BODY_ACCESS_JWT_SECRET="${BODY_ACCESS_JWT_SECRET:-test-body-access-secret-at-least-32-characters-long}"
+node --test scripts/ci/body-retention.test.mjs scripts/ingest-recovery/worker.test.mjs
 bun run duplicates:check
 exec bun run check

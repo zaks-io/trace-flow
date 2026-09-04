@@ -1,9 +1,12 @@
+import { captureMessage } from '@sentry/cloudflare';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type * as SentryCloudflare from '@sentry/cloudflare';
 import { createExecutionContext, env, runInDurableObject } from 'cloudflare:test';
-import type { QueueMessage } from '@trace-flow/types';
+import type { QueueMessage, TraceDeliveryEnvelope, TraceDeliveryMessage } from '@trace-flow/types';
+import { buildTraceDeliveryKey } from '@trace-flow/utils';
 import type { TraceBatcherInstance } from '../batcher';
 import worker from '../index';
+import { runTraceBatcherHealthCheck } from '../index';
 import { createMockTrace } from './fixtures';
 import { analyticsKeyId } from '@trace-flow/utils';
 import { calculateShardId } from '../sharding';
@@ -24,6 +27,7 @@ vi.mock('../tinybird', () => ({
 // not this handler's logic.
 vi.mock('@sentry/cloudflare', async (importOriginal) => ({
   ...(await importOriginal<typeof SentryCloudflare>()),
+  captureMessage: vi.fn(),
   instrumentDurableObjectWithSentry: <T>(_options: unknown, DurableObjectClass: T): T =>
     DurableObjectClass,
 }));
@@ -126,6 +130,138 @@ describe('Queue Handler Integration', () => {
     expect(JSON.stringify(ledgerKeys)).not.toContain(message.apiKey);
   });
 
+  it('copies an encrypted body before durable staging, then deletes the outbox reference', async () => {
+    const requestId = 'delivery-request';
+    const key = buildTraceDeliveryKey('delivery-1');
+    const bodyKey = `bodies/${requestId}`;
+    const payload = { ...createMockQueueMessage(requestId, 'api-key-delivery'), orgId: 'org-1' };
+    const envelope: TraceDeliveryEnvelope = {
+      version: 1,
+      message: payload,
+      body: {
+        key: bodyKey,
+        orgId: 'org-1',
+        encryptedPayload: {
+          v: 1,
+          alg: 'AES-GCM',
+          kdf: 'HKDF-SHA-256',
+          kid: 'kid-1',
+          orgId: 'org-1',
+          iv: 'iv',
+          data: 'ciphertext',
+        },
+      },
+    };
+    await env.STORAGE.put(key, JSON.stringify(envelope));
+    let acks = 0;
+    const message = {
+      id: 'queue-delivery-1',
+      timestamp: new Date(),
+      body: { type: 'delivery', key } satisfies TraceDeliveryMessage,
+      attempts: 0,
+      ack: () => acks++,
+      retry: () => undefined,
+    };
+    const batch = {
+      queue: 'trace-flow-requests-dev',
+      messages: [message],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: () => undefined,
+      ackAll: () => undefined,
+    } as unknown as MessageBatch<TraceDeliveryMessage>;
+
+    await worker.queue(batch, env, createExecutionContext());
+    await worker.queue(batch, env, createExecutionContext());
+
+    expect(acks).toBe(2);
+    expect(await env.STORAGE.get(key)).toBeNull();
+    const storedBody = await env.STORAGE.get(bodyKey);
+    expect(storedBody?.customMetadata).toEqual({ orgId: 'org-1' });
+    expect(await storedBody?.json()).toEqual(envelope.body?.encryptedPayload);
+  });
+
+  it('keeps the delivery outbox when the canonical body copy fails', async () => {
+    const requestId = 'delivery-copy-failure';
+    const key = buildTraceDeliveryKey('delivery-copy-failure');
+    const envelope: TraceDeliveryEnvelope = {
+      version: 1,
+      message: { ...createMockQueueMessage(requestId, 'api-key-delivery'), orgId: 'org-1' },
+      body: {
+        key: `bodies/${requestId}`,
+        orgId: 'org-1',
+        encryptedPayload: {
+          v: 1,
+          alg: 'AES-GCM',
+          kdf: 'HKDF-SHA-256',
+          kid: 'kid',
+          orgId: 'org-1',
+          iv: 'iv',
+          data: 'data',
+        },
+      },
+    };
+    await env.STORAGE.put(key, JSON.stringify(envelope));
+    const putSpy = vi.spyOn(env.STORAGE, 'put').mockRejectedValueOnce(new Error('copy failed'));
+    let retries = 0;
+    const batch = {
+      queue: 'trace-flow-requests-dev',
+      messages: [
+        {
+          id: 'copy-failure',
+          timestamp: new Date(),
+          body: { type: 'delivery', key },
+          attempts: 0,
+          ack: () => undefined,
+          retry: () => retries++,
+        },
+      ],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: () => undefined,
+      ackAll: () => undefined,
+    } as unknown as MessageBatch<TraceDeliveryMessage>;
+
+    await worker.queue(batch, env, createExecutionContext());
+
+    expect(retries).toBe(1);
+    expect(await env.STORAGE.get(key)).not.toBeNull();
+    putSpy.mockRestore();
+  });
+
+  it('preserves a DLQ message durably before acknowledging it', async () => {
+    const body = createMockQueueMessage('dlq-request', 'dlq-api-key');
+    let acked = false;
+    const batch = {
+      queue: 'trace-flow-requests-dlq-dev',
+      messages: [
+        {
+          id: 'dlq-message',
+          timestamp: new Date(),
+          body,
+          attempts: 0,
+          ack: () => {
+            acked = true;
+          },
+          retry: () => undefined,
+        },
+      ],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: () => undefined,
+      ackAll: () => undefined,
+    } as unknown as MessageBatch<QueueMessage>;
+
+    await worker.queue(batch, env, createExecutionContext());
+
+    expect(acked).toBe(true);
+    const pages = await Promise.all(
+      [0, 1].map((id) =>
+        env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName(`batcher-${id}`)).listRecovery(),
+      ),
+    );
+    expect(pages.flatMap((page) => page.records)).toEqual([
+      expect.objectContaining({ kind: 'dlq', state: 'blocked', classification: 'dead_letter' }),
+    ]);
+  });
+
   it('should distribute messages across shards by API key', async () => {
     const messages = Array.from({ length: 20 }, (_, i) => {
       const message = createMockQueueMessage(`test-${i}`, `api-key-${i}`);
@@ -197,24 +333,32 @@ describe('Queue Handler Integration', () => {
   it('should write cron health metrics for all shards and only warn for unhealthy ones', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2024-01-01T00:00:00.000Z'));
-    env.NUM_SHARDS = 3;
+    env.NUM_SHARDS = 23;
 
     const analyticsSpy = vi.spyOn(env.ANALYTICS, 'writeDataPoint');
     const warnSpy = vi.spyOn(console, 'warn');
     const infoSpy = vi.spyOn(console, 'info');
 
-    const shard0 = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName('batcher-0'));
-    await runInDurableObject(shard0, (instance: TraceBatcherInstance) => {
-      return instance.addMessageTraces([
+    const staleShard = env.TRACE_BATCHER.get(env.TRACE_BATCHER.idFromName('batcher-22'));
+    await runInDurableObject(staleShard, async (instance: TraceBatcherInstance, state) => {
+      await instance.addMessageTraces([
         { messageId: 'stale-msg', traces: [createMockTrace('trace-stale')] },
       ]);
+      state.storage.sql.exec('UPDATE traces SET timestamp = 0');
+      await state.storage.deleteAlarm();
     });
 
     vi.advanceTimersByTime(11 * 60 * 1000);
 
-    await worker.scheduled(createScheduledController(), env, createExecutionContext());
+    const staleStats = await runInDurableObject(staleShard, (instance: TraceBatcherInstance) =>
+      instance.getStats(),
+    );
+    expect(staleStats.queuedTraces).toBe(1);
+    expect(staleStats.blockedRecoveryRecords).toBe(0);
 
-    expect(analyticsSpy).toHaveBeenCalledTimes(3);
+    await runTraceBatcherHealthCheck(env, createScheduledController().cron);
+
+    expect(analyticsSpy).toHaveBeenCalledTimes(23);
 
     const statuses = analyticsSpy.mock.calls.map(
       ([point]) => (point as { blobs?: string[] }).blobs?.[1],
@@ -263,7 +407,7 @@ describe('Queue Handler Integration', () => {
     );
     expect(completeRecord).toBeDefined();
     expect(completeRecord?.data).toMatchObject({
-      checkedShards: 3,
+      checkedShards: 23,
       cron: '*/5 * * * *',
     });
   });
@@ -617,5 +761,41 @@ describe('Queue Handler Integration', () => {
     await worker.queue(batch, env, createExecutionContext());
 
     expect(ackCalled.value).toBe(true);
+  });
+});
+
+describe('DLQ preservation failure', () => {
+  it('retries without acknowledging and emits an actionable failure event', async () => {
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const message = {
+      id: 'preservation-failure',
+      timestamp: new Date(),
+      body: { malformed: true },
+      attempts: 1,
+      ack,
+      retry,
+    };
+    const batch = {
+      queue: 'trace-flow-requests-dlq-dev',
+      messages: [message],
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll: vi.fn(),
+      ackAll: vi.fn(),
+    } as unknown as MessageBatch<unknown>;
+    const unavailable = () => {
+      throw new Error('durable storage unavailable');
+    };
+    const failingEnv = {
+      ...env,
+      TRACE_BATCHER: { getByName: unavailable, idFromName: unavailable, get: unavailable },
+    } as unknown as typeof env;
+    await worker.queue(batch, failingEnv, createExecutionContext());
+    expect(ack).not.toHaveBeenCalled();
+    expect(retry).toHaveBeenCalledOnce();
+    expect(captureMessage).toHaveBeenCalledWith(
+      'consumer.dead_letter_preservation_failed',
+      expect.objectContaining({ level: 'fatal' }),
+    );
   });
 });

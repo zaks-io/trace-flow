@@ -10,6 +10,7 @@ export * from './message-parsing';
 export * from './redaction';
 export * from './security-headers';
 export * from './collector-auth';
+export * from './trace-delivery';
 
 // Backward compat — djb2Hash was previously exported as hashString
 export { djb2Hash as hashString } from './crypto';

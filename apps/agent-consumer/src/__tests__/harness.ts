@@ -61,9 +61,11 @@ function makeFactBatcher(): AgentConsumerEnv['AGENT_FACT_BATCHER'] {
       ({
         addFacts: async ({
           rows,
+          writeClean = true,
           writeLegacy = false,
         }: {
           rows: Accumulator;
+          writeClean?: boolean;
           writeLegacy?: boolean;
         }) => {
           try {
@@ -73,7 +75,9 @@ function makeFactBatcher(): AgentConsumerEnv['AGENT_FACT_BATCHER'] {
                 continue;
               }
               acceptedRows += rows[category].length;
-              await insertRows(rows[category], 'tb-token', DATASOURCES[category], TINYBIRD_HOST);
+              if (writeClean) {
+                await insertRows(rows[category], 'tb-token', DATASOURCES[category], TINYBIRD_HOST);
+              }
               if (writeLegacy && LEGACY_CATEGORIES.includes(category as never)) {
                 const legacyCategory = category as (typeof LEGACY_CATEGORIES)[number];
                 await insertRows(
@@ -84,9 +88,23 @@ function makeFactBatcher(): AgentConsumerEnv['AGENT_FACT_BATCHER'] {
                 );
               }
             }
-            return { status: 'accepted', acceptedRows, duplicateRows: 0, repairRows: 0 };
+            return {
+              status: 'accepted',
+              acceptedRows,
+              duplicateRows: 0,
+              repairRows: 0,
+              blockedRecoveryRows: 0,
+              blockedRecoveryRecords: 0,
+            };
           } catch {
-            return { status: 'failed', acceptedRows: 0, duplicateRows: 0, repairRows: 0 };
+            return {
+              status: 'failed',
+              acceptedRows: 0,
+              duplicateRows: 0,
+              repairRows: 0,
+              blockedRecoveryRows: 0,
+              blockedRecoveryRecords: 0,
+            };
           }
         },
       }) as unknown,
@@ -121,7 +139,7 @@ export function mockTinybird(failDatasources: string[] = []): {
       if (failDatasources.includes(datasource)) {
         return new Response('boom', { status: 503 });
       }
-      return new Response('', { status: 200 });
+      return Response.json({ successful_rows: rows.length, quarantined_rows: 0 }, { status: 200 });
     }),
   );
 

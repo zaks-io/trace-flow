@@ -17,6 +17,16 @@ export interface ForwardedExchange {
   responseReceived: number;
 }
 
+export class UpstreamFetchError extends Error {
+  constructor(
+    readonly exchange: Omit<ForwardedExchange, 'response' | 'responseReceived'>,
+    cause: unknown,
+  ) {
+    super('Upstream request failed', { cause });
+    this.name = 'UpstreamFetchError';
+  }
+}
+
 /**
  * Tee the request body, forward to the resolved provider, capture timestamps.
  *
@@ -49,11 +59,22 @@ export async function forwardToUpstream(
 
   const requestSent = getCurrentTimestamp();
 
-  const response = await fetch(targetUrl, {
-    method: c.req.method,
-    headers,
-    body: streamToProxy,
-  });
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, {
+      method: c.req.method,
+      headers,
+      body: streamToProxy,
+    });
+  } catch (error) {
+    if (streamToProxy) {
+      await streamToProxy.cancel().catch(() => undefined);
+    }
+    throw new UpstreamFetchError(
+      { validated, targetUrl, streamToCapture, requestStart, requestSent },
+      error,
+    );
+  }
 
   const responseReceived = getCurrentTimestamp();
 

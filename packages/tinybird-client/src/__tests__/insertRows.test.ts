@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { insertRows, shouldRetryTinybirdInsert } from '../insertRows';
+import {
+  classifyTinybirdInsertFailure,
+  insertRows,
+  shouldRetryTinybirdInsert,
+} from '../insertRows';
 import { TinybirdInsertError } from '../errors';
 
 const HOST = 'https://api.tinybird.co';
 
-function okResponse(): Response {
-  return new Response('', { status: 200 });
+function receiptResponse(successfulRows: number, quarantinedRows = 0): Response {
+  return Response.json(
+    { successful_rows: successfulRows, quarantined_rows: quarantinedRows },
+    { status: 200 },
+  );
 }
 
 function errorResponse(status: number, text: string): Response {
@@ -18,13 +25,13 @@ describe('insertRows', () => {
   });
 
   it('POSTs NDJSON to /v0/events with the bearer token', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okResponse());
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(2));
 
     await insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_facts', HOST);
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe(`${HOST}/v0/events?name=agent_message_facts`);
+    expect(String(url)).toBe(`${HOST}/v0/events?name=agent_message_facts&wait=true`);
     expect(init?.method).toBe('POST');
     const headers = init?.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer tok');
@@ -33,7 +40,7 @@ describe('insertRows', () => {
   });
 
   it('URL-encodes the datasource name', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okResponse());
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(1));
 
     await insertRows([{ a: 1 }], 'tok', 'name with spaces', HOST);
 
@@ -42,7 +49,7 @@ describe('insertRows', () => {
   });
 
   it('serializes an empty row set to an empty body', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(okResponse());
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(0));
 
     await insertRows([], 'tok', 'agent_message_facts', HOST);
 
@@ -56,7 +63,62 @@ describe('insertRows', () => {
       name: 'TinybirdInsertError',
       status: 422,
       responseText: 'quarantined rows',
-      message: 'Tinybird insert failed: 422 quarantined rows',
+      message: 'Tinybird insert failed: status=422 reason=http',
+    });
+  });
+
+  it('rejects a 202 receipt because the database has not acknowledged the write', async () => {
+    const responseText = '{"successful_rows":1,"quarantined_rows":0}';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(responseText, { status: 202 }),
+    );
+
+    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toMatchObject({
+      name: 'TinybirdInsertError',
+      status: 202,
+      reason: 'unconfirmed',
+      responseText,
+      message: 'Tinybird insert failed: status=202 reason=unconfirmed',
+    });
+  });
+
+  it('rejects a partial receipt', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(2, 1));
+
+    await expect(
+      insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_facts', HOST),
+    ).rejects.toMatchObject({
+      status: 200,
+      reason: 'partial-receipt',
+      responseText: '{"successful_rows":2,"quarantined_rows":1}',
+      message: 'Tinybird insert failed: status=200 reason=partial-receipt',
+    });
+  });
+
+  it('rejects a successful row count that does not match the batch', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(receiptResponse(1));
+
+    await expect(
+      insertRows([{ a: 1 }, { a: 2 }], 'tok', 'agent_message_facts', HOST),
+    ).rejects.toMatchObject({
+      status: 200,
+      reason: 'partial-receipt',
+      responseText: '{"successful_rows":1,"quarantined_rows":0}',
+      message: 'Tinybird insert failed: status=200 reason=partial-receipt',
+    });
+  });
+
+  it('rejects a malformed receipt', async () => {
+    const responseText = '{"successful_rows":"1","quarantined_rows":0}';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(responseText, { status: 200 }),
+    );
+
+    await expect(insertRows([{ a: 1 }], 'tok', 'agent_message_facts', HOST)).rejects.toMatchObject({
+      status: 200,
+      reason: 'malformed-receipt',
+      responseText,
+      message: 'Tinybird insert failed: status=200 reason=malformed-receipt',
     });
   });
 
@@ -69,17 +131,37 @@ describe('insertRows', () => {
   });
 });
 
-describe('shouldRetryTinybirdInsert', () => {
-  it('retries transient statuses (429, 503, 5xx) and non-insert errors', () => {
-    expect(shouldRetryTinybirdInsert(new TinybirdInsertError(429, ''))).toBe(true);
-    expect(shouldRetryTinybirdInsert(new TinybirdInsertError(503, ''))).toBe(true);
-    expect(shouldRetryTinybirdInsert(new TinybirdInsertError(500, ''))).toBe(true);
-    expect(shouldRetryTinybirdInsert(new Error('timeout'))).toBe(true);
+describe('classifyTinybirdInsertFailure', () => {
+  it('classifies only 429 and 503 as safely retryable', () => {
+    expect(classifyTinybirdInsertFailure(new TinybirdInsertError(429, ''))).toBe('retryable');
+    expect(classifyTinybirdInsertFailure(new TinybirdInsertError(503, ''))).toBe('retryable');
   });
 
-  it('does not retry terminal client errors (400/401/403/404/413/422)', () => {
-    for (const status of [400, 401, 403, 404, 413, 422]) {
-      expect(shouldRetryTinybirdInsert(new TinybirdInsertError(status, ''))).toBe(false);
+  it('classifies definitive request rejections', () => {
+    for (const status of [400, 401, 403, 404, 413]) {
+      expect(classifyTinybirdInsertFailure(new TinybirdInsertError(status, ''))).toBe('rejected');
     }
+  });
+
+  it('classifies timeouts, 202, malformed receipts, 422, and other failures as uncertain', () => {
+    const failures = [
+      new DOMException('Timed out', 'TimeoutError'),
+      new TinybirdInsertError(202, '', 'unconfirmed'),
+      new TinybirdInsertError(200, '', 'malformed-receipt'),
+      new TinybirdInsertError(200, '', 'partial-receipt'),
+      new TinybirdInsertError(422, 'partial ingestion'),
+      new TinybirdInsertError(500, 'unexpected error'),
+    ];
+
+    for (const failure of failures) {
+      expect(classifyTinybirdInsertFailure(failure)).toBe('uncertain');
+      expect(shouldRetryTinybirdInsert(failure)).toBe(false);
+    }
+  });
+
+  it('keeps shouldRetryTinybirdInsert as the retryable-only compatibility helper', () => {
+    expect(shouldRetryTinybirdInsert(new TinybirdInsertError(429, ''))).toBe(true);
+    expect(shouldRetryTinybirdInsert(new TinybirdInsertError(503, ''))).toBe(true);
+    expect(shouldRetryTinybirdInsert(new TinybirdInsertError(400, ''))).toBe(false);
   });
 });

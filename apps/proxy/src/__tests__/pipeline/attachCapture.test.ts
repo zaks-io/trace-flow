@@ -53,7 +53,10 @@ describe('attachCapture', () => {
 
   it('forwards response body bytes to the readable returned to the client', async () => {
     const attached = attachCapture(makeForwarded('application/json', '{"hello":"world"}'));
-    const drained = await drain(attached.readable);
+    const draining = drain(attached.readable);
+    await attached.capture.waitForDrain();
+    attached.capture.release();
+    const drained = await draining;
     await attached.pipePromise;
     expect(drained).toBe('{"hello":"world"}');
   });
@@ -61,5 +64,16 @@ describe('attachCapture', () => {
   it('exposes empty sseStreamData by default', () => {
     const attached = attachCapture(makeForwarded('application/json', '{}'));
     expect(attached.sseStreamData.messages).toEqual([]);
+  });
+
+  it('reports client cancellation as an interrupted capture', async () => {
+    const attached = attachCapture(makeForwarded('application/json', '{"partial":true}'));
+    const reader = attached.readable.getReader();
+    await reader.read();
+    await reader.cancel(new Error('client disconnected'));
+
+    await expect(attached.capture.waitForDrain()).resolves.toMatchObject({ complete: false });
+    attached.capture.release();
+    await attached.pipePromise;
   });
 });

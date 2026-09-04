@@ -68,4 +68,14 @@ describe('respond', () => {
     const res = respond(makeAttached({ record: true, reason: 'ok' }));
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
   });
+
+  it('removes Content-Length while a recorded response is durability-gated', () => {
+    const res = respond(
+      makeAttached(
+        { record: true, reason: 'ok' },
+        { status: 200, statusText: 'OK', headers: { 'content-length': '2' } },
+      ),
+    );
+    expect(res.headers.get('Content-Length')).toBeNull();
+  });
 });

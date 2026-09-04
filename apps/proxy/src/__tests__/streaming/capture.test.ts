@@ -146,6 +146,7 @@ describe('createResponseCapture', () => {
       },
     });
 
+    capture.release();
     await stream.pipeThrough(transform).pipeTo(
       new WritableStream({
         write() {
@@ -180,6 +181,7 @@ describe('createResponseCapture', () => {
       },
     });
 
+    capture.release();
     await stream.pipeThrough(transform).pipeTo(
       new WritableStream({
         write() {
@@ -219,6 +221,7 @@ describe('createResponseCapture', () => {
       },
     });
 
+    capture.release();
     await stream.pipeThrough(transform).pipeTo(timeAdvancingWriter);
 
     expect(capture.getFirstTokenTime()).toBe(mockTime);
@@ -240,6 +243,7 @@ describe('createResponseCapture', () => {
       },
     });
 
+    capture.release();
     await stream.pipeThrough(transform).pipeTo(
       new WritableStream({
         write() {
@@ -270,6 +274,7 @@ describe('createResponseCapture', () => {
       },
     });
 
+    capture.release();
     await stream.pipeThrough(transform).pipeTo(
       new WritableStream({
         write(chunk) {
@@ -278,9 +283,37 @@ describe('createResponseCapture', () => {
       }),
     );
 
-    expect(outputChunks).toEqual(['chunk1', 'chunk2']);
+    expect(outputChunks.join('')).toBe('chunk1chunk2');
 
     vi.useRealTimers();
+  });
+
+  it('preserves bytes exactly when an empty chunk follows buffered data', async () => {
+    const encoder = new TextEncoder();
+    const capture = createResponseCapture();
+    const outputChunks: Uint8Array[] = [];
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('first'));
+        controller.enqueue(new Uint8Array());
+        controller.enqueue(encoder.encode('second'));
+        controller.close();
+      },
+    });
+
+    capture.release();
+    await stream.pipeThrough(capture.transform).pipeTo(
+      new WritableStream({
+        write(chunk) {
+          outputChunks.push(chunk);
+        },
+      }),
+    );
+
+    const output = outputChunks.reduce((text, chunk) => text + new TextDecoder().decode(chunk), '');
+    expect(output).toBe('firstsecond');
+    expect(capture.getTotalSize()).toBe(11);
+    expect(capture.getCapturedSize()).toBe(11);
   });
 
   it('should work without onChunk callback', async () => {
@@ -295,6 +328,7 @@ describe('createResponseCapture', () => {
       },
     });
 
+    capture.release();
     await expect(
       stream.pipeThrough(transform).pipeTo(
         new WritableStream({
@@ -308,5 +342,36 @@ describe('createResponseCapture', () => {
     expect(capture.getCapturedChunks()).toHaveLength(1);
 
     vi.useRealTimers();
+  });
+
+  it('does not close the client stream until durable work releases it', async () => {
+    const encoder = new TextEncoder();
+    const capture = createResponseCapture();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('complete'));
+        controller.close();
+      },
+    });
+    let closed = false;
+    let output = '';
+    const pipe = stream.pipeThrough(capture.transform).pipeTo(
+      new WritableStream({
+        write(chunk) {
+          output += new TextDecoder().decode(chunk);
+        },
+        close() {
+          closed = true;
+        },
+      }),
+    );
+
+    await expect(capture.waitForDrain()).resolves.toEqual({ complete: true });
+    expect(closed).toBe(false);
+    expect(output).toBe('complet');
+    capture.release();
+    await pipe;
+    expect(closed).toBe(true);
+    expect(output).toBe('complete');
   });
 });

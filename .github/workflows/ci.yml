@@ -256,6 +256,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Test ingest recovery tooling
+        run: node --test scripts/ci/body-retention.test.mjs scripts/ingest-recovery/worker.test.mjs
+
       - name: Check duplicate code
         run: bun run duplicates:check
 

@@ -1,13 +1,10 @@
 import * as Sentry from '@sentry/cloudflare';
 import type { AgentIngestQueueMessage } from '@trace-flow/types';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
-import { insertRows } from '@trace-flow/tinybird-client';
 import { continueQueueTrace, groupBySentryTrace } from '@trace-flow/utils/sentry-tracing';
 import type { AgentConsumerEnv } from './context';
 import {
   CATEGORIES,
-  LEGACY_CATEGORIES,
-  LEGACY_DATASOURCES,
   ROW_IDENTITY_FIELDS,
   emptyAccumulator,
   rowIdentity,
@@ -34,7 +31,7 @@ type WriteMode = 'clean' | 'legacy' | 'dual';
  * the scalar fields `accumulateMessage` dereferences (source, parser_version, tenancy ids), not just
  * the container shape, so contract drift surfaces here instead of as an opaque mapping error.
  */
-function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
+export function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
   if (typeof body !== 'object' || body === null) {
     return false;
   }
@@ -59,6 +56,28 @@ function isQueueMessage(body: unknown): body is AgentIngestQueueMessage {
     }
     return Array.isArray(f[category]);
   });
+}
+
+export async function processAgentRecoveryPayload(
+  body: unknown,
+  env: AgentConsumerEnv,
+): Promise<void> {
+  if (!isQueueMessage(body)) throw new Error('DLQ payload still fails the agent queue contract');
+  const logger = createLogger({
+    service: 'agent-consumer',
+    runtime: 'cloudflare-worker',
+    axiom: axiomConfigFromEnv(env),
+    context: { component: 'recovery-replay' },
+  });
+  try {
+    const acc = emptyAccumulator();
+    await accumulateMessage(body, acc, new PriceCache(env.MODEL_PRICING));
+    dedupeAccumulator(acc);
+    if (!(await flush(acc, env, logger)))
+      throw new Error('agent recovery replay was not durably staged');
+  } finally {
+    await logger.flush();
+  }
 }
 
 const TENANCY_FIELDS = ['org_id', 'user_id', 'collector_id', 'collector_credential_id'] as const;
@@ -107,10 +126,7 @@ async function accumulateMessage(
 /** Hands rows to the configured Tinybird write targets. Returns false when any target failed. */
 async function flush(acc: Accumulator, env: AgentConsumerEnv, logger: Logger): Promise<boolean> {
   const mode = writeMode(env);
-  if (mode === 'legacy') {
-    return flushLegacy(acc, env, logger);
-  }
-  return flushClean(acc, env, logger, mode === 'dual');
+  return flushBatched(acc, env, logger, mode !== 'legacy', mode !== 'clean');
 }
 
 function writeMode(env: AgentConsumerEnv): WriteMode {
@@ -122,10 +138,11 @@ function writeMode(env: AgentConsumerEnv): WriteMode {
 }
 
 /** Hands rows to the sharded Durable Object ledger. Returns false when any shard failed. */
-async function flushClean(
+async function flushBatched(
   acc: Accumulator,
   env: AgentConsumerEnv,
   logger: Logger,
+  writeClean: boolean,
   writeLegacy: boolean,
 ): Promise<boolean> {
   const byOrg = groupRowsByOrg(acc);
@@ -136,7 +153,7 @@ async function flushClean(
   const results = await Promise.allSettled(
     [...byOrg.entries()].map(async ([orgId, rows]) => {
       const batcher = env.AGENT_FACT_BATCHER.getByName(`org:${orgId}`);
-      const result = await batcher.addFacts({ rows, writeLegacy });
+      const result = await batcher.addFacts({ rows, writeClean, writeLegacy });
       if (result.status === 'failed') {
         throw new Error(`agent fact batcher rejected org ${orgId}`);
       }
@@ -144,6 +161,13 @@ async function flushClean(
         logger.warn('agent_consumer.repair_rows_detected', {
           orgId,
           repairRows: result.repairRows,
+        });
+      }
+      if (result.blockedRecoveryRecords > 0) {
+        logger.warn('agent_consumer.blocked_recovery_rows', {
+          orgId,
+          blockedRecoveryRows: result.blockedRecoveryRows,
+          blockedRecoveryRecords: result.blockedRecoveryRecords,
         });
       }
     }),
@@ -155,34 +179,6 @@ async function flushClean(
       ok = false;
       logger.error('agent_consumer.fact_batcher_failed', result.reason);
       Sentry.captureException(result.reason, { tags: { operation: 'agent_fact_batcher' } });
-    }
-  }
-  return ok;
-}
-
-/** Writes legacy ReplacingMergeTree tables during the rollout rollback window. */
-async function flushLegacy(
-  acc: Accumulator,
-  env: AgentConsumerEnv,
-  logger: Logger,
-): Promise<boolean> {
-  const results = await Promise.allSettled(
-    LEGACY_CATEGORIES.filter((category) => acc[category].length > 0).map((category) =>
-      insertRows(
-        acc[category],
-        env.TINYBIRD_TOKEN,
-        LEGACY_DATASOURCES[category],
-        env.TINYBIRD_HOST,
-      ),
-    ),
-  );
-
-  let ok = true;
-  for (const result of results) {
-    if (result.status === 'rejected') {
-      ok = false;
-      logger.error('agent_consumer.legacy_insert_failed', result.reason);
-      Sentry.captureException(result.reason, { tags: { operation: 'agent_legacy_insert' } });
     }
   }
   return ok;

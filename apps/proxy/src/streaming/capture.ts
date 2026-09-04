@@ -58,9 +58,8 @@ export function chunksToString(chunks: Uint8Array[]): string {
 }
 
 /**
- * Creates a TransformStream that captures response data while simultaneously streaming it to the client.
- * This pattern is critical for low-latency proxying - we never block the client response to capture data.
- * The transform passes chunks through untouched while maintaining a side copy for storage and parsing.
+ * Creates a TransformStream that captures response data while streaming it to the client.
+ * One terminal byte and transport EOF remain withheld until the durable delivery is accepted.
  *
  * Implements size limits to prevent OOM (Workers have 128MB memory limit per isolate):
  * - 20MB response limit (handles ~1M tokens with overhead)
@@ -68,37 +67,74 @@ export function chunksToString(chunks: Uint8Array[]): string {
  * - Truncates capture if limits exceeded while still streaming full response to client
  *
  * @param onChunk - Optional callback invoked on each chunk, used for SSE parsing
- * @returns Transform stream, captured chunks getter, TTFB timestamp, size and truncation status
+ * @returns Transform stream, durability gate, captured chunks, timing, and size status
  */
 export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boolean) => void): {
   transform: TransformStream<Uint8Array, Uint8Array>;
   getCapturedChunks: () => Uint8Array[];
   getFirstTokenTime: () => number | undefined;
   getTotalSize: () => number;
+  getCapturedSize: () => number;
   isTruncated: () => boolean;
+  waitForDrain: () => Promise<{ complete: true } | { complete: false; error: unknown }>;
+  markDrained: () => void;
+  markInterrupted: (error: unknown) => void;
+  release: () => void;
+  fail: (error: unknown) => void;
 } {
   const MAX_RESPONSE_SIZE = 20 * 1024 * 1024;
   const MAX_CHUNKS = 5000;
   const capturedChunks: Uint8Array[] = [];
   let totalSize = 0;
+  let capturedSize = 0;
   let truncated = false;
   let isFirstChunk = true;
   let firstTokenReceived: number | undefined;
+  let pendingFinalByte: Uint8Array | undefined;
+  let drainSettled = false;
+  let resolveDrain!: (result: { complete: true } | { complete: false; error: unknown }) => void;
+  const drainPromise = new Promise<{ complete: true } | { complete: false; error: unknown }>(
+    (resolve) => {
+      resolveDrain = resolve;
+    },
+  );
+  let resolveGate!: () => void;
+  let rejectGate!: (error: unknown) => void;
+  const gatePromise = new Promise<void>((resolve, reject) => {
+    resolveGate = resolve;
+    rejectGate = reject;
+  });
+  void gatePromise.catch(() => undefined);
+
+  const settleDrain = (result: { complete: true } | { complete: false; error: unknown }) => {
+    if (drainSettled) return;
+    drainSettled = true;
+    resolveDrain(result);
+  };
 
   const transform = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
+      if (chunk.length === 0) return;
+
       const isFirst = isFirstChunk;
       if (isFirstChunk) {
         firstTokenReceived = getCurrentTimestamp();
         isFirstChunk = false;
       }
 
-      controller.enqueue(chunk);
+      totalSize += chunk.length;
+
+      if (pendingFinalByte) controller.enqueue(pendingFinalByte);
+      if (chunk.length > 1) controller.enqueue(chunk.subarray(0, chunk.length - 1));
+      pendingFinalByte = chunk.length > 0 ? chunk.slice(chunk.length - 1) : pendingFinalByte;
 
       if (!truncated) {
-        if (totalSize + chunk.length <= MAX_RESPONSE_SIZE && capturedChunks.length < MAX_CHUNKS) {
+        if (
+          capturedSize + chunk.length <= MAX_RESPONSE_SIZE &&
+          capturedChunks.length < MAX_CHUNKS
+        ) {
           capturedChunks.push(chunk);
-          totalSize += chunk.length;
+          capturedSize += chunk.length;
         } else {
           truncated = true;
           console.warn('Response capture truncated:', {
@@ -113,6 +149,11 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
         onChunk(chunk, isFirst);
       }
     },
+    async flush(controller) {
+      settleDrain({ complete: true });
+      await gatePromise;
+      if (pendingFinalByte) controller.enqueue(pendingFinalByte);
+    },
   });
 
   return {
@@ -120,6 +161,12 @@ export function createResponseCapture(onChunk?: (chunk: Uint8Array, isFirst: boo
     getCapturedChunks: () => capturedChunks,
     getFirstTokenTime: () => firstTokenReceived,
     getTotalSize: () => totalSize,
+    getCapturedSize: () => capturedSize,
     isTruncated: () => truncated,
+    waitForDrain: () => drainPromise,
+    markDrained: () => settleDrain({ complete: true }),
+    markInterrupted: (error) => settleDrain({ complete: false, error }),
+    release: resolveGate,
+    fail: rejectGate,
   };
 }

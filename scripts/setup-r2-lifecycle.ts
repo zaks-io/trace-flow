@@ -1,86 +1,43 @@
-/**
- * Sets a 30-day object expiration lifecycle rule on trace-flow R2 storage buckets.
- * Run once per environment: `bun scripts/setup-r2-lifecycle.ts`
- *
- * Requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env vars.
- */
+import { isDeepStrictEqual } from 'node:util';
+import { bodyRetentionRules } from './ci/body-retention.mjs';
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+const buckets = process.argv.slice(2);
 
-if (!accountId || !apiToken) {
-  console.error('Required env vars: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN');
-  process.exit(1);
+if (!accountId || !apiToken) throw new Error('Cloudflare account ID and API token are required');
+if (buckets.length === 0) throw new Error('Pass the exact storage bucket names to configure');
+if (buckets.some((name) => !/^trace-flow-storage-[a-z0-9-]+$/.test(name))) {
+  throw new Error('Expected explicit trace-flow-storage-* bucket names');
 }
 
-const BUCKET_PREFIXES = ['trace-flow-storage-dev', 'trace-flow-storage-prod'];
-const EXPIRATION_DAYS = 30;
-
-async function cfFetch(path: string, options?: RequestInit) {
+async function lifecycle(bucket: string, body?: string) {
   const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}${path}`,
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${bucket}/lifecycle`,
     {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
+      method: body ? 'PUT' : 'GET',
+      headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+      body,
     },
   );
-  return response.json() as Promise<{ success: boolean; errors?: { message: string }[] }>;
-}
-
-async function listBuckets(): Promise<{ name: string }[]> {
-  const result = (await cfFetch('/r2/buckets')) as { result: { buckets: { name: string }[] } };
-  return result.result?.buckets ?? [];
-}
-
-async function setLifecycleRule(bucketName: string) {
-  const rule = {
-    rules: [
-      {
-        id: 'auto-expire-30d',
-        enabled: true,
-        conditions: { prefix: '' },
-        actions: {
-          deleteObject: { daysAfterLastModificationDate: EXPIRATION_DAYS },
-        },
-      },
-    ],
-  };
-
-  const result = await cfFetch(`/r2/buckets/${bucketName}/lifecycle`, {
-    method: 'PUT',
-    body: JSON.stringify(rule),
-  });
-
-  if (result.success) {
-    console.log(`Set ${EXPIRATION_DAYS}-day expiration on ${bucketName}`);
-  } else {
-    console.error(`Failed for ${bucketName}:`, result.errors);
+  const result = (await response.json()) as { success: boolean; result?: { rules?: unknown[] } };
+  if (!response.ok || !result.success) {
+    throw new Error(
+      `R2 lifecycle ${body ? 'write' : 'read'} failed for ${bucket}: HTTP ${response.status}`,
+    );
   }
+  return result.result;
 }
 
-async function main() {
-  const buckets = await listBuckets();
-  const targetBuckets = buckets.filter((b) =>
-    BUCKET_PREFIXES.some((prefix) => b.name.startsWith(prefix)),
-  );
-
-  if (targetBuckets.length === 0) {
-    console.log('No matching trace-flow-storage-* buckets found');
-    return;
+for (const bucket of buckets) {
+  const current = await lifecycle(bucket);
+  const rules = bodyRetentionRules(current?.rules);
+  if (!isDeepStrictEqual(current?.rules, rules)) {
+    await lifecycle(bucket, JSON.stringify({ rules }));
   }
-
-  console.log(
-    `Found ${targetBuckets.length} bucket(s):`,
-    targetBuckets.map((b) => b.name),
-  );
-
-  for (const bucket of targetBuckets) {
-    await setLifecycleRule(bucket.name);
+  const verified = await lifecycle(bucket);
+  if (!isDeepStrictEqual(verified?.rules, rules)) {
+    throw new Error(`R2 lifecycle verification failed for ${bucket}`);
   }
+  console.log(`Verified pending trace deliveries are excluded from expiration in ${bucket}`);
 }
-
-main().catch(console.error);
