@@ -333,6 +333,9 @@ export const deleteOrgDataScheduled = internalAction({
 });
 
 async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
+  // Establish the durable archive deletion gate before the external deletion begins.
+  await ctx.runMutation(internal.admin.admin.beginOrgDeletion, { orgId });
+
   // IMPORTANT: Tinybird deletion must run BEFORE Convex record deletion.
   // deleteOrgTraces queries API keys from Convex to build the SQL WHERE clause.
   const tinybirdResults = await ctx.runAction(internal.integrations.tinybird.deleteOrgTraces, {
@@ -392,6 +395,17 @@ const deleteBatchCountsValidator = v.object({
 });
 
 const PAGE_SIZE = 500;
+
+export const beginOrgDeletion = internalMutation({
+  args: { orgId: v.id('organizations') },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.orgId);
+    if (!org) throw new Error('Organization not found');
+    await beginArchiveDeletion(ctx, args.orgId, Date.now());
+    return null;
+  },
+});
 
 /**
  * Deletes up to PAGE_SIZE org-related records per call. Returns hasMore=true

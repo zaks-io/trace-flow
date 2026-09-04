@@ -1527,6 +1527,12 @@ export declare const api: {
 export declare const internal: {
   admin: {
     admin: {
+      beginOrgDeletion: FunctionReference<
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations"> },
+        null
+      >;
       deleteOrgDataScheduled: FunctionReference<
         "action",
         "internal",
