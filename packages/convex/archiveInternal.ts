@@ -160,6 +160,9 @@ export const reportCollectorHeartbeat = internalMutation({
     if (enrollment?.collectorCredentialId !== credential._id) {
       throw new Error('Enrollment not found');
     }
+    if (enrollment.status !== 'active') {
+      throw new Error('Enrollment is not active');
+    }
 
     await ctx.db.patch(enrollment._id, {
       pendingSpoolBytes: args.pendingSpoolBytes,

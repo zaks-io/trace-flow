@@ -13,17 +13,21 @@ import {
 } from './validators';
 import {
   ARCHIVE_CAP_BYTES,
+  claimArchiveActivation,
+  claimContributionForUser,
+  claimEnrollmentSlot,
   countActiveEnrollments,
   decideEnrollmentAction,
   ensureArchiveStatusRow,
   getArchiveActivation,
   getArchiveStatusRow,
-  getContributionForUser,
   getEnrollmentSlot,
   invalidateArchiveEnrollment,
   isActiveProSubscription,
   isArchiveServerEnabled,
   projectLifecycle,
+  refreshArchiveStatusCounts,
+  repairEnrollmentSlots,
   requireActiveMembership,
   sourceAlreadyAuthorized,
   validateAuthorizedSources,
@@ -118,13 +122,18 @@ export const activate = mutation({
     }
 
     const now = Date.now();
-    const activationId = await ctx.db.insert('archiveActivations', {
+    const insertedId = await ctx.db.insert('archiveActivations', {
       orgId: org._id,
       activatedByUserId: user._id,
       activatedAt: now,
       capBytes: ARCHIVE_CAP_BYTES,
       status: 'active',
     });
+    const winner = await claimArchiveActivation(ctx, org._id);
+    const activationId = winner?._id ?? insertedId;
+    if (activationId !== insertedId) {
+      return { activationId, created: false };
+    }
     await ensureArchiveStatusRow(ctx, {
       orgId: org._id,
       lifecycle: 'active',
@@ -152,7 +161,7 @@ export const enroll = mutation({
     const sources = validateAuthorizedSources(args.authorizedSources);
     const now = Date.now();
 
-    const slot = await getEnrollmentSlot(ctx, user.orgId, credential._id);
+    const slot = await repairEnrollmentSlots(ctx, user.orgId, credential._id);
     const current = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
     const decision = decideEnrollmentAction(current);
 
@@ -164,18 +173,7 @@ export const enroll = mutation({
       };
     }
 
-    let contribution = await getContributionForUser(ctx, user.orgId, user._id);
-    if (!contribution) {
-      const contributionId = await ctx.db.insert('archiveContributions', {
-        orgId: user.orgId,
-        userId: user._id,
-        createdAt: now,
-        status: 'active',
-      });
-      contribution = (await ctx.db.get(contributionId))!;
-    } else if (contribution.status !== 'active') {
-      await ctx.db.patch(contribution._id, { status: 'active' });
-    }
+    const contribution = await claimContributionForUser(ctx, user.orgId, user._id, now);
 
     const enrollmentId = await ctx.db.insert('archiveEnrollments', {
       orgId: user.orgId,
@@ -194,19 +192,31 @@ export const enroll = mutation({
     if (slot) {
       await ctx.db.patch(slot._id, { currentEnrollmentId: enrollmentId });
     } else {
-      await ctx.db.insert('archiveEnrollmentSlots', {
-        orgId: user.orgId,
-        collectorCredentialId: credential._id,
-        currentEnrollmentId: enrollmentId,
-      });
+      const claimed = await claimEnrollmentSlot(ctx, user.orgId, credential._id, enrollmentId);
+      if (!claimed.created) {
+        await ctx.db.delete(enrollmentId);
+        const winner = await ctx.db.get(claimed.enrollmentId);
+        if (!winner) throw new Error('Enrollment not found');
+        await refreshArchiveStatusCounts(ctx, user.orgId, now);
+        return {
+          enrollmentId: winner._id,
+          contributionId: winner.contributionId,
+          created: false,
+        };
+      }
     }
 
-    await ensureArchiveStatusRow(ctx, {
-      orgId: user.orgId,
-      lifecycle: 'active',
-      capBytes: ARCHIVE_CAP_BYTES,
-      now,
-    });
+    const status = await getArchiveStatusRow(ctx, user.orgId);
+    if (status) {
+      await refreshArchiveStatusCounts(ctx, user.orgId, now);
+    } else {
+      await ensureArchiveStatusRow(ctx, {
+        orgId: user.orgId,
+        lifecycle: 'active',
+        capBytes: ARCHIVE_CAP_BYTES,
+        now,
+      });
+    }
 
     return {
       enrollmentId,

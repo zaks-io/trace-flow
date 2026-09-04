@@ -24,6 +24,7 @@ import {
   decideWriteAuthorization,
   isActiveProSubscription,
   isArchiveServerEnabled,
+  pickOldestDocument,
   projectLifecycle,
   validateAuthorizedSources,
 } from '../archiveLib';
@@ -374,6 +375,13 @@ describe('archive control-plane pure functions', () => {
     expect(() =>
       validateAuthorizedSources([{ source: 'cursor' as never, historyChoice: 'new_only' }]),
     ).toThrow('not authorized');
+  });
+
+  it('keeps the first-writer document when concurrent inserts collide', () => {
+    const older = { _id: 'a', _creationTime: 1 };
+    const newer = { _id: 'b', _creationTime: 2 };
+    expect(pickOldestDocument([newer, older])).toEqual(older);
+    expect(pickOldestDocument([])).toBeNull();
   });
 
   it('projects blocked at the recorded 100 GB cap', () => {
@@ -781,5 +789,75 @@ describe('archive control plane', () => {
 
     const enrollment = (await world.driver.query('archiveEnrollments').collect())[0]!;
     expect(enrollment.pendingSpoolBytes).toBeUndefined();
+  });
+
+  it('does not let enrollment overwrite Archive API lifecycle or durable bytes', async () => {
+    enableArchive();
+    const world = seedWorld();
+    const ownerCtx = world.driver.ctx(identity(world.owner));
+    const memberCtx = world.driver.ctx(identity(world.member));
+    await call(activate, ownerCtx, {});
+    await call(enroll, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      authorizedSources: sources,
+    });
+    await call(applyServerStatus, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      storedBytes: ARCHIVE_CAP_BYTES,
+      lastDurableAcknowledgedAt: 999,
+      lifecycle: 'blocked',
+    });
+
+    await call(enroll, memberCtx, {
+      collectorCredentialId: world.memberCred,
+      authorizedSources: sources,
+    });
+
+    const status = await call<StatusResult>(getStatus, ownerCtx, {});
+    expect(status.lifecycle).toBe('blocked');
+    expect(status.storedBytes).toBe(ARCHIVE_CAP_BYTES);
+    expect(status.lastDurableAcknowledgedAt).toBe(999);
+    expect(status.enrolledCollectorCount).toBe(2);
+  });
+
+  it('repairs duplicate enrollment slots without throwing on later reads', async () => {
+    enableArchive();
+    const world = seedWorld();
+    const ownerCtx = world.driver.ctx(identity(world.owner));
+    await call(activate, ownerCtx, {});
+    const first = await call<EnrollResult>(enroll, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      authorizedSources: sources,
+    });
+
+    const extraEnrollment = world.driver.insert('archiveEnrollments', {
+      orgId: world.owner.orgId,
+      userId: world.owner._id,
+      collectorCredentialId: world.ownerCred,
+      collectorId: 'collector-owner',
+      contributionId: first.contributionId,
+      authorizedSources: [{ source: 'codex', historyChoice: 'all_history', authorizedAt: 1 }],
+      status: 'active',
+      createdAt: Date.now(),
+    });
+    world.driver.insert('archiveEnrollmentSlots', {
+      orgId: world.owner.orgId,
+      collectorCredentialId: world.ownerCred,
+      currentEnrollmentId: extraEnrollment,
+    });
+
+    const replay = await call<EnrollResult>(enroll, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      authorizedSources: [{ source: 'codex', historyChoice: 'all_history' }],
+    });
+    expect(replay.enrollmentId).toBe(first.enrollmentId);
+    expect(replay.created).toBe(false);
+    await expect(world.driver.query('archiveEnrollmentSlots').collect()).resolves.toHaveLength(1);
+
+    const allowed = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+      collectorCredentialId: world.ownerCred,
+      source: 'claude',
+    });
+    expect(allowed).toMatchObject({ allowed: true, enrollmentId: first.enrollmentId });
   });
 });

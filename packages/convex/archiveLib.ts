@@ -1,5 +1,5 @@
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import type { Doc, Id } from './_generated/dataModel';
+import type { Doc, Id, TableNames } from './_generated/dataModel';
 
 export const ARCHIVE_SUPPORTED_SOURCES = ['claude', 'codex'] as const;
 export type ArchiveSupportedSource = (typeof ARCHIVE_SUPPORTED_SOURCES)[number];
@@ -136,24 +136,45 @@ export function projectLifecycle(input: {
   return 'active';
 }
 
+export function pickOldestDocument<T extends { _creationTime: number }>(rows: T[]): T | null {
+  if (rows.length === 0) return null;
+  return rows.reduce((oldest, row) => (row._creationTime < oldest._creationTime ? row : oldest));
+}
+
+async function keepOldestDocuments<T extends { _id: Id<TableNames>; _creationTime: number }>(
+  ctx: MutationCtx,
+  rows: T[],
+): Promise<T | null> {
+  const winner = pickOldestDocument(rows);
+  if (!winner) return null;
+  for (const row of rows) {
+    if (row._id !== winner._id) {
+      await ctx.db.delete(row._id);
+    }
+  }
+  return winner;
+}
+
 export async function getArchiveActivation(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<'organizations'>,
 ): Promise<Doc<'archiveActivations'> | null> {
-  return await ctx.db
+  const rows = await ctx.db
     .query('archiveActivations')
     .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
-    .unique();
+    .collect();
+  return pickOldestDocument(rows);
 }
 
 export async function getArchiveStatusRow(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<'organizations'>,
 ): Promise<Doc<'archiveStatuses'> | null> {
-  return await ctx.db
+  const rows = await ctx.db
     .query('archiveStatuses')
     .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
-    .unique();
+    .collect();
+  return pickOldestDocument(rows);
 }
 
 export async function getEnrollmentSlot(
@@ -161,12 +182,13 @@ export async function getEnrollmentSlot(
   orgId: Id<'organizations'>,
   collectorCredentialId: Id<'collectorCredentials'>,
 ): Promise<Doc<'archiveEnrollmentSlots'> | null> {
-  return await ctx.db
+  const rows = await ctx.db
     .query('archiveEnrollmentSlots')
     .withIndex('by_org_collector', (q) =>
       q.eq('orgId', orgId).eq('collectorCredentialId', collectorCredentialId),
     )
-    .unique();
+    .collect();
+  return pickOldestDocument(rows);
 }
 
 export async function getContributionForUser(
@@ -174,10 +196,92 @@ export async function getContributionForUser(
   orgId: Id<'organizations'>,
   userId: Id<'users'>,
 ): Promise<Doc<'archiveContributions'> | null> {
-  return await ctx.db
+  const rows = await ctx.db
     .query('archiveContributions')
     .withIndex('by_org_user', (q) => q.eq('orgId', orgId).eq('userId', userId))
-    .unique();
+    .collect();
+  return pickOldestDocument(rows);
+}
+
+export async function claimArchiveActivation(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+): Promise<Doc<'archiveActivations'> | null> {
+  const rows = await ctx.db
+    .query('archiveActivations')
+    .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+    .collect();
+  return await keepOldestDocuments(ctx, rows);
+}
+
+export async function claimEnrollmentSlot(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  collectorCredentialId: Id<'collectorCredentials'>,
+  enrollmentId: Id<'archiveEnrollments'>,
+): Promise<{ enrollmentId: Id<'archiveEnrollments'>; created: boolean }> {
+  const rows = await ctx.db
+    .query('archiveEnrollmentSlots')
+    .withIndex('by_org_collector', (q) =>
+      q.eq('orgId', orgId).eq('collectorCredentialId', collectorCredentialId),
+    )
+    .collect();
+
+  if (rows.length === 0) {
+    await ctx.db.insert('archiveEnrollmentSlots', {
+      orgId,
+      collectorCredentialId,
+      currentEnrollmentId: enrollmentId,
+    });
+    return { enrollmentId, created: true };
+  }
+
+  const winner = (await keepOldestDocuments(ctx, rows))!;
+  if (winner.currentEnrollmentId !== enrollmentId) {
+    return { enrollmentId: winner.currentEnrollmentId, created: false };
+  }
+  return { enrollmentId, created: true };
+}
+
+export async function repairEnrollmentSlots(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  collectorCredentialId: Id<'collectorCredentials'>,
+): Promise<Doc<'archiveEnrollmentSlots'> | null> {
+  const rows = await ctx.db
+    .query('archiveEnrollmentSlots')
+    .withIndex('by_org_collector', (q) =>
+      q.eq('orgId', orgId).eq('collectorCredentialId', collectorCredentialId),
+    )
+    .collect();
+  return await keepOldestDocuments(ctx, rows);
+}
+
+export async function claimContributionForUser(
+  ctx: MutationCtx,
+  orgId: Id<'organizations'>,
+  userId: Id<'users'>,
+  now: number,
+): Promise<Doc<'archiveContributions'>> {
+  const rows = await ctx.db
+    .query('archiveContributions')
+    .withIndex('by_org_user', (q) => q.eq('orgId', orgId).eq('userId', userId))
+    .collect();
+  const existing = pickOldestDocument(rows);
+  if (!existing) {
+    const contributionId = await ctx.db.insert('archiveContributions', {
+      orgId,
+      userId,
+      createdAt: now,
+      status: 'active',
+    });
+    return (await ctx.db.get(contributionId))!;
+  }
+
+  if (existing.status !== 'active') {
+    await ctx.db.patch(existing._id, { status: 'active' });
+  }
+  return existing.status === 'active' ? existing : { ...existing, status: 'active' };
 }
 
 export async function requireActiveMembership(
@@ -234,20 +338,30 @@ export async function ensureArchiveStatusRow(
     orgId: Id<'organizations'>;
     lifecycle: ArchiveLifecycle;
     capBytes: number;
-    graceDeadlineAt?: number;
+    graceDeadlineAt?: number | null;
     now: number;
   },
 ): Promise<Id<'archiveStatuses'>> {
   const existing = await getArchiveStatusRow(ctx, args.orgId);
   const counts = await countActiveEnrollments(ctx, args.orgId);
   if (existing) {
-    await ctx.db.patch(existing._id, {
+    const patch: {
+      lifecycle: ArchiveLifecycle;
+      capBytes: number;
+      enrolledContributorCount: number;
+      enrolledCollectorCount: number;
+      updatedAt: number;
+      graceDeadlineAt?: number;
+    } = {
       lifecycle: args.lifecycle,
       capBytes: args.capBytes,
-      graceDeadlineAt: args.graceDeadlineAt,
       ...counts,
       updatedAt: args.now,
-    });
+    };
+    if (args.graceDeadlineAt !== undefined) {
+      patch.graceDeadlineAt = args.graceDeadlineAt ?? undefined;
+    }
+    await ctx.db.patch(existing._id, patch);
     return existing._id;
   }
 
@@ -258,7 +372,7 @@ export async function ensureArchiveStatusRow(
     capBytes: args.capBytes,
     enrolledContributorCount: counts.enrolledContributorCount,
     enrolledCollectorCount: counts.enrolledCollectorCount,
-    graceDeadlineAt: args.graceDeadlineAt,
+    graceDeadlineAt: args.graceDeadlineAt ?? undefined,
     updatedAt: args.now,
   });
 }
@@ -289,6 +403,7 @@ export async function syncArchiveLifecycleForEntitlement(
         capBytes: activation.capBytes,
       }),
       capBytes: activation.capBytes,
+      graceDeadlineAt: null,
       now,
     });
     return;
