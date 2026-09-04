@@ -125,7 +125,7 @@ export function CostAlertChannelDialog({
                 ) : (
                   <div className="space-y-2">
                     {channelForm.webhookHeaders.map((header, index) => (
-                      <div key={`${index}-${header.key}`} className="grid grid-cols-2 gap-2">
+                      <div key={index} className="grid grid-cols-2 gap-2">
                         <Input
                           value={header.key}
                           onChange={(event) =>
