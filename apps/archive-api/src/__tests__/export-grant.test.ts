@@ -45,4 +45,19 @@ describe('Archive Export Grant placeholder', () => {
       reason: 'invalid_credential_class',
     });
   });
+
+  it('rejects a grant header when a foreign credential class is also present', () => {
+    expect(
+      authenticateArchiveExportGrant('placeholder-grant', 'Bearer pipe-token', undefined),
+    ).toEqual({
+      ok: false,
+      reason: 'invalid_credential_class',
+    });
+    expect(
+      authenticateArchiveExportGrant('placeholder-grant', undefined, 'tf_session=abc'),
+    ).toEqual({
+      ok: false,
+      reason: 'invalid_credential_class',
+    });
+  });
 });

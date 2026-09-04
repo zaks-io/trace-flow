@@ -46,7 +46,8 @@ export const FORBIDDEN_ARCHIVE_API_BINDINGS = [
 
 export type ForbiddenArchiveApiBinding = (typeof FORBIDDEN_ARCHIVE_API_BINDINGS)[number];
 
-export type ArchiveApiEnvHasNoForbiddenBindings =
-  Exclude<keyof ArchiveApiEnv, ForbiddenArchiveApiBinding> extends keyof ArchiveApiEnv
-    ? true
-    : never;
+export type ArchiveApiEnvHasNoForbiddenBindings = [
+  Extract<keyof ArchiveApiEnv, ForbiddenArchiveApiBinding>,
+] extends [never]
+  ? true
+  : never;

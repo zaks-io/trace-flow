@@ -85,6 +85,7 @@ jobs:
               - 'apps/archive-api/**'
               - 'packages/utils/**'
               - 'packages/logging/**'
+              - 'packages/convex/**'
             agent-consumer:
               - 'apps/agent-consumer/**'
               - 'packages/types/**'
