@@ -5,6 +5,8 @@ import {
   ARCHIVE_CAP_BYTES,
   ARCHIVE_ENABLED_ENV,
   ARCHIVE_GRACE_MS,
+  ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS,
+  assertHeartbeatObservedAt,
   beginArchiveDeletion,
   consentSourcesMatch,
   decideEnrollmentAction,
@@ -388,6 +390,17 @@ describe('archive control-plane pure functions', () => {
       decideVersionedUpdate({ storedVersion: 2, incomingVersion: 1, payloadEquals: true }),
     ).toBe('stale');
   });
+
+  it('rejects heartbeat observations beyond the allowed future skew', () => {
+    const now = 10_000;
+    expect(() =>
+      assertHeartbeatObservedAt(now + ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS, now),
+    ).not.toThrow();
+    expect(() =>
+      assertHeartbeatObservedAt(now + ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS + 1, now),
+    ).toThrow('in the future');
+    expect(() => assertHeartbeatObservedAt(Number.NaN, now)).toThrow('invalid');
+  });
 });
 
 describe('archive control plane', () => {
@@ -486,7 +499,7 @@ describe('archive control plane', () => {
     expect(enrollment?.idempotencyKey).toBe(`consent:${world.memberCred}`);
   });
 
-  it('produces one enrollment when two first-use enrollments commit concurrently', async () => {
+  it('replays repeated first-use enroll calls as one enrollment under convex-test', async () => {
     enableArchive();
     const world = await seedWorld();
     const owner = asUser(world, world.owner);
@@ -504,6 +517,25 @@ describe('archive control plane', () => {
     await expect(
       world.t.run(async (ctx) => ctx.db.query('archiveEnrollmentSlots').collect()),
     ).resolves.toHaveLength(1);
+  });
+
+  it('does not treat convex-test Promise.all as OCC concurrent first enrollment', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const holdTopLevelMutation = async () => {
+      await world.t.run(async (ctx) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        await ctx.db.query('users').first();
+        inFlight -= 1;
+      });
+    };
+
+    await Promise.all([holdTopLevelMutation(), holdTopLevelMutation()]);
+    expect(maxInFlight).toBe(1);
   });
 
   it('lets a current member self-enroll after activation without archive-wide read authority', async () => {
@@ -661,6 +693,61 @@ describe('archive control plane', () => {
         (row) => row.userId === world.member._id,
       ),
     ).toBe(true);
+  });
+
+  it('invalidates enrollment writes on member removal while keeping acknowledged contribution metadata', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+    const memberEnroll = await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
+
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
+      collectorCredentialId: world.memberCred,
+      revision: 1,
+      storedBytes: 77,
+      lastDurableAcknowledgedAt: 1234,
+      lifecycle: 'active',
+    });
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.memberCred,
+        source: 'claude',
+      }),
+    ).toMatchObject({ allowed: true, enrollmentId: memberEnroll.enrollmentId });
+
+    await owner.mutation(api.auth.users.removeMember, { memberId: world.memberMembership });
+
+    expect((await world.t.run(async (ctx) => ctx.db.get(memberEnroll.enrollmentId)))?.status).toBe(
+      'member_removed',
+    );
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.memberCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'credential_revoked' });
+
+    const contribution = await world.t.run(async (ctx) => ctx.db.get(memberEnroll.contributionId));
+    expect(contribution).toMatchObject({
+      orgId: world.member.orgId,
+      userId: world.member._id,
+      status: 'member_removed',
+    });
+
+    const ownerStatus = await owner.query(api.archive.getStatus, {});
+    expect(ownerStatus.storedBytes).toBe(77);
+    expect(ownerStatus.lastDurableAcknowledgedAt).toBe(1234);
+    expect(ownerStatus.contributions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contributionId: memberEnroll.contributionId,
+          userId: world.member._id,
+          status: 'member_removed',
+        }),
+      ]),
+    );
   });
 
   it('creates a new consent record on re-enrollment instead of reviving the revoked one', async () => {
@@ -932,6 +1019,41 @@ describe('archive control plane', () => {
     )[0]!;
     expect(enrollment.pendingSpoolBytes).toBe(20);
     expect(enrollment.localObservedAt).toBe(3000);
+  });
+
+  it('rejects a future heartbeat observation so later legitimate heartbeats still apply', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    const now = Date.now();
+    await expect(
+      owner.mutation(api.archive.reportHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 99,
+        observedAt: now + ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS + 60_000,
+      }),
+    ).rejects.toThrow('in the future');
+    await expect(
+      world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 99,
+        observedAt: now + ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS + 60_000,
+      }),
+    ).rejects.toThrow('in the future');
+
+    await owner.mutation(api.archive.reportHeartbeat, {
+      collectorCredentialId: world.ownerCred,
+      pendingSpoolBytes: 11,
+      observedAt: now,
+    });
+    const enrollment = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect())
+    )[0]!;
+    expect(enrollment.pendingSpoolBytes).toBe(11);
+    expect(enrollment.localObservedAt).toBe(now);
   });
 
   it('lets Archive API own durable acknowledgement, server bytes, and lifecycle', async () => {

@@ -10,6 +10,7 @@ export type ArchiveHistoryChoice = (typeof ARCHIVE_HISTORY_CHOICES)[number];
 export const ARCHIVE_CAP_BYTES = 100 * 1024 * 1024 * 1024;
 export const ARCHIVE_GRACE_MS = 90 * 24 * 60 * 60 * 1000;
 export const ARCHIVE_ENABLED_ENV = 'CONVERSATION_ARCHIVE_ENABLED';
+export const ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 export type ArchiveEnrollmentStatus = 'active' | 'unenrolled' | 'revoked' | 'member_removed';
 export type ArchiveInvalidationReason = 'user_unenrolled' | 'owner_revoked' | 'member_removed';
@@ -241,11 +242,22 @@ export function serverStatusPayloadEquals(
   );
 }
 
+export function assertHeartbeatObservedAt(observedAt: number, now: number): void {
+  if (!Number.isFinite(observedAt)) {
+    throw new Error('Collector heartbeat observation is invalid');
+  }
+  if (observedAt > now + ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS) {
+    throw new Error('Collector heartbeat observation is in the future');
+  }
+}
+
 export async function applyCollectorHeartbeat(
   ctx: MutationCtx,
   enrollment: Doc<'archiveEnrollments'>,
   args: { pendingSpoolBytes: number; localError?: string; observedAt: number },
+  now: number = Date.now(),
 ): Promise<void> {
+  assertHeartbeatObservedAt(args.observedAt, now);
   const decision = decideVersionedUpdate({
     storedVersion: enrollment.localObservedAt,
     incomingVersion: args.observedAt,
