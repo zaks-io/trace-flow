@@ -1945,4 +1945,75 @@ describe('archive control plane', () => {
     const enrollment = await world.t.run(async (ctx) => ctx.db.get(enrolled.enrollmentId));
     expect(enrollment?.pendingSpoolBytes).toBeUndefined();
   });
+
+  it('authorizes a hashed-secret write only for the matching enrolled Collector and Source', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    const allowed = await world.t.query(
+      internal.archiveInternal.authorizeArchiveWriteByHashedSecret,
+      {
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: world.owner.orgId,
+        userId: world.owner._id,
+        collectorId: 'collector-owner',
+      },
+    );
+    expect(allowed).toMatchObject({
+      allowed: true,
+      contributionId: enrolled.contributionId,
+      collectorCredentialId: world.ownerCred,
+      orgId: world.owner.orgId,
+      userId: world.owner._id,
+    });
+
+    const crossUser = await world.t.query(
+      internal.archiveInternal.authorizeArchiveWriteByHashedSecret,
+      {
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: world.owner.orgId,
+        userId: world.member._id,
+        collectorId: 'collector-owner',
+      },
+    );
+    expect(crossUser).toEqual({ allowed: false, reason: 'not_enrolled' });
+
+    const crossOrg = await world.t.query(
+      internal.archiveInternal.authorizeArchiveWriteByHashedSecret,
+      {
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: world.otherOwner.orgId,
+        userId: world.owner._id,
+        collectorId: 'collector-owner',
+      },
+    );
+    expect(crossOrg).toEqual({ allowed: false, reason: 'not_enrolled' });
+  });
+
+  it('lets unenrollment win a later hashed-secret archive authorization', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await owner.mutation(api.archive.unenroll, { enrollmentId: enrolled.enrollmentId });
+
+    const denied = await world.t.query(
+      internal.archiveInternal.authorizeArchiveWriteByHashedSecret,
+      {
+        hashedSecret: 'hash-owner',
+        source: 'claude',
+        orgId: world.owner.orgId,
+        userId: world.owner._id,
+        collectorId: 'collector-owner',
+      },
+    );
+    expect(denied).toEqual({ allowed: false, reason: 'enrollment_invalid' });
+  });
 });

@@ -2030,6 +2030,44 @@ export declare const internal: {
             | "source_unauthorized";
         }
     >;
+    authorizeArchiveWriteByHashedSecret: FunctionReference<
+      "query",
+      "internal",
+      {
+        collectorId: string;
+        hashedSecret: string;
+        orgId: Id<"organizations">;
+        source: "claude" | "codex";
+        userId: Id<"users">;
+      },
+      | {
+          allowed: true;
+          authorizedSources: Array<{
+            authorizedAt: number;
+            historyChoice: "new_only" | "all_history";
+            source: "claude" | "codex";
+          }>;
+          collectorCredentialId: Id<"collectorCredentials">;
+          collectorId: string;
+          contributionId: Id<"archiveContributions">;
+          enrollmentId: Id<"archiveEnrollments">;
+          orgId: Id<"organizations">;
+          userId: Id<"users">;
+        }
+      | {
+          allowed: false;
+          reason:
+            | "server_disabled"
+            | "not_activated"
+            | "not_enrolled"
+            | "enrollment_invalid"
+            | "credential_revoked"
+            | "not_pro"
+            | "frozen"
+            | "deleting"
+            | "source_unauthorized";
+        }
+    >;
     getCapMetadata: FunctionReference<
       "query",
       "internal",

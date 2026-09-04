@@ -934,6 +934,114 @@ describe('convex/http.ts', () => {
     });
   });
 
+  describe('POST /archive-api/authorize-write', () => {
+    const ORG_ID = 'k57axc8sefsfp6k28nx6c481js806pwv';
+    const USER_ID = 'j57axc8sefsfp6k28nx6c481js806pwv';
+
+    beforeEach(() => {
+      vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');
+    });
+
+    it('rejects a missing shared secret', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/authorize-write',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            hashedSecret: 'hash-owner',
+            source: 'claude',
+            orgId: ORG_ID,
+            userId: USER_ID,
+            collectorId: 'collector-owner',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(401);
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
+    it('rejects a Pipe Token bearer that is not the Archive API shared secret', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/authorize-write',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer pipe-token',
+          },
+          body: JSON.stringify({
+            hashedSecret: 'hash-owner',
+            source: 'claude',
+            orgId: ORG_ID,
+            userId: USER_ID,
+            collectorId: 'collector-owner',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(401);
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed organization ids before Convex validators run', async () => {
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/authorize-write',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            hashedSecret: 'hash-owner',
+            source: 'claude',
+            orgId: 'org_dev_smoke',
+            userId: USER_ID,
+            collectorId: 'collector-owner',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({ error: 'Invalid organization id' });
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
+    it('forwards a valid request to the hashed-secret authorize query', async () => {
+      ctx.runQuery.mockResolvedValueOnce({
+        allowed: false,
+        reason: 'not_enrolled',
+      });
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/authorize-write',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({
+            hashedSecret: 'hash-owner',
+            source: 'claude',
+            orgId: ORG_ID,
+            userId: USER_ID,
+            collectorId: 'collector-owner',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ allowed: false, reason: 'not_enrolled' });
+      expect(ctx.runQuery).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('MCP backend shared-secret routes', () => {
     const SECRET = 'mcp-backend-secret';
     const USER_ID = 'user_1';
