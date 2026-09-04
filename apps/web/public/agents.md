@@ -30,6 +30,7 @@ Always preserve the provider's normal API key and add Trace Flow alongside it.
 ```bash
 TRACE_FLOW_API_KEY=...
 OPENAI_API_KEY=...
+OPENAI_MODEL=your-openai-model
 ```
 
 ## Quick Start

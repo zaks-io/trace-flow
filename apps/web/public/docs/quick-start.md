@@ -16,6 +16,7 @@ Keep your upstream provider key exactly as you already do, then add your Trace F
 ```bash
 export TRACE_FLOW_API_KEY="your-trace-flow-key"
 export OPENAI_API_KEY="your-provider-key"
+export OPENAI_MODEL="your-openai-model"
 ```
 
 ## 2) Install SDK dependencies

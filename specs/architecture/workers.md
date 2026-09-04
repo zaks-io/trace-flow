@@ -293,7 +293,7 @@ Defined in `apps/agent-consumer/wrangler.jsonc`:
 
 Production uses `trace-flow-agent-consumer`, `agent-ingest-prod`, `agent-ingest-dlq-prod`, and the production model-pricing namespace.
 
-## API Worker
+## Raw API Worker
 
 **Location**: `apps/api/`
 
@@ -302,14 +302,14 @@ Production uses `trace-flow-agent-consumer`, `agent-ingest-prod`, `agent-ingest-
 ### What It Owns
 
 - R2 body retrieval
-- Auth0 JWT validation for web dashboard access
+- Request-scoped Body Access Token validation
 - CORS handling for browser requests
 
 ### What It Does NOT Own
 
 - Delivery-envelope creation (handled by Proxy) and canonical Body Object handoff (handled by Proxy
   Consumer)
-- Trace queries (handled by frontend to Tinybird directly)
+- Trace queries (handled by Pipes API)
 - User management
 - Agent analytics ingest
 
@@ -320,11 +320,12 @@ Production uses `trace-flow-agent-consumer`, `agent-ingest-prod`, `agent-ingest-
 
 ### Why a Separate Worker?
 
-The API worker exists because:
+The Raw API worker exists because:
 
-1. **Auth separation**: Uses Auth0 JWT validation (user identity), not API key auth
-2. **CORS requirements**: Browser requests need proper CORS headers
-3. **Access pattern**: Bodies are fetched on-demand when viewing trace details, not during ingestion
+1. **Secret separation**: Holds R2 body credentials but no Tinybird Pipe credentials
+2. **Scoped authorization**: Accepts short-lived Body Access Tokens minted for one request and organization
+3. **CORS requirements**: Browser requests need proper CORS headers
+4. **Access pattern**: Bodies are fetched on-demand when viewing trace details, not during ingestion
 
 ### Configuration
 
@@ -336,8 +337,8 @@ binding = "STORAGE"
 bucket_name = "trace-flow-storage-dev"
 
 [vars]
-AUTH0_DOMAIN = "auth0.zaks.io"
-AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
+SENTRY_ENVIRONMENT = "development"
+BODY_ENCRYPTION_KEY_ID = "v1"
 ```
 
 ## Web Worker (OpenNext)
@@ -350,13 +351,12 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 
 - Next.js SSR and static assets via OpenNext on Cloudflare Workers
 - React-based dashboard UI
-- Tinybird query generation and execution
 - LLM trace and agent analytics views
 
 ### What It Does NOT Own
 
 - Backend API endpoints (uses Convex for backend logic)
-- Body storage or retrieval (uses API worker)
+- Body storage or retrieval (uses Raw API)
 - Authentication state (uses Auth0)
 - Agent fact ingestion
 
@@ -364,7 +364,7 @@ AUTH0_CLIENT_ID = "iyvisDUHrcsFGZYWdxZrX7LH8rtnT50W"
 
 - **Inbound**: Browser requests
 - **Outbound**:
-  - Convex for user data, API keys, collector credentials, alerts, and Tinybird JWTs
+  - Convex for user data, API keys, collector credentials, alerts, Pipe Tokens, and Body Access Tokens
   - Pipes API for trace and agent queries
   - Raw API for body retrieval
 

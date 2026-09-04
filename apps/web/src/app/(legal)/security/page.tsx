@@ -177,8 +177,8 @@ export default function SecurityPage() {
         <Section number={9} title="Data retention">
           <p>
             Body retention is tier-based: Hobby and Pro plans have different access windows. When
-            the API worker is asked for a body that falls outside the caller&apos;s current
-            retention window, it returns HTTP 410 with{' '}
+            Raw API is asked for a body that falls outside the caller&apos;s current retention
+            window, it returns HTTP 410 with{' '}
             <Code>Bodies expired under current retention policy</Code>, regardless of whether the
             underlying R2 object is still present.
           </p>

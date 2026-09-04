@@ -93,7 +93,13 @@ async function handleUserRequest(userMessage: string) {
 
 ```typescript
 process.once('SIGTERM', () => {
-  void sdk.shutdown();
+  void sdk.shutdown().then(
+    () => process.exit(0),
+    (error) => {
+      console.error('OpenTelemetry shutdown failed', error);
+      process.exit(1);
+    },
+  );
 });
 ```
 
