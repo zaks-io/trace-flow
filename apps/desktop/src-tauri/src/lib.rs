@@ -20,6 +20,7 @@ mod paths;
 mod settings;
 mod state;
 mod tray;
+mod updater;
 
 use std::sync::Arc;
 
@@ -49,6 +50,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Cross-platform autostart. The plugin owns the Windows registry path; on macOS the
         // `autostart` module overrides it with a LaunchAgent that surfaces in Login Items. The plugin
         // must still be registered so its managed state (`app.autolaunch()`) exists on every platform.
@@ -68,6 +70,7 @@ pub fn run() {
             commands::recent_errors,
             commands::clear_errors,
             commands::open_dashboard,
+            updater::update_to_latest,
         ])
         .setup(|app| {
             let error_ring = logging::init_tracing(app.handle());
@@ -91,6 +94,7 @@ pub fn run() {
 
             // The single login seam, shared by every command and the tray (one in-flight guard).
             app.manage(crate::connector::Connector::default());
+            app.manage(updater::UpdateState::default());
 
             let (menu, handles) = build_menu(app.handle()).map_err(|err| {
                 Box::new(std::io::Error::other(err.to_string())) as Box<dyn std::error::Error>

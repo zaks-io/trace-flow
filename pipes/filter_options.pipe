@@ -6,10 +6,16 @@ SQL >
     %
     SELECT DISTINCT Provider AS value
     FROM trace_filter_options
-    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    WHERE (
+        ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+    )
         AND Provider != ''
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
     GROUP BY Provider
     HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
@@ -21,10 +27,16 @@ SQL >
     %
     SELECT DISTINCT Model AS value
     FROM trace_filter_options
-    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    WHERE (
+        ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+    )
         AND Model != ''
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
     GROUP BY Model
     HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
@@ -36,9 +48,15 @@ SQL >
     %
     SELECT DISTINCT StatusCode AS value
     FROM trace_filter_options
-    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    WHERE (
+        ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+    )
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
     GROUP BY StatusCode
     HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
@@ -49,10 +67,16 @@ SQL >
     %
     SELECT DISTINCT BaggageOperation AS value
     FROM trace_filter_options
-    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    WHERE (
+        ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+    )
         AND BaggageOperation != ''
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
     GROUP BY BaggageOperation
     HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
@@ -62,11 +86,19 @@ SQL >
 NODE api_keys_list
 SQL >
     %
-    SELECT DISTINCT ApiKey AS value
+    SELECT DISTINCT
+        if(
+            match(ApiKey, '^sha256:[0-9a-f]{64}$'),
+            ApiKey,
+            concat('sha256:', lower(hex(SHA256(ApiKey))))
+        ) AS value
     FROM trace_filter_options
-    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    WHERE (
+        ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+    )
         AND ApiKey != ''
-    GROUP BY ApiKey
+    GROUP BY value
     HAVING maxMerge(LastSeenAt) >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
     ORDER BY value
     LIMIT 100

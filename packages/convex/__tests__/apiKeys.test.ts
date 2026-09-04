@@ -1,5 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
 
+const authMocks = vi.hoisted(() => ({
+  requireAuthenticated: vi.fn(),
+  getCurrentUser: vi.fn(),
+}));
+
+vi.mock('../auth/auth', () => ({
+  requireAuthenticated: authMocks.requireAuthenticated,
+}));
+
+vi.mock('../auth/users', () => ({
+  getCurrentUser: authMocks.getCurrentUser,
+  requireEnabledUser: vi.fn(),
+}));
+
+import { listAnalytics } from '../apiKeys';
+
 // ---------------------------------------------------------------------------
 // apiKeys.ts handler logic tests
 // ---------------------------------------------------------------------------
@@ -92,6 +108,56 @@ describe('apiKeys.list handler logic', () => {
     // Simulate: if user.orgId use by_org_id, else use by_user_id
     const indexName = user.orgId ? 'by_org_id' : 'by_user_id';
     expect(indexName).toBe('by_user_id');
+  });
+});
+
+describe('apiKeys.listAnalytics', () => {
+  it('returns canonical identifiers and names without credentials', async () => {
+    const orgKey = makeApiKey({
+      _id: 'org_key',
+      key: 'org-secret',
+      name: 'Production',
+    });
+    const userKey = makeApiKey({
+      _id: 'user_key',
+      key: 'user-secret',
+      orgId: undefined,
+      name: undefined,
+    });
+    authMocks.getCurrentUser.mockResolvedValue(makeUser());
+
+    const ctx = {
+      db: {
+        query: vi.fn(() => ({
+          withIndex: vi.fn((indexName: string) => ({
+            collect: vi
+              .fn()
+              .mockResolvedValue(indexName === 'by_org_id' ? [orgKey] : [orgKey, userKey]),
+          })),
+        })),
+      },
+    };
+
+    const result = await (
+      listAnalytics as unknown as {
+        _handler: (context: unknown, args: Record<string, never>) => Promise<unknown[]>;
+      }
+    )._handler(ctx, {});
+
+    expect(result).toEqual([
+      {
+        _id: 'org_key',
+        name: 'Production',
+        identifier: 'sha256:2f627f99a5328b27cad5cfba45e374b198a82b8f7e9e94649db6e37322b398e1',
+      },
+      {
+        _id: 'user_key',
+        name: undefined,
+        identifier: 'sha256:fa32968772a8ee3fbd6f842644e210e8d27d27ac97742fe7f1910778fc3fa21d',
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain('org-secret');
+    expect(JSON.stringify(result)).not.toContain('user-secret');
   });
 });
 

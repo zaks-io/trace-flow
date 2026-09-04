@@ -15,7 +15,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::connector::Connector;
 use crate::engine::{self, EngineCommand, EngineHandle};
 use crate::logging::ErrorRing;
-use crate::state::AppStateBus;
+use crate::state::{AppStateBus, UpdateStatus};
 
 /// How many recent warn/error lines the diagnostics view shows.
 const RECENT_ERROR_LIMIT: usize = 10;
@@ -37,6 +37,7 @@ pub struct StatusDto {
     pub credential_present: bool,
     pub expired: bool,
     pub sync: String,
+    pub update: UpdateStatus,
 }
 
 fn now_ms() -> i64 {
@@ -98,6 +99,7 @@ pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
         credential_present,
         expired,
         sync: snapshot.sync.label().to_string(),
+        update: snapshot.update,
     }
 }
 

@@ -5,7 +5,15 @@ import Usage from '@/components/usage/Usage';
 
 export default async function DashboardPage() {
   const token = await getConvexToken();
-  const preloadedApiKeys = await preloadQuery(api.apiKeys.list, {}, { token });
+  const [preloadedApiKeys, preloadedAnalyticsApiKeys] = await Promise.all([
+    preloadQuery(api.apiKeys.list, {}, { token }),
+    preloadQuery(api.apiKeys.listAnalytics, {}, { token }),
+  ]);
 
-  return <Usage preloadedApiKeys={preloadedApiKeys} />;
+  return (
+    <Usage
+      preloadedApiKeys={preloadedApiKeys}
+      preloadedAnalyticsApiKeys={preloadedAnalyticsApiKeys}
+    />
+  );
 }

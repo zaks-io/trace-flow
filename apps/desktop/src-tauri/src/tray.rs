@@ -46,11 +46,23 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             _ => dispatch(app, EngineCommand::Pause),
         },
         "toggle_autostart" => toggle_autostart(app),
+        "action_update" => update_to_latest(app),
         "open_dashboard" => open_dashboard(app),
         "open_logs" => open_logs(app),
         "quit" => app.exit(0),
         other => tracing::debug!(menu_id = other, "unhandled menu event"),
     }
+}
+
+fn update_to_latest<R: Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let bus: tauri::State<'_, AppStateBus> = app.state();
+        let state: tauri::State<'_, crate::updater::UpdateState> = app.state();
+        if let Err(err) = crate::updater::install_latest(&app, &bus, &state).await {
+            tracing::error!(error = %err, "tray update failed");
+        }
+    });
 }
 
 fn reconnect<R: Runtime>(app: &AppHandle<R>) {

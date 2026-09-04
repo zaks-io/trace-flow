@@ -10,7 +10,10 @@ SQL >
         countDistinct(SpanId) as request_count
     FROM otel_trace_spans
     WHERE ParentSpanId = ''
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         AND ReceivedAt >= {{ Int64(start_time_ns, 0) }}
         AND JSONExtractString(SpanAttributes, 'gen_ai.system') != ''

@@ -2,11 +2,24 @@
 // Talks to the Rust commands via the global Tauri bridge (withGlobalTauri = true). No bundler.
 
 const invoke = window.__TAURI__.core.invoke;
+const listen = window.__TAURI__.event.listen;
 
 const el = (id) => document.getElementById(id);
 const msg = (text) => {
   el('msg').textContent = text || '';
 };
+
+function applyUpdateStatus(status) {
+  const button = el('update');
+  button.disabled = status.status === 'checking' || status.status === 'installing';
+  if (status.status === 'checking') {
+    button.textContent = 'Checking for updates…';
+  } else if (status.status === 'installing') {
+    button.textContent = `Installing ${status.version}…`;
+  } else {
+    button.textContent = 'Update to latest';
+  }
+}
 
 async function refreshStatus() {
   const status = await invoke('connection_status');
@@ -28,6 +41,7 @@ async function refreshStatus() {
   el('start').disabled = !ready;
   el('sync-now').disabled = !ready;
   el('disconnect').disabled = !status.connected;
+  applyUpdateStatus(status.update);
 }
 
 async function refreshSources() {
@@ -111,6 +125,26 @@ el('disconnect').addEventListener('click', async () => {
     msg(`${err}`);
   }
   await refresh();
+});
+
+el('update').addEventListener('click', async () => {
+  const button = el('update');
+  button.disabled = true;
+  button.textContent = 'Checking for updates…';
+  msg('Checking for the latest version…');
+  try {
+    const result = await invoke('update_to_latest');
+    msg(`Trace Flow Desktop ${result.currentVersion} is up to date.`);
+  } catch (err) {
+    msg(`Update failed: ${err}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Update to latest';
+  }
+});
+
+listen('desktop-update-status', (event) => applyUpdateStatus(event.payload)).catch((err) => {
+  msg(`Update status listener failed: ${err}`);
 });
 
 refresh();

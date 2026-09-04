@@ -402,7 +402,7 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     );
   }
 
-  const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';
+  const apiKey = keyData.analyticsKeyId;
   // Convert milliseconds to nanoseconds for OTLP spec compliance
   const receivedAtNano = getCurrentTimestamp() * 1_000_000;
   const traces = transformOTLPToTraces(body, apiKey, receivedAtNano);

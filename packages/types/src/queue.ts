@@ -14,6 +14,7 @@ import type { SSEStreamData } from './sse';
 
 export interface QueueMessage {
   requestId: string;
+  /** SHA-256 analytics identifier, never the authentication credential. */
   apiKey: string;
   targetUrl: string;
   request: LLMRequest;
@@ -57,6 +58,7 @@ export interface TinybirdTrace {
   Duration: number;
   StatusCode: string;
   StatusMessage: string;
+  /** Legacy column name retained for Tinybird compatibility; contains an analytics identifier. */
   ApiKey: string;
   'Events.Timestamp': number[];
   'Events.Name': string[];
@@ -75,6 +77,7 @@ export interface TinybirdTrace {
  */
 export interface OTLPQueueMessage {
   type: 'otlp';
+  /** SHA-256 analytics identifier, never the authentication credential. */
   apiKey: string;
   traces: TinybirdTrace[];
   receivedAt: number;

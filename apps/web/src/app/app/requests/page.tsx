@@ -7,7 +7,7 @@ export default async function RequestsPage() {
   const token = await getConvexToken();
   const [preloadedAlerts, preloadedApiKeys] = await Promise.all([
     preloadQuery(api.alerts.listEnabled, {}, { token }),
-    preloadQuery(api.apiKeys.list, {}, { token }),
+    preloadQuery(api.apiKeys.listAnalytics, {}, { token }),
   ]);
 
   return <Requests preloadedAlerts={preloadedAlerts} preloadedApiKeys={preloadedApiKeys} />;

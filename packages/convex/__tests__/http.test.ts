@@ -1407,11 +1407,13 @@ describe('convex/http.ts', () => {
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ token: 'minted-tinybird-jwt' });
-      // raw key resolved server-side and passed to the mint action
       expect(ctx.runAction.mock.calls[0]?.[1]).toMatchObject({
-        apiKeys: ['raw-secret-1'],
+        analyticsKeyIds: [
+          'sha256:f42ffc628be4e7fd158fdea6f57970e4f201f537dcdd5b80e355105fd77648e7',
+        ],
         orgId: 'org_1',
       });
+      expect(JSON.stringify(ctx.runAction.mock.calls[0]?.[1])).not.toContain('raw-secret-1');
     });
 
     it('rejects mint for a disabled user with 403', async () => {

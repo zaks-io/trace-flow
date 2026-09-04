@@ -10,7 +10,10 @@ SQL >
     %
     SELECT DISTINCT TraceId
     FROM otel_genai_spans
-    WHERE ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+    WHERE (
+        ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+    )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}
@@ -31,7 +34,10 @@ SQL >
         AND TraceId = {{ String(search) }}
         {% end %}
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
     ORDER BY TraceId DESC
     LIMIT {{ Int32(limit, 100) * 10 }}
@@ -73,7 +79,10 @@ SQL >
         TraceId IN (SELECT TraceId FROM filter_traces)
         AND {% end %}
         JSONExtractString(SpanAttributes, 'trace_flow.source') = 'proxy'
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if not (defined(provider) or defined(model) or defined(status) or defined(operation) or defined(search) or defined(api_key_filter)) and defined(after_received_at) %}
         AND ReceivedAt > {{ Int64(after_received_at) }}

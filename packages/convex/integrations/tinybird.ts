@@ -6,10 +6,11 @@ import { requireAuthenticated } from '../auth/auth';
 import { api, internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
+import { analyticsKeyId } from '@trace-flow/utils';
 import { rateLimiter } from '../rateLimits';
-import { sanitizeApiKeys, sqlStringLiteral, UUID_PATTERN } from '../tinybirdSql';
+import { NORMALIZED_API_KEY_SQL, sanitizeAnalyticsKeyIds, sqlStringLiteral } from '../tinybirdSql';
 
-export { sanitizeApiKeys, UUID_PATTERN } from '../tinybirdSql';
+export { sanitizeAnalyticsKeyIds } from '../tinybirdSql';
 
 const adminToken = process.env.TINYBIRD_ADMIN_TOKEN;
 const workspaceId = process.env.TINYBIRD_WORKSPACE_ID;
@@ -221,9 +222,10 @@ export const generateWebReadToken = action({
   },
 });
 
-/** Build comma-separated api_keys for JWT fixed_params from key docs (e.g. listForUser). */
-export function joinSanitizedApiKeys(apiKeys: { key: string }[]): string {
-  return sanitizeApiKeys(apiKeys.map((k) => k.key)).join(',');
+/** Build comma-separated analytics key identifiers for JWT fixed_params. */
+export async function joinAnalyticsKeyIds(apiKeys: { key: string }[]): Promise<string> {
+  const ids = await Promise.all(apiKeys.map((apiKey) => analyticsKeyId(apiKey.key)));
+  return sanitizeAnalyticsKeyIds(ids).join(',');
 }
 
 export const LLM_API_KEY_DATASOURCES = [
@@ -259,18 +261,18 @@ interface TinybirdDeleteStatement {
 }
 
 export function buildOrgTraceDeleteStatements(params: {
-  apiKeys: string[];
+  analyticsKeyIds: string[];
   orgId: string;
 }): TinybirdDeleteStatement[] {
-  const validKeys = sanitizeApiKeys(params.apiKeys);
+  const validIds = sanitizeAnalyticsKeyIds(params.analyticsKeyIds);
   const statements: TinybirdDeleteStatement[] = [];
 
-  if (validKeys.length > 0) {
-    const apiKeysInClause = validKeys.map(sqlStringLiteral).join(',');
+  if (validIds.length > 0) {
+    const analyticsKeyIdsInClause = validIds.map(sqlStringLiteral).join(',');
     statements.push(
       ...LLM_API_KEY_DATASOURCES.map((datasource) => ({
         datasource,
-        sql: `ALTER TABLE ${datasource} DELETE WHERE ApiKey IN (${apiKeysInClause})`,
+        sql: `ALTER TABLE ${datasource} DELETE WHERE ${NORMALIZED_API_KEY_SQL} IN (${analyticsKeyIdsInClause})`,
       })),
     );
   }
@@ -288,28 +290,27 @@ export function buildOrgTraceDeleteStatements(params: {
 
 async function getApiKeyString(ctx: ActionCtx, userId: Id<'users'>): Promise<string> {
   const apiKeys = await ctx.runQuery(internal.apiKeys.listForUser, { userId });
-  return joinSanitizedApiKeys(apiKeys);
+  return joinAnalyticsKeyIds(apiKeys);
 }
 
-// Internal action for MCP - bypasses Convex auth, requires apiKeys parameter
+// Internal action for MCP. The backend resolves owned key ids to analytics ids.
 export const generateTokenInternal = internalAction({
   args: {
     scopes: v.array(v.object({ type: v.string(), resource: v.string() })),
-    apiKeys: v.array(v.string()),
+    analyticsKeyIds: v.array(v.string()),
     retentionDays: v.optional(v.number()),
     orgId: v.optional(v.string()),
     ttl: v.optional(v.number()),
   },
   returns: v.string(),
   handler: async (_, args) => {
-    // Validate API keys are UUIDs before inclusion in JWT (defense in depth)
-    const validKeys = sanitizeApiKeys(args.apiKeys);
+    const analyticsKeyIds = sanitizeAnalyticsKeyIds(args.analyticsKeyIds);
 
     // Same fixed_param builder as the web token path: always emits org_id
     // (sentinel when the caller has no org), so MCP cannot issue an agent JWT
     // that is unscoped on org_id.
     const scopesWithApiKeys = withRowSecurityParams(validateMcpTinybirdScopes(args.scopes), {
-      apiKeyString: validKeys.join(','),
+      apiKeyString: analyticsKeyIds.join(','),
       retentionDays: args.retentionDays ?? RETENTION_DAYS.hobby,
       orgId: args.orgId ?? '',
     });
@@ -343,8 +344,10 @@ export const deleteOrgTraces = internalAction({
   ),
   handler: async (ctx, args) => {
     const apiKeys = await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: args.orgId });
-    const apiKeyStrings = apiKeys.map((k: { key: string }) => k.key);
-    const statements = buildOrgTraceDeleteStatements({ apiKeys: apiKeyStrings, orgId: args.orgId });
+    const analyticsKeyIds = await Promise.all(
+      apiKeys.map((apiKey: { key: string }) => analyticsKeyId(apiKey.key)),
+    );
+    const statements = buildOrgTraceDeleteStatements({ analyticsKeyIds, orgId: args.orgId });
 
     const results: Record<string, { success: boolean; error?: string }> = {};
 
@@ -386,9 +389,11 @@ export const extendRetention = internalAction({
   handler: async (ctx, args) => {
     // Get all API keys for this organization
     const apiKeys = await ctx.runQuery(internal.apiKeys.listByOrgId, { orgId: args.orgId });
-    const apiKeyStrings = apiKeys.map((k: { key: string }) => k.key);
+    const analyticsKeyIds = sanitizeAnalyticsKeyIds(
+      await Promise.all(apiKeys.map((apiKey: { key: string }) => analyticsKeyId(apiKey.key))),
+    );
 
-    if (apiKeyStrings.length === 0) {
+    if (analyticsKeyIds.length === 0) {
       return { updated: false as const, reason: 'No API keys found for organization' };
     }
 
@@ -396,14 +401,7 @@ export const extendRetention = internalAction({
     const extensionNanos = (RETENTION_DAYS.pro - RETENTION_DAYS.hobby) * NANOSECONDS_PER_DAY;
     const nowNanos = Date.now() * 1_000_000;
 
-    // Validate API keys are UUIDs before interpolating into SQL (defense in depth)
-    const validKeys = apiKeyStrings.filter((k: string) => UUID_PATTERN.test(k));
-    if (validKeys.length === 0) {
-      return { updated: false as const, reason: 'No valid API keys found for organization' };
-    }
-
-    // Format API keys for SQL IN clause (safe: UUID_PATTERN guarantees only hex + dashes)
-    const apiKeysInClause = validKeys.map((k: string) => `'${k}'`).join(',');
+    const analyticsKeyIdsInClause = analyticsKeyIds.map(sqlStringLiteral).join(',');
 
     // Datasources to update
     const datasources = ['otel_trace_spans', 'otel_genai_spans', 'llm_request_facts'];
@@ -419,7 +417,7 @@ export const extendRetention = internalAction({
         UPDATE
           RetentionExpiresAt = RetentionExpiresAt + ${extensionNanos},
           TierAtIngestion = 'pro'
-        WHERE ApiKey IN (${apiKeysInClause})
+        WHERE ${NORMALIZED_API_KEY_SQL} IN (${analyticsKeyIdsInClause})
           AND RetentionExpiresAt > ${nowNanos}
           AND TierAtIngestion IN ('hobby', '')
       `;

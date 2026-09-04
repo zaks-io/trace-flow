@@ -62,7 +62,10 @@ SQL >
         WHERE range_days <= 30
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
-            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND (
+                ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+                OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+            )
             AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
@@ -80,7 +83,10 @@ SQL >
             AND StatusCode = {{ String(status) }}
             {% end %}
             {% if defined(api_key_filter) %}
-            AND ApiKey = {{ String(api_key_filter) }}
+            AND (
+                ApiKey = {{ String(api_key_filter) }}
+                OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+            )
             {% end %}
         UNION ALL
         SELECT
@@ -109,7 +115,10 @@ SQL >
             AND range_days <= 180
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
-            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND (
+                ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+                OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+            )
             AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
@@ -127,7 +136,10 @@ SQL >
             AND StatusCode = {{ String(status) }}
             {% end %}
             {% if defined(api_key_filter) %}
-            AND ApiKey = {{ String(api_key_filter) }}
+            AND (
+                ApiKey = {{ String(api_key_filter) }}
+                OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+            )
             {% end %}
         UNION ALL
         SELECT
@@ -155,7 +167,10 @@ SQL >
         WHERE range_days > 180
             AND BucketStart >= start_dt
             AND BucketStart <= end_dt
-            AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            AND (
+                ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+                OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+            )
             AND BucketStart >= now() - toIntervalDay({{ Int32(retention_days, 7) }})
             {% if defined(provider) %}
             AND Provider = {{ String(provider) }}
@@ -173,7 +188,10 @@ SQL >
             AND StatusCode = {{ String(status) }}
             {% end %}
             {% if defined(api_key_filter) %}
-            AND ApiKey = {{ String(api_key_filter) }}
+            AND (
+                ApiKey = {{ String(api_key_filter) }}
+                OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+            )
             {% end %}
     )
     GROUP BY bucket_start
