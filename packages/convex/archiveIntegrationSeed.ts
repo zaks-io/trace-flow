@@ -2,12 +2,21 @@ import { internalMutation } from './_generated/server';
 import { v } from 'convex/values';
 
 const ARCHIVE_INTEGRATION_TEST_GATE = 'TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED';
+const ARCHIVE_INTEGRATION_ORG_NAME_PREFIX = 'Archive concurrency test ';
 
 function assertArchiveIntegrationTestEnabled() {
   if (process.env[ARCHIVE_INTEGRATION_TEST_GATE] !== 'true') {
     throw new Error(
       'Archive integration seed is disabled outside an explicit test deployment gate',
     );
+  }
+}
+
+function assertSeededArchiveIntegrationOrg<T extends { name: string }>(
+  organization: T | null,
+): asserts organization is T {
+  if (!organization?.name.startsWith(ARCHIVE_INTEGRATION_ORG_NAME_PREFIX)) {
+    throw new Error('Archive integration cleanup targets seeded test organizations only');
   }
 }
 
@@ -34,7 +43,7 @@ export const seedConcurrentEnrollment = internalMutation({
       enabled: true,
     });
     const orgId = await ctx.db.insert('organizations', {
-      name: `Archive concurrency test ${runId}`,
+      name: `${ARCHIVE_INTEGRATION_ORG_NAME_PREFIX}${runId}`,
       ownerId: userId,
     });
     await ctx.db.patch(userId, { orgId });
@@ -78,6 +87,8 @@ export const cleanupConcurrentEnrollment = internalMutation({
   returns: v.null(),
   handler: async (ctx, { orgId }) => {
     assertArchiveIntegrationTestEnabled();
+    const organization = await ctx.db.get(orgId);
+    assertSeededArchiveIntegrationOrg(organization);
     for (const row of await ctx.db
       .query('archiveSessionIntegrity')
       .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
@@ -138,8 +149,7 @@ export const cleanupConcurrentEnrollment = internalMutation({
       .collect()) {
       await ctx.db.delete(row._id);
     }
-    const organization = await ctx.db.get(orgId);
-    if (organization) await ctx.db.delete(organization._id);
+    await ctx.db.delete(organization._id);
     return null;
   },
 });

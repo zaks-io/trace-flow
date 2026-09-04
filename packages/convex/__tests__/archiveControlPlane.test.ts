@@ -567,6 +567,21 @@ describe('archive control plane', () => {
     ).rejects.toThrow('disabled outside an explicit test deployment gate');
   });
 
+  it('refuses integration cleanup for organizations that were not seeded', async () => {
+    process.env.TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED = 'true';
+    try {
+      const world = await seedWorld();
+      await expect(
+        world.t.mutation(internal.archiveIntegrationSeed.cleanupConcurrentEnrollment, {
+          orgId: world.owner.orgId,
+        }),
+      ).rejects.toThrow('seeded test organizations only');
+      expect(await world.t.run(async (ctx) => ctx.db.get(world.owner.orgId))).not.toBeNull();
+    } finally {
+      delete process.env.TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED;
+    }
+  });
+
   it('does not treat convex-test Promise.all as OCC concurrent first enrollment', async () => {
     enableArchive();
     const world = await seedWorld();
