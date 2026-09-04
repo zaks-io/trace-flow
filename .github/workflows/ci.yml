@@ -30,6 +30,7 @@ jobs:
       convex: ${{ steps.filter.outputs.convex }}
       pricing: ${{ steps.filter.outputs.pricing }}
       agent-ingest: ${{ steps.filter.outputs.agent-ingest }}
+      archive-api: ${{ steps.filter.outputs.archive-api }}
       agent-consumer: ${{ steps.filter.outputs.agent-consumer }}
       analyst-sandbox: ${{ steps.filter.outputs.analyst-sandbox }}
       duplicates: ${{ steps.filter.outputs.duplicates }}
@@ -78,6 +79,10 @@ jobs:
             agent-ingest:
               - 'apps/agent-ingest/**'
               - 'packages/types/**'
+              - 'packages/utils/**'
+              - 'packages/logging/**'
+            archive-api:
+              - 'apps/archive-api/**'
               - 'packages/utils/**'
               - 'packages/logging/**'
             agent-consumer:
@@ -628,6 +633,51 @@ jobs:
       - name: Build
         run: bunx turbo run build --filter=@trace-flow/agent-ingest
 
+  archive-api:
+    name: Archive API Worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [changes]
+    if: needs.changes.outputs.archive-api == 'true' || needs.changes.outputs.root == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Cache Turbo
+        uses: actions/cache@v6
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Format check
+        run: bun prettier --check "apps/archive-api/**/*.{ts,tsx,js,jsx,json}"
+
+      - name: Lint
+        run: bunx turbo run lint --filter=@trace-flow/archive-api
+
+      - name: Type check
+        run: bunx turbo run type-check --filter=@trace-flow/archive-api
+
+      - name: Test
+        run: bunx turbo run test --filter=@trace-flow/archive-api
+
+      - name: Build
+        run: bunx turbo run build --filter=@trace-flow/archive-api
+
   agent-consumer:
     name: Agent Consumer Worker
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -853,6 +903,7 @@ jobs:
       - web
       - pricing
       - agent-ingest
+      - archive-api
       - agent-consumer
       - analyst-sandbox
       - rust

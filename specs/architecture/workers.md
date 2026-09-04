@@ -191,9 +191,9 @@ Defined in `apps/agent-ingest/wrangler.jsonc`:
 
 Production uses `trace-flow-agent-ingest`, `collector.trace-flow.dev`, the production `COLLECTOR_CREDS` namespace, and `agent-ingest-prod`.
 
-## Archive API Worker (Planned)
+## Archive API Worker
 
-**Target location**: `apps/archive-api/`
+**Location**: `apps/archive-api/`
 
 **Production origin**: `https://archive.trace-flow.dev`
 
