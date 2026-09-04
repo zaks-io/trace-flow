@@ -47,6 +47,7 @@ function disableArchive() {
 
 afterEach(() => {
   disableArchive();
+  delete process.env.TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED;
 });
 
 async function seedWorld(
@@ -349,24 +350,35 @@ describe('archive control-plane pure functions', () => {
       assertArchiveMutationAllowed({
         org: null,
         activation: { status: 'active' },
+        serverEnabled: true,
       }),
     ).toThrow('Organization not found');
     expect(() =>
       assertArchiveMutationAllowed({
         org: { deletedAt: 1 },
         activation: { status: 'active' },
+        serverEnabled: true,
       }),
     ).toThrow('Organization not found');
     expect(() =>
       assertArchiveMutationAllowed({
         org: {},
         activation: { status: 'deleting' },
+        serverEnabled: true,
       }),
     ).toThrow('deleting');
     expect(() =>
       assertArchiveMutationAllowed({
         org: {},
         activation: { status: 'active' },
+        serverEnabled: false,
+      }),
+    ).toThrow('not enabled');
+    expect(() =>
+      assertArchiveMutationAllowed({
+        org: {},
+        activation: { status: 'active' },
+        serverEnabled: true,
       }),
     ).not.toThrow();
   });
@@ -1672,5 +1684,58 @@ describe('archive control plane', () => {
         sourceSessionId: 'sess-after-org-row-gone',
       }),
     ).rejects.toThrow('Organization not found');
+  });
+
+  it('fails closed on internal archive writes when the server gate is off', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    disableArchive();
+
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatus, {
+        collectorCredentialId: world.ownerCred,
+        revision: 12,
+        storedBytes: 1,
+        lifecycle: 'active',
+      }),
+    ).rejects.toThrow('not enabled');
+    await expect(
+      world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 1,
+        observedAt: 12,
+      }),
+    ).rejects.toThrow('not enabled');
+    await expect(
+      world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+        sourceSessionId: 'sess-after-kill-switch',
+      }),
+    ).rejects.toThrow('not enabled');
+  });
+
+  it('rejects internal collector heartbeats after the credential is revoked', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await world.t.run(async (ctx) => {
+      await ctx.db.patch(world.ownerCred, { status: 'revoked' });
+    });
+
+    await expect(
+      world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 99,
+        observedAt: 13,
+      }),
+    ).rejects.toThrow('Collector Credential is not active');
+    const enrollment = await world.t.run(async (ctx) => ctx.db.get(enrolled.enrollmentId));
+    expect(enrollment?.pendingSpoolBytes).toBeUndefined();
   });
 });

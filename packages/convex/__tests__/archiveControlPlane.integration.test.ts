@@ -56,15 +56,23 @@ function runConvex<T>(
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
+    let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
     });
     child.on('error', () => {
       reject(new Error(`Unable to start Convex command for ${functionName}`));
     });
     child.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`Convex command ${functionName} failed with exit code ${code}`));
+        reject(
+          new Error(
+            `Convex command ${functionName} failed with exit code ${code}: ${stderr.trim()}`,
+          ),
+        );
         return;
       }
       if (stdout.trim().length === 0) {

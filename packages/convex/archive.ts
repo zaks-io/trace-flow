@@ -96,12 +96,13 @@ async function requireArchiveHeartbeatAllowed(
   ctx: Parameters<typeof requireEnabledUser>[0],
   orgId: Id<'organizations'>,
 ) {
-  if (!isArchiveServerEnabled()) {
-    throw new Error('Conversation Archive is not enabled');
-  }
   const org = await ctx.db.get(orgId);
   const activation = await getArchiveActivation(ctx, orgId);
-  assertArchiveMutationAllowed({ org, activation });
+  assertArchiveMutationAllowed({
+    org,
+    activation,
+    serverEnabled: isArchiveServerEnabled(),
+  });
   if (!activation) {
     throw new Error('Conversation Archive is not activated');
   }

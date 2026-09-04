@@ -110,6 +110,7 @@ export const applyServerStatus = internalMutation({
     assertArchiveMutationAllowed({
       org,
       activation,
+      serverEnabled: isArchiveServerEnabled(),
     });
 
     const now = Date.now();
@@ -182,11 +183,15 @@ export const reportCollectorHeartbeat = internalMutation({
   handler: async (ctx, args) => {
     const credential = await ctx.db.get(args.collectorCredentialId);
     if (!credential) throw new Error('Collector Credential not found');
+    if (credential.status !== 'active') {
+      throw new Error('Collector Credential is not active');
+    }
     const org = await ctx.db.get(credential.orgId);
     const activation = await getArchiveActivation(ctx, credential.orgId);
     assertArchiveMutationAllowed({
       org,
       activation,
+      serverEnabled: isArchiveServerEnabled(),
     });
     const slot = await getEnrollmentSlot(ctx, credential.orgId, credential._id);
     if (!slot) throw new Error('Enrollment not found');
@@ -223,6 +228,7 @@ export const upsertSessionIntegrity = internalMutation({
     assertArchiveMutationAllowed({
       org,
       activation,
+      serverEnabled: isArchiveServerEnabled(),
     });
     const slot = await getEnrollmentSlot(ctx, credential.orgId, credential._id);
     const enrollment = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;

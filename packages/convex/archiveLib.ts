@@ -300,7 +300,11 @@ export function isOrganizationDeleted(org: { deletedAt?: number } | null | undef
 export function assertArchiveMutationAllowed(input: {
   org: { deletedAt?: number } | null;
   activation: { status: ArchiveActivationStatus } | null;
+  serverEnabled: boolean;
 }): void {
+  if (!input.serverEnabled) {
+    throw new Error('Conversation Archive is not enabled');
+  }
   if (isOrganizationDeleted(input.org)) throw new Error('Organization not found');
   if (input.activation?.status === 'deleting') {
     throw new Error('Conversation Archive is deleting');
