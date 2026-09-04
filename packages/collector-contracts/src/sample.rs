@@ -9,10 +9,7 @@ use crate::enums::{
     AgentToolErrorCoverage, CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence,
     TokenCoverage,
 };
-use crate::envelope::{
-    AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts, RawSessionBundle,
-    RawSessionBundleManifest,
-};
+use crate::envelope::{AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts};
 use crate::facts::{
     AgentCapabilitySnapshotFact, AgentFileEventFact, AgentMessageFact, AgentPullRequestLinkFact,
     AgentToolEventFact,
@@ -25,7 +22,6 @@ pub fn sample_envelope() -> AgentIngestEnvelope {
             collector_batch_id: "batch_01HZX0000000000000000000".to_string(),
             desktop_version: "0.1.0".to_string(),
             parser_version: "0.1.0".to_string(),
-            raw_upload_requested: true,
         },
         facts: AgentIngestFacts {
             messages: vec![AgentMessageFact {
@@ -126,16 +122,5 @@ pub fn sample_envelope() -> AgentIngestEnvelope {
                 dropped_sensitive: 0,
             }],
         },
-        raw_session_bundles: Some(vec![RawSessionBundle {
-            manifest: RawSessionBundleManifest {
-                source: AgentSource::Claude,
-                vendor_session_id: "claude-sess-abc123".to_string(),
-                parser_version: "0.1.0".to_string(),
-                part_ids: vec!["main".to_string(), "subagents/agent-7f3c".to_string()],
-                content_hash: "sha256:cafebabe".to_string(),
-                byte_count: 20480,
-            },
-            gzip_base64: "H4sIAAAAAAAAAytJLS4BAAx+f9gEAAAA".to_string(),
-        }]),
     }
 }

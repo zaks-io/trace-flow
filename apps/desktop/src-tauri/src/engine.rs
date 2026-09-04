@@ -51,8 +51,6 @@ pub enum EngineCommand {
     Resume,
     /// Stop all egress; the loop stays alive but does no work until resumed.
     Pause,
-    /// Set whether raw-transcript upload is requested on subsequent cycles.
-    SetRawUpload(bool),
 }
 
 #[derive(Clone)]
@@ -92,7 +90,6 @@ async fn run_loop(
     ticker.tick().await;
 
     bus.update(|s| {
-        s.raw_upload = settings.raw_upload;
         if settings.syncing {
             s.sync = SyncStatus::Idle;
         }
@@ -111,10 +108,6 @@ async fn run_loop(
             cmd = rx.recv() => {
                 let Some(cmd) = cmd else { break };
                 match cmd {
-                    EngineCommand::SetRawUpload(value) => {
-                        settings.raw_upload = value;
-                        bus.update(|s| s.raw_upload = value);
-                    }
                     EngineCommand::Pause => {
                         settings.syncing = false;
                         bus.update(|s| s.sync = SyncStatus::Paused);
@@ -156,7 +149,7 @@ async fn run_authorized_cycle(bus: &AppStateBus, settings: &mut Settings) {
     } else {
         sync::window_from_since(FIRST_BACKFILL).unwrap_or(Window::Incremental)
     };
-    if run_cycle(bus, settings.raw_upload, window).await {
+    if run_cycle(bus, window).await {
         settings.backfilled = true;
     }
 }
@@ -204,7 +197,7 @@ struct CycleOutcome {
 /// Returns `true` only when the cycle actually reached the ingest worker without a setup failure or
 /// panic — so a caller (the first backfill) can tell a real pass from a no-op/abort and avoid marking
 /// a one-time backfill done when nothing landed.
-async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool {
+async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
     let conn = match Paths::resolve().and_then(|p| p.load_connection()) {
         Ok(Some(conn)) => conn,
         Ok(None) => {
@@ -277,9 +270,7 @@ async fn run_cycle(bus: &AppStateBus, raw_upload: bool, window: Window) -> bool 
 
     let now_ms = now_ms();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        run_cycle_blocking(
-            org_id, credential, ingest_url, home, window, raw_upload, now_ms,
-        )
+        run_cycle_blocking(org_id, credential, ingest_url, home, window, now_ms)
     })
     .await;
 
@@ -344,7 +335,6 @@ fn run_cycle_blocking(
     ingest_url: String,
     home: std::path::PathBuf,
     window: Window,
-    raw_upload: bool,
     now_ms: i64,
 ) -> CycleOutcome {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -369,7 +359,6 @@ fn run_cycle_blocking(
         home: &home,
         window,
         now_ms,
-        raw_upload,
         batch_id_prefix: "desktop",
     }));
 

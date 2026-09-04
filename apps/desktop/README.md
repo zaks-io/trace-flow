@@ -14,8 +14,8 @@ detection, the sync drive loop, prod endpoint defaults), so the CLI and the desk
 ## Architecture
 
 - **Tray menu** - status, per-source file counts, Sync now / Pause, autostart, open dashboard/logs.
-- **First-run window** (`ui/`, static HTML + the global Tauri bridge) - source detection, the
-  raw-upload opt-in (**off by default**), and the explicit **Start syncing** egress gate.
+- **First-run window** (`ui/`, static HTML + the global Tauri bridge) - source detection and the
+  explicit **Start syncing** egress gate.
 - **`src-tauri/src/engine.rs`** - the background sync loop. `collector-sync` is deliberately
   single-task and **not `Send`** (its cursor connection + upload concurrency live on one task), so each
   cycle runs on a dedicated blocking thread with a current-thread runtime, exactly like the CLI's

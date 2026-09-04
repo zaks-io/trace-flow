@@ -3,10 +3,7 @@
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 
 use super::*;
-use collector_contracts::{
-    AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts, AgentSource, RawSessionBundle,
-    RawSessionBundleManifest,
-};
+use collector_contracts::{AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts, AgentSource};
 use flate2::read::GzDecoder;
 use std::io::Read as _;
 use std::sync::{
@@ -23,7 +20,6 @@ fn minimal_envelope() -> AgentIngestEnvelope {
             collector_batch_id: "batch-001".into(),
             desktop_version: "0.1.0".into(),
             parser_version: "0.1.0".into(),
-            raw_upload_requested: false,
         },
         facts: AgentIngestFacts {
             messages: vec![],
@@ -32,7 +28,6 @@ fn minimal_envelope() -> AgentIngestEnvelope {
             capability_snapshots: vec![],
             pull_request_links: vec![],
         },
-        raw_session_bundles: None,
     }
 }
 
@@ -217,17 +212,7 @@ async fn sends_gzip_encoded_body() {
 #[tokio::test]
 async fn rejects_oversized_envelope_before_network() {
     let mut envelope = minimal_envelope();
-    envelope.raw_session_bundles = Some(vec![RawSessionBundle {
-        manifest: RawSessionBundleManifest {
-            source: AgentSource::Claude,
-            vendor_session_id: "session-1".to_string(),
-            parser_version: "0.1.0".to_string(),
-            part_ids: vec![],
-            content_hash: "sha256:1".to_string(),
-            byte_count: 0,
-        },
-        gzip_base64: "x".repeat(MAX_INGEST_BYTES),
-    }]);
+    envelope.batch.collector_batch_id = "x".repeat(MAX_INGEST_BYTES);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

@@ -97,7 +97,6 @@ export interface AgentIngestBatch {
   collector_batch_id: string;
   desktop_version: string;
   parser_version: string;
-  raw_upload_requested: boolean;
 }
 
 /**
@@ -244,32 +243,10 @@ export interface AgentIngestFacts {
   pull_request_links: AgentPullRequestLinkFact[];
 }
 
-/**
- * Manifest for a Raw Session Bundle (deferred; plumbed so raw replay is additive later — see
- * `docs/adr/r2-storage-caps.md`). Counts/hashes only at this layer.
- */
-export interface RawSessionBundleManifest {
-  source: AgentSource;
-  vendor_session_id: string;
-  parser_version: string;
-  part_ids: string[];
-  content_hash: string;
-  byte_count: number;
-}
-
-/** A gzip-compressed Raw Session Bundle, sent only when raw upload is opted in (deferred). */
-export interface RawSessionBundle {
-  manifest: RawSessionBundleManifest;
-  /** base64-encoded gzip JSONL container. */
-  gzip_base64: string;
-}
-
 /** What the Collector POSTs to the ingest Worker. No tenancy, no cost, no final `*_pk`. */
 export interface AgentIngestEnvelope {
   batch: AgentIngestBatch;
   facts: AgentIngestFacts;
-  /** Present only when `batch.raw_upload_requested` and raw upload is enabled (deferred). */
-  raw_session_bundles?: RawSessionBundle[];
 }
 
 /** Tenancy + internal audit identity the Worker stamps from the Collector Credential record. */

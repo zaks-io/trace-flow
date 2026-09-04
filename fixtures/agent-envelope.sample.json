@@ -3,8 +3,7 @@
     "source": "claude",
     "collector_batch_id": "batch_01HZX0000000000000000000",
     "desktop_version": "0.1.0",
-    "parser_version": "0.1.0",
-    "raw_upload_requested": true
+    "parser_version": "0.1.0"
   },
   "facts": {
     "messages": [
@@ -114,18 +113,5 @@
         "dropped_sensitive": 0
       }
     ]
-  },
-  "raw_session_bundles": [
-    {
-      "manifest": {
-        "source": "claude",
-        "vendor_session_id": "claude-sess-abc123",
-        "parser_version": "0.1.0",
-        "part_ids": ["main", "subagents/agent-7f3c"],
-        "content_hash": "sha256:cafebabe",
-        "byte_count": 20480
-      },
-      "gzip_base64": "H4sIAAAAAAAAAytJLS4BAAx+f9gEAAAA"
-    }
-  ]
+  }
 }

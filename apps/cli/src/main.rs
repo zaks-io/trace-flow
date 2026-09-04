@@ -174,7 +174,6 @@ async fn cmd_sync(since: &str) -> Result<()> {
         home: &home,
         window,
         now_ms: now_ms(),
-        raw_upload: false,
         batch_id_prefix: "cli",
     })
     .await?;

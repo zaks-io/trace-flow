@@ -23,8 +23,6 @@ async function refreshStatus() {
   }
   el('status').textContent = label;
 
-  el('raw-upload').checked = !!status.raw_upload;
-
   const ready = status.connected && status.credential_present && !status.expired;
   el('connect').textContent = status.connected ? 'Reconnect…' : 'Connect…';
   el('start').disabled = !ready;
@@ -82,15 +80,6 @@ el('connect').addEventListener('click', async () => {
   } finally {
     el('connect').disabled = false;
     await refresh();
-  }
-});
-
-el('raw-upload').addEventListener('change', async (e) => {
-  try {
-    await invoke('set_raw_upload', { value: e.target.checked });
-  } catch (err) {
-    e.target.checked = !e.target.checked;
-    msg(`${err}`);
   }
 });
 

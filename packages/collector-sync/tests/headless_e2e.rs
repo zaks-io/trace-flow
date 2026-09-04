@@ -134,7 +134,6 @@ async fn headless_run_posts_real_claude_transcripts_and_advances_cursors() {
         source: AgentSource::Claude,
         desktop_version: "e2e".to_string(),
         parser_version: "e2e".to_string(),
-        raw_upload_requested: false,
     };
 
     let mut units = Vec::with_capacity(selected.len());

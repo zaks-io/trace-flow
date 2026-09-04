@@ -166,7 +166,7 @@ Agent analytics is still not production-ready until the gates in `docs/guides/ag
 - Tinybird writes
 - User-facing API key auth
 - LLM proxying
-- Conversation Archive R2 storage. The existing deferred `raw_session_bundles` wire slots are not the target design and should be removed; Archive JSONL uses the separately enrolled durable archive path defined by ADR 0012.
+- Conversation Archive R2 storage. Agent Ingest envelopes are fact-only; Archive JSONL uses the separately enrolled durable archive path defined by ADR 0012.
 
 ### Communication
 

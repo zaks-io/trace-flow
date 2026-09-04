@@ -43,6 +43,43 @@ fn fixture_deserializes_and_round_trips_without_field_loss() {
 }
 
 #[test]
+fn serialized_envelopes_cannot_carry_legacy_raw_slots() {
+    let json = serde_json::to_string(&sample_envelope()).expect("serialize sample");
+    assert!(
+        !json.contains("raw_upload_requested"),
+        "fact envelopes must not request raw upload"
+    );
+    assert!(
+        !json.contains("raw_session_bundles"),
+        "fact envelopes must not carry raw transcript slots"
+    );
+}
+
+#[test]
+fn legacy_raw_fields_are_dropped_without_being_copied() {
+    let mut legacy = serde_json::to_value(sample_envelope()).expect("serialize sample");
+    legacy["batch"]["raw_upload_requested"] = serde_json::json!(true);
+    legacy["raw_session_bundles"] = serde_json::json!([{
+        "manifest": {
+            "source": "claude",
+            "vendor_session_id": "legacy-raw",
+            "parser_version": "0.1.0",
+            "part_ids": ["main"],
+            "content_hash": "sha256:deadbeef",
+            "byte_count": 12
+        },
+        "gzip_base64": "legacy-raw-transcript-bytes"
+    }]);
+
+    let envelope: AgentIngestEnvelope =
+        serde_json::from_value(legacy).expect("legacy extra fields deserialize by ignoring them");
+    let reserialized = serde_json::to_string(&envelope).expect("re-serialize");
+    assert!(!reserialized.contains("raw_upload_requested"));
+    assert!(!reserialized.contains("raw_session_bundles"));
+    assert!(!reserialized.contains("legacy-raw-transcript-bytes"));
+}
+
+#[test]
 fn redaction_canary_corpus_parses() {
     // The shared corpus 3a (this crate's parser) and 2b (the TS server re-redact) both assert
     // against. Here we only prove it is present and well-formed with planted secrets to drop.

@@ -227,7 +227,7 @@ Build the production desktop app after the CLI proves the ingestion path.
   starts paused; nothing leaves the machine before the click). The authorization persists across
   relaunches, and the incremental window resumes from the last complete sync so downtime is
   rescanned rather than skipped.
-- ☐ Remove the legacy raw-upload toggle and `raw_session_bundles` fact-envelope slots. Lossless
+- ✅ Remove the legacy raw-upload toggle and `raw_session_bundles` fact-envelope slots. Lossless
   transcript upload belongs only to the separately activated and enrolled Pro Conversation Archive.
 - ✅ Pause/resume, run sync, disconnect.
 - ☐ Connected Desktops web surface for list/revoke/status (follow-up PR; backend

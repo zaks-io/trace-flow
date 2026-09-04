@@ -19,10 +19,7 @@ pub use enums::{
     AgentToolErrorCoverage, CacheCoverage, PullRequestLinkConfidence, PullRequestLinkEvidence,
     RepoSource, TokenCoverage,
 };
-pub use envelope::{
-    AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts, RawSessionBundle,
-    RawSessionBundleManifest,
-};
+pub use envelope::{AgentIngestBatch, AgentIngestEnvelope, AgentIngestFacts};
 pub use facts::{
     AgentCapabilitySnapshotFact, AgentFileEventFact, AgentMessageFact, AgentPullRequestLinkFact,
     AgentToolEventFact,
