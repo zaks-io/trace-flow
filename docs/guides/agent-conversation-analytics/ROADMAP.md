@@ -277,15 +277,55 @@ Ingest's fact envelope.
 - Add Archive Activation, per-Collector Enrollment, contributor ownership, Pro grace, and Archive
   Export Grant control-plane records and authorization.
 - Add `apps/archive-api` at `archive.trace-flow.dev` with its own Archive Session Ledger Durable
-  Objects, Storage Budget access, Agent Archive R2 bucket, and versioned Archive Encryption Keys.
-- Add lossless Archive JSONL encoding for Claude, Codex, and Cursor, immutable 16 MiB
-  contribution-and-session-scoped chunks, manifests, deterministic retries, and key rotation.
+  Objects, Storage Budget access, US-jurisdiction R2 Standard bucket, and versioned Archive Encryption
+  Keys. The first release exposes no archive-region selector.
+- Add first-release lossless Archive JSONL encoding, payload content hashes, chained record hashes, and
+  completed-scan checkpoints for Claude and Codex append-oriented JSONL through complete byte offsets.
+- Show Cursor as unsupported for archive capture. Add its deterministically ordered, content-hashed
+  mutable `cursorDiskKV` snapshot path after the first archive release rather than making it a release
+  gate.
+- Add immutable 16 MiB contribution-and-session-scoped chunks, manifests that map content chains and
+  checkpoints to byte ranges, deterministic retries, and key rotation.
+- Add session-scoped integrity failure handling that rejects without acknowledgement, preserves pending
+  spool and suspect server evidence, blocks only the affected session until explicit repair, and keeps
+  every other archive session and parsed fact sync running.
+- Add an operator-only v1 integrity repair that can clear an error only after re-verifying the canonical
+  chain and exact deterministic commit or pending batch. It cannot discard records, rebase the chain,
+  synthesize a checkpoint, or expose decrypted content.
 - Add the fixed 2 GB encrypted Desktop Archive Spool, guided owner activation, member contribution,
-  all-currently-available-history import choice, blocked/frozen states, and owner lossless export.
+  explicit new-only or all-currently-available-history choice, and capture through the existing
+  immediate plus five-minute authorized Desktop cycle.
+- For new-only enrollment, persist a complete pre-capture session baseline and permanently exclude those
+  sessions, later appends to them, and any later-discovered session with pre-enrollment or ambiguous
+  history. All-history enrollment has no baseline exclusion.
+- For all-history enrollment, capture newly created conversations first, then backfill baseline sessions
+  from most recently active to oldest while preserving Source order within each session. Keep initial
+  import incomplete until every eligible session checkpoint is acknowledged, including explicit missing
+  state when local history disappears first.
+- Persist the archive Source types shown during consent. A later Cursor or other Source adapter remains
+  off for existing enrollments until the User explicitly adds it and chooses that Source's history
+  boundary.
+- Add blocked/frozen states and resumable owner lossless export as a top-level archive manifest plus
+  verified per-session `records.jsonl` and `manifest.json` files, with no ZIP or server-side export copy.
 - Add contribution deletion, whole-archive crypto-erasure, and 90-day Pro cancellation grace.
+- Add member-removal coverage that revokes Collector Credentials and Archive Enrollments, rejects later
+  uploads, purges unacknowledged Desktop spool data on reconnect, and retains committed Organization-owned
+  contribution records.
+- Add user-unenrollment and owner-revocation coverage that permits no final archive upload, purges the
+  enrollment's unacknowledged spool and local archive progress, retains acknowledged content, and requires
+  new consent plus a new history choice before capture resumes.
+- Defer individual Agent Session deletion until the investigation phase provides session discovery and
+  a conversation viewer; it is not a first-release archive gate.
 - Add the access-scoped Convex Archive Status projection and persistent `/app/agents` card with
   server bytes, durable acknowledgement, contributor and Collector counts, timestamped spool/error
   observations, and grace deadline.
+- Add metadata-only append-only Convex Archive Audit Events for activation, enrollment, revocation,
+  export-grant issuance, export outcome, deletion, key rotation, integrity failure, and operator repair.
+  Store actor and target identifiers, timestamps, outcomes, counts, and applicable manifest roots without
+  raw content, paths, secrets, or per-chunk events.
+- Update the Terms and Privacy Policy before launch to cover lossless organization-owned transcript
+  collection, US storage and processing, enrollment consent, retention, export, deletion, and the fact
+  that archive enrollment does not authorize training. Final legal language requires counsel review.
 - Add production authorization, idempotency, lossless round-trip, quota, rotation, deletion, export,
   and status smoke coverage.
 
@@ -296,5 +336,25 @@ Ingest's fact envelope.
 - Parsed fact sync remains available to every plan and continues during every archive-only failure.
 - No unenrolled or Hobby Collector sends transcript content, and Agent Ingest has no archive binding
   or side effect.
+- Export verifies every payload hash, chain link, and completed-scan checkpoint for Claude and Codex
+  fixtures. Cursor archive capture remains visibly unsupported until its separate mutable-store path
+  passes equivalent round-trip and same-key changed-value coverage.
+- A corrupt upload or retained object cannot advance its session ledger. The affected session reports
+  `integrity_error` with no raw content, while unrelated archive sessions and parsed facts continue.
+- No owner or contributor self-service integrity repair exists in v1. An operator repair clears an error
+  only when the existing chain and exact commit or batch verify, and every attempt is audited.
+- New-only enrollment never uploads a baseline session or a session whose post-enrollment boundary cannot
+  be proven. Continuing an existing conversation does not make it eligible.
+- All-history enrollment does not report its initial import complete until every eligible session has a
+  durable checkpoint acknowledgement. Missing local history remains visible instead of being counted as
+  archived.
+- A newly supported archive Source uploads nothing under an older enrollment until the User explicitly
+  adds that Source and chooses new-only or all-history for it.
+- A revoked enrollment cannot upload a final batch. Its next Desktop contact purges unacknowledged archive
+  data and progress, while acknowledged content remains until an owner-authorized deletion.
+- Export never silently omits an integrity failure. It names the failed session in the top-level manifest,
+  preserves already verified output, and exits incomplete.
+- Archive authorization, export, deletion, key rotation, integrity failure, and repair outcomes create
+  metadata-only Archive Audit Events without logging transcript content or individual chunk transfers.
 - v1 exports the lossless archive only. It creates no normalized training dataset or hosted
-  fine-tuning job.
+  fine-tuning job, and Archive enrollment does not authorize later training.
