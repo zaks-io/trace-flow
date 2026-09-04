@@ -5,7 +5,7 @@ import { OperationsAnalytics as Operations } from '@/components/operations/Opera
 
 export default async function OperationsPage() {
   const token = await getConvexToken();
-  const preloadedApiKeys = await preloadQuery(api.apiKeys.list, {}, { token });
+  const preloadedApiKeys = await preloadQuery(api.apiKeys.listAnalytics, {}, { token });
 
   return <Operations preloadedApiKeys={preloadedApiKeys} />;
 }

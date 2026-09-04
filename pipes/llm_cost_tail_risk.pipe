@@ -14,7 +14,11 @@ SQL >
         TraceId,
         SpanId,
         ReceivedAt,
-        ApiKey,
+        if(
+            match(ApiKey, '^sha256:[0-9a-f]{64}$'),
+            ApiKey,
+            concat('sha256:', lower(hex(SHA256(ApiKey))))
+        ) AS NormalizedApiKey,
         Provider,
         Model,
         OperationName,
@@ -31,10 +35,16 @@ SQL >
     FROM llm_request_facts
     WHERE ReceivedAt >= start_ns
         AND ReceivedAt <= end_ns
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
         {% if defined(provider) %}
         AND Provider = {{ String(provider) }}
@@ -58,7 +68,7 @@ SQL >
 NODE grouped
 SQL >
     SELECT
-        ApiKey AS api_key,
+        NormalizedApiKey AS api_key,
         Provider AS provider,
         Model AS model,
         OperationName AS operation_name,
@@ -80,7 +90,7 @@ SQL >
         nullIf(argMax(TraceId, (TotalCostMicrodollars, ReceivedAt, TraceId, SpanId)), '') AS max_cost_trace_id,
         nullIf(argMax(SpanId, (TotalCostMicrodollars, ReceivedAt, TraceId, SpanId)), '') AS max_cost_span_id
     FROM requests
-    GROUP BY ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
+    GROUP BY NormalizedApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
 
 NODE endpoint
 SQL >

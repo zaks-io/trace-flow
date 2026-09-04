@@ -93,7 +93,8 @@ jobs:
   deploy-convex:
     name: Deploy Convex
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    needs: [ci]
+    # Readers must understand analytics identifiers before Convex issues scoped tokens for them.
+    needs: [ci, deploy-tinybird-schema]
     environment: Production
     outputs:
       convex_url: ${{ steps.deploy.outputs.convex_url }}

@@ -1,37 +1,65 @@
-import { action, mutation, query, internalQuery } from './_generated/server';
+import { action, mutation, query, internalQuery, type QueryCtx } from './_generated/server';
 import { v } from 'convex/values';
 import { requireAuthenticated } from './auth/auth';
 import { internal } from './_generated/api';
 import { getCurrentUser, requireEnabledUser } from './auth/users';
 import { apiKeyValidator } from './validators';
 import { rateLimiter } from './rateLimits';
+import { analyticsKeyId } from '@trace-flow/utils';
+
+async function listAccessibleKeys(ctx: QueryCtx) {
+  const user = await getCurrentUser(ctx);
+  if (!user) return [];
+
+  if (user.orgId) {
+    const [orgKeys, userKeys] = await Promise.all([
+      ctx.db
+        .query('apiKeys')
+        .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId))
+        .collect(),
+      ctx.db
+        .query('apiKeys')
+        .withIndex('by_user_id', (q) => q.eq('userId', user._id))
+        .collect(),
+    ]);
+    const seen = new Set(orgKeys.map((key) => key._id));
+    return [...orgKeys, ...userKeys.filter((key) => !seen.has(key._id))];
+  }
+
+  return ctx.db
+    .query('apiKeys')
+    .withIndex('by_user_id', (q) => q.eq('userId', user._id))
+    .collect();
+}
 
 export const list = query({
   args: {},
   returns: v.array(apiKeyValidator),
   handler: async (ctx) => {
     await requireAuthenticated(ctx);
-    const user = await getCurrentUser(ctx);
+    return listAccessibleKeys(ctx);
+  },
+});
 
-    if (!user) return [];
-
-    if (user.orgId) {
-      const orgKeys = await ctx.db
-        .query('apiKeys')
-        .withIndex('by_org_id', (q) => q.eq('orgId', user.orgId))
-        .collect();
-      const userKeys = await ctx.db
-        .query('apiKeys')
-        .withIndex('by_user_id', (q) => q.eq('userId', user._id))
-        .collect();
-      const seen = new Set(orgKeys.map((k) => k._id));
-      return [...orgKeys, ...userKeys.filter((k) => !seen.has(k._id))];
-    }
-
-    return await ctx.db
-      .query('apiKeys')
-      .withIndex('by_user_id', (q) => q.eq('userId', user._id))
-      .collect();
+export const listAnalytics = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id('apiKeys'),
+      name: v.optional(v.string()),
+      identifier: v.string(),
+    }),
+  ),
+  handler: async (ctx) => {
+    await requireAuthenticated(ctx);
+    const apiKeys = await listAccessibleKeys(ctx);
+    return Promise.all(
+      apiKeys.map(async (apiKey) => ({
+        _id: apiKey._id,
+        name: apiKey.name,
+        identifier: await analyticsKeyId(apiKey.key),
+      })),
+    );
   },
 });
 

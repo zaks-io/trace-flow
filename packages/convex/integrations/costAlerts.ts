@@ -12,6 +12,7 @@ import type { Id } from '../_generated/dataModel';
 import { RETENTION_DAYS } from '@trace-flow/types';
 import { fetchPipe as fetchPipeShared } from '@trace-flow/tinybird-client';
 import { sendCostAlertWebhookNotification } from './costAlertWebhookDelivery';
+import { analyticsKeyId } from '@trace-flow/utils';
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? 'Trace Flow <noreply@updates.trace-flow.dev>';
 const APP_URL = process.env.APP_URL ?? process.env.APP_BASE_URL ?? 'http://localhost:3000';
@@ -613,19 +614,22 @@ async function sendEmailNotification(
   });
 }
 
-export function resolveScopedApiKeys(
+export async function resolveScopedApiKeys(
   alert: {
     apiKeyIds?: string[];
   },
   apiKeys: { _id: string; key: string }[],
-): string[] {
+): Promise<string[]> {
+  let selectedKeys: string[];
   if (alert.apiKeyIds?.length) {
-    return alert.apiKeyIds
+    selectedKeys = alert.apiKeyIds
       .map((apiKeyId) => apiKeys.find((apiKey) => apiKey._id === apiKeyId)?.key)
       .filter((apiKey): apiKey is string => Boolean(apiKey));
+  } else {
+    selectedKeys = apiKeys.map((apiKey) => apiKey.key);
   }
 
-  return apiKeys.map((apiKey) => apiKey.key);
+  return Promise.all(selectedKeys.map((apiKey) => analyticsKeyId(apiKey)));
 }
 
 async function deliverEvent(args: {
@@ -772,7 +776,7 @@ export const evaluateOrg = internalAction({
 
     for (const alert of enabledAlerts) {
       try {
-        const scopedKeys = resolveScopedApiKeys(
+        const scopedKeys = await resolveScopedApiKeys(
           {
             apiKeyIds: alert.apiKeyIds?.map((apiKeyId) => String(apiKeyId)),
           },

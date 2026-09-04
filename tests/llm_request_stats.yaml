@@ -23,12 +23,12 @@
 - name: request_distribution_fat_tailed_slice
   description: per-request cost distribution + concentration (Gini, Lorenz, decile buckets, half-spend) for one fat-tailed API-key slice
   expected_http_status: 200
-  parameters: api_keys=key_proj&api_key_filter=key_proj&baggage_operation=chat&retention_days=3650
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&api_key_filter=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&baggage_operation=chat&retention_days=3650
   expected_result: |
     {"request_count":5,"total_cost_usd":4.09,"cost_p50":0.02,"cost_p25":0.01,"cost_p75":0.05,"cost_p95":4,"cost_p99":4,"cost_min":0.01,"cost_max":4,"duration_p50":1200,"duration_p25":1100,"duration_p75":1300,"duration_p95":8000,"duration_p99":8000,"duration_min":1000,"duration_max":8000,"cost_bucket_lo":[0.01,0.02,0.05],"cost_bucket_hi":[0.02,0.05,4],"cost_bucket_count":[3,1,1],"cost_bucket_sum":[0.04,0.05,4],"gini":0.9804,"half_spend_request_count":1,"lorenz_request_pct":[0,0.2,0.4,0.6,0.8,1],"lorenz_cost_pct":[0,0.9779951100244502,0.9902200488997557,0.9951100244498778,0.9975550122249389,1]}
 
 - name: request_distribution_slice_filter_isolates
   description: filtering to an operation with no key_proj requests yields no row (client renders as no-data)
   expected_http_status: 200
-  parameters: api_keys=key_proj&api_key_filter=key_proj&baggage_operation=does_not_exist&retention_days=3650
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&api_key_filter=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&baggage_operation=does_not_exist&retention_days=3650
   expected_result: ''

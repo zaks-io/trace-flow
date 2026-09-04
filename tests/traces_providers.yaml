@@ -1,0 +1,23 @@
+# Fixtures: fixtures/otel_trace_spans.ndjson. key_proj is a legacy raw stored value,
+# while key_other is stored as its canonical analytics identifier.
+
+- name: providers_matches_legacy_rows_by_canonical_identifier
+  description: a canonical API-key identifier reads legacy raw-key spans without exposing another tenant
+  expected_http_status: 200
+  parameters: api_keys=sha256:676832a08de9db804b63024a071d06fac72d8fdd655e6249b9d985eddba8b953&start_time_ns=1779840000000000000&retention_days=3650
+  expected_result: |
+    {"provider":"anthropic","request_count":5}
+
+- name: providers_reads_new_canonical_rows_directly
+  description: a canonical API-key identifier reads spans already stored under that identifier
+  expected_http_status: 200
+  parameters: api_keys=sha256:8a876aaf86d3ee01b61c028863136830d26de5634c3831c905a8f0995bd98333&start_time_ns=1779840000000000000&retention_days=3650
+  expected_result: |
+    {"provider":"openai","request_count":1}
+
+- name: providers_normalizes_legacy_parameter_during_cutover
+  description: an existing raw query parameter still reads a row stored under its canonical identifier
+  expected_http_status: 200
+  parameters: api_keys=key_other&start_time_ns=1779840000000000000&retention_days=3650
+  expected_result: |
+    {"provider":"openai","request_count":1}

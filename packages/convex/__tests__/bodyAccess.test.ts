@@ -19,6 +19,8 @@ vi.mock('@trace-flow/tinybird-client', () => ({
 import { bodyAccessRateLimitKey, buildBodyAccessOwnershipSql, issueToken } from '../bodyAccess';
 
 const VALID_API_KEY = '11111111-1111-1111-1111-111111111111';
+const VALID_ANALYTICS_KEY_ID =
+  'sha256:bafde89c041e1756082b933aaf16cad8e65dec48de748479352f657e89dd6da5';
 
 function makeIssueTokenCtx() {
   return {
@@ -53,16 +55,12 @@ describe('body access token helpers', () => {
   it('builds an ownership query scoped to sanitized API keys and request id', () => {
     const sql = buildBodyAccessOwnershipSql({
       requestId: "req_'quoted",
-      apiKeys: [
-        '11111111-1111-1111-1111-111111111111',
-        'not-a-valid-key',
-        '22222222-2222-2222-2222-222222222222',
-      ],
+      analyticsKeyIds: [`sha256:${'1'.repeat(64)}`, 'not-a-valid-key', `sha256:${'2'.repeat(64)}`],
     });
 
     expect(sql).toContain('FROM otel_trace_spans');
     expect(sql).toContain(
-      "ApiKey IN ('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222')",
+      `if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) IN ('sha256:${'1'.repeat(64)}','sha256:${'2'.repeat(64)}')`,
     );
     expect(sql).toContain(
       "JSONExtractString(SpanAttributes, 'gen_ai.request_id') = 'req_''quoted'",
@@ -74,7 +72,7 @@ describe('body access token helpers', () => {
     expect(
       buildBodyAccessOwnershipSql({
         requestId: 'req_123',
-        apiKeys: ['not-a-valid-key'],
+        analyticsKeyIds: ['not-a-valid-key'],
       }),
     ).toBeNull();
   });
@@ -99,9 +97,10 @@ describe('body access token helpers', () => {
       expect.objectContaining({
         adminToken: 'test-tinybird-admin-token',
         baseUrl: 'https://api.us-west-2.aws.tinybird.co',
-        sql: expect.stringContaining(`ApiKey IN ('${VALID_API_KEY}')`),
+        sql: expect.stringContaining(`IN ('${VALID_ANALYTICS_KEY_ID}')`),
       }),
     );
+    expect(mocks.runAdminSql.mock.calls[0]?.[0].sql).not.toContain(VALID_API_KEY);
     expect(mocks.runAdminSql.mock.calls[0]?.[0].sql).toContain(
       "JSONExtractString(SpanAttributes, 'gen_ai.request_id') = 'req_123'",
     );

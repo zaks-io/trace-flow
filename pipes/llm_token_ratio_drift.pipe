@@ -12,7 +12,11 @@ SQL >
         if(end_ns_raw = 0, toUnixTimestamp64Nano(toDateTime64(now(), 9)), end_ns_raw) AS end_ns,
         if(start_ns_raw = 0, end_ns - toInt64({{ Int32(retention_days, 7) }}) * 86400 * 1000000000, start_ns_raw) AS start_ns
     SELECT
-        ApiKey,
+        if(
+            match(ApiKey, '^sha256:[0-9a-f]{64}$'),
+            ApiKey,
+            concat('sha256:', lower(hex(SHA256(ApiKey))))
+        ) AS NormalizedApiKey,
         Provider,
         Model,
         OperationName,
@@ -24,10 +28,16 @@ SQL >
     FROM llm_request_facts
     WHERE ReceivedAt >= start_ns
         AND ReceivedAt <= end_ns
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
         {% if defined(provider) %}
         AND Provider = {{ String(provider) }}
@@ -47,7 +57,7 @@ SQL >
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}
         {% end %}
-    GROUP BY ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
+    GROUP BY NormalizedApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
 
 NODE baseline_window
 SQL >
@@ -63,7 +73,11 @@ SQL >
         if(baseline_end_ns_raw = 0, start_ns - 1, baseline_end_ns_raw) AS baseline_end_ns,
         if(baseline_start_ns_raw = 0, baseline_end_ns - window_ns + 1, baseline_start_ns_raw) AS baseline_start_ns
     SELECT
-        ApiKey,
+        if(
+            match(ApiKey, '^sha256:[0-9a-f]{64}$'),
+            ApiKey,
+            concat('sha256:', lower(hex(SHA256(ApiKey))))
+        ) AS NormalizedApiKey,
         Provider,
         Model,
         OperationName,
@@ -75,10 +89,16 @@ SQL >
     FROM llm_request_facts
     WHERE ReceivedAt >= baseline_start_ns
         AND ReceivedAt <= baseline_end_ns
-        AND ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+        AND (
+            ApiKey IN splitByChar(',', {{ String(api_keys, '') }})
+            OR has(arrayMap(key_identifier -> if(match(key_identifier, '^sha256:[0-9a-f]{64}$'), key_identifier, concat('sha256:', lower(hex(SHA256(key_identifier))))), splitByChar(',', {{ String(api_keys, '') }})), if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))))
+        )
         AND ReceivedAt >= toInt64(toUnixTimestamp(now() - toIntervalDay({{ Int32(retention_days, 7) }}))) * 1000000000
         {% if defined(api_key_filter) %}
-        AND ApiKey = {{ String(api_key_filter) }}
+        AND (
+            ApiKey = {{ String(api_key_filter) }}
+            OR if(match(ApiKey, '^sha256:[0-9a-f]{64}$'), ApiKey, concat('sha256:', lower(hex(SHA256(ApiKey))))) = if(match({{ String(api_key_filter) }}, '^sha256:[0-9a-f]{64}$'), {{ String(api_key_filter) }}, concat('sha256:', lower(hex(SHA256({{ String(api_key_filter) }})))))
+        )
         {% end %}
         {% if defined(provider) %}
         AND Provider = {{ String(provider) }}
@@ -98,12 +118,12 @@ SQL >
         {% if defined(status) %}
         AND StatusCode = {{ String(status) }}
         {% end %}
-    GROUP BY ApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
+    GROUP BY NormalizedApiKey, Provider, Model, OperationName, BaggageOperation, BaggageUserId
 
 NODE joined
 SQL >
     SELECT
-        c.ApiKey AS api_key,
+        c.NormalizedApiKey AS api_key,
         c.Provider AS provider,
         c.Model AS model,
         c.OperationName AS operation_name,
@@ -117,7 +137,7 @@ SQL >
         coalesce(b.baseline_output_tokens, 0) AS baseline_output_tokens
     FROM current_window AS c
     LEFT JOIN baseline_window AS b
-        ON c.ApiKey = b.ApiKey
+        ON c.NormalizedApiKey = b.NormalizedApiKey
         AND c.Provider = b.Provider
         AND c.Model = b.Model
         AND c.OperationName = b.OperationName

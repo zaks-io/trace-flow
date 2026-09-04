@@ -8,12 +8,13 @@ import {
   type McpUserContext,
 } from '@trace-flow/mcp-core';
 import { RETENTION_DAYS } from '@trace-flow/types';
+import { analyticsKeyId } from '@trace-flow/utils';
 
 /**
  * Adapts the Convex action ctx to the host-agnostic `McpBackend` the dispatch
  * core in `@trace-flow/mcp-core` expects. Bound to one `userId` per request so
- * `mintToken` can resolve owned key ids → raw keys and the org id locally — raw
- * keys and the Tinybird admin token never leave Convex.
+ * `mintToken` can resolve owned key ids to analytics identifiers and the org id
+ * locally. Raw keys and the Tinybird admin token never leave Convex.
  *
  * Both the in-process MCP handler (during transition) and the shared-secret
  * `/mcp-backend/*` routes the dedicated MCP worker calls use this same adapter,
@@ -37,11 +38,15 @@ export function createMcpBackend(ctx: ActionCtx, userId: Id<'users'>): McpBacken
       const keys = await getKeys();
       const now = Date.now();
       const ids = new Set(apiKeyIds);
-      const rawKeys = keys.filter((k) => ids.has(k._id) && k.expiresAt > now).map((k) => k.key);
+      const analyticsKeyIds = await Promise.all(
+        keys
+          .filter((key) => ids.has(key._id) && key.expiresAt > now)
+          .map((key) => analyticsKeyId(key.key)),
+      );
       const user = await ctx.runQuery(internal.auth.users.getUserById, { id: userId });
       return ctx.runAction(internal.integrations.tinybird.generateTokenInternal, {
         scopes,
-        apiKeys: rawKeys,
+        analyticsKeyIds,
         retentionDays,
         orgId: user?.orgId,
         ttl: ttlSeconds,

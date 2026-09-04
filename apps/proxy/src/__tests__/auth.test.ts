@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { validateApiKey, isAuthError, checkBillingStatus } from '../auth';
 import { _clearAll } from '../cache';
+import { analyticsKeyId } from '@trace-flow/utils';
 import type { Context } from 'hono';
 
 beforeEach(async () => {
@@ -68,6 +69,8 @@ describe('validateApiKey', () => {
     expect(isAuthError(result)).toBe(false);
     if (!isAuthError(result)) {
       expect(result.orgId).toBe('org123');
+      expect(result.analyticsKeyId).toBe(await analyticsKeyId('valid-api-key'));
+      expect(JSON.stringify(result)).not.toContain('valid-api-key');
     }
     expect(context.env.API_KEYS.get).toHaveBeenCalledWith('valid-api-key');
   });

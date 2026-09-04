@@ -12,7 +12,8 @@ import {
 } from '@trace-flow/types';
 import { extractSub, requireEnabledUser } from './auth/users';
 import { rateLimiter } from './rateLimits';
-import { sanitizeApiKeys, sqlStringLiteral } from './tinybirdSql';
+import { analyticsKeyId } from '@trace-flow/utils';
+import { NORMALIZED_API_KEY_SQL, sanitizeAnalyticsKeyIds, sqlStringLiteral } from './tinybirdSql';
 
 const BODY_ACCESS_DENIED_MESSAGE = 'Body access denied';
 
@@ -44,15 +45,17 @@ export function bodyAccessRateLimitKey(userId: string): string {
 
 export function buildBodyAccessOwnershipSql(params: {
   requestId: string;
-  apiKeys: string[];
+  analyticsKeyIds: string[];
 }): string | null {
-  const apiKeyLiterals = sanitizeApiKeys(params.apiKeys).map(sqlStringLiteral);
-  if (apiKeyLiterals.length === 0) return null;
+  const analyticsKeyIdLiterals = sanitizeAnalyticsKeyIds(params.analyticsKeyIds).map(
+    sqlStringLiteral,
+  );
+  if (analyticsKeyIdLiterals.length === 0) return null;
 
   return [
     'SELECT 1',
     'FROM otel_trace_spans',
-    `WHERE ApiKey IN (${apiKeyLiterals.join(',')})`,
+    `WHERE ${NORMALIZED_API_KEY_SQL} IN (${analyticsKeyIdLiterals.join(',')})`,
     `  AND JSONExtractString(SpanAttributes, 'gen_ai.request_id') = ${sqlStringLiteral(params.requestId)}`,
     'LIMIT 1',
   ].join('\n');
@@ -68,7 +71,7 @@ async function assertRequestVisibleToSubject(
   });
   const sql = buildBodyAccessOwnershipSql({
     requestId,
-    apiKeys: apiKeys.map((apiKey) => apiKey.key),
+    analyticsKeyIds: await Promise.all(apiKeys.map((apiKey) => analyticsKeyId(apiKey.key))),
   });
 
   if (!sql) {

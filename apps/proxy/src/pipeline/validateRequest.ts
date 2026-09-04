@@ -160,7 +160,7 @@ export async function validateRequest(c: Context<{ Bindings: ProxyEnv }>): Promi
     });
   }
 
-  const apiKey = c.req.header('X-Trace-Flow-Api-Key') ?? '';
+  const apiKey = keyData.analyticsKeyId;
   const requestId = generateId();
 
   const traceparent = parseTraceparent(c.req.header('traceparent'));

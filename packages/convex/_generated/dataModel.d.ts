@@ -449,7 +449,6 @@ export type DataModel = {
       by_org_action: ["orgId", "action", "_creationTime"];
       by_org_id: ["orgId", "_creationTime"];
       by_org_occurred_at: ["orgId", "occurredAt", "_creationTime"];
-      by_org_operation_id: ["orgId", "operationId", "_creationTime"];
       by_org_operation_action_outcome: [
         "orgId",
         "operationId",
@@ -457,6 +456,7 @@ export type DataModel = {
         "outcome",
         "_creationTime",
       ];
+      by_org_operation_id: ["orgId", "operationId", "_creationTime"];
       by_org_operation_outcome: [
         "orgId",
         "operationId",
