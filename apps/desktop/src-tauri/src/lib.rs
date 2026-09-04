@@ -6,8 +6,8 @@
 //! A macOS menu-bar app that runs the same Collector path as the CLI through the shared
 //! `collector-embedder` crate: sign in via the browser device flow, store the Collector Credential in
 //! the OS keychain, and sync local Claude/Codex transcripts to production ingest. A small first-run
-//! window hosts source detection, the raw-upload opt-in (default off), and the explicit "Start
-//! syncing" egress gate; the tray menu mirrors status and drives the engine thereafter.
+//! window hosts source detection and the explicit "Start syncing" egress gate; the tray menu
+//! mirrors status and drives the engine thereafter.
 
 mod autostart;
 mod commands;
@@ -60,7 +60,6 @@ pub fn run() {
             commands::detect_sources,
             commands::connection_status,
             commands::start_login,
-            commands::set_raw_upload,
             commands::start_syncing,
             commands::pause,
             commands::resume,

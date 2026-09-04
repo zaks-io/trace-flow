@@ -36,7 +36,6 @@ pub struct StatusDto {
     pub org_id: Option<String>,
     pub credential_present: bool,
     pub expired: bool,
-    pub raw_upload: bool,
     pub sync: String,
 }
 
@@ -98,7 +97,6 @@ pub fn connection_status(bus: State<'_, AppStateBus>) -> StatusDto {
         org_id,
         credential_present,
         expired,
-        raw_upload: snapshot.raw_upload,
         sync: snapshot.sync.label().to_string(),
     }
 }
@@ -115,11 +113,6 @@ pub async fn start_login(
     connection_status(bus)
         .org_id
         .ok_or_else(|| "connected but no org id on disk".to_string())
-}
-
-#[tauri::command]
-pub fn set_raw_upload(value: bool, handle: State<'_, EngineHandle>) {
-    handle.send(EngineCommand::SetRawUpload(value));
 }
 
 /// "Start syncing": connect if needed, then run the one-time 7d backfill and drop into incremental

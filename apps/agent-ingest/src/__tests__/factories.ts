@@ -170,7 +170,6 @@ export function envelope(over: Partial<AgentIngestEnvelope> = {}): AgentIngestEn
       collector_batch_id: 'batch-1',
       desktop_version: '1.2.3',
       parser_version: '1.2.3',
-      raw_upload_requested: false,
     },
     facts: facts(),
     ...over,

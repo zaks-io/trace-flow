@@ -370,6 +370,44 @@ describe('POST /v1/ingest', () => {
     expect(queueSend).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores legacy raw-upload fields without storing or forwarding them', async () => {
+    const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
+    interceptPolicy(200, POLICY);
+    interceptClaim({ claim: 'claimed' });
+    const legacy = {
+      ...envelope(),
+      batch: {
+        ...envelope().batch,
+        raw_upload_requested: true,
+      },
+      raw_session_bundles: [
+        {
+          manifest: {
+            source: 'claude',
+            vendor_session_id: 'legacy-raw',
+            parser_version: '0.1.0',
+            part_ids: ['main'],
+            content_hash: 'sha256:deadbeef',
+            byte_count: 12,
+          },
+          gzip_base64: 'legacy-raw-transcript-bytes',
+        },
+      ],
+    };
+
+    const res = await post(env, JSON.stringify(legacy), authHeaders);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ sessions: 1 });
+    expect(queueSend).toHaveBeenCalledTimes(1);
+
+    const sentGroup = queueSend.mock.calls[0]![0] as { body: AgentIngestQueueMessage }[];
+    const enqueued = JSON.stringify(sentGroup);
+    expect(enqueued).not.toContain('raw_upload_requested');
+    expect(enqueued).not.toContain('raw_session_bundles');
+    expect(enqueued).not.toContain('legacy-raw-transcript-bytes');
+    expect(sentGroup[0]!.body.facts.messages.length).toBeGreaterThan(0);
+  });
+
   it('accepts legacy tool events without ingest-time classification fields', async () => {
     const { env, queueSend } = makeEnv({ creds: await validCredEntries() });
     interceptPolicy(200, POLICY);

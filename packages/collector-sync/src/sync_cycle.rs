@@ -465,7 +465,6 @@ mod tests {
             source: AgentSource::Claude,
             desktop_version: "1.0.0".to_string(),
             parser_version: "0.1.0".to_string(),
-            raw_upload_requested: false,
         }
     }
 
@@ -590,7 +589,6 @@ mod tests {
             source: AgentSource::Cursor,
             desktop_version: "1.0.0".to_string(),
             parser_version: "0.1.0".to_string(),
-            raw_upload_requested: false,
         };
 
         let (report, _) = run_sync_cycle(

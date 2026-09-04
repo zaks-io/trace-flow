@@ -78,8 +78,8 @@ rotation unless there is a root-key incident.
 
 ## Conversation Archive
 
-Agent Conversation Analytics currently uploads typed facts only. The Rust sync envelope explicitly
-omits `raw_session_bundles`, and Agent Ingest has no R2 binding for raw transcript storage.
+Agent Conversation Analytics currently uploads typed facts only. Fact envelopes have no raw-upload
+slots, and Agent Ingest has no R2 binding for raw transcript storage.
 
 The accepted target in [ADR 0012](../../docs/adr/0012-agent-conversation-analytics.md) has no generic or
 90-day raw-upload mode. Only an explicitly activated Pro Conversation Archive and separately enrolled

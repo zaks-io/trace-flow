@@ -104,16 +104,6 @@
       .stack > * + * {
         margin-top: 8px;
       }
-      label.toggle {
-        display: flex;
-        gap: 8px;
-        align-items: flex-start;
-        cursor: pointer;
-      }
-      label.toggle .desc {
-        color: var(--muted);
-        font-size: 12px;
-      }
       .status-line {
         display: flex;
         gap: 8px;
@@ -154,16 +144,6 @@
     <div class="card">
       <div class="row"><strong>Detected sources</strong></div>
       <div id="sources"></div>
-    </div>
-
-    <div class="card">
-      <label class="toggle">
-        <input type="checkbox" id="raw-upload" />
-        <span>
-          <strong>Upload raw transcripts</strong>
-          <div class="desc">Off by default. When off, only redacted facts leave your machine.</div>
-        </span>
-      </label>
     </div>
 
     <div class="stack">

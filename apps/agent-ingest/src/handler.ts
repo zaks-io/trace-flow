@@ -25,7 +25,7 @@ import { validateEnvelopeShape } from './validation';
 /** Collector authenticates with this header; the value is the raw Collector Credential secret. */
 const COLLECTOR_SECRET_HEADER = 'X-Trace-Flow-Collector-Secret';
 
-/** Hard cap on the request body (envelopes with deferred raw bundles are the large case). */
+/** Hard cap on the request body. */
 const MAX_INGEST_BYTES = 10 * 1024 * 1024;
 
 // Cloudflare Queues `sendBatch` limits: ≤100 messages AND ≤256 KB total per call (each message also

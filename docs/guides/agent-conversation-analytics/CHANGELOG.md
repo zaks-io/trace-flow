@@ -15,6 +15,12 @@ per working session or task hand-off. Copy the template.
 
 ---
 
+## 2026-09-04 — TRA-213 — cursor/remove-legacy-raw-upload-66d3
+**Status:** 🚧 in progress
+**Changed:** Removed the Desktop raw-upload toggle/settings/command and dropped `raw_upload_requested` plus `raw_session_bundles` from fact-envelope contracts, fixtures, and tests. Agent Ingest still accepts leftover legacy raw fields but does not store or forward them.
+**Verified:** pending required checks
+**Next / blockers:** Run collector Rust tests, `@trace-flow/types`, `@trace-flow/agent-ingest`, and `bun run ci:check`.
+
 ## 2026-05-28 — production-readiness rebaseline — Codex
 
 **Status:** 🚧 in progress — documentation and Linear rebaseline for production launch.

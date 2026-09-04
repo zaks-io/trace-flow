@@ -28,8 +28,6 @@ pub struct Settings {
     pub syncing: bool,
     /// Whether the one-time first-run history backfill has reached ingest.
     pub backfilled: bool,
-    /// Whether raw-transcript upload is requested.
-    pub raw_upload: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -83,7 +81,6 @@ mod tests {
         let settings = Settings {
             syncing: true,
             backfilled: true,
-            raw_upload: false,
         };
         file.save(&settings).unwrap();
         assert_eq!(file.load().unwrap(), settings);
@@ -98,7 +95,26 @@ mod tests {
         let settings = file.load().unwrap();
         assert!(settings.syncing);
         assert!(!settings.backfilled);
-        assert!(!settings.raw_upload);
+    }
+
+    #[test]
+    fn leftover_raw_upload_is_ignored_and_not_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = SettingsFile::at(dir.path());
+        fs::write(
+            dir.path().join(FILE_NAME),
+            br#"{"syncing":true,"backfilled":true,"raw_upload":true}"#,
+        )
+        .unwrap();
+        let settings = file.load().unwrap();
+        assert!(settings.syncing);
+        assert!(settings.backfilled);
+        file.save(&settings).unwrap();
+        let persisted = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+        assert!(
+            !persisted.contains("raw_upload"),
+            "legacy raw-upload must not be copied into persisted settings: {persisted}"
+        );
     }
 
     #[test]

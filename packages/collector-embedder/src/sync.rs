@@ -84,9 +84,6 @@ pub struct RunConfig<'a> {
     pub window: Window,
     /// `now` in epoch ms, injected so the window math is testable and the cursor seam stays clock-free.
     pub now_ms: i64,
-    /// Whether the user opted into raw-transcript upload for this run. Wires
-    /// `BatchMeta.raw_upload_requested`; defaults off — the embedder never enables it implicitly.
-    pub raw_upload: bool,
     /// A short embedder tag (e.g. `"cli"`, `"desktop"`) that prefixes the per-POST batch id, so a
     /// batch id reads as `cli-<n>` / `desktop-<n>` for audit. Not security-relevant.
     pub batch_id_prefix: &'a str,
@@ -188,7 +185,6 @@ async fn run_source(
         source,
         desktop_version: DESKTOP_VERSION.to_string(),
         parser_version: PARSER_VERSION.to_string(),
-        raw_upload_requested: cfg.raw_upload,
     };
 
     let mut orch = Orchestrator::new();

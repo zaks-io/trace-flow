@@ -65,8 +65,6 @@ pub struct AppState {
     pub connection: ConnectionState,
     pub sync: SyncStatus,
     pub sources: SourceCounts,
-    /// `false` until the user opts in; wires `BatchMeta.raw_upload_requested`.
-    pub raw_upload: bool,
     pub autostart: bool,
     pub last_sync_at: Option<SystemTime>,
     pub recent_errors: Vec<RecentError>,

@@ -233,7 +233,7 @@ describe('AgentIngestEnvelope contract fixture', () => {
     expect(isString(batch.collector_batch_id)).toBe(true);
     expect(isString(batch.desktop_version)).toBe(true);
     expect(isString(batch.parser_version)).toBe(true);
-    expect(isBool(batch.raw_upload_requested)).toBe(true);
+    expect(batch).not.toHaveProperty('raw_upload_requested');
   });
 
   it('carries all five fully-populated fact arrays', () => {
@@ -264,14 +264,11 @@ describe('AgentIngestEnvelope contract fixture', () => {
     expect(legacyTool.navigation_kind).toBeUndefined();
   });
 
-  it('plumbs the deferred raw_session_bundles slot', () => {
-    expect(envelope.raw_session_bundles).toBeDefined();
-    const bundle = envelope.raw_session_bundles?.[0];
-    expect(bundle).toBeDefined();
-    expect(isString(bundle?.gzip_base64)).toBe(true);
-    expect(isString(bundle?.manifest.vendor_session_id)).toBe(true);
-    expect(isNumber(bundle?.manifest.byte_count)).toBe(true);
-    expect(Array.isArray(bundle?.manifest.part_ids)).toBe(true);
+  it('omits legacy raw-upload slots from the serialized envelope', () => {
+    expect(envelope).not.toHaveProperty('raw_session_bundles');
+    const json = JSON.stringify(envelope);
+    expect(json).not.toContain('raw_upload_requested');
+    expect(json).not.toContain('raw_session_bundles');
   });
 });
 
