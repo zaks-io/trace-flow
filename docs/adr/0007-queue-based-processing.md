@@ -1,5 +1,9 @@
 # Queue-Based Processing: Decoupling Proxy from Observability
 
+> Delivery semantics updated: see [Trace delivery and recovery](../guides/trace-delivery-recovery.md).
+> Queue retries start after durable intake. Tinybird failures after Durable Object staging
+> use retained recovery records; they do not return to the original queue DLQ.
+
 ## Decision
 
 The proxy worker sends metadata to a Cloudflare Queue immediately after capturing request/response data. A separate consumer worker processes queue messages asynchronously, transforming them into OpenTelemetry traces and inserting them into Tinybird.
@@ -243,6 +247,6 @@ Messages may be processed out of order, especially during retries. This doesn't 
 Queue-based processing achieves both goals:
 
 - **Minimal proxy latency**: Queue send is <5ms, non-blocking
-- **Reliable data capture**: Retries and DLQ ensure no data loss
+- **Recoverable delivery**: Durable intake, retries, and retained recovery records protect accepted traces
 
 The eventual consistency trade-off is acceptable for observability data. Users view traces seconds to minutes after capture, not milliseconds. The queue provides the buffer needed to achieve both reliability and performance.

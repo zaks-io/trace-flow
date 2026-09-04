@@ -2,6 +2,41 @@ import { TinybirdInsertError } from './errors';
 
 const TINYBIRD_TIMEOUT_MS = 60_000;
 
+export type TinybirdInsertFailureClassification = 'retryable' | 'rejected' | 'uncertain';
+
+interface TinybirdInsertReceipt {
+  successful_rows: number;
+  quarantined_rows: number;
+}
+
+function parseReceipt(responseText: string): TinybirdInsertReceipt | undefined {
+  let receipt: unknown;
+  try {
+    receipt = JSON.parse(responseText);
+  } catch {
+    return undefined;
+  }
+
+  if (typeof receipt !== 'object' || receipt === null || Array.isArray(receipt)) {
+    return undefined;
+  }
+
+  const { successful_rows, quarantined_rows } = receipt as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(successful_rows) ||
+    !Number.isSafeInteger(quarantined_rows) ||
+    (successful_rows as number) < 0 ||
+    (quarantined_rows as number) < 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    successful_rows: successful_rows as number,
+    quarantined_rows: quarantined_rows as number,
+  };
+}
+
 /**
  * Generic Events API insert transport: serialize `rows` as NDJSON and POST them to
  * `/v0/events?name=<datasource>`. This is the shared core both consumers use; it knows nothing
@@ -18,7 +53,7 @@ export async function insertRows(
   datasource: string,
   host: string,
 ): Promise<void> {
-  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}`;
+  const url = `${host}/v0/events?name=${encodeURIComponent(datasource)}&wait=true`;
   const body = rows.map((row) => JSON.stringify(row)).join('\n');
 
   const response = await fetch(url, {
@@ -33,32 +68,44 @@ export async function insertRows(
 
   const responseText = await response.text();
 
-  if (!response.ok) {
+  if (response.status !== 200) {
+    if (response.ok) {
+      throw new TinybirdInsertError(response.status, responseText, 'unconfirmed');
+    }
     throw new TinybirdInsertError(response.status, responseText);
+  }
+
+  const receipt = parseReceipt(responseText);
+  if (!receipt) {
+    throw new TinybirdInsertError(response.status, responseText, 'malformed-receipt');
+  }
+
+  if (receipt.successful_rows !== rows.length || receipt.quarantined_rows !== 0) {
+    throw new TinybirdInsertError(response.status, responseText, 'partial-receipt');
   }
 }
 
 /**
- * Whether a failed insert is worth retrying. 4xx client errors (bad rows, auth, payload too large)
- * and 422 partial-ingestion are terminal; 429/503 and 5xx are transient. A non-`TinybirdInsertError`
- * (network/timeout) is treated as transient.
+ * Classify whether retrying an Events API insert is safe. The endpoint is non-idempotent, so only
+ * statuses for which Tinybird guarantees no write are retryable. A timeout, network error, or
+ * unconfirmed/partial receipt may have committed and must be reconciled by the caller.
  */
-export function shouldRetryTinybirdInsert(error: unknown): boolean {
+export function classifyTinybirdInsertFailure(error: unknown): TinybirdInsertFailureClassification {
   if (!(error instanceof TinybirdInsertError)) {
-    return true;
-  }
-
-  if (error.status === 422) {
-    return false;
+    return 'uncertain';
   }
 
   if (error.status === 429 || error.status === 503) {
-    return true;
+    return 'retryable';
   }
 
   if ([400, 401, 403, 404, 413].includes(error.status)) {
-    return false;
+    return 'rejected';
   }
 
-  return error.status >= 500;
+  return 'uncertain';
+}
+
+export function shouldRetryTinybirdInsert(error: unknown): boolean {
+  return classifyTinybirdInsertFailure(error) === 'retryable';
 }

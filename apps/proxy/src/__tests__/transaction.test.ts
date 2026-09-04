@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Logger } from '@trace-flow/logging';
 import type { SSEStreamData } from '@trace-flow/types';
 import { getProvider } from '@trace-flow/llm-providers';
-import { buildTransaction } from '../transaction';
+import { buildTransaction, drainCapture, recordSkippedExchange } from '../transaction';
+import { attachCapture } from '../pipeline/attachCapture';
+import type { ProxyEnv } from '../context';
 import type { AttachedCapture } from '../pipeline/attachCapture';
 import type { ForwardedExchange } from '../pipeline/forwardToUpstream';
 
@@ -67,7 +69,10 @@ function makeDrained(opts: {
     firstTokenReceived: undefined,
     isTruncated: opts.isTruncated ?? false,
     totalSize: 0,
+    capturedSize: 0,
     responseComplete: 0,
+    requestCaptureError: undefined,
+    streamError: undefined,
   };
 }
 
@@ -197,5 +202,156 @@ describe('buildTransaction', () => {
       logger,
     );
     expect(warn).toHaveBeenCalledWith('proxy.response_truncated', expect.any(Object));
+  });
+
+  it('records interrupted response streams as explicit failed transactions', () => {
+    const drained = makeDrained({
+      providerId: 'openai',
+      responseBody: '{"partial":',
+    });
+    drained.streamError = new Error('upstream stream reset');
+    drained.totalSize = 11;
+    drained.capturedSize = 11;
+
+    const transaction = buildTransaction(drained, noopLogger);
+
+    expect(transaction.responseStatus).toBe(502);
+    expect(transaction.error).toEqual({
+      type: 'stream_interrupted',
+      message: 'Upstream response stream did not complete',
+    });
+    expect(transaction.responseBody).toBe('{"partial":');
+    expect(transaction.responseMetadata).toBeUndefined();
+  });
+
+  it('preserves a completed upstream response when request capture fails', async () => {
+    const responseBody = JSON.stringify({
+      id: 'resp_123',
+      model: 'gpt-4o',
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    });
+    const provider = getProvider('openai');
+    const forwarded = {
+      validated: {
+        requestId: 'req-capture-failure',
+        traceId: 'trace-capture-failure',
+        traceFlags: 1,
+        traceState: '',
+        baggage: {},
+        apiKey: 'tf-test',
+        keyData: { orgId: 'org-1' },
+        route: { provider },
+      },
+      response: new Response(responseBody, { status: 200 }),
+      streamToCapture: new ReadableStream({
+        start(controller) {
+          controller.error(new Error('request capture failed'));
+        },
+      }),
+      targetUrl: 'https://api.openai.com/v1/chat/completions',
+      requestStart: 0,
+      requestSent: 0,
+      responseReceived: 0,
+    } as unknown as ForwardedExchange;
+    const attached = attachCapture(forwarded);
+    const clientResponse = new Response(attached.readable).text();
+    const drained = await drainCapture(attached);
+    attached.capture.release();
+    await clientResponse;
+    await attached.pipePromise;
+    const error = vi.fn();
+
+    const transaction = buildTransaction(drained, { ...noopLogger, error });
+
+    expect(drained.requestCaptureError).toBeDefined();
+    expect(drained.streamError).toBeUndefined();
+    expect(transaction.responseStatus).toBe(200);
+    expect(transaction.error).toBeUndefined();
+    expect(transaction.tokens?.totalTokens).toBe(15);
+    expect(transaction.responseMetadata?.model).toBe('gpt-4o');
+    expect(transaction.isTruncated).toBe(true);
+    expect(error).toHaveBeenCalledWith('proxy.request_capture_failed', expect.any(Error));
+  });
+
+  it('does not synthesize completion for an interrupted partial SSE event', async () => {
+    const provider = getProvider('anthropic');
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              'event: message_start\ndata: {"type":"message_start","message":{"id":"msg","model":"claude","usage":{"input_tokens":1}}}',
+            ),
+          );
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    );
+    const forwarded = {
+      validated: {
+        requestId: 'req-sse',
+        traceId: 'trace-sse',
+        traceFlags: 1,
+        traceState: '',
+        baggage: {},
+        apiKey: 'tf-test',
+        keyData: { orgId: 'org-1' },
+        route: { provider },
+      },
+      response,
+      streamToCapture: null,
+      targetUrl: 'https://api.anthropic.com/v1/messages',
+      requestStart: 0,
+      requestSent: 0,
+      responseReceived: 0,
+    } as unknown as ForwardedExchange;
+    const attached = attachCapture(forwarded);
+    const clientReader = attached.readable.getReader();
+    await clientReader.read();
+    attached.capture.markInterrupted(new Error('upstream reset'));
+
+    const drained = await drainCapture(attached);
+    await clientReader.cancel();
+    await attached.pipePromise;
+
+    expect(drained.streamError).toBeDefined();
+    expect(attached.sseStreamData.messages).toEqual([]);
+    expect(drained.responseBody).toContain('message_start');
+  });
+
+  it('releases skipped responses even when analytics throws', async () => {
+    const provider = getProvider('openai');
+    const route = { provider } as Parameters<typeof recordSkippedExchange>[2]['route'];
+    const forwarded = {
+      validated: {
+        decision: { record: false, reason: 'exceeded' },
+        keyData: { orgId: 'org-1' },
+        operationName: 'chat',
+        route,
+      },
+      response: new Response('{"ok":true}', { status: 200 }),
+      streamToCapture: null,
+      targetUrl: 'https://api.openai.com/v1/chat/completions',
+      requestStart: 0,
+      requestSent: 0,
+      responseReceived: 0,
+    } as unknown as ForwardedExchange;
+    const attached = attachCapture(forwarded);
+    const responseText = new Response(attached.readable).text();
+    const env = {
+      ANALYTICS: {
+        writeDataPoint: () => {
+          throw new Error('analytics unavailable');
+        },
+      },
+    } as unknown as ProxyEnv;
+
+    await recordSkippedExchange(env, attached, {
+      decision: { record: false, reason: 'exceeded' },
+      route,
+      logger: noopLogger,
+    });
+
+    await expect(responseText).resolves.toBe('{"ok":true}');
   });
 });

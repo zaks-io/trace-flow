@@ -75,7 +75,7 @@ export async function insertIntoTinybirdWithRetry(
       console.warn(`Insert attempt ${attempt + 1}/${MAX_RETRIES} failed:`, lastError.message);
 
       if (!retryable) {
-        console.error('Non-retriable Tinybird insert error:', lastError);
+        console.error('Non-retriable Tinybird insert error:', lastError.message);
         throw lastError;
       }
 
@@ -84,7 +84,7 @@ export async function insertIntoTinybirdWithRetry(
         const jitter = Math.floor(Math.random() * 100);
         await delayFn(delay + jitter);
       } else {
-        console.error('Failed to insert traces into Tinybird after retries:', lastError);
+        console.error('Failed to insert traces into Tinybird after retries:', lastError.message);
       }
     }
   }

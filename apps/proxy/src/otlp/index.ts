@@ -10,9 +10,16 @@ import type { TracingDecision } from '../context';
 import { applyTierToTraces, transformOTLPToTraces } from './transform';
 import { decodeOTLPProtobuf, readOTLPBody, OTLPProtoDecodeError } from './decode';
 import type { OTLPExportTraceServiceRequest, OTLPExportTraceServiceResponse } from './types';
+import {
+  buildTraceDeliveryEnvelope,
+  enqueueTraceDelivery,
+  persistTraceDelivery,
+} from '../delivery';
 
 interface Env {
   REQUEST_QUEUE: Queue<QueueMessageUnion>;
+  STORAGE: R2Bucket;
+  TRACE_DELIVERY_NAMESPACE: string;
   API_KEYS: KVNamespace;
   USAGE_TRACKER: DurableObjectNamespace;
   ORG_LIMITER: RateLimit;
@@ -437,6 +444,12 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
   if (!decision.record) {
     const rejection = otlpRejectionFor(decision.reason);
     orgLogger.warn('otlp.reject', { reason: rejection.logReason, rejectedSpans: traces.length });
+    if (decision.reason === 'internal_error') {
+      c.executionCtx.waitUntil(orgLogger.flush());
+      return c.json({ error: { code: 503, message: rejection.errorMessage } }, 503, {
+        'Retry-After': '1',
+      });
+    }
     const response: OTLPExportTraceServiceResponse = {
       partialSuccess: { rejectedSpans: traces.length, errorMessage: rejection.errorMessage },
     };
@@ -459,18 +472,36 @@ export async function handleOTLPTraces(c: Context<{ Bindings: Env }>): Promise<R
     sentry_trace_context: currentSentryTraceContext(),
   };
 
+  let deliveryKey: string;
+  try {
+    const envelope = await buildTraceDeliveryEnvelope(message);
+    deliveryKey = await persistTraceDelivery(
+      c.env.STORAGE,
+      envelope,
+      c.env.TRACE_DELIVERY_NAMESPACE,
+    );
+  } catch (err) {
+    orgLogger.error('otlp.delivery_persist_failed', err, { traceCount: traces.length });
+    c.executionCtx.waitUntil(orgLogger.flush());
+    return c.json({ error: { code: 503, message: 'Trace persistence failed' } }, 503, {
+      'Retry-After': '1',
+    });
+  }
+
   c.executionCtx.waitUntil(
     (async () => {
       try {
-        await c.env.REQUEST_QUEUE.send(message);
+        await enqueueTraceDelivery(c.env.REQUEST_QUEUE, deliveryKey, message);
         orgLogger.info('otlp.enqueued', {
           encoding: contentType,
           spanCount: traces.length,
           resourceSpanCount: body.resourceSpans.length,
+          deliveryKey,
         });
       } catch (err) {
         orgLogger.error('otlp.enqueue_failed', err, {
           traceCount: traces.length,
+          deliveryKey,
         });
       } finally {
         await orgLogger.flush();

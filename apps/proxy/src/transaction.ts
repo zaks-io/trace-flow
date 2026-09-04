@@ -14,10 +14,11 @@ import { parseError } from './parsers/errors';
 import { writeRequestAnalytics, writeSkippedAnalytics } from './analytics';
 import { captureStream, chunksToString } from './streaming/capture';
 import { createQueueMessage } from './queue';
-import { storeBodies } from './storage';
+import { buildTraceDeliveryEnvelope, enqueueTraceDelivery, persistTraceDelivery } from './delivery';
 import { MAX_REQUEST_SIZE } from './pipeline/validateRequest';
 import type { ProxyEnv, TracingDecision } from './context';
 import type { AttachedCapture } from './pipeline/attachCapture';
+import type { UpstreamFetchError } from './pipeline/forwardToUpstream';
 
 /**
  * Output of `drainCapture`. Composes the attached stage and adds the stream-side
@@ -30,7 +31,10 @@ interface DrainedCapture {
   firstTokenReceived: number | undefined;
   isTruncated: boolean;
   totalSize: number;
+  capturedSize: number;
   responseComplete: number;
+  requestCaptureError?: unknown;
+  streamError?: unknown;
 }
 
 /**
@@ -41,7 +45,7 @@ interface DrainedCapture {
  * Excludes policy concerns: a Transaction is what was captured. Whether it gets
  * persisted, and under what retention, is passed to `persistTransaction` alongside.
  */
-interface Transaction {
+export interface Transaction {
   requestId: string;
   traceId: string;
   parentSpanId: string | undefined;
@@ -72,6 +76,14 @@ interface Transaction {
   isSSE: boolean;
   isTruncated: boolean;
   totalSize: number;
+  capturedSize: number;
+  requestCaptureError?: unknown;
+  streamError?: unknown;
+}
+
+export interface PersistedTransaction {
+  deliveryKey: string;
+  message: ReturnType<typeof createQueueMessage>;
 }
 
 interface PersistOpts {
@@ -87,6 +99,51 @@ interface SkipOpts {
   logger: Logger;
 }
 
+export async function buildUpstreamFailureTransaction(
+  failure: UpstreamFetchError,
+): Promise<Transaction> {
+  const { validated, targetUrl, streamToCapture, requestStart, requestSent } = failure.exchange;
+  let requestBody = '';
+  let captureError: unknown;
+  try {
+    requestBody = await captureStream(streamToCapture, MAX_REQUEST_SIZE);
+  } catch (error) {
+    captureError = error;
+  }
+  const responseComplete = getCurrentTimestamp();
+  return {
+    requestId: validated.requestId,
+    traceId: validated.traceId,
+    parentSpanId: validated.parentSpanId,
+    traceFlags: validated.traceFlags,
+    traceState: validated.traceState,
+    baggage: validated.baggage,
+    apiKey: validated.apiKey,
+    orgId: validated.keyData.orgId,
+    operationName: validated.operationName,
+    targetUrl,
+    requestBody,
+    responseBody: '',
+    responseStatus: 502,
+    requestStart,
+    requestSent,
+    responseReceived: responseComplete,
+    firstTokenReceived: undefined,
+    responseComplete,
+    tokens: undefined,
+    error: { type: 'upstream_fetch_error', message: 'Upstream request failed' },
+    responseMetadata: undefined,
+    inputMessages: undefined,
+    sseStreamData: undefined,
+    isSSE: false,
+    isTruncated: false,
+    totalSize: 0,
+    capturedSize: 0,
+    requestCaptureError: captureError,
+    streamError: failure.cause,
+  };
+}
+
 /**
  * Await the captured stream, flush trailing SSE state, snapshot capture metrics.
  *
@@ -96,18 +153,23 @@ interface SkipOpts {
  * SSE message ourselves once we know the response is complete.
  */
 export async function drainCapture(attached: AttachedCapture): Promise<DrainedCapture> {
-  const { capture, parser, pipePromise, isSSE, sseStreamData, forwarded } = attached;
+  const { capture, parser, isSSE, sseStreamData, forwarded } = attached;
 
-  const requestBody = await captureStream(forwarded.streamToCapture, MAX_REQUEST_SIZE);
-  await pipePromise;
+  const [requestResult, responseResult] = await Promise.all([
+    captureStream(forwarded.streamToCapture, MAX_REQUEST_SIZE).then(
+      (body) => ({ body, error: undefined }),
+      (error: unknown) => ({ body: '', error }),
+    ),
+    capture.waitForDrain(),
+  ]);
 
-  if (isSSE && parser) {
+  if (responseResult.complete && isSSE && parser) {
     parser.feed('\n\n');
   }
 
   const responseComplete = getCurrentTimestamp();
 
-  if (isSSE && sseStreamData.messages.length > 0) {
+  if (responseResult.complete && isSSE && sseStreamData.messages.length > 0) {
     const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
     if (lastMessage && !lastMessage.messageStop) {
       lastMessage.messageStop = responseComplete;
@@ -118,12 +180,15 @@ export async function drainCapture(attached: AttachedCapture): Promise<DrainedCa
 
   return {
     attached,
-    requestBody,
+    requestBody: requestResult.body,
     responseBody,
     firstTokenReceived: capture.getFirstTokenTime(),
     isTruncated: capture.isTruncated(),
     totalSize: capture.getTotalSize(),
+    capturedSize: capture.getCapturedSize(),
     responseComplete,
+    requestCaptureError: requestResult.error,
+    streamError: responseResult.complete ? undefined : responseResult.error,
   };
 }
 
@@ -146,23 +211,31 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
   if (drained.isTruncated) {
     logger.warn('proxy.response_truncated', {
       totalSize: drained.totalSize,
-      capturedSize: responseBody.length,
+      capturedSize: drained.capturedSize,
     });
+  }
+
+  if (drained.requestCaptureError) {
+    logger.error('proxy.request_capture_failed', drained.requestCaptureError);
   }
 
   // For SSE responses, only use aggregated SSE tokens — parsing raw SSE text
   // would match partial data from individual events and could leak stale fields.
   let tokens: LLMTokenUsage | undefined;
-  if (isSSE && sseStreamData.messages.length > 0) {
+  if (!drained.streamError && isSSE && sseStreamData.messages.length > 0) {
     tokens = provider.aggregateSSETokens(sseStreamData);
-  } else if (response.status < 400) {
+  } else if (!drained.streamError && response.status < 400) {
     tokens = provider.parseResponseTokenUsage(responseBody);
   }
 
-  const error = response.status >= 400 ? parseError(responseBody, response.status) : undefined;
+  const error = drained.streamError
+    ? { type: 'stream_interrupted', message: 'Upstream response stream did not complete' }
+    : response.status >= 400
+      ? parseError(responseBody, response.status)
+      : undefined;
 
   let responseMetadata: Partial<LLMResponseMetadata> | undefined;
-  if (response.status < 400) {
+  if (!drained.streamError && response.status < 400) {
     if (isSSE && sseStreamData.messages.length > 0) {
       const lastMessage = sseStreamData.messages[sseStreamData.messages.length - 1];
       responseMetadata = lastMessage?.metadata;
@@ -194,7 +267,7 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
 
     requestBody,
     responseBody,
-    responseStatus: response.status,
+    responseStatus: drained.streamError ? 502 : response.status,
 
     requestStart: forwarded.requestStart,
     requestSent: forwarded.requestSent,
@@ -209,22 +282,24 @@ export function buildTransaction(drained: DrainedCapture, logger: Logger): Trans
     sseStreamData: isSSE && sseStreamData.messages.length > 0 ? sseStreamData : undefined,
 
     isSSE,
-    isTruncated: drained.isTruncated,
+    isTruncated: drained.isTruncated || Boolean(drained.requestCaptureError),
     totalSize: drained.totalSize,
+    capturedSize: drained.capturedSize,
+    requestCaptureError: drained.requestCaptureError,
+    streamError: drained.streamError,
   };
 }
 
 /**
- * Redact, persist the Body Object, send the Queue Message, write analytics.
- * Bundled because all three writes share the redacted shape and target the
- * same org-scoped destinations — splitting them would force the caller to
- * thread the redacted shape three times and decide ordering.
+ * Redact and durably persist one delivery envelope. Body data is encrypted
+ * before it shares the envelope with metadata. Queue publication happens only
+ * after this function returns successfully.
  */
 export async function persistTransaction(
   env: ProxyEnv,
   transaction: Transaction,
   opts: PersistOpts,
-): Promise<void> {
+): Promise<PersistedTransaction> {
   const { tier, route, omitBody, logger } = opts;
 
   try {
@@ -241,30 +316,6 @@ export async function persistTransaction(
       transaction.inputMessages && transaction.inputMessages.length > 0
         ? redactValue(transaction.inputMessages)
         : undefined;
-
-    let stored = false;
-    if (!omitBody) {
-      try {
-        stored = await storeBodies(
-          env.STORAGE,
-          transaction.requestId,
-          redactedRequestBody,
-          redactedResponseBody,
-          transaction.isTruncated,
-          logger,
-          transaction.orgId,
-          {
-            rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
-            keyId: env.BODY_ENCRYPTION_KEY_ID,
-          },
-        );
-        if (!stored) {
-          logger.warn('proxy.r2_storage_failed');
-        }
-      } catch (err) {
-        logger.error('proxy.r2_storage_failed', err);
-      }
-    }
 
     const latency = transaction.responseComplete - transaction.requestStart;
     const queueMessage = createQueueMessage({
@@ -313,7 +364,7 @@ export async function persistTransaction(
         tokens: transaction.tokens,
         totalSize: transaction.totalSize,
         storageSkipped: omitBody,
-        stored,
+        stored: !omitBody,
       });
     } catch (err) {
       logger.error('proxy.analytics_write_failed', err);
@@ -329,16 +380,46 @@ export async function persistTransaction(
       isSse: transaction.isSSE,
       model: transaction.responseMetadata?.model,
       totalTokens: transaction.tokens?.totalTokens ?? 0,
-      r2Stored: omitBody ? 'skipped' : stored ? 'stored' : 'failed',
+      r2Stored: omitBody ? 'skipped' : 'pending_delivery',
     });
 
-    try {
-      await env.REQUEST_QUEUE.send(queueMessage);
-    } catch (err) {
-      logger.error('proxy.queue_send_failed', err);
-    }
+    const envelope = await buildTraceDeliveryEnvelope(
+      queueMessage,
+      omitBody
+        ? undefined
+        : {
+            requestId: transaction.requestId,
+            requestBody: redactedRequestBody,
+            responseBody: redactedResponseBody,
+            truncated: transaction.isTruncated,
+            orgId: transaction.orgId,
+            encryption: {
+              rootKeyBase64: env.BODY_ENCRYPTION_ROOT_KEY,
+              keyId: env.BODY_ENCRYPTION_KEY_ID,
+            },
+          },
+    );
+    const deliveryKey = await persistTraceDelivery(
+      env.STORAGE,
+      envelope,
+      env.TRACE_DELIVERY_NAMESPACE,
+    );
+    return { deliveryKey, message: queueMessage };
   } catch (err) {
     logger.error('proxy.capture_failed', err);
+    throw err;
+  }
+}
+
+export async function enqueuePersistedTransaction(
+  env: ProxyEnv,
+  persisted: PersistedTransaction,
+  logger: Logger,
+): Promise<void> {
+  try {
+    await enqueueTraceDelivery(env.REQUEST_QUEUE, persisted.deliveryKey, persisted.message);
+  } catch (err) {
+    logger.error('proxy.queue_send_failed', err, { deliveryKey: persisted.deliveryKey });
   } finally {
     await logger.flush();
   }
@@ -355,8 +436,9 @@ export async function recordSkippedExchange(
   opts: SkipOpts,
 ): Promise<void> {
   const { decision, route, logger } = opts;
-  const { forwarded, isSSE, pipePromise } = attached;
+  const { forwarded, isSSE, pipePromise, capture } = attached;
   const { validated, response, streamToCapture } = forwarded;
+  capture.release();
 
   try {
     writeSkippedAnalytics(

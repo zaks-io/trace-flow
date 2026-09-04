@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env, SELF } from 'cloudflare:test';
-import { isEncryptedStoredBodiesPayload, type StoredBodiesPayload } from '@trace-flow/types';
+import {
+  isEncryptedStoredBodiesPayload,
+  type StoredBodiesPayload,
+  type TraceDeliveryEnvelope,
+} from '@trace-flow/types';
+import { isTraceDeliveryEnvelope } from '@trace-flow/utils';
 import { decryptStoredBodyPayload } from '@trace-flow/utils';
 
 const WAIT_UNTIL_DELAY = 100;
@@ -44,25 +49,22 @@ function mockUpstream(
   });
 }
 
-async function decryptStoredBodiesObject(
-  objectKey: string,
-  object: R2ObjectBody,
-): Promise<StoredBodiesPayload> {
+async function decryptStoredBodiesObject(object: R2ObjectBody): Promise<StoredBodiesPayload> {
   const parsed: unknown = JSON.parse(await object.text());
-  if (!isEncryptedStoredBodiesPayload(parsed)) {
+  if (!isTraceDeliveryEnvelope(parsed) || !parsed.body) {
+    throw new Error('Expected trace delivery with encrypted bodies');
+  }
+  const delivery: TraceDeliveryEnvelope = parsed;
+  const deliveryBody = delivery.body;
+  if (!deliveryBody || !isEncryptedStoredBodiesPayload(deliveryBody.encryptedPayload)) {
     throw new Error('Expected encrypted stored body payload');
   }
 
-  const orgId = object.customMetadata?.orgId;
-  if (!orgId) {
-    throw new Error('Expected stored body org metadata');
-  }
-
   return JSON.parse(
-    await decryptStoredBodyPayload(parsed, {
+    await decryptStoredBodyPayload(deliveryBody.encryptedPayload, {
       rootKeyBase64: TEST_BODY_ENCRYPTION_ROOT_KEY,
-      orgId,
-      objectKey,
+      orgId: deliveryBody.orgId,
+      objectKey: deliveryBody.key,
     }),
   ) as StoredBodiesPayload;
 }
@@ -240,7 +242,7 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
 
       // Verify R2 storage
-      const stored = await env.STORAGE.list({ prefix: 'bodies/' });
+      const stored = await env.STORAGE.list({ prefix: 'trace-deliveries/' });
       expect(stored.objects.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -426,6 +428,36 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
     });
 
+    it('persists an explicit failed transaction when the upstream fetch rejects', async () => {
+      await setupValidApiKey('upstream-failure-key');
+      const keysBefore = new Set(
+        (await env.STORAGE.list({ prefix: 'trace-deliveries/' })).objects.map((o) => o.key),
+      );
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('upstream unavailable'));
+
+      const res = await SELF.fetch('http://localhost/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Api-Key': 'upstream-failure-key',
+          Authorization: 'Bearer openai-key',
+        },
+        body: JSON.stringify({ model: 'gpt-4', messages: [] }),
+      });
+
+      expect(res.status).toBe(502);
+      const after = await env.STORAGE.list({ prefix: 'trace-deliveries/' });
+      const newKey = after.objects.find((object) => !keysBefore.has(object.key))?.key;
+      if (!newKey) throw new Error('expected a failed transaction delivery');
+      const object = await env.STORAGE.get(newKey);
+      const envelope: unknown = await object?.json();
+      expect(isTraceDeliveryEnvelope(envelope)).toBe(true);
+      expect((envelope as TraceDeliveryEnvelope).message).toMatchObject({
+        response: { status: 502 },
+        error: { type: 'upstream_fetch_error' },
+      });
+    });
+
     it('should detect and handle SSE streams', async () => {
       await setupValidApiKey('test-key');
 
@@ -539,7 +571,7 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
 
       // Verify request body was stored
-      const storedBodies = await env.STORAGE.list({ prefix: 'bodies/' });
+      const storedBodies = await env.STORAGE.list({ prefix: 'trace-deliveries/' });
       expect(storedBodies.objects.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -564,7 +596,7 @@ describe('Proxy Worker Integration', () => {
       };
 
       const keysBefore = new Set(
-        (await env.STORAGE.list({ prefix: 'bodies/' })).objects.map((o) => o.key),
+        (await env.STORAGE.list({ prefix: 'trace-deliveries/' })).objects.map((o) => o.key),
       );
 
       mockUpstream(
@@ -598,13 +630,13 @@ describe('Proxy Worker Integration', () => {
 
       await waitForAsyncOps();
 
-      const after = await env.STORAGE.list({ prefix: 'bodies/' });
+      const after = await env.STORAGE.list({ prefix: 'trace-deliveries/' });
       const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
       if (!newKey) throw new Error('expected a new R2 bodies object for this request');
 
       const obj = await env.STORAGE.get(newKey);
       if (!obj) throw new Error('expected the new R2 bodies object to exist');
-      const stored = await decryptStoredBodiesObject(newKey, obj);
+      const stored = await decryptStoredBodiesObject(obj);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');
@@ -622,7 +654,7 @@ describe('Proxy Worker Integration', () => {
       const sseBody = `data: {"choices":[{"delta":{"content":"${secretEmail}"}}]}\n\ndata: [DONE]\n\n`;
 
       const keysBefore = new Set(
-        (await env.STORAGE.list({ prefix: 'bodies/' })).objects.map((o) => o.key),
+        (await env.STORAGE.list({ prefix: 'trace-deliveries/' })).objects.map((o) => o.key),
       );
 
       mockUpstream(
@@ -656,13 +688,13 @@ describe('Proxy Worker Integration', () => {
 
       await waitForAsyncOps();
 
-      const after = await env.STORAGE.list({ prefix: 'bodies/' });
+      const after = await env.STORAGE.list({ prefix: 'trace-deliveries/' });
       const newKey = after.objects.find((o) => !keysBefore.has(o.key))?.key;
       if (!newKey) throw new Error('expected a new R2 bodies object for this request');
 
       const obj = await env.STORAGE.get(newKey);
       if (!obj) throw new Error('expected the new R2 bodies object to exist');
-      const stored = await decryptStoredBodiesObject(newKey, obj);
+      const stored = await decryptStoredBodiesObject(obj);
 
       expect(stored.requestBody).not.toContain(requestEmail);
       expect(stored.requestBody).toContain('[REDACTED]');
@@ -1013,9 +1045,12 @@ describe('Proxy Worker Integration', () => {
 
       await waitForAsyncOps();
 
-      // Verify NO bodies were stored
-      const stored = await env.STORAGE.list();
-      expect(stored.objects.length).toBe(0);
+      const stored = await env.STORAGE.list({ prefix: 'trace-deliveries/' });
+      expect(stored.objects).toHaveLength(1);
+      const delivery = await env.STORAGE.get(stored.objects[0]!.key);
+      const envelope: unknown = await delivery?.json();
+      expect(isTraceDeliveryEnvelope(envelope)).toBe(true);
+      expect((envelope as TraceDeliveryEnvelope).body).toBeUndefined();
     });
 
     it('should store bodies when X-Trace-Flow-Omit-Body header is absent', async () => {
@@ -1059,7 +1094,7 @@ describe('Proxy Worker Integration', () => {
       await waitForAsyncOps();
 
       // Verify bodies WERE stored
-      const stored = await env.STORAGE.list({ prefix: 'bodies/' });
+      const stored = await env.STORAGE.list({ prefix: 'trace-deliveries/' });
       expect(stored.objects.length).toBeGreaterThanOrEqual(1);
 
       const firstStoredObject = stored.objects[0];
@@ -1067,8 +1102,8 @@ describe('Proxy Worker Integration', () => {
       const storedObject = await env.STORAGE.get(firstStoredObject!.key);
       expect(storedObject).not.toBeNull();
       const storedText = await storedObject!.text();
-      expect(storedText).not.toContain('gpt-4');
       expect(storedText).not.toContain('Hello!');
+      expect(JSON.parse(storedText)).toHaveProperty('body.encryptedPayload');
     });
 
     it('should strip X-Trace-Flow-Omit-Body header before forwarding to provider', async () => {

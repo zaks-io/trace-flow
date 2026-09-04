@@ -22,9 +22,8 @@ export interface AttachedCapture {
  * Wire a TransformStream between the upstream response and the client so we
  * can tee response chunks into the SSE parser without blocking the byte path.
  *
- * `pipePromise` is intentionally not awaited here — the response goes back to
- * the client immediately, and capture runs inside `waitUntil` after the
- * response stream finishes draining.
+ * The capture exposes a drain signal before closing. The caller persists the
+ * delivery envelope, then releases the terminal response byte and EOF.
  */
 export function attachCapture(forwarded: ForwardedExchange): AttachedCapture {
   const { response } = forwarded;
@@ -45,7 +44,37 @@ export function attachCapture(forwarded: ForwardedExchange): AttachedCapture {
   });
 
   const { readable, writable } = capture.transform;
-  const pipePromise = response.body?.pipeTo(writable);
+  const pipePromise = response.body?.pipeTo(writable).catch((error: unknown) => {
+    capture.markInterrupted(error);
+  });
 
-  return { forwarded, isSSE, sseStreamData, parser, capture, readable, pipePromise };
+  if (!response.body) {
+    capture.markDrained();
+  }
+
+  const reader = readable.getReader();
+  const clientReadable = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const result = await reader.read();
+      if (result.done) {
+        controller.close();
+      } else {
+        controller.enqueue(result.value);
+      }
+    },
+    async cancel(reason) {
+      capture.markInterrupted(reason ?? new Error('Client response stream canceled'));
+      await reader.cancel(reason);
+    },
+  });
+
+  return {
+    forwarded,
+    isSSE,
+    sseStreamData,
+    parser,
+    capture,
+    readable: clientReadable,
+    pipePromise,
+  };
 }

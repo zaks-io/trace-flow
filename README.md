@@ -40,7 +40,7 @@ are complete.
 
 - **Low-latency user experience** - Streaming responses are delivered immediately without blocking on observability data processing
 - **High throughput** - Queue-based architecture handles traffic spikes and scales automatically
-- **Reliable delivery** - Built-in retry logic and error handling ensure no data loss
+- **Durable delivery** - Accepted traces remain in durable storage until handoff; failed or uncertain writes remain available for recovery. See [delivery guarantees and recovery](docs/guides/trace-delivery-recovery.md).
 - **Distributed tracing support** - Captures and propagates trace context for end-to-end observability
 - **Async body storage** - Request/response bodies are stored in R2 asynchronously to minimize latency
 

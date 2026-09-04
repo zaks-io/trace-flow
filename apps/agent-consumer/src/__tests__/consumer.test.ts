@@ -337,6 +337,8 @@ describe('processAgentBatch', () => {
       acceptedRows: 1,
       duplicateRows: 0,
       repairRows: 0,
+      blockedRecoveryRows: 0,
+      blockedRecoveryRecords: 0,
     }));
     env.AGENT_FACT_BATCHER = {
       getByName: () => ({ addFacts }),
@@ -358,6 +360,44 @@ describe('processAgentBatch', () => {
 
     expect(tb.inserts.map((i) => i.datasource)).toEqual(['agent_messages']);
     expect(msg.ack).toHaveBeenCalledOnce();
+  });
+
+  it('retries a legacy-only review attribution when the batcher rejects its unsupported target', async () => {
+    tb = mockTinybird();
+    const { kv } = makeKv({ [PRICING_KEY]: PRICING });
+    const fact = reviewUnitAttributionFact();
+    const msg = stubMessage(
+      queueMessage({
+        facts: { ...emptyQueueFacts(), review_unit_attributions: [fact] },
+      }),
+    );
+    const env = makeEnv(kv, { TINYBIRD_AGENT_WRITE_MODE: 'legacy' });
+    const addFacts = vi.fn(async () => ({
+      status: 'failed',
+      acceptedRows: 0,
+      duplicateRows: 0,
+      repairRows: 0,
+      blockedRecoveryRows: 0,
+      blockedRecoveryRecords: 0,
+    }));
+    env.AGENT_FACT_BATCHER = {
+      getByName: () => ({ addFacts }),
+    } as unknown as typeof env.AGENT_FACT_BATCHER;
+
+    await processAgentBatch(batchOf([msg]), env);
+
+    expect(addFacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        writeClean: false,
+        writeLegacy: true,
+        rows: expect.objectContaining({
+          review_unit_attributions: [expect.objectContaining({ OrgId: 'org-1' })],
+        }),
+      }),
+    );
+    expect(msg.retry).toHaveBeenCalledOnce();
+    expect(msg.ack).not.toHaveBeenCalled();
+    expect(tb.inserts).toHaveLength(0);
   });
 
   it('dedupes repeated rows inside one queue batch before inserting', async () => {

@@ -153,15 +153,19 @@ No credentials management or SDK configuration required.
 
 ### 30-Day Retention
 
-Bodies are retained for 30 days, then deleted via R2 lifecycle rules:
+Bodies are retained for 30 days, then deleted via R2 lifecycle rules scoped to `bodies/`.
+Pending `trace-deliveries/` envelopes must not expire; see [delivery recovery](../guides/trace-delivery-recovery.md).
+
+Example body policy:
 
 ```json
 {
   "rules": [
     {
       "id": "delete-old-bodies",
-      "status": "Enabled",
-      "expiration": { "days": 30 }
+      "enabled": true,
+      "conditions": { "prefix": "bodies/" },
+      "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 2592000 } }
     }
   ]
 }

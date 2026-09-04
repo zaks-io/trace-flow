@@ -1,12 +1,25 @@
 import * as Sentry from '@sentry/cloudflare';
+import { normalizeAnalyticsKey } from '@trace-flow/utils';
 import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { DurableObject } from 'cloudflare:workers';
 import { axiomConfigFromEnv, createLogger } from '@trace-flow/logging';
 import type { TinybirdTrace } from '@trace-flow/types';
+import {
+  classifyTinybirdInsertFailure,
+  requireRecoveryReason,
+  serializeTinybirdFailure,
+  splitUtf8Chunks,
+  TinybirdRecoveryStore,
+  type ReconcileRecoveryInput,
+  type RecoveryPage,
+  type RecoveryPageOptions,
+  type RecoveryRecord,
+} from '@trace-flow/tinybird-client';
 import type { Env } from './index';
 import { insertIntoTinybirdWithRetry } from './tinybird';
 
 const BATCH_SIZE = 10_000;
+const MAX_NDJSON_BYTES = 900_000;
 // Dashboard freshness tolerates minute-level latency; sparse traffic should batch for ClickHouse.
 const FLUSH_INTERVAL_MS = 60_000;
 const MAX_JITTER_MS = 1000;
@@ -18,8 +31,6 @@ const STALE_FLUSH_THRESHOLD_MS = 60 * 60 * 1000;
 const MAX_SQL_PARAMS = 90;
 // INSERT uses 2 params per row (data, timestamp)
 const MAX_INSERT_ROWS = Math.floor(MAX_SQL_PARAMS / 2);
-const PROCESSED_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 export const TRACE_BATCHER_BATCH_SIZE = BATCH_SIZE;
 export const TRACE_BATCHER_FLUSH_INTERVAL_MS = FLUSH_INTERVAL_MS;
@@ -60,6 +71,8 @@ export interface MessageTraceResult {
 
 export interface TraceBatcherStats {
   queuedTraces: number;
+  blockedRecoveryRows: number;
+  blockedRecoveryRecords: number;
   oldestQueuedTraceTime: number | null;
   lastSuccessfulFlushTime: number;
   lastFlushTime: number;
@@ -70,10 +83,9 @@ class TraceBatcherBase extends DurableObject<Env> {
   private lastSuccessfulFlushTime: number = Date.now();
   private flushAlarmScheduled = false;
   private durableState: DurableObjectState;
+  private recovery: TinybirdRecoveryStore;
   private traceCount = 0;
   private flushInProgress = false;
-  private lastCleanupTime = 0;
-  private lastStaleAlertTime = 0;
   private logger = createLogger({
     service: 'proxy-consumer',
     runtime: 'durable-object',
@@ -86,6 +98,7 @@ class TraceBatcherBase extends DurableObject<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     this.durableState = state;
+    this.recovery = new TinybirdRecoveryStore(state.storage);
 
     this.initializeSchema();
 
@@ -99,13 +112,7 @@ class TraceBatcherBase extends DurableObject<Env> {
       this.lastSuccessfulFlushTime = rows[0].last_successful_flush_time;
     }
 
-    const countResult = this.durableState.storage.sql.exec<{ count: number }>(
-      'SELECT COUNT(*) as count FROM traces',
-    );
-    const countRows = [...countResult];
-    if (countRows.length > 0 && countRows[0]) {
-      this.traceCount = countRows[0].count;
-    }
+    this.traceCount = this.countHealthyTraces();
 
     // If we restart (e.g. after a deploy) with traces already queued, schedule
     // an immediate flush. Without this, stuck traces from a previous version
@@ -138,6 +145,14 @@ class TraceBatcherBase extends DurableObject<Env> {
         legacy_sent_at_ms INTEGER
       )
     `);
+    this.durableState.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS trace_payload_chunks (
+        trace_id INTEGER NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (trace_id, chunk_index)
+      )
+    `);
     this.ensureColumn('traces', 'clean_sent_at_ms', 'INTEGER');
     this.ensureColumn('traces', 'legacy_sent_at_ms', 'INTEGER');
 
@@ -165,11 +180,9 @@ class TraceBatcherBase extends DurableObject<Env> {
         seen_at_ms INTEGER NOT NULL
       )
     `);
+    this.ensureColumn('trace_repairs', 'data', 'TEXT');
 
-    this.durableState.storage.sql.exec(`
-      CREATE INDEX IF NOT EXISTS idx_processed_messages_time
-      ON processed_messages(processed_at_ms)
-    `);
+    this.recovery.initialize();
 
     this.durableState.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS metadata (
@@ -238,8 +251,6 @@ class TraceBatcherBase extends DurableObject<Env> {
     }
 
     const now = Date.now();
-    this.cleanupProcessedMessages(now);
-
     const results: MessageTraceResult[] = [];
     let insertedTraceCount = 0;
 
@@ -268,6 +279,8 @@ class TraceBatcherBase extends DurableObject<Env> {
         results.push({ messageId: item.messageId, status: 'failed' });
       }
     }
+
+    this.traceCount = this.countHealthyTraces();
 
     if (this.traceCount > 0) {
       if (this.traceCount >= BATCH_SIZE && insertedTraceCount > 0) {
@@ -323,84 +336,26 @@ class TraceBatcherBase extends DurableObject<Env> {
 
     this.flushInProgress = true;
 
-    const batchCount = Math.ceil(this.traceCount / BATCH_SIZE);
     let lastSuccessfulFlushTime = this.lastSuccessfulFlushTime;
 
     try {
-      for (let i = 0; i < batchCount; i++) {
-        const rows = [
-          ...this.durableState.storage.sql.exec<StoredTraceRow>(
-            `SELECT id, data, clean_sent_at_ms, legacy_sent_at_ms
-             FROM traces
-             ORDER BY id
-             LIMIT ?`,
-            BATCH_SIZE,
-          ),
-        ];
-
-        if (rows.length === 0) {
-          break;
-        }
-
-        const targets = tinybirdWriteTargets(this.env);
-        const ids = rows.map((row) => row.id);
-
-        try {
-          const host = this.env.TINYBIRD_HOST ?? 'https://api.us-west-2.aws.tinybird.co';
-          for (const target of targets) {
-            const targetRows = rows.filter((row) => row[target.sentColumn] === null);
-            if (targetRows.length === 0) {
-              continue;
-            }
-
-            const traces = targetRows.map((row) => JSON.parse(row.data) as TinybirdTrace);
-            await insertIntoTinybirdWithRetry(
-              traces,
-              this.env.TINYBIRD_TOKEN,
-              target.datasource,
-              host,
-            );
-            this.markTraceTargetSent(
-              targetRows.map((row) => row.id),
-              target.sentColumn,
-            );
-          }
-
-          const deleted = this.deleteFullySentTraces(ids, targets);
-          this.traceCount -= deleted;
-          lastSuccessfulFlushTime = Date.now();
-        } catch (error) {
-          this.logger
-            .child({ traceId: firstTraceId(rows) })
-            .error('consumer.tinybird_flush_failed', error, {
-              batchSize: rows.length,
-            });
-          const ageMs = Date.now() - this.lastSuccessfulFlushTime;
-          const isStale = ageMs > STALE_FLUSH_THRESHOLD_MS;
-          // Throttle fatal alerts: with 5s retries, an extended Tinybird
-          // outage would otherwise emit ~720 fatal events/hour/shard. Cap at
-          // one fatal per stale-window per shard; downgrade the rest to error.
-          const shouldEmitFatal =
-            isStale && Date.now() - this.lastStaleAlertTime >= STALE_FLUSH_THRESHOLD_MS;
-          if (shouldEmitFatal) {
-            this.lastStaleAlertTime = Date.now();
-          }
-          Sentry.captureException(error, {
-            level: shouldEmitFatal ? 'fatal' : 'error',
-            tags: {
-              operation: 'flush',
-              stale_shard: isStale ? 'true' : 'false',
-            },
-            extra: {
-              batchSize: rows.length,
-              queuedTraces: this.traceCount,
-              lastSuccessfulFlushAgeMs: ageMs,
-            },
-          });
-          break;
+      const targets = tinybirdWriteTargets(this.env);
+      for (const target of targets) {
+        const rows = this.selectHealthyRows(target);
+        for (const batch of splitRowsByBytes(rows)) {
+          const result = await this.sendTraceBatch(target, batch);
+          if (result === 'retryable') break;
+          if (result === 'confirmed') lastSuccessfulFlushTime = Date.now();
         }
       }
+      this.deleteFullySentTraces(
+        [...this.durableState.storage.sql.exec<{ id: number }>('SELECT id FROM traces')].map(
+          (row) => row.id,
+        ),
+        targets,
+      );
     } finally {
+      this.traceCount = this.countHealthyTraces();
       this.lastFlushTime = Date.now();
       this.lastSuccessfulFlushTime = lastSuccessfulFlushTime;
       this.updateFlushTimes();
@@ -427,6 +382,137 @@ class TraceBatcherBase extends DurableObject<Env> {
     }
   }
 
+  private selectHealthyRows(target: TinybirdTraceTarget): StoredTraceRow[] {
+    return [
+      ...this.durableState.storage.sql.exec<StoredTraceRow>(
+        `SELECT id, data, clean_sent_at_ms, legacy_sent_at_ms
+         FROM traces AS t
+         WHERE ${target.sentColumn} IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM recovery_items AS i
+             JOIN recovery_records AS r ON r.id = i.recovery_id
+             WHERE i.row_id = t.id AND i.target_key = ? AND r.state IN ('in_flight', 'blocked')
+           )
+         ORDER BY id
+         LIMIT ?`,
+        target.sentColumn,
+        BATCH_SIZE,
+      ),
+    ].map((row) => ({ ...row, data: this.loadTraceData(row.id, row.data) }));
+  }
+
+  private loadTraceData(traceId: number, fallback: string): string {
+    if (fallback.length > 0) return fallback;
+    const chunks = [
+      ...this.durableState.storage.sql.exec<{ data: string }>(
+        'SELECT data FROM trace_payload_chunks WHERE trace_id = ? ORDER BY chunk_index',
+        traceId,
+      ),
+    ];
+    if (chunks.length === 0) throw new Error(`trace ${traceId} has no payload`);
+    return chunks.map((chunk) => chunk.data).join('');
+  }
+
+  private async sendTraceBatch(
+    target: TinybirdTraceTarget,
+    rows: StoredTraceRow[],
+  ): Promise<'confirmed' | 'blocked' | 'retryable'> {
+    if (rows.length === 0) return 'confirmed';
+    const rowIds = rows.map((row) => row.id);
+    let traces: TinybirdTrace[];
+    try {
+      traces = await Promise.all(
+        rows.map(async (row) => {
+          const trace = JSON.parse(row.data) as TinybirdTrace;
+          return { ...trace, ApiKey: await normalizeAnalyticsKey(trace.ApiKey) };
+        }),
+      );
+    } catch (error) {
+      if (rows.length > 1) {
+        const middle = Math.ceil(rows.length / 2);
+        const left = await this.sendTraceBatch(target, rows.slice(0, middle));
+        const right = await this.sendTraceBatch(target, rows.slice(middle));
+        if (left === 'retryable' || right === 'retryable') return 'retryable';
+        return left === 'confirmed' && right === 'confirmed' ? 'confirmed' : 'blocked';
+      }
+      this.recovery.preserveInsert(
+        target.datasource,
+        target.sentColumn,
+        `[${rows[0]?.data ?? ''}]`,
+        rowIds,
+        'rejected',
+        serializeTinybirdFailure(error),
+      );
+      return 'blocked';
+    }
+
+    const payload = JSON.stringify(traces);
+    if (new TextEncoder().encode(payload).byteLength > MAX_NDJSON_BYTES) {
+      if (rows.length > 1) {
+        const middle = Math.ceil(rows.length / 2);
+        const left = await this.sendTraceBatch(target, rows.slice(0, middle));
+        const right = await this.sendTraceBatch(target, rows.slice(middle));
+        if (left === 'retryable' || right === 'retryable') return 'retryable';
+        return left === 'confirmed' && right === 'confirmed' ? 'confirmed' : 'blocked';
+      }
+      this.recovery.preserveInsert(
+        target.datasource,
+        target.sentColumn,
+        payload,
+        rowIds,
+        'rejected',
+        JSON.stringify({ reason: 'row_too_large' }),
+      );
+      return 'blocked';
+    }
+
+    const recoveryId = this.recovery.beginInsert(
+      target.datasource,
+      target.sentColumn,
+      payload,
+      rowIds,
+    );
+    try {
+      await insertIntoTinybirdWithRetry(
+        traces,
+        this.env.TINYBIRD_TOKEN,
+        target.datasource,
+        this.env.TINYBIRD_HOST ?? 'https://api.us-west-2.aws.tinybird.co',
+      );
+      this.markTraceTargetSent(rowIds, target.sentColumn);
+      this.recovery.discardIntent(recoveryId);
+      return 'confirmed';
+    } catch (error) {
+      const classification = classifyTinybirdInsertFailure(error);
+      const sanitizedError = new Error(
+        error instanceof Error ? error.message : 'Tinybird insert failed',
+      );
+      this.logger
+        .child({ traceId: firstTraceId(rows) })
+        .error('consumer.tinybird_flush_failed', sanitizedError, {
+          batchSize: rows.length,
+          classification,
+          datasource: target.datasource,
+        });
+      Sentry.captureException(sanitizedError, { tags: { operation: 'flush', classification } });
+
+      if (classification === 'retryable') {
+        this.recovery.discardIntent(recoveryId);
+        return 'retryable';
+      }
+      if (isPayloadTooLarge(error) && rows.length > 1) {
+        this.recovery.discardIntent(recoveryId);
+        const middle = Math.ceil(rows.length / 2);
+        const left = await this.sendTraceBatch(target, rows.slice(0, middle));
+        const right = await this.sendTraceBatch(target, rows.slice(middle));
+        if (left === 'retryable' || right === 'retryable') return 'retryable';
+        return left === 'confirmed' && right === 'confirmed' ? 'confirmed' : 'blocked';
+      }
+      this.recovery.blockInsert(recoveryId, classification, serializeTinybirdFailure(error));
+      return 'blocked';
+    }
+  }
+
   private updateFlushTimes(): void {
     this.durableState.storage.sql.exec(
       'UPDATE metadata SET last_flush_time = ?, last_successful_flush_time = ? WHERE id = 1',
@@ -435,24 +521,44 @@ class TraceBatcherBase extends DurableObject<Env> {
     );
   }
 
+  private healthyTraceCondition(): string {
+    const targets = tinybirdWriteTargets(this.env);
+    const clauses = targets.map(
+      (target) => `(${target.sentColumn} IS NULL AND NOT EXISTS (
+        SELECT 1 FROM recovery_items AS i JOIN recovery_records AS r ON r.id = i.recovery_id
+        WHERE i.row_id = traces.id AND i.target_key = '${target.sentColumn}'
+          AND r.state IN ('in_flight', 'blocked')
+      ))`,
+    );
+    return clauses.join(' OR ') || '0';
+  }
+
+  private countHealthyTraces(): number {
+    return this.durableState.storage.sql
+      .exec<{
+        count: number;
+      }>(`SELECT COUNT(*) AS count FROM traces WHERE ${this.healthyTraceCondition()}`)
+      .one().count;
+  }
+
   private markTraceTargetSent(ids: number[], column: TinybirdTraceTarget['sentColumn']): void {
     if (ids.length === 0) {
       return;
     }
 
+    this.durableState.storage.transactionSync(() => this.markTraceTargetSentSync(ids, column));
+  }
+
+  private markTraceTargetSentSync(ids: number[], column: TinybirdTraceTarget['sentColumn']): void {
     const sentAt = Date.now();
-    this.durableState.storage.transactionSync(() => {
-      for (let i = 0; i < ids.length; i += MAX_SQL_PARAMS - 1) {
-        const chunk = ids.slice(i, i + MAX_SQL_PARAMS - 1);
-        this.durableState.storage.sql.exec(
-          `UPDATE traces
-           SET ${column} = ?
-           WHERE id IN (${chunk.map(() => '?').join(',')})`,
-          sentAt,
-          ...chunk,
-        );
-      }
-    });
+    for (let i = 0; i < ids.length; i += MAX_SQL_PARAMS - 1) {
+      const chunk = ids.slice(i, i + MAX_SQL_PARAMS - 1);
+      this.durableState.storage.sql.exec(
+        `UPDATE traces SET ${column} = ? WHERE id IN (${chunk.map(() => '?').join(',')})`,
+        sentAt,
+        ...chunk,
+      );
+    }
   }
 
   private deleteFullySentTraces(ids: number[], targets: TinybirdTraceTarget[]): number {
@@ -466,6 +572,13 @@ class TraceBatcherBase extends DurableObject<Env> {
     this.durableState.storage.transactionSync(() => {
       for (let i = 0; i < ids.length; i += MAX_SQL_PARAMS) {
         const chunk = ids.slice(i, i + MAX_SQL_PARAMS);
+        this.durableState.storage.sql.exec(
+          `DELETE FROM trace_payload_chunks WHERE trace_id IN (
+               SELECT id FROM traces WHERE id IN (${chunk.map(() => '?').join(',')})
+                 AND ${sentCondition}
+             )`,
+          ...chunk,
+        );
         this.durableState.storage.sql.exec(
           `DELETE FROM traces
            WHERE id IN (${chunk.map(() => '?').join(',')})
@@ -490,12 +603,73 @@ class TraceBatcherBase extends DurableObject<Env> {
     return { before, after: this.traceCount };
   }
 
+  listRecovery(options: RecoveryPageOptions = {}): RecoveryPage {
+    return this.recovery.list(options);
+  }
+
+  getRecovery(recoveryId: number): RecoveryRecord {
+    return this.recovery.get(recoveryId);
+  }
+
+  async reconcileRecovery(input: ReconcileRecoveryInput): Promise<RecoveryRecord> {
+    if (!['confirm-written', 'confirm-not-written', 'retain-original'].includes(input.action)) {
+      throw new Error('invalid recovery action');
+    }
+    requireRecoveryReason(input.reason);
+    const record = this.recovery.get(input.recoveryId);
+    if (record.state !== 'blocked') throw new Error('recovery record is not blocked');
+    if (record.kind === 'repair') {
+      if (input.action !== 'retain-original')
+        throw new Error('repair records can only retain-original');
+    } else if (record.kind === 'tinybird_insert') {
+      if (input.action === 'retain-original')
+        throw new Error('insert recovery requires a write confirmation');
+    } else {
+      throw new Error('DLQ records must use replayDlq');
+    }
+
+    const targetKey =
+      record.kind === 'tinybird_insert'
+        ? requireTargetKey(this.recovery.getTargetKey(record.id))
+        : null;
+    const ids = record.kind === 'tinybird_insert' ? this.recovery.rowIds(record.id) : [];
+    if (input.action === 'confirm-not-written') {
+      await this.durableState.storage.setAlarm(Date.now() + 1000);
+      this.flushAlarmScheduled = true;
+    }
+    const resolved = this.recovery.resolveWithMutation(
+      record.id,
+      input.action,
+      input.reason,
+      () => {
+        if (input.action === 'confirm-written' && targetKey) {
+          this.markTraceTargetSentSync(ids, targetKey);
+        }
+      },
+    );
+    if (input.action === 'confirm-written') {
+      this.deleteFullySentTraces(ids, tinybirdWriteTargets(this.env));
+    }
+    this.traceCount = this.countHealthyTraces();
+    return resolved;
+  }
+
+  preserveDlq(payload: string, outcome: string, dedupeKey: string): RecoveryRecord {
+    return this.recovery.preserveDlq(payload, outcome, dedupeKey);
+  }
+
+  resolveDlq(recoveryId: number, reason: string): RecoveryRecord {
+    const record = this.recovery.get(recoveryId);
+    if (record.kind !== 'dlq') throw new Error('recovery record is not a DLQ message');
+    return this.recovery.resolve(recoveryId, 'replayed', reason);
+  }
+
   getStats(): TraceBatcherStats {
     let oldestQueuedTraceTime: number | null = null;
     if (this.traceCount > 0) {
       const oldestTraceRows = [
         ...this.durableState.storage.sql.exec<{ oldest_queued_trace_time: number | null }>(
-          'SELECT MIN(timestamp) as oldest_queued_trace_time FROM traces',
+          `SELECT MIN(timestamp) AS oldest_queued_trace_time FROM traces WHERE ${this.healthyTraceCondition()}`,
         ),
       ];
       oldestQueuedTraceTime = oldestTraceRows[0]?.oldest_queued_trace_time ?? null;
@@ -503,6 +677,8 @@ class TraceBatcherBase extends DurableObject<Env> {
 
     return {
       queuedTraces: this.traceCount,
+      blockedRecoveryRows: this.recovery.countBlockedRows(),
+      blockedRecoveryRecords: this.recovery.countBlockedRecords(),
       oldestQueuedTraceTime,
       lastSuccessfulFlushTime: this.lastSuccessfulFlushTime,
       lastFlushTime: this.lastFlushTime,
@@ -555,13 +731,31 @@ class TraceBatcherBase extends DurableObject<Env> {
 
           if (existing) {
             summary.repairTraces++;
-            this.durableState.storage.sql.exec(
-              `INSERT INTO trace_repairs (trace_key, old_hash, new_hash, seen_at_ms)
-               VALUES (?, ?, ?, ?)`,
-              traceKey,
-              existing.content_hash,
-              contentHash,
-              now,
+            const changedData = JSON.stringify(trace);
+            const priorRepair = [
+              ...this.durableState.storage.sql.exec<{ id: number }>(
+                `SELECT id FROM trace_repairs
+               WHERE trace_key = ? AND old_hash = ? AND new_hash = ? LIMIT 1`,
+                traceKey,
+                existing.content_hash,
+                contentHash,
+              ),
+            ][0];
+            if (!priorRepair) {
+              this.durableState.storage.sql.exec(
+                `INSERT INTO trace_repairs (trace_key, old_hash, new_hash, seen_at_ms, data)
+                 VALUES (?, ?, ?, ?, ?)`,
+                traceKey,
+                existing.content_hash,
+                contentHash,
+                now,
+                inlinePayload(changedData),
+              );
+            }
+            this.recovery.preserveRepair(
+              changedData,
+              JSON.stringify({ traceKey, oldHash: existing.content_hash, newHash: contentHash }),
+              JSON.stringify([traceKey, existing.content_hash, contentHash]),
             );
             continue;
           }
@@ -577,7 +771,13 @@ class TraceBatcherBase extends DurableObject<Env> {
         }
 
         for (let j = 0; j < tracesToQueue.length; j += MAX_INSERT_ROWS) {
-          const chunk = tracesToQueue.slice(j, j + MAX_INSERT_ROWS);
+          const chunk = tracesToQueue
+            .slice(j, j + MAX_INSERT_ROWS)
+            .filter(
+              (trace) =>
+                new TextEncoder().encode(JSON.stringify(trace)).byteLength <= MAX_NDJSON_BYTES,
+            );
+          if (chunk.length === 0) continue;
           const values = chunk.map(() => '(?, ?)').join(', ');
           const params = chunk.flatMap((trace) => [JSON.stringify(trace), timestamp]);
           this.durableState.storage.sql.exec(
@@ -585,27 +785,31 @@ class TraceBatcherBase extends DurableObject<Env> {
             ...params,
           );
         }
+        for (const trace of tracesToQueue) {
+          const data = JSON.stringify(trace);
+          if (new TextEncoder().encode(data).byteLength <= MAX_NDJSON_BYTES) continue;
+          this.durableState.storage.sql.exec(
+            'INSERT INTO traces (data, timestamp) VALUES (?, ?)',
+            '',
+            timestamp,
+          );
+          const traceId = this.durableState.storage.sql
+            .exec<{ id: number }>('SELECT last_insert_rowid() AS id')
+            .one().id;
+          for (const [index, chunk] of splitUtf8Chunks(data, MAX_NDJSON_BYTES).entries()) {
+            this.durableState.storage.sql.exec(
+              'INSERT INTO trace_payload_chunks (trace_id, chunk_index, data) VALUES (?, ?, ?)',
+              traceId,
+              index,
+              chunk,
+            );
+          }
+        }
         summary.queuedTraces = tracesToQueue.length;
       }
     });
 
-    if (summary.messageInserted) {
-      this.traceCount += summary.queuedTraces;
-    }
     return summary;
-  }
-
-  private cleanupProcessedMessages(now: number): void {
-    if (now - this.lastCleanupTime < CLEANUP_INTERVAL_MS) {
-      return;
-    }
-
-    const cutoff = now - PROCESSED_MESSAGE_TTL_MS;
-    this.durableState.storage.sql.exec(
-      'DELETE FROM processed_messages WHERE processed_at_ms < ?',
-      cutoff,
-    );
-    this.lastCleanupTime = now;
   }
 }
 
@@ -624,6 +828,37 @@ function firstTraceId(rows: StoredTraceRow[]): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function splitRowsByBytes(rows: StoredTraceRow[]): StoredTraceRow[][] {
+  const batches: StoredTraceRow[][] = [];
+  let current: StoredTraceRow[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    const rowBytes = new TextEncoder().encode(row.data).byteLength + (current.length > 0 ? 1 : 0);
+    if (current.length > 0 && bytes + rowBytes > MAX_NDJSON_BYTES) {
+      batches.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(row);
+    bytes += rowBytes;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
+function inlinePayload(value: string): string {
+  return new TextEncoder().encode(value).byteLength <= MAX_NDJSON_BYTES ? value : '';
+}
+
+function isPayloadTooLarge(error: unknown): boolean {
+  return error instanceof Error && (error as Error & { status?: unknown }).status === 413;
+}
+
+function requireTargetKey(value: string | null): TinybirdTraceTarget['sentColumn'] {
+  if (value === 'clean_sent_at_ms' || value === 'legacy_sent_at_ms') return value;
+  throw new Error('recovery record has invalid target key');
 }
 
 function stableHash(value: unknown): string {

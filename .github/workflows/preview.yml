@@ -72,6 +72,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Protect pending trace deliveries from body expiration
+        run: |
+          node --test scripts/ci/body-retention.test.mjs
+          bun scripts/setup-r2-lifecycle.ts trace-flow-storage-dev
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy Static Preview Workers
         run: |
           for attempt in 1 2 3; do

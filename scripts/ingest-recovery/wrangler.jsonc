@@ -1,0 +1,50 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "trace-flow-ingest-recovery-local",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-04",
+  "workers_dev": false,
+  "preview_urls": false,
+  "services": [
+    {
+      "binding": "PROXY_RECOVERY",
+      "service": "trace-flow-consumer-dev",
+      "entrypoint": "TraceRecovery",
+      "remote": true,
+    },
+    {
+      "binding": "AGENT_RECOVERY",
+      "service": "trace-flow-agent-consumer-dev",
+      "entrypoint": "TraceRecovery",
+      "remote": true,
+    },
+  ],
+  "env": {
+    "preview": {
+      "services": [
+        {
+          "binding": "PROXY_RECOVERY",
+          "service": "trace-flow-consumer-preview",
+          "entrypoint": "TraceRecovery",
+          "remote": true,
+        },
+      ],
+    },
+    "production": {
+      "services": [
+        {
+          "binding": "PROXY_RECOVERY",
+          "service": "trace-flow-consumer",
+          "entrypoint": "TraceRecovery",
+          "remote": true,
+        },
+        {
+          "binding": "AGENT_RECOVERY",
+          "service": "trace-flow-agent-consumer",
+          "entrypoint": "TraceRecovery",
+          "remote": true,
+        },
+      ],
+    },
+  },
+}

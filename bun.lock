@@ -421,6 +421,7 @@
       "name": "@trace-flow/tinybird-client",
       "version": "0.0.1",
       "devDependencies": {
+        "@cloudflare/workers-types": "^4.20260511.1",
         "@vitest/coverage-v8": "^4.1.6",
         "typescript": "^5.9.3",
         "vitest": "^4.1.6",

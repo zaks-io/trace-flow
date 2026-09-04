@@ -57,6 +57,14 @@ max_concurrency = 20
 max_retries = 5
 dead_letter_queue = "trace-flow-requests-dlq-dev"
 
+[[queues.consumers]]
+queue = "trace-flow-requests-dlq-dev"
+max_batch_size = 10
+max_batch_timeout = 5
+max_concurrency = 2
+max_retries = 100
+retry_delay = 14400
+
 # R2 bucket for storing request/response bodies
 [[r2_buckets]]
 binding = "STORAGE"
@@ -108,6 +116,14 @@ max_concurrency = 20
 max_retries = 5
 dead_letter_queue = "trace-flow-requests-dlq-prod"
 
+[[env.production.queues.consumers]]
+queue = "trace-flow-requests-dlq-prod"
+max_batch_size = 10
+max_batch_timeout = 5
+max_concurrency = 2
+max_retries = 100
+retry_delay = 14400
+
 [[env.production.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "trace-flow-storage-prod"
@@ -145,6 +161,14 @@ max_batch_timeout = 5
 max_concurrency = 20
 max_retries = 5
 dead_letter_queue = "trace-flow-requests-dlq-preview"
+
+[[env.preview.queues.consumers]]
+queue = "trace-flow-requests-dlq-preview"
+max_batch_size = 10
+max_batch_timeout = 5
+max_concurrency = 2
+max_retries = 100
+retry_delay = 14400
 
 [[env.preview.r2_buckets]]
 binding = "STORAGE"

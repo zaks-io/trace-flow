@@ -11,6 +11,7 @@ import type {
 } from './llm';
 import type { SentryTraceContext } from './sentry';
 import type { SSEStreamData } from './sse';
+import type { EncryptedStoredBodiesPayload } from './storage';
 
 export interface QueueMessage {
   requestId: string;
@@ -93,8 +94,29 @@ export interface LLMQueueMessage extends QueueMessage {
   type?: 'llm';
 }
 
+export type TraceDeliveryPayload = LLMQueueMessage | OTLPQueueMessage;
+
+export interface TraceDeliveryBody {
+  key: string;
+  encryptedPayload: EncryptedStoredBodiesPayload;
+  orgId: string;
+}
+
+export interface TraceDeliveryEnvelope {
+  version: 1;
+  message: TraceDeliveryPayload;
+  body?: TraceDeliveryBody;
+}
+
+/** Small queue reference to a durable delivery envelope in R2. */
+export interface TraceDeliveryMessage {
+  type: 'delivery';
+  key: string;
+  sentry_trace_context?: SentryTraceContext;
+}
+
 /**
  * Union type for all queue message types.
  * Use type guard to distinguish between message types.
  */
-export type QueueMessageUnion = LLMQueueMessage | OTLPQueueMessage;
+export type QueueMessageUnion = TraceDeliveryPayload | TraceDeliveryMessage;
