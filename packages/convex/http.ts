@@ -1326,6 +1326,19 @@ export function createApp(
     const authHeader = c.req.header('Authorization');
     const secret = process.env.ARCHIVE_API_SHARED_SECRET;
     if (!hasValidBearerSecret(authHeader, secret)) {
+      const logger = getRequestLogger(c.req.raw, {
+        operation: 'archive_authorize_write',
+        ...requestTraceContext,
+      });
+      logger.warn('convex.archive_authorize_shared_secret_invalid', {
+        reason:
+          secret === undefined || secret.length === 0
+            ? 'missing_configured_secret'
+            : authHeader === undefined
+              ? 'missing'
+              : 'invalid',
+      });
+      await logger.flush();
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
