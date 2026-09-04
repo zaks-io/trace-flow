@@ -14,7 +14,13 @@ export default defineConfig({
     // performs the import resolution instead.
     server: {
       deps: {
-        inline: [/@convex-dev\/launchdarkly/, /@launchdarkly\/js-server-sdk-common/],
+        inline: [
+          'convex-test',
+          /@convex-dev\/agent/,
+          /@convex-dev\/rate-limiter/,
+          /@convex-dev\/launchdarkly/,
+          /@launchdarkly\/js-server-sdk-common/,
+        ],
       },
     },
     coverage: {

@@ -66,6 +66,7 @@ export declare const api: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -617,6 +618,133 @@ export declare const api: {
       }
     >;
   };
+  archive: {
+    activate: FunctionReference<
+      "mutation",
+      "public",
+      {},
+      { activationId: Id<"archiveActivations">; created: boolean }
+    >;
+    addAuthorizedSource: FunctionReference<
+      "mutation",
+      "public",
+      {
+        enrollmentId: Id<"archiveEnrollments">;
+        historyChoice: "new_only" | "all_history";
+        source: "claude" | "codex";
+      },
+      {
+        _creationTime: number;
+        _id: Id<"archiveEnrollments">;
+        authorizedSources: Array<{
+          authorizedAt: number;
+          historyChoice: "new_only" | "all_history";
+          source: "claude" | "codex";
+        }>;
+        collectorCredentialId: Id<"collectorCredentials">;
+        collectorId: string;
+        consentSources: Array<{
+          historyChoice: "new_only" | "all_history";
+          source: "claude" | "codex";
+        }>;
+        contributionId: Id<"archiveContributions">;
+        createdAt: number;
+        idempotencyKey: string;
+        invalidatedAt?: number;
+        invalidationReason?:
+          | "user_unenrolled"
+          | "owner_revoked"
+          | "member_removed";
+        localError?: string;
+        localObservedAt?: number;
+        orgId: Id<"organizations">;
+        pendingSpoolBytes?: number;
+        status: "active" | "unenrolled" | "revoked" | "member_removed";
+        userId: Id<"users">;
+      }
+    >;
+    enroll: FunctionReference<
+      "mutation",
+      "public",
+      {
+        authorizedSources: Array<{
+          historyChoice: "new_only" | "all_history";
+          source: "claude" | "codex";
+        }>;
+        collectorCredentialId: Id<"collectorCredentials">;
+        idempotencyKey: string;
+      },
+      {
+        contributionId: Id<"archiveContributions">;
+        created: boolean;
+        enrollmentId: Id<"archiveEnrollments">;
+      }
+    >;
+    getStatus: FunctionReference<
+      "query",
+      "public",
+      {},
+      {
+        capBytes: number;
+        contributions: Array<{
+          collectors: Array<{
+            authorizedSources: Array<{
+              authorizedAt: number;
+              historyChoice: "new_only" | "all_history";
+              source: "claude" | "codex";
+            }>;
+            collectorCredentialId: Id<"collectorCredentials">;
+            collectorId: string;
+            enrollmentId: Id<"archiveEnrollments">;
+            localError?: string;
+            localObservedAt?: number;
+            pendingSpoolBytes?: number;
+            status: "active" | "unenrolled" | "revoked" | "member_removed";
+          }>;
+          contributionId: Id<"archiveContributions">;
+          status: "active" | "unenrolled" | "revoked" | "member_removed";
+          userId: Id<"users">;
+        }>;
+        enrolledCollectorCount: number;
+        enrolledContributorCount: number;
+        graceDeadlineAt: number | null;
+        integritySessions: Array<{
+          contributionId: Id<"archiveContributions">;
+          errorClass?: string;
+          repairOutcome?: string;
+          source: "claude" | "codex";
+          sourceSessionId: string;
+          updatedAt: number;
+        }>;
+        lastDurableAcknowledgedAt: number | null;
+        lifecycle: "not_enabled" | "active" | "blocked" | "frozen" | "deleting";
+        storedBytes: number | null;
+      }
+    >;
+    reportHeartbeat: FunctionReference<
+      "mutation",
+      "public",
+      {
+        collectorCredentialId: Id<"collectorCredentials">;
+        localError?: string;
+        observedAt: number;
+        pendingSpoolBytes: number;
+      },
+      null
+    >;
+    revokeEnrollment: FunctionReference<
+      "mutation",
+      "public",
+      { enrollmentId: Id<"archiveEnrollments"> },
+      null
+    >;
+    unenroll: FunctionReference<
+      "mutation",
+      "public",
+      { enrollmentId: Id<"archiveEnrollments"> },
+      null
+    >;
+  };
   auth: {
     auth: {
       isAuthenticatedQuery: FunctionReference<"query", "public", {}, boolean>;
@@ -679,6 +807,7 @@ export declare const api: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -1400,6 +1529,12 @@ export declare const api: {
 export declare const internal: {
   admin: {
     admin: {
+      beginOrgDeletion: FunctionReference<
+        "mutation",
+        "internal",
+        { orgId: Id<"organizations"> },
+        null
+      >;
       deleteOrgDataScheduled: FunctionReference<
         "action",
         "internal",
@@ -1827,6 +1962,123 @@ export declare const internal: {
       }>
     >;
   };
+  archiveIntegrationSeed: {
+    cleanupConcurrentEnrollment: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      null
+    >;
+    seedConcurrentEnrollment: FunctionReference<
+      "mutation",
+      "internal",
+      {},
+      {
+        collectorCredentialId: Id<"collectorCredentials">;
+        idempotencyKey: string;
+        orgId: Id<"organizations">;
+        tokenIdentifier: string;
+      }
+    >;
+  };
+  archiveInternal: {
+    applyServerStatus: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        collectorCredentialId: Id<"collectorCredentials">;
+        lastDurableAcknowledgedAt?: number;
+        lifecycle?:
+          | "not_enabled"
+          | "active"
+          | "blocked"
+          | "frozen"
+          | "deleting";
+        revision: number;
+        storedBytes?: number;
+      },
+      null
+    >;
+    authorizeArchiveWrite: FunctionReference<
+      "query",
+      "internal",
+      {
+        collectorCredentialId: Id<"collectorCredentials">;
+        source: "claude" | "codex";
+      },
+      | {
+          allowed: true;
+          authorizedSources: Array<{
+            authorizedAt: number;
+            historyChoice: "new_only" | "all_history";
+            source: "claude" | "codex";
+          }>;
+          contributionId: Id<"archiveContributions">;
+          enrollmentId: Id<"archiveEnrollments">;
+        }
+      | {
+          allowed: false;
+          reason:
+            | "server_disabled"
+            | "not_activated"
+            | "not_enrolled"
+            | "enrollment_invalid"
+            | "credential_revoked"
+            | "not_pro"
+            | "frozen"
+            | "deleting"
+            | "source_unauthorized";
+        }
+    >;
+    getCapMetadata: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      { capBytes: number; entitled: boolean; graceDeadlineAt: number | null }
+    >;
+    invalidateEnrollmentsForRemovedUser: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations">; userId: Id<"users"> },
+      null
+    >;
+    reportCollectorHeartbeat: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        collectorCredentialId: Id<"collectorCredentials">;
+        localError?: string;
+        observedAt: number;
+        pendingSpoolBytes: number;
+      },
+      null
+    >;
+    syncLifecycleForOrg: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      null
+    >;
+    upsertSessionIntegrity: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        collectorCredentialId: Id<"collectorCredentials">;
+        errorClass?: string;
+        repairOutcome?: string;
+        source: "claude" | "codex";
+        sourceSessionId: string;
+      },
+      {
+        contributionId: Id<"archiveContributions">;
+        errorClass?: string;
+        repairOutcome?: string;
+        source: "claude" | "codex";
+        sourceSessionId: string;
+        updatedAt: number;
+      }
+    >;
+  };
   auth: {
     organizations: {
       getActiveMemberCountInternal: FunctionReference<
@@ -1843,6 +2095,7 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -1857,6 +2110,7 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;
@@ -2465,6 +2719,7 @@ export declare const internal: {
           _creationTime: number;
           _id: Id<"organizations">;
           deletedAt?: number;
+          deletionStartedAt?: number;
           name: string;
           onboardingCompletedAt?: number;
           ownerId: Id<"users">;

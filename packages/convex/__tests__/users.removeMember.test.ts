@@ -6,6 +6,7 @@ function queryResult(firstValue: unknown = null, collectValue: unknown[] = []) {
     withIndex: vi.fn().mockReturnThis(),
     filter: vi.fn().mockReturnThis(),
     first: vi.fn().mockResolvedValue(firstValue),
+    unique: vi.fn().mockResolvedValue(firstValue),
     collect: vi.fn().mockResolvedValue(collectValue),
   };
 }
@@ -89,6 +90,13 @@ function makeRemoveMemberCtx(acceptedInvite: Record<string, unknown> | null = nu
         if (table === 'apiKeys') return apiKeysQuery;
         if (table === 'collectorCredentials') return collectorCredentialsQuery;
         if (table === 'invites') return invitesQuery;
+        if (
+          table === 'archiveEnrollments' ||
+          table === 'archiveContributions' ||
+          table === 'archiveStatuses'
+        ) {
+          return queryResult(null, []);
+        }
         throw new Error(`Unexpected table: ${table}`);
       }),
     },

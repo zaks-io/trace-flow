@@ -14,6 +14,7 @@ import { getStripeClient } from '../billing/stripe';
 import { scheduleKVSync } from '../billing/subscriptions';
 import { ensureOrgHasSubscription } from '../auth/organizations';
 import { TIER_CONFIG } from '@trace-flow/types';
+import { beginArchiveDeletion } from '../archiveLib';
 import type { Id } from '../_generated/dataModel';
 
 async function requireAdminAction(ctx: ActionCtx) {
@@ -332,6 +333,9 @@ export const deleteOrgDataScheduled = internalAction({
 });
 
 async function deleteOrgDataImpl(ctx: ActionCtx, orgId: Id<'organizations'>) {
+  // Establish the durable archive deletion gate before the external deletion begins.
+  await ctx.runMutation(internal.admin.admin.beginOrgDeletion, { orgId });
+
   // IMPORTANT: Tinybird deletion must run BEFORE Convex record deletion.
   // deleteOrgTraces queries API keys from Convex to build the SQL WHERE clause.
   const tinybirdResults = await ctx.runAction(internal.integrations.tinybird.deleteOrgTraces, {
@@ -392,6 +396,15 @@ const deleteBatchCountsValidator = v.object({
 
 const PAGE_SIZE = 500;
 
+export const beginOrgDeletion = internalMutation({
+  args: { orgId: v.id('organizations') },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await beginArchiveDeletion(ctx, args.orgId, Date.now());
+    return null;
+  },
+});
+
 /**
  * Deletes up to PAGE_SIZE org-related records per call. Returns hasMore=true
  * if there are remaining records — the caller (action) loops until done.
@@ -416,6 +429,8 @@ export const deleteOrgRecordsBatch = internalMutation({
       mcpRefreshTokens: 0,
     };
     let ops = 0;
+
+    await beginArchiveDeletion(ctx, args.orgId, Date.now());
 
     // Helper: delete up to remaining budget from a query
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -524,6 +539,29 @@ export const deleteOrgRecordsBatch = internalMutation({
       if (await deleteBatch(tokens, 'mcpRefreshTokens')) return { counts, hasMore: true };
     }
 
+    // Delete Conversation Archive control-plane rows. Counts stay on the existing
+    // public shape; these deletes only consume the page budget.
+    const archiveTables = [
+      'archiveSessionIntegrity',
+      'archiveEnrollments',
+      'archiveEnrollmentSlots',
+      'archiveContributions',
+      'archiveStatuses',
+      'archiveActivations',
+    ] as const;
+    for (const table of archiveTables) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_org_id', (q) => q.eq('orgId', args.orgId))
+        .take(PAGE_SIZE - ops);
+      for (const row of rows) {
+        if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+        await ctx.db.delete(row._id);
+        ops++;
+      }
+      if (ops >= PAGE_SIZE) return { counts, hasMore: true };
+    }
+
     // Delete invites
     const invites = await ctx.db
       .query('invites')
@@ -563,7 +601,10 @@ export const finalizeOrgDeletion = internalMutation({
     // Mark org as deleted
     const org = await ctx.db.get(args.orgId);
     if (org) {
-      await ctx.db.patch(args.orgId, { deletedAt: Date.now() });
+      await ctx.db.patch(args.orgId, {
+        deletionStartedAt: undefined,
+        deletedAt: Date.now(),
+      });
     }
   },
 });

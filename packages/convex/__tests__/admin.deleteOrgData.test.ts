@@ -41,6 +41,7 @@ const emptyCounts = (): DeleteCounts => ({
 function makeDeleteCtx(batchCounts: DeleteCounts[]) {
   let queryCount = 0;
   let batchIndex = 0;
+  let mutationIndex = 0;
 
   return {
     auth: {
@@ -54,6 +55,11 @@ function makeDeleteCtx(batchCounts: DeleteCounts[]) {
       throw new Error(`Unexpected query ${queryCount}`);
     }),
     runMutation: vi.fn().mockImplementation(() => {
+      if (mutationIndex === 0) {
+        mutationIndex++;
+        return Promise.resolve(null);
+      }
+      mutationIndex++;
       if (batchIndex < batchCounts.length) {
         const counts = batchCounts[batchIndex];
         batchIndex++;
@@ -101,5 +107,17 @@ describe('admin.deleteOrgData', () => {
     const result = await handler(ctx, { orgId: 'org_1' });
 
     expect(result.convexDeleted.collectorCredentials).toBe(2);
+  });
+
+  it('starts the archive deletion gate before the Tinybird deletion action', async () => {
+    const ctx = makeDeleteCtx([emptyCounts()]);
+    const handler = (deleteOrgData as unknown as { _handler: DeleteHandler })._handler;
+
+    await handler(ctx, { orgId: 'org_1' });
+
+    expect(ctx.runMutation.mock.calls[0]?.[1]).toEqual({ orgId: 'org_1' });
+    expect(ctx.runMutation.mock.invocationCallOrder[0]).toBeLessThan(
+      ctx.runAction.mock.invocationCallOrder[0]!,
+    );
   });
 });
