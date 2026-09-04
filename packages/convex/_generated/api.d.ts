@@ -642,6 +642,10 @@ export declare const api: {
         }>;
         collectorCredentialId: Id<"collectorCredentials">;
         collectorId: string;
+        consentSources: Array<{
+          historyChoice: "new_only" | "all_history";
+          source: "claude" | "codex";
+        }>;
         contributionId: Id<"archiveContributions">;
         createdAt: number;
         idempotencyKey: string;

@@ -231,6 +231,11 @@ export const archiveHistoryChoiceValidator = v.union(
   v.literal('all_history'),
 );
 
+export const archiveSourceAuthorizationInputValidator = v.object({
+  source: archiveSupportedSourceValidator,
+  historyChoice: archiveHistoryChoiceValidator,
+});
+
 export const archiveAuthorizedSourceValidator = v.object({
   source: archiveSupportedSourceValidator,
   historyChoice: archiveHistoryChoiceValidator,
@@ -284,6 +289,7 @@ export const archiveEnrollmentValidator = v.object({
   collectorId: v.string(),
   contributionId: v.id('archiveContributions'),
   idempotencyKey: v.string(),
+  consentSources: v.array(archiveSourceAuthorizationInputValidator),
   authorizedSources: v.array(archiveAuthorizedSourceValidator),
   status: archiveEnrollmentStatusValidator,
   createdAt: v.number(),
@@ -292,11 +298,6 @@ export const archiveEnrollmentValidator = v.object({
   pendingSpoolBytes: v.optional(v.number()),
   localError: v.optional(v.string()),
   localObservedAt: v.optional(v.number()),
-});
-
-export const archiveSourceAuthorizationInputValidator = v.object({
-  source: archiveSupportedSourceValidator,
-  historyChoice: archiveHistoryChoiceValidator,
 });
 
 export const archiveWriteDenialReasonValidator = v.union(

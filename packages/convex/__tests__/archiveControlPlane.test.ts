@@ -229,7 +229,7 @@ describe('archive control-plane pure functions', () => {
     const existingByKey = {
       userId: 'user',
       collectorCredentialId: 'cred',
-      authorizedSources: sources,
+      consentSources: sources,
     };
 
     expect(decideEnrollmentAction({ existingByKey: null, currentEnrollment: null, request })).toBe(
@@ -272,7 +272,7 @@ describe('archive control-plane pure functions', () => {
     ).toBe('already_enrolled');
     expect(
       decideEnrollmentAction({
-        existingByKey: { ...existingByKey, authorizedSources: otherSources },
+        existingByKey: { ...existingByKey, consentSources: otherSources },
         currentEnrollment: { status: 'active' },
         request,
       }),
@@ -473,6 +473,7 @@ describe('archive control plane', () => {
     expect(replay.created).toBe(false);
     expect(replay.enrollmentId).toBe(created.enrollmentId);
     const enrollment = await world.t.run(async (ctx) => ctx.db.get(created.enrollmentId));
+    expect(enrollment?.consentSources).toEqual([{ source: 'claude', historyChoice: 'new_only' }]);
     expect(enrollment?.authorizedSources).toEqual([
       expect.objectContaining({ source: 'claude', historyChoice: 'new_only' }),
     ]);
@@ -782,6 +783,54 @@ describe('archive control plane', () => {
         enrollInput(world.ownerCred, { idempotencyKey: `consent:${world.ownerCred}:other` }),
       ),
     ).rejects.toThrow('already enrolled');
+  });
+
+  it('replays the original consent key after a later Source is added', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const first = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    const updated = await owner.mutation(api.archive.addAuthorizedSource, {
+      enrollmentId: first.enrollmentId,
+      source: 'codex',
+      historyChoice: 'all_history',
+    });
+    expect(updated.consentSources).toEqual([{ source: 'claude', historyChoice: 'new_only' }]);
+    expect(updated.authorizedSources).toEqual([
+      expect.objectContaining({ source: 'claude', historyChoice: 'new_only' }),
+      expect.objectContaining({ source: 'codex', historyChoice: 'all_history' }),
+    ]);
+
+    const replay = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    expect(replay).toEqual({
+      enrollmentId: first.enrollmentId,
+      contributionId: first.contributionId,
+      created: false,
+    });
+    expect(await world.t.run(async (ctx) => ctx.db.get(first.enrollmentId))).toMatchObject({
+      status: 'active',
+      consentSources: [{ source: 'claude', historyChoice: 'new_only' }],
+    });
+    await expect(
+      owner.mutation(
+        api.archive.enroll,
+        enrollInput(world.ownerCred, { authorizedSources: otherSources }),
+      ),
+    ).rejects.toThrow('does not match the original consent');
+    await expect(
+      owner.mutation(
+        api.archive.enroll,
+        enrollInput(world.ownerCred, { idempotencyKey: `consent:${world.ownerCred}:other` }),
+      ),
+    ).rejects.toThrow('already enrolled');
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'codex',
+      }),
+    ).toMatchObject({ allowed: true, enrollmentId: first.enrollmentId });
   });
 
   it('lets collector heartbeats change only timestamped local fields', async () => {
@@ -1134,6 +1183,7 @@ describe('archive control plane', () => {
         collectorId: 'collector-owner',
         contributionId: first.contributionId,
         idempotencyKey: `consent:${world.ownerCred}:extra`,
+        consentSources: [{ source: 'codex', historyChoice: 'all_history' }],
         authorizedSources: [{ source: 'codex', historyChoice: 'all_history', authorizedAt: 1 }],
         status: 'active',
         createdAt: Date.now(),

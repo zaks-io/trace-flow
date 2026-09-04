@@ -420,6 +420,10 @@ export type DataModel = {
       }>;
       collectorCredentialId: Id<"collectorCredentials">;
       collectorId: string;
+      consentSources: Array<{
+        historyChoice: "new_only" | "all_history";
+        source: "claude" | "codex";
+      }>;
       contributionId: Id<"archiveContributions">;
       createdAt: number;
       idempotencyKey: string;
@@ -443,6 +447,7 @@ export type DataModel = {
       | "authorizedSources"
       | "collectorCredentialId"
       | "collectorId"
+      | "consentSources"
       | "contributionId"
       | "createdAt"
       | "idempotencyKey"

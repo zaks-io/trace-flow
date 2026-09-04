@@ -85,7 +85,7 @@ export function decideEnrollmentAction(input: {
   existingByKey: {
     userId: string;
     collectorCredentialId: string;
-    authorizedSources: { source: string; historyChoice: string }[];
+    consentSources: { source: string; historyChoice: string }[];
   } | null;
   currentEnrollment: { status: ArchiveEnrollmentStatus } | null;
   request: {
@@ -101,9 +101,7 @@ export function decideEnrollmentAction(input: {
     ) {
       return 'conflict';
     }
-    if (
-      !consentSourcesMatch(input.existingByKey.authorizedSources, input.request.authorizedSources)
-    ) {
+    if (!consentSourcesMatch(input.existingByKey.consentSources, input.request.authorizedSources)) {
       return 'conflict';
     }
     return 'replay';

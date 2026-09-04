@@ -211,6 +211,7 @@ export const enroll = mutation({
       collectorId: credential.collectorId,
       contributionId: contribution._id,
       idempotencyKey,
+      consentSources: sources,
       authorizedSources: sources.map((source) => ({
         ...source,
         authorizedAt: now,
@@ -232,7 +233,7 @@ export const enroll = mutation({
       ) {
         throw new Error('Enrollment idempotency key is already bound to another Collector');
       }
-      if (!consentSourcesMatch(claimedByKey.enrollment.authorizedSources, sources)) {
+      if (!consentSourcesMatch(claimedByKey.enrollment.consentSources, sources)) {
         throw new Error('Enrollment idempotency key does not match the original consent');
       }
       await refreshArchiveStatusCounts(ctx, user.orgId, now);
