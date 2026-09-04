@@ -279,7 +279,8 @@ Ingest's fact envelope.
 - Add `apps/archive-api` at `archive.trace-flow.dev` with its own Archive Session Ledger Durable
   Objects, Storage Budget access, R2 Standard bucket using Cloudflare's fixed `us` jurisdiction, and
   versioned Archive Encryption Keys. The first release exposes no archive-region selector and its R2
-  binding and access path use `jurisdiction: "us"`.
+  binding and access path use `jurisdiction: "us"`; P8 must use a current Cloudflare API or client
+  version that supports this jurisdiction rather than substituting a non-binding location hint.
 - Add first-release lossless Archive JSONL encoding, payload content hashes, chained record hashes, and
   completed-scan checkpoints for Claude and Codex append-oriented JSONL through complete byte offsets.
 - Show Cursor as unsupported for archive capture. Add its deterministically ordered, content-hashed

@@ -79,7 +79,7 @@ _Avoid_: "API Worker" when discussing Body Object retrieval.
 _Avoid_: "backend".
 
 **Archive API**:
-The planned `apps/archive-api` Worker at `https://archive.trace-flow.dev`. It is the sole public data-plane boundary for **Conversation Archive** upload, durable acknowledgement, owner export, and deletion. It exclusively binds the Agent Archive R2 Standard bucket, which uses Cloudflare's fixed `us` jurisdiction in the first release; its R2 binding and access path specify `jurisdiction: "us"`. It also binds **Archive Encryption Key** material. Uploads require a **Collector Credential** plus valid **Collector Enrollment**; reads require an **Archive Export Grant**. It does not bind proxy Body Object secrets, Tinybird credentials, or agent fact queues.
+The planned `apps/archive-api` Worker at `https://archive.trace-flow.dev`. It is the sole public data-plane boundary for **Conversation Archive** upload, durable acknowledgement, owner export, and deletion. It exclusively binds the Agent Archive R2 Standard bucket, which uses Cloudflare's fixed `us` jurisdiction in the first release; its R2 binding and access path specify `jurisdiction: "us"`. P8 must use a current Cloudflare API or client version that supports this jurisdiction rather than substituting a non-binding location hint. It also binds **Archive Encryption Key** material. Uploads require a **Collector Credential** plus valid **Collector Enrollment**; reads require an **Archive Export Grant**. It does not bind proxy Body Object secrets, Tinybird credentials, or agent fact queues.
 _Avoid_: extending **Agent Ingest** or the **Raw API Worker** with transcript storage, "Archive Worker" when referring to the product.
 
 **Web**:
