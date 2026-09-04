@@ -5,9 +5,9 @@
  * of scope for this slice.
  */
 import * as Sentry from '@sentry/cloudflare';
-import { TRACE_FLOW_PROPAGATION_TARGETS } from '@trace-flow/utils/sentry-tracing';
 import { Hono } from 'hono';
 import type { ArchiveApiEnv } from './context';
+import { createArchiveApiSentryOptions } from './sentry';
 import {
   handleDeleteArchive,
   handleDeleteContribution,
@@ -28,13 +28,4 @@ app.post('/v1/archive/exports', handleExport);
 app.delete('/v1/archive/contributions/:contributionId', handleDeleteContribution);
 app.delete('/v1/archive', handleDeleteArchive);
 
-export default Sentry.withSentry(
-  (env: ArchiveApiEnv) => ({
-    dsn: env.SENTRY_DSN,
-    release: env.CF_VERSION_METADATA?.id,
-    environment: env.SENTRY_ENVIRONMENT ?? 'development',
-    tracesSampleRate: 1.0,
-    tracePropagationTargets: TRACE_FLOW_PROPAGATION_TARGETS,
-  }),
-  app,
-);
+export default Sentry.withSentry(createArchiveApiSentryOptions, app);
