@@ -7,7 +7,7 @@ import {
 import type { SourceFingerprint } from './archive-validation';
 import type { LedgerCommit, LedgerSnapshot, ScanState } from './archive-ledger-state';
 
-export function ensureLedgerTables(storage: DurableObjectStorage): void {
+function ensureLedgerTables(storage: DurableObjectStorage): void {
   storage.sql.exec(
     'CREATE TABLE IF NOT EXISTS ledger_record_versions (version_key TEXT PRIMARY KEY, part_id TEXT NOT NULL, record_identity TEXT NOT NULL, content_hash TEXT NOT NULL, sequence INTEGER NOT NULL)',
   );

@@ -4,7 +4,6 @@ import {
   assertIdentifier,
   type ArchiveScope,
   type ArchiveUploadRequest,
-  type LedgerElement,
 } from './archive-contract';
 import type {
   ArchiveAcknowledgement,
@@ -38,27 +37,19 @@ export function parseCommitEnvelope(value: unknown): CommitEnvelope {
     orgId: scope.orgId as string,
     keyVersion: record.keyVersion as number,
   });
+  const parsedScope: ArchiveScope = {
+    orgId: scope.orgId as string,
+    userId: scope.userId as string,
+    contributionId: scope.contributionId as string,
+    source: scope.source,
+    sourceSessionId: scope.sourceSessionId as string,
+  };
   return {
-    scope: scope as unknown as ArchiveScope,
+    scope: parsedScope,
     upload: record.upload as ArchiveUploadRequest,
     keyVersion: record.keyVersion as number,
     wrappedKey: record.wrappedKey,
   };
-}
-
-export function allVersionsExist(
-  elements: LedgerElement[],
-  observations: ArchiveUploadRequest['observations'],
-): boolean {
-  return observations.every((observation) =>
-    elements.some(
-      (element) =>
-        element.kind === 'record' &&
-        element.source_transcript_part_id === observation.source_transcript_part_id &&
-        element.source_record_identity === observation.source_record_identity &&
-        element.content_sha256 === observation.content_sha256,
-    ),
-  );
 }
 
 export async function intentDigest(value: unknown): Promise<string> {

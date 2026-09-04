@@ -131,7 +131,7 @@ export function decodeBase64(value: unknown): Uint8Array {
   return bytes;
 }
 
-export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 

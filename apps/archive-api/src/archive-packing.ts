@@ -19,8 +19,6 @@ import {
 import { archiveObjectKey } from './archive-storage-key';
 
 export { archiveSessionPrefix } from './archive-storage-key';
-export { buildArchiveSessionManifest } from './archive-manifest-packing';
-export { buildIncrementalManifest } from './archive-manifest-packing';
 export type { PlannedManifestObject } from './archive-manifest-packing';
 
 export interface PackedChunk {

@@ -5,7 +5,6 @@ import {
   type ArchiveObservation,
   type ArchiveSource,
   type CompletedScanCheckpoint,
-  type StoredRecordMetadata,
   assertArchiveSource,
   assertDigest,
   assertIdentifier,
@@ -141,38 +140,4 @@ export function validateCheckpoint(
     prefix_chain_sha256: checkpoint.prefix_chain_sha256,
     first_observed_at: checkpoint.first_observed_at as number,
   };
-}
-
-export function validateStoredRecordMetadata(
-  value: unknown,
-  expected: { source: ArchiveSource; sourceSessionId: string },
-): asserts value is StoredRecordMetadata {
-  if (typeof value !== 'object' || value === null) {
-    throw new ArchiveContractError('invalid_stored_record');
-  }
-  const record = value as Record<string, unknown>;
-  assertVersion(
-    record.archive_format_version,
-    ARCHIVE_FORMAT_VERSION,
-    'unsupported_archive_format_version',
-  );
-  assertVersion(record.chain_hash_version, CHAIN_HASH_VERSION, 'unsupported_chain_hash_version');
-  assertArchiveSource(record.source);
-  assertIdentifier(record.source_session_id, 'invalid_source_session_id');
-  assertIdentifier(record.source_transcript_part_id, 'invalid_transcript_part_id');
-  assertTranscriptPartId(record.source, record.source_transcript_part_id);
-  assertIdentifier(record.source_record_identity, 'invalid_record_identity');
-  if (record.source !== expected.source || record.source_session_id !== expected.sourceSessionId) {
-    throw new ArchiveContractError('stored_scope_mismatch');
-  }
-  if (!Number.isSafeInteger(record.observed_at)) {
-    throw new ArchiveContractError('invalid_observed_at');
-  }
-  if (record.payload_encoding !== 'utf8' && record.payload_encoding !== 'base64') {
-    throw new ArchiveContractError('invalid_payload_encoding');
-  }
-  assertDigest(record.content_sha256, 'invalid_content_hash');
-  assertSafeInteger(record.chain_sequence, 'invalid_sequence');
-  assertDigest(record.previous_chain_hash, 'invalid_previous_chain_hash');
-  assertDigest(record.chain_hash, 'invalid_chain_hash');
 }

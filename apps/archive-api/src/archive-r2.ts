@@ -43,7 +43,7 @@ export async function verifyOrPutImmutableObject(
   }
 }
 
-export async function verifyEncryptedChunk(
+async function verifyEncryptedChunk(
   object: ArchiveR2Object,
   key: CryptoKey,
   orgId: string,
@@ -64,7 +64,7 @@ export async function verifyEncryptedChunk(
   }
 }
 
-export async function verifyEncryptedManifest(
+async function verifyEncryptedManifest(
   object: ArchiveR2Object,
   key: CryptoKey,
   orgId: string,

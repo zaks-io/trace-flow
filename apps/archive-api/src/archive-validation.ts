@@ -140,18 +140,3 @@ export function sourceFingerprints(observations: ArchiveObservation[]): SourceFi
     }),
   );
 }
-
-export function sameFingerprintPrefix(
-  incoming: SourceFingerprint[],
-  stored: SourceFingerprint[],
-): boolean {
-  if (incoming.length < stored.length) return false;
-  return stored.every((expected, index) => {
-    const actual = incoming[index];
-    return (
-      actual?.source_transcript_part_id === expected.source_transcript_part_id &&
-      actual.source_record_identity === expected.source_record_identity &&
-      actual.content_sha256 === expected.content_sha256
-    );
-  });
-}

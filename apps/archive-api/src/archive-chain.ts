@@ -2,19 +2,13 @@ import {
   ARCHIVE_FORMAT_VERSION,
   ArchiveContractError,
   CHAIN_HASH_VERSION,
-  GENESIS_CHAIN_HASH,
   type ArchiveObservation,
-  type ArchiveSource,
   type CompletedScanCheckpoint,
-  type LedgerElement,
-  type StoredCheckpoint,
   type StoredElement,
   type StoredRecord,
-  type StoredRecordMetadata,
   digestBytes,
   digestString,
 } from './archive-contract';
-import { validateCheckpoint, validateStoredRecordMetadata } from './archive-contract-validation';
 
 const RECORD_DOMAIN = new TextEncoder().encode('trace-flow/archive/record-chain/v1');
 const CHECKPOINT_DOMAIN = new TextEncoder().encode('trace-flow/archive/checkpoint-chain/v1');
@@ -122,11 +116,6 @@ export function canonicalElement(element: StoredElement): string {
   return JSON.stringify(element);
 }
 
-export function canonicalElements(elements: StoredElement[]): Uint8Array {
-  const lines = elements.map((element) => `${canonicalElement(element)}\n`).join('');
-  return new TextEncoder().encode(lines);
-}
-
 export function observationFingerprint(
   observation: Pick<
     ArchiveObservation,
@@ -140,7 +129,7 @@ export function observationFingerprint(
   });
 }
 
-export function checkpointLogicalKey(checkpoint: CompletedScanCheckpoint): string {
+function checkpointLogicalKey(checkpoint: CompletedScanCheckpoint): string {
   return JSON.stringify({
     archive_format_version: checkpoint.archive_format_version,
     chain_hash_version: checkpoint.chain_hash_version,
@@ -162,41 +151,6 @@ export function sameCheckpointLogicalPosition(
   return checkpointLogicalKey(left) === checkpointLogicalKey(right);
 }
 
-export function storedRecordToObservation(record: StoredRecord): ArchiveObservation {
-  return {
-    archive_format_version: record.archive_format_version,
-    chain_hash_version: record.chain_hash_version,
-    source: record.source,
-    source_session_id: record.source_session_id,
-    source_transcript_part_id: record.source_transcript_part_id,
-    source_record_identity: record.source_record_identity,
-    observed_at: record.observed_at,
-    payload_encoding: record.payload_encoding,
-    payload: record.payload,
-    content_sha256: record.content_sha256,
-  };
-}
-
-export function checkpointWrapper(
-  checkpoint: CompletedScanCheckpoint,
-  sequence: number,
-  previous_chain_hash: string,
-  chain_hash: string,
-): StoredCheckpoint {
-  return {
-    kind: 'checkpoint',
-    archive_format_version: ARCHIVE_FORMAT_VERSION,
-    chain_hash_version: CHAIN_HASH_VERSION,
-    source: checkpoint.source,
-    source_session_id: checkpoint.source_session_id,
-    source_transcript_part_id: checkpoint.source_transcript_part_id,
-    checkpoint,
-    chain_sequence: sequence,
-    previous_chain_hash,
-    chain_hash,
-  };
-}
-
 export async function buildRecord(
   observation: ArchiveObservation,
   sequence: number,
@@ -210,70 +164,4 @@ export async function buildRecord(
     previous_chain_hash,
     chain_hash,
   };
-}
-
-export function assertStoredElementScope(
-  element: LedgerElement,
-  expected: { source: ArchiveSource; sourceSessionId: string },
-): void {
-  if (
-    element.source !== expected.source ||
-    element.source_session_id !== expected.sourceSessionId
-  ) {
-    throw new ArchiveContractError('stored_scope_mismatch');
-  }
-  if (element.kind === 'record') {
-    validateStoredRecordMetadata(element, expected);
-    return;
-  }
-  if (
-    element.archive_format_version !== ARCHIVE_FORMAT_VERSION ||
-    element.chain_hash_version !== CHAIN_HASH_VERSION ||
-    element.source_transcript_part_id !== element.checkpoint.source_transcript_part_id
-  ) {
-    throw new ArchiveContractError('stored_checkpoint_mismatch');
-  }
-  if (!Number.isSafeInteger(element.chain_sequence) || element.chain_sequence < 0) {
-    throw new ArchiveContractError('invalid_sequence');
-  }
-  if (!/^sha256:[0-9a-f]{64}$/u.test(element.previous_chain_hash)) {
-    throw new ArchiveContractError('invalid_previous_chain_hash');
-  }
-  if (!/^sha256:[0-9a-f]{64}$/u.test(element.chain_hash)) {
-    throw new ArchiveContractError('invalid_chain_hash');
-  }
-  validateCheckpoint(element.checkpoint, expected);
-}
-
-export function latestCheckpoint(
-  elements: StoredElement[],
-  partId: string,
-): CompletedScanCheckpoint | undefined {
-  for (let index = elements.length - 1; index >= 0; index--) {
-    const element = elements[index];
-    if (!element) continue;
-    if (element.kind === 'checkpoint' && element.source_transcript_part_id === partId) {
-      return element.checkpoint;
-    }
-  }
-  return undefined;
-}
-
-export function storedRecordFingerprints(elements: LedgerElement[], partId: string): string[] {
-  return elements
-    .filter(
-      (element): element is StoredRecordMetadata =>
-        element.kind === 'record' && element.source_transcript_part_id === partId,
-    )
-    .map((record) =>
-      JSON.stringify({
-        source_transcript_part_id: record.source_transcript_part_id,
-        source_record_identity: record.source_record_identity,
-        content_sha256: record.content_sha256,
-      }),
-    );
-}
-
-export function genesisChainHead(): string {
-  return GENESIS_CHAIN_HASH;
 }
