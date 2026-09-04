@@ -2118,6 +2118,30 @@ export declare const internal: {
       }
     >;
   };
+  archiveKeysInternal: {
+    destroyVersion: FunctionReference<
+      "mutation",
+      "internal",
+      { keyVersion: number; orgId: Id<"organizations"> },
+      boolean
+    >;
+    getVersion: FunctionReference<
+      "query",
+      "internal",
+      { keyVersion: number; orgId: Id<"organizations"> },
+      {
+        keyVersion: number;
+        orgId: Id<"organizations">;
+        wrappedKey: string;
+      } | null
+    >;
+    storeVersion: FunctionReference<
+      "mutation",
+      "internal",
+      { keyVersion: number; orgId: Id<"organizations">; wrappedKey: string },
+      Id<"archiveEncryptionKeyVersions">
+    >;
+  };
   auth: {
     organizations: {
       getActiveMemberCountInternal: FunctionReference<

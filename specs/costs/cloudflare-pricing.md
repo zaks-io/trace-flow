@@ -106,7 +106,7 @@ Conversation Archive is accepted but not implemented. Its separate cost model in
 
 - Archive API Worker requests and CPU for upload, encryption, export, rotation, and deletion
 - Archive Session Ledger and Storage Budget Durable Object requests and storage
-- R2 Standard storage and Class A writes for immutable 16 MiB Archive Chunks and manifests
+- R2 Standard storage and Class A writes for immutable 1.5 MiB Archive Chunks and manifests
 - R2 Class B reads for lossless export and key rotation
 - Convex control-plane and Archive Status projection updates
 

@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 pub const ARCHIVE_FORMAT_VERSION: u16 = 1;
 pub const CHAIN_HASH_VERSION: u16 = 1;
 pub const GENESIS_CHAIN_HASH: Sha256Digest = Sha256Digest([0; 32]);
-pub const MAX_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
+pub const MAX_CHUNK_BYTES: u64 = 3 * 1024 * 1024 / 2;
 
 /// A validated SHA-256 digest serialized as `sha256:` followed by lowercase hexadecimal.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
