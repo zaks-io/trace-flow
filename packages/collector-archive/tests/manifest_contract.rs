@@ -166,6 +166,15 @@ fn manifest_wire_rejects_unsupported_versions_during_deserialization() {
             .is_err()
     );
 
+    let mut coordinated_session = serde_json::to_value(&manifest).unwrap();
+    coordinated_session["source_session_id"] = serde_json::json!("other-session");
+    coordinated_session["elements"][1]["checkpoint"]["source_session_id"] =
+        serde_json::json!("other-session");
+    assert!(
+        serde_json::from_value::<collector_archive::ArchiveSessionManifest>(coordinated_session)
+            .is_err()
+    );
+
     let mut nested_source = serde_json::to_value(&manifest).unwrap();
     nested_source["elements"][1]["checkpoint"]["source"] = serde_json::json!("codex");
     nested_source["elements"][1]["checkpoint"]["source_transcript_part_id"] =

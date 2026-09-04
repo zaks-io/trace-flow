@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{de, Deserialize, Deserializer, Serialize};
 
 use crate::chain::{ArchiveChain, ChainError};
-use crate::elements::ChainElement;
+use crate::elements::{ChainElement, CommittedScanCheckpoint};
+use crate::framing::checkpoint_chain_hash;
 use crate::types::{
     ArchiveError, ArchiveSource, CompletedScanCheckpoint, Sha256Digest, ARCHIVE_FORMAT_VERSION,
     CHAIN_HASH_VERSION, GENESIS_CHAIN_HASH, MAX_CHUNK_BYTES,
@@ -238,6 +239,7 @@ impl ArchiveSessionManifest {
         if self.chain_head != expected_chain_head {
             return Err(ManifestError::ChainHeadMismatch);
         }
+        let mut previous_chain_hash = GENESIS_CHAIN_HASH;
         for (expected_sequence, element) in self.elements.iter().enumerate() {
             let sequence = match element {
                 ManifestElement::Record { chain_sequence, .. }
@@ -271,9 +273,10 @@ impl ArchiveSessionManifest {
                     byte_range.validate()?;
                 }
                 ManifestElement::Checkpoint {
+                    chain_sequence,
                     checkpoint,
+                    chain_hash,
                     byte_range,
-                    ..
                 } => {
                     checkpoint.validate()?;
                     if checkpoint.source != self.source
@@ -281,9 +284,31 @@ impl ArchiveSessionManifest {
                     {
                         return Err(ManifestError::CheckpointScopeMismatch);
                     }
+                    let committed = CommittedScanCheckpoint {
+                        archive_format_version: self.archive_format_version,
+                        chain_hash_version: self.chain_hash_version,
+                        source: self.source,
+                        source_session_id: self.source_session_id.clone(),
+                        source_transcript_part_id: checkpoint.source_transcript_part_id.clone(),
+                        checkpoint: checkpoint.clone(),
+                        chain_sequence: *chain_sequence,
+                        previous_chain_hash,
+                        chain_hash: *chain_hash,
+                    };
+                    if checkpoint_chain_hash(previous_chain_hash, *chain_sequence, &committed)
+                        != *chain_hash
+                    {
+                        return Err(ManifestError::CheckpointHashMismatch {
+                            sequence: *chain_sequence,
+                        });
+                    }
                     byte_range.validate()?;
                 }
             }
+            previous_chain_hash = match element {
+                ManifestElement::Record { chain_hash, .. }
+                | ManifestElement::Checkpoint { chain_hash, .. } => *chain_hash,
+            };
         }
         validate_ordered_ranges(&self.elements)?;
         Ok(())
@@ -397,6 +422,16 @@ mod tests {
         ));
 
         let mut manifest = valid_manifest();
+        manifest.source_session_id = "other-session".to_string();
+        if let ManifestElement::Checkpoint { checkpoint, .. } = &mut manifest.elements[1] {
+            checkpoint.source_session_id = "other-session".to_string();
+        }
+        assert!(matches!(
+            manifest.to_bytes(),
+            Err(ArchiveError::InvalidManifest(_))
+        ));
+
+        let mut manifest = valid_manifest();
         if let ManifestElement::Checkpoint { checkpoint, .. } = &mut manifest.elements[1] {
             checkpoint.source_session_id = "other-session".to_string();
         }
@@ -448,6 +483,8 @@ pub enum ManifestError {
     ElementCountMismatch,
     #[error("manifest checkpoint scope does not match its top-level session")]
     CheckpointScopeMismatch,
+    #[error("manifest checkpoint chain hash mismatch at sequence {sequence}")]
+    CheckpointHashMismatch { sequence: u64 },
     #[error("manifest chain head does not match its final element")]
     ChainHeadMismatch,
     #[error("manifest chain sequence expected {expected}, found {actual}")]

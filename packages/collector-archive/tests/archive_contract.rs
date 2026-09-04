@@ -96,6 +96,33 @@ fn payload_encoding_must_be_canonical_for_exact_bytes() {
 }
 
 #[test]
+fn sha256_digest_wire_requires_lowercase_hex() {
+    let observation =
+        ArchiveObservation::new(ArchiveSource::Claude, "session-1", "record-1", 10, b"x").unwrap();
+    let mut observation_wire = serde_json::to_value(&observation).unwrap();
+    let observation_digest = observation.content_sha256.to_string();
+    observation_wire["content_sha256"] = serde_json::json!(format!(
+        "sha256:{}",
+        observation_digest["sha256:".len()..].to_ascii_uppercase()
+    ));
+    assert!(serde_json::from_value::<ArchiveObservation>(observation_wire).is_err());
+
+    let checkpoint = scan_claude_jsonl("session-1", b"{\"uuid\":\"r1\"}\n", 10, None)
+        .unwrap()
+        .checkpoint;
+    let mut checkpoint_wire = serde_json::to_value(&checkpoint).unwrap();
+    let checkpoint_digest = checkpoint.complete_prefix_sha256.to_string();
+    checkpoint_wire["complete_prefix_sha256"] = serde_json::json!(format!(
+        "sha256:{}",
+        checkpoint_digest["sha256:".len()..].to_ascii_uppercase()
+    ));
+    assert!(
+        serde_json::from_value::<collector_archive::CompletedScanCheckpoint>(checkpoint_wire)
+            .is_err()
+    );
+}
+
+#[test]
 fn source_identity_is_part_of_the_record_scope_even_for_equal_payloads() {
     let first =
         ArchiveObservation::new(ArchiveSource::Claude, "session-1", "record-1", 10, b"same")

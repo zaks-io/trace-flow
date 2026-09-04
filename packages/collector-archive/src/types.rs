@@ -64,7 +64,11 @@ fn parse_digest(value: &str) -> Result<Sha256Digest, ArchiveError> {
     let hex = value
         .strip_prefix("sha256:")
         .ok_or(ArchiveError::InvalidDigest)?;
-    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
         return Err(ArchiveError::InvalidDigest);
     }
     let mut bytes = [0; 32];
@@ -80,7 +84,6 @@ fn hex_value(byte: u8) -> u8 {
     match byte {
         b'0'..=b'9' => byte - b'0',
         b'a'..=b'f' => byte - b'a' + 10,
-        b'A'..=b'F' => byte - b'A' + 10,
         _ => unreachable!("validated hexadecimal input"),
     }
 }
