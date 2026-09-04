@@ -88,8 +88,12 @@ function isArchiveWriteDecision(value: unknown): value is ArchiveWriteDecision {
 
 /**
  * Live Convex enrollment check. Unenrollment / revocation / member removal win
- * because Convex is consulted on every request when reachable. A current cache
- * is used only when Convex is unavailable.
+ * because Convex is consulted on every request when reachable.
+ *
+ * The cache is deny-only. Cached `allowed: true` is never upload commit
+ * authority: an allow must be a current Convex decision at this boundary.
+ * Cached denials may be reused when Convex is unavailable. Every other policy
+ * outage fails closed.
  */
 export async function authorizeArchiveUpload(
   env: Pick<ArchiveApiEnv, 'CONVEX_SITE_URL' | 'ARCHIVE_API_SHARED_SECRET'>,
@@ -129,7 +133,7 @@ export async function authorizeArchiveUpload(
       logger.error('archive_api.policy_malformed');
       return degradeOrFail(key, logger);
     }
-    cached = { key, decision: parsed, fetchedAt: Date.now() };
+    rememberDenial(key, parsed);
     return parsed;
   } catch (err) {
     logger.error('archive_api.policy_fetch_error', err);
@@ -137,10 +141,20 @@ export async function authorizeArchiveUpload(
   }
 }
 
+function rememberDenial(key: string, decision: ArchiveWriteDecision): void {
+  if (decision.allowed === false) {
+    cached = { key, decision, fetchedAt: Date.now() };
+    return;
+  }
+  if (cached?.key === key) {
+    cached = null;
+  }
+}
+
 function degradeOrFail(key: string, logger: Logger): ArchiveWriteDecision {
   const decision = currentCache(key);
-  if (decision) {
-    logger.warn('archive_api.policy_degraded', { cached: true });
+  if (decision?.allowed === false) {
+    logger.warn('archive_api.policy_degraded', { cached: true, reason: decision.reason });
     return decision;
   }
   logger.error('archive_api.policy_unavailable');

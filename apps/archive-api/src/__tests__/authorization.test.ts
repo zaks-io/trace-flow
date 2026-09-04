@@ -216,7 +216,50 @@ describe('Archive API authorization', () => {
     expect(await res.json()).toMatchObject({ reason: 'policy_unavailable' });
   });
 
-  it('uses a current cache only when Convex is unavailable', async () => {
+  it.each([
+    { invalidation: 'self-unenroll', reason: 'enrollment_invalid' as const },
+    { invalidation: 'owner revocation', reason: 'enrollment_invalid' as const },
+    { invalidation: 'member removal', reason: 'enrollment_invalid' as const },
+  ])('denies after $invalidation even when Convex later fails', async ({ reason }) => {
+    const env = makeEnv(await validCredEntries());
+    interceptAuthorize({
+      allowed: true,
+      enrollmentId: 'enr_1',
+      contributionId: 'con_1',
+      orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+      userId: 'j57axc8sefsfp6k28nx6c481js806pwv',
+      collectorId: 'collector-1',
+      collectorCredentialId: 'cred_1',
+    });
+    expect(
+      (
+        await fetchRoute(env, '/v1/archive/uploads', {
+          method: 'POST',
+          headers: collectorHeaders,
+        })
+      ).status,
+    ).toBe(501);
+
+    interceptAuthorize({ allowed: false, reason });
+    const afterInvalidation = await fetchRoute(env, '/v1/archive/uploads', {
+      method: 'POST',
+      headers: collectorHeaders,
+    });
+    expect(afterInvalidation.status).toBe(403);
+    expect(await afterInvalidation.json()).toMatchObject({ reason });
+
+    authorizeResponder = () => {
+      throw new Error('convex down');
+    };
+    const afterOutage = await fetchRoute(env, '/v1/archive/uploads', {
+      method: 'POST',
+      headers: collectorHeaders,
+    });
+    expect(afterOutage.status).toBe(403);
+    expect(await afterOutage.json()).toMatchObject({ reason });
+  });
+
+  it('fails closed on a cached allow when Convex is unavailable', async () => {
     interceptAuthorize({
       allowed: true,
       enrollmentId: 'enr_1',
@@ -243,7 +286,8 @@ describe('Archive API authorization', () => {
       method: 'POST',
       headers: collectorHeaders,
     });
-    expect(degraded.status).toBe(501);
+    expect(degraded.status).toBe(503);
+    expect(await degraded.json()).toMatchObject({ reason: 'policy_unavailable' });
   });
 
   it('does not let upload authority read, export, or delete another contribution', async () => {
