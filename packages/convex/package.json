@@ -6,6 +6,7 @@
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "TRACE_FLOW_CONVEX_INTEGRATION=1 TRACE_FLOW_ARCHIVE_INTEGRATION_TEST_ENABLED=true vitest run __tests__/archiveControlPlane.integration.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

@@ -1954,6 +1954,25 @@ export declare const internal: {
       }>
     >;
   };
+  archiveIntegrationSeed: {
+    cleanupConcurrentEnrollment: FunctionReference<
+      "mutation",
+      "internal",
+      { orgId: Id<"organizations"> },
+      null
+    >;
+    seedConcurrentEnrollment: FunctionReference<
+      "mutation",
+      "internal",
+      {},
+      {
+        collectorCredentialId: Id<"collectorCredentials">;
+        idempotencyKey: string;
+        orgId: Id<"organizations">;
+        tokenIdentifier: string;
+      }
+    >;
+  };
   archiveInternal: {
     applyServerStatus: FunctionReference<
       "mutation",
