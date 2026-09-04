@@ -14,6 +14,7 @@ import {
 import {
   ARCHIVE_CAP_BYTES,
   applyCollectorHeartbeat,
+  assertArchiveMutationAllowed,
   claimArchiveActivation,
   claimContributionForUser,
   claimEnrollmentByIdempotencyKey,
@@ -88,6 +89,23 @@ async function requireArchiveWritable(
     throw new Error('Active Pro entitlement is required');
   }
   return { activation, subscription };
+}
+
+// Frozen grace still reports timestamped spool bytes so /app/agents stays current.
+async function requireArchiveHeartbeatAllowed(
+  ctx: Parameters<typeof requireEnabledUser>[0],
+  orgId: Id<'organizations'>,
+) {
+  if (!isArchiveServerEnabled()) {
+    throw new Error('Conversation Archive is not enabled');
+  }
+  const org = await ctx.db.get(orgId);
+  const activation = await getArchiveActivation(ctx, orgId);
+  assertArchiveMutationAllowed({ org, activation });
+  if (!activation) {
+    throw new Error('Conversation Archive is not activated');
+  }
+  return { activation };
 }
 
 async function requireBoundCollectorCredential(
@@ -365,7 +383,7 @@ export const reportHeartbeat = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const { user } = await requireCurrentOrgUser(ctx);
-    await requireArchiveWritable(ctx, user.orgId);
+    await requireArchiveHeartbeatAllowed(ctx, user.orgId);
     const credential = await requireBoundCollectorCredential(ctx, args.collectorCredentialId, user);
     const slot = await getEnrollmentSlot(ctx, user.orgId, credential._id);
     if (!slot) throw new Error('Enrollment not found');

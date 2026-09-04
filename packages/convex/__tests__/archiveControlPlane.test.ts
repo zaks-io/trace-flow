@@ -1553,6 +1553,67 @@ describe('archive control plane', () => {
     ).rejects.toThrow('deleting');
   });
 
+  it('lets public collector heartbeats continue while the archive is frozen', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'canceled' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    expect(
+      (await world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect()))[0]?.status,
+    ).toBe('frozen');
+    expect(
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
+    ).toEqual({ allowed: false, reason: 'frozen' });
+    await expect(owner.mutation(api.archive.enroll, enrollInput(world.ownerCred))).rejects.toThrow(
+      'frozen',
+    );
+    await expect(
+      owner.mutation(api.archive.addAuthorizedSource, {
+        enrollmentId: enrolled.enrollmentId,
+        source: 'codex',
+        historyChoice: 'new_only',
+      }),
+    ).rejects.toThrow('frozen');
+
+    await owner.mutation(api.archive.reportHeartbeat, {
+      collectorCredentialId: world.ownerCred,
+      pendingSpoolBytes: 64,
+      localError: 'grace_spool',
+      observedAt: 4242,
+    });
+    const afterPublic = await world.t.run(async (ctx) => ctx.db.get(enrolled.enrollmentId));
+    expect(afterPublic?.pendingSpoolBytes).toBe(64);
+    expect(afterPublic?.localError).toBe('grace_spool');
+    expect(afterPublic?.localObservedAt).toBe(4242);
+
+    await world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+      collectorCredentialId: world.ownerCred,
+      pendingSpoolBytes: 65,
+      localError: 'grace_spool',
+      observedAt: 4243,
+    });
+    const enrollment = await world.t.run(async (ctx) => ctx.db.get(enrolled.enrollmentId));
+    expect(enrollment?.pendingSpoolBytes).toBe(65);
+    expect(enrollment?.localObservedAt).toBe(4243);
+  });
+
   it('rejects archive writes when the organization document is gone', async () => {
     enableArchive();
     const world = await seedWorld();
