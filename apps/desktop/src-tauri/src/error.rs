@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: error type. Adapted from otto-desktop's error.rs.
 
 #[derive(Debug, thiserror::Error)]

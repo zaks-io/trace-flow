@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: tracing + a recent-errors ring. Adapted from otto-desktop's logging.rs.
 
 //! File-backed JSON tracing plus an in-memory ring of recent warn/error events the tray menu surfaces.

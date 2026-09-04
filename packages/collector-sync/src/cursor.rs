@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // The cursor *record* (file path + mtime + byte offset + head hash) and the advance-only-after-a-
 // successful-upload discipline are adapted from otto-sync's `CompletedFileCursor` (engine.rs,
 // ~/src/otto, 2026-05-25). The SQLite persistence here is new Trace Flow code, not vendored: otto

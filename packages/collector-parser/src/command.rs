@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/derive_facts.rs `command_family` (~/src/otto, 2026-05-25).
 // Diverged deliberately: otto emits a *two-part* family ("git push", "npm install") from a hardcoded
 // allowlist of programs — an invented taxonomy the Trace Flow ADR never defines and explicitly avoids.

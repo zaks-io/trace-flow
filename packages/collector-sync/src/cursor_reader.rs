@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code (otto read Cursor's legacy `~/.cursor/projects` JSONL; this targets the
 // current `state.vscdb` SQLite store). The SQLite-source analog of `discovery` + `assemble_units`: it
 // snapshots the DB read-only, GLOB-scans composers + bubbles, and assembles one `SyncUnit` per composer

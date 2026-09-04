@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/claude_code/tools.rs file extractors (Read -> file_extractor,
 // Edit/Write -> edit_extractor, MultiEdit -> multi_edit_extractor; all keyed on `input.file_path`)
 // (~/src/otto, 2026-05-25). Reworked: otto threaded touched paths through its per-tool extractor map

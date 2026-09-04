@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Crate root adapted from otto-sync/src/lib.rs (~/src/otto, 2026-05-25); each module's header notes
 // what was adapted and what was left out. otto-sync's `pricing` and `provider_usage` modules are
 // deliberately NOT carried over: provider-usage cost tracking is a separate Trace Flow feature, and

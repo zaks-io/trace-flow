@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-sync/src/orchestrator.rs (~/src/otto, 2026-05-25): the command set, the
 // one-job-at-a-time discipline, and the pause/resume/watch shape come from there. The state set is
 // redesigned to the ADR's named states (Watching/Syncing/ImportingHistory/Paused/Error), and the

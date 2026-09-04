@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // `resolve_git_metadata` is vendored and refactored from otto-sync/src/git.rs (~/src/otto,
 // 2026-05-25). The `cwd -> GitMetadata` freeze cache is original Trace Flow code: otto re-resolved
 // the remote on every call, which lets a mid-run `git remote set-url` silently re-attribute a

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/claude_code/{mod.rs,tools.rs} (~/src/otto, 2026-05-25).
 // Reworked: otto emits a separate fact for the tool_use block and again for the tool_result block;
 // Trace Flow folds the two (same tool_use_id) into ONE Tool Event, as the ADR requires, so a call and

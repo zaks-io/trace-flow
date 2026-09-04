@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/claude_code/{mod.rs,tools.rs} tool emission (~/src/otto,
 // 2026-05-25). Reworked: otto emitted the tool_use and tool_result as two priced facts; Trace Flow
 // emits ONE unpriced `AgentToolEventFact` per call (the use/result join lives in `tool_fold`),

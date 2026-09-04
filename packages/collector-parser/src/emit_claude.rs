@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/claude_code/mod.rs message emission (~/src/otto, 2026-05-25).
 // Reworked: otto emits one priced event per JSONL record (so a turn written across N content-block
 // records is counted N times) and threads its own depth/spawn maps; Trace Flow emits one unpriced

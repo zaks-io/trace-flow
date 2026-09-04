@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI: Collector Credential storage in the OS keychain.
 
 //! The Collector Credential store.

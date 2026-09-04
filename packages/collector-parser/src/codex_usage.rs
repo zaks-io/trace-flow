@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/codex_cli/usage.rs (~/src/otto, 2026-05-25). Reworked: otto reads
 // one event's `last_token_usage` in isolation and prices it locally; Trace Flow ships tokens only and
 // reduces the two Codex usage fields to a per-turn shape. This module is the usage *reader* — it turns

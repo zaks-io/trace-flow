@@ -1,5 +1,9 @@
 # Setup Instructions
 
+This file documents the company development setup. It is not a verified deployment recipe for a
+fresh external account. A fork must replace company domains, resource IDs, secrets, and CI deployment
+settings with its own. Hosted dependencies and provider calls may incur charges.
+
 This file is the setup map. For architecture details, read `specs/architecture/overview.md` and
 `specs/architecture/workers.md`. For agent analytics production gates, read
 `docs/guides/agent-conversation-analytics/ROADMAP.md` and

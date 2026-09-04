@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Asserts the Collector parser's redaction against the shared canary corpus the TS ingest Worker
 // (apps/agent-ingest/src/__tests__/redaction.test.ts) also asserts against, so the primary and
 // backstop redaction layers cannot drift on a planted secret.

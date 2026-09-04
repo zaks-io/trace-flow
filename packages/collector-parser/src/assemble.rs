@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. The per-source fan-out that turns one parsed session into the typed
 // `AgentIngestFacts` bundle the collector-sync uploader (3b) wraps in an `AgentIngestEnvelope`.
 // Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector embedder: the shared library behind the CLI and the desktop app.
 
 //! The Collector embedder.

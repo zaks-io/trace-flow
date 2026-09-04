@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. otto-sync had no standalone end-to-end harness; this exercises the full
 // Trace Flow read path (discovery -> assemble -> envelope -> live POST -> cursor) against a real
 // ~/.claude corpus and the dev ingest worker. Trace Flow owns the contract, IDs, pricing, redaction,

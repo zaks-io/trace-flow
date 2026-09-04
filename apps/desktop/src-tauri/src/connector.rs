@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the single seam for "make sure we're connected".
 
 //! One place that owns the device-flow login.

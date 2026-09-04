@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Desktop: the broadcast app state. Adapted from otto-desktop's state.rs, trimmed of the
 // provider-usage surface (that is a separate Trace Flow feature, not part of agent analytics).
 

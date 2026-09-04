@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code (no otto equivalent: otto resolved this metadata inline in its per-source
 // parsers). Trace Flow owns the contract, IDs, pricing, redaction, and storage around this code.
 

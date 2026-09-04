@@ -2,7 +2,7 @@
 name = "collector-common"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "Path discovery helpers for the Trace Flow agent Collector."
 
 [dependencies]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-sync's `files.rs` (the `walk_files` / `mtime_to_ms` / oldest-first sort) and the
 // change-detection half of `engine.rs::cursor_indicates_unchanged` + `hash_head_text` / `head_text` /
 // `utf8_prefix` (~/src/otto, 2026-05-25). The selection here reads the *local SQLite* `CursorStore`

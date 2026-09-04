@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/codex_cli/mod.rs turn segmentation (~/src/otto, 2026-05-25).
 // Reworked: otto threads a turn counter through its emission state machine and bumps it after
 // scaffold/role filtering, so a re-parse whose heuristic changes renumbers turns — the fragility the ADR

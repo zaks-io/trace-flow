@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Adapted from otto-parser/src/parser/codex_cli/blocks.rs tool extraction (~/src/otto, 2026-05-25).
 // Reworked: otto emitted the tool_use and the tool_result as two separate NormalizedToolEvents; Trace
 // Flow folds the Codex `function_call`/`function_call_output` pair (joined by `call_id`) into ONE

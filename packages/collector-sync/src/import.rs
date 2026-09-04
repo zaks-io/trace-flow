@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Original Trace Flow code. The incremental-vs-history-import distinction echoes otto-sync's
 // `SyncMode` (Backfill/Incremental/Watch, types.rs, ~/src/otto), but the 24-hour active-session
 // grace window and the 7-day / 30-day / 1-year history presets are Trace Flow decisions from the

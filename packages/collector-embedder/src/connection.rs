@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Trace Flow Collector CLI: non-secret local config + state directory.
 
 //! The CLI's on-disk, **non-secret** state.

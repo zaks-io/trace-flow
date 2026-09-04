@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 // Vendored and refactored from otto-parser/src/parser/redaction.rs (~/src/otto, 2026-05-25).
 // The drop/mask policy and pattern set are aligned with apps/agent-ingest/src/redaction.ts (task 2b)
 // so the Collector (primary redactor) and the ingest Worker (backstop) redact the shared canary
