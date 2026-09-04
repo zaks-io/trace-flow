@@ -345,7 +345,7 @@ jobs:
             local source=$1
             local name=$2
             local content_type=$3
-            bunx wrangler r2 object put \
+            bunx wrangler@4.95.0 r2 object put \
               "${destination}/${name}" \
               --remote \
               --file "$source" \
@@ -368,14 +368,14 @@ jobs:
           WIN_BUNDLE: ${{ steps.meta.outputs.windows_bundle }}
         run: |
           set -euo pipefail
-          bunx wrangler r2 object put \
+          bunx wrangler@4.95.0 r2 object put \
             "${R2_BUCKET}/trace-flow/desktop/latest/trace-flow-desktop.dmg" \
             --remote \
             --file "$DMG_FILE" \
             --content-type application/x-apple-diskimage \
             --cache-control 'no-cache, max-age=0' \
             --force
-          bunx wrangler r2 object put \
+          bunx wrangler@4.95.0 r2 object put \
             "${R2_BUCKET}/trace-flow/desktop/latest/trace-flow-desktop-setup.exe" \
             --remote \
             --file "$WIN_BUNDLE" \
@@ -419,7 +419,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
-          bunx wrangler r2 object put \
+          bunx wrangler@4.95.0 r2 object put \
             "${R2_BUCKET}/trace-flow/desktop/latest.json" \
             --remote \
             --file latest.json \
