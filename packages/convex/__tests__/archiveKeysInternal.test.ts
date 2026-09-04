@@ -132,6 +132,102 @@ describe('archive key metadata internal boundary', () => {
     ).toBeNull();
   });
 
+  it.each([47, 49])(
+    'repairs a seeded invalid %d-byte same-organization/version row before idempotency checks',
+    async (ciphertextBytes) => {
+      const { t, orgA } = await seedOrganizations();
+      const wrappingSecretBase64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+      const validWrappedKey = serializeArchiveWrappedKeyVersion(
+        await createArchiveEncryptionKeyVersion({
+          orgId: orgA,
+          keyVersion: 1,
+          wrappingSecretBase64,
+        }),
+      );
+      const validWrappedKeyRecord = JSON.parse(validWrappedKey) as Record<string, unknown>;
+      const invalidWrappedKey = JSON.stringify({
+        ...validWrappedKeyRecord,
+        ciphertext: base64Bytes(ciphertextBytes),
+      });
+      const seededId = await t.run(async (ctx) =>
+        ctx.db.insert('archiveEncryptionKeyVersions', {
+          orgId: orgA,
+          keyVersion: 1,
+          wrappedKey: invalidWrappedKey,
+          createdAt: 1,
+        }),
+      );
+
+      await expect(
+        t.query(internal.archiveKeysInternal.getVersion, {
+          orgId: orgA,
+          keyVersion: 1,
+        }),
+      ).resolves.toEqual({ orgId: orgA, keyVersion: 1, wrappedKey: invalidWrappedKey });
+
+      const repairedId = await t.mutation(internal.archiveKeysInternal.storeVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+        wrappedKey: validWrappedKey,
+      });
+      expect(repairedId).toBe(seededId);
+      await expect(
+        t.query(internal.archiveKeysInternal.getVersion, {
+          orgId: orgA,
+          keyVersion: 1,
+        }),
+      ).resolves.toEqual({ orgId: orgA, keyVersion: 1, wrappedKey: validWrappedKey });
+
+      const replayId = await t.mutation(internal.archiveKeysInternal.storeVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+        wrappedKey: validWrappedKey,
+      });
+      expect(replayId).toBe(seededId);
+    },
+  );
+
+  it('does not replace a different valid same-organization/version row', async () => {
+    const { t, orgA } = await seedOrganizations();
+    const wrappingSecretBase64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+    const firstWrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: orgA,
+        keyVersion: 1,
+        wrappingSecretBase64,
+      }),
+    );
+    const differentValidWrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: orgA,
+        keyVersion: 1,
+        wrappingSecretBase64,
+      }),
+    );
+    await t.run(async (ctx) =>
+      ctx.db.insert('archiveEncryptionKeyVersions', {
+        orgId: orgA,
+        keyVersion: 1,
+        wrappedKey: firstWrappedKey,
+        createdAt: 1,
+      }),
+    );
+
+    await expect(
+      t.mutation(internal.archiveKeysInternal.storeVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+        wrappedKey: differentValidWrappedKey,
+      }),
+    ).rejects.toThrow('Archive key version already exists');
+    expect(
+      await t.query(internal.archiveKeysInternal.getVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+      }),
+    ).toEqual({ orgId: orgA, keyVersion: 1, wrappedKey: firstWrappedKey });
+  });
+
   it('destroys the exact wrapped version and leaves other Organizations untouched', async () => {
     const { t, orgA, orgB } = await seedOrganizations();
     const wrappingSecretBase64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';

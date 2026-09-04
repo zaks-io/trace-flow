@@ -14,6 +14,18 @@ function assertKeyVersion(version: number): void {
   }
 }
 
+function isValidStoredWrappedKey(
+  wrappedKey: string,
+  expected: { orgId: string; keyVersion: number },
+): boolean {
+  try {
+    parseArchiveWrappedKeyVersion(wrappedKey, expected);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const storeVersion = internalMutation({
   args: {
     orgId: v.id('organizations'),
@@ -37,6 +49,10 @@ export const storeVersion = internalMutation({
       )
       .first();
     if (existing) {
+      if (!isValidStoredWrappedKey(existing.wrappedKey, args)) {
+        await ctx.db.patch(existing._id, { wrappedKey: args.wrappedKey });
+        return existing._id;
+      }
       if (existing.wrappedKey !== args.wrappedKey) {
         throw new Error('Archive key version already exists');
       }
