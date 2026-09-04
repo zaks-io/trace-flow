@@ -1,27 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  activate,
-  addAuthorizedSource,
-  enroll,
-  getStatus,
-  reportHeartbeat,
-  revokeEnrollment,
-  unenroll,
-} from '../archive';
-import {
-  applyServerStatus,
-  authorizeArchiveWrite,
-  reportCollectorHeartbeat,
-  upsertSessionIntegrity,
-} from '../archiveInternal';
-import { removeMember } from '../auth/users';
-import { syncLifecycleForOrg } from '../archiveInternal';
+import { api, internal } from '../_generated/api';
+import type { Id } from '../_generated/dataModel';
 import {
   ARCHIVE_CAP_BYTES,
   ARCHIVE_ENABLED_ENV,
   ARCHIVE_GRACE_MS,
   consentSourcesMatch,
   decideEnrollmentAction,
+  decideVersionedUpdate,
   decideWriteAuthorization,
   isActiveProSubscription,
   isArchiveServerEnabled,
@@ -31,187 +17,18 @@ import {
   validateAuthorizedSources,
   validateEnrollmentIdempotencyKey,
 } from '../archiveLib';
-
-type TableName = string;
-type Doc = Record<string, unknown> & { _id: string; _creationTime: number };
-
-class ConvexTestDriver {
-  private tables = new Map<TableName, Map<string, Doc>>();
-  private seq = 0;
-  private writeQueue: Promise<void> = Promise.resolve();
-
-  snapshot(): Map<TableName, Map<string, Doc>> {
-    const copy = new Map<TableName, Map<string, Doc>>();
-    for (const [table, rows] of this.tables) {
-      copy.set(table, new Map(rows));
-    }
-    return copy;
-  }
-
-  restore(snapshot: Map<TableName, Map<string, Doc>>) {
-    this.tables = snapshot;
-  }
-
-  private table(name: TableName): Map<string, Doc> {
-    let rows = this.tables.get(name);
-    if (!rows) {
-      rows = new Map();
-      this.tables.set(name, rows);
-    }
-    return rows;
-  }
-
-  insert(table: TableName, doc: Record<string, unknown>): string {
-    const id = `${table}_${++this.seq}`;
-    this.table(table).set(id, { ...doc, _id: id, _creationTime: Date.now() });
-    return id;
-  }
-
-  get(id: string): Doc | null {
-    for (const rows of this.tables.values()) {
-      const doc = rows.get(id);
-      if (doc) return { ...doc };
-    }
-    return null;
-  }
-
-  patch(id: string, patch: Record<string, unknown>) {
-    for (const rows of this.tables.values()) {
-      const doc = rows.get(id);
-      if (!doc) continue;
-      rows.set(id, { ...doc, ...patch });
-      return;
-    }
-    throw new Error(`Missing document ${id}`);
-  }
-
-  delete(id: string) {
-    for (const rows of this.tables.values()) {
-      if (rows.delete(id)) return;
-    }
-    throw new Error(`Missing document ${id}`);
-  }
-
-  query(table: TableName) {
-    const rows = () => [...this.table(table).values()];
-    let matches = rows();
-    const api = {
-      withIndex: (_name: string, fn?: (q: IndexBuilder) => void) => {
-        if (fn) {
-          const builder = new IndexBuilder();
-          fn(builder);
-          matches = rows().filter((doc) => builder.matches(doc));
-        }
-        return api;
-      },
-      filter: (fn: (q: FilterBuilder) => boolean) => {
-        matches = matches.filter((doc) => fn(new FilterBuilder(doc)));
-        return api;
-      },
-      first: async () => (matches[0] ? { ...matches[0] } : null),
-      unique: async () => {
-        if (matches.length > 1) throw new Error(`Unique index returned ${matches.length} rows`);
-        return matches[0] ? { ...matches[0] } : null;
-      },
-      collect: async () => matches.map((doc) => ({ ...doc })),
-      take: async (n: number) => matches.slice(0, n).map((doc) => ({ ...doc })),
-    };
-    return api;
-  }
-
-  ctx(identity: { tokenIdentifier: string } | null) {
-    return {
-      auth: {
-        getUserIdentity: async () => identity,
-      },
-      db: {
-        insert: async (table: TableName, doc: Record<string, unknown>) => this.insert(table, doc),
-        get: async (id: string) => this.get(id),
-        patch: async (id: string, patch: Record<string, unknown>) => this.patch(id, patch),
-        delete: async (id: string) => this.delete(id),
-        query: (table: TableName) => this.query(table),
-      },
-      scheduler: {
-        runAfter: async () => 'scheduled',
-        cancel: async () => undefined,
-      },
-    };
-  }
-
-  async transact<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.writeQueue.then(fn, fn);
-    this.writeQueue = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
-}
-
-class IndexBuilder {
-  private eqs: { field: string; value: unknown }[] = [];
-  eq(field: string, value: unknown) {
-    this.eqs.push({ field, value });
-    return this;
-  }
-  matches(doc: Doc) {
-    return this.eqs.every((eq) => doc[eq.field] === eq.value);
-  }
-}
-
-class FilterBuilder {
-  constructor(private readonly doc: Doc) {}
-  field(name: string) {
-    return this.doc[name];
-  }
-  eq(left: unknown, right: unknown) {
-    return left === right;
-  }
-}
-
-interface Handler<Args, Result> {
-  _handler: (ctx: unknown, args: Args) => Promise<Result>;
-}
-
-function call<Result>(fn: unknown, ctx: unknown, args: unknown = {}): Promise<Result> {
-  return (fn as Handler<unknown, Result>)._handler(ctx, args);
-}
-
-interface ActivateResult {
-  activationId: string;
-  created: boolean;
-}
-interface EnrollResult {
-  enrollmentId: string;
-  contributionId: string;
-  created: boolean;
-}
-type WriteDecision =
-  | { allowed: true; enrollmentId: string; contributionId: string }
-  | { allowed: false; reason: string };
-interface StatusResult {
-  lifecycle: string;
-  storedBytes: number | null;
-  lastDurableAcknowledgedAt: number | null;
-  enrolledCollectorCount: number;
-  contributions: {
-    userId: string;
-    contributionId: string;
-    collectors: { enrollmentId: string; status: string }[];
-  }[];
-  integritySessions: { source: string; sourceSessionId: string; errorClass?: string }[];
-}
+import { initConvexTest, type ArchiveTestConvex } from './convexTest.setup';
 
 interface SeededWorld {
-  driver: ConvexTestDriver;
-  owner: { _id: string; tokenIdentifier: string; orgId: string };
-  member: { _id: string; tokenIdentifier: string; orgId: string };
-  otherOwner: { _id: string; tokenIdentifier: string; orgId: string };
-  ownerCred: string;
-  memberCred: string;
-  foreignCred: string;
-  ownerMembership: string;
-  memberMembership: string;
+  t: ArchiveTestConvex;
+  owner: { _id: Id<'users'>; tokenIdentifier: string; orgId: Id<'organizations'> };
+  member: { _id: Id<'users'>; tokenIdentifier: string; orgId: Id<'organizations'> };
+  otherOwner: { _id: Id<'users'>; tokenIdentifier: string; orgId: Id<'organizations'> };
+  ownerCred: Id<'collectorCredentials'>;
+  memberCred: Id<'collectorCredentials'>;
+  foreignCred: Id<'collectorCredentials'>;
+  ownerMembership: Id<'organizationMembers'>;
+  memberMembership: Id<'organizationMembers'>;
 }
 
 function enableArchive() {
@@ -226,126 +43,131 @@ afterEach(() => {
   disableArchive();
 });
 
-function seedWorld(
+async function seedWorld(
   tier: 'hobby' | 'pro' = 'pro',
   status: 'active' | 'grace' | 'canceled' = 'active',
-): SeededWorld {
-  const driver = new ConvexTestDriver();
-  const ownerId = driver.insert('users', {
-    tokenIdentifier: 'https://auth.example/|auth0|owner',
-    email: 'owner@example.com',
-    enabled: true,
-  });
-  const memberId = driver.insert('users', {
-    tokenIdentifier: 'https://auth.example/|auth0|member',
-    email: 'member@example.com',
-    enabled: true,
-  });
-  const otherOwnerId = driver.insert('users', {
-    tokenIdentifier: 'https://auth.example/|auth0|other',
-    email: 'other@example.com',
-    enabled: true,
-  });
-
-  const orgId = driver.insert('organizations', { name: 'Acme', ownerId });
-  const otherOrgId = driver.insert('organizations', { name: 'Other', ownerId: otherOwnerId });
-  driver.patch(ownerId, { orgId });
-  driver.patch(memberId, { orgId });
-  driver.patch(otherOwnerId, { orgId: otherOrgId });
-
-  const ownerMembership = driver.insert('organizationMembers', {
-    orgId,
-    userId: ownerId,
-    role: 'owner',
-    status: 'active',
-  });
-  const memberMembership = driver.insert('organizationMembers', {
-    orgId,
-    userId: memberId,
-    role: 'member',
-    status: 'active',
-  });
-  driver.insert('organizationMembers', {
-    orgId: otherOrgId,
-    userId: otherOwnerId,
-    role: 'owner',
-    status: 'active',
-  });
-
-  driver.insert('subscriptions', {
-    orgId,
-    tier,
-    status,
-    monthlyUnits: 1000,
-    addonUnits: 0,
-    currentPeriodStart: 1,
-    currentPeriodEnd: 2,
-    currentPeriodOverageSpentCents: 0,
-    addonPurchaseCount: 0,
-  });
-  driver.insert('subscriptions', {
-    orgId: otherOrgId,
-    tier: 'pro',
-    status: 'active',
-    monthlyUnits: 1000,
-    addonUnits: 0,
-    currentPeriodStart: 1,
-    currentPeriodEnd: 2,
-    currentPeriodOverageSpentCents: 0,
-    addonPurchaseCount: 0,
-  });
-
-  const ownerCred = driver.insert('collectorCredentials', {
-    hashedSecret: 'hash-owner',
-    orgId,
-    userId: ownerId,
-    collectorId: 'collector-owner',
-    status: 'active',
-    expiresAt: Date.now() + 60_000,
-  });
-  const memberCred = driver.insert('collectorCredentials', {
-    hashedSecret: 'hash-member',
-    orgId,
-    userId: memberId,
-    collectorId: 'collector-member',
-    status: 'active',
-    expiresAt: Date.now() + 60_000,
-  });
-  const foreignCred = driver.insert('collectorCredentials', {
-    hashedSecret: 'hash-foreign',
-    orgId: otherOrgId,
-    userId: otherOwnerId,
-    collectorId: 'collector-foreign',
-    status: 'active',
-    expiresAt: Date.now() + 60_000,
-  });
-
-  return {
-    driver,
-    owner: { _id: ownerId, tokenIdentifier: 'https://auth.example/|auth0|owner', orgId },
-    member: { _id: memberId, tokenIdentifier: 'https://auth.example/|auth0|member', orgId },
-    otherOwner: {
-      _id: otherOwnerId,
+): Promise<SeededWorld> {
+  const t = initConvexTest();
+  return await t.run(async (ctx) => {
+    const ownerId = await ctx.db.insert('users', {
+      tokenIdentifier: 'https://auth.example/|auth0|owner',
+      email: 'owner@example.com',
+      enabled: true,
+    });
+    const memberId = await ctx.db.insert('users', {
+      tokenIdentifier: 'https://auth.example/|auth0|member',
+      email: 'member@example.com',
+      enabled: true,
+    });
+    const otherOwnerId = await ctx.db.insert('users', {
       tokenIdentifier: 'https://auth.example/|auth0|other',
+      email: 'other@example.com',
+      enabled: true,
+    });
+
+    const orgId = await ctx.db.insert('organizations', { name: 'Acme', ownerId });
+    const otherOrgId = await ctx.db.insert('organizations', {
+      name: 'Other',
+      ownerId: otherOwnerId,
+    });
+    await ctx.db.patch(ownerId, { orgId });
+    await ctx.db.patch(memberId, { orgId });
+    await ctx.db.patch(otherOwnerId, { orgId: otherOrgId });
+
+    const ownerMembership = await ctx.db.insert('organizationMembers', {
+      orgId,
+      userId: ownerId,
+      role: 'owner',
+      status: 'active',
+    });
+    const memberMembership = await ctx.db.insert('organizationMembers', {
+      orgId,
+      userId: memberId,
+      role: 'member',
+      status: 'active',
+    });
+    await ctx.db.insert('organizationMembers', {
       orgId: otherOrgId,
-    },
-    ownerCred,
-    memberCred,
-    foreignCred,
-    ownerMembership,
-    memberMembership,
-  };
+      userId: otherOwnerId,
+      role: 'owner',
+      status: 'active',
+    });
+
+    await ctx.db.insert('subscriptions', {
+      orgId,
+      tier,
+      status,
+      monthlyUnits: 1000,
+      addonUnits: 0,
+      currentPeriodStart: 1,
+      currentPeriodEnd: 2,
+      currentPeriodOverageSpentCents: 0,
+      addonPurchaseCount: 0,
+    });
+    await ctx.db.insert('subscriptions', {
+      orgId: otherOrgId,
+      tier: 'pro',
+      status: 'active',
+      monthlyUnits: 1000,
+      addonUnits: 0,
+      currentPeriodStart: 1,
+      currentPeriodEnd: 2,
+      currentPeriodOverageSpentCents: 0,
+      addonPurchaseCount: 0,
+    });
+
+    const ownerCred = await ctx.db.insert('collectorCredentials', {
+      hashedSecret: 'hash-owner',
+      orgId,
+      userId: ownerId,
+      collectorId: 'collector-owner',
+      status: 'active',
+      expiresAt: Date.now() + 60_000,
+    });
+    const memberCred = await ctx.db.insert('collectorCredentials', {
+      hashedSecret: 'hash-member',
+      orgId,
+      userId: memberId,
+      collectorId: 'collector-member',
+      status: 'active',
+      expiresAt: Date.now() + 60_000,
+    });
+    const foreignCred = await ctx.db.insert('collectorCredentials', {
+      hashedSecret: 'hash-foreign',
+      orgId: otherOrgId,
+      userId: otherOwnerId,
+      collectorId: 'collector-foreign',
+      status: 'active',
+      expiresAt: Date.now() + 60_000,
+    });
+
+    return {
+      t,
+      owner: { _id: ownerId, tokenIdentifier: 'https://auth.example/|auth0|owner', orgId },
+      member: { _id: memberId, tokenIdentifier: 'https://auth.example/|auth0|member', orgId },
+      otherOwner: {
+        _id: otherOwnerId,
+        tokenIdentifier: 'https://auth.example/|auth0|other',
+        orgId: otherOrgId,
+      },
+      ownerCred,
+      memberCred,
+      foreignCred,
+      ownerMembership,
+      memberMembership,
+    };
+  });
 }
 
-function identity(user: { tokenIdentifier: string }) {
-  return { tokenIdentifier: user.tokenIdentifier };
+function asUser(world: SeededWorld, user: { tokenIdentifier: string }) {
+  return world.t.withIdentity({ tokenIdentifier: user.tokenIdentifier });
 }
 
 const sources = [{ source: 'claude' as const, historyChoice: 'new_only' as const }];
 const otherSources = [{ source: 'codex' as const, historyChoice: 'all_history' as const }];
 
 function enrollInput(
-  collectorCredentialId: string,
+  collectorCredentialId: Id<'collectorCredentials'>,
   overrides: {
     authorizedSources?: {
       source: 'claude' | 'codex';
@@ -494,6 +316,7 @@ describe('archive control-plane pure functions', () => {
       subscription: { tier: 'pro', status: 'active' },
       credential: { status: 'active', orgId: 'org', userId: 'user' },
       enrollment: { status: 'active' as const, authorizedSources: [{ source: 'claude' }] },
+      source: 'claude',
     };
     expect(decideWriteAuthorization(base)).toEqual({ allowed: true });
     expect(decideWriteAuthorization({ ...base, serverEnabled: false })).toEqual({
@@ -520,60 +343,89 @@ describe('archive control-plane pure functions', () => {
       reason: 'source_unauthorized',
     });
   });
+
+  it('treats exact versioned replays as no-ops and rejects stale or conflicting updates', () => {
+    expect(
+      decideVersionedUpdate({ storedVersion: undefined, incomingVersion: 1, payloadEquals: false }),
+    ).toBe('apply');
+    expect(
+      decideVersionedUpdate({ storedVersion: 2, incomingVersion: 3, payloadEquals: false }),
+    ).toBe('apply');
+    expect(
+      decideVersionedUpdate({ storedVersion: 2, incomingVersion: 2, payloadEquals: true }),
+    ).toBe('replay');
+    expect(
+      decideVersionedUpdate({ storedVersion: 2, incomingVersion: 2, payloadEquals: false }),
+    ).toBe('conflict');
+    expect(
+      decideVersionedUpdate({ storedVersion: 2, incomingVersion: 1, payloadEquals: true }),
+    ).toBe('stale');
+  });
 });
 
 describe('archive control plane', () => {
   it('lets only an authenticated owner atomically create Archive Activation', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    const memberCtx = world.driver.ctx(identity(world.member));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
 
-    await expect(call(activate, memberCtx, {})).rejects.toThrow('organization owner');
-    const first = await call<ActivateResult>(activate, ownerCtx, {});
-    const second = await call<ActivateResult>(activate, ownerCtx, {});
+    await expect(member.mutation(api.archive.activate, {})).rejects.toThrow('organization owner');
+    const first = await owner.mutation(api.archive.activate, {});
+    const second = await owner.mutation(api.archive.activate, {});
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);
     expect(second.activationId).toBe(first.activationId);
-    await expect(world.driver.query('archiveActivations').collect()).resolves.toHaveLength(1);
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect()),
+    ).resolves.toHaveLength(1);
   });
 
   it('fails closed for hobby, inactive Pro, or a disabled server gate', async () => {
-    const hobby = seedWorld('hobby');
+    const hobby = await seedWorld('hobby');
     enableArchive();
-    await expect(call(activate, hobby.driver.ctx(identity(hobby.owner)), {})).rejects.toThrow(
+    await expect(asUser(hobby, hobby.owner).mutation(api.archive.activate, {})).rejects.toThrow(
       'Active Pro entitlement',
     );
 
-    const inactive = seedWorld('pro', 'canceled');
+    const inactive = await seedWorld('pro', 'canceled');
     enableArchive();
-    await expect(call(activate, inactive.driver.ctx(identity(inactive.owner)), {})).rejects.toThrow(
-      'Active Pro entitlement',
-    );
+    await expect(
+      asUser(inactive, inactive.owner).mutation(api.archive.activate, {}),
+    ).rejects.toThrow('Active Pro entitlement');
 
-    const gated = seedWorld();
+    const gated = await seedWorld();
     disableArchive();
-    await expect(call(activate, gated.driver.ctx(identity(gated.owner)), {})).rejects.toThrow(
+    await expect(asUser(gated, gated.owner).mutation(api.archive.activate, {})).rejects.toThrow(
       'not enabled',
     );
   });
 
   it('records the 100 GB cap and freezes with a 90-day grace deadline when Pro lapses', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    const activation = (await world.driver.query('archiveActivations').collect())[0]!;
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const activation = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect())
+    )[0]!;
     expect(activation.capBytes).toBe(ARCHIVE_CAP_BYTES);
     expect(activation.graceDeadlineAt).toBeUndefined();
 
-    const subscription = (await world.driver.query('subscriptions').collect()).find(
-      (row) => row.orgId === world.owner.orgId,
-    )!;
-    world.driver.patch(subscription._id, { status: 'canceled' });
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'canceled' });
+    });
     const before = Date.now();
-    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
-    const frozen = world.driver.get(activation._id);
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    const frozen = await world.t.run(async (ctx) => ctx.db.get(activation._id));
     expect(frozen?.status).toBe('frozen');
     expect(frozen?.graceDeadlineAt).toBeGreaterThanOrEqual(before + ARCHIVE_GRACE_MS);
     expect(frozen?.graceDeadlineAt).toBeLessThanOrEqual(Date.now() + ARCHIVE_GRACE_MS);
@@ -581,25 +433,25 @@ describe('archive control plane', () => {
 
   it('enrolls only a Collector Credential bound to the same Organization and User', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    const memberCtx = world.driver.ctx(identity(world.member));
-    await call(activate, ownerCtx, {});
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
 
-    await expect(call(enroll, ownerCtx, enrollInput(world.memberCred))).rejects.toThrow(
+    await expect(owner.mutation(api.archive.enroll, enrollInput(world.memberCred))).rejects.toThrow(
       'Collector Credential not found',
     );
-    await expect(call(enroll, memberCtx, enrollInput(world.foreignCred))).rejects.toThrow(
-      'Collector Credential not found',
-    );
+    await expect(
+      member.mutation(api.archive.enroll, enrollInput(world.foreignCred)),
+    ).rejects.toThrow('Collector Credential not found');
 
-    const created = await call<EnrollResult>(enroll, memberCtx, enrollInput(world.memberCred));
+    const created = await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
     expect(created.created).toBe(true);
 
-    const replay = await call<EnrollResult>(enroll, memberCtx, enrollInput(world.memberCred));
+    const replay = await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
     expect(replay.created).toBe(false);
     expect(replay.enrollmentId).toBe(created.enrollmentId);
-    const enrollment = world.driver.get(created.enrollmentId);
+    const enrollment = await world.t.run(async (ctx) => ctx.db.get(created.enrollmentId));
     expect(enrollment?.authorizedSources).toEqual([
       expect.objectContaining({ source: 'claude', historyChoice: 'new_only' }),
     ]);
@@ -608,44 +460,35 @@ describe('archive control plane', () => {
 
   it('produces one enrollment when two first-use enrollments commit concurrently', async () => {
     enableArchive();
-    const world = seedWorld();
-    await call(activate, world.driver.ctx(identity(world.owner)), {});
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
 
     const results = await Promise.all([
-      world.driver.transact(() =>
-        call<EnrollResult>(
-          enroll,
-          world.driver.ctx(identity(world.owner)),
-          enrollInput(world.ownerCred),
-        ),
-      ),
-      world.driver.transact(() =>
-        call<EnrollResult>(
-          enroll,
-          world.driver.ctx(identity(world.owner)),
-          enrollInput(world.ownerCred),
-        ),
-      ),
+      owner.mutation(api.archive.enroll, enrollInput(world.ownerCred)),
+      owner.mutation(api.archive.enroll, enrollInput(world.ownerCred)),
     ]);
 
     expect(new Set(results.map((result) => result.enrollmentId)).size).toBe(1);
-    const enrollments = await world.driver.query('archiveEnrollments').collect();
-    expect(enrollments).toHaveLength(1);
-    const slots = await world.driver.query('archiveEnrollmentSlots').collect();
-    expect(slots).toHaveLength(1);
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect()),
+    ).resolves.toHaveLength(1);
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveEnrollmentSlots').collect()),
+    ).resolves.toHaveLength(1);
   });
 
   it('lets a current member self-enroll after activation without archive-wide read authority', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    const memberCtx = world.driver.ctx(identity(world.member));
-    await call(activate, ownerCtx, {});
-    await call(enroll, ownerCtx, enrollInput(world.ownerCred));
-    await call(enroll, memberCtx, enrollInput(world.memberCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
 
-    const ownerStatus = await call<StatusResult>(getStatus, ownerCtx, {});
-    const memberStatus = await call<StatusResult>(getStatus, memberCtx, {});
+    const ownerStatus = await owner.query(api.archive.getStatus, {});
+    const memberStatus = await member.query(api.archive.getStatus, {});
 
     expect(ownerStatus.contributions).toHaveLength(2);
     expect(ownerStatus.storedBytes).toBe(0);
@@ -655,9 +498,9 @@ describe('archive control plane', () => {
     expect(memberStatus.storedBytes).toBeNull();
     expect(memberStatus.enrolledCollectorCount).toBe(1);
 
-    await expect(call(activate, memberCtx, {})).rejects.toThrow('organization owner');
+    await expect(member.mutation(api.archive.activate, {})).rejects.toThrow('organization owner');
     await expect(
-      call(revokeEnrollment, memberCtx, {
+      member.mutation(api.archive.revokeEnrollment, {
         enrollmentId: ownerStatus.contributions[0]!.collectors[0]!.enrollmentId,
       }),
     ).rejects.toThrow('organization owner');
@@ -665,89 +508,128 @@ describe('archive control plane', () => {
 
   it('keeps a newly supported Source unauthorized until it is explicitly added', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    const enrolled = await call<EnrollResult>(enroll, ownerCtx, enrollInput(world.ownerCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
 
-    const denied = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+    const denied = await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
       collectorCredentialId: world.ownerCred,
       source: 'codex',
     });
     expect(denied).toEqual({ allowed: false, reason: 'source_unauthorized' });
 
-    await call(addAuthorizedSource, ownerCtx, {
+    await owner.mutation(api.archive.addAuthorizedSource, {
       enrollmentId: enrolled.enrollmentId,
       source: 'codex',
       historyChoice: 'all_history',
     });
-    const allowed = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+    const allowed = await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
       collectorCredentialId: world.ownerCred,
       source: 'codex',
     });
     expect(allowed).toMatchObject({ allowed: true });
   });
 
+  it('requires a Source for content authorization and never grants a source-neutral write', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await expect(
+      world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+      } as never),
+    ).rejects.toThrow(/source/i);
+
+    const denied = await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+      collectorCredentialId: world.ownerCred,
+      source: 'codex',
+    });
+    expect(denied).toEqual({ allowed: false, reason: 'source_unauthorized' });
+  });
+
   it('rejects stale membership and cross-tenant IDs', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    const memberCtx = world.driver.ctx(identity(world.member));
-    await call(activate, ownerCtx, {});
-    world.driver.patch(world.memberMembership, { status: 'removed' });
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+    await world.t.run(async (ctx) => {
+      await ctx.db.patch(world.memberMembership, { status: 'removed' });
+    });
 
-    await expect(call(enroll, memberCtx, enrollInput(world.memberCred))).rejects.toThrow(
-      'Not an active organization member',
-    );
+    await expect(
+      member.mutation(api.archive.enroll, enrollInput(world.memberCred)),
+    ).rejects.toThrow('Not an active organization member');
 
-    const foreign = world.driver.ctx(identity(world.otherOwner));
-    await expect(call(getStatus, foreign, {})).resolves.toMatchObject({ lifecycle: 'not_enabled' });
-    await call(activate, foreign, {});
-    await expect(call(enroll, foreign, enrollInput(world.ownerCred))).rejects.toThrow(
-      'Collector Credential not found',
-    );
+    const foreign = asUser(world, world.otherOwner);
+    await expect(foreign.query(api.archive.getStatus, {})).resolves.toMatchObject({
+      lifecycle: 'not_enabled',
+    });
+    await foreign.mutation(api.archive.activate, {});
+    await expect(
+      foreign.mutation(api.archive.enroll, enrollInput(world.ownerCred)),
+    ).rejects.toThrow('Collector Credential not found');
   });
 
   it('invalidates enrollment on unenroll, owner revocation, and member removal without deleting the contribution', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    const memberCtx = world.driver.ctx(identity(world.member));
-    await call(activate, ownerCtx, {});
-    const ownerEnroll = await call<EnrollResult>(enroll, ownerCtx, enrollInput(world.ownerCred));
-    const memberEnroll = await call<EnrollResult>(enroll, memberCtx, enrollInput(world.memberCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+    const ownerEnroll = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    const memberEnroll = await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
 
-    await call(unenroll, ownerCtx, { enrollmentId: ownerEnroll.enrollmentId });
-    expect(world.driver.get(ownerEnroll.enrollmentId)?.status).toBe('unenrolled');
-    expect(world.driver.get(ownerEnroll.contributionId)?.status).toBe('unenrolled');
+    await owner.mutation(api.archive.unenroll, { enrollmentId: ownerEnroll.enrollmentId });
+    expect((await world.t.run(async (ctx) => ctx.db.get(ownerEnroll.enrollmentId)))?.status).toBe(
+      'unenrolled',
+    );
+    expect((await world.t.run(async (ctx) => ctx.db.get(ownerEnroll.contributionId)))?.status).toBe(
+      'unenrolled',
+    );
     expect(
-      await call(authorizeArchiveWrite, ownerCtx, { collectorCredentialId: world.ownerCred }),
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
     ).toEqual({ allowed: false, reason: 'enrollment_invalid' });
 
-    await call(revokeEnrollment, ownerCtx, { enrollmentId: memberEnroll.enrollmentId });
-    expect(world.driver.get(memberEnroll.enrollmentId)?.status).toBe('revoked');
-    expect(world.driver.get(memberEnroll.contributionId)).toMatchObject({
-      orgId: world.member.orgId,
-      userId: world.member._id,
-    });
-
-    const member2Cred = world.driver.insert('collectorCredentials', {
-      hashedSecret: 'hash-member-2',
-      orgId: world.member.orgId,
-      userId: world.member._id,
-      collectorId: 'collector-member-2',
-      status: 'active',
-      expiresAt: Date.now() + 60_000,
-    });
-    world.driver.patch(world.memberMembership, { status: 'active' });
-    await call(enroll, memberCtx, enrollInput(member2Cred));
-    await call(removeMember, ownerCtx, { memberId: world.memberMembership });
-    const remaining = (await world.driver.query('archiveEnrollments').collect()).filter(
-      (row) => row.userId === world.member._id && row.status === 'active',
+    await owner.mutation(api.archive.revokeEnrollment, { enrollmentId: memberEnroll.enrollmentId });
+    expect((await world.t.run(async (ctx) => ctx.db.get(memberEnroll.enrollmentId)))?.status).toBe(
+      'revoked',
     );
+    expect(await world.t.run(async (ctx) => ctx.db.get(memberEnroll.contributionId))).toMatchObject(
+      {
+        orgId: world.member.orgId,
+        userId: world.member._id,
+      },
+    );
+
+    const member2Cred = await world.t.run(async (ctx) =>
+      ctx.db.insert('collectorCredentials', {
+        hashedSecret: 'hash-member-2',
+        orgId: world.member.orgId,
+        userId: world.member._id,
+        collectorId: 'collector-member-2',
+        status: 'active',
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    await world.t.run(async (ctx) => {
+      await ctx.db.patch(world.memberMembership, { status: 'active' });
+    });
+    await member.mutation(api.archive.enroll, enrollInput(member2Cred));
+    await owner.mutation(api.auth.users.removeMember, { memberId: world.memberMembership });
+    const remaining = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect())
+    ).filter((row) => row.userId === world.member._id && row.status === 'active');
     expect(remaining).toHaveLength(0);
     expect(
-      (await world.driver.query('archiveContributions').collect()).some(
+      (await world.t.run(async (ctx) => ctx.db.query('archiveContributions').collect())).some(
         (row) => row.userId === world.member._id,
       ),
     ).toBe(true);
@@ -755,14 +637,13 @@ describe('archive control plane', () => {
 
   it('creates a new consent record on re-enrollment instead of reviving the revoked one', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    const first = await call<EnrollResult>(enroll, ownerCtx, enrollInput(world.ownerCred));
-    await call(unenroll, ownerCtx, { enrollmentId: first.enrollmentId });
-    const second = await call<EnrollResult>(
-      enroll,
-      ownerCtx,
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const first = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await owner.mutation(api.archive.unenroll, { enrollmentId: first.enrollmentId });
+    const second = await owner.mutation(
+      api.archive.enroll,
       enrollInput(world.ownerCred, {
         authorizedSources: otherSources,
         idempotencyKey: `consent:${world.ownerCred}:renew`,
@@ -770,8 +651,10 @@ describe('archive control plane', () => {
     );
     expect(second.enrollmentId).not.toBe(first.enrollmentId);
     expect(second.created).toBe(true);
-    expect(world.driver.get(first.enrollmentId)?.status).toBe('unenrolled');
-    expect(world.driver.get(second.enrollmentId)).toMatchObject({
+    expect((await world.t.run(async (ctx) => ctx.db.get(first.enrollmentId)))?.status).toBe(
+      'unenrolled',
+    );
+    expect(await world.t.run(async (ctx) => ctx.db.get(second.enrollmentId))).toMatchObject({
       status: 'active',
       idempotencyKey: `consent:${world.ownerCred}:renew`,
       authorizedSources: [
@@ -782,16 +665,15 @@ describe('archive control plane', () => {
 
   it('replays a delayed old consent after unenroll or revoke without reactivating it', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    const memberCtx = world.driver.ctx(identity(world.member));
-    await call(activate, ownerCtx, {});
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
 
-    const ownerFirst = await call<EnrollResult>(enroll, ownerCtx, enrollInput(world.ownerCred));
-    await call(unenroll, ownerCtx, { enrollmentId: ownerFirst.enrollmentId });
-    const delayedUnenrollReplay = await call<EnrollResult>(
-      enroll,
-      ownerCtx,
+    const ownerFirst = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await owner.mutation(api.archive.unenroll, { enrollmentId: ownerFirst.enrollmentId });
+    const delayedUnenrollReplay = await owner.mutation(
+      api.archive.enroll,
       enrollInput(world.ownerCred),
     );
     expect(delayedUnenrollReplay).toEqual({
@@ -799,16 +681,20 @@ describe('archive control plane', () => {
       contributionId: ownerFirst.contributionId,
       created: false,
     });
-    expect(world.driver.get(ownerFirst.enrollmentId)?.status).toBe('unenrolled');
+    expect((await world.t.run(async (ctx) => ctx.db.get(ownerFirst.enrollmentId)))?.status).toBe(
+      'unenrolled',
+    );
     expect(
-      await call(authorizeArchiveWrite, ownerCtx, { collectorCredentialId: world.ownerCred }),
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      }),
     ).toEqual({ allowed: false, reason: 'enrollment_invalid' });
 
-    const memberFirst = await call<EnrollResult>(enroll, memberCtx, enrollInput(world.memberCred));
-    await call(revokeEnrollment, ownerCtx, { enrollmentId: memberFirst.enrollmentId });
-    const delayedRevokeReplay = await call<EnrollResult>(
-      enroll,
-      memberCtx,
+    const memberFirst = await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
+    await owner.mutation(api.archive.revokeEnrollment, { enrollmentId: memberFirst.enrollmentId });
+    const delayedRevokeReplay = await member.mutation(
+      api.archive.enroll,
       enrollInput(world.memberCred),
     );
     expect(delayedRevokeReplay).toEqual({
@@ -816,46 +702,62 @@ describe('archive control plane', () => {
       contributionId: memberFirst.contributionId,
       created: false,
     });
-    expect(world.driver.get(memberFirst.enrollmentId)?.status).toBe('revoked');
+    expect((await world.t.run(async (ctx) => ctx.db.get(memberFirst.enrollmentId)))?.status).toBe(
+      'revoked',
+    );
     expect(
-      await call(authorizeArchiveWrite, memberCtx, { collectorCredentialId: world.memberCred }),
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
+        collectorCredentialId: world.memberCred,
+        source: 'claude',
+      }),
     ).toEqual({ allowed: false, reason: 'enrollment_invalid' });
-    expect(await world.driver.query('archiveEnrollments').collect()).toHaveLength(2);
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect()),
+    ).resolves.toHaveLength(2);
   });
 
   it('fails when the same idempotency key is reused with a different consent payload', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    const first = await call<EnrollResult>(enroll, ownerCtx, enrollInput(world.ownerCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const first = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
 
     await expect(
-      call(enroll, ownerCtx, enrollInput(world.ownerCred, { authorizedSources: otherSources })),
+      owner.mutation(
+        api.archive.enroll,
+        enrollInput(world.ownerCred, { authorizedSources: otherSources }),
+      ),
     ).rejects.toThrow('does not match the original consent');
-    expect(world.driver.get(first.enrollmentId)).toMatchObject({
+    expect(await world.t.run(async (ctx) => ctx.db.get(first.enrollmentId))).toMatchObject({
       status: 'active',
       authorizedSources: [expect.objectContaining({ source: 'claude', historyChoice: 'new_only' })],
     });
 
-    await call(unenroll, ownerCtx, { enrollmentId: first.enrollmentId });
+    await owner.mutation(api.archive.unenroll, { enrollmentId: first.enrollmentId });
     await expect(
-      call(enroll, ownerCtx, enrollInput(world.ownerCred, { authorizedSources: otherSources })),
+      owner.mutation(
+        api.archive.enroll,
+        enrollInput(world.ownerCred, { authorizedSources: otherSources }),
+      ),
     ).rejects.toThrow('does not match the original consent');
-    expect(world.driver.get(first.enrollmentId)?.status).toBe('unenrolled');
-    expect(await world.driver.query('archiveEnrollments').collect()).toHaveLength(1);
+    expect((await world.t.run(async (ctx) => ctx.db.get(first.enrollmentId)))?.status).toBe(
+      'unenrolled',
+    );
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect()),
+    ).resolves.toHaveLength(1);
   });
 
   it('rejects a new consent key while the Collector is still enrolled', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    await call(enroll, ownerCtx, enrollInput(world.ownerCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
     await expect(
-      call(
-        enroll,
-        ownerCtx,
+      owner.mutation(
+        api.archive.enroll,
         enrollInput(world.ownerCred, { idempotencyKey: `consent:${world.ownerCred}:other` }),
       ),
     ).rejects.toThrow('already enrolled');
@@ -863,89 +765,269 @@ describe('archive control plane', () => {
 
   it('lets collector heartbeats change only timestamped local fields', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    await call(enroll, ownerCtx, enrollInput(world.ownerCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
 
-    await call(reportHeartbeat, ownerCtx, {
+    await owner.mutation(api.archive.reportHeartbeat, {
       collectorCredentialId: world.ownerCred,
       pendingSpoolBytes: 42,
       localError: 'spool_full',
       observedAt: 1234,
     });
-    const enrollment = (await world.driver.query('archiveEnrollments').collect())[0]!;
+    const enrollment = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect())
+    )[0]!;
     expect(enrollment.pendingSpoolBytes).toBe(42);
     expect(enrollment.localError).toBe('spool_full');
     expect(enrollment.localObservedAt).toBe(1234);
 
-    const before = world.driver.get(
-      (await world.driver.query('archiveStatuses').collect())[0]!._id,
-    );
-    await call(reportCollectorHeartbeat, ownerCtx, {
+    const before = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveStatuses').collect())
+    )[0]!;
+    await world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
       collectorCredentialId: world.ownerCred,
       pendingSpoolBytes: 7,
       observedAt: 5678,
     });
-    const after = world.driver.get(before!._id);
-    expect(after?.storedBytes).toBe(before?.storedBytes);
-    expect(after?.lifecycle).toBe(before?.lifecycle);
-    expect(after?.lastDurableAcknowledgedAt).toBe(before?.lastDurableAcknowledgedAt);
+    const after = await world.t.run(async (ctx) => ctx.db.get(before._id));
+    expect(after?.storedBytes).toBe(before.storedBytes);
+    expect(after?.lifecycle).toBe(before.lifecycle);
+    expect(after?.lastDurableAcknowledgedAt).toBe(before.lastDurableAcknowledgedAt);
+  });
+
+  it('rejects delayed heartbeat retries that reuse or regress the observation version', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await owner.mutation(api.archive.reportHeartbeat, {
+      collectorCredentialId: world.ownerCred,
+      pendingSpoolBytes: 10,
+      localError: 'spool_full',
+      observedAt: 2000,
+    });
+    await owner.mutation(api.archive.reportHeartbeat, {
+      collectorCredentialId: world.ownerCred,
+      pendingSpoolBytes: 10,
+      localError: 'spool_full',
+      observedAt: 2000,
+    });
+    await expect(
+      owner.mutation(api.archive.reportHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 99,
+        observedAt: 2000,
+      }),
+    ).rejects.toThrow('reused with a different payload');
+
+    await owner.mutation(api.archive.reportHeartbeat, {
+      collectorCredentialId: world.ownerCred,
+      pendingSpoolBytes: 20,
+      observedAt: 3000,
+    });
+    await expect(
+      owner.mutation(api.archive.reportHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 10,
+        localError: 'spool_full',
+        observedAt: 2000,
+      }),
+    ).rejects.toThrow('Stale collector heartbeat observation');
+
+    await world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+      collectorCredentialId: world.ownerCred,
+      pendingSpoolBytes: 20,
+      observedAt: 3000,
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.reportCollectorHeartbeat, {
+        collectorCredentialId: world.ownerCred,
+        pendingSpoolBytes: 1,
+        observedAt: 2500,
+      }),
+    ).rejects.toThrow('Stale collector heartbeat observation');
+
+    const enrollment = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect())
+    )[0]!;
+    expect(enrollment.pendingSpoolBytes).toBe(20);
+    expect(enrollment.localObservedAt).toBe(3000);
   });
 
   it('lets Archive API own durable acknowledgement, server bytes, and lifecycle', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    await call(enroll, ownerCtx, enrollInput(world.ownerCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const enrolled = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
 
-    await call(applyServerStatus, ownerCtx, {
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
       collectorCredentialId: world.ownerCred,
+      revision: 1,
       storedBytes: 99,
       lastDurableAcknowledgedAt: 888,
       lifecycle: 'blocked',
     });
-    await call(upsertSessionIntegrity, ownerCtx, {
+    await world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
       collectorCredentialId: world.ownerCred,
       source: 'claude',
       sourceSessionId: 'sess-1',
       errorClass: 'chain_mismatch',
     });
 
-    const status = await call<StatusResult>(getStatus, ownerCtx, {});
+    const status = await owner.query(api.archive.getStatus, {});
     expect(status.storedBytes).toBe(99);
     expect(status.lastDurableAcknowledgedAt).toBe(888);
     expect(status.lifecycle).toBe('blocked');
     expect(status.integritySessions).toEqual([
       expect.objectContaining({
+        contributionId: enrolled.contributionId,
         source: 'claude',
         sourceSessionId: 'sess-1',
         errorClass: 'chain_mismatch',
       }),
     ]);
 
-    const enrollment = (await world.driver.query('archiveEnrollments').collect())[0]!;
+    const enrollment = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveEnrollments').collect())
+    )[0]!;
     expect(enrollment.pendingSpoolBytes).toBeUndefined();
+  });
+
+  it('rejects delayed server-status retries that reuse or regress the revision', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
+      collectorCredentialId: world.ownerCred,
+      revision: 1,
+      storedBytes: 10,
+      lastDurableAcknowledgedAt: 100,
+      lifecycle: 'active',
+    });
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
+      collectorCredentialId: world.ownerCred,
+      revision: 1,
+      storedBytes: 10,
+      lastDurableAcknowledgedAt: 100,
+      lifecycle: 'active',
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatus, {
+        collectorCredentialId: world.ownerCred,
+        revision: 1,
+        storedBytes: 99,
+        lastDurableAcknowledgedAt: 100,
+        lifecycle: 'active',
+      }),
+    ).rejects.toThrow('reused with a different payload');
+
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
+      collectorCredentialId: world.ownerCred,
+      revision: 2,
+      storedBytes: 20,
+      lastDurableAcknowledgedAt: 200,
+      lifecycle: 'blocked',
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatus, {
+        collectorCredentialId: world.ownerCred,
+        revision: 1,
+        storedBytes: 10,
+        lastDurableAcknowledgedAt: 100,
+        lifecycle: 'active',
+      }),
+    ).rejects.toThrow('Stale archive server status revision');
+
+    const status = await owner.query(api.archive.getStatus, {});
+    expect(status.storedBytes).toBe(20);
+    expect(status.lastDurableAcknowledgedAt).toBe(200);
+    expect(status.lifecycle).toBe('blocked');
+  });
+
+  it('keys session integrity by contribution and never reassigns ownership on collision', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+    const ownerEnroll = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    const memberEnroll = await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
+
+    const ownerRow = await world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+      collectorCredentialId: world.ownerCred,
+      source: 'claude',
+      sourceSessionId: 'shared-session',
+      errorClass: 'owner_gap',
+    });
+    const memberRow = await world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+      collectorCredentialId: world.memberCred,
+      source: 'claude',
+      sourceSessionId: 'shared-session',
+      errorClass: 'member_gap',
+    });
+    expect(ownerRow.contributionId).toBe(ownerEnroll.contributionId);
+    expect(memberRow.contributionId).toBe(memberEnroll.contributionId);
+    expect(ownerRow.contributionId).not.toBe(memberRow.contributionId);
+
+    const ownerReplay = await world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+      collectorCredentialId: world.ownerCred,
+      source: 'claude',
+      sourceSessionId: 'shared-session',
+      errorClass: 'owner_repaired',
+    });
+    expect(ownerReplay.contributionId).toBe(ownerEnroll.contributionId);
+
+    const rows = await world.t.run(async (ctx) =>
+      ctx.db.query('archiveSessionIntegrity').collect(),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.contributionId).sort()).toEqual(
+      [ownerEnroll.contributionId, memberEnroll.contributionId].sort(),
+    );
+    expect(rows.every((row) => row.sourceSessionId === 'shared-session')).toBe(true);
+
+    const memberStatus = await member.query(api.archive.getStatus, {});
+    expect(memberStatus.integritySessions).toEqual([
+      expect.objectContaining({
+        contributionId: memberEnroll.contributionId,
+        sourceSessionId: 'shared-session',
+        errorClass: 'member_gap',
+      }),
+    ]);
+
+    const ownerStatus = await owner.query(api.archive.getStatus, {});
+    expect(ownerStatus.integritySessions).toHaveLength(2);
+    expect(ownerStatus.integritySessions.map((row) => row.contributionId).sort()).toEqual(
+      [ownerEnroll.contributionId, memberEnroll.contributionId].sort(),
+    );
   });
 
   it('does not let enrollment overwrite Archive API lifecycle or durable bytes', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    const memberCtx = world.driver.ctx(identity(world.member));
-    await call(activate, ownerCtx, {});
-    await call(enroll, ownerCtx, enrollInput(world.ownerCred));
-    await call(applyServerStatus, ownerCtx, {
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const member = asUser(world, world.member);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
       collectorCredentialId: world.ownerCred,
+      revision: 1,
       storedBytes: ARCHIVE_CAP_BYTES,
       lastDurableAcknowledgedAt: 999,
       lifecycle: 'blocked',
     });
 
-    await call(enroll, memberCtx, enrollInput(world.memberCred));
+    await member.mutation(api.archive.enroll, enrollInput(world.memberCred));
 
-    const status = await call<StatusResult>(getStatus, ownerCtx, {});
+    const status = await owner.query(api.archive.getStatus, {});
     expect(status.lifecycle).toBe('blocked');
     expect(status.storedBytes).toBe(ARCHIVE_CAP_BYTES);
     expect(status.lastDurableAcknowledgedAt).toBe(999);
@@ -954,39 +1036,62 @@ describe('archive control plane', () => {
 
   it('preserves deleting through billing sync after entitlement is regained', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    await call(enroll, ownerCtx, enrollInput(world.ownerCred));
-    await call(applyServerStatus, ownerCtx, {
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
       collectorCredentialId: world.ownerCred,
+      revision: 1,
       storedBytes: 50,
       lastDurableAcknowledgedAt: 111,
       lifecycle: 'deleting',
     });
 
-    const deniedWhileDeleting = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
-      collectorCredentialId: world.ownerCred,
-      source: 'claude',
-    });
+    const deniedWhileDeleting = await world.t.query(
+      internal.archiveInternal.authorizeArchiveWrite,
+      {
+        collectorCredentialId: world.ownerCred,
+        source: 'claude',
+      },
+    );
     expect(deniedWhileDeleting).toEqual({ allowed: false, reason: 'deleting' });
 
-    const subscription = (await world.driver.query('subscriptions').collect()).find(
-      (row) => row.orgId === world.owner.orgId,
-    )!;
-    world.driver.patch(subscription._id, { status: 'canceled' });
-    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
-    world.driver.patch(subscription._id, { status: 'active' });
-    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'canceled' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'active' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
 
-    const activation = (await world.driver.query('archiveActivations').collect())[0]!;
+    const activation = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect())
+    )[0]!;
     expect(activation.status).toBe('deleting');
-    const status = await call<StatusResult>(getStatus, ownerCtx, {});
+    const status = await owner.query(api.archive.getStatus, {});
     expect(status.lifecycle).toBe('deleting');
     expect(status.storedBytes).toBe(50);
     expect(status.lastDurableAcknowledgedAt).toBe(111);
 
-    const stillDenied = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+    const stillDenied = await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
       collectorCredentialId: world.ownerCred,
       source: 'claude',
     });
@@ -995,34 +1100,38 @@ describe('archive control plane', () => {
 
   it('repairs duplicate enrollment slots without throwing on later reads', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    const first = await call<EnrollResult>(enroll, ownerCtx, enrollInput(world.ownerCred));
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    const first = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
 
-    const extraEnrollment = world.driver.insert('archiveEnrollments', {
-      orgId: world.owner.orgId,
-      userId: world.owner._id,
-      collectorCredentialId: world.ownerCred,
-      collectorId: 'collector-owner',
-      contributionId: first.contributionId,
-      idempotencyKey: `consent:${world.ownerCred}:extra`,
-      authorizedSources: [{ source: 'codex', historyChoice: 'all_history', authorizedAt: 1 }],
-      status: 'active',
-      createdAt: Date.now(),
-    });
-    world.driver.insert('archiveEnrollmentSlots', {
-      orgId: world.owner.orgId,
-      collectorCredentialId: world.ownerCred,
-      currentEnrollmentId: extraEnrollment,
+    await world.t.run(async (ctx) => {
+      const extraEnrollment = await ctx.db.insert('archiveEnrollments', {
+        orgId: world.owner.orgId,
+        userId: world.owner._id,
+        collectorCredentialId: world.ownerCred,
+        collectorId: 'collector-owner',
+        contributionId: first.contributionId,
+        idempotencyKey: `consent:${world.ownerCred}:extra`,
+        authorizedSources: [{ source: 'codex', historyChoice: 'all_history', authorizedAt: 1 }],
+        status: 'active',
+        createdAt: Date.now(),
+      });
+      await ctx.db.insert('archiveEnrollmentSlots', {
+        orgId: world.owner.orgId,
+        collectorCredentialId: world.ownerCred,
+        currentEnrollmentId: extraEnrollment,
+      });
     });
 
-    const replay = await call<EnrollResult>(enroll, ownerCtx, enrollInput(world.ownerCred));
+    const replay = await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
     expect(replay.enrollmentId).toBe(first.enrollmentId);
     expect(replay.created).toBe(false);
-    await expect(world.driver.query('archiveEnrollmentSlots').collect()).resolves.toHaveLength(1);
+    await expect(
+      world.t.run(async (ctx) => ctx.db.query('archiveEnrollmentSlots').collect()),
+    ).resolves.toHaveLength(1);
 
-    const allowed = await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+    const allowed = await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
       collectorCredentialId: world.ownerCred,
       source: 'claude',
     });
@@ -1031,37 +1140,52 @@ describe('archive control plane', () => {
 
   it('keeps deleting terminal when entitlement syncs again', async () => {
     enableArchive();
-    const world = seedWorld();
-    const ownerCtx = world.driver.ctx(identity(world.owner));
-    await call(activate, ownerCtx, {});
-    await call(enroll, ownerCtx, enrollInput(world.ownerCred));
-    await call(applyServerStatus, ownerCtx, {
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await owner.mutation(api.archive.enroll, enrollInput(world.ownerCred));
+    await world.t.mutation(internal.archiveInternal.applyServerStatus, {
       collectorCredentialId: world.ownerCred,
+      revision: 1,
       lifecycle: 'deleting',
     });
 
-    const activation = (await world.driver.query('archiveActivations').collect())[0]!;
+    const activation = (
+      await world.t.run(async (ctx) => ctx.db.query('archiveActivations').collect())
+    )[0]!;
     expect(activation.status).toBe('deleting');
     expect(
-      await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
         collectorCredentialId: world.ownerCred,
+        source: 'claude',
       }),
     ).toEqual({ allowed: false, reason: 'deleting' });
 
-    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
-    expect(world.driver.get(activation._id)?.status).toBe('deleting');
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    expect((await world.t.run(async (ctx) => ctx.db.get(activation._id)))?.status).toBe('deleting');
     expect(
-      await call<WriteDecision>(authorizeArchiveWrite, ownerCtx, {
+      await world.t.query(internal.archiveInternal.authorizeArchiveWrite, {
         collectorCredentialId: world.ownerCred,
+        source: 'claude',
       }),
     ).toEqual({ allowed: false, reason: 'deleting' });
 
-    const subscription = (await world.driver.query('subscriptions').collect()).find(
-      (row) => row.orgId === world.owner.orgId,
-    )!;
-    world.driver.patch(subscription._id, { status: 'canceled' });
-    await call(syncLifecycleForOrg, ownerCtx, { orgId: world.owner.orgId });
-    expect(world.driver.get(activation._id)?.status).toBe('deleting');
-    expect(world.driver.get(activation._id)?.graceDeadlineAt).toBeUndefined();
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'canceled' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    const stillDeleting = await world.t.run(async (ctx) => ctx.db.get(activation._id));
+    expect(stillDeleting?.status).toBe('deleting');
+    expect(stillDeleting?.graceDeadlineAt).toBeUndefined();
   });
 });

@@ -163,7 +163,7 @@ export function decideWriteAuthorization(input: {
     status: ArchiveEnrollmentStatus;
     authorizedSources: { source: string }[];
   } | null;
-  source?: string;
+  source: string;
 }): { allowed: true } | { allowed: false; reason: ArchiveWriteDenialReason } {
   if (!input.serverEnabled) return { allowed: false, reason: 'server_disabled' };
   if (!input.activation) return { allowed: false, reason: 'not_activated' };
@@ -175,10 +175,91 @@ export function decideWriteAuthorization(input: {
   }
   if (!input.enrollment) return { allowed: false, reason: 'not_enrolled' };
   if (input.enrollment.status !== 'active') return { allowed: false, reason: 'enrollment_invalid' };
-  if (input.source && !enrollmentAllowsSource(input.enrollment, input.source)) {
+  if (!enrollmentAllowsSource(input.enrollment, input.source)) {
     return { allowed: false, reason: 'source_unauthorized' };
   }
   return { allowed: true };
+}
+
+export type VersionedUpdateDecision = 'apply' | 'replay' | 'stale' | 'conflict';
+
+export function decideVersionedUpdate(input: {
+  storedVersion: number | undefined;
+  incomingVersion: number;
+  payloadEquals: boolean;
+}): VersionedUpdateDecision {
+  if (input.storedVersion === undefined) return 'apply';
+  if (input.incomingVersion < input.storedVersion) return 'stale';
+  if (input.incomingVersion > input.storedVersion) return 'apply';
+  return input.payloadEquals ? 'replay' : 'conflict';
+}
+
+export function assertVersionedUpdate(
+  decision: VersionedUpdateDecision,
+  kind: 'server_status' | 'heartbeat',
+): void {
+  if (decision === 'stale') {
+    throw new Error(
+      kind === 'server_status'
+        ? 'Stale archive server status revision'
+        : 'Stale collector heartbeat observation',
+    );
+  }
+  if (decision === 'conflict') {
+    throw new Error(
+      kind === 'server_status'
+        ? 'Archive server status revision was reused with a different payload'
+        : 'Collector heartbeat observation was reused with a different payload',
+    );
+  }
+}
+
+export function heartbeatPayloadEquals(
+  stored: { pendingSpoolBytes?: number; localError?: string },
+  incoming: { pendingSpoolBytes: number; localError?: string },
+): boolean {
+  return (
+    stored.pendingSpoolBytes === incoming.pendingSpoolBytes &&
+    (stored.localError ?? undefined) === (incoming.localError ?? undefined)
+  );
+}
+
+export function serverStatusPayloadEquals(
+  stored: {
+    storedBytes: number;
+    lastDurableAcknowledgedAt?: number;
+    lifecycle: string;
+  },
+  incoming: {
+    storedBytes: number;
+    lastDurableAcknowledgedAt?: number;
+    lifecycle: string;
+  },
+): boolean {
+  return (
+    stored.storedBytes === incoming.storedBytes &&
+    stored.lastDurableAcknowledgedAt === incoming.lastDurableAcknowledgedAt &&
+    stored.lifecycle === incoming.lifecycle
+  );
+}
+
+export async function applyCollectorHeartbeat(
+  ctx: MutationCtx,
+  enrollment: Doc<'archiveEnrollments'>,
+  args: { pendingSpoolBytes: number; localError?: string; observedAt: number },
+): Promise<void> {
+  const decision = decideVersionedUpdate({
+    storedVersion: enrollment.localObservedAt,
+    incomingVersion: args.observedAt,
+    payloadEquals: heartbeatPayloadEquals(enrollment, args),
+  });
+  if (decision === 'replay') return;
+  assertVersionedUpdate(decision, 'heartbeat');
+  await ctx.db.patch(enrollment._id, {
+    pendingSpoolBytes: args.pendingSpoolBytes,
+    localError: args.localError,
+    localObservedAt: args.observedAt,
+  });
 }
 
 export function projectLifecycle(input: {
@@ -468,6 +549,7 @@ export async function ensureArchiveStatusRow(
     enrolledContributorCount: counts.enrolledContributorCount,
     enrolledCollectorCount: counts.enrolledCollectorCount,
     graceDeadlineAt: args.graceDeadlineAt ?? undefined,
+    serverRevision: 0,
     updatedAt: args.now,
   });
 }

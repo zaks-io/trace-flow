@@ -13,6 +13,7 @@ import {
 } from './validators';
 import {
   ARCHIVE_CAP_BYTES,
+  applyCollectorHeartbeat,
   claimArchiveActivation,
   claimContributionForUser,
   claimEnrollmentByIdempotencyKey,
@@ -374,11 +375,7 @@ export const reportHeartbeat = mutation({
       throw new Error('Enrollment is not active');
     }
 
-    await ctx.db.patch(enrollment._id, {
-      pendingSpoolBytes: args.pendingSpoolBytes,
-      localError: args.localError,
-      localObservedAt: args.observedAt,
-    });
+    await applyCollectorHeartbeat(ctx, enrollment, args);
     return null;
   },
 });
@@ -483,6 +480,7 @@ export const getStatus = query({
       graceDeadlineAt: activation?.graceDeadlineAt ?? status?.graceDeadlineAt ?? null,
       contributions: projectedContributions,
       integritySessions: integrityRows.map((row) => ({
+        contributionId: row.contributionId,
         source: row.source,
         sourceSessionId: row.sourceSessionId,
         errorClass: row.errorClass,

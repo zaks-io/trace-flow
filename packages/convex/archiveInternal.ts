@@ -8,6 +8,9 @@ import {
 } from './validators';
 import {
   ARCHIVE_CAP_BYTES,
+  applyCollectorHeartbeat,
+  assertVersionedUpdate,
+  decideVersionedUpdate,
   decideWriteAuthorization,
   ensureArchiveStatusRow,
   getArchiveActivation,
@@ -16,14 +19,16 @@ import {
   invalidateArchiveEnrollmentsForUser,
   isActiveProSubscription,
   isArchiveServerEnabled,
+  pickOldestDocument,
   projectLifecycle,
+  serverStatusPayloadEquals,
   syncArchiveLifecycleForEntitlement,
 } from './archiveLib';
 
 export const authorizeArchiveWrite = internalQuery({
   args: {
     collectorCredentialId: v.id('collectorCredentials'),
-    source: v.optional(archiveSupportedSourceValidator),
+    source: archiveSupportedSourceValidator,
   },
   returns: v.union(
     v.object({
@@ -81,6 +86,7 @@ export const authorizeArchiveWrite = internalQuery({
 export const applyServerStatus = internalMutation({
   args: {
     collectorCredentialId: v.id('collectorCredentials'),
+    revision: v.number(),
     storedBytes: v.optional(v.number()),
     lastDurableAcknowledgedAt: v.optional(v.number()),
     lifecycle: v.optional(archiveLifecycleValidator),
@@ -96,6 +102,8 @@ export const applyServerStatus = internalMutation({
     const now = Date.now();
     const existing = await getArchiveStatusRow(ctx, credential.orgId);
     const storedBytes = args.storedBytes ?? existing?.storedBytes ?? 0;
+    const lastDurableAcknowledgedAt =
+      args.lastDurableAcknowledgedAt ?? existing?.lastDurableAcknowledgedAt;
     const lifecycle =
       args.lifecycle ??
       projectLifecycle({
@@ -103,15 +111,23 @@ export const applyServerStatus = internalMutation({
         storedBytes,
         capBytes: activation.capBytes,
       });
+    const incoming = { storedBytes, lastDurableAcknowledgedAt, lifecycle };
+    const decision = decideVersionedUpdate({
+      storedVersion: existing?.serverRevision,
+      incomingVersion: args.revision,
+      payloadEquals: existing ? serverStatusPayloadEquals(existing, incoming) : false,
+    });
+    if (decision === 'replay') return null;
+    assertVersionedUpdate(decision, 'server_status');
 
     if (existing) {
       await ctx.db.patch(existing._id, {
         storedBytes,
-        lastDurableAcknowledgedAt:
-          args.lastDurableAcknowledgedAt ?? existing.lastDurableAcknowledgedAt,
+        lastDurableAcknowledgedAt,
         lifecycle,
         capBytes: activation.capBytes,
         graceDeadlineAt: activation.graceDeadlineAt,
+        serverRevision: args.revision,
         updatedAt: now,
       });
     } else {
@@ -123,14 +139,12 @@ export const applyServerStatus = internalMutation({
         now,
       });
       const created = await getArchiveStatusRow(ctx, credential.orgId);
-      if (
-        created &&
-        (args.storedBytes !== undefined || args.lastDurableAcknowledgedAt !== undefined)
-      ) {
+      if (created) {
         await ctx.db.patch(created._id, {
           storedBytes,
-          lastDurableAcknowledgedAt: args.lastDurableAcknowledgedAt,
+          lastDurableAcknowledgedAt,
           lifecycle,
+          serverRevision: args.revision,
           updatedAt: now,
         });
       }
@@ -164,11 +178,7 @@ export const reportCollectorHeartbeat = internalMutation({
       throw new Error('Enrollment is not active');
     }
 
-    await ctx.db.patch(enrollment._id, {
-      pendingSpoolBytes: args.pendingSpoolBytes,
-      localError: args.localError,
-      localObservedAt: args.observedAt,
-    });
+    await applyCollectorHeartbeat(ctx, enrollment, args);
     return null;
   },
 });
@@ -190,24 +200,26 @@ export const upsertSessionIntegrity = internalMutation({
     if (!enrollment) throw new Error('Enrollment not found');
 
     const now = Date.now();
-    const existing = await ctx.db
+    const existingRows = await ctx.db
       .query('archiveSessionIntegrity')
-      .withIndex('by_org_session', (q) =>
+      .withIndex('by_org_contribution_session', (q) =>
         q
           .eq('orgId', credential.orgId)
+          .eq('contributionId', enrollment.contributionId)
           .eq('source', args.source)
           .eq('sourceSessionId', args.sourceSessionId),
       )
-      .unique();
+      .collect();
+    const existing = pickOldestDocument(existingRows);
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        contributionId: enrollment.contributionId,
         errorClass: args.errorClass,
         repairOutcome: args.repairOutcome,
         updatedAt: now,
       });
       return {
+        contributionId: existing.contributionId,
         source: args.source,
         sourceSessionId: args.sourceSessionId,
         errorClass: args.errorClass,
@@ -226,6 +238,7 @@ export const upsertSessionIntegrity = internalMutation({
       updatedAt: now,
     });
     return {
+      contributionId: enrollment.contributionId,
       source: args.source,
       sourceSessionId: args.sourceSessionId,
       errorClass: args.errorClass,

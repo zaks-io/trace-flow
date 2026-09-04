@@ -646,7 +646,10 @@ export declare const api: {
         createdAt: number;
         idempotencyKey: string;
         invalidatedAt?: number;
-        invalidationReason?: "user_unenrolled" | "owner_revoked" | "member_removed";
+        invalidationReason?:
+          | "user_unenrolled"
+          | "owner_revoked"
+          | "member_removed";
         localError?: string;
         localObservedAt?: number;
         orgId: Id<"organizations">;
@@ -701,6 +704,7 @@ export declare const api: {
         enrolledContributorCount: number;
         graceDeadlineAt: number | null;
         integritySessions: Array<{
+          contributionId: Id<"archiveContributions">;
           errorClass?: string;
           repairOutcome?: string;
           source: "claude" | "codex";
@@ -1953,7 +1957,13 @@ export declare const internal: {
       {
         collectorCredentialId: Id<"collectorCredentials">;
         lastDurableAcknowledgedAt?: number;
-        lifecycle?: "not_enabled" | "active" | "blocked" | "frozen" | "deleting";
+        lifecycle?:
+          | "not_enabled"
+          | "active"
+          | "blocked"
+          | "frozen"
+          | "deleting";
+        revision: number;
         storedBytes?: number;
       },
       null
@@ -1963,7 +1973,7 @@ export declare const internal: {
       "internal",
       {
         collectorCredentialId: Id<"collectorCredentials">;
-        source?: "claude" | "codex";
+        source: "claude" | "codex";
       },
       | {
           allowed: true;
@@ -2029,6 +2039,7 @@ export declare const internal: {
         sourceSessionId: string;
       },
       {
+        contributionId: Id<"archiveContributions">;
         errorClass?: string;
         repairOutcome?: string;
         source: "claude" | "codex";

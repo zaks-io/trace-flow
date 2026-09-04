@@ -411,29 +411,6 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
-  archiveEnrollmentSlots: {
-    document: {
-      collectorCredentialId: Id<"collectorCredentials">;
-      currentEnrollmentId: Id<"archiveEnrollments">;
-      orgId: Id<"organizations">;
-      _id: Id<"archiveEnrollmentSlots">;
-      _creationTime: number;
-    };
-    fieldPaths:
-      | "_creationTime"
-      | "_id"
-      | "collectorCredentialId"
-      | "currentEnrollmentId"
-      | "orgId";
-    indexes: {
-      by_id: ["_id"];
-      by_creation_time: ["_creationTime"];
-      by_org_collector: ["orgId", "collectorCredentialId", "_creationTime"];
-      by_org_id: ["orgId", "_creationTime"];
-    };
-    searchIndexes: {};
-    vectorIndexes: {};
-  };
   archiveEnrollments: {
     document: {
       authorizedSources: Array<{
@@ -447,7 +424,10 @@ export type DataModel = {
       createdAt: number;
       idempotencyKey: string;
       invalidatedAt?: number;
-      invalidationReason?: "user_unenrolled" | "owner_revoked" | "member_removed";
+      invalidationReason?:
+        | "user_unenrolled"
+        | "owner_revoked"
+        | "member_removed";
       localError?: string;
       localObservedAt?: number;
       orgId: Id<"organizations">;
@@ -461,9 +441,6 @@ export type DataModel = {
       | "_creationTime"
       | "_id"
       | "authorizedSources"
-      | "authorizedSources.authorizedAt"
-      | "authorizedSources.historyChoice"
-      | "authorizedSources.source"
       | "collectorCredentialId"
       | "collectorId"
       | "contributionId"
@@ -486,6 +463,29 @@ export type DataModel = {
       by_org_id: ["orgId", "_creationTime"];
       by_org_idempotency_key: ["orgId", "idempotencyKey", "_creationTime"];
       by_user_id: ["userId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
+  archiveEnrollmentSlots: {
+    document: {
+      collectorCredentialId: Id<"collectorCredentials">;
+      currentEnrollmentId: Id<"archiveEnrollments">;
+      orgId: Id<"organizations">;
+      _id: Id<"archiveEnrollmentSlots">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "collectorCredentialId"
+      | "currentEnrollmentId"
+      | "orgId";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_collector: ["orgId", "collectorCredentialId", "_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
     };
     searchIndexes: {};
     vectorIndexes: {};
@@ -516,8 +516,14 @@ export type DataModel = {
       by_id: ["_id"];
       by_creation_time: ["_creationTime"];
       by_contribution: ["contributionId", "_creationTime"];
+      by_org_contribution_session: [
+        "orgId",
+        "contributionId",
+        "source",
+        "sourceSessionId",
+        "_creationTime",
+      ];
       by_org_id: ["orgId", "_creationTime"];
-      by_org_session: ["orgId", "source", "sourceSessionId", "_creationTime"];
     };
     searchIndexes: {};
     vectorIndexes: {};
@@ -531,6 +537,7 @@ export type DataModel = {
       lastDurableAcknowledgedAt?: number;
       lifecycle: "not_enabled" | "active" | "blocked" | "frozen" | "deleting";
       orgId: Id<"organizations">;
+      serverRevision: number;
       storedBytes: number;
       updatedAt: number;
       _id: Id<"archiveStatuses">;
@@ -546,6 +553,7 @@ export type DataModel = {
       | "lastDurableAcknowledgedAt"
       | "lifecycle"
       | "orgId"
+      | "serverRevision"
       | "storedBytes"
       | "updatedAt";
     indexes: {

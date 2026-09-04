@@ -330,6 +330,7 @@ export const archiveStatusContributionValidator = v.object({
 });
 
 export const archiveSessionIntegrityValidator = v.object({
+  contributionId: v.id('archiveContributions'),
   source: archiveSupportedSourceValidator,
   sourceSessionId: v.string(),
   errorClass: v.optional(v.string()),

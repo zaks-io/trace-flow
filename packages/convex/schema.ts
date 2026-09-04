@@ -564,10 +564,12 @@ export default defineSchema({
     enrolledContributorCount: v.number(),
     enrolledCollectorCount: v.number(),
     graceDeadlineAt: v.optional(v.number()),
+    serverRevision: v.number(),
     updatedAt: v.number(),
   }).index('by_org_id', ['orgId']),
 
-  // Server-authoritative integrity state per affected Agent Session. No transcript content.
+  // Server-authoritative integrity state per contribution + Source session.
+  // Contribution ownership is part of identity and is never reassigned.
   archiveSessionIntegrity: defineTable({
     orgId: v.id('organizations'),
     contributionId: v.id('archiveContributions'),
@@ -579,5 +581,5 @@ export default defineSchema({
   })
     .index('by_org_id', ['orgId'])
     .index('by_contribution', ['contributionId'])
-    .index('by_org_session', ['orgId', 'source', 'sourceSessionId']),
+    .index('by_org_contribution_session', ['orgId', 'contributionId', 'source', 'sourceSessionId']),
 });
