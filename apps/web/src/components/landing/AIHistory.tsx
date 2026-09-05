@@ -6,25 +6,25 @@ export function AIHistory() {
       <div className="mx-auto max-w-7xl px-5 sm:px-8">
         <div className="mb-12 max-w-3xl">
           <div className="mb-4 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-            Why keep the data?
+            Today and next
           </div>
           <h2 className="text-balance text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-            Your AI work is worth learning from.
+            Analytics today. Conversations next.
           </h2>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
-            A session ends, but the questions remain. Why did it cost so much? Where did the agent
-            get stuck? Did a model change help? Trace Flow starts by collecting the history you need
-            to investigate.
+            Today, Trace Flow keeps analytics from coding sessions and model calls so you can
+            investigate costs and performance over time. Full coding-agent conversation storage and
+            search are still in development.
           </p>
         </div>
 
         <div className="grid gap-5 lg:grid-cols-2">
           <article className="rounded-xl border border-border bg-background p-6 sm:p-8">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-              In the alpha
+              Available today
             </div>
             <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-              A history beyond the current session
+              Cost and performance history
             </h3>
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
               Keep cost and usage trends you can revisit as your tools and habits change. Monthly
@@ -32,8 +32,8 @@ export function AIHistory() {
               Individual model traces have shorter, plan-based access windows.
             </p>
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              Search and filter analytics in the dashboard, or query them through MCP to bring that
-              history into your own investigations.
+              Filter analytics in the dashboard or query them through MCP. Coding-session capture
+              includes redacted excerpts for investigation; it does not upload full transcripts.
             </p>
             <Link
               href="/privacy"
@@ -43,7 +43,7 @@ export function AIHistory() {
             </Link>
           </article>
 
-          <article className="rounded-xl border border-primary/25 bg-primary/4 p-6 sm:p-8">
+          <article className="rounded-xl border border-border bg-background p-6 sm:p-8">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
               In development
             </div>
@@ -56,23 +56,23 @@ export function AIHistory() {
               return to it for deeper analysis and future training datasets.
             </p>
             <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              Full conversation archiving and search are not available in the alpha yet.
+              Full conversation archiving and search are not available yet.
             </p>
           </article>
         </div>
 
         <div className="mt-12 max-w-3xl">
           <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-primary">
-            Planned research
+            Planned
           </div>
           <h3 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-            Trace Flow Analyst
+            Analyze archived conversations
           </h3>
           <p className="mt-4 text-sm leading-6 text-muted-foreground">
-            Next, we want to search across captured conversations and analyze where agents get
-            stuck, repeat failed approaches, or waste time and tokens. Trace Flow Analyst is
-            planned, not built. Longer term, we want to explore how this record can support
-            fine-tuning and alignment research into how agents behave across many conversations.
+            Trace Flow Analyst lets you ask questions about the analytics you collect today. We plan
+            to extend it to archived conversations to investigate repeated failures and wasted time
+            or tokens. That archive-based analysis is not available yet. Longer term, we want to
+            explore how opt-in archives could support fine-tuning and alignment research.
           </p>
         </div>
       </div>

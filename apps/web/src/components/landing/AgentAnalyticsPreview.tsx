@@ -18,7 +18,7 @@ export function AgentAnalyticsPreview() {
           </span>
         </div>
         <span className="rounded border border-primary/25 bg-primary/8 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-primary">
-          Illustrative alpha data
+          Illustrative data
         </span>
       </div>
 
