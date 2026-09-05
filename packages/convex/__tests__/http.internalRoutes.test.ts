@@ -491,4 +491,54 @@ describe('convex/http.ts internal routes', () => {
       });
     });
   });
+
+  describe('POST /archive-api/key', () => {
+    beforeEach(() => {
+      vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');
+    });
+
+    it('returns the requested wrapped organization key version', async () => {
+      ctx.runQuery.mockResolvedValueOnce({ keyVersion: 7, wrappedKey: 'wrapped-test-value' });
+      const app = createApp(deps);
+
+      const res = await app.request(
+        'http://localhost/archive-api/key',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer archive-secret',
+          },
+          body: JSON.stringify({ orgId: 'k57axc8sefsfp6k28nx6c481js806pwv', keyVersion: 7 }),
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        keyVersion: 7,
+        wrappedKey: 'wrapped-test-value',
+      });
+      expect(ctx.runQuery).toHaveBeenCalledOnce();
+      expect(ctx.runQuery.mock.calls[0]?.[1]).toEqual({
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+        keyVersion: 7,
+      });
+    });
+
+    it('rejects requests without the Archive API shared secret before the key query', async () => {
+      const app = createApp(deps);
+
+      const res = await app.request(
+        'http://localhost/archive-api/key',
+        {
+          method: 'POST',
+          body: JSON.stringify({ orgId: 'k57axc8sefsfp6k28nx6c481js806pwv', keyVersion: 7 }),
+        },
+        ctx,
+      );
+
+      expect(res.status).toBe(401);
+      expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+  });
 });

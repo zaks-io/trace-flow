@@ -11,6 +11,7 @@ import type { HttpDeps } from './httpRoutes/deps';
 import { registerAgentIngestRoutes } from './httpRoutes/agentIngest';
 import { registerArchiveAuditRoutes } from './httpRoutes/archiveAudit';
 import { registerArchiveAuthorizeRoutes } from './httpRoutes/archiveAuthorize';
+import { registerArchiveKeyRoutes } from './httpRoutes/archiveKey';
 import { registerCollectorAuthorizeRoutes } from './httpRoutes/collectorAuthorize';
 import { registerMcpAuthorizeRoutes } from './httpRoutes/mcpAuthorize';
 import { registerMcpBackendRoutes } from './httpRoutes/mcpBackend';
@@ -47,6 +48,7 @@ export function createApp(
   registerAgentIngestRoutes(app);
   registerArchiveAuthorizeRoutes(app);
   registerArchiveAuditRoutes(app);
+  registerArchiveKeyRoutes(app);
   registerMcpBackendRoutes(app);
   registerCollectorAuthorizeRoutes(app, deps);
 

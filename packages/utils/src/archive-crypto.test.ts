@@ -22,6 +22,7 @@ const TRAILING_MALFORMED_OBJECT_KEY = 'archive/chunk-\uD800';
 const TRAILING_REPLACEMENT_OBJECT_KEY = 'archive/chunk-\uFFFD';
 const PAIRED_SURROGATE_ORG_ID = 'org_\uD83D\uDE00';
 const PAIRED_SURROGATE_OBJECT_KEY = 'archive/chunk-\uD83D\uDE00';
+const MAX_ARCHIVE_CHUNK_BYTES = 1_572_864;
 const PLAINTEXT = new TextEncoder().encode('{"records":[{"content":"private archive"}]}');
 
 type ArchiveMetadataPatch = Partial<
@@ -33,7 +34,9 @@ function fixedBytes(start: number, length: number): Uint8Array {
 }
 
 function base64Bytes(length: number): string {
-  return btoa(String.fromCharCode(...new Uint8Array(length)));
+  const chars = new Array<string>(length);
+  for (let index = 0; index < length; index++) chars[index] = String.fromCharCode(0);
+  return btoa(chars.join(''));
 }
 
 function mockRandomValues(...values: Uint8Array[]) {
@@ -121,6 +124,30 @@ describe('Conversation Archive cryptography', () => {
     ).resolves.toEqual(PLAINTEXT);
     await expect(crypto.subtle.exportKey('raw', key)).rejects.toThrow();
   });
+
+  it('round-trips a maximum-size binary archive object', async () => {
+    const { key } = await makeKeyFixture();
+    const plaintext = new Uint8Array(MAX_ARCHIVE_CHUNK_BYTES);
+    for (let index = 0; index < plaintext.length; index++) plaintext[index] = index & 0xff;
+    mockRandomValues(fixedBytes(201, 12));
+    const envelope = await encryptArchiveObject(plaintext, {
+      key,
+      orgId: ORG_ID,
+      objectKey: OBJECT_KEY,
+      objectClass: 'chunk',
+      keyVersion: 7,
+    });
+
+    await expect(
+      decryptArchiveObject(envelope, {
+        key,
+        orgId: ORG_ID,
+        objectKey: OBJECT_KEY,
+        objectClass: 'chunk',
+        keyVersion: 7,
+      }),
+    ).resolves.toEqual(plaintext);
+  }, 15_000);
 
   it.each([47, 49])(
     'rejects a canonical wrapped-key record with %s ciphertext bytes',

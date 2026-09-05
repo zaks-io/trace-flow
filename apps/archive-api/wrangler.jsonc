@@ -1,7 +1,6 @@
 {
-  // Conversation Archive data-plane Worker. This slice owns the authorization
-  // boundary only — no R2 writes, encryption, queues, or production enablement.
-  // Default deploys stay off the production origin until an explicit enablement ticket.
+  // Conversation Archive data-plane Worker. The development binding is used by
+  // Worker-runtime contract tests; production resources remain a separate ticket.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trace-flow-archive-api-dev",
   "main": "src/index.ts",
@@ -23,14 +22,26 @@
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "vars": {
     "SENTRY_ENVIRONMENT": "development",
+    "ARCHIVE_KEY_VERSION": "1",
     // Server availability stays disabled in Convex (`CONVERSATION_ARCHIVE_ENABLED`).
     // Do not bind proxy Body Object, Tinybird, or agent-queue secrets here.
   },
   // CONVEX_SITE_URL is injected by deploy workflows from the Convex deployment output.
-  // Secrets (set via `wrangler secret` / CI, never committed):
-  //   ARCHIVE_API_SHARED_SECRET, SENTRY_DSN
+  // Secrets (set via `wrangler secret` / CI, never committed): ARCHIVE_API_SHARED_SECRET,
+  // ARCHIVE_KEY_WRAPPING_SECRET, SENTRY_DSN.
   // This slice does not ship a production env or deploy script.
   // Same Collector Credential namespace Agent Ingest uses. Archive API never binds
   // the proxy storage bucket, BODY_ENCRYPTION_ROOT_KEY, or Tinybird credentials.
   "kv_namespaces": [{ "binding": "COLLECTOR_CREDS", "id": "f945ee3d71954ffabd364e3db385d3ab" }],
+  "r2_buckets": [
+    {
+      "binding": "ARCHIVE_STORAGE",
+      "bucket_name": "trace-flow-agent-archive-dev",
+      "jurisdiction": "us",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ARCHIVE_SESSION_LEDGER", "class_name": "ArchiveSessionLedger" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ArchiveSessionLedger"] }],
 }

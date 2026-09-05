@@ -19,7 +19,7 @@ function contractBindingNames(): string[] {
 describe('Archive API bindings', () => {
   it('does not bind Body Object, Tinybird, proxy-bucket, or agent-queue secrets', () => {
     const names = contractBindingNames();
-    expect(names).toEqual(['COLLECTOR_CREDS']);
+    expect(names).toEqual(['COLLECTOR_CREDS', 'ARCHIVE_STORAGE']);
     expect(ARCHIVE_API_WRANGLER_CONTRACT.kv_namespaces).toEqual([
       { binding: 'COLLECTOR_CREDS', id: 'f945ee3d71954ffabd364e3db385d3ab' },
     ]);
@@ -29,9 +29,18 @@ describe('Archive API bindings', () => {
       expect(env[forbidden]).toBeUndefined();
     }
     expect(env.COLLECTOR_CREDS).toBeDefined();
-    expect(env.STORAGE).toBeUndefined();
+    expect(env.ARCHIVE_STORAGE).toBeDefined();
     expect(env.AGENT_QUEUE).toBeUndefined();
-    expect(ARCHIVE_API_WRANGLER_CONTRACT.r2_buckets).toBeUndefined();
+    expect(ARCHIVE_API_WRANGLER_CONTRACT.r2_buckets).toEqual([
+      {
+        binding: 'ARCHIVE_STORAGE',
+        bucket_name: 'trace-flow-agent-archive-dev',
+        jurisdiction: 'us',
+      },
+    ]);
+    expect(ARCHIVE_API_WRANGLER_CONTRACT.durable_objects).toEqual([
+      { binding: 'ARCHIVE_SESSION_LEDGER', class_name: 'ArchiveSessionLedger' },
+    ]);
     expect(ARCHIVE_API_WRANGLER_CONTRACT.queues).toBeUndefined();
   });
 

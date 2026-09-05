@@ -5,6 +5,7 @@ use crate::types::{ArchiveObservation, Sha256Digest};
 
 const RECORD_DOMAIN: &[u8] = b"trace-flow/archive/record-chain/v1";
 const CHECKPOINT_DOMAIN: &[u8] = b"trace-flow/archive/checkpoint-chain/v1";
+pub const PREFIX_CHAIN_DOMAIN: &[u8] = b"trace-flow/archive/source-prefix-chain/v1";
 
 pub fn hash_framed(domain: &[u8], fields: &[&[u8]]) -> Sha256Digest {
     let mut frame = Vec::new();
@@ -98,8 +99,26 @@ pub fn checkpoint_chain_hash(
             &offset,
             &observed_size,
             inner.complete_prefix_sha256.as_bytes(),
+            inner.prefix_chain_sha256.as_bytes(),
             &first_observed_at,
             &sequence,
+        ],
+    )
+}
+
+pub fn source_prefix_chain_hash(
+    previous: Option<Sha256Digest>,
+    appended_bytes: &[u8],
+) -> Sha256Digest {
+    let length = u64_bytes(appended_bytes.len() as u64);
+    hash_framed(
+        PREFIX_CHAIN_DOMAIN,
+        &[
+            previous
+                .unwrap_or(crate::types::GENESIS_CHAIN_HASH)
+                .as_bytes(),
+            &length,
+            appended_bytes,
         ],
     )
 }

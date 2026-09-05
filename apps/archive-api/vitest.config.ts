@@ -7,6 +7,9 @@ export default defineConfig({
       wrangler: { configPath: './wrangler.jsonc' },
       miniflare: {
         compatibilityFlags: ['nodejs_compat'],
+        bindings: {
+          ARCHIVE_KEY_WRAPPING_SECRET: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
+        },
       },
     }),
   ],

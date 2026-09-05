@@ -1,0 +1,164 @@
+{
+  "initial": {
+    "source_session_id": "session-1",
+    "observations": [
+      {
+        "archive_format_version": 1,
+        "chain_hash_version": 1,
+        "source": "claude",
+        "source_session_id": "session-1",
+        "source_transcript_part_id": "claude:part:parent",
+        "source_record_identity": "claude:part:parent:claude:id:r1:0",
+        "observed_at": 10,
+        "payload_encoding": "utf8",
+        "payload": "{\"uuid\":\"r1\"}",
+        "content_sha256": "sha256:85c231207183082f7fdb921fd27c03398ed633b1a44cfa92530813d23f42bdec"
+      }
+    ],
+    "checkpoint": {
+      "archive_format_version": 1,
+      "chain_hash_version": 1,
+      "source": "claude",
+      "source_session_id": "session-1",
+      "source_transcript_part_id": "claude:part:parent",
+      "record_count": 1,
+      "last_source_record_identity": "claude:part:parent:claude:id:r1:0",
+      "last_complete_byte_offset": 17,
+      "observed_file_size": 29,
+      "complete_prefix_sha256": "sha256:776d5d74b7fc26d724c4693a57a9df65680d16a33e3e41fec823b6a18ed7f0ae",
+      "prefix_chain_sha256": "sha256:33a572d559ccfb03aca4e484933de6a032c89eedcabbf924e53119415bb5de53",
+      "first_observed_at": 10
+    },
+    "complete_prefix_base64": "CiAKeyJ1dWlkIjoicjEifQo="
+  },
+  "eof": {
+    "source_session_id": "session-1",
+    "observations": [
+      {
+        "archive_format_version": 1,
+        "chain_hash_version": 1,
+        "source": "claude",
+        "source_session_id": "session-1",
+        "source_transcript_part_id": "claude:part:parent",
+        "source_record_identity": "claude:part:parent:claude:id:r2:0",
+        "observed_at": 11,
+        "payload_encoding": "utf8",
+        "payload": "{\"uuid\":\"r2\"}",
+        "content_sha256": "sha256:9ccd447af5a3674e310d53fe19476660931b9db3dc8fcc0f8099a97f62fa8891"
+      }
+    ],
+    "checkpoint": {
+      "archive_format_version": 1,
+      "chain_hash_version": 1,
+      "source": "claude",
+      "source_session_id": "session-1",
+      "source_transcript_part_id": "claude:part:parent",
+      "record_count": 2,
+      "last_source_record_identity": "claude:part:parent:claude:id:r2:0",
+      "last_complete_byte_offset": 31,
+      "observed_file_size": 31,
+      "complete_prefix_sha256": "sha256:4e8d45b1a89ee874b896a26967f656807d9b797b7bc8031351e7bd86bf7f9adf",
+      "prefix_chain_sha256": "sha256:6af89f29817d0a555fc0ed749ccf3f14478db0326ee4ccc4a6d646d91cca8557",
+      "first_observed_at": 10
+    },
+    "prior_checkpoint": {
+      "archive_format_version": 1,
+      "chain_hash_version": 1,
+      "source": "claude",
+      "source_session_id": "session-1",
+      "source_transcript_part_id": "claude:part:parent",
+      "record_count": 1,
+      "last_source_record_identity": "claude:part:parent:claude:id:r1:0",
+      "last_complete_byte_offset": 17,
+      "observed_file_size": 29,
+      "complete_prefix_sha256": "sha256:776d5d74b7fc26d724c4693a57a9df65680d16a33e3e41fec823b6a18ed7f0ae",
+      "prefix_chain_sha256": "sha256:33a572d559ccfb03aca4e484933de6a032c89eedcabbf924e53119415bb5de53",
+      "first_observed_at": 10
+    },
+    "append_proof": {
+      "prior_prefix_chain_sha256": "sha256:33a572d559ccfb03aca4e484933de6a032c89eedcabbf924e53119415bb5de53",
+      "appended_prefix_base64": "eyJ1dWlkIjoicjIifQo="
+    }
+  },
+  "append": {
+    "source_session_id": "session-1",
+    "observations": [
+      {
+        "archive_format_version": 1,
+        "chain_hash_version": 1,
+        "source": "claude",
+        "source_session_id": "session-1",
+        "source_transcript_part_id": "claude:part:parent",
+        "source_record_identity": "claude:part:parent:claude:id:r3:0",
+        "observed_at": 12,
+        "payload_encoding": "utf8",
+        "payload": "{\"uuid\":\"r3\"}",
+        "content_sha256": "sha256:edd2c33ceea09f47a753014204e59ee666e1637439c930617404466aeda94129"
+      }
+    ],
+    "checkpoint": {
+      "archive_format_version": 1,
+      "chain_hash_version": 1,
+      "source": "claude",
+      "source_session_id": "session-1",
+      "source_transcript_part_id": "claude:part:parent",
+      "record_count": 3,
+      "last_source_record_identity": "claude:part:parent:claude:id:r3:0",
+      "last_complete_byte_offset": 45,
+      "observed_file_size": 45,
+      "complete_prefix_sha256": "sha256:386f0667036d2f89cb92a56a6a52632e4f101192d6e8a3ab322e6ee5612588e1",
+      "prefix_chain_sha256": "sha256:51a68cc6408503e0014d9e829d274d4ccb43ff3e412b42528ee219effdf9df07",
+      "first_observed_at": 10
+    },
+    "prior_checkpoint": {
+      "archive_format_version": 1,
+      "chain_hash_version": 1,
+      "source": "claude",
+      "source_session_id": "session-1",
+      "source_transcript_part_id": "claude:part:parent",
+      "record_count": 2,
+      "last_source_record_identity": "claude:part:parent:claude:id:r2:0",
+      "last_complete_byte_offset": 31,
+      "observed_file_size": 31,
+      "complete_prefix_sha256": "sha256:4e8d45b1a89ee874b896a26967f656807d9b797b7bc8031351e7bd86bf7f9adf",
+      "prefix_chain_sha256": "sha256:6af89f29817d0a555fc0ed749ccf3f14478db0326ee4ccc4a6d646d91cca8557",
+      "first_observed_at": 10
+    },
+    "append_proof": {
+      "prior_prefix_chain_sha256": "sha256:6af89f29817d0a555fc0ed749ccf3f14478db0326ee4ccc4a6d646d91cca8557",
+      "appended_prefix_base64": "eyJ1dWlkIjoicjMifQo="
+    }
+  },
+  "vertical_tab": {
+    "source_session_id": "vertical-tab-session",
+    "observations": [
+      {
+        "archive_format_version": 1,
+        "chain_hash_version": 1,
+        "source": "claude",
+        "source_session_id": "vertical-tab-session",
+        "source_transcript_part_id": "claude:part:parent",
+        "source_record_identity": "claude:part:parent:claude:id:vt:0",
+        "observed_at": 10,
+        "payload_encoding": "utf8",
+        "payload": "{\"uuid\":\"vt\"}",
+        "content_sha256": "sha256:90c98c81d754e6f92cd6cfbe64ecd92857f115112d094172fd601b0542aa9e9a"
+      }
+    ],
+    "checkpoint": {
+      "archive_format_version": 1,
+      "chain_hash_version": 1,
+      "source": "claude",
+      "source_session_id": "vertical-tab-session",
+      "source_transcript_part_id": "claude:part:parent",
+      "record_count": 1,
+      "last_source_record_identity": "claude:part:parent:claude:id:vt:0",
+      "last_complete_byte_offset": 14,
+      "observed_file_size": 15,
+      "complete_prefix_sha256": "sha256:3669c2bca8b1ff24e2ec5f56c7b8e0d8adebb0efee0b8ed63ee0b1447cf3814f",
+      "prefix_chain_sha256": "sha256:fb3704153b4989cc8b28d006bd25b3a816d8fc1933c9e4eb384b64e3726ed326",
+      "first_observed_at": 10
+    },
+    "complete_prefix_base64": "eyJ1dWlkIjoidnQifQo="
+  }
+}

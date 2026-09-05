@@ -2,8 +2,8 @@
 
 Model API and coding-agent observability platform on Cloudflare Workers. Production deploys nine
 services: **Proxy**, **Proxy Consumer**, **Agent Ingest**, **Agent Consumer**, **Pipes API**, **Raw
-API**, **MCP**, **Analyst Sandbox**, and **Web**. `apps/archive-api` is a disabled Conversation
-Archive authorization scaffold with no persistence or production environment.
+API**, **MCP**, **Analyst Sandbox**, and **Web**. `apps/archive-api` is a disabled development
+Conversation Archive persistence slice using Durable Objects and R2 with no production environment.
 
 Docs: [README.md](./README.md) | [SETUP.md](./SETUP.md) | [agents.md](./apps/web/public/agents.md)
 

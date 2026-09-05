@@ -37,7 +37,7 @@ fn canonical_chain_jsonl_round_trips_and_preserves_raw_payload() {
     );
     assert_eq!(
         chain.elements[1].chain_hash().to_string(),
-        "sha256:47dcc58c6af9c66d782820c816f491baab6577770b544fe60d4e31a427dc9398"
+        "sha256:0e10b5049417b7d2bce25557c32e44cc9f3f321b99adc15e5782e78125e2ea11"
     );
     let restored = ArchiveChain::from_jsonl(ArchiveSource::Claude, "session-1", &encoded).unwrap();
     assert_eq!(restored, chain);
