@@ -968,7 +968,10 @@ describe('Archive encryption key rotation', () => {
     });
     const second = await stub.advanceKeyRotation({ orgId, limit: 8 });
     expect(second.status).toBe('succeeded');
-    expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
+    const afterV3 = await runtimeEnv.ARCHIVE_STORAGE.get(objectKey);
+    if (!afterV3) throw new Error(`missing object ${objectKey}`);
+    const v3Body = await afterV3.text();
+    expect(JSON.parse(v3Body).keyVersion).toBe(3);
     const stale = await runInDurableObject(stub, async (_instance, state) => {
       try {
         await commitRotationReplacement(runtimeEnv, state.storage, {
@@ -985,6 +988,9 @@ describe('Archive encryption key rotation', () => {
       }
     });
     expect(stale).toBe('archive_key_rotation_stale');
+    const afterStale = await runtimeEnv.ARCHIVE_STORAGE.get(objectKey);
+    if (!afterStale) throw new Error(`missing object ${objectKey}`);
+    expect(await afterStale.text()).toBe(v3Body);
     expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
     expect(await decryptStored(objectKey, orgId, 3, v3)).toEqual(
       new TextEncoder().encode('chunk-body-stale-worker'),

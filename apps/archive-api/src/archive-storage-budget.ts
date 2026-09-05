@@ -116,10 +116,12 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     fromVersion: number;
     toVersion: number;
     activationId?: string;
-  }): ArchiveKeyRotationHealth {
-    budgetState(this.ctx.storage, input.orgId);
-    const state = startStoredRotation(this.ctx.storage, input);
-    return rotationHealth(input.orgId, state);
+  }): Promise<ArchiveKeyRotationHealth> {
+    return this.enqueueExclusive(() => {
+      budgetState(this.ctx.storage, input.orgId);
+      const state = startStoredRotation(this.ctx.storage, input);
+      return rotationHealth(input.orgId, state);
+    });
   }
 
   async advanceKeyRotation(input: {
@@ -127,12 +129,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     limit?: number;
     injectFailure?: ArchiveKeyRotationFailureInjection;
   }): Promise<ArchiveKeyRotationHealth> {
-    const turn = this.reconciliationQueue.then(() => this.runKeyRotationAdvance(input));
-    this.reconciliationQueue = turn.then(
-      () => undefined,
-      () => undefined,
-    );
-    return turn;
+    return this.enqueueExclusive(() => this.runKeyRotationAdvance(input));
   }
 
   private async runKeyRotationAdvance(input: {
@@ -292,16 +289,20 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     }
   }
 
-  private queueReconciliationPage(
-    input: { orgId: string; limit?: number },
-    forceStart: boolean,
-  ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
-    const turn = this.reconciliationQueue.then(() => this.reconcilePage(input, forceStart));
+  private enqueueExclusive<T>(work: () => T | Promise<T>): Promise<T> {
+    const turn = this.reconciliationQueue.then(work);
     this.reconciliationQueue = turn.then(
       () => undefined,
       () => undefined,
     );
     return turn;
+  }
+
+  private queueReconciliationPage(
+    input: { orgId: string; limit?: number },
+    forceStart: boolean,
+  ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
+    return this.enqueueExclusive(() => this.reconcilePage(input, forceStart));
   }
 
   private async reconcilePage(
