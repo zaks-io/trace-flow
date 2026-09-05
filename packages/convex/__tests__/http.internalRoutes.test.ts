@@ -708,6 +708,89 @@ describe('convex/http.ts internal routes', () => {
       });
     });
 
+    it('returns the active wrapped organization key version', async () => {
+      ctx.runQuery.mockResolvedValueOnce({
+        keyVersion: 3,
+        wrappedKey: 'wrapped-active-value',
+        retiringKeyVersion: 2,
+        rotationStatus: 'rotating',
+      });
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/key/active',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({ orgId: 'k57axc8sefsfp6k28nx6c481js806pwv' }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        keyVersion: 3,
+        wrappedKey: 'wrapped-active-value',
+        retiringKeyVersion: 2,
+        rotationStatus: 'rotating',
+      });
+    });
+
+    it('activates a new wrapped key version', async () => {
+      ctx.runMutation.mockResolvedValueOnce({
+        orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+        fromVersion: 1,
+        toVersion: 2,
+        replay: false,
+        operationId: 'rotate:1',
+      });
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/key/activate',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({
+            orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+            keyVersion: 2,
+            wrappedKey: 'wrapped-v2',
+            operationId: 'rotate:1',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      expect(ctx.runMutation).toHaveBeenCalledOnce();
+      await expect(res.json()).resolves.toMatchObject({
+        fromVersion: 1,
+        toVersion: 2,
+        replay: false,
+      });
+    });
+
+    it('refuses retiring-key destroy when Convex reports live references', async () => {
+      ctx.runMutation.mockRejectedValueOnce(
+        new Error('Archive key still has live object references'),
+      );
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/key/destroy-retiring',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({
+            orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+            keyVersion: 1,
+            operationId: 'rotate:1',
+            liveReferenceCount: 3,
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'Archive key still has live object references',
+      });
+    });
+
     it('rejects requests without the Archive API shared secret before the key query', async () => {
       const app = createApp(deps);
 
@@ -722,6 +805,25 @@ describe('convex/http.ts internal routes', () => {
 
       expect(res.status).toBe(401);
       expect(ctx.runQuery).not.toHaveBeenCalled();
+    });
+
+    it('records a rotation failure for the matching operation', async () => {
+      ctx.runMutation.mockResolvedValueOnce(true);
+      const app = createApp(deps);
+      const res = await app.request(
+        'http://localhost/archive-api/key/rotation-failed',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer archive-secret' },
+          body: JSON.stringify({
+            orgId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+            operationId: 'rotate:1',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ recorded: true });
     });
   });
 

@@ -2270,11 +2270,65 @@ export declare const internal: {
     >;
   };
   archiveKeysInternal: {
+    activateVersion: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        keyVersion: number;
+        operationId: string;
+        orgId: Id<"organizations">;
+        wrappedKey: string;
+      },
+      {
+        activationId?: Id<"archiveActivations">;
+        fromVersion: number;
+        operationId: string;
+        orgId: Id<"organizations">;
+        replay: boolean;
+        toVersion: number;
+      }
+    >;
+    destroyRetiringVersion: FunctionReference<
+      "mutation",
+      "internal",
+      {
+        keyVersion: number;
+        liveReferenceCount: number;
+        operationId: string;
+        orgId: Id<"organizations">;
+      },
+      boolean
+    >;
     destroyVersion: FunctionReference<
       "mutation",
       "internal",
       { keyVersion: number; orgId: Id<"organizations"> },
       boolean
+    >;
+    getActiveVersion: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      {
+        keyVersion: number;
+        orgId: Id<"organizations">;
+        retiringKeyVersion?: number;
+        rotationOperationId?: string;
+        rotationStatus?: "rotating" | "succeeded" | "failed";
+        wrappedKey: string;
+      } | null
+    >;
+    getCustody: FunctionReference<
+      "query",
+      "internal",
+      { orgId: Id<"organizations"> },
+      {
+        activeKeyVersion: number;
+        orgId: Id<"organizations">;
+        retiringKeyVersion?: number;
+        rotationOperationId?: string;
+        rotationStatus?: "rotating" | "succeeded" | "failed";
+      } | null
     >;
     getVersion: FunctionReference<
       "query",
@@ -2285,6 +2339,12 @@ export declare const internal: {
         orgId: Id<"organizations">;
         wrappedKey: string;
       } | null
+    >;
+    markRotationFailed: FunctionReference<
+      "mutation",
+      "internal",
+      { operationId: string; orgId: Id<"organizations"> },
+      boolean
     >;
     storeVersion: FunctionReference<
       "mutation",
