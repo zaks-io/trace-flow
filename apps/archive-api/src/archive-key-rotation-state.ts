@@ -172,7 +172,9 @@ export function countKeyVersionReferences(
   }
   const row = [
     ...storage.sql.exec<{ count: number }>(
-      "SELECT COUNT(*) AS count FROM storage_budget_objects WHERE status = 'committed' AND (key_version = ? OR key_version IS NULL)",
+      `SELECT COUNT(*) AS count FROM storage_budget_objects
+       WHERE status IN ('reserved', 'committed')
+         AND (key_version = ? OR key_version IS NULL)`,
       keyVersion,
     ),
   ][0];

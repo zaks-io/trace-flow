@@ -142,6 +142,26 @@ async function decryptStored(
   });
 }
 
+function plannedBudgetObjects(
+  objects: {
+    objectKey: string;
+    objectClass: 'chunk' | 'manifest';
+    bytes: number;
+    keyVersion: number;
+  }[],
+) {
+  return objects.map((object) => ({
+    objectKey: object.objectKey,
+    objectClass:
+      object.objectClass === 'chunk'
+        ? ('agent_archive_chunk' as const)
+        : ('agent_archive_manifest' as const),
+    bytes: object.bytes,
+    expiresAt: null,
+    keyVersion: object.keyVersion,
+  }));
+}
+
 async function commitObjects(
   orgId: string,
   objects: {
@@ -152,16 +172,7 @@ async function commitObjects(
   }[],
 ): Promise<void> {
   const stub = budget(orgId);
-  const planned = objects.map((object) => ({
-    objectKey: object.objectKey,
-    objectClass:
-      object.objectClass === 'chunk'
-        ? ('agent_archive_chunk' as const)
-        : ('agent_archive_manifest' as const),
-    bytes: object.bytes,
-    expiresAt: null,
-    keyVersion: object.keyVersion,
-  }));
+  const planned = plannedBudgetObjects(objects);
   const reserved = await stub.reserveStorage({ orgId, objects: planned });
   expect(reserved.accepted).toBe(true);
   await stub.commitStorage({ orgId, objects: planned });
@@ -580,6 +591,37 @@ describe('Archive encryption key rotation', () => {
     expect(JSON.stringify(custody.auditBodies[0])).not.toContain(v2);
     expect(JSON.stringify(custody.auditBodies[0])).not.toContain('ciphertext');
     expect(JSON.stringify(custody.auditBodies[0])).not.toContain('chunk-body');
+  });
+
+  it('does not destroy the retiring key while reserved objects still reference it', async () => {
+    const { orgId, objects } = await seedOrg('reserved');
+    const stub = await startRotation(orgId, 'rotate-reserved');
+    const reserved = plannedBudgetObjects([
+      {
+        objectKey: `${objects[0]!.objectKey}-pending`,
+        objectClass: 'chunk',
+        bytes: 32,
+        keyVersion: 1,
+      },
+    ]);
+    expect((await stub.reserveStorage({ orgId, objects: reserved })).accepted).toBe(true);
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBe(3);
+
+    const blocked = await stub.advanceKeyRotation({ orgId, limit: 8 });
+    expect(blocked.status).toBe('rotating');
+    expect(blocked.remainingReferences).toBe(1);
+    expect(custody.destroyCalls).toHaveLength(0);
+    expect(custody.versions.has(1)).toBe(true);
+    expect((await readEnvelope(objects[0]!.objectKey)).keyVersion).toBe(2);
+
+    await stub.releaseStorage({ orgId, objects: reserved });
+    expect(await stub.countKeyVersionReferences({ orgId, keyVersion: 1 })).toBe(0);
+    const completed = await stub.advanceKeyRotation({ orgId, limit: 8 });
+    expect(completed.status).toBe('succeeded');
+    expect(custody.destroyCalls).toEqual([
+      { keyVersion: 1, liveReferenceCount: 0, operationId: 'rotate-reserved' },
+    ]);
+    expect(custody.versions.has(1)).toBe(false);
   });
 
   it('does not double-count rotation temp objects in live storage bytes', async () => {
