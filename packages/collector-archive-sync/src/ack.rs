@@ -53,8 +53,21 @@ pub fn acknowledgement_matches(
             return false;
         }
     }
-    ack.record_count == pending.expected_record_count
-        || ack.appended_records == pending.expected_appended_records
+    counts_match(pending, ack)
+}
+
+fn counts_match(pending: &PendingArchiveRequest, ack: &ArchiveAcknowledgement) -> bool {
+    if ack.record_count == pending.expected_record_count {
+        return true;
+    }
+    if pending.expected_appended_records > 0
+        && ack.appended_records == pending.expected_appended_records
+    {
+        return true;
+    }
+    // Archive API session-aggregate duplicate: no part field, appended_records=0,
+    // record_count is the whole-session ledger (parent + subagent).
+    ack.appended_records == 0 && ack.record_count >= pending.expected_record_count
 }
 
 #[cfg(test)]
@@ -115,6 +128,34 @@ mod tests {
     }
 
     #[test]
+    fn session_aggregate_duplicate_parent_rescan_matches() {
+        let pending = PendingArchiveRequest {
+            source: ArchiveSource::Claude,
+            source_session_id: "session-1".to_string(),
+            source_transcript_part_id: default_transcript_part_id(ArchiveSource::Claude),
+            expected_record_count: 1,
+            expected_appended_records: 1,
+            body: b"{}".to_vec(),
+        };
+        let ack = ArchiveAcknowledgement {
+            status: "acknowledged".to_string(),
+            duplicate: false,
+            source: ArchiveSource::Claude,
+            source_session_id: "session-1".to_string(),
+            source_transcript_part_id: None,
+            contribution_id: "con_1".to_string(),
+            appended_records: 0,
+            appended_checkpoint: false,
+            record_count: 3,
+            generation: 1,
+            chain_head: "sha256:00".to_string(),
+            manifest_key: "m".to_string(),
+            chunk_keys: vec![],
+        };
+        assert!(acknowledgement_matches(&pending, &ack));
+    }
+
+    #[test]
     fn session_or_count_mismatch_does_not_advance() {
         let mut wrong_session = ack();
         wrong_session.source_session_id = "other".to_string();
@@ -124,6 +165,11 @@ mod tests {
         wrong_count.record_count = 1;
         wrong_count.appended_records = 1;
         assert!(!acknowledgement_matches(&pending(), &wrong_count));
+
+        let mut aggregate_too_small = ack();
+        aggregate_too_small.record_count = 0;
+        aggregate_too_small.appended_records = 0;
+        assert!(!acknowledgement_matches(&pending(), &aggregate_too_small));
 
         let mut not_ack = ack();
         not_ack.status = "pending".to_string();

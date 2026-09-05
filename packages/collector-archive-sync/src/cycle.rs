@@ -39,10 +39,12 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
 ) -> ArchiveCycleReport {
     let mut report = ArchiveCycleReport::default();
     if policy.purges() {
-        if spool.purge(key_store).is_err() {
-            record_error(&mut report, "archive_purge");
-        } else {
-            report.purged = true;
+        match spool.purge(key_store) {
+            Ok(()) => report.purged = true,
+            Err(err) => {
+                report.failed += 1;
+                record_error(&mut report, err.class());
+            }
         }
         return report;
     }
@@ -69,6 +71,9 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
         {
             if class == "purged" {
                 report.purged = true;
+                break;
+            }
+            if class == "halt" {
                 break;
             }
         }
@@ -112,6 +117,11 @@ async fn replay_pending<U: ArchiveUploader>(
                     }
                     Ok(UploadOutcome::Purged) => {
                         report.purged = true;
+                        break;
+                    }
+                    Ok(UploadOutcome::Halt(class)) => {
+                        report.failed += 1;
+                        record_error(report, class);
                         break;
                     }
                     Err(class) => {
@@ -192,6 +202,11 @@ async fn capture_snapshot<U: ArchiveUploader>(
                 return Ok(());
             }
             Ok(UploadOutcome::Purged) => return Err("purged"),
+            Ok(UploadOutcome::Halt(class)) => {
+                report.failed += 1;
+                record_error(report, class);
+                return Err("halt");
+            }
             Err(class) => {
                 report.failed += 1;
                 record_error(report, class);
@@ -205,6 +220,7 @@ enum UploadOutcome {
     Advanced,
     Frozen,
     Purged,
+    Halt(&'static str),
 }
 
 async fn upload_pending<U: ArchiveUploader>(
@@ -226,10 +242,10 @@ async fn upload_pending<U: ArchiveUploader>(
             Ok(UploadOutcome::Advanced)
         }
         Err(err) => match err.denial_reason().and_then(policy_from_denial_reason) {
-            Some(ArchivePolicy::Revoked) => {
-                let _ = spool.purge(key_store);
-                Ok(UploadOutcome::Purged)
-            }
+            Some(ArchivePolicy::Revoked) => match spool.purge(key_store) {
+                Ok(()) => Ok(UploadOutcome::Purged),
+                Err(err) => Ok(UploadOutcome::Halt(err.class())),
+            },
             Some(ArchivePolicy::Frozen) | Some(ArchivePolicy::Grace) => Ok(UploadOutcome::Frozen),
             _ => Err(err.class()),
         },

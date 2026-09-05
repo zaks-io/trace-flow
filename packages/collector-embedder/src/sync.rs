@@ -237,7 +237,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         prepared.push((source, report, units));
     }
 
-    let archive = if let Some(archive_cfg) = &cfg.archive {
+    let mut archive = if let Some(archive_cfg) = &cfg.archive {
         let mut report =
             run_archive_work(archive_cfg, cfg.org_id, &cfg.credential, &archive_snapshots).await;
         for class in &archive_discovery_errors {
@@ -259,7 +259,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
         reports.push((source, report));
     }
 
-    apply_archive_policy_after_cycle(cfg.archive.as_ref(), cfg.org_id, archive.as_ref(), &reports);
+    apply_archive_policy_after_cycle(cfg.archive.as_ref(), cfg.org_id, archive.as_mut(), &reports);
 
     let archive_incomplete = archive
         .as_ref()
@@ -337,13 +337,13 @@ fn ingest_denial_reason(first_error: &Option<String>) -> Option<&str> {
 fn apply_archive_policy_after_cycle(
     archive_cfg: Option<&ArchiveRunConfig>,
     org_id: &str,
-    archive: Option<&ArchiveCycleReport>,
+    archive: Option<&mut ArchiveCycleReport>,
     reports: &[(AgentSource, SourceReport)],
 ) {
     let Some(archive_cfg) = archive_cfg else {
         return;
     };
-    let archive_purged = archive.is_some_and(|report| report.purged);
+    let archive_purged = archive.as_ref().is_some_and(|report| report.purged);
     // Terminal revocation from fact ingest always purges, including after Frozen/Grace
     // retention. Those states only retain for frozen/expired/grace denials, not for
     // credential_revoked / enrollment_invalid / deleting / revoked.
@@ -352,15 +352,30 @@ fn apply_archive_policy_after_cycle(
             == Some(ArchivePolicy::Revoked)
     });
     if archive_purged || fact_revoked {
-        let _ = ArchiveSpool::purge_at(
+        match ArchiveSpool::purge_at(
             &archive_cfg.spool_dir,
             org_id,
             archive_cfg.key_store.as_ref(),
-        );
+        ) {
+            Ok(()) => {
+                if let Some(report) = archive {
+                    report.purged = true;
+                }
+            }
+            Err(err) => {
+                if let Some(report) = archive {
+                    report.purged = false;
+                    report.failed += 1;
+                    if report.first_error.is_none() {
+                        report.first_error = Some(err.class().to_string());
+                    }
+                }
+            }
+        }
         let _ = ArchiveEnrollmentRecord::save(&archive_cfg.enrollment_path, ArchivePolicy::Revoked);
         return;
     }
-    if archive.is_some_and(|report| report.frozen) {
+    if archive.as_ref().is_some_and(|report| report.frozen) {
         let _ = ArchiveEnrollmentRecord::save(&archive_cfg.enrollment_path, ArchivePolicy::Frozen);
     }
 }

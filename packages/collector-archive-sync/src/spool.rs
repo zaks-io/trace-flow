@@ -1,6 +1,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use collector_archive::{
     default_transcript_part_id, ArchiveSource, ArchiveUploadRequest, CompletedScanCheckpoint,
@@ -65,6 +66,7 @@ pub struct ArchiveSpool {
     org_id: String,
     key: ArchiveSpoolKey,
     cap_bytes: u64,
+    fail_next_pending_clear: AtomicBool,
 }
 
 impl ArchiveSpool {
@@ -99,9 +101,16 @@ impl ArchiveSpool {
             org_id,
             key,
             cap_bytes,
+            fail_next_pending_clear: AtomicBool::new(false),
         };
+        spool.recover_ack_staging();
         spool.recover_acknowledged_pending();
         Ok(spool)
+    }
+
+    /// Test seam: fail the pending unlink after durable progress is staged.
+    pub fn debug_fail_next_pending_clear(&self) {
+        self.fail_next_pending_clear.store(true, Ordering::SeqCst);
     }
 
     pub fn on_disk_bytes(&self) -> ArchiveSyncResult<u64> {
@@ -109,6 +118,7 @@ impl ArchiveSpool {
     }
 
     pub fn persist_pending(&self, pending: &PendingArchiveRequest) -> ArchiveSyncResult<()> {
+        self.recover_ack_staging();
         let path = self.pending_path(
             pending.source,
             &pending.source_session_id,
@@ -331,14 +341,14 @@ impl ArchiveSpool {
         )?)
     }
 
-    /// Persist the acknowledged checkpoint first, then drop pending. Progress may be written
-    /// while the spool is at capacity because the pending file is released as part of the same
-    /// transition.
+    /// Stage durable progress as an uncounted `.ack.tmp`, then drop pending, then promote.
+    /// Counted bytes never include both pending and progress `.bin` files.
     pub fn commit_acknowledgement(
         &self,
         pending: &PendingArchiveRequest,
         checkpoint: &CompletedScanCheckpoint,
     ) -> ArchiveSyncResult<()> {
+        self.recover_ack_staging();
         let pending_path = self.pending_path(
             pending.source,
             &pending.source_session_id,
@@ -349,6 +359,7 @@ impl ArchiveSpool {
             &pending.source_session_id,
             &pending.source_transcript_part_id,
         )?;
+        let staging_path = ack_staging_path(&progress_path);
         let plaintext = serde_json::to_vec(checkpoint)?;
         let aad = self.aad(
             "progress",
@@ -360,8 +371,25 @@ impl ArchiveSpool {
         if let Some(parent) = progress_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        atomic_write(&progress_path, &blob)?;
-        remove_if_present(&pending_path)
+        atomic_write_named(&staging_path, &blob)?;
+        if self.fail_next_pending_clear.swap(false, Ordering::SeqCst) {
+            return Err(ArchiveSyncError::Io(io::Error::other(
+                "pending clear failed",
+            )));
+        }
+        remove_if_present(&pending_path)?;
+        if pending_path.exists() {
+            return Err(ArchiveSyncError::Io(io::Error::other(
+                "pending still present",
+            )));
+        }
+        fs::rename(&staging_path, &progress_path)?;
+        if let Some(dir) = progress_path.parent() {
+            if let Ok(dir_file) = File::open(dir) {
+                let _ = dir_file.sync_all();
+            }
+        }
+        Ok(())
     }
 
     pub fn purge(&self, key_store: &dyn ArchiveKeyStore) -> ArchiveSyncResult<()> {
@@ -374,10 +402,17 @@ impl ArchiveSpool {
         org_id: &str,
         key_store: &dyn ArchiveKeyStore,
     ) -> ArchiveSyncResult<()> {
+        key_store.delete(org_id)?;
+        if key_store.load(org_id)?.is_some() {
+            return Err(ArchiveSyncError::KeyUnavailable);
+        }
         if root.exists() {
             fs::remove_dir_all(root)?;
         }
-        key_store.delete(org_id)
+        if key_store.load(org_id)?.is_some() || durable_files_exist(root)? {
+            return Err(ArchiveSyncError::KeyUnavailable);
+        }
+        Ok(())
     }
 
     /// Open a spool that already has a key. Frozen/grace retention must not mint a new key.
@@ -398,7 +433,9 @@ impl ArchiveSpool {
                     org_id,
                     key,
                     cap_bytes: ARCHIVE_SPOOL_CAP_BYTES,
+                    fail_next_pending_clear: AtomicBool::new(false),
                 };
+                spool.recover_ack_staging();
                 spool.recover_acknowledged_pending();
                 Ok(Some(spool))
             }
@@ -409,6 +446,39 @@ impl ArchiveSpool {
                     Ok(None)
                 }
             }
+        }
+    }
+
+    fn recover_ack_staging(&self) {
+        let Ok(files) = walkdir_files(&self.root.join("progress")) else {
+            return;
+        };
+        for staging in files {
+            if !is_ack_staging(&staging) {
+                continue;
+            }
+            let Some((source, session, part)) = parse_ack_staging(&self.root, &staging) else {
+                continue;
+            };
+            let aad = self.aad("progress", source, &session, &part);
+            let Ok(blob) = fs::read(&staging) else {
+                continue;
+            };
+            if decrypt(&self.key, &aad, &blob).is_err() {
+                continue;
+            }
+            let Ok(pending_path) = self.pending_path(source, &session, &part) else {
+                continue;
+            };
+            if pending_path.exists()
+                && (remove_if_present(&pending_path).is_err() || pending_path.exists())
+            {
+                continue;
+            }
+            let Ok(progress_path) = self.progress_path(source, &session, &part) else {
+                continue;
+            };
+            let _ = fs::rename(&staging, &progress_path);
         }
     }
 
@@ -706,15 +776,69 @@ fn durable_files_exist(root: &Path) -> ArchiveSyncResult<bool> {
     if !root.exists() {
         return Ok(false);
     }
-    Ok(walkdir_files(root)?
-        .into_iter()
-        .any(|path| path.extension().and_then(|ext| ext.to_str()) != Some("tmp")))
+    Ok(walkdir_files(root)?.into_iter().any(|path| {
+        path.extension().and_then(|ext| ext.to_str()) != Some("tmp") || is_ack_staging(&path)
+    }))
 }
 
 fn cleanup_tmp_files(root: &Path) -> ArchiveSyncResult<()> {
     for path in walkdir_files(root)? {
-        if path.extension().and_then(|ext| ext.to_str()) == Some("tmp") {
+        if path.extension().and_then(|ext| ext.to_str()) == Some("tmp") && !is_ack_staging(&path) {
             remove_if_present(&path)?;
+        }
+    }
+    Ok(())
+}
+
+fn is_ack_staging(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".ack.tmp"))
+}
+
+fn ack_staging_path(progress_path: &Path) -> PathBuf {
+    let stem = progress_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("progress");
+    progress_path.with_file_name(format!("{stem}.ack.tmp"))
+}
+
+fn parse_ack_staging(root: &Path, path: &Path) -> Option<(ArchiveSource, String, String)> {
+    let relative = path.strip_prefix(root).ok()?;
+    let mut parts = relative.components();
+    let _progress = parts.next()?;
+    let source = match parts.next()?.as_os_str().to_str()? {
+        "claude" => ArchiveSource::Claude,
+        "codex" => ArchiveSource::Codex,
+        _ => return None,
+    };
+    let session = parts.next()?.as_os_str().to_str()?.to_string();
+    let file = parts.next()?.as_os_str().to_str()?;
+    let stem = file.strip_suffix(".ack.tmp")?;
+    let part = part_id_from_file_stem(stem)?;
+    Some((source, session, part))
+}
+
+fn atomic_write_named(path: &Path, bytes: &[u8]) -> ArchiveSyncResult<()> {
+    let tmp = {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".tmp");
+        path.with_file_name(name)
+    };
+    {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, path)?;
+    if let Some(dir) = path.parent() {
+        if let Ok(dir_file) = File::open(dir) {
+            let _ = dir_file.sync_all();
         }
     }
     Ok(())

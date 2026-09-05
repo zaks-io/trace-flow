@@ -9,9 +9,9 @@ use collector_archive::{
 use collector_archive_sync::{
     acknowledgement_matches, run_archive_cycle, ArchiveAcknowledgement, ArchiveClient,
     ArchiveClientConfig, ArchiveClientError, ArchiveEnrollmentRecord, ArchiveKeyStore,
-    ArchivePolicy, ArchiveSnapshot, ArchiveSpool, ArchiveSpoolKey, ArchiveUploader, MemoryKeyStore,
-    PendingArchiveRequest, PendingLoad, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
-    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
+    ArchivePolicy, ArchiveSnapshot, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError,
+    ArchiveUploader, MemoryKeyStore, PendingArchiveRequest, PendingLoad, ARCHIVE_SPOOL_CAP_BYTES,
+    ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -112,6 +112,83 @@ fn pending_disk_path(
             "{}.bin",
             pending.source_transcript_part_id.replace(':', "_")
         ))
+}
+
+fn progress_disk_path(
+    root: &std::path::Path,
+    pending: &PendingArchiveRequest,
+) -> std::path::PathBuf {
+    root.join("progress")
+        .join(pending.source.as_str())
+        .join(&pending.source_session_id)
+        .join(format!(
+            "{}.bin",
+            pending.source_transcript_part_id.replace(':', "_")
+        ))
+}
+
+fn ack_staging_disk_path(
+    root: &std::path::Path,
+    pending: &PendingArchiveRequest,
+) -> std::path::PathBuf {
+    root.join("progress")
+        .join(pending.source.as_str())
+        .join(&pending.source_session_id)
+        .join(format!(
+            "{}.ack.tmp",
+            pending.source_transcript_part_id.replace(':', "_")
+        ))
+}
+
+fn checkpoint_from_pending(
+    pending: &PendingArchiveRequest,
+) -> collector_archive::CompletedScanCheckpoint {
+    let value: serde_json::Value = serde_json::from_slice(&pending.body).unwrap();
+    serde_json::from_value(value["checkpoint"].clone()).unwrap()
+}
+
+fn server_aggregate_duplicate_ack(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
+    ArchiveAcknowledgement {
+        status: "acknowledged".to_string(),
+        duplicate: false,
+        source: pending.source,
+        source_session_id: pending.source_session_id.clone(),
+        source_transcript_part_id: None,
+        contribution_id: "con_1".to_string(),
+        appended_records: 0,
+        appended_checkpoint: false,
+        record_count: 3,
+        generation: 1,
+        chain_head: "sha256:00".to_string(),
+        manifest_key: "manifest".to_string(),
+        chunk_keys: vec![],
+    }
+}
+
+struct FailingDeleteKeyStore {
+    inner: MemoryKeyStore,
+}
+
+impl FailingDeleteKeyStore {
+    fn new() -> Self {
+        Self {
+            inner: MemoryKeyStore::new(),
+        }
+    }
+}
+
+impl ArchiveKeyStore for FailingDeleteKeyStore {
+    fn load(&self, org_id: &str) -> Result<Option<ArchiveSpoolKey>, ArchiveSyncError> {
+        self.inner.load(org_id)
+    }
+
+    fn store(&self, org_id: &str, key: &ArchiveSpoolKey) -> Result<(), ArchiveSyncError> {
+        self.inner.store(org_id, key)
+    }
+
+    fn delete(&self, _org_id: &str) -> Result<(), ArchiveSyncError> {
+        Err(ArchiveSyncError::KeyUnavailable)
+    }
 }
 
 #[test]
@@ -930,4 +1007,134 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
         parent_progress.prefix_chain_sha256,
         sub_progress.prefix_chain_sha256
     );
+}
+
+#[test]
+fn acknowledgement_unlink_failure_never_exceeds_exact_cap() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let used = {
+        let spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, u64::MAX).unwrap();
+        spool.persist_pending(&pending).unwrap();
+        spool.on_disk_bytes().unwrap()
+    };
+    let spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, used).unwrap();
+    assert_eq!(spool.on_disk_bytes().unwrap(), used);
+    spool.debug_fail_next_pending_clear();
+    let checkpoint = checkpoint_from_pending(&pending);
+    assert!(spool.commit_acknowledgement(&pending, &checkpoint).is_err());
+    assert_eq!(spool.on_disk_bytes().unwrap(), used);
+    assert!(pending_disk_path(dir.path(), &pending).exists());
+    assert!(!progress_disk_path(dir.path(), &pending).exists());
+    assert!(ack_staging_disk_path(dir.path(), &pending).exists());
+
+    let relaunched = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, used).unwrap();
+    assert!(relaunched
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        relaunched
+            .progress(ArchiveSource::Claude, &pending.source_session_id)
+            .unwrap()
+            .unwrap()
+            .record_count,
+        checkpoint.record_count
+    );
+    assert!(relaunched.on_disk_bytes().unwrap() <= used);
+    assert!(!pending_disk_path(dir.path(), &pending).exists());
+    assert!(progress_disk_path(dir.path(), &pending).exists());
+    assert!(!ack_staging_disk_path(dir.path(), &pending).exists());
+}
+
+#[tokio::test]
+async fn session_aggregate_duplicate_parent_rescan_advances() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let parent_bytes = br#"{"sessionId":"session-1","uuid":"parent-1"}
+"#;
+    let pending = pending_from_bytes(ArchiveSource::Claude, parent_bytes, 10);
+    assert_eq!(pending.expected_record_count, 1);
+    assert_eq!(pending.expected_appended_records, 1);
+    spool.persist_pending(&pending).unwrap();
+    let ack = server_aggregate_duplicate_ack(&pending);
+    assert!(acknowledgement_matches(&pending, &ack));
+    let uploader = ScriptedUploader::new([Ok(ack)]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(report.failed, 0);
+    assert!(spool
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_none());
+    let progress = spool
+        .progress(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(progress.record_count, pending.expected_record_count);
+    assert_eq!(progress.record_count, 1);
+}
+
+#[tokio::test]
+async fn failing_keyring_delete_does_not_claim_purge() {
+    let dir = TempDir::new().unwrap();
+    let keys = FailingDeleteKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    spool.persist_pending(&pending).unwrap();
+    assert!(keys.load("org_1").unwrap().is_some());
+    let uploader = ScriptedUploader::new([]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Claude, CLAUDE, 10)],
+        ArchivePolicy::Revoked,
+        None,
+    )
+    .await;
+    assert!(!report.purged);
+    assert!(report.failed >= 1);
+    assert_eq!(
+        report.first_error.as_deref(),
+        Some("archive_key_unavailable")
+    );
+    assert!(keys.load("org_1").unwrap().is_some());
+    assert!(pending_disk_path(dir.path(), &pending).exists());
+
+    let live_dir = TempDir::new().unwrap();
+    let live_keys = FailingDeleteKeyStore::new();
+    let mut live_spool = ArchiveSpool::open(live_dir.path(), "org_1", &live_keys).unwrap();
+    let live_pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    live_spool.persist_pending(&live_pending).unwrap();
+    let live_uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
+        reason: "credential_revoked".to_string(),
+    })]);
+    let live_report = run_archive_cycle(
+        &live_uploader,
+        &mut live_spool,
+        &live_keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert!(!live_report.purged);
+    assert!(live_report.failed >= 1);
+    assert_eq!(
+        live_report.first_error.as_deref(),
+        Some("archive_key_unavailable")
+    );
+    assert!(live_keys.load("org_1").unwrap().is_some());
+    assert!(pending_disk_path(live_dir.path(), &live_pending).exists());
 }
