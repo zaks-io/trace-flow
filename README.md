@@ -1,18 +1,27 @@
 # Trace Flow
 
-Trace Flow is Zaks.io's internal development tooling for inspecting model API requests and local
-coding-agent sessions. We are sharing the source under [Apache-2.0](./LICENSE) because it may be
-useful to other builders working on similar problems.
+Trace Flow is the tooling Zaks.io built to watch its own model API spend and coding-agent sessions.
+One small team runs it for its own work, and each component exists because that team uses it or is
+about to. We publish the source under [Apache-2.0](./LICENSE) because it may be useful to other
+builders working on similar problems.
 
 This is an early, company-specific project. Expect rough edges, changing APIs, and setup work.
 It is not a supported observability service or a turnkey self-hosted package. Maintenance follows
 our internal needs; there is no support SLA or release schedule.
 
-The model gateway is used internally. Agent Conversation Analytics has collector, ingestion,
-dashboard, and desktop implementations, but is not production-ready until the checks in the
-[roadmap](./docs/guides/agent-conversation-analytics/ROADMAP.md) are complete. Conversation Archive
-is unfinished and its API is disabled. Roadmaps and specifications describe intended work, not
-necessarily working features.
+## Status
+
+Today Trace Flow is mostly data capture: model API calls from the gateway, coding-agent sessions
+from the collector, and soon the raw conversation history behind those sessions. The dashboard and
+MCP server read what was captured. The scope is wide for the size of the user base because it
+follows one team's workflow rather than a market, and that use is the validation behind it.
+Roadmaps and specifications describe intended work, not necessarily working features.
+
+| Capture path                             | Status                                 | Detail                                                                                                                                                                                                                         |
+| ---------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Model gateway                            | In use                                 | Our applications route model calls through the gateway for cost, token, latency, and body capture.                                                                                                                             |
+| Coding-agent collector and `/app/agents` | In use by us; private alpha for others | The desktop app syncs our Claude Code, Codex CLI, and Cursor sessions. Signed installers are published. Not every production gate in the [roadmap](./docs/guides/agent-conversation-analytics/ROADMAP.md) is green.            |
+| Conversation Archive                     | In development, not deployed           | The collector-side encrypted spool, session ledger, and Convex control plane are merged. `apps/archive-api` is a disabled authorization scaffold with no persistence or origin. This is how we will keep conversation history. |
 
 ## What Trace Flow observes
 
@@ -68,27 +77,23 @@ upload behind an explicit **Start syncing** action. Raw transcripts are not uplo
 - [CLI source and development notes](./apps/cli/README.md)
 - [Desktop architecture and release notes](./apps/desktop/README.md)
 
-## Runtime
+## Architecture
 
-The repository contains nine services deployed by the production workflow and one disabled Archive
-API scaffold:
+Two inputs feed one control plane and one data plane. Convex owns users, organizations, API keys,
+Collector Credentials, subscriptions, session ownership, and scoped Tinybird token minting. Tinybird
+holds the trace spans and agent facts the dashboard reads. R2 holds encrypted request and response
+bodies. The Rust workspace contains the collector CLI, the desktop shell, parsers, the sync engine,
+and the Conversation Archive contracts and spool.
 
-| Component       | Location               | Responsibility                                                         |
-| --------------- | ---------------------- | ---------------------------------------------------------------------- |
-| Proxy           | `apps/proxy`           | Streams provider calls; durably stages transactions and OTLP spans     |
-| Proxy Consumer  | `apps/proxy-consumer`  | Prices and writes LLM spans to Tinybird                                |
-| Agent Ingest    | `apps/agent-ingest`    | Authenticates and validates collector fact envelopes                   |
-| Agent Consumer  | `apps/agent-consumer`  | Deduplicates, prices, and writes agent facts to Tinybird               |
-| Pipes API       | `apps/pipes-api`       | Forwards Convex-minted, query-scoped Pipe Tokens to Tinybird           |
-| Raw API         | `apps/api`             | Authorizes and decrypts R2 Body Object reads                           |
-| MCP             | `apps/mcp`             | Exposes org-scoped trace and agent analytics tools over OAuth          |
-| Analyst Sandbox | `apps/analyst-sandbox` | Runs isolated, stateful analysis jobs                                  |
-| Web             | `apps/web`             | Next.js dashboard deployed through OpenNext                            |
-| Archive API     | `apps/archive-api`     | Disabled authorization scaffold; persistence and production are absent |
-
-Convex owns users, organizations, API keys, Collector Credentials, subscriptions, session ownership,
-and scoped Tinybird token minting. The Rust workspace contains the CLI, desktop shell, parsers, sync
-engine, and Conversation Archive contracts.
+The runtime is split into more Cloudflare Workers than the feature list suggests. The count is
+structural, not a sign of separate products. Each input has an ingress Worker and a separate queue
+consumer (Proxy and Proxy Consumer for model calls, Agent Ingest and Agent Consumer for collector
+uploads) so capture never waits on Tinybird writes
+([ADR 0007](./docs/adr/0007-queue-based-processing.md)). The read side is two Workers because
+[ADR 0020](./docs/adr/0020-read-side-secret-boundaries.md) keeps Body Object decryption keys and
+Tinybird forwarding in separate isolates (Raw API and Pipes API). Web and MCP read through those two.
+`apps/archive-api` is not deployed. The per-app map is in
+[repo navigation](./docs/agents/repo-navigation.md).
 
 ### Data flow
 
@@ -122,8 +127,7 @@ scripts/dev/          Reproducible local environment and verification commands
 specs/                Component and feature specifications
 ```
 
-The canonical domain vocabulary is in [CONTEXT.md](./CONTEXT.md). The current service boundaries are
-documented in [ADR 0020](./docs/adr/0020-read-side-secret-boundaries.md).
+The canonical domain vocabulary is in [CONTEXT.md](./CONTEXT.md).
 
 ## Development
 
@@ -157,8 +161,8 @@ scripts/dev/web.sh
 ```
 
 `scripts/dev/workers.sh` starts the six core data-plane Workers together so local queues, KV, R2,
-and Durable Objects share one persisted state directory. Web, Convex, MCP, Analyst Sandbox, and the
-disabled Archive API are not part of that multi-Worker process.
+and Durable Objects share one persisted state directory. Web, Convex, MCP, and the disabled Archive
+API are not part of that multi-Worker process.
 
 The scripts default to **Self-Contained Local**: local Workers, Convex local, and Tinybird Local. For
 the normal **Cloud-Dev** workflow, point the local Web and collector at the deployed cloud-dev
@@ -204,8 +208,7 @@ fail-closed authorization boundary only and is not deployed.
 
 Production deploys run through `.github/workflows/deploy.yml` after changes land on `main`. The
 workflow validates TypeScript, Rust, and Tinybird; deploys Convex; deploys the Tinybird schema before
-both consumers; then deploys Web, Proxy, Proxy Consumer, Raw API, Pipes API, MCP, Agent Ingest, Agent
-Consumer, and Analyst Sandbox according to their dependencies.
+both consumers; then deploys the remaining Workers in dependency order.
 
 `apps/archive-api` is excluded from production deployment. Do not manually deploy production.
 
