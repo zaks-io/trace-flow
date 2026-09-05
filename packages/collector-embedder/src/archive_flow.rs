@@ -28,17 +28,12 @@ pub const HISTORY_NEW_ONLY_DETAIL: &str =
 pub const HISTORY_ALL_DETAIL: &str =
     "Include every conversation currently available from the covered Sources, then keep capturing new ones.";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArchiveHistoryChoice {
+    #[default]
     NewOnly,
     AllHistory,
-}
-
-impl Default for ArchiveHistoryChoice {
-    fn default() -> Self {
-        Self::NewOnly
-    }
 }
 
 impl ArchiveHistoryChoice {
@@ -171,8 +166,9 @@ pub struct ArchiveSubmitResult {
     pub enrollment_created: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ArchiveFlowState {
+    #[default]
     Idle,
     Authenticating {
         intent: ArchiveIntent,
@@ -216,12 +212,6 @@ pub enum ArchiveFlowState {
         intent: ArchiveIntent,
         eligibility: ArchiveEligibility,
     },
-}
-
-impl Default for ArchiveFlowState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -723,10 +713,13 @@ mod tests {
             [HISTORY_NEW_ONLY_LABEL, HISTORY_ALL_LABEL]
         );
         assert_eq!(view.history_new_only_label, HISTORY_NEW_ONLY_LABEL);
-        assert!(!view
+        assert!(view
+            .history_new_only_detail
+            .contains("stay out of the archive"));
+        assert!(view
             .history_new_only_detail
             .to_lowercase()
-            .contains("continu"));
+            .contains("not a continuation"));
         assert!(view
             .disclosures
             .iter()

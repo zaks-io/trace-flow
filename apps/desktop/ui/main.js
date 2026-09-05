@@ -209,7 +209,8 @@ function renderArchive(dto) {
     el('archive-summary').textContent =
       'History choice declined. Nothing was enrolled. Start again to choose.';
   } else if (enrolled) {
-    el('archive-summary').textContent = 'This computer is enrolled. Fact sync continues independently.';
+    el('archive-summary').textContent =
+      'This computer is enrolled. Fact sync continues independently.';
   } else {
     el('archive-summary').textContent =
       'Parsed fact sync stays on. Archive enrollment is a separate Pro consent.';

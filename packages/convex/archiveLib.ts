@@ -373,6 +373,13 @@ export async function beginArchiveDeletion(
   }
 }
 
+export async function getOrgSubscription(ctx: QueryCtx | MutationCtx, orgId: Id<'organizations'>) {
+  return await ctx.db
+    .query('subscriptions')
+    .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
+    .first();
+}
+
 export async function getArchiveActivation(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<'organizations'>,

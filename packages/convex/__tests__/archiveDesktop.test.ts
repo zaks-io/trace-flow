@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { internal } from '../_generated/api';
-import {
-  enableArchive,
-  enrollInput,
-  seedWorld,
-} from './archiveControlPlaneTest.setup';
+import { enableArchive, enrollInput, seedWorld } from './archiveControlPlaneTest.setup';
 
 describe('archive desktop control-plane helpers', () => {
   it('lets an owner activate and enroll as distinct records', async () => {

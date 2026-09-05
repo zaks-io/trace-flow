@@ -329,79 +329,70 @@ impl<C: ArchiveControlPlane> ArchiveFlowRuntime<C> {
     }
 
     fn submit_current(&mut self) -> Result<ArchiveFlowView> {
-        let outcome = match &self.state {
-            ArchiveFlowState::Submitting {
-                intent: ArchiveIntent::EnableOrganization,
-                eligibility,
-                history,
-            } => {
+        let ArchiveFlowState::Submitting {
+            intent,
+            eligibility,
+            history,
+        } = &self.state
+        else {
+            return Ok(self.view());
+        };
+        let intent = *intent;
+        let eligibility = eligibility.clone();
+        let history = *history;
+        let collector_id = eligibility.this_collector.collector_id.clone();
+        let enrollment_id = eligibility.this_collector.enrollment_id.clone();
+        let activation_id = eligibility.activation_id.clone();
+
+        let outcome = match intent {
+            ArchiveIntent::EnableOrganization => {
                 let history = history.unwrap_or_default();
                 let sources = source_consents(history);
-                let key = self.fresh_key(&eligibility.this_collector.collector_id, history);
-                match self.submit_enable(&eligibility.this_collector.collector_id, &sources, &key) {
-                    Ok(result) => Ok(result),
-                    Err(err) => Err(err),
-                }
+                let key = self.fresh_key(&collector_id, history);
+                self.submit_enable(&collector_id, &sources, &key)
             }
-            ArchiveFlowState::Submitting {
-                intent: ArchiveIntent::ContributeThisComputer,
-                eligibility,
-                history,
-            } => {
+            ArchiveIntent::ContributeThisComputer => {
                 let history = history.unwrap_or_default();
                 let sources = source_consents(history);
-                let key = self.fresh_key(&eligibility.this_collector.collector_id, history);
-                match self
-                    .control
-                    .enroll(&eligibility.this_collector.collector_id, &sources, &key)
-                {
-                    Ok((enrolled, created)) => Ok(ArchiveSubmitResult {
-                        activation_id: eligibility.activation_id.clone(),
+                let key = self.fresh_key(&collector_id, history);
+                self.control
+                    .enroll(&collector_id, &sources, &key)
+                    .map(|(enrolled, created)| ArchiveSubmitResult {
+                        activation_id,
                         activation_created: false,
                         enrollment_id: enrolled.enrollment_id,
                         contribution_id: enrolled.contribution_id,
                         enrollment_created: created,
-                    }),
-                    Err(err) => Err(err),
-                }
+                    })
             }
-            ArchiveFlowState::Submitting {
-                intent: ArchiveIntent::UnenrollThisComputer,
-                eligibility,
-                ..
-            } => {
-                let Some(enrollment_id) = &eligibility.this_collector.enrollment_id else {
+            ArchiveIntent::UnenrollThisComputer => {
+                let Some(enrollment_id) = enrollment_id else {
                     return Ok(self.fail_submit("Enrollment not found"));
                 };
                 self.control
-                    .unenroll(enrollment_id)
+                    .unenroll(&enrollment_id)
                     .map(|_| ArchiveSubmitResult {
-                        activation_id: eligibility.activation_id.clone(),
+                        activation_id,
                         activation_created: false,
-                        enrollment_id: enrollment_id.clone(),
+                        enrollment_id,
                         contribution_id: String::new(),
                         enrollment_created: false,
                     })
             }
-            ArchiveFlowState::Submitting {
-                intent: ArchiveIntent::RevokeThisCollector,
-                eligibility,
-                ..
-            } => {
-                let Some(enrollment_id) = &eligibility.this_collector.enrollment_id else {
+            ArchiveIntent::RevokeThisCollector => {
+                let Some(enrollment_id) = enrollment_id else {
                     return Ok(self.fail_submit("Enrollment not found"));
                 };
                 self.control
-                    .revoke(enrollment_id)
+                    .revoke(&enrollment_id)
                     .map(|_| ArchiveSubmitResult {
-                        activation_id: eligibility.activation_id.clone(),
+                        activation_id,
                         activation_created: false,
-                        enrollment_id: enrollment_id.clone(),
+                        enrollment_id,
                         contribution_id: String::new(),
                         enrollment_created: false,
                     })
             }
-            _ => return Ok(self.view()),
         };
         match outcome {
             Ok(result) => {

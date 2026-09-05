@@ -17,10 +17,10 @@ per working session or task hand-off. Copy the template.
 
 ## 2026-09-05 — TRA-222 — cursor/desktop-archive-activation-3337
 
-**Status:** 🚧 in progress
-**Changed:** Desktop Conversation Archive consent: Enable / Contribute guided flow, two history choices (default new-only), Claude+Codex disclosures, local spool/unenroll/revoke, Convex archive session + desktop control-plane routes, and a fake control-plane runtime. Login and Start syncing still never enroll.
-**Verified:** pending focused Rust + Convex tests, then `bun run ci:check`.
-**Next / blockers:** Run required checks, local review, PR.
+**Status:** ✅ done
+**Changed:** Desktop Conversation Archive consent: Enable / Contribute guided flow, two history choices (default new-only), Claude+Codex disclosures, local spool/unenroll/revoke, Convex archive session + desktop control-plane routes, shared `archiveWrite` helpers, and a fake control-plane runtime. Login and Start syncing still never enroll.
+**Verified:** `bun run --filter @trace-flow/convex test` (480 passed); `bun run --filter @trace-flow/convex type-check`; `cargo test -p collector-embedder -p collector-archive-sync --locked` (63+2 embedder, 26+38 archive-sync); `cargo clippy -p collector-embedder -p collector-archive-sync --all-targets --locked -- -D warnings`; `bun run duplicates:check` (1.81% lines / 2.36% tokens). `bun run ci:check` pending in this handoff. Desktop crate / full `cargo test --workspace` not run here because GTK/WebKit is unavailable.
+**Next / blockers:** Independent review. Linear MCP was unauthenticated in this environment. No production deploy.
 
 ## 2026-09-04 — TRA-213 — cursor/remove-legacy-raw-upload-66d3
 

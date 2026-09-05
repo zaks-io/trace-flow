@@ -18,7 +18,7 @@ use crate::archive_control::{
 };
 use crate::archive_flow::{
     ArchiveActivationPresence, ArchiveActorRole, ArchiveCollectorPresence, ArchiveEligibility,
-    ArchiveHistoryChoice, ArchiveIntent, ArchivePlanKind, ArchivePlanStatus,
+    ArchiveIntent, ArchivePlanKind, ArchivePlanStatus,
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -170,10 +170,7 @@ struct ErrorBody {
 }
 
 #[derive(Debug, Deserialize)]
-struct OkBody {
-    #[serde(default)]
-    ok: Option<bool>,
-}
+struct OkBody {}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -369,6 +366,7 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::archive_flow::ArchiveHistoryChoice;
 
     fn result_of(outcome: CallbackOutcome) -> std::result::Result<ArchiveLoginResult, String> {
         match outcome {

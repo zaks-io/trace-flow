@@ -6,30 +6,19 @@ import {
   archiveSourceAuthorizationInputValidator,
   archiveSupportedSourceValidator,
 } from './validators';
-import { activationOperationId, appendArchiveAuditEvent, enrollmentOperationId } from './archiveAuditLib';
 import {
-  ARCHIVE_CAP_BYTES,
-  assertArchiveMutationAllowed,
-  claimArchiveActivation,
-  claimContributionForUser,
-  claimEnrollmentByIdempotencyKey,
-  claimEnrollmentSlot,
-  consentSourcesMatch,
-  decideEnrollmentAction,
-  ensureArchiveStatusRow,
   getArchiveActivation,
-  getArchiveStatusRow,
-  getEnrollmentByIdempotencyKey,
-  invalidateArchiveEnrollment,
-  isActiveProSubscription,
+  getOrgSubscription,
   isArchiveServerEnabled,
-  refreshArchiveStatusCounts,
-  repairEnrollmentSlots,
   requireActiveMembership,
-  sourceAlreadyAuthorized,
-  validateAuthorizedSources,
-  validateEnrollmentIdempotencyKey,
 } from './archiveLib';
+import {
+  activateArchiveForOwner,
+  addAuthorizedArchiveSource,
+  enrollArchiveForUser,
+  revokeArchiveEnrollmentForOwner,
+  unenrollArchiveForUser,
+} from './archiveWrite';
 
 const desktopSnapshotValidator = v.object({
   userId: v.id('users'),
@@ -79,17 +68,9 @@ async function loadOrgUser(
   return { user: { ...user, orgId: user.orgId }, org, membership };
 }
 
-async function getOrgSubscription(
-  ctx: Parameters<typeof requireActiveMembership>[0],
-  orgId: Id<'organizations'>,
-) {
-  return await ctx.db
-    .query('subscriptions')
-    .withIndex('by_org_id', (q) => q.eq('orgId', orgId))
-    .first();
-}
-
-function planStatusOf(subscription: { status: string } | null): 'active' | 'inactive' | 'canceled' | 'none' {
+function planStatusOf(
+  subscription: { status: string } | null,
+): 'active' | 'inactive' | 'canceled' | 'none' {
   if (!subscription) return 'none';
   if (subscription.status === 'active') return 'active';
   if (subscription.status === 'canceled') return 'canceled';
@@ -143,20 +124,24 @@ export const snapshotForUser = internalQuery({
           .collect()
       : [];
     const current = enrollments.find((row) => row.status === 'active') ?? enrollments[0];
+    const activationState = !activation
+      ? ('not_enabled' as const)
+      : activation.status === 'frozen'
+        ? ('frozen' as const)
+        : activation.status === 'deleting'
+          ? ('deleting' as const)
+          : ('active' as const);
     return {
       userId: user._id,
       orgId: user.orgId,
-      role: org.ownerId === user._id && membership.role === 'owner' ? 'owner' : 'member',
-      plan: subscription?.tier === 'pro' ? 'pro' : 'hobby',
+      role:
+        org.ownerId === user._id && membership.role === 'owner'
+          ? ('owner' as const)
+          : ('member' as const),
+      plan: subscription?.tier === 'pro' ? ('pro' as const) : ('hobby' as const),
       planStatus: planStatusOf(subscription),
       serverEnabled: isArchiveServerEnabled(),
-      activation: !activation
-        ? 'not_enabled'
-        : activation.status === 'frozen'
-          ? 'frozen'
-          : activation.status === 'deleting'
-            ? 'deleting'
-            : 'active',
+      activation: activationState,
       ...(activation ? { activationId: activation._id } : {}),
       collectorId: args.collectorId,
       collectorUserId: credential?.userId ?? user._id,
@@ -173,58 +158,7 @@ export const activateForUser = internalMutation({
   }),
   handler: async (ctx, args) => {
     const { user, org, membership } = await loadOrgUser(ctx, args.userId);
-    if (org.ownerId !== user._id || membership.role !== 'owner') {
-      throw new Error('Only the organization owner can activate Conversation Archive');
-    }
-    const existing = await getArchiveActivation(ctx, org._id);
-    assertArchiveMutationAllowed({
-      org,
-      activation: existing,
-      serverEnabled: isArchiveServerEnabled(),
-    });
-    if (!isArchiveServerEnabled()) {
-      throw new Error('Conversation Archive is not enabled');
-    }
-    const subscription = await getOrgSubscription(ctx, org._id);
-    if (!isActiveProSubscription(subscription)) {
-      throw new Error('Active Pro entitlement is required');
-    }
-    if (existing) {
-      return { activationId: existing._id, created: false };
-    }
-
-    const now = Date.now();
-    const insertedId = await ctx.db.insert('archiveActivations', {
-      orgId: org._id,
-      activatedByUserId: user._id,
-      activatedAt: now,
-      capBytes: ARCHIVE_CAP_BYTES,
-      status: 'active',
-    });
-    const winner = await claimArchiveActivation(ctx, org._id);
-    const activationId = winner?._id ?? insertedId;
-    if (activationId !== insertedId) {
-      return { activationId, created: false };
-    }
-    await ensureArchiveStatusRow(ctx, {
-      orgId: org._id,
-      lifecycle: 'active',
-      capBytes: ARCHIVE_CAP_BYTES,
-      now,
-    });
-    await appendArchiveAuditEvent(ctx, {
-      orgId: org._id,
-      actorKind: 'user',
-      actorUserId: user._id,
-      action: 'activation',
-      outcome: 'success',
-      operationId: activationOperationId(org._id),
-      targetKind: 'activation',
-      targetId: activationId,
-      activationId,
-      now,
-    });
-    return { activationId, created: true };
+    return await activateArchiveForOwner(ctx, user, org, membership);
   },
 });
 
@@ -241,156 +175,15 @@ export const enrollForUser = internalMutation({
     created: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const { user, org } = await loadOrgUser(ctx, args.userId);
-    if (!isArchiveServerEnabled()) {
-      throw new Error('Conversation Archive is not enabled');
-    }
-    const activation = await getArchiveActivation(ctx, user.orgId);
-    assertArchiveMutationAllowed({
-      org,
-      activation,
-      serverEnabled: isArchiveServerEnabled(),
-    });
-    if (!activation) {
-      throw new Error('Conversation Archive is not activated');
-    }
-    if (activation.status === 'frozen') {
-      throw new Error('Conversation Archive is frozen');
-    }
-    const subscription = await getOrgSubscription(ctx, user.orgId);
-    if (!isActiveProSubscription(subscription)) {
-      throw new Error('Active Pro entitlement is required');
-    }
+    const { user } = await loadOrgUser(ctx, args.userId);
     const credential = await findCollectorCredential(ctx, user, args.collectorId);
-    const sources = validateAuthorizedSources(args.authorizedSources);
-    const idempotencyKey = validateEnrollmentIdempotencyKey(args.idempotencyKey);
-    const now = Date.now();
-
-    const existingByKey = await getEnrollmentByIdempotencyKey(ctx, user.orgId, idempotencyKey);
-    const slot = await repairEnrollmentSlots(ctx, user.orgId, credential._id);
-    const current = slot ? await ctx.db.get(slot.currentEnrollmentId) : null;
-    const decision = decideEnrollmentAction({
-      existingByKey,
-      currentEnrollment: current,
-      request: {
-        userId: user._id,
-        collectorCredentialId: credential._id,
-        authorizedSources: sources,
-      },
-    });
-
-    if (decision === 'replay' && existingByKey) {
-      return {
-        enrollmentId: existingByKey._id,
-        contributionId: existingByKey.contributionId,
-        created: false,
-      };
-    }
-    if (decision === 'conflict') {
-      if (
-        existingByKey &&
-        (existingByKey.userId !== user._id ||
-          existingByKey.collectorCredentialId !== credential._id)
-      ) {
-        throw new Error('Enrollment idempotency key is already bound to another Collector');
-      }
-      throw new Error('Enrollment idempotency key does not match the original consent');
-    }
-    if (decision === 'already_enrolled') {
-      throw new Error('Collector is already enrolled');
-    }
-
-    const contribution = await claimContributionForUser(ctx, user.orgId, user._id, now);
-    const enrollmentId = await ctx.db.insert('archiveEnrollments', {
-      orgId: user.orgId,
-      userId: user._id,
-      collectorCredentialId: credential._id,
-      collectorId: credential.collectorId,
-      contributionId: contribution._id,
-      idempotencyKey,
-      consentSources: sources,
-      authorizedSources: sources.map((source) => ({
-        ...source,
-        authorizedAt: now,
-      })),
-      status: 'active',
-      createdAt: now,
-    });
-
-    const claimedByKey = await claimEnrollmentByIdempotencyKey(
+    return await enrollArchiveForUser(
       ctx,
-      user.orgId,
-      idempotencyKey,
-      enrollmentId,
+      user,
+      credential,
+      args.authorizedSources,
+      args.idempotencyKey,
     );
-    if (!claimedByKey.created) {
-      if (
-        claimedByKey.enrollment.userId !== user._id ||
-        claimedByKey.enrollment.collectorCredentialId !== credential._id
-      ) {
-        throw new Error('Enrollment idempotency key is already bound to another Collector');
-      }
-      if (!consentSourcesMatch(claimedByKey.enrollment.consentSources, sources)) {
-        throw new Error('Enrollment idempotency key does not match the original consent');
-      }
-      await refreshArchiveStatusCounts(ctx, user.orgId, now);
-      return {
-        enrollmentId: claimedByKey.enrollment._id,
-        contributionId: claimedByKey.enrollment.contributionId,
-        created: false,
-      };
-    }
-
-    if (slot) {
-      await ctx.db.patch(slot._id, { currentEnrollmentId: enrollmentId });
-    } else {
-      const claimed = await claimEnrollmentSlot(ctx, user.orgId, credential._id, enrollmentId);
-      if (!claimed.created) {
-        const winner = await ctx.db.get(claimed.enrollmentId);
-        if (!winner) throw new Error('Enrollment not found');
-        if (winner.idempotencyKey !== idempotencyKey) {
-          await ctx.db.delete(enrollmentId);
-          throw new Error('Collector is already enrolled');
-        }
-        await refreshArchiveStatusCounts(ctx, user.orgId, now);
-        return {
-          enrollmentId: winner._id,
-          contributionId: winner.contributionId,
-          created: false,
-        };
-      }
-    }
-
-    const status = await getArchiveStatusRow(ctx, user.orgId);
-    if (status) {
-      await refreshArchiveStatusCounts(ctx, user.orgId, now);
-    } else {
-      await ensureArchiveStatusRow(ctx, {
-        orgId: user.orgId,
-        lifecycle: 'active',
-        capBytes: ARCHIVE_CAP_BYTES,
-        now,
-      });
-    }
-
-    await appendArchiveAuditEvent(ctx, {
-      orgId: user.orgId,
-      actorKind: 'user',
-      actorUserId: user._id,
-      action: 'enrollment',
-      outcome: 'success',
-      operationId: await enrollmentOperationId(user.orgId, idempotencyKey),
-      targetKind: 'enrollment',
-      targetId: enrollmentId,
-      enrollmentId,
-      contributionId: contribution._id,
-      now,
-    });
-    return {
-      enrollmentId,
-      contributionId: contribution._id,
-      created: true,
-    };
   },
 });
 
@@ -403,38 +196,8 @@ export const addAuthorizedSourceForUser = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { user, org } = await loadOrgUser(ctx, args.userId);
-    const activation = await getArchiveActivation(ctx, user.orgId);
-    assertArchiveMutationAllowed({
-      org,
-      activation,
-      serverEnabled: isArchiveServerEnabled(),
-    });
-    if (!activation) {
-      throw new Error('Conversation Archive is not activated');
-    }
-    const enrollment = await ctx.db.get(args.enrollmentId);
-    if (enrollment?.orgId !== user.orgId || enrollment.userId !== user._id) {
-      throw new Error('Enrollment not found');
-    }
-    if (enrollment.status !== 'active') {
-      throw new Error('Enrollment is not active');
-    }
-    validateAuthorizedSources([{ source: args.source, historyChoice: args.historyChoice }]);
-    if (sourceAlreadyAuthorized(enrollment.authorizedSources, args.source)) {
-      return null;
-    }
-    const now = Date.now();
-    await ctx.db.patch(enrollment._id, {
-      authorizedSources: [
-        ...enrollment.authorizedSources,
-        {
-          source: args.source,
-          historyChoice: args.historyChoice,
-          authorizedAt: now,
-        },
-      ],
-    });
+    const { user } = await loadOrgUser(ctx, args.userId);
+    await addAuthorizedArchiveSource(ctx, user, args.enrollmentId, args.source, args.historyChoice);
     return null;
   },
 });
@@ -447,11 +210,7 @@ export const unenrollForUser = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const { user } = await loadOrgUser(ctx, args.userId);
-    const enrollment = await ctx.db.get(args.enrollmentId);
-    if (enrollment?.orgId !== user.orgId || enrollment.userId !== user._id) {
-      throw new Error('Enrollment not found');
-    }
-    await invalidateArchiveEnrollment(ctx, enrollment, 'user_unenrolled', Date.now(), user._id);
+    await unenrollArchiveForUser(ctx, user, args.enrollmentId);
     return null;
   },
 });
@@ -464,14 +223,7 @@ export const revokeForUser = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const { user, org, membership } = await loadOrgUser(ctx, args.userId);
-    if (org.ownerId !== user._id || membership.role !== 'owner') {
-      throw new Error('Only the organization owner can revoke enrollments');
-    }
-    const enrollment = await ctx.db.get(args.enrollmentId);
-    if (enrollment?.orgId !== user.orgId) {
-      throw new Error('Enrollment not found');
-    }
-    await invalidateArchiveEnrollment(ctx, enrollment, 'owner_revoked', Date.now(), user._id);
+    await revokeArchiveEnrollmentForOwner(ctx, user, org, membership, args.enrollmentId);
     return null;
   },
 });

@@ -3,7 +3,7 @@ import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import type { HttpDeps } from './deps';
-import { isLoopbackRedirect } from './redirectUris';
+import { redirectLoopbackAuthorize } from './loopbackAuthorize';
 import { getRequestLogger, isConvexDocumentId, isJsonContentType } from './shared';
 
 const ARCHIVE_STATE_PREFIX = 'archive:';
@@ -45,36 +45,54 @@ function jsonError(message: string, status: number): Response {
   });
 }
 
+async function runEnrollmentLeave(
+  c: {
+    req: {
+      raw: Request;
+      header: (name: string) => string | undefined;
+      json: () => Promise<unknown>;
+    };
+    json: (data: unknown, status?: number) => Response;
+  },
+  oauth: HttpDeps['oauth'],
+  options: {
+    operation: string;
+    failEvent: string;
+    failMessage: string;
+    mutate: (userId: Id<'users'>, enrollmentId: Id<'archiveEnrollments'>) => Promise<unknown>;
+  },
+): Promise<Response> {
+  const logger = getRequestLogger(c.req.raw, { operation: options.operation });
+  const session = await requireArchiveSession(oauth, c.req.header('Authorization'));
+  if (session instanceof Response) return session;
+  const body = (await c.req.json().catch(() => null)) as { enrollmentId?: unknown } | null;
+  if (!body || typeof body.enrollmentId !== 'string' || !isConvexDocumentId(body.enrollmentId)) {
+    return jsonError('enrollmentId is required', 400);
+  }
+  try {
+    await options.mutate(session.userId, body.enrollmentId as Id<'archiveEnrollments'>);
+    await logger.flush();
+    return c.json({ ok: true });
+  } catch (error) {
+    logger.warn(options.failEvent, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    await logger.flush();
+    return jsonError(error instanceof Error ? error.message : options.failMessage, 400);
+  }
+}
+
 export function registerArchiveDesktopRoutes(
   app: HonoWithConvex<ActionCtx>,
   { oauth }: HttpDeps,
 ): void {
-  app.get('/archive/authorize', async (c) => {
-    const logger = getRequestLogger(c.req.raw, { operation: 'archive_authorize' });
-    const url = new URL(c.req.url);
-    const redirectUri = url.searchParams.get('redirect_uri');
-    const clientState = url.searchParams.get('state') ?? '';
-    if (!redirectUri) {
-      return c.json({ error: 'redirect_uri is required' }, 400);
-    }
-    if (!isLoopbackRedirect(redirectUri)) {
-      logger.warn('convex.archive_authorize_bad_redirect');
-      await logger.flush();
-      return c.json({ error: 'redirect_uri must be a loopback (127.0.0.1) address' }, 400);
-    }
-
-    const callbackUrl = new URL('/mcp/callback', url.origin).toString();
-    const state = await oauth.signState({
-      clientState: `${ARCHIVE_STATE_PREFIX}${clientState}`,
-      redirectUri,
-    });
-    const auth0Url = oauth.buildAuth0AuthorizeUrl(state, callbackUrl);
-    await logger.flush();
-    return new Response(null, {
-      status: 302,
-      headers: { Location: auth0Url, 'Cache-Control': 'no-store' },
-    });
-  });
+  app.get('/archive/authorize', async (c) =>
+    redirectLoopbackAuthorize(c, oauth, {
+      operation: 'archive_authorize',
+      badRedirectEvent: 'convex.archive_authorize_bad_redirect',
+      clientStatePrefix: ARCHIVE_STATE_PREFIX,
+    }),
+  );
 
   app.post('/archive/desktop/snapshot', async (c) => {
     const logger = getRequestLogger(c.req.raw, { operation: 'archive_desktop_snapshot' });
@@ -168,41 +186,25 @@ export function registerArchiveDesktopRoutes(
     }
   });
 
-  app.post('/archive/desktop/unenroll', async (c) => {
-    const session = await requireArchiveSession(oauth, c.req.header('Authorization'));
-    if (session instanceof Response) return session;
-    const body = (await c.req.json().catch(() => null)) as { enrollmentId?: unknown } | null;
-    if (!body || typeof body.enrollmentId !== 'string' || !isConvexDocumentId(body.enrollmentId)) {
-      return jsonError('enrollmentId is required', 400);
-    }
-    try {
-      await c.env.runMutation(internal.archiveDesktop.unenrollForUser, {
-        userId: session.userId,
-        enrollmentId: body.enrollmentId as Id<'archiveEnrollments'>,
-      });
-      return c.json({ ok: true });
-    } catch (error) {
-      return jsonError(error instanceof Error ? error.message : 'Unenroll failed', 400);
-    }
-  });
+  app.post('/archive/desktop/unenroll', async (c) =>
+    runEnrollmentLeave(c, oauth, {
+      operation: 'archive_desktop_unenroll',
+      failEvent: 'convex.archive_desktop_unenroll_failed',
+      failMessage: 'Unenroll failed',
+      mutate: (userId, enrollmentId) =>
+        c.env.runMutation(internal.archiveDesktop.unenrollForUser, { userId, enrollmentId }),
+    }),
+  );
 
-  app.post('/archive/desktop/revoke', async (c) => {
-    const session = await requireArchiveSession(oauth, c.req.header('Authorization'));
-    if (session instanceof Response) return session;
-    const body = (await c.req.json().catch(() => null)) as { enrollmentId?: unknown } | null;
-    if (!body || typeof body.enrollmentId !== 'string' || !isConvexDocumentId(body.enrollmentId)) {
-      return jsonError('enrollmentId is required', 400);
-    }
-    try {
-      await c.env.runMutation(internal.archiveDesktop.revokeForUser, {
-        userId: session.userId,
-        enrollmentId: body.enrollmentId as Id<'archiveEnrollments'>,
-      });
-      return c.json({ ok: true });
-    } catch (error) {
-      return jsonError(error instanceof Error ? error.message : 'Revoke failed', 400);
-    }
-  });
+  app.post('/archive/desktop/revoke', async (c) =>
+    runEnrollmentLeave(c, oauth, {
+      operation: 'archive_desktop_revoke',
+      failEvent: 'convex.archive_desktop_revoke_failed',
+      failMessage: 'Revoke failed',
+      mutate: (userId, enrollmentId) =>
+        c.env.runMutation(internal.archiveDesktop.revokeForUser, { userId, enrollmentId }),
+    }),
+  );
 }
 
 export const ARCHIVE_DESKTOP_STATE_PREFIX = ARCHIVE_STATE_PREFIX;
