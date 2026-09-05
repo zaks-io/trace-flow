@@ -180,6 +180,34 @@ pub fn load_desktop_archive_run_config(
     )
 }
 
+/// Isolate optional Archive setup for the serialized Desktop/CLI cycle.
+///
+/// Unreadable enrollment without a cleanup marker stays fail-loud in `load_error` so diagnostics
+/// remain, but `config` is `None` so parsed-fact sync still runs. Marker-driven cleanup still
+/// returns `Some(Revoked)` from the loader.
+pub fn prepare_serialized_archive(
+    paths: &Paths,
+    org_id: &str,
+    archive_url: String,
+    key_store: Arc<dyn ArchiveKeyStore>,
+) -> (Option<ArchiveRunConfig>, Option<String>) {
+    match load_archive_run_config(paths, org_id, archive_url, key_store) {
+        Ok(config) => (config, None),
+        Err(err) => (None, Some(err.to_string())),
+    }
+}
+
+/// Desktop production isolate: same as [`prepare_serialized_archive`] with the OS key store.
+pub fn prepare_desktop_serialized_archive(
+    paths: &Paths,
+    org_id: &str,
+) -> (Option<ArchiveRunConfig>, Option<String>) {
+    match load_desktop_archive_run_config(paths, org_id) {
+        Ok(config) => (config, None),
+        Err(err) => (None, Some(err.to_string())),
+    }
+}
+
 /// Run a sync pass over every ingestable Source, returning one report per Source attempted.
 ///
 /// Errors only on setup failures (bad client config, broken cursor DB). A per-envelope or cycle-fatal
@@ -1479,5 +1507,67 @@ mod tests {
         .err()
         .expect("unreadable enrollment must not look inactive");
         assert!(err.to_string().contains("load archive enrollment"));
+    }
+
+    #[tokio::test]
+    async fn unreadable_enrollment_without_marker_still_runs_fact_sync() {
+        let home = tempfile::TempDir::new().unwrap();
+        let state = tempfile::TempDir::new().unwrap();
+        write_home_transcripts(home.path());
+        struct RestoreStateDir(Option<std::ffi::OsString>);
+        impl Drop for RestoreStateDir {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var("TRACE_FLOW_STATE_DIR", value),
+                    None => std::env::remove_var("TRACE_FLOW_STATE_DIR"),
+                }
+            }
+        }
+        let _restore = RestoreStateDir(std::env::var_os("TRACE_FLOW_STATE_DIR"));
+        std::env::set_var("TRACE_FLOW_STATE_DIR", state.path());
+        let paths = Paths::resolve().expect("TRACE_FLOW_STATE_DIR seam");
+        paths.ensure().unwrap();
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+
+        let fact_posts = Arc::new(Mutex::new(0u32));
+        let ingest_url = spawn_http({
+            let fact_posts = Arc::clone(&fact_posts);
+            move |_raw| {
+                *fact_posts.lock().unwrap() += 1;
+                raw_response(
+                    202,
+                    "Accepted",
+                    r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#,
+                )
+            }
+        })
+        .await;
+
+        let (archive, load_error) = prepare_serialized_archive(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        );
+        assert!(archive.is_none());
+        assert!(
+            load_error
+                .as_deref()
+                .is_some_and(|err| err.contains("load archive enrollment")),
+            "Archive diagnostics must stay fail-loud: {load_error:?}"
+        );
+
+        let outcome = run_with_servers(home.path(), state.path(), ingest_url, archive).await;
+        let advanced: u32 = outcome
+            .reports
+            .iter()
+            .map(|(_, report)| report.advanced)
+            .sum();
+        assert!(
+            advanced >= 1,
+            "optional Archive setup failure must not block fact sync"
+        );
+        assert!(*fact_posts.lock().unwrap() >= 1);
+        assert!(outcome.archive.is_none());
     }
 }

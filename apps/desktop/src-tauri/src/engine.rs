@@ -330,12 +330,16 @@ async fn run_cycle(bus: &AppStateBus, window: Window) -> bool {
 
 /// Load Archive inputs for this serialized cycle. Inactive enrollment stays `None` so no spool or
 /// key is created. Frozen/grace/revoked keep the existing local archive state without a second task.
-/// Cleanup markers keep Archive on the cycle even when enrollment is unreadable; parse failures
-/// without a marker fail loud instead of dropping mandatory purge work.
-fn cycle_archive_config(org_id: &str) -> Result<Option<sync::ArchiveRunConfig>, String> {
-    let paths = Paths::resolve().map_err(|err| format!("resolve collector paths: {err}"))?;
-    let _ = paths.ensure();
-    sync::load_desktop_archive_run_config(&paths, org_id).map_err(|err| err.to_string())
+/// Cleanup markers keep Archive on the cycle even when enrollment is unreadable. Parse failures
+/// without a marker stay fail-loud in the error string but do not abort parsed-fact sync.
+fn cycle_archive_config(org_id: &str) -> (Option<sync::ArchiveRunConfig>, Option<String>) {
+    match Paths::resolve() {
+        Ok(paths) => {
+            let _ = paths.ensure();
+            sync::prepare_desktop_serialized_archive(&paths, org_id)
+        }
+        Err(err) => (None, Some(format!("resolve collector paths: {err}"))),
+    }
 }
 
 /// The non-`Send` half: build a local current-thread runtime and drive one [`sync::run`] on it.
@@ -362,17 +366,7 @@ fn run_cycle_blocking(
         }
     };
 
-    let archive = match cycle_archive_config(&org_id) {
-        Ok(archive) => archive,
-        Err(err) => {
-            return CycleOutcome {
-                advanced: 0,
-                failed: 0,
-                first_error: None,
-                setup_error: Some(err),
-            };
-        }
-    };
+    let (archive, archive_setup_error) = cycle_archive_config(&org_id);
     let result = runtime.block_on(sync::run_detailed(sync::RunConfig {
         ingest_url,
         credential,
@@ -407,7 +401,7 @@ fn run_cycle_blocking(
                 advanced,
                 failed,
                 first_error,
-                setup_error: None,
+                setup_error: archive_setup_error,
             }
         }
         // Setup failure (bad client config, broken cursor DB). The Display is a class, not a secret.
@@ -577,5 +571,76 @@ mod archive_engine_tests {
         .err()
         .expect("Desktop must not drop an unreadable enrollment as inactive");
         assert!(err.to_string().contains("load archive enrollment"));
+    }
+
+    #[test]
+    fn unreadable_policy_without_marker_still_runs_fact_sync() {
+        const CLAUDE: &[u8] =
+            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
+        let home = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
+
+        struct RestoreStateDir(Option<std::ffi::OsString>);
+        impl Drop for RestoreStateDir {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var("TRACE_FLOW_STATE_DIR", value),
+                    None => std::env::remove_var("TRACE_FLOW_STATE_DIR"),
+                }
+            }
+        }
+        let _restore = RestoreStateDir(std::env::var_os("TRACE_FLOW_STATE_DIR"));
+        std::env::set_var("TRACE_FLOW_STATE_DIR", state.path());
+        let paths = Paths::resolve().expect("TRACE_FLOW_STATE_DIR seam");
+        paths.ensure().unwrap();
+        std::fs::write(paths.archive_enrollment_file("org_1"), b"{not-json").unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let posts = fact_posts.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
+                let response = format!(
+                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+
+        let outcome = run_cycle_blocking(
+            "org_1".to_string(),
+            "tfc_secret".to_string(),
+            format!("http://{addr}"),
+            home.path().to_path_buf(),
+            Window::Incremental,
+            1_779_840_000_000,
+        );
+
+        assert!(
+            outcome
+                .setup_error
+                .as_deref()
+                .is_some_and(|err| err.contains("load archive enrollment")),
+            "Archive diagnostics must stay fail-loud: {:?}",
+            outcome.setup_error
+        );
+        assert!(
+            outcome.advanced >= 1,
+            "corrupt Archive policy must not abort fact sync: advanced={}",
+            outcome.advanced
+        );
+        assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
     }
 }
