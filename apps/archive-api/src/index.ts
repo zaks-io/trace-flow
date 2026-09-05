@@ -16,6 +16,7 @@ import {
   handleUpload,
 } from './handler';
 export { ArchiveSessionLedger } from './archive-ledger';
+export { StorageBudget } from './archive-storage-budget';
 
 export const app = new Hono<{ Bindings: ArchiveApiEnv }>();
 

@@ -40,6 +40,7 @@ describe('Archive API bindings', () => {
     ]);
     expect(ARCHIVE_API_WRANGLER_CONTRACT.durable_objects).toEqual([
       { binding: 'ARCHIVE_SESSION_LEDGER', class_name: 'ArchiveSessionLedger' },
+      { binding: 'STORAGE_BUDGET', class_name: 'StorageBudget' },
     ]);
     expect(ARCHIVE_API_WRANGLER_CONTRACT.queues).toBeUndefined();
   });

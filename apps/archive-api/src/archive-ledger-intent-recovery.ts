@@ -9,10 +9,18 @@ import {
   type PendingExpectedObject,
   type PendingIntent,
   markIntentReady,
+  markIntentWriteAuthorized,
   commitIntent,
+  discardPendingIntent,
 } from './archive-ledger-intent';
 import type { ArchiveR2Object } from './archive-r2';
-import { verifyEncryptedPlannedObject, verifyOrPutImmutableObject } from './archive-r2';
+import {
+  ArchiveR2BatchWriteError,
+  didAttemptWrite,
+  storageBudgetObject,
+  verifyEncryptedPlannedObject,
+  verifyOrPutImmutableObject,
+} from './archive-r2';
 import type { LedgerSnapshot } from './archive-ledger-state';
 
 export async function recoverPendingIntent(
@@ -71,8 +79,55 @@ export async function recoverPendingIntent(
       throw new ArchiveContractError('pending_object_verification_failed');
     }
   }
-  await verifyObjects(env.ARCHIVE_STORAGE, pending.objects);
+  const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
+  const reservation = await budget.reserveStorage({
+    orgId: envelope.scope.orgId,
+    objects: pending.objects.map(storageBudgetObject),
+  });
+  if (!reservation.accepted) {
+    await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, pending);
+    throw new ArchiveContractError('storage_cap_exceeded');
+  }
+  if (pending.status !== 'write_authorized') {
+    markIntentWriteAuthorized(storage, pending.intentHash);
+  }
+  await verifyObjectsAndReleaseDefinitivelyUnwritten(
+    env.ARCHIVE_STORAGE,
+    pending.objects,
+    (unwritten) =>
+      budget.releaseStorage({
+        orgId: envelope.scope.orgId,
+        objects: unwritten.map(storageBudgetObject),
+      }),
+  );
+  await budget.commitStorage({
+    orgId: envelope.scope.orgId,
+    objects: pending.objects.map(storageBudgetObject),
+  });
   commitIntent(storage, pending.intentHash, pending.commit, pending.acknowledgement);
+  await budget.recordArchiveAcknowledgement({
+    orgId: envelope.scope.orgId,
+    acknowledgedAt: Date.now(),
+  });
+}
+
+export async function discardDefinitelyUnwrittenIntent(
+  storage: DurableObjectStorage,
+  budget: {
+    releaseStorage(input: {
+      orgId: string;
+      objects: ReturnType<typeof storageBudgetObject>[];
+    }): Promise<unknown>;
+  },
+  orgId: string,
+  pending: PendingIntent,
+): Promise<void> {
+  if (pending.status === 'write_authorized') return;
+  await budget.releaseStorage({
+    orgId,
+    objects: pending.objects.map(storageBudgetObject),
+  });
+  discardPendingIntent(storage, pending.intentHash);
 }
 
 export function pendingExpectedObjects(
@@ -141,6 +196,53 @@ export async function unwrapKey(
   );
 }
 
-export async function verifyObjects(bucket: R2Bucket, objects: ArchiveR2Object[]): Promise<void> {
-  for (const object of objects) await verifyOrPutImmutableObject(bucket, object);
+async function verifyObjects(bucket: R2Bucket, objects: ArchiveR2Object[]): Promise<void> {
+  for (const [index, object] of objects.entries()) {
+    try {
+      await verifyOrPutImmutableObject(bucket, object);
+    } catch (error) {
+      throw new ArchiveR2BatchWriteError(
+        error,
+        objects.slice(index + (didAttemptWrite(error) ? 1 : 0)),
+      );
+    }
+  }
+}
+
+async function definitelyUnwrittenObjects(
+  bucket: R2Bucket,
+  objects: ArchiveR2Object[],
+): Promise<ArchiveR2Object[]> {
+  const unwritten: ArchiveR2Object[] = [];
+  for (const object of objects) {
+    try {
+      if ((await bucket.head(object.key)) === null) unwritten.push(object);
+    } catch {
+      // An ambiguous inventory result must retain the reservation for recovery.
+    }
+  }
+  return unwritten;
+}
+
+export async function verifyObjectsAndReleaseDefinitivelyUnwritten(
+  bucket: R2Bucket,
+  objects: ArchiveR2Object[],
+  release: (objects: ArchiveR2Object[]) => Promise<unknown>,
+): Promise<void> {
+  try {
+    await verifyObjects(bucket, objects);
+  } catch (error) {
+    if (error instanceof ArchiveR2BatchWriteError) {
+      const unwritten = await definitelyUnwrittenObjects(bucket, error.definitelyUnwritten);
+      if (unwritten.length > 0) {
+        try {
+          await release(unwritten);
+        } catch {
+          // An ambiguous release must leave the reservation for recovery.
+        }
+      }
+      throw error.cause;
+    }
+    throw error;
+  }
 }

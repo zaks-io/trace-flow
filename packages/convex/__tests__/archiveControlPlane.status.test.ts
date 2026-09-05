@@ -4,6 +4,40 @@ import { ARCHIVE_CAP_BYTES, ARCHIVE_HEARTBEAT_FUTURE_SKEW_MS } from '../archiveL
 import { asUser, enableArchive, enrollInput, seedWorld } from './archiveControlPlaneTest.setup';
 
 describe('archive control plane status and lifecycle', () => {
+  it('projects status by organization without crossing collector or organization boundaries', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    const otherOwner = asUser(world, world.otherOwner);
+    await owner.mutation(api.archive.activate, {});
+    await otherOwner.mutation(api.archive.activate, {});
+
+    await world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+      orgId: world.owner.orgId,
+      revision: 1,
+      storedBytes: 11,
+      lifecycle: 'active',
+    });
+    await world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+      orgId: world.otherOwner.orgId,
+      revision: 1,
+      storedBytes: 22,
+      lifecycle: 'blocked',
+    });
+
+    const statuses = await world.t.run(async (ctx) => ctx.db.query('archiveStatuses').collect());
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ orgId: world.owner.orgId, storedBytes: 11, lifecycle: 'active' }),
+        expect.objectContaining({
+          orgId: world.otherOwner.orgId,
+          storedBytes: 22,
+          lifecycle: 'blocked',
+        }),
+      ]),
+    );
+  });
+
   it('lets collector heartbeats change only timestamped local fields', async () => {
     enableArchive();
     const world = await seedWorld();
@@ -225,6 +259,70 @@ describe('archive control plane status and lifecycle', () => {
     expect(status.storedBytes).toBe(20);
     expect(status.lastDurableAcknowledgedAt).toBe(200);
     expect(status.lifecycle).toBe('blocked');
+  });
+
+  it('accepts a rebased server status after entitlement sync changes lifecycle at the same revision', async () => {
+    enableArchive();
+    const world = await seedWorld();
+    const owner = asUser(world, world.owner);
+    await owner.mutation(api.archive.activate, {});
+    await world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+      orgId: world.owner.orgId,
+      revision: 1,
+      storedBytes: 10,
+      lifecycle: 'blocked',
+    });
+
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'canceled' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+    await world.t.run(async (ctx) => {
+      const subscription = (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_org_id', (q) => q.eq('orgId', world.owner.orgId))
+          .collect()
+      )[0]!;
+      await ctx.db.patch(subscription._id, { status: 'active' });
+    });
+    await world.t.mutation(internal.archiveInternal.syncLifecycleForOrg, {
+      orgId: world.owner.orgId,
+    });
+
+    const entitlementUpdated = await owner.query(api.archive.getStatus, {});
+    expect(entitlementUpdated).toMatchObject({
+      storedBytes: 10,
+      lifecycle: 'active',
+    });
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+        orgId: world.owner.orgId,
+        revision: 1,
+        storedBytes: 10,
+        lifecycle: 'blocked',
+      }),
+    ).rejects.toThrow('reused with a different payload');
+    await expect(
+      world.t.mutation(internal.archiveInternal.applyServerStatusByOrganization, {
+        orgId: world.owner.orgId,
+        revision: 2,
+        storedBytes: 10,
+        lifecycle: 'blocked',
+      }),
+    ).resolves.toEqual({ revision: 2, replay: false });
+    expect(await owner.query(api.archive.getStatus, {})).toMatchObject({
+      storedBytes: 10,
+      lifecycle: 'blocked',
+    });
   });
 
   it('keys session integrity by contribution and never reassigns ownership on collision', async () => {

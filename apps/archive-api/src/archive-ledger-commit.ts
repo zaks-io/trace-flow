@@ -6,7 +6,11 @@ import {
   parseAndValidateUpload,
   sourceFingerprints,
 } from './archive-validation';
-import { verifyEncryptedPlannedObject, type ArchiveR2Object } from './archive-r2';
+import {
+  storageBudgetObject,
+  verifyEncryptedPlannedObject,
+  type ArchiveR2Object,
+} from './archive-r2';
 import {
   type ArchiveAcknowledgement,
   type LedgerCommit,
@@ -18,6 +22,7 @@ import {
   readIntent,
   readPendingIntent,
   markIntentReady,
+  markIntentWriteAuthorized,
   writeIntent,
   assertPendingIntentAuthenticated,
   encryptPendingIntentState,
@@ -28,10 +33,11 @@ import { reconcileArchiveUpload } from './archive-ledger-reconciliation';
 import { buildAcknowledgement, intentDigest, parseCommitEnvelope } from './archive-ledger-support';
 import {
   assertPendingIntentMatches,
+  discardDefinitelyUnwrittenIntent,
   pendingExpectedObjects,
   recoverPendingIntent,
   unwrapKey,
-  verifyObjects,
+  verifyObjectsAndReleaseDefinitivelyUnwritten,
   verifyPendingIntentBodies,
 } from './archive-ledger-intent-recovery';
 
@@ -56,7 +62,14 @@ export async function commitArchiveSession(
 
   const intentHash = await intentDigest({ scope: envelope.scope, upload });
   const priorIntent = readIntent(storage, intentHash);
-  if (priorIntent?.status === 'committed') return priorIntent.acknowledgement;
+  const budget = env.STORAGE_BUDGET.getByName(envelope.scope.orgId);
+  if (priorIntent?.status === 'committed') {
+    await budget.recordArchiveAcknowledgement({
+      orgId: envelope.scope.orgId,
+      acknowledgedAt: Date.now(),
+    });
+    return priorIntent.acknowledgement;
+  }
   const existingPending = readPendingIntent(storage);
   if (existingPending && existingPending.intentHash !== intentHash) {
     await recoverPendingIntent(storage, env, envelope, state, existingPending);
@@ -206,9 +219,36 @@ export async function commitArchiveSession(
       envelope.scope.orgId,
       envelope.keyVersion,
     );
-    await verifyObjects(env.ARCHIVE_STORAGE, priorIntent.objects);
     if (priorIntent.status === 'building') markIntentReady(storage, intentHash);
+    const reservation = await budget.reserveStorage({
+      orgId: envelope.scope.orgId,
+      objects: priorIntent.objects.map(storageBudgetObject),
+    });
+    if (!reservation.accepted) {
+      await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, priorIntent);
+      throw new ArchiveContractError('storage_cap_exceeded');
+    }
+    if (priorIntent.status !== 'write_authorized') {
+      markIntentWriteAuthorized(storage, intentHash);
+    }
+    await verifyObjectsAndReleaseDefinitivelyUnwritten(
+      env.ARCHIVE_STORAGE,
+      priorIntent.objects,
+      (unwritten) =>
+        budget.releaseStorage({
+          orgId: envelope.scope.orgId,
+          objects: unwritten.map(storageBudgetObject),
+        }),
+    );
+    await budget.commitStorage({
+      orgId: envelope.scope.orgId,
+      objects: priorIntent.objects.map(storageBudgetObject),
+    });
     commitIntent(storage, intentHash, priorIntent.commit!, priorIntent.acknowledgement);
+    await budget.recordArchiveAcknowledgement({
+      orgId: envelope.scope.orgId,
+      acknowledgedAt: Date.now(),
+    });
     return priorIntent.acknowledgement;
   }
   const intent: PendingIntent = {
@@ -224,8 +264,30 @@ export async function commitArchiveSession(
   };
   writeIntent(storage, intent);
   markIntentReady(storage, intentHash);
-  await verifyObjects(env.ARCHIVE_STORAGE, objects);
+  const reservation = await budget.reserveStorage({
+    orgId: envelope.scope.orgId,
+    objects: objects.map(storageBudgetObject),
+  });
+  if (!reservation.accepted) {
+    await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, intent);
+    throw new ArchiveContractError('storage_cap_exceeded');
+  }
+  markIntentWriteAuthorized(storage, intentHash);
+  await verifyObjectsAndReleaseDefinitivelyUnwritten(env.ARCHIVE_STORAGE, objects, (unwritten) =>
+    budget.releaseStorage({
+      orgId: envelope.scope.orgId,
+      objects: unwritten.map(storageBudgetObject),
+    }),
+  );
+  await budget.commitStorage({
+    orgId: envelope.scope.orgId,
+    objects: objects.map(storageBudgetObject),
+  });
   commitIntent(storage, intentHash, commit, acknowledgement);
+  await budget.recordArchiveAcknowledgement({
+    orgId: envelope.scope.orgId,
+    acknowledgedAt: Date.now(),
+  });
   return acknowledgement;
 }
 

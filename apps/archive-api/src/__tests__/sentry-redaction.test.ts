@@ -3,6 +3,8 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import * as Sentry from '@sentry/cloudflare';
 import worker, { app } from '../index';
 import type { ArchiveApiEnv } from '../context';
+import type { ArchiveSessionLedger } from '../archive-ledger';
+import type { StorageBudget } from '../archive-storage-budget';
 import {
   ARCHIVE_API_SENTRY_MAX_REQUEST_BODY_SIZE,
   ARCHIVE_API_SENTRY_REDACTED_HEADERS,
@@ -30,7 +32,8 @@ function makeEnv(): ArchiveApiEnv {
     CONVEX_SITE_URL: CONVEX,
     ARCHIVE_API_SHARED_SECRET: 'archive-shared-secret',
     ARCHIVE_STORAGE: makeEnvStorage(),
-    ARCHIVE_SESSION_LEDGER: {} as DurableObjectNamespace,
+    ARCHIVE_SESSION_LEDGER: {} as DurableObjectNamespace<ArchiveSessionLedger>,
+    STORAGE_BUDGET: {} as DurableObjectNamespace<StorageBudget>,
     ARCHIVE_KEY_VERSION: '1',
     ARCHIVE_KEY_WRAPPING_SECRET: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=',
     SENTRY_DSN,
