@@ -149,7 +149,7 @@ fn max_fitting_records(
     let mut lo = 1;
     let mut hi = high;
     while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
+        let mid = lo + (hi - lo).div_ceil(2);
         if request_fits(
             source,
             source_session_id,
