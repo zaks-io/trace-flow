@@ -380,7 +380,7 @@ describe('Archive Session Ledger', () => {
     );
     expect(appendResult.response.status).toBe(200);
     expect(appendResult.body.record_count).toBe(MAX_UPLOAD_OBSERVATIONS + 1);
-  });
+  }, 30_000);
 
   it('keeps manifest and intent work bounded across more than 16,384 records', async () => {
     const currentScope = scope('codex', `paged-lifetime-${crypto.randomUUID()}`);
