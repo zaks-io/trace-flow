@@ -22,6 +22,8 @@ import {
   observation,
   checkpoint,
   archiveKey,
+  archiveKeyHttpResponse,
+  fallbackArchiveKeyHttp,
   scope,
   newLedger,
 } from './ledger.integration.fixtures';
@@ -68,10 +70,11 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: hashedSecret,
         });
       }
-      if (url.pathname === '/archive-api/key') {
+      const keyResponse = await archiveKeyHttpResponse(url.pathname, () => {
         keyRequests++;
         throw new Error('key custody must not be reached');
-      }
+      });
+      if (keyResponse) return keyResponse;
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
     const realNamespace = runtimeEnv.ARCHIVE_SESSION_LEDGER;
@@ -244,13 +247,14 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId,
         });
       }
-      if (url.pathname === '/archive-api/key') {
+      const keyResponse = await archiveKeyHttpResponse(url.pathname, async () => {
         keyRequests++;
         return Response.json({
           wrappedKey: await archiveKey(currentScope.orgId),
           keyVersion: KEY_VERSION,
         });
-      }
+      });
+      if (keyResponse) return keyResponse;
       if (url.pathname === '/archive-api/session-integrity') {
         statusRequests++;
         const body = await request.json<Record<string, unknown>>();
@@ -466,12 +470,8 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: identity.collectorCredentialId,
         });
       }
-      if (url.pathname === '/archive-api/key') {
-        return Response.json({
-          wrappedKey: await archiveKey(currentScope.orgId),
-          keyVersion: KEY_VERSION,
-        });
-      }
+      const keyResponse = await fallbackArchiveKeyHttp(url.pathname, currentScope.orgId);
+      if (keyResponse) return keyResponse;
       if (url.pathname === '/archive-api/session-integrity') {
         const body = await request.json<Record<string, unknown>>();
         integrityStatusBodies.push(body);
@@ -706,12 +706,8 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: identity.hashedSecret,
         });
       }
-      if (url.pathname === '/archive-api/key') {
-        return Response.json({
-          wrappedKey: await archiveKey(currentScope.orgId),
-          keyVersion: KEY_VERSION,
-        });
-      }
+      const keyResponse = await fallbackArchiveKeyHttp(url.pathname, currentScope.orgId);
+      if (keyResponse) return keyResponse;
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
     const handlerEnv = {
@@ -873,12 +869,8 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: hashedSecret,
         });
       }
-      if (url.pathname === '/archive-api/key') {
-        return Response.json({
-          wrappedKey: await archiveKey(currentScope.orgId),
-          keyVersion: KEY_VERSION,
-        });
-      }
+      const keyResponse = await fallbackArchiveKeyHttp(url.pathname, currentScope.orgId);
+      if (keyResponse) return keyResponse;
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
     const handlerEnv = {
@@ -962,12 +954,8 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: hashedSecret,
         });
       }
-      if (url.pathname === '/archive-api/key') {
-        return Response.json({
-          wrappedKey: await archiveKey(currentScope.orgId),
-          keyVersion: KEY_VERSION,
-        });
-      }
+      const keyResponse = await fallbackArchiveKeyHttp(url.pathname, currentScope.orgId);
+      if (keyResponse) return keyResponse;
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
     const wire = JSON.parse(rustWireSessionJson) as Record<string, ArchiveUploadRequest>;

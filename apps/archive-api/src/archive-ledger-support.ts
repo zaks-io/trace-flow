@@ -117,10 +117,17 @@ const CONFLICT_ERROR_CLASSES = new Set([
   'storage_reservation_missing',
   'storage_budget_identity_mismatch',
   'storage_budget_corrupt',
+  'archive_key_has_live_references',
+  'archive_key_destroy_rejected',
+  'archive_key_rotation_in_progress',
+  'archive_key_version_retired',
+  'archive_key_rotation_stale',
 ]);
 
 const TRANSIENT_ERROR_CLASSES = new Set([
   'key_unavailable',
   'pending_commit_exists',
   'storage_budget_inventory_failed',
+  'archive_key_activation_failed',
+  'archive_key_rotation_failed',
 ]);

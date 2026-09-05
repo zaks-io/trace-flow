@@ -1,6 +1,7 @@
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, assertIdentifier } from './archive-contract';
 import { parseArchiveStatusUpdate, type ArchiveStatusUpdate } from './archive-status';
+import { assertWritableKeyVersion } from './archive-key-rotation-state';
 
 export const ARCHIVE_STORAGE_CAP_BYTES = 100 * 1024 * 1024 * 1024;
 export const STORAGE_BUDGET_OBJECT_CLASSES = [
@@ -14,6 +15,7 @@ export interface StorageBudgetObject {
   objectClass: StorageBudgetObjectClass;
   bytes: number;
   expiresAt: string | null;
+  keyVersion?: number;
 }
 
 export interface StorageBudgetSnapshot {
@@ -59,7 +61,8 @@ export function ensureBudgetSchema(storage: DurableObjectStorage): void {
       object_class TEXT NOT NULL,
       bytes INTEGER NOT NULL,
       expires_at TEXT,
-      status TEXT NOT NULL CHECK (status IN ('reserved', 'committed'))
+      status TEXT NOT NULL CHECK (status IN ('reserved', 'committed')),
+      key_version INTEGER
     );
     CREATE TABLE IF NOT EXISTS storage_budget_status_outbox (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -85,6 +88,14 @@ export function ensureBudgetSchema(storage: DurableObjectStorage): void {
     storage.sql.exec(
       'ALTER TABLE storage_budget_state ADD COLUMN admission_guard_revision INTEGER NOT NULL DEFAULT 0',
     );
+  }
+  const objectColumns = new Set(
+    [...storage.sql.exec<{ name: string }>('PRAGMA table_info(storage_budget_objects)')].map(
+      (column) => column.name,
+    ),
+  );
+  if (!objectColumns.has('key_version')) {
+    storage.sql.exec('ALTER TABLE storage_budget_objects ADD COLUMN key_version INTEGER');
   }
 }
 
@@ -157,7 +168,9 @@ function normalizeObjects(objects: StorageBudgetObject[]): StorageBudgetObject[]
       !objectClass(object.objectClass) ||
       !Number.isSafeInteger(object.bytes) ||
       object.bytes < 0 ||
-      (object.expiresAt !== null && typeof object.expiresAt !== 'string')
+      (object.expiresAt !== null && typeof object.expiresAt !== 'string') ||
+      (object.keyVersion !== undefined &&
+        (!Number.isSafeInteger(object.keyVersion) || object.keyVersion < 1))
     ) {
       throw new ArchiveContractError('storage_budget_object_invalid');
     }
@@ -171,6 +184,22 @@ function normalizeObjects(objects: StorageBudgetObject[]): StorageBudgetObject[]
     normalized.set(object.objectKey, object);
   }
   return [...normalized.values()];
+}
+
+function insertBudgetObject(
+  storage: DurableObjectStorage,
+  object: StorageBudgetObject,
+  status: 'reserved' | 'committed',
+): void {
+  storage.sql.exec(
+    'INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, ?, ?, ?, ?, ?)',
+    object.objectKey,
+    object.objectClass,
+    object.bytes,
+    object.expiresAt,
+    status,
+    object.keyVersion ?? null,
+  );
 }
 
 function assertExistingObject(
@@ -385,13 +414,7 @@ export async function reserveBudgetStorage(
           assertExistingObject(existing, object);
           continue;
         }
-        storage.sql.exec(
-          "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status) VALUES (?, ?, ?, ?, 'committed')",
-          object.objectKey,
-          object.objectClass,
-          object.bytes,
-          object.expiresAt,
-        );
+        insertBudgetObject(storage, object, 'committed');
         discoveredBytes += object.bytes;
       }
       if (discoveredBytes > 0) {
@@ -419,6 +442,7 @@ export async function reserveBudgetStorage(
     const additions: StorageBudgetObject[] = [];
     const existingObjects: StorageBudgetObject[] = [];
     for (const object of objects) {
+      assertWritableKeyVersion(storage, object.keyVersion);
       const existing = [
         ...storage.sql.exec<{
           object_class: StorageBudgetObjectClass;
@@ -436,13 +460,7 @@ export async function reserveBudgetStorage(
     const additionalBytes = additions.reduce((sum, object) => sum + object.bytes, 0);
     const existingBytes = existingObjects.reduce((sum, object) => sum + object.bytes, 0);
     for (const object of existingObjects) {
-      storage.sql.exec(
-        "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status) VALUES (?, ?, ?, ?, 'committed')",
-        object.objectKey,
-        object.objectClass,
-        object.bytes,
-        object.expiresAt,
-      );
+      insertBudgetObject(storage, object, 'committed');
     }
     const exceedsCap =
       additionalBytes > 0 &&
@@ -466,14 +484,7 @@ export async function reserveBudgetStorage(
       return;
     }
     for (const object of additions) {
-      storage.sql.exec(
-        'INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status) VALUES (?, ?, ?, ?, ?)',
-        object.objectKey,
-        object.objectClass,
-        object.bytes,
-        object.expiresAt,
-        'reserved',
-      );
+      insertBudgetObject(storage, object, 'reserved');
     }
     if (additionalBytes > 0 || existingBytes > 0) {
       storage.sql.exec(
@@ -501,6 +512,7 @@ export function commitBudgetStorage(
     budgetState(storage, input.orgId);
     const rows = new Map<string, { bytes: number; status: 'reserved' | 'committed' }>();
     for (const object of objects) {
+      assertWritableKeyVersion(storage, object.keyVersion);
       const row = [
         ...storage.sql.exec<{
           object_class: StorageBudgetObjectClass;

@@ -604,6 +604,19 @@ export default defineSchema({
     .index('by_org_version', ['orgId', 'keyVersion'])
     .index('by_org_id', ['orgId']),
 
+  // One row per Organization: the write-active key version and any retiring
+  // version that must stay wrapped until Archive API reports zero live refs.
+  archiveEncryptionCustody: defineTable({
+    orgId: v.id('organizations'),
+    activeKeyVersion: v.number(),
+    retiringKeyVersion: v.optional(v.number()),
+    rotationOperationId: v.optional(v.string()),
+    rotationStatus: v.optional(
+      v.union(v.literal('rotating'), v.literal('succeeded'), v.literal('failed')),
+    ),
+    updatedAt: v.number(),
+  }).index('by_org_id', ['orgId']),
+
   // Append-only metadata trail for semantic Conversation Archive operations.
   // Never stores transcript content, commands, payloads, paths, or secrets.
   archiveAuditEvents: defineTable({

@@ -25,6 +25,17 @@ import {
   type ReconciliationState,
 } from './archive-storage-budget-reconciliation';
 import { isArchiveStatusRevisionConflict, publishArchiveStatus } from './archive-status';
+import { advanceStoredRotation, startStoredRotation } from './archive-key-rotation';
+import {
+  ARCHIVE_ROTATION_RETRY_MS,
+  countKeyVersionReferences,
+  ensureRotationSchema,
+  readRotationState,
+  rotationHealth,
+  type ArchiveKeyRotationFailureInjection,
+  type ArchiveKeyRotationHealth,
+} from './archive-key-rotation-state';
+import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 
 export {
   ARCHIVE_STORAGE_CAP_BYTES,
@@ -44,6 +55,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     void this.ctx.blockConcurrencyWhile(() => {
       ensureBudgetSchema(this.ctx.storage);
       ensureReconciliationSchema(this.ctx.storage);
+      ensureRotationSchema(this.ctx.storage);
       return Promise.resolve();
     });
   }
@@ -98,6 +110,59 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     return snapshot(this.ctx.storage, budgetState(this.ctx.storage, input.orgId));
   }
 
+  startKeyRotation(input: {
+    orgId: string;
+    operationId: string;
+    fromVersion: number;
+    toVersion: number;
+    activationId?: string;
+  }): Promise<ArchiveKeyRotationHealth> {
+    return this.enqueueExclusive(() => {
+      budgetState(this.ctx.storage, input.orgId);
+      const state = startStoredRotation(this.ctx.storage, input);
+      return rotationHealth(input.orgId, state);
+    });
+  }
+
+  async advanceKeyRotation(input: {
+    orgId: string;
+    limit?: number;
+    injectFailure?: ArchiveKeyRotationFailureInjection;
+  }): Promise<ArchiveKeyRotationHealth> {
+    return this.enqueueExclusive(() => this.runKeyRotationAdvance(input));
+  }
+
+  private async runKeyRotationAdvance(input: {
+    orgId: string;
+    limit?: number;
+    injectFailure?: ArchiveKeyRotationFailureInjection;
+  }): Promise<ArchiveKeyRotationHealth> {
+    budgetState(this.ctx.storage, input.orgId);
+    const logger = createWorkerLogger({
+      service: 'archive-api',
+      request: new Request('https://archive-session-ledger/key-rotation'),
+      axiom: axiomConfigFromEnv(this.env),
+      context: { component: 'key-rotation', operation: 'advance' },
+    });
+    try {
+      const health = await advanceStoredRotation(this.ctx.storage, this.env, logger, input);
+      await this.scheduleAlarmIfNeeded();
+      return health;
+    } finally {
+      this.ctx.waitUntil(logger.flush());
+    }
+  }
+
+  getKeyRotationHealth(input: { orgId: string }): ArchiveKeyRotationHealth {
+    budgetState(this.ctx.storage, input.orgId);
+    return rotationHealth(input.orgId, readRotationState(this.ctx.storage));
+  }
+
+  countKeyVersionReferences(input: { orgId: string; keyVersion: number }): number {
+    budgetState(this.ctx.storage, input.orgId);
+    return countKeyVersionReferences(this.ctx.storage, input.keyVersion);
+  }
+
   async startReconciliation(input: { orgId: string }): Promise<ReconciliationState> {
     const result = startBudgetReconciliation(this.ctx.storage, input.orgId);
     await this.scheduleAlarmIfNeeded();
@@ -149,6 +214,20 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
 
   async alarm(): Promise<void> {
     await this.flushStatusOutbox();
+    const rotation = readRotationState(this.ctx.storage);
+    if (rotation && rotation.status !== 'succeeded' && rotation.status !== 'failed') {
+      try {
+        await this.advanceKeyRotation({ orgId: this.orgId() });
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: 'archive_api.key_rotation_failed',
+            errorClass: error instanceof Error ? error.message : 'unknown_error',
+          }),
+        );
+        await this.ctx.storage.setAlarm(Date.now() + ARCHIVE_ROTATION_RETRY_MS);
+      }
+    }
     const now = Date.now();
     let reconciliation = reconciliationState(this.ctx.storage);
     if (
@@ -194,9 +273,12 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
       ),
     ][0];
     const reconciliation = reconciliationState(this.ctx.storage);
+    const rotation = readRotationState(this.ctx.storage);
+    const rotationActive =
+      rotation !== null && rotation.status !== 'succeeded' && rotation.status !== 'failed';
     const now = Date.now();
     const scheduledAt =
-      reconciliation.activeGeneration !== undefined || outbox
+      reconciliation.activeGeneration !== undefined || outbox || rotationActive
         ? now + STATUS_RETRY_MS
         : reconciliation.lastCompletedAt === undefined
           ? now + STATUS_RETRY_MS
@@ -207,16 +289,20 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     }
   }
 
-  private queueReconciliationPage(
-    input: { orgId: string; limit?: number },
-    forceStart: boolean,
-  ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
-    const turn = this.reconciliationQueue.then(() => this.reconcilePage(input, forceStart));
+  private enqueueExclusive<T>(work: () => T | Promise<T>): Promise<T> {
+    const turn = this.reconciliationQueue.then(work);
     this.reconciliationQueue = turn.then(
       () => undefined,
       () => undefined,
     );
     return turn;
+  }
+
+  private queueReconciliationPage(
+    input: { orgId: string; limit?: number },
+    forceStart: boolean,
+  ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
+    return this.enqueueExclusive(() => this.reconcilePage(input, forceStart));
   }
 
   private async reconcilePage(

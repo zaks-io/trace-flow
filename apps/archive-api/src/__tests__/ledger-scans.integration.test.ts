@@ -25,6 +25,7 @@ import {
   observation,
   checkpoint,
   archiveKey,
+  fallbackArchiveKeyHttp,
   scope,
   envelope,
   call,
@@ -821,12 +822,8 @@ describe('Archive Session Ledger', () => {
           collectorCredentialId: hashedSecret,
         });
       }
-      if (url.pathname === '/archive-api/key') {
-        return Response.json({
-          wrappedKey: await archiveKey(currentScope.orgId),
-          keyVersion: KEY_VERSION,
-        });
-      }
+      const keyResponse = await fallbackArchiveKeyHttp(url.pathname, currentScope.orgId);
+      if (keyResponse) return keyResponse;
       throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
     });
     const handlerEnv = {

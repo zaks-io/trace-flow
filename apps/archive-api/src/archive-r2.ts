@@ -25,12 +25,16 @@ export class ArchiveR2BatchWriteError extends Error {
   }
 }
 
-export function storageBudgetObject(object: ArchiveR2Object): StorageBudgetObject {
+export function storageBudgetObject(
+  object: ArchiveR2Object,
+  keyVersion?: number,
+): StorageBudgetObject {
   return {
     objectKey: object.key,
     objectClass: object.objectClass === 'chunk' ? 'agent_archive_chunk' : 'agent_archive_manifest',
     bytes: new TextEncoder().encode(object.body).byteLength,
     expiresAt: null,
+    ...(keyVersion === undefined ? {} : { keyVersion }),
   };
 }
 

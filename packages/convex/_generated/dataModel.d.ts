@@ -493,6 +493,34 @@ export type DataModel = {
     searchIndexes: {};
     vectorIndexes: {};
   };
+  archiveEncryptionCustody: {
+    document: {
+      activeKeyVersion: number;
+      orgId: Id<"organizations">;
+      retiringKeyVersion?: number;
+      rotationOperationId?: string;
+      rotationStatus?: "rotating" | "succeeded" | "failed";
+      updatedAt: number;
+      _id: Id<"archiveEncryptionCustody">;
+      _creationTime: number;
+    };
+    fieldPaths:
+      | "_creationTime"
+      | "_id"
+      | "activeKeyVersion"
+      | "orgId"
+      | "retiringKeyVersion"
+      | "rotationOperationId"
+      | "rotationStatus"
+      | "updatedAt";
+    indexes: {
+      by_id: ["_id"];
+      by_creation_time: ["_creationTime"];
+      by_org_id: ["orgId", "_creationTime"];
+    };
+    searchIndexes: {};
+    vectorIndexes: {};
+  };
   archiveEncryptionKeyVersions: {
     document: {
       createdAt: number;

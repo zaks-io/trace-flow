@@ -11,12 +11,15 @@ import {
   getArchiveWrappedKey,
   isArchiveSupportedSource,
 } from './enrollment';
+import { getActiveArchiveWrappedKey } from './archive-key-client';
+import { mintAndActivateNextKey } from './archive-key-rotation';
 import {
   ARCHIVE_EXPORT_GRANT_HEADER,
   authenticateArchiveExportGrant,
   hasForeignCredentialClass,
 } from './export-grant';
 import { MAX_ARCHIVE_UPLOAD_BYTES, readBoundedJson } from './archive-request';
+import { statusFor } from './archive-ledger-support';
 import { appendArchiveAuditEvent } from './audit';
 import { publishArchiveIntegrityStatus } from './archive-integrity-status';
 
@@ -243,14 +246,21 @@ export async function handleUpload(c: Context<{ Bindings: ArchiveApiEnv }>): Pro
       }
     }
 
-    const keyVersion = Number(c.env.ARCHIVE_KEY_VERSION);
-    if (!Number.isSafeInteger(keyVersion) || keyVersion < 1) {
+    const configuredKeyVersion = Number(c.env.ARCHIVE_KEY_VERSION);
+    if (!Number.isSafeInteger(configuredKeyVersion) || configuredKeyVersion < 1) {
       logger.error('archive_api.key_configuration_invalid');
       return c.json({ error: 'archive_unavailable', reason: 'key_configuration_invalid' }, 503);
     }
     let wrappedKey: Awaited<ReturnType<typeof getArchiveWrappedKey>>;
     try {
-      wrappedKey = await getArchiveWrappedKey(c.env, { orgId: decision.orgId, keyVersion }, logger);
+      const active = await getActiveArchiveWrappedKey(c.env, currentDecision.orgId, logger);
+      wrappedKey =
+        active ??
+        (await getArchiveWrappedKey(
+          c.env,
+          { orgId: currentDecision.orgId, keyVersion: configuredKeyVersion },
+          logger,
+        ));
     } catch {
       return c.json({ error: 'archive_unavailable', reason: 'key_unavailable' }, 503);
     }
@@ -405,4 +415,107 @@ export function handleDeleteContribution(c: Context<{ Bindings: ArchiveApiEnv }>
 
 export function handleDeleteArchive(c: Context<{ Bindings: ArchiveApiEnv }>): Response {
   return rejectWithoutExportGrant(c, 'archive_delete');
+}
+
+function hasInternalArchiveAuthority(
+  authHeader: string | undefined,
+  secret: string | undefined,
+): boolean {
+  if (!secret || !authHeader?.startsWith('Bearer ')) return false;
+  const provided = authHeader.slice(7);
+  if (provided.length !== secret.length) return false;
+  let diff = 0;
+  for (let index = 0; index < secret.length; index++) {
+    diff |= provided.charCodeAt(index) ^ secret.charCodeAt(index);
+  }
+  return diff === 0;
+}
+
+export async function handleRotateKey(c: Context<{ Bindings: ArchiveApiEnv }>): Promise<Response> {
+  const logger = requestLogger(c, 'archive_key_rotation');
+  try {
+    if (
+      !hasInternalArchiveAuthority(c.req.header('Authorization'), c.env.ARCHIVE_API_SHARED_SECRET)
+    ) {
+      logger.warn('archive_api.key_rotation_unauthorized');
+      return c.json({ error: 'unauthorized', reason: 'invalid_credential_class' }, 401);
+    }
+    let parsed: unknown;
+    try {
+      parsed = await readBoundedJson(c.req.raw, 4096, 'invalid_rotation');
+    } catch {
+      logger.warn('archive_api.key_rotation_invalid', { reason: 'invalid_json' });
+      return c.json({ error: 'invalid_rotation' }, 400);
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      logger.warn('archive_api.key_rotation_invalid', { reason: 'invalid_shape' });
+      return c.json({ error: 'invalid_rotation' }, 400);
+    }
+    const body = parsed as { orgId?: unknown; operationId?: unknown };
+    if (typeof body.orgId !== 'string') {
+      logger.warn('archive_api.key_rotation_invalid', { reason: 'invalid_shape' });
+      return c.json({ error: 'invalid_rotation' }, 400);
+    }
+    try {
+      assertIdentifier(body.orgId, 'invalid_organization_id');
+    } catch {
+      logger.warn('archive_api.key_rotation_invalid', { reason: 'invalid_organization_id' });
+      return c.json({ error: 'invalid_rotation' }, 400);
+    }
+    const activation = await mintAndActivateNextKey(
+      c.env,
+      body.orgId,
+      logger,
+      typeof body.operationId === 'string' ? body.operationId : undefined,
+    );
+    const budget = c.env.STORAGE_BUDGET.getByName(body.orgId);
+    await budget.startKeyRotation({
+      orgId: body.orgId,
+      operationId: activation.operationId,
+      fromVersion: activation.fromVersion,
+      toVersion: activation.toVersion,
+      activationId: activation.activationId,
+    });
+    const health = await budget.advanceKeyRotation({ orgId: body.orgId });
+    logger.info('archive_api.key_rotation_started', {
+      replay: activation.replay,
+      status: health.status,
+    });
+    return c.json(health);
+  } catch (error) {
+    const reason =
+      error instanceof ArchiveContractError ? error.errorClass : 'archive_key_rotation_failed';
+    logger.error('archive_api.key_rotation_failed', error, { reason });
+    return new Response(JSON.stringify({ error: 'rotation_failed', reason }), {
+      status: statusFor(reason),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } finally {
+    c.executionCtx.waitUntil(logger.flush());
+  }
+}
+
+export async function handleRotationHealth(
+  c: Context<{ Bindings: ArchiveApiEnv }>,
+): Promise<Response> {
+  const logger = requestLogger(c, 'archive_key_rotation_health');
+  try {
+    if (
+      !hasInternalArchiveAuthority(c.req.header('Authorization'), c.env.ARCHIVE_API_SHARED_SECRET)
+    ) {
+      logger.warn('archive_api.key_rotation_unauthorized');
+      return c.json({ error: 'unauthorized', reason: 'invalid_credential_class' }, 401);
+    }
+    const orgId = c.req.param('orgId');
+    try {
+      assertIdentifier(orgId, 'invalid_organization_id');
+    } catch {
+      logger.warn('archive_api.key_rotation_invalid', { reason: 'invalid_organization_id' });
+      return c.json({ error: 'invalid_rotation' }, 400);
+    }
+    const health = await c.env.STORAGE_BUDGET.getByName(orgId).getKeyRotationHealth({ orgId });
+    return c.json(health);
+  } finally {
+    c.executionCtx.waitUntil(logger.flush());
+  }
 }

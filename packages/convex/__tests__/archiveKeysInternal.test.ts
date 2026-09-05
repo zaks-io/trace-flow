@@ -352,4 +352,201 @@ describe('archive key metadata internal boundary', () => {
       wrappedKey: wrappedKeyOtherOrganization,
     });
   });
+
+  it('activates the next version atomically and refuses destroy while refs remain', async () => {
+    const { t, orgA } = await seedOrganizations();
+    const wrappingSecretBase64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+    const firstWrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: orgA,
+        keyVersion: 1,
+        wrappingSecretBase64,
+      }),
+    );
+    const secondWrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: orgA,
+        keyVersion: 2,
+        wrappingSecretBase64,
+      }),
+    );
+    await t.mutation(internal.archiveKeysInternal.storeVersion, {
+      orgId: orgA,
+      keyVersion: 1,
+      wrappedKey: firstWrappedKey,
+    });
+    expect(await t.query(internal.archiveKeysInternal.getActiveVersion, { orgId: orgA })).toEqual({
+      orgId: orgA,
+      keyVersion: 1,
+      wrappedKey: firstWrappedKey,
+    });
+
+    const first = await t.mutation(internal.archiveKeysInternal.activateVersion, {
+      orgId: orgA,
+      keyVersion: 2,
+      wrappedKey: secondWrappedKey,
+      operationId: 'rotate:org-a:1:2',
+    });
+    expect(first).toMatchObject({
+      fromVersion: 1,
+      toVersion: 2,
+      replay: false,
+      operationId: 'rotate:org-a:1:2',
+    });
+    const replay = await t.mutation(internal.archiveKeysInternal.activateVersion, {
+      orgId: orgA,
+      keyVersion: 2,
+      wrappedKey: secondWrappedKey,
+      operationId: 'rotate:org-a:1:2',
+    });
+    expect(replay.replay).toBe(true);
+    expect(
+      await t.query(internal.archiveKeysInternal.getActiveVersion, { orgId: orgA }),
+    ).toMatchObject({
+      orgId: orgA,
+      keyVersion: 2,
+      wrappedKey: secondWrappedKey,
+      retiringKeyVersion: 1,
+      rotationStatus: 'rotating',
+    });
+
+    await expect(
+      t.mutation(internal.archiveKeysInternal.destroyRetiringVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+        operationId: 'rotate:org-a:1:2',
+        liveReferenceCount: 2,
+      }),
+    ).rejects.toThrow('live object references');
+    await expect(
+      t.mutation(internal.archiveKeysInternal.destroyRetiringVersion, {
+        orgId: orgA,
+        keyVersion: 2,
+        operationId: 'rotate:org-a:1:2',
+        liveReferenceCount: 0,
+      }),
+    ).rejects.toThrow('Active archive key cannot be destroyed');
+    expect(
+      await t.query(internal.archiveKeysInternal.getVersion, { orgId: orgA, keyVersion: 1 }),
+    ).toEqual({ orgId: orgA, keyVersion: 1, wrappedKey: firstWrappedKey });
+
+    await expect(
+      t.mutation(internal.archiveKeysInternal.destroyRetiringVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+        operationId: 'rotate:org-a:1:2',
+        liveReferenceCount: 0,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      t.query(internal.archiveKeysInternal.getVersion, { orgId: orgA, keyVersion: 1 }),
+    ).resolves.toBeNull();
+    await expect(
+      t.mutation(internal.archiveKeysInternal.destroyRetiringVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+        operationId: 'rotate:org-a:1:2',
+        liveReferenceCount: 0,
+      }),
+    ).resolves.toBe(true);
+    expect(await t.query(internal.archiveKeysInternal.getCustody, { orgId: orgA })).toMatchObject({
+      activeKeyVersion: 2,
+      rotationStatus: 'succeeded',
+    });
+    expect(
+      await t.mutation(internal.archiveKeysInternal.markRotationFailed, {
+        orgId: orgA,
+        operationId: 'rotate:org-a:1:2',
+      }),
+    ).toBe(false);
+    expect(await t.query(internal.archiveKeysInternal.getCustody, { orgId: orgA })).toMatchObject({
+      rotationStatus: 'succeeded',
+    });
+  });
+
+  it('refuses a skipped version, a second in-flight operation, and destroy with the wrong operation', async () => {
+    const { t, orgA } = await seedOrganizations();
+    const wrappingSecretBase64 = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
+    const firstWrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: orgA,
+        keyVersion: 1,
+        wrappingSecretBase64,
+      }),
+    );
+    const thirdWrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: orgA,
+        keyVersion: 3,
+        wrappingSecretBase64,
+      }),
+    );
+    const secondWrappedKey = serializeArchiveWrappedKeyVersion(
+      await createArchiveEncryptionKeyVersion({
+        orgId: orgA,
+        keyVersion: 2,
+        wrappingSecretBase64,
+      }),
+    );
+    await t.mutation(internal.archiveKeysInternal.storeVersion, {
+      orgId: orgA,
+      keyVersion: 1,
+      wrappedKey: firstWrappedKey,
+    });
+    await expect(
+      t.mutation(internal.archiveKeysInternal.activateVersion, {
+        orgId: orgA,
+        keyVersion: 3,
+        wrappedKey: thirdWrappedKey,
+        operationId: 'rotate:skip',
+      }),
+    ).rejects.toThrow('increment by one');
+    await t.mutation(internal.archiveKeysInternal.activateVersion, {
+      orgId: orgA,
+      keyVersion: 2,
+      wrappedKey: secondWrappedKey,
+      operationId: 'rotate:first',
+    });
+    await expect(
+      t.mutation(internal.archiveKeysInternal.activateVersion, {
+        orgId: orgA,
+        keyVersion: 3,
+        wrappedKey: thirdWrappedKey,
+        operationId: 'rotate:second',
+      }),
+    ).rejects.toThrow('already in progress');
+    await expect(
+      t.mutation(internal.archiveKeysInternal.destroyRetiringVersion, {
+        orgId: orgA,
+        keyVersion: 1,
+        operationId: 'rotate:other',
+        liveReferenceCount: 0,
+      }),
+    ).rejects.toThrow('does not match');
+    expect(
+      await t.mutation(internal.archiveKeysInternal.markRotationFailed, {
+        orgId: orgA,
+        operationId: 'rotate:first',
+      }),
+    ).toBe(true);
+    expect(
+      await t.mutation(internal.archiveKeysInternal.markRotationFailed, {
+        orgId: orgA,
+        operationId: 'rotate:first',
+      }),
+    ).toBe(true);
+    expect(await t.query(internal.archiveKeysInternal.getCustody, { orgId: orgA })).toMatchObject({
+      rotationStatus: 'failed',
+      retiringKeyVersion: 1,
+      activeKeyVersion: 2,
+    });
+    await expect(
+      t.mutation(internal.archiveKeysInternal.activateVersion, {
+        orgId: orgA,
+        keyVersion: 3,
+        wrappedKey: thirdWrappedKey,
+        operationId: 'rotate:after-failure',
+      }),
+    ).rejects.toThrow('already in progress');
+  });
 });

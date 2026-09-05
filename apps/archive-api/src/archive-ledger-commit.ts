@@ -1,3 +1,4 @@
+import { axiomConfigFromEnv, createWorkerLogger } from '@trace-flow/logging';
 import { isArchiveIntegrityErrorClass } from '@trace-flow/types';
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, type ArchiveScope } from './archive-contract';
@@ -36,11 +37,13 @@ import {
 } from './archive-ledger-intent';
 import { reconcileArchiveUpload } from './archive-ledger-reconciliation';
 import { buildAcknowledgement, intentDigest, parseCommitEnvelope } from './archive-ledger-support';
+import { getArchiveWrappedKeyVersion } from './archive-key-client';
 import {
   assertPendingIntentMatches,
   discardDefinitelyUnwrittenIntent,
   pendingExpectedObjects,
   recoverPendingIntent,
+  resolveIntentKeyMaterial,
   unwrapKey,
   verifyObjectsAndReleaseDefinitivelyUnwritten,
   verifyPendingIntentBodies,
@@ -86,21 +89,21 @@ async function commitArchiveSessionEnvelope(
   state = assertScope(state, envelope.scope);
   const upload = await parseAndValidateUpload(envelope.upload, envelope.scope);
   let scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
-  const configuredKeyVersion = Number(env.ARCHIVE_KEY_VERSION);
-  if (envelope.keyVersion !== configuredKeyVersion) {
+  if (state.keyVersion !== undefined && envelope.keyVersion < state.keyVersion) {
     throw new ArchiveContractError('archive_key_version_mismatch');
   }
-  if (state.keyVersion !== undefined && state.keyVersion !== envelope.keyVersion) {
-    throw new ArchiveContractError('archive_key_version_mismatch');
-  }
-  const archiveKey = await unwrapKey(env, envelope);
   if (state.manifestKey) {
+    const committedKeyVersion = state.keyVersion ?? envelope.keyVersion;
+    const committedMaterial =
+      committedKeyVersion === envelope.keyVersion
+        ? { keyVersion: envelope.keyVersion, wrappedKey: envelope.wrappedKey }
+        : await getCommittedManifestKeyMaterial(env, envelope.scope.orgId, committedKeyVersion);
     await verifyCommittedManifestObject(
       env.ARCHIVE_STORAGE,
       state.manifestKey,
-      archiveKey,
+      await unwrapKey(env, { ...envelope, ...committedMaterial }),
       envelope.scope,
-      envelope.keyVersion,
+      committedMaterial.keyVersion,
       state,
     );
   } else if (state.generation > 0) {
@@ -145,10 +148,13 @@ async function commitArchiveSessionEnvelope(
     const { payload: _payload, ...metadata } = element;
     return metadata;
   });
+  const writeKeyMaterial = priorIntent
+    ? await resolveIntentKeyMaterial(env, envelope, priorIntent)
+    : { keyVersion: envelope.keyVersion, wrappedKey: envelope.wrappedKey };
   const nextState: LedgerSnapshot = {
     ...state,
     scope: envelope.scope,
-    keyVersion: envelope.keyVersion,
+    keyVersion: writeKeyMaterial.keyVersion,
     elementCount: state.elementCount + ledgerElements.length,
     recordCount:
       state.recordCount + ledgerElements.filter((element) => element.kind === 'record').length,
@@ -157,6 +163,7 @@ async function commitArchiveSessionEnvelope(
     manifestKey: undefined,
     manifestHeadPageKey: state.manifestHeadPageKey,
   };
+  const archiveKey = await unwrapKey(env, { ...envelope, ...writeKeyMaterial });
   const plan = await packNewElementsPaged(
     envelope.scope,
     storage,
@@ -165,13 +172,13 @@ async function commitArchiveSessionEnvelope(
     nextState.generation,
     nextState.chainHead,
     archiveKey,
-    envelope.keyVersion,
+    writeKeyMaterial.keyVersion,
     async (chunk) => {
       await verifyEncryptedPlannedObject(
         { key: chunk.objectKey, body: chunk.encryptedBody, objectClass: 'chunk' },
         archiveKey,
         envelope.scope.orgId,
-        envelope.keyVersion,
+        writeKeyMaterial.keyVersion,
         chunk.plainBytes,
       );
     },
@@ -196,7 +203,7 @@ async function commitArchiveSessionEnvelope(
       { key: manifestObject.key, body: manifestObject.body, objectClass: 'manifest' },
       archiveKey,
       envelope.scope.orgId,
-      envelope.keyVersion,
+      writeKeyMaterial.keyVersion,
       manifestObject.plaintext,
     );
   }
@@ -209,7 +216,7 @@ async function commitArchiveSessionEnvelope(
   );
   const commit: LedgerCommit = {
     scope: envelope.scope,
-    keyVersion: envelope.keyVersion,
+    keyVersion: writeKeyMaterial.keyVersion,
     elementCount: nextState.elementCount,
     recordCount: nextState.recordCount,
     chainHead: nextState.chainHead,
@@ -246,14 +253,14 @@ async function commitArchiveSessionEnvelope(
     expectedPendingObjects,
     archiveKey,
     envelope.scope.orgId,
-    envelope.keyVersion,
+    writeKeyMaterial.keyVersion,
   );
   if (priorIntent) {
     await assertPendingIntentAuthenticated({
       ...priorIntent,
       key: archiveKey,
       orgId: envelope.scope.orgId,
-      keyVersion: envelope.keyVersion,
+      keyVersion: writeKeyMaterial.keyVersion,
     });
     if (!priorIntent.commit) throw new ArchiveContractError('pending_intent_corrupt');
     await assertPlannedChain(
@@ -270,12 +277,14 @@ async function commitArchiveSessionEnvelope(
       expectedObjects,
       archiveKey,
       envelope.scope.orgId,
-      envelope.keyVersion,
+      writeKeyMaterial.keyVersion,
     );
     if (priorIntent.status === 'building') markIntentReady(storage, intentHash);
     const reservation = await budget.reserveStorage({
       orgId: envelope.scope.orgId,
-      objects: priorIntent.objects.map(storageBudgetObject),
+      objects: priorIntent.objects.map((object) =>
+        storageBudgetObject(object, writeKeyMaterial.keyVersion),
+      ),
     });
     if (!reservation.accepted) {
       await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, priorIntent);
@@ -290,12 +299,16 @@ async function commitArchiveSessionEnvelope(
       (unwritten) =>
         budget.releaseStorage({
           orgId: envelope.scope.orgId,
-          objects: unwritten.map(storageBudgetObject),
+          objects: unwritten.map((object) =>
+            storageBudgetObject(object, writeKeyMaterial.keyVersion),
+          ),
         }),
     );
     await budget.commitStorage({
       orgId: envelope.scope.orgId,
-      objects: priorIntent.objects.map(storageBudgetObject),
+      objects: priorIntent.objects.map((object) =>
+        storageBudgetObject(object, writeKeyMaterial.keyVersion),
+      ),
     });
     commitIntent(storage, intentHash, priorIntent.commit, priorIntent.acknowledgement);
     await budget.recordArchiveAcknowledgement({
@@ -319,7 +332,7 @@ async function commitArchiveSessionEnvelope(
   markIntentReady(storage, intentHash);
   const reservation = await budget.reserveStorage({
     orgId: envelope.scope.orgId,
-    objects: objects.map(storageBudgetObject),
+    objects: objects.map((object) => storageBudgetObject(object, writeKeyMaterial.keyVersion)),
   });
   if (!reservation.accepted) {
     await discardDefinitelyUnwrittenIntent(storage, budget, envelope.scope.orgId, intent);
@@ -329,12 +342,12 @@ async function commitArchiveSessionEnvelope(
   await verifyObjectsAndReleaseDefinitivelyUnwritten(env.ARCHIVE_STORAGE, objects, (unwritten) =>
     budget.releaseStorage({
       orgId: envelope.scope.orgId,
-      objects: unwritten.map(storageBudgetObject),
+      objects: unwritten.map((object) => storageBudgetObject(object, writeKeyMaterial.keyVersion)),
     }),
   );
   await budget.commitStorage({
     orgId: envelope.scope.orgId,
-    objects: objects.map(storageBudgetObject),
+    objects: objects.map((object) => storageBudgetObject(object, writeKeyMaterial.keyVersion)),
   });
   commitIntent(storage, intentHash, commit, acknowledgement);
   await budget.recordArchiveAcknowledgement({
@@ -342,6 +355,24 @@ async function commitArchiveSessionEnvelope(
     acknowledgedAt: Date.now(),
   });
   return acknowledgement;
+}
+
+async function getCommittedManifestKeyMaterial(
+  env: ArchiveApiEnv,
+  orgId: string,
+  keyVersion: number,
+): Promise<{ keyVersion: number; wrappedKey: string }> {
+  const logger = createWorkerLogger({
+    service: 'archive-api',
+    request: new Request('https://archive-session-ledger/commit'),
+    axiom: axiomConfigFromEnv(env),
+    context: { component: 'ledger', operation: 'committed_manifest_key' },
+  });
+  try {
+    return await getArchiveWrappedKeyVersion(env, { orgId, keyVersion }, logger);
+  } finally {
+    void logger.flush();
+  }
 }
 
 function assertScope(state: LedgerSnapshot, scope: ArchiveScope): LedgerSnapshot {
