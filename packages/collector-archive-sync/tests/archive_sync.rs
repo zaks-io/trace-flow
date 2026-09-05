@@ -7,11 +7,12 @@ use collector_archive::{
     claude_transcript_part_id, default_transcript_part_id, scan_claude_jsonl, ArchiveSource,
 };
 use collector_archive_sync::{
-    acknowledgement_matches, run_archive_cycle, ArchiveAcknowledgement, ArchiveClient,
-    ArchiveClientConfig, ArchiveClientError, ArchiveEnrollmentRecord, ArchiveKeyStore,
-    ArchivePolicy, ArchiveSnapshot, ArchiveSpool, ArchiveSpoolKey, ArchiveSyncError,
-    ArchiveUploader, MemoryKeyStore, PendingArchiveRequest, PendingLoad, ARCHIVE_SPOOL_CAP_BYTES,
-    ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
+    acknowledgement_matches, archive_source_session_id, run_archive_cycle, transcript_part_for,
+    ArchiveAcknowledgement, ArchiveClient, ArchiveClientConfig, ArchiveClientError,
+    ArchiveEnrollmentRecord, ArchiveKeyStore, ArchivePolicy, ArchiveSnapshot, ArchiveSpool,
+    ArchiveSpoolKey, ArchiveSyncError, ArchiveUploader, MemoryKeyStore, PendingArchiveRequest,
+    PendingLoad, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE, MAX_ARCHIVE_UPLOAD_BYTES,
+    MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -76,13 +77,31 @@ fn ack_for(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
 }
 
 fn snapshot(source: ArchiveSource, bytes: &[u8], observed_at: i64) -> ArchiveSnapshot {
-    let source_session_id =
-        collector_archive_sync::archive_source_session_id(source, bytes).unwrap();
+    let source_session_id = archive_source_session_id(source, bytes).unwrap();
     ArchiveSnapshot {
         source,
         source_session_id,
         source_transcript_part_id: default_transcript_part_id(source),
         transcript_part_identity: None,
+        bytes: bytes.to_vec(),
+        observed_at,
+    }
+}
+
+fn snapshot_for_path(
+    source: ArchiveSource,
+    path: &str,
+    bytes: &[u8],
+    observed_at: i64,
+) -> ArchiveSnapshot {
+    let source_session_id = archive_source_session_id(source, bytes).unwrap();
+    let (source_transcript_part_id, transcript_part_identity) =
+        transcript_part_for(source, Some(path), bytes).unwrap();
+    ArchiveSnapshot {
+        source,
+        source_session_id,
+        source_transcript_part_id,
+        transcript_part_identity,
         bytes: bytes.to_vec(),
         observed_at,
     }
@@ -1271,6 +1290,177 @@ async fn claude_parent_and_subagent_same_session_upload_independently() {
         parent_progress.prefix_chain_sha256,
         sub_progress.prefix_chain_sha256
     );
+}
+
+#[tokio::test]
+async fn missing_or_empty_agent_id_subagent_does_not_collide_with_parent_across_relaunch() {
+    let parent_path = "/home/.claude/projects/p/session-1.jsonl";
+    let cases = [
+        (
+            "/home/.claude/projects/p/session-1/subagents/child.jsonl",
+            br#"{"sessionId":"session-1","uuid":"sub-1"}
+{"sessionId":"session-1","uuid":"sub-2"}
+"#
+            .as_slice(),
+            "path:child.jsonl",
+        ),
+        (
+            "/home/.claude/projects/p/session-1/subagents/empty.jsonl",
+            br#"{"sessionId":"session-1","uuid":"sub-empty-1","agentId":""}
+{"sessionId":"session-1","uuid":"sub-empty-2","agentId":"   "}
+"#
+            .as_slice(),
+            "path:empty.jsonl",
+        ),
+    ];
+    for (child_path, child_bytes, expected_identity) in cases {
+        let dir = TempDir::new().unwrap();
+        let keys = MemoryKeyStore::new();
+        let parent_bytes = br#"{"sessionId":"session-1","uuid":"parent-1"}
+{"sessionId":"session-1","uuid":"parent-2"}
+"#;
+        let child = snapshot_for_path(ArchiveSource::Claude, child_path, child_bytes, 10);
+        let parent = snapshot_for_path(ArchiveSource::Claude, parent_path, parent_bytes, 11);
+        let parent_part = default_transcript_part_id(ArchiveSource::Claude);
+        let child_part = claude_transcript_part_id(expected_identity).unwrap();
+        assert_eq!(
+            child.transcript_part_identity.as_deref(),
+            Some(expected_identity)
+        );
+        assert_eq!(child.source_transcript_part_id, child_part);
+        assert_eq!(parent.source_transcript_part_id, parent_part);
+        assert_ne!(child_part, parent_part);
+
+        let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+        let uploader = AckingUploader::new();
+        let first = run_archive_cycle(
+            &uploader,
+            &mut spool,
+            &keys,
+            &[child.clone(), parent.clone()],
+            ArchivePolicy::Enrolled,
+            None,
+        )
+        .await;
+        assert_eq!(first.failed, 0, "child-first cycle must isolate parts");
+        assert_eq!(first.uploaded, 2);
+        let first_part = serde_json::from_slice::<serde_json::Value>(&uploader.bodies.borrow()[0])
+            .unwrap()["checkpoint"]["source_transcript_part_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let second_part = serde_json::from_slice::<serde_json::Value>(&uploader.bodies.borrow()[1])
+            .unwrap()["checkpoint"]["source_transcript_part_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(first_part, child_part);
+        assert_eq!(second_part, parent_part);
+        drop(spool);
+
+        let parent_append = snapshot_for_path(
+            ArchiveSource::Claude,
+            parent_path,
+            br#"{"sessionId":"session-1","uuid":"parent-1"}
+{"sessionId":"session-1","uuid":"parent-2"}
+{"sessionId":"session-1","uuid":"parent-3"}
+"#,
+            12,
+        );
+        let mut relaunched = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+        let relaunch_uploader = AckingUploader::new();
+        let second = run_archive_cycle(
+            &relaunch_uploader,
+            &mut relaunched,
+            &keys,
+            &[child, parent_append],
+            ArchivePolicy::Enrolled,
+            None,
+        )
+        .await;
+        assert_eq!(second.failed, 0, "relaunch must keep parent progressing");
+        assert_eq!(second.uploaded, 1);
+        let relaunch_body =
+            serde_json::from_slice::<serde_json::Value>(&relaunch_uploader.bodies.borrow()[0])
+                .unwrap();
+        assert_eq!(
+            relaunch_body["checkpoint"]["source_transcript_part_id"].as_str(),
+            Some(parent_part.as_str())
+        );
+        assert_eq!(relaunch_body["checkpoint"]["record_count"], 3);
+        let parent_progress = relaunched
+            .progress_part(ArchiveSource::Claude, "session-1", &parent_part)
+            .unwrap()
+            .unwrap();
+        let child_progress = relaunched
+            .progress_part(ArchiveSource::Claude, "session-1", &child_part)
+            .unwrap()
+            .unwrap();
+        assert_eq!(parent_progress.record_count, 3);
+        assert_eq!(child_progress.record_count, 2);
+        assert_ne!(
+            parent_progress.source_transcript_part_id(),
+            child_progress.source_transcript_part_id()
+        );
+    }
+}
+
+#[test]
+fn missing_key_with_existing_ciphertext_does_not_mint_a_replacement() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let path = pending_disk_path(dir.path(), &pending);
+    let original_key = {
+        let spool =
+            ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, ARCHIVE_SPOOL_CAP_BYTES)
+                .unwrap();
+        spool.persist_pending(&pending).unwrap();
+        pad_spool_leaving_room(dir.path(), ARCHIVE_SPOOL_CAP_BYTES, 0);
+        assert_eq!(real_durable_bytes(dir.path()), ARCHIVE_SPOOL_CAP_BYTES);
+        keys.load("org_1").unwrap().unwrap()
+    };
+    let original_bytes = *original_key.as_bytes();
+    let ciphertext = fs::read(&path).unwrap();
+    keys.delete("org_1").unwrap();
+
+    match ArchiveSpool::open(dir.path(), "org_1", &keys) {
+        Err(ArchiveSyncError::Corrupt) => {}
+        Ok(_) => panic!("missing key must not mint a replacement over existing ciphertext"),
+        Err(err) => panic!("expected archive_spool_corrupt, got {}", err.class()),
+    }
+    assert!(keys.load("org_1").unwrap().is_none());
+    assert_eq!(fs::read(&path).unwrap(), ciphertext);
+    assert_eq!(real_durable_bytes(dir.path()), ARCHIVE_SPOOL_CAP_BYTES);
+
+    match ArchiveSpool::open(dir.path(), "org_1", &keys) {
+        Err(ArchiveSyncError::Corrupt) => {}
+        Ok(_) => panic!("relaunch must still refuse to mint a replacement key"),
+        Err(err) => panic!("expected archive_spool_corrupt, got {}", err.class()),
+    }
+    assert!(keys.load("org_1").unwrap().is_none());
+
+    let replacement = ArchiveSpoolKey::generate().unwrap();
+    assert_ne!(replacement.as_bytes(), &original_bytes);
+    keys.store("org_1", &ArchiveSpoolKey::from_bytes(original_bytes))
+        .unwrap();
+    let restored = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), ciphertext);
+    assert_eq!(
+        restored
+            .pending(ArchiveSource::Claude, &pending.source_session_id)
+            .unwrap()
+            .unwrap()
+            .body,
+        pending.body
+    );
+    assert_eq!(restored.on_disk_bytes().unwrap(), ARCHIVE_SPOOL_CAP_BYTES);
+    let extra = pending_from_bytes(ArchiveSource::Codex, CODEX, 11);
+    assert!(matches!(
+        restored.persist_pending(&extra),
+        Err(ArchiveSyncError::CapacityExceeded)
+    ));
+    assert_eq!(fs::read(&path).unwrap(), ciphertext);
 }
 
 #[test]

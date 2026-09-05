@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::ArchiveSyncResult;
+use crate::error::{ArchiveSyncError, ArchiveSyncResult};
 use crate::policy::ArchivePolicy;
 use crate::spool::atomic_write;
 
@@ -20,15 +20,17 @@ impl ArchiveEnrollmentRecord {
         }
     }
 
-    pub fn policy(&self) -> ArchivePolicy {
-        self.status.parse().unwrap_or(ArchivePolicy::Inactive)
+    pub fn policy(&self) -> ArchiveSyncResult<ArchivePolicy> {
+        self.status
+            .parse()
+            .map_err(|_| ArchiveSyncError::InvalidEnrollment)
     }
 
     pub fn load(path: &Path) -> ArchiveSyncResult<ArchivePolicy> {
         match fs::read(path) {
             Ok(bytes) => {
                 let record: Self = serde_json::from_slice(&bytes)?;
-                Ok(record.policy())
+                record.policy()
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(ArchivePolicy::Inactive),
             Err(err) => Err(err.into()),
@@ -71,5 +73,22 @@ mod tests {
         assert!(persisted.contains("grace"));
         assert!(!persisted.contains("tfc_"));
         assert!(!persisted.contains("payload"));
+    }
+
+    #[test]
+    fn truncated_or_unknown_status_fails_loud() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("archive-enrollment.json");
+        fs::write(&path, br#"{"status":"enrolle"}"#).unwrap();
+        let err = ArchiveEnrollmentRecord::load(&path).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::ArchiveSyncError::InvalidEnrollment
+        ));
+        fs::write(&path, br#"{"status":"inactive"}"#).unwrap();
+        assert_eq!(
+            ArchiveEnrollmentRecord::load(&path).unwrap(),
+            ArchivePolicy::Inactive
+        );
     }
 }

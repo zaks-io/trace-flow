@@ -41,17 +41,29 @@ impl ArchivePolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArchivePolicyParseError;
+
+impl std::fmt::Display for ArchivePolicyParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("unknown archive enrollment status")
+    }
+}
+
+impl std::error::Error for ArchivePolicyParseError {}
+
 impl std::str::FromStr for ArchivePolicy {
-    type Err = std::convert::Infallible;
+    type Err = ArchivePolicyParseError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(match value {
-            "enrolled" => Self::Enrolled,
-            "frozen" => Self::Frozen,
-            "grace" => Self::Grace,
-            "revoked" => Self::Revoked,
-            _ => Self::Inactive,
-        })
+        match value {
+            "inactive" => Ok(Self::Inactive),
+            "enrolled" => Ok(Self::Enrolled),
+            "frozen" => Ok(Self::Frozen),
+            "grace" => Ok(Self::Grace),
+            "revoked" => Ok(Self::Revoked),
+            _ => Err(ArchivePolicyParseError),
+        }
     }
 }
 
@@ -104,5 +116,20 @@ mod tests {
             assert!(!policy.captures());
             assert!(!policy.purges());
         }
+    }
+
+    #[test]
+    fn from_str_accepts_inactive_and_rejects_unknown() {
+        assert_eq!(
+            "inactive".parse::<ArchivePolicy>().unwrap(),
+            ArchivePolicy::Inactive
+        );
+        assert_eq!(
+            "enrolled".parse::<ArchivePolicy>().unwrap(),
+            ArchivePolicy::Enrolled
+        );
+        assert!("enrolle".parse::<ArchivePolicy>().is_err());
+        assert!("".parse::<ArchivePolicy>().is_err());
+        assert!("ENROLLED".parse::<ArchivePolicy>().is_err());
     }
 }

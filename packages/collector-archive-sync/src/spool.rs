@@ -91,8 +91,13 @@ impl ArchiveSpool {
     ) -> ArchiveSyncResult<Self> {
         let root = root.into();
         let org_id = org_id.into();
-        if cleanup_obligation_exists(&root) && key_store.load(&org_id)?.is_none() {
-            return Err(ArchiveSyncError::KeyUnavailable);
+        if key_store.load(&org_id)?.is_none() {
+            if cleanup_obligation_exists(&root) {
+                return Err(ArchiveSyncError::KeyUnavailable);
+            }
+            if durable_files_exist(&root)? {
+                return Err(ArchiveSyncError::Corrupt);
+            }
         }
         fs::create_dir_all(&root)?;
         let key = match key_store.load(&org_id)? {

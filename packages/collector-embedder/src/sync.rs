@@ -1509,6 +1509,54 @@ mod tests {
         assert!(err.to_string().contains("load archive enrollment"));
     }
 
+    #[test]
+    fn unknown_policy_status_fails_loud_and_explicit_inactive_stays_inactive() {
+        let state = tempfile::TempDir::new().unwrap();
+        let paths = Paths::at(state.path().to_path_buf());
+        paths.ensure().unwrap();
+        std::fs::write(
+            paths.archive_enrollment_file("org_1"),
+            br#"{"status":"enrolle"}"#,
+        )
+        .unwrap();
+        let err = match load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("truncated status must not look inactive"),
+        };
+        assert!(err.to_string().contains("load archive enrollment"));
+        let (config, load_error) = prepare_serialized_archive(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        );
+        assert!(config.is_none());
+        assert!(
+            load_error
+                .as_deref()
+                .is_some_and(|err| err.contains("load archive enrollment")),
+            "truncated policy must stay fail-loud: {load_error:?}"
+        );
+        std::fs::write(
+            paths.archive_enrollment_file("org_1"),
+            br#"{"status":"inactive"}"#,
+        )
+        .unwrap();
+        assert!(load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        )
+        .unwrap()
+        .is_none());
+    }
+
     #[tokio::test]
     async fn unreadable_enrollment_without_marker_still_runs_fact_sync() {
         let home = tempfile::TempDir::new().unwrap();

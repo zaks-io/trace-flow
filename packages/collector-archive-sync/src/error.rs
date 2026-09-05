@@ -12,6 +12,8 @@ pub enum ArchiveSyncError {
     UnsupportedSource,
     #[error("archive session is invalid")]
     InvalidSession,
+    #[error("archive enrollment status is invalid")]
+    InvalidEnrollment,
     #[error("archive key is unavailable")]
     KeyUnavailable,
     #[error("archive acknowledgement does not match the pending request")]
@@ -37,6 +39,7 @@ impl ArchiveSyncError {
             Self::Corrupt => "archive_spool_corrupt",
             Self::UnsupportedSource => "unsupported_archive_source",
             Self::InvalidSession => "invalid_archive_session",
+            Self::InvalidEnrollment => "archive_enrollment_invalid",
             Self::KeyUnavailable => "archive_key_unavailable",
             Self::AcknowledgementMismatch => "archive_ack_mismatch",
             Self::UploadTooLarge => "upload_too_large",

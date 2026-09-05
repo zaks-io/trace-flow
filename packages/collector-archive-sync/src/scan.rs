@@ -32,8 +32,10 @@ pub fn archive_source_session_id(source: ArchiveSource, bytes: &[u8]) -> Archive
 
 /// Resolve Claude parent vs subagent part identity from the transcript path and records.
 ///
-/// Parent files use [`scan_claude_jsonl`] (`claude:part:parent`). A `subagents/` path plus an
-/// `agentId` uses [`scan_claude_jsonl_part`]. Codex is always `codex:part:primary`.
+/// Parent files use [`scan_claude_jsonl`] (`claude:part:parent`). A `subagents/` path uses
+/// [`scan_claude_jsonl_part`] with `agentId` when present, otherwise a stable path-derived
+/// identity. Subagent paths never fall back to the parent part. Codex is always
+/// `codex:part:primary`.
 pub fn transcript_part_for(
     source: ArchiveSource,
     transcript_path: Option<&str>,
@@ -42,9 +44,10 @@ pub fn transcript_part_for(
     match source {
         ArchiveSource::Claude => {
             if transcript_path.is_some_and(claude_is_subagent_path) {
-                if let Some(agent_id) = claude_agent_id(bytes) {
-                    return Ok((claude_transcript_part_id(&agent_id)?, Some(agent_id)));
-                }
+                let identity = claude_agent_id(bytes)
+                    .or_else(|| transcript_path.and_then(claude_subagent_path_identity))
+                    .ok_or(ArchiveSyncError::InvalidSession)?;
+                return Ok((claude_transcript_part_id(&identity)?, Some(identity)));
             }
             Ok((default_transcript_part_id(ArchiveSource::Claude), None))
         }
@@ -75,6 +78,21 @@ pub fn scan_snapshot(
 fn claude_is_subagent_path(path: &str) -> bool {
     path.split(['/', '\\'])
         .any(|segment| segment == "subagents")
+}
+
+fn claude_subagent_path_identity(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path
+        .split(['/', '\\'])
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let idx = segments
+        .iter()
+        .rposition(|segment| *segment == "subagents")?;
+    let rest = &segments[idx + 1..];
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!("path:{}", rest.join("/")))
 }
 
 fn claude_agent_id(bytes: &[u8]) -> Option<String> {
@@ -153,5 +171,52 @@ mod tests {
         assert_eq!(sub_identity.as_deref(), Some("agent-001"));
         assert_ne!(parent_part, sub_part);
         assert_eq!(sub_part, claude_transcript_part_id("agent-001").unwrap());
+    }
+
+    #[test]
+    fn missing_or_empty_agent_id_subagent_never_uses_parent_part() {
+        let parent = br#"{"sessionId":"session-1","uuid":"p1"}"#;
+        let missing = br#"{"sessionId":"session-1","uuid":"s1"}"#;
+        let empty = br#"{"sessionId":"session-1","uuid":"s2","agentId":"   "}"#;
+        let parent_part = default_transcript_part_id(ArchiveSource::Claude);
+        let (resolved_parent, parent_identity) = transcript_part_for(
+            ArchiveSource::Claude,
+            Some("/home/.claude/projects/p/session-1.jsonl"),
+            parent,
+        )
+        .unwrap();
+        assert_eq!(resolved_parent, parent_part);
+        assert!(parent_identity.is_none());
+
+        for (path, bytes, expected_identity) in [
+            (
+                "/home/.claude/projects/p/session-1/subagents/child.jsonl",
+                missing.as_slice(),
+                "path:child.jsonl",
+            ),
+            (
+                "/home/.claude/projects/p/session-1/subagents/empty.jsonl",
+                empty.as_slice(),
+                "path:empty.jsonl",
+            ),
+        ] {
+            let (part, identity) = transcript_part_for(ArchiveSource::Claude, Some(path), bytes)
+                .expect("subagent path must keep a distinct part identity");
+            assert_eq!(identity.as_deref(), Some(expected_identity));
+            assert_eq!(part, claude_transcript_part_id(expected_identity).unwrap());
+            assert_ne!(part, parent_part);
+        }
+    }
+
+    #[test]
+    fn subagent_path_without_identity_fails_isolated() {
+        let bytes = br#"{"sessionId":"session-1","uuid":"s1"}"#;
+        let err = transcript_part_for(
+            ArchiveSource::Claude,
+            Some("/home/.claude/projects/p/session-1/subagents"),
+            bytes,
+        )
+        .expect_err("a subagents/ path with no file identity must not fall back to parent");
+        assert!(matches!(err, ArchiveSyncError::InvalidSession));
     }
 }

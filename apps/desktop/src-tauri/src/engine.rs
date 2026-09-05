@@ -610,6 +610,46 @@ mod archive_engine_tests {
     }
 
     #[test]
+    fn truncated_policy_status_fails_loud_and_explicit_inactive_stays_inactive() {
+        let dir = TempDir::new().unwrap();
+        let paths = Paths::at(dir.path().to_path_buf());
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "enrolle");
+        let err = match sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("truncated status must not look inactive"),
+        };
+        assert!(err.to_string().contains("load archive enrollment"));
+        let (config, load_error) = sync::prepare_serialized_archive(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        );
+        assert!(config.is_none());
+        assert!(
+            load_error
+                .as_deref()
+                .is_some_and(|err| err.contains("load archive enrollment")),
+            "truncated policy must stay fail-loud: {load_error:?}"
+        );
+        enrollment(&paths, "org_1", "inactive");
+        assert!(sync::load_archive_run_config(
+            &paths,
+            "org_1",
+            "https://archive.example".to_string(),
+            Arc::new(MemoryKeyStore::new()),
+        )
+        .unwrap()
+        .is_none());
+    }
+
+    #[test]
     fn unreadable_policy_without_marker_still_runs_fact_sync() {
         const CLAUDE: &[u8] =
             include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
@@ -680,6 +720,92 @@ mod archive_engine_tests {
         );
         assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
         assert!(fact_cycle_reached_ingest(&outcome));
+    }
+
+    #[test]
+    fn truncated_policy_without_marker_still_runs_fact_sync_and_backfill() {
+        const CLAUDE: &[u8] =
+            include_bytes!("../../../../packages/collector-archive/tests/fixtures/claude.jsonl");
+        let home = TempDir::new().unwrap();
+        let state = TempDir::new().unwrap();
+        let claude_dir = home.path().join(".claude").join("projects").join("p1");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("claude-session-001.jsonl"), CLAUDE).unwrap();
+
+        struct RestoreStateDir(Option<std::ffi::OsString>);
+        impl Drop for RestoreStateDir {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var("TRACE_FLOW_STATE_DIR", value),
+                    None => std::env::remove_var("TRACE_FLOW_STATE_DIR"),
+                }
+            }
+        }
+        let _restore = RestoreStateDir(std::env::var_os("TRACE_FLOW_STATE_DIR"));
+        std::env::set_var("TRACE_FLOW_STATE_DIR", state.path());
+        let paths = Paths::resolve().expect("TRACE_FLOW_STATE_DIR seam");
+        paths.ensure().unwrap();
+        enrollment(&paths, "org_1", "enrolle");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let fact_posts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let posts = fact_posts.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body = r#"{"accepted":true,"sessions":1,"skipped_conflict":0}"#;
+                let response = format!(
+                    "HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+            }
+        });
+
+        let outcome = run_cycle_blocking(
+            "org_1".to_string(),
+            "tfc_secret".to_string(),
+            format!("http://{addr}"),
+            home.path().to_path_buf(),
+            Window::Incremental,
+            1_779_840_000_000,
+        );
+
+        assert!(
+            outcome
+                .archive_setup_error
+                .as_deref()
+                .is_some_and(|err| err.contains("load archive enrollment")),
+            "truncated policy must stay fail-loud: {:?}",
+            outcome.archive_setup_error
+        );
+        assert!(outcome.setup_error.is_none());
+        assert!(outcome.advanced >= 1);
+        assert!(fact_posts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+        assert!(fact_cycle_reached_ingest(&outcome));
+
+        let mut settings = Settings {
+            syncing: true,
+            backfilled: false,
+        };
+        match (
+            apply_authorized_cycle(&mut settings, &outcome),
+            sync::window_from_since("7d").unwrap(),
+        ) {
+            (Window::History(actual), Window::History(expected)) => assert_eq!(actual, expected),
+            _ => panic!("first truncated-policy cycle must still use FIRST_BACKFILL"),
+        }
+        assert!(settings.backfilled);
+        assert!(matches!(
+            window_for_authorized_cycle(&settings),
+            Window::Incremental
+        ));
     }
 
     #[test]
