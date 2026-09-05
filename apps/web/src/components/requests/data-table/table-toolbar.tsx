@@ -17,6 +17,7 @@ import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
 import type { Alert } from '@/types/alerts';
 import type { Table, ColumnDef, VisibilityState } from '@tanstack/react-table';
+import { readTraceColumnMeta } from './metadata';
 
 export type AlertFilterValue = string;
 
@@ -180,7 +181,7 @@ function ColumnToggleDropdown<TData>(props: ColumnToggleProps<TData>) {
   if (props.table) {
     const columns = props.table.getAllLeafColumns();
     items = columns.map((col) => {
-      const meta = col.columnDef.meta as { category?: string; label?: string } | undefined;
+      const meta = readTraceColumnMeta(col.columnDef.meta);
       return {
         id: col.id,
         label: meta?.label ?? col.id,
@@ -195,7 +196,7 @@ function ColumnToggleDropdown<TData>(props: ColumnToggleProps<TData>) {
     items = columnDefs
       .filter((col): col is ColumnDef<unknown> & { id: string } => !!col.id)
       .map((col) => {
-        const meta = col.meta as { category?: string; label?: string } | undefined;
+        const meta = readTraceColumnMeta(col.meta);
         const id = col.id!;
         return {
           id,

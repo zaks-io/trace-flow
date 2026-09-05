@@ -31,7 +31,7 @@ function traceSpansResult(result: TraceSpansResult): ToolCallResult {
 }
 
 interface GetTraceSpansParams {
-  trace_id: string;
+  trace_id?: string;
   expand?: string[];
   span_names?: string[];
   exclude_span_names?: string[];
@@ -53,14 +53,15 @@ export async function getTraceSpans(
     return noApiKeysError();
   }
 
-  if (!TRACE_ID_PATTERN.test(params.trace_id)) {
+  const traceId = params.trace_id;
+  if (!traceId || !TRACE_ID_PATTERN.test(traceId)) {
     return invalidTraceIdError();
   }
 
   const token = await mintPipeReadToken(ctx, apiKeyIds, retentionDays, 'mcp_trace_detail');
 
   const baseParams: Record<string, string | number | undefined> = {
-    trace_id: params.trace_id,
+    trace_id: traceId,
   };
 
   addPatternParams(baseParams, params.span_names, 'span_names', 'span_name_prefixes');
@@ -97,11 +98,17 @@ export async function getTraceSpans(
     detailParams.order = 'desc';
   }
 
-  const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_detail', detailParams);
+  const data = await queryPipe<SpanRowWithCount>(
+    ctx.tinybirdBaseUrl,
+    token,
+    'mcp_trace_detail',
+    detailParams,
+  );
 
-  if (data.length === 0) {
+  const firstRow = data[0];
+  if (!firstRow) {
     return traceSpansResult({
-      trace_id: params.trace_id,
+      trace_id: traceId,
       spans: [],
       pagination: offsetPaginationResult(pagination, 0, 0, {
         total: cappedTopN ? 0 : undefined,
@@ -111,8 +118,8 @@ export async function getTraceSpans(
 
   const expand = new Set(params.expand ?? []);
 
-  const totalCount = (data[0] as unknown as SpanRowWithCount).total_count;
-  const parsedSpans = data.map((row) => parseSpanRow(row as unknown as SpanRow));
+  const totalCount = firstRow.total_count;
+  const parsedSpans = data.map(parseSpanRow);
 
   let paginatedSpans = parsedSpans;
   let hasMore: boolean;
@@ -127,7 +134,7 @@ export async function getTraceSpans(
   const outputSpans = paginatedSpans.map((s) => buildOutputSpan(s, expand));
 
   const result = {
-    trace_id: params.trace_id,
+    trace_id: traceId,
     spans: outputSpans,
     pagination: {
       ...offsetPaginationResult(

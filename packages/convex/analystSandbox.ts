@@ -101,11 +101,10 @@ async function runTraceFlowTool(
 }
 
 async function resolveToolUser(ctx: AgentToolCtx<DataModel>): Promise<Doc<'users'>> {
-  const actionCtx = ctx as unknown as ActionCtx;
   if (ctx.userId) {
-    return getEnabledUserById(actionCtx, ctx.userId as Id<'users'>);
+    return getEnabledUserById(ctx, ctx.userId as Id<'users'>);
   }
-  return getEnabledActionUser(actionCtx);
+  return getEnabledActionUser(ctx);
 }
 
 export function shouldExposeSandboxControlTool(prompt: string) {

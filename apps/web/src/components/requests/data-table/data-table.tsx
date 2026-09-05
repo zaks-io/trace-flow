@@ -13,6 +13,7 @@ import { TableToolbar, type AlertFilterValue } from './table-toolbar';
 import type { TraceAlertSummary, Alert } from '@/types/alerts';
 import type { TableFilters } from '@/hooks/useTableFilters';
 import type { FilterOptions } from '@/hooks/useFilterOptions';
+import type { TraceTableMeta } from './metadata';
 
 export type { AlertFilterValue };
 
@@ -154,7 +155,7 @@ export function DataTable<TData>({
     getRowId,
     meta: {
       alertSummary,
-    },
+    } satisfies TraceTableMeta,
   });
 
   return (

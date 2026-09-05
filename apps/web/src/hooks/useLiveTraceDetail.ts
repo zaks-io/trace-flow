@@ -8,10 +8,6 @@ import { TraceSpanRowSchema } from '@trace-flow/spans';
 import { fetchTinybirdPipe, tinybirdKeys } from '@/lib/tinybird';
 import type { TraceSpan } from '@/lib/spans';
 
-interface TinybirdResponse {
-  data: TraceSpan[];
-}
-
 interface UseLiveTraceDetailOptions {
   traceId: string | null;
   enabled?: boolean;
@@ -28,6 +24,16 @@ const FIVE_MINUTES_NS = 5 * 60 * 1000 * 1_000_000;
 const MIN_POLL_INTERVAL = 2000;
 const MAX_POLL_INTERVAL = 30000;
 const PIPE_NAME = 'trace_detail';
+
+const TraceDetailSpanSchema = TraceSpanRowSchema.required({
+  ReceivedAt: true,
+  ParentSpanId: true,
+  StatusMessage: true,
+  ResourceAttributes: true,
+  'Events.Timestamp': true,
+  'Events.Name': true,
+  'Events.Attributes': true,
+});
 
 function shouldEnableLiveMode(spans: TraceSpan[]): boolean {
   if (spans.length === 0) return false;
@@ -97,11 +103,11 @@ export function useLiveTraceDetail(options: UseLiveTraceDetailOptions): UseLiveT
         params.since_timestamp = sinceTimestamp;
       }
 
-      const result = await fetchTinybirdPipe<TinybirdResponse>({
+      const result = await fetchTinybirdPipe<TraceSpan>({
         pipe: PIPE_NAME,
         params,
         generateWebReadToken,
-        schema: TraceSpanRowSchema,
+        schema: TraceDetailSpanSchema,
       });
 
       const incoming = result.data;

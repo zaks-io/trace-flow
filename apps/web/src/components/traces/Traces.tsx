@@ -22,14 +22,6 @@ import {
 import { evaluateAlertsForTraces } from '@/lib/alerts';
 import type { RequestRow } from '@/components/requests/data-table/columns';
 
-interface TinybirdResponse {
-  data: SpanGroupRow[];
-}
-
-interface AlertSpansResponse {
-  data: RequestRow[];
-}
-
 interface TracesProps {
   preloadedAlerts: Preloaded<typeof api.alerts.listEnabled>;
   preloadedApiKeys: Preloaded<typeof api.apiKeys.listAnalytics>;
@@ -86,7 +78,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     return params;
   }, [filters, isLiveMode, latestReceivedAt, apiKeyFilter]);
 
-  const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<TinybirdResponse>({
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useTinybirdQuery<SpanGroupRow>({
     pipe: 'traces_grouped',
     params: pipeParams,
     enabled: (!filters.apiKey || Boolean(apiKeyFilter)) && !apiKeyFilterError,
@@ -118,7 +110,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     return { trace_ids: traceIds.join(',') };
   }, [traceIds, alerts]);
 
-  const { data: alertSpansData } = useTinybirdQuery<AlertSpansResponse>({
+  const { data: alertSpansData } = useTinybirdQuery<RequestRow>({
     pipe: 'traces_for_alerts',
     params: alertSpansParams,
     enabled: alertSpansParams !== undefined,
@@ -201,14 +193,13 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
     });
   }, [data, dataUpdatedAt, isLiveMode, initialLoadComplete]);
 
-  // Refetch when re-entering live mode
-  useEffect(() => {
-    if (isLiveMode && initialLoadComplete) {
+  const handleLiveModeToggle = useCallback(() => {
+    const nextLiveMode = !isLiveMode;
+    setIsLiveMode(nextLiveMode);
+    if (nextLiveMode && initialLoadComplete) {
       void refetch();
     }
-    // Only trigger on isLiveMode transitions
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLiveMode]);
+  }, [initialLoadComplete, isLiveMode, refetch]);
 
   const spanGroups = useMemo(
     (): SpanGroupRow[] =>
@@ -295,7 +286,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
           alertFilter={alertFilter}
           onAlertFilterChange={setAlertFilter}
           isLiveMode={isLiveMode}
-          onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+          onLiveModeToggle={handleLiveModeToggle}
           apiKeyOptions={apiKeyOptions}
           apiKeyMap={apiKeyMap}
         />
@@ -310,7 +301,7 @@ export default function Traces({ preloadedAlerts, preloadedApiKeys }: TracesProp
           onRowClick={handleRowClick}
           getRowId={getRowId}
           isLiveMode={isLiveMode}
-          onLiveModeToggle={() => setIsLiveMode(!isLiveMode)}
+          onLiveModeToggle={handleLiveModeToggle}
           alertSummary={alertSummary}
           alerts={alerts ?? []}
           alertFilter={alertFilter}

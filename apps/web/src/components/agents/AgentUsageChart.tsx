@@ -94,8 +94,13 @@ export function AgentUsageChart({
       value: key,
       color: metricConfig[key]?.color ?? 'var(--color-chart-1)',
     }));
+    const rekeyed = data.map((row) => {
+      const out: Record<string, string | number> = { bucket_start: row.bucket_start };
+      for (const key of AGENT_METRIC_KEYS[metric]) out[key] = row[key];
+      return out;
+    });
     return {
-      chartData: data as unknown as Array<Record<string, string | number>>,
+      chartData: rekeyed,
       series: s,
       config: metricConfig,
     };

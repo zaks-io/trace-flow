@@ -81,10 +81,10 @@ export async function listTraces(
   const pipeParams = offsetPipeParams(startTimeNs, pagination);
   addOptionalPipeParams(pipeParams, params, ['provider', 'model', 'status', 'sort_by', 'order']);
 
-  const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_traces_list', pipeParams);
+  const data = await queryPipe<TraceRow>(ctx.tinybirdBaseUrl, token, 'mcp_traces_list', pipeParams);
 
-  const totalCount = data.length > 0 ? (data[0] as unknown as TraceRow).total_count : 0;
-  const formattedTraces = data.map((row) => formatTraceRow(row as unknown as TraceRow));
+  const totalCount = data.length > 0 ? data[0]!.total_count : 0;
+  const formattedTraces = data.map(formatTraceRow);
 
   const result = {
     traces: formattedTraces,

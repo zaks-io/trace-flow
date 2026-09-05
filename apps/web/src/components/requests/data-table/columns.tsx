@@ -9,7 +9,7 @@ import { calculateCacheHitRate } from '@/lib/cacheMetrics';
 import { AlertIndicator } from '@/components/alerts';
 import { ModelPill } from '@/components/traces/spans-table/ModelPill';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { TraceAlertSummary } from '@/types/alerts';
+import { readAlertSummary } from './metadata';
 
 export type RequestRow = Pick<
   TraceSpanRow,
@@ -25,19 +25,6 @@ export type RequestRow = Pick<
   ReceivedAt: number;
   BaggageOperation: string;
 };
-
-declare module '@tanstack/react-table' {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface ColumnMeta<TData, TValue> {
-    category: 'standard' | 'ai' | 'http' | 'alerts';
-    label: string;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  interface TableMeta<TData> {
-    alertSummary?: Map<string, TraceAlertSummary>;
-  }
-}
 
 function getSpanAttribute(row: RequestRow, key: string): string | undefined {
   return parseSpanAttributes(row.SpanAttributes)[key];
@@ -67,7 +54,7 @@ export const allColumns: ColumnDef<RequestRow>[] = [
     minSize: 40,
     maxSize: 40,
     cell: ({ row, table }) => {
-      const alertSummary = table.options.meta?.alertSummary;
+      const alertSummary = readAlertSummary(table.options.meta);
       const key = row.original.TraceId;
       const summary = alertSummary?.get(key);
       const hasAlerts = summary && summary.triggeredAlerts.length > 0;

@@ -16,17 +16,15 @@ interface UseFilterOptionsResult {
   refetch: () => void;
 }
 
-interface FilterOptionsResponse {
-  data: {
-    providers: string[];
-    models: string[];
-    statuses: string[];
-    operations: string[];
-  }[];
+interface FilterOptionsRow {
+  providers: string[];
+  models: string[];
+  statuses: string[];
+  operations: string[];
 }
 
 export function useFilterOptions(): UseFilterOptionsResult {
-  const { data, isLoading, error, refetch } = useTinybirdQuery<FilterOptionsResponse>({
+  const { data, isLoading, error, refetch } = useTinybirdQuery<FilterOptionsRow>({
     pipe: 'filter_options',
   });
 

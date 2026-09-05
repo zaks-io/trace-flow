@@ -58,11 +58,7 @@ export interface PricingStore {
  * This allows pricing to be stored by model family rather than specific snapshots.
  */
 function extractModelPrefix(model: string): string | null {
-  // Match date suffix pattern: -YYYYMMDD at end of string.
-  // String#match (not RegExp#exec) is deliberate: equivalent for this non-global pattern, and the
-  // repo security hook false-flags the literal `.exec(` token as child_process.exec.
-  // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec
-  const match = model.match(/^(.+)-\d{8}$/);
+  const match = /^(.+)-\d{8}$/.exec(model);
   return match?.[1] ?? null;
 }
 

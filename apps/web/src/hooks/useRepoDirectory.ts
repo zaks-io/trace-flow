@@ -2,7 +2,6 @@
 
 import { useMemo } from 'react';
 import { useTinybirdQuery } from '@/hooks/useTinybirdQuery';
-import type { TinybirdResponse } from '@/components/usage/types';
 import type { AgentRepoDirectoryRow } from '@/components/agents/types';
 import { buildRepoLabelMap } from '@/components/agents/repoLabel';
 
@@ -15,7 +14,7 @@ export function useRepoDirectory(
   windowParams: Record<string, string | number>,
   enabled: boolean,
 ): Map<string, string> {
-  const query = useTinybirdQuery<TinybirdResponse<AgentRepoDirectoryRow>>({
+  const query = useTinybirdQuery<AgentRepoDirectoryRow>({
     pipe: 'agent_repo_directory',
     params: windowParams,
     enabled,

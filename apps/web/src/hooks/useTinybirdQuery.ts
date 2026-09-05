@@ -3,32 +3,33 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAction } from 'convex/react';
 import { api } from '@trace-flow/convex/_generated/api';
-import { fetchTinybirdPipe, tinybirdKeys } from '@/lib/tinybird';
+import { fetchTinybirdPipe, tinybirdKeys, type TinybirdResponse } from '@/lib/tinybird';
 
-interface UseTinybirdQueryOptions<T> {
+interface UseTinybirdQueryOptions<T, TResult> {
   pipe: string;
   params?: Record<string, string | number | boolean | undefined>;
   enabled?: boolean;
   pollInterval?: number;
-  transform?: (data: unknown) => T;
+  transform?: (response: TinybirdResponse<T>) => TResult;
   staleTime?: number;
   gcTime?: number;
 }
 
-export function useTinybirdQuery<T = unknown>(options: UseTinybirdQueryOptions<T>) {
+export function useTinybirdQuery<T = unknown, TResult = TinybirdResponse<T>>(
+  options: UseTinybirdQueryOptions<T, TResult>,
+) {
   const { pipe, params, enabled = true, pollInterval, transform, staleTime, gcTime } = options;
 
   const generateWebReadToken = useAction(api.integrations.tinybird.generateWebReadToken);
 
   const query = useQuery({
     queryKey: tinybirdKeys.pipeWithParams(pipe, params as Record<string, unknown> | undefined),
-    queryFn: () =>
-      fetchTinybirdPipe<T>({
-        pipe,
-        params,
-        transform,
-        generateWebReadToken,
-      }),
+    queryFn: (): Promise<TinybirdResponse<T> | TResult> => {
+      const request = { pipe, params, generateWebReadToken };
+      return transform
+        ? fetchTinybirdPipe<T, TResult>({ ...request, transform })
+        : fetchTinybirdPipe<T>(request);
+    },
     enabled,
     refetchInterval: pollInterval ?? false,
     retry: false,

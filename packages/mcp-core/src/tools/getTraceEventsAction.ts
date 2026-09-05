@@ -87,7 +87,7 @@ export function formatEventRow(row: EventRow): FormattedEvent {
 }
 
 interface GetTraceEventsParams {
-  trace_id: string;
+  trace_id?: string;
   span_id?: string;
   span_names?: string[];
   event_names?: string[];
@@ -106,7 +106,8 @@ export async function getTraceEvents(
     return noApiKeysError();
   }
 
-  if (!TRACE_ID_PATTERN.test(params.trace_id)) {
+  const traceId = params.trace_id;
+  if (!traceId || !TRACE_ID_PATTERN.test(traceId)) {
     return invalidTraceIdError();
   }
 
@@ -119,7 +120,7 @@ export async function getTraceEvents(
   );
 
   const pipeParams: Record<string, string | number | undefined> = {
-    trace_id: params.trace_id,
+    trace_id: traceId,
     limit: pagination.limit,
     offset: pagination.offset,
   };
@@ -138,13 +139,18 @@ export async function getTraceEvents(
     pipeParams.order = params.order;
   }
 
-  const data = await queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_events', pipeParams);
+  const data = await queryPipe<EventRow>(
+    ctx.tinybirdBaseUrl,
+    token,
+    'mcp_trace_events',
+    pipeParams,
+  );
 
-  const totalCount = data.length > 0 ? (data[0] as unknown as EventRow).total_count : 0;
-  const formattedEvents = data.map((row) => formatEventRow(row as unknown as EventRow));
+  const totalCount = data.length > 0 ? data[0]!.total_count : 0;
+  const formattedEvents = data.map(formatEventRow);
 
   const result = {
-    trace_id: params.trace_id,
+    trace_id: traceId,
     events: formattedEvents,
     pagination: offsetPaginationResult(pagination, data.length, totalCount),
   };

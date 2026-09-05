@@ -37,7 +37,7 @@ interface ByModelRow {
 }
 
 interface GetTraceParams {
-  trace_id: string;
+  trace_id?: string;
 }
 
 export async function getTrace(
@@ -50,29 +50,30 @@ export async function getTrace(
     return noApiKeysError();
   }
 
-  if (!TRACE_ID_PATTERN.test(params.trace_id)) {
+  const traceId = params.trace_id;
+  if (!traceId || !TRACE_ID_PATTERN.test(traceId)) {
     return invalidTraceIdError();
   }
 
   const pipes = ['mcp_trace_summary', 'mcp_trace_by_provider', 'mcp_trace_by_model'];
   const token = await mintPipeReadToken(ctx, apiKeyIds, retentionDays, pipes);
 
-  const baseParams = { trace_id: params.trace_id };
+  const baseParams = { trace_id: traceId };
 
   const [summaryData, byProviderData, byModelData] = await Promise.all([
-    queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_summary', baseParams),
-    queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_provider', baseParams),
-    queryPipe(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_model', baseParams),
+    queryPipe<SummaryRow>(ctx.tinybirdBaseUrl, token, 'mcp_trace_summary', baseParams),
+    queryPipe<ByProviderRow>(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_provider', baseParams),
+    queryPipe<ByModelRow>(ctx.tinybirdBaseUrl, token, 'mcp_trace_by_model', baseParams),
   ]);
 
-  const summaryRow = summaryData[0] as unknown as SummaryRow | undefined;
+  const summaryRow = summaryData[0];
 
   if (!summaryRow) {
-    return traceNotFoundError(params.trace_id);
+    return traceNotFoundError(traceId);
   }
 
-  const byProvider = indexMetricRows(byProviderData as unknown as ByProviderRow[], 'provider');
-  const byModel = indexMetricRows(byModelData as unknown as ByModelRow[], 'model');
+  const byProvider = indexMetricRows(byProviderData, 'provider');
+  const byModel = indexMetricRows(byModelData, 'model');
 
   const timestamp = new Date(summaryRow.first_timestamp / 1_000_000).toISOString();
   const duration_ms =
@@ -80,7 +81,7 @@ export async function getTrace(
     summaryRow.total_duration_ms;
 
   const result = {
-    trace_id: params.trace_id,
+    trace_id: traceId,
     status: summaryRow.error_count > 0 ? 'error' : 'ok',
     timestamp,
     duration_ms,

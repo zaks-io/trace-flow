@@ -156,6 +156,8 @@ export interface AgentTimeseriesRow {
   tool_unknown_count: number;
 }
 
+export type AgentMetricKey = Exclude<keyof AgentTimeseriesRow, 'bucket_start' | 'group_value'>;
+
 // Cost has no per-component breakdown in the agent data model (one estimated cost_usd
 // per Agent Message), so it renders as a single series. Tokens stack by component and
 // tool-events by outcome. Config keys are the AgentTimeseriesRow dataKeys the chart reads.
@@ -186,7 +188,7 @@ const agentToolEventsChartConfig = {
 } satisfies ChartConfig;
 
 /** dataKeys stacked for each metric, in render order. Drives the chart and its legend. */
-export const AGENT_METRIC_KEYS: Record<AgentMetric, readonly string[]> = {
+export const AGENT_METRIC_KEYS: Record<AgentMetric, readonly AgentMetricKey[]> = {
   cost: ['cost_usd'],
   tokens: [
     'input_tokens',

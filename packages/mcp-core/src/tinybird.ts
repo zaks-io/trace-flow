@@ -36,13 +36,13 @@ export interface ToolCtx {
  * Bearer-token fetch of a Tinybird Pipe with 403-retry semantics already baked
  * in by the shared client.
  */
-export async function queryPipe(
+export async function queryPipe<Row = Record<string, unknown>>(
   baseUrl: string,
   token: string,
   pipe: string,
   params?: Record<string, PipeParam>,
-): Promise<Record<string, unknown>[]> {
-  return fetchPipe<Record<string, unknown>>({
+): Promise<Row[]> {
+  return fetchPipe<Row>({
     baseUrl,
     token,
     pipe,

@@ -15,7 +15,7 @@ import { scheduleKVSync } from '../billing/subscriptions';
 import { ensureOrgHasSubscription } from '../auth/organizations';
 import { TIER_CONFIG } from '@trace-flow/types';
 import { beginArchiveDeletion } from '../archiveLib';
-import type { Id } from '../_generated/dataModel';
+import type { Id, TableNames } from '../_generated/dataModel';
 
 async function requireAdminAction(ctx: ActionCtx) {
   await requireAuthenticated(ctx);
@@ -433,8 +433,7 @@ export const deleteOrgRecordsBatch = internalMutation({
     await beginArchiveDeletion(ctx, args.orgId, Date.now());
 
     // Helper: delete up to remaining budget from a query
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async function deleteBatch<T extends { _id: any }>(
+    async function deleteBatch<T extends { _id: Id<TableNames> }>(
       items: T[],
       key: keyof typeof counts,
     ): Promise<boolean> {

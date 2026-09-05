@@ -1,5 +1,13 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { exportPKCS8, exportSPKI, generateKeyPair, jwtVerify, importJWK } from 'jose';
+import {
+  exportPKCS8,
+  exportSPKI,
+  generateKeyPair,
+  importJWK,
+  importPKCS8,
+  jwtVerify,
+  SignJWT,
+} from 'jose';
 import { MCP_ACCESS_TOKEN_ALG, MCP_ACCESS_TOKEN_KID } from '@trace-flow/mcp-core';
 
 // Real RS256 round trip: Convex signs (createAccessToken), publishes the public
@@ -29,7 +37,7 @@ describe('MCP RS256 access tokens + JWKS', () => {
     vi.stubEnv('MCP_JWT_PRIVATE_KEY', privatePem);
     vi.stubEnv('MCP_JWT_PUBLIC_KEY', publicPem);
 
-    const { createAccessToken } = await import('../tokens');
+    const { createAccessToken, validateAccessToken } = await import('../tokens');
     const { getPublicJwk } = await import('../keys');
 
     const issuer = 'https://connect.test';
@@ -52,6 +60,25 @@ describe('MCP RS256 access tokens + JWKS', () => {
     expect(protectedHeader.kid).toBe(MCP_ACCESS_TOKEN_KID);
     expect(payload.userId).toBe('user-123');
     expect(payload.tokenId).toBe('token-abc');
+    await expect(validateAccessToken(token, issuer, resource)).resolves.toEqual({
+      userId: 'user-123',
+      tokenId: 'token-abc',
+    });
+  });
+
+  it('rejects a signed token whose identity claims have the wrong types', async () => {
+    vi.stubEnv('MCP_JWT_PUBLIC_KEY', publicPem);
+    const issuer = 'https://connect.test';
+    const signingKey = await importPKCS8(privatePem, MCP_ACCESS_TOKEN_ALG);
+    const token = await new SignJWT({ userId: 123, tokenId: 'token-abc' })
+      .setProtectedHeader({ alg: MCP_ACCESS_TOKEN_ALG, kid: MCP_ACCESS_TOKEN_KID })
+      .setIssuer(issuer)
+      .setAudience(resource)
+      .setExpirationTime('1h')
+      .sign(signingKey);
+
+    const { validateAccessToken } = await import('../tokens');
+    await expect(validateAccessToken(token, issuer, resource)).resolves.toBeNull();
   });
 
   it('rejects a token signed by a different key', async () => {

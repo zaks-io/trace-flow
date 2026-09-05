@@ -54,22 +54,18 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    // Type assertion needed for Next.js 16 compatibility with Auth0 SDK
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await auth0.middleware(request as any);
+    const response = await auth0.middleware(request);
 
     // Proactively refresh for protected routes to persist rotated refresh tokens.
     // Server Components cannot set cookies - middleware must do this.
     const shouldTouchTokens = pathname.startsWith('/app');
 
     if (shouldTouchTokens) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const session = await auth0.getSession(request as any);
+      const session = await auth0.getSession(request);
       if (!isConvexTokenUsable(session?.tokenSet?.idToken)) {
         return redirectToLogin(request, csp);
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await auth0.getAccessToken(request as any, response).catch(() => undefined);
+      await auth0.getAccessToken(request, response).catch(() => undefined);
     }
 
     applyResponseSecurityHeaders(response, csp);
