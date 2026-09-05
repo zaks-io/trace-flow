@@ -1,11 +1,11 @@
 # Trace Flow Specs
 
 Architectural decisions, technology choices, and contextual information for Trace Flow's model API
-and coding-agent observability platform.
+and coding-agent observability tooling.
 
 ## Quick Reference
 
-**What is Trace Flow?** A private-alpha observability platform for proxied model API requests and
+**What is Trace Flow?** One team's tooling, in private alpha, for proxied model API requests and
 locally collected coding-agent sessions. It stores model calls as OpenTelemetry spans and agent
 activity as redacted typed facts, then exposes both through the dashboard and MCP.
 
