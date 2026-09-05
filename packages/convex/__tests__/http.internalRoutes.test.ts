@@ -613,4 +613,135 @@ describe('convex/http.ts internal routes', () => {
       expect(ctx.runQuery).toHaveBeenCalledOnce();
     });
   });
+
+  describe('POST /archive/desktop write routes', () => {
+    const archiveSession = {
+      tokenUse: 'archive_session',
+      userId: 'k57axc8sefsfp6k28nx6c481js806pwv',
+      orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
+    };
+
+    function withSession() {
+      (deps.oauth.verifyArchiveSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+        archiveSession,
+      );
+    }
+
+    it('rejects activate, enroll, unenroll, and revoke without a session', async () => {
+      const app = createApp(deps);
+      const paths = [
+        '/archive/desktop/activate',
+        '/archive/desktop/enroll',
+        '/archive/desktop/unenroll',
+        '/archive/desktop/revoke',
+      ];
+      for (const path of paths) {
+        const res = await app.request(
+          `http://localhost${path}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              collectorId: 'collector-1',
+              authorizedSources: [{ source: 'claude', historyChoice: 'new_only' }],
+              idempotencyKey: 'consent:collector-1:new_only:1',
+              enrollmentId: 'k57axc8sefsfp6k28nx6c481js806pwx',
+            }),
+          },
+          ctx,
+        );
+        expect(res.status).toBe(401);
+      }
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+
+    it('activates using the session user, not a body userId', async () => {
+      const app = createApp(deps);
+      withSession();
+      ctx.runMutation.mockResolvedValue({
+        activationId: 'k57axc8sefsfp6k28nx6c481js806pwy',
+        created: true,
+      });
+      const res = await app.request(
+        'http://localhost/archive/desktop/activate',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-session',
+          },
+          body: JSON.stringify({ userId: 'attacker-user' }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      expect(ctx.runMutation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: archiveSession.userId }),
+      );
+    });
+
+    it('enrolls the session user collector after JSON validation', async () => {
+      const app = createApp(deps);
+      withSession();
+      ctx.runMutation.mockResolvedValue({
+        enrollmentId: 'k57axc8sefsfp6k28nx6c481js806pwz',
+        contributionId: 'k57axc8sefsfp6k28nx6c481js806px0',
+        created: true,
+      });
+      const res = await app.request(
+        'http://localhost/archive/desktop/enroll',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer archive-session',
+          },
+          body: JSON.stringify({
+            collectorId: 'collector-1',
+            authorizedSources: [{ source: 'claude', historyChoice: 'new_only' }],
+            idempotencyKey: 'consent:collector-1:new_only:1',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      expect(ctx.runMutation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          userId: archiveSession.userId,
+          collectorId: 'collector-1',
+        }),
+      );
+    });
+
+    it('unenrolls and revokes using the session user and enrollment id', async () => {
+      const app = createApp(deps);
+      withSession();
+      ctx.runMutation.mockResolvedValue(null);
+      const enrollmentId = 'k57axc8sefsfp6k28nx6c481js806pwx';
+      for (const path of ['/archive/desktop/unenroll', '/archive/desktop/revoke']) {
+        const res = await app.request(
+          `http://localhost${path}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer archive-session',
+            },
+            body: JSON.stringify({ enrollmentId }),
+          },
+          ctx,
+        );
+        expect(res.status).toBe(200);
+        expect(ctx.runMutation).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            userId: archiveSession.userId,
+            enrollmentId,
+          }),
+        );
+      }
+    });
+  });
 });

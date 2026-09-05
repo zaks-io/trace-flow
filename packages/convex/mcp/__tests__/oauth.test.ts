@@ -422,5 +422,6 @@ describe('archive session tokens', () => {
       orgId: 'k57axc8sefsfp6k28nx6c481js806pww',
     });
     await expect(verifyState(token)).resolves.toBeNull();
+    await expect(verifyConsent(token)).resolves.toBeNull();
   });
 });
