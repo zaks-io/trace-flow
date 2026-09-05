@@ -13,15 +13,15 @@ export function FooterCTA({ isWaitlistMode }: FooterCTAProps) {
 
       <div className="mx-auto max-w-2xl px-6 text-center">
         <div className="mb-5 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-primary">
-          Private alpha
+          Access Trace Flow
         </div>
         <h2 className="mb-5 text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-5xl">
-          Start keeping your AI history.
-          <span className="block text-primary">Put it to work.</span>
+          Understand your AI spending.
+          <span className="block text-primary">Investigate the expensive sessions.</span>
         </h2>
         <p className="mx-auto mb-8 max-w-lg text-base leading-7 text-muted-foreground">
-          Join the private alpha to track costs and performance across your model calls and coding
-          sessions. Help shape what we capture and how you learn from it.
+          Use the desktop app for coding-session analytics or connect your SDK for model-call
+          tracking. Contact us to request hosted access.
         </p>
 
         <div className="mb-14">

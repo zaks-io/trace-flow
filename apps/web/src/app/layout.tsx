@@ -17,22 +17,22 @@ const firaCode = Fira_Code({
 });
 
 export const metadata: Metadata = {
-  title: 'Trace Flow | Your AI cost and performance history',
+  title: 'Trace Flow | Coding-agent and model-call analytics',
   description:
-    'Collect model and coding-agent analytics in the background. Track costs and performance over time with Trace Flow. Private alpha.',
+    'Track estimated costs, context growth, and tool failures across coding sessions, plus model-call usage and performance.',
   openGraph: {
-    title: 'Trace Flow | Your AI cost and performance history',
+    title: 'Trace Flow | Coding-agent and model-call analytics',
     description:
-      'Keep a history of your AI work. Track spending, performance, and wasted tokens across model calls and coding agents. Private alpha.',
+      'Track estimated costs, context growth, and tool failures across coding sessions, plus model-call usage and performance.',
     url: 'https://trace-flow.dev',
     siteName: 'Trace Flow',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Trace Flow | Your AI cost and performance history',
+    title: 'Trace Flow | Coding-agent and model-call analytics',
     description:
-      'Keep a history of your AI work. Track spending, performance, and wasted tokens across model calls and coding agents. Private alpha.',
+      'Track estimated costs, context growth, and tool failures across coding sessions, plus model-call usage and performance.',
   },
 };
 
