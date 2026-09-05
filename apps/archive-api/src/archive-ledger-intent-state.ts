@@ -71,37 +71,13 @@ export function decodePendingPlaintext(value: string): Uint8Array {
 export async function assertPendingIntentAuthenticated(intent: {
   intentHash: string;
   commit?: LedgerCommit;
-  expectedObjects?: PendingExpectedObject[];
   stateHash?: string;
   stateAuthentication?: string;
   key: CryptoKey;
   orgId: string;
   keyVersion: number;
-}): Promise<void> {
-  if (
-    !intent.commit ||
-    !intent.expectedObjects ||
-    !intent.stateHash ||
-    !intent.stateAuthentication
-  ) {
-    throw new ArchiveContractError('pending_intent_corrupt');
-  }
-  for (const object of intent.expectedObjects) {
-    if (
-      typeof object.key !== 'string' ||
-      (object.objectClass !== 'chunk' && object.objectClass !== 'manifest') ||
-      typeof object.plaintextBase64 !== 'string'
-    ) {
-      throw new ArchiveContractError('pending_intent_corrupt');
-    }
-    decodePendingPlaintext(object.plaintextBase64);
-  }
-  const expected = await pendingIntentStateHash(
-    intent.intentHash,
-    intent.commit,
-    intent.expectedObjects,
-  );
-  if (expected !== intent.stateHash) {
+}): Promise<PendingExpectedObject[]> {
+  if (!intent.commit || !intent.stateHash || !intent.stateAuthentication) {
     throw new ArchiveContractError('pending_intent_corrupt');
   }
   try {
@@ -115,15 +91,45 @@ export async function assertPendingIntentAuthenticated(intent: {
         keyVersion: intent.keyVersion,
       },
     );
-    const decoded = JSON.parse(new TextDecoder().decode(authenticatedState)) as unknown;
+    const decoded = JSON.parse(new TextDecoder().decode(authenticatedState)) as {
+      intentHash?: unknown;
+      commit?: LedgerCommit;
+      expectedObjects?: PendingExpectedObject[];
+    };
+    if (
+      decoded.intentHash !== intent.intentHash ||
+      JSON.stringify(decoded.commit) !== JSON.stringify(intent.commit) ||
+      !Array.isArray(decoded.expectedObjects)
+    ) {
+      throw new Error('pending intent state mismatch');
+    }
+    for (const object of decoded.expectedObjects) {
+      if (
+        typeof object.key !== 'string' ||
+        (object.objectClass !== 'chunk' && object.objectClass !== 'manifest') ||
+        typeof object.plaintextBase64 !== 'string'
+      ) {
+        throw new ArchiveContractError('pending_intent_corrupt');
+      }
+      decodePendingPlaintext(object.plaintextBase64);
+    }
+    const expected = await pendingIntentStateHash(
+      intent.intentHash,
+      intent.commit,
+      decoded.expectedObjects,
+    );
+    if (expected !== intent.stateHash) {
+      throw new Error('pending intent state digest mismatch');
+    }
     const expectedState = {
       intentHash: intent.intentHash,
       commit: intent.commit,
-      expectedObjects: intent.expectedObjects,
+      expectedObjects: decoded.expectedObjects,
     };
     if (JSON.stringify(decoded) !== JSON.stringify(expectedState)) {
       throw new Error('pending intent state mismatch');
     }
+    return decoded.expectedObjects;
   } catch {
     throw new ArchiveContractError('pending_intent_corrupt');
   }

@@ -219,7 +219,6 @@ export async function commitArchiveSession(
     objects,
     acknowledgement,
     commit,
-    expectedObjects: expectedPendingObjects,
     stateHash,
     stateAuthentication,
   };

@@ -402,7 +402,6 @@ async function seedPendingCommit(
     objects,
     acknowledgement,
     commit,
-    expectedObjects: expectedPendingObjects,
     stateHash: await pendingIntentStateHash(intentHash, commit, expectedPendingObjects),
     stateAuthentication: await encryptPendingIntentState(
       intentHash,
@@ -1768,12 +1767,13 @@ describe('Archive Session Ledger', () => {
 
   it('resumes a pending intent after a partial immutable R2 write', async () => {
     const currentScope = scope('codex', `pending-${crypto.randomUUID()}`);
+    const transcriptMarker = 'known-transcript-marker-should-not-persist';
     const record = await observation(
       'codex',
       currentScope.sourceSessionId,
       partFor('codex'),
       '0',
-      '"pending"',
+      JSON.stringify({ transcript: transcriptMarker }),
     );
     const upload = {
       source_session_id: currentScope.sourceSessionId,
@@ -1784,6 +1784,19 @@ describe('Archive Session Ledger', () => {
       complete_prefix_base64: base64(exactPrefix([record])),
     };
     const { stub, acknowledgement } = await seedPendingCommit(currentScope, upload);
+    const persistedIntent = await runInDurableObject(stub, (_instance, state) =>
+      [
+        ...state.storage.sql.exec<{ data: string }>(
+          'SELECT data FROM pending_intent_metadata ORDER BY part_index',
+        ),
+        ...state.storage.sql.exec<{ data: string }>(
+          'SELECT data FROM pending_intent_parts ORDER BY object_index, part_index',
+        ),
+      ]
+        .map(({ data }) => data)
+        .join(''),
+    );
+    expect(persistedIntent).not.toContain(transcriptMarker);
     const before = await runtimeEnv.ARCHIVE_STORAGE.list({
       prefix: await archiveSessionPrefix(currentScope),
     });

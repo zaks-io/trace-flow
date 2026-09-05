@@ -2,7 +2,6 @@ import { ArchiveContractError } from './archive-contract';
 import type { ArchiveR2Object } from './archive-r2';
 import { type ArchiveAcknowledgement, type LedgerCommit } from './archive-ledger-state';
 import { persistLedgerCommit } from './archive-ledger-storage';
-import type { PendingExpectedObject } from './archive-ledger-intent-state';
 
 export {
   assertPendingIntentAuthenticated,
@@ -21,7 +20,6 @@ export interface PendingIntent {
   objects: ArchiveR2Object[];
   acknowledgement: ArchiveAcknowledgement;
   commit?: LedgerCommit;
-  expectedObjects?: PendingExpectedObject[];
   stateHash?: string;
   stateAuthentication?: string;
 }
@@ -43,7 +41,6 @@ function readIntentMetadata(
   acknowledgement: ArchiveAcknowledgement;
   objects?: { key: string; objectClass: ArchiveR2Object['objectClass']; partCount: number }[];
   commit?: LedgerCommit;
-  expectedObjects?: PendingExpectedObject[];
   stateHash?: string;
   stateAuthentication?: string;
 } {
@@ -62,7 +59,6 @@ function readIntentMetadata(
       partCount: number;
     }[];
     commit?: LedgerCommit;
-    expectedObjects?: PendingExpectedObject[];
     stateHash?: string;
     stateAuthentication?: string;
   };
@@ -75,7 +71,8 @@ function readIntentMetadata(
     typeof metadata !== 'object' ||
     !metadata?.acknowledgement ||
     (metadata.objects !== undefined && !Array.isArray(metadata.objects)) ||
-    (metadata.expectedObjects !== undefined && !Array.isArray(metadata.expectedObjects))
+    (metadata.stateHash !== undefined && typeof metadata.stateHash !== 'string') ||
+    (metadata.stateAuthentication !== undefined && typeof metadata.stateAuthentication !== 'string')
   ) {
     throw new ArchiveContractError('pending_intent_corrupt');
   }
@@ -83,7 +80,6 @@ function readIntentMetadata(
     acknowledgement: metadata.acknowledgement,
     objects: metadata.objects,
     commit: metadata.commit,
-    expectedObjects: metadata.expectedObjects,
     stateHash: metadata.stateHash,
     stateAuthentication: metadata.stateAuthentication,
   };
@@ -116,12 +112,7 @@ export function readIntent(
     };
   }
   if (!metadata.objects) throw new ArchiveContractError('pending_intent_corrupt');
-  if (
-    !metadata.commit ||
-    !metadata.expectedObjects ||
-    !metadata.stateHash ||
-    !metadata.stateAuthentication
-  ) {
+  if (!metadata.commit || !metadata.stateHash || !metadata.stateAuthentication) {
     throw new ArchiveContractError('pending_intent_corrupt');
   }
   const objects = metadata.objects.map((descriptor, objectIndex) => {
@@ -156,7 +147,6 @@ export function readIntent(
     objects,
     acknowledgement: metadata.acknowledgement,
     commit: metadata.commit,
-    expectedObjects: metadata.expectedObjects,
     stateHash: metadata.stateHash,
     stateAuthentication: metadata.stateAuthentication,
   };
@@ -172,12 +162,7 @@ export function readPendingIntent(storage: DurableObjectStorage): PendingIntent 
 }
 
 export function writeIntent(storage: DurableObjectStorage, intent: PendingIntent): void {
-  if (
-    !intent.commit ||
-    !intent.expectedObjects ||
-    !intent.stateHash ||
-    !intent.stateAuthentication
-  ) {
+  if (!intent.commit || !intent.stateHash || !intent.stateAuthentication) {
     throw new ArchiveContractError('pending_intent_corrupt');
   }
   const descriptors = intent.objects.map((object) => ({
@@ -189,7 +174,6 @@ export function writeIntent(storage: DurableObjectStorage, intent: PendingIntent
     acknowledgement: intent.acknowledgement,
     objects: descriptors,
     commit: intent.commit,
-    expectedObjects: intent.expectedObjects,
     stateHash: intent.stateHash,
     stateAuthentication: intent.stateAuthentication,
   });

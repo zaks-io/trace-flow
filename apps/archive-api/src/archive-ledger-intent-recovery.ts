@@ -23,13 +23,13 @@ export async function recoverPendingIntent(
   pending: PendingIntent,
 ): Promise<void> {
   const archiveKey = await unwrapKey(env, envelope);
-  await assertPendingIntentAuthenticated({
+  const expectedObjects = await assertPendingIntentAuthenticated({
     ...pending,
     key: archiveKey,
     orgId: envelope.scope.orgId,
     keyVersion: envelope.keyVersion,
   });
-  if (!pending.commit || !pending.expectedObjects) {
+  if (!pending.commit) {
     throw new ArchiveContractError('pending_intent_corrupt');
   }
   if (
@@ -42,7 +42,7 @@ export async function recoverPendingIntent(
   }
   if (pending.status === 'building') markIntentReady(storage, pending.intentHash);
   const expected = new Map(
-    pending.expectedObjects.map((object) => [
+    expectedObjects.map((object) => [
       object.key,
       {
         objectClass: object.objectClass,
