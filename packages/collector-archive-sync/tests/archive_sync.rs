@@ -835,6 +835,99 @@ async fn oversized_session_splits_at_byte_limit() {
 }
 
 #[tokio::test]
+async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let bytes = padded_records(300, 20_000, "disappear-session");
+    let first = collector_archive_sync::build_bounded_pending(
+        ArchiveSource::Claude,
+        "disappear-session",
+        None,
+        &bytes,
+        10,
+        None,
+    )
+    .unwrap()
+    .expect("first bounded request");
+    assert!(first.expected_record_count >= 1);
+    assert!(first.expected_record_count < 300);
+
+    let uploader = ScriptedUploader::new([Err(ArchiveClientError::Unavailable {
+        reason: "archive unavailable".to_string(),
+    })]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Claude, &bytes, 10)],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(report.uploaded, 0);
+    assert_eq!(report.failed, 1);
+    assert!(report.captured >= 2);
+    assert_eq!(uploader.calls.get(), 1);
+
+    let ready: Vec<PendingArchiveRequest> = spool
+        .all_pending()
+        .unwrap()
+        .into_iter()
+        .filter_map(|load| match load {
+            PendingLoad::Ready(record) => Some(record),
+            PendingLoad::Corrupt { .. } => None,
+        })
+        .collect();
+    assert!(
+        ready.len() >= 2,
+        "every observed bounded request must be durable before upload can stop"
+    );
+    let durable_records: u64 = ready
+        .iter()
+        .map(|record| record.expected_appended_records)
+        .sum();
+    assert_eq!(durable_records, 300);
+    assert_eq!(
+        ready
+            .iter()
+            .map(|record| record.expected_record_count)
+            .max(),
+        Some(300)
+    );
+
+    drop(spool);
+    let mut relaunched = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let ack = AckingUploader::new();
+    let replay = run_archive_cycle(
+        &ack,
+        &mut relaunched,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(replay.failed, 0);
+    assert!(replay.uploaded >= 2);
+    assert!(replay.first_error.is_none());
+    assert!(relaunched
+        .all_pending()
+        .unwrap()
+        .iter()
+        .all(|load| !matches!(load, PendingLoad::Ready(_))));
+    assert!(relaunched
+        .pending(ArchiveSource::Claude, "disappear-session")
+        .unwrap()
+        .is_none());
+    let progress = relaunched
+        .progress(ArchiveSource::Claude, "disappear-session")
+        .unwrap()
+        .expect("progress recovered every observed record");
+    assert_eq!(progress.record_count, 300);
+}
+
+#[tokio::test]
 async fn oversized_session_splits_at_observation_count() {
     let dir = TempDir::new().unwrap();
     let keys = MemoryKeyStore::new();

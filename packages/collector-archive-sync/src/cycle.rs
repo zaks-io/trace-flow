@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use collector_archive::ArchiveSource;
 use tokio_util::sync::CancellationToken;
 
@@ -114,16 +116,31 @@ async fn replay_pending<U: ArchiveUploader>(
             return;
         }
     };
+    let mut blocked_parts = HashSet::new();
     for record in pending {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             break;
         }
         match record {
-            PendingLoad::Corrupt { class, .. } => {
+            PendingLoad::Corrupt {
+                source,
+                source_session_id,
+                source_transcript_part_id,
+                class,
+            } => {
+                blocked_parts.insert((source, source_session_id, source_transcript_part_id));
                 report.failed += 1;
                 record_error(report, class);
             }
             PendingLoad::Ready(record) => {
+                let part_key = (
+                    record.source,
+                    record.source_session_id.clone(),
+                    record.source_transcript_part_id.clone(),
+                );
+                if blocked_parts.contains(&part_key) {
+                    continue;
+                }
                 match upload_pending(uploader, spool, key_store, &record, cancel).await {
                     Ok(UploadOutcome::Advanced) => report.uploaded += 1,
                     Ok(UploadOutcome::Frozen) => {
@@ -141,6 +158,7 @@ async fn replay_pending<U: ArchiveUploader>(
                         break;
                     }
                     Err(class) => {
+                        blocked_parts.insert(part_key);
                         report.failed += 1;
                         record_error(report, class);
                     }
@@ -169,57 +187,33 @@ async fn capture_snapshot<U: ArchiveUploader>(
             }
         }
     }
-    loop {
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
-            return Ok(());
-        }
-        match spool.pending_part(
-            snapshot.source,
-            &snapshot.source_session_id,
-            &snapshot.source_transcript_part_id,
-        ) {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Ok(());
+    match persist_observed_slices(spool, snapshot, report, cancel) {
+        Ok(persisted) => report.captured += persisted,
+        Err(class) => {
+            if class == "purged" || class == "halt" {
+                return Err(class);
             }
         }
-        let prior = match spool.progress_part(
-            snapshot.source,
-            &snapshot.source_session_id,
-            &snapshot.source_transcript_part_id,
-        ) {
-            Ok(prior) => prior,
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Ok(());
-            }
-        };
-        let pending = match build_bounded_pending(
-            snapshot.source,
-            &snapshot.source_session_id,
-            snapshot.transcript_part_identity.as_deref(),
-            &snapshot.bytes,
-            snapshot.observed_at,
-            prior.as_ref(),
-        ) {
-            Ok(Some(pending)) => pending,
-            Ok(None) => return Ok(()),
-            Err(err) => {
-                report.failed += 1;
-                record_error(report, err.class());
-                return Ok(());
-            }
-        };
-        if let Err(err) = spool.persist_pending(&pending) {
+    }
+    if cancel.is_some_and(CancellationToken::is_cancelled) {
+        return Ok(());
+    }
+    let slices = match spool.slices_for_part(
+        snapshot.source,
+        &snapshot.source_session_id,
+        &snapshot.source_transcript_part_id,
+    ) {
+        Ok(slices) => slices,
+        Err(err) => {
             report.failed += 1;
             record_error(report, err.class());
             return Ok(());
         }
-        report.captured += 1;
+    };
+    for pending in slices {
+        if cancel.is_some_and(CancellationToken::is_cancelled) {
+            return Ok(());
+        }
         match upload_pending(uploader, spool, key_store, &pending, cancel).await {
             Ok(UploadOutcome::Advanced) => {
                 report.uploaded += 1;
@@ -242,6 +236,83 @@ async fn capture_snapshot<U: ArchiveUploader>(
             }
         }
     }
+    Ok(())
+}
+
+fn persist_observed_slices(
+    spool: &ArchiveSpool,
+    snapshot: &ArchiveSnapshot,
+    report: &mut ArchiveCycleReport,
+    cancel: Option<&CancellationToken>,
+) -> Result<u32, &'static str> {
+    let progress = match spool.progress_part(
+        snapshot.source,
+        &snapshot.source_session_id,
+        &snapshot.source_transcript_part_id,
+    ) {
+        Ok(progress) => progress,
+        Err(err) => {
+            report.failed += 1;
+            record_error(report, err.class());
+            return Err(err.class());
+        }
+    };
+    let existing = match spool.slices_for_part(
+        snapshot.source,
+        &snapshot.source_session_id,
+        &snapshot.source_transcript_part_id,
+    ) {
+        Ok(existing) => existing,
+        Err(err) => {
+            report.failed += 1;
+            record_error(report, err.class());
+            return Err(err.class());
+        }
+    };
+    let mut prior = match existing
+        .iter()
+        .max_by_key(|record| record.expected_record_count)
+    {
+        Some(last) => Some(pending_checkpoint(last)?),
+        None => progress,
+    };
+    let mut persisted = 0u32;
+    loop {
+        if cancel.is_some_and(CancellationToken::is_cancelled) {
+            break;
+        }
+        let pending = match build_bounded_pending(
+            snapshot.source,
+            &snapshot.source_session_id,
+            snapshot.transcript_part_identity.as_deref(),
+            &snapshot.bytes,
+            snapshot.observed_at,
+            prior.as_ref(),
+        ) {
+            Ok(Some(pending)) => pending,
+            Ok(None) => break,
+            Err(err) => {
+                report.failed += 1;
+                record_error(report, err.class());
+                return Err(err.class());
+            }
+        };
+        if existing
+            .iter()
+            .any(|record| record.expected_record_count == pending.expected_record_count)
+        {
+            prior = Some(pending_checkpoint(&pending)?);
+            continue;
+        }
+        if let Err(err) = spool.persist_slice(&pending) {
+            report.failed += 1;
+            record_error(report, err.class());
+            return Err(err.class());
+        }
+        persisted += 1;
+        prior = Some(pending_checkpoint(&pending)?);
+    }
+    Ok(persisted)
 }
 
 enum UploadOutcome {
