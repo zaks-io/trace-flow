@@ -19,6 +19,7 @@ import {
 import { readLedgerScan, readLedgerSnapshot } from './archive-ledger-storage';
 import {
   commitIntent,
+  discardPendingIntent,
   readIntent,
   readPendingIntent,
   markIntentReady,
@@ -35,7 +36,7 @@ import {
   pendingExpectedObjects,
   recoverPendingIntent,
   unwrapKey,
-  verifyObjects,
+  verifyObjectsAndReleaseDefinitivelyUnwritten,
   verifyPendingIntentBodies,
 } from './archive-ledger-intent-recovery';
 
@@ -222,7 +223,15 @@ export async function commitArchiveSession(
       objects: priorIntent.objects.map(storageBudgetObject),
     });
     if (!reservation.accepted) throw new ArchiveContractError('storage_cap_exceeded');
-    await verifyObjects(env.ARCHIVE_STORAGE, priorIntent.objects);
+    await verifyObjectsAndReleaseDefinitivelyUnwritten(
+      env.ARCHIVE_STORAGE,
+      priorIntent.objects,
+      (unwritten) =>
+        budget.releaseStorage({
+          orgId: envelope.scope.orgId,
+          objects: unwritten.map(storageBudgetObject),
+        }),
+    );
     await budget.commitStorage({
       orgId: envelope.scope.orgId,
       objects: priorIntent.objects.map(storageBudgetObject),
@@ -252,8 +261,16 @@ export async function commitArchiveSession(
     orgId: envelope.scope.orgId,
     objects: objects.map(storageBudgetObject),
   });
-  if (!reservation.accepted) throw new ArchiveContractError('storage_cap_exceeded');
-  await verifyObjects(env.ARCHIVE_STORAGE, objects);
+  if (!reservation.accepted) {
+    discardPendingIntent(storage, intentHash);
+    throw new ArchiveContractError('storage_cap_exceeded');
+  }
+  await verifyObjectsAndReleaseDefinitivelyUnwritten(env.ARCHIVE_STORAGE, objects, (unwritten) =>
+    budget.releaseStorage({
+      orgId: envelope.scope.orgId,
+      objects: unwritten.map(storageBudgetObject),
+    }),
+  );
   await budget.commitStorage({
     orgId: envelope.scope.orgId,
     objects: objects.map(storageBudgetObject),

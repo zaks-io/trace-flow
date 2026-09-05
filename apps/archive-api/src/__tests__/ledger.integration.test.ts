@@ -59,6 +59,10 @@ import {
 import claudeFixture from '../../../../packages/collector-archive/tests/fixtures/claude.jsonl?raw';
 import codexFixture from '../../../../packages/collector-archive/tests/fixtures/codex.jsonl?raw';
 import rustWireSessionJson from '../../../../packages/collector-archive/tests/fixtures/archive-wire-session.json?raw';
+import { app as agentIngestApp } from '../../../agent-ingest/src/index';
+import { __resetPolicyCache } from '../../../agent-ingest/src/policy';
+import type { AgentIngestEnv } from '../../../agent-ingest/src/context';
+import { envelope as agentIngestEnvelope } from '../../../agent-ingest/src/__tests__/factories';
 
 const WRAPPING_SECRET = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const KEY_VERSION = 1;
@@ -3778,6 +3782,102 @@ describe('Archive Session Ledger', () => {
       ...state.storage.sql.exec<{ data: string }>('SELECT data FROM ledger_state WHERE id = 1'),
     ]);
     expect(ledgerState).toHaveLength(0);
+    const pendingIntents = await runInDurableObject(stub, (_instance, state) => [
+      ...state.storage.sql.exec<{ status: string }>('SELECT status FROM pending_intents'),
+    ]);
+    expect(pendingIntents).toHaveLength(0);
+
+    __resetPolicyCache();
+    const collectorSecret = 'archive-cap-fact-ingest-secret';
+    const collectorKey = `collector:${await sha256Hex(collectorSecret)}`;
+    const queueSend = vi.fn(async () => {});
+    const agentEnv = {
+      COLLECTOR_CREDS: {
+        get: async (key: string) =>
+          key === collectorKey
+            ? JSON.stringify({
+                orgId: currentScope.orgId,
+                userId: currentScope.userId,
+                collectorId: 'collector-1',
+                expiresAt: Date.now() + 60_000,
+                status: 'active',
+                createdAt: Date.now(),
+              })
+            : null,
+      },
+      AGENT_QUEUE: { sendBatch: queueSend },
+      AGENT_INGEST_LIMITER: { limit: async () => ({ success: true }) },
+      CONVEX_SITE_URL: 'https://agent-convex.test',
+      AGENT_INGEST_SHARED_SECRET: 'agent-shared-secret',
+    } as unknown as AgentIngestEnv;
+    const previousFetch = globalThis.fetch;
+    const agentFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (
+        request.method === 'GET' &&
+        url.origin === 'https://agent-convex.test' &&
+        url.pathname === '/agent-ingest/compatibility-policy'
+      ) {
+        return new Response(
+          JSON.stringify({
+            minDesktopVersion: '1.0.0',
+            minParserVersion: '1.0.0',
+            denylistedVersions: [],
+            updatedAt: Date.now(),
+          }),
+          { status: 200 },
+        );
+      }
+      if (
+        request.method === 'POST' &&
+        url.origin === 'https://agent-convex.test' &&
+        url.pathname === '/agent-ingest/claim-sessions'
+      ) {
+        const body = await request.json();
+        if (
+          typeof body !== 'object' ||
+          body === null ||
+          !('sessionPks' in body) ||
+          !Array.isArray(body.sessionPks) ||
+          !body.sessionPks.every((value): value is string => typeof value === 'string')
+        ) {
+          throw new Error('claim request malformed');
+        }
+        return new Response(
+          JSON.stringify({
+            results: body.sessionPks.map((sessionPk) => ({
+              sessionPk,
+              status: 'claimed',
+              ownerUserId: currentScope.userId,
+            })),
+          }),
+          { status: 200 },
+        );
+      }
+      return previousFetch(input, init);
+    });
+    try {
+      const ingestContext = createExecutionContext();
+      const ingestResponse = await agentIngestApp.fetch(
+        new Request('https://agent.test/v1/ingest', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Trace-Flow-Collector-Secret': collectorSecret,
+          },
+          body: JSON.stringify(agentIngestEnvelope()),
+        }),
+        agentEnv,
+        ingestContext,
+      );
+      await waitOnExecutionContext(ingestContext);
+      expect(ingestResponse.status).toBe(202);
+      expect(await ingestResponse.json()).toMatchObject({ accepted: true, sessions: 1 });
+      expect(queueSend).toHaveBeenCalledTimes(1);
+    } finally {
+      agentFetch.mockRestore();
+    }
     const outbox = await runInDurableObject(budgetStub, (_instance, state) => [
       ...state.storage.sql.exec<{ payload: string }>(
         'SELECT payload FROM storage_budget_status_outbox WHERE id = 1',
@@ -3788,6 +3888,63 @@ describe('Archive Session Ledger', () => {
       storedBytes: ARCHIVE_STORAGE_CAP_BYTES - 1,
       lifecycle: 'blocked',
     });
+  });
+
+  it('retains a durable intent when the storage reservation result is ambiguous', async () => {
+    const currentScope = scope('codex', `storage-reservation-${crypto.randomUUID()}`);
+    const record = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      'storage-reservation-record',
+      '{"storage_reservation":true}',
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [record],
+      ),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    } satisfies ArchiveUploadRequest;
+    const request = await envelope(currentScope, upload);
+    const stub = newLedger(currentScope);
+    const ambiguousEnv = {
+      ...runtimeEnv,
+      STORAGE_BUDGET: {
+        getByName: () => ({
+          reserveStorage: async () => {
+            throw new Error('storage_reservation_result_ambiguous');
+          },
+        }),
+      },
+    } as unknown as ArchiveApiEnv;
+
+    const failure = await runInDurableObject(stub, async (_instance, state) => {
+      try {
+        await commitArchiveSession(state.storage, ambiguousEnv, request);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    expect(failure).toBe('storage_reservation_result_ambiguous');
+    const pending = await runInDurableObject(stub, (_instance, state) => [
+      ...state.storage.sql.exec<{ status: string }>(
+        "SELECT status FROM pending_intents WHERE status IN ('building', 'ready')",
+      ),
+    ]);
+    expect(pending).toEqual([{ status: 'ready' }]);
+    expect(
+      await runtimeEnv.ARCHIVE_STORAGE.list({ prefix: await archiveSessionPrefix(currentScope) }),
+    ).toMatchObject({ objects: [] });
+
+    const recovered = await call(stub, request);
+    expect(recovered.response.status).toBe(200);
+    expect(recovered.body).toMatchObject({ generation: 1 });
   });
 
   it('holds the one-and-a-half MiB uncompressed chunk boundary', async () => {

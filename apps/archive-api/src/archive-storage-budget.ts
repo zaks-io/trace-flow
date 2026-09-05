@@ -10,12 +10,14 @@ import {
   releaseBudgetStorage,
   reserveBudgetStorage,
   snapshot,
+  storageAdmissionUnsafe,
   type StorageBudgetObject,
   type StorageBudgetReservation,
   type StorageBudgetSnapshot,
 } from './archive-storage-budget-ledger';
 import {
   ensureReconciliationSchema,
+  RECONCILIATION_INTERVAL_MS,
   reconcileBudgetInventoryPage,
   reconciliationState,
   startBudgetReconciliation,
@@ -49,9 +51,19 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     orgId: string;
     objects: StorageBudgetObject[];
   }): Promise<StorageBudgetReservation> {
-    const result = await reserveBudgetStorage(this.ctx.storage, this.env, input);
-    await this.scheduleAlarmIfNeeded();
-    return result;
+    try {
+      const result = await reserveBudgetStorage(this.ctx.storage, this.env, input);
+      await this.scheduleAlarmIfNeeded();
+      return result;
+    } catch (error) {
+      const initialized = [
+        ...this.ctx.storage.sql.exec<{ id: number }>(
+          'SELECT id FROM storage_budget_state WHERE id = 1',
+        ),
+      ][0];
+      if (initialized) await this.scheduleAlarmIfNeeded();
+      throw error;
+    }
   }
 
   async commitStorage(input: {
@@ -95,12 +107,7 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
     orgId: string;
     limit?: number;
   }): Promise<{ complete: boolean; generation: number; cursor?: string }> {
-    const turn = this.reconciliationQueue.then(() => this.reconcilePage(input));
-    this.reconciliationQueue = turn.then(
-      () => undefined,
-      () => undefined,
-    );
-    return turn;
+    return this.queueReconciliationPage(input, true);
   }
 
   async flushStatusOutbox(): Promise<boolean> {
@@ -138,10 +145,20 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
 
   async alarm(): Promise<void> {
     await this.flushStatusOutbox();
-    const reconciliation = reconciliationState(this.ctx.storage);
+    const now = Date.now();
+    let reconciliation = reconciliationState(this.ctx.storage);
+    if (
+      reconciliation.activeGeneration === undefined &&
+      (storageAdmissionUnsafe(this.ctx.storage) ||
+        reconciliation.lastCompletedAt === undefined ||
+        now >= reconciliation.lastCompletedAt + RECONCILIATION_INTERVAL_MS)
+    ) {
+      startBudgetReconciliation(this.ctx.storage, this.orgId(), false);
+      reconciliation = reconciliationState(this.ctx.storage);
+    }
     if (reconciliation.activeGeneration !== undefined) {
       try {
-        await this.reconcileArchiveInventory({ orgId: this.orgId(), limit: 1000 });
+        await this.queueReconciliationPage({ orgId: this.orgId(), limit: 1000 }, false);
       } catch (error) {
         console.error(
           JSON.stringify({
@@ -166,23 +183,50 @@ export class StorageBudget extends DurableObject<ArchiveApiEnv> {
   }
 
   private async scheduleAlarmIfNeeded(): Promise<void> {
+    startBudgetReconciliation(this.ctx.storage, this.orgId(), false);
     const outbox = [
       ...this.ctx.storage.sql.exec<{ id: number }>(
         'SELECT id FROM storage_budget_status_outbox WHERE id = 1',
       ),
     ][0];
     const reconciliation = reconciliationState(this.ctx.storage);
-    if (reconciliation.activeGeneration !== undefined || outbox) {
-      await this.ctx.storage.setAlarm(Date.now() + STATUS_RETRY_MS);
+    const now = Date.now();
+    const scheduledAt =
+      reconciliation.activeGeneration !== undefined || outbox
+        ? now + STATUS_RETRY_MS
+        : reconciliation.lastCompletedAt === undefined
+          ? now + STATUS_RETRY_MS
+          : reconciliation.lastCompletedAt + RECONCILIATION_INTERVAL_MS;
+    const existingAlarm = await this.ctx.storage.getAlarm();
+    if (existingAlarm === null || scheduledAt < existingAlarm) {
+      await this.ctx.storage.setAlarm(scheduledAt);
     }
   }
 
-  private async reconcilePage(input: {
-    orgId: string;
-    limit?: number;
-  }): Promise<{ complete: boolean; generation: number; cursor?: string }> {
+  private queueReconciliationPage(
+    input: { orgId: string; limit?: number },
+    forceStart: boolean,
+  ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
+    const turn = this.reconciliationQueue.then(() => this.reconcilePage(input, forceStart));
+    this.reconciliationQueue = turn.then(
+      () => undefined,
+      () => undefined,
+    );
+    return turn;
+  }
+
+  private async reconcilePage(
+    input: {
+      orgId: string;
+      limit?: number;
+    },
+    forceStart: boolean,
+  ): Promise<{ complete: boolean; generation: number; cursor?: string }> {
     try {
-      const result = await reconcileBudgetInventoryPage(this.ctx.storage, this.env, input);
+      const result = await reconcileBudgetInventoryPage(this.ctx.storage, this.env, {
+        ...input,
+        forceStart,
+      });
       await this.scheduleAlarmIfNeeded();
       return result;
     } catch (error) {

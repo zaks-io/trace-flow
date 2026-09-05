@@ -218,6 +218,17 @@ export function markIntentReady(storage: DurableObjectStorage, intentHash: strin
   });
 }
 
+export function discardPendingIntent(storage: DurableObjectStorage, intentHash: string): void {
+  storage.transactionSync(() => {
+    storage.sql.exec(
+      "DELETE FROM pending_intents WHERE intent_hash = ? AND status IN ('building', 'ready')",
+      intentHash,
+    );
+    storage.sql.exec('DELETE FROM pending_intent_parts WHERE intent_hash = ?', intentHash);
+    storage.sql.exec('DELETE FROM pending_intent_metadata WHERE intent_hash = ?', intentHash);
+  });
+}
+
 export function commitIntent(
   storage: DurableObjectStorage,
   intentHash: string,

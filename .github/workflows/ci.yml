@@ -83,6 +83,7 @@ jobs:
               - 'packages/logging/**'
             archive-api:
               - 'apps/archive-api/**'
+              - 'apps/agent-ingest/**'
               - 'packages/utils/**'
               - 'packages/logging/**'
               - 'packages/convex/**'

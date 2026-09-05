@@ -43,6 +43,9 @@
     "lint": {},
     "type-check": {},
     "test": {},
+    "@trace-flow/archive-api#test": {
+      "inputs": ["$TURBO_DEFAULT$", "../agent-ingest/src/**"]
+    },
     "test:watch": {
       "cache": false,
       "persistent": true

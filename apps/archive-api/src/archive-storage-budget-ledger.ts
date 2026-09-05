@@ -22,6 +22,7 @@ export interface StorageBudgetSnapshot {
   reservedBytes: number;
   committedBytes: number;
   availableBytes: number;
+  blockedReason?: 'storage_cap_exceeded';
   byClass: Record<StorageBudgetObjectClass, { reservedBytes: number; committedBytes: number }>;
 }
 
@@ -34,8 +35,10 @@ export interface BudgetState {
   reservedBytes: number;
   committedBytes: number;
   mutationVersion: number;
+  admissionGuardRevision: number;
   statusRevision: number;
   lastDurableAcknowledgedAt?: number;
+  blockedReason?: 'storage_cap_exceeded';
 }
 
 export function ensureBudgetSchema(storage: DurableObjectStorage): void {
@@ -47,6 +50,7 @@ export function ensureBudgetSchema(storage: DurableObjectStorage): void {
       reserved_bytes INTEGER NOT NULL,
       committed_bytes INTEGER NOT NULL,
       mutation_version INTEGER NOT NULL,
+      admission_guard_revision INTEGER NOT NULL DEFAULT 0,
       status_revision INTEGER NOT NULL,
       last_durable_acknowledged_at INTEGER
     );
@@ -62,7 +66,26 @@ export function ensureBudgetSchema(storage: DurableObjectStorage): void {
       revision INTEGER NOT NULL,
       payload TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS storage_budget_blocks (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      reason TEXT NOT NULL CHECK (reason = 'storage_cap_exceeded')
+    );
+    CREATE TABLE IF NOT EXISTS storage_budget_admission_guard (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      reason TEXT NOT NULL CHECK (reason = 'inventory_unsafe'),
+      revision INTEGER NOT NULL
+    );
   `);
+  const stateColumns = new Set(
+    [...storage.sql.exec<{ name: string }>('PRAGMA table_info(storage_budget_state)')].map(
+      (column) => column.name,
+    ),
+  );
+  if (!stateColumns.has('admission_guard_revision')) {
+    storage.sql.exec(
+      'ALTER TABLE storage_budget_state ADD COLUMN admission_guard_revision INTEGER NOT NULL DEFAULT 0',
+    );
+  }
 }
 
 export function budgetState(storage: DurableObjectStorage, orgId: string): BudgetState {
@@ -74,6 +97,7 @@ export function budgetState(storage: DurableObjectStorage, orgId: string): Budge
       reserved_bytes: number;
       committed_bytes: number;
       mutation_version: number;
+      admission_guard_revision: number;
       status_revision: number;
       last_durable_acknowledged_at: number | null;
     }>('SELECT * FROM storage_budget_state WHERE id = 1'),
@@ -84,18 +108,32 @@ export function budgetState(storage: DurableObjectStorage, orgId: string): Budge
       orgId,
       ARCHIVE_STORAGE_CAP_BYTES,
     );
-    return { orgId, reservedBytes: 0, committedBytes: 0, mutationVersion: 0, statusRevision: 0 };
+    return {
+      orgId,
+      reservedBytes: 0,
+      committedBytes: 0,
+      mutationVersion: 0,
+      admissionGuardRevision: 0,
+      statusRevision: 0,
+    };
   }
   if (existing.org_id !== orgId || existing.cap_bytes !== ARCHIVE_STORAGE_CAP_BYTES) {
     throw new ArchiveContractError('storage_budget_identity_mismatch');
   }
+  const block = [
+    ...storage.sql.exec<{ reason: 'storage_cap_exceeded' }>(
+      'SELECT reason FROM storage_budget_blocks WHERE id = 1',
+    ),
+  ][0];
   return {
     orgId: existing.org_id,
     reservedBytes: existing.reserved_bytes,
     committedBytes: existing.committed_bytes,
     mutationVersion: existing.mutation_version,
+    admissionGuardRevision: existing.admission_guard_revision,
     statusRevision: existing.status_revision,
     lastDurableAcknowledgedAt: existing.last_durable_acknowledged_at ?? undefined,
+    blockedReason: block?.reason,
   };
 }
 
@@ -174,6 +212,7 @@ export function snapshot(
     reservedBytes: current.reservedBytes,
     committedBytes: current.committedBytes,
     availableBytes: ARCHIVE_STORAGE_CAP_BYTES - current.reservedBytes - current.committedBytes,
+    ...(current.blockedReason === undefined ? {} : { blockedReason: current.blockedReason }),
     byClass,
   };
 }
@@ -185,7 +224,12 @@ export function enqueueStatus(
 ): void {
   const revision = current.statusRevision + 1;
   const lifecycle: ArchiveStatusUpdate['lifecycle'] =
-    blocked || current.committedBytes >= ARCHIVE_STORAGE_CAP_BYTES ? 'blocked' : 'active';
+    blocked ||
+    storageAdmissionUnsafe(storage) ||
+    current.blockedReason !== undefined ||
+    current.committedBytes >= ARCHIVE_STORAGE_CAP_BYTES
+      ? 'blocked'
+      : 'active';
   const payload: ArchiveStatusUpdate = {
     orgId: current.orgId,
     revision,
@@ -203,6 +247,70 @@ export function enqueueStatus(
   );
 }
 
+function setStorageCapBlocked(storage: DurableObjectStorage): void {
+  storage.sql.exec(
+    "INSERT INTO storage_budget_blocks (id, reason) VALUES (1, 'storage_cap_exceeded') ON CONFLICT(id) DO UPDATE SET reason = excluded.reason",
+  );
+}
+
+export function markStorageAdmissionUnsafe(
+  storage: DurableObjectStorage,
+  current: BudgetState,
+): void {
+  storage.sql.exec(
+    'UPDATE storage_budget_state SET admission_guard_revision = admission_guard_revision + 1 WHERE id = 1',
+  );
+  const revision = [
+    ...storage.sql.exec<{ revision: number }>(
+      'SELECT admission_guard_revision AS revision FROM storage_budget_state WHERE id = 1',
+    ),
+  ][0]!.revision;
+  storage.sql.exec(
+    "INSERT INTO storage_budget_admission_guard (id, reason, revision) VALUES (1, 'inventory_unsafe', ?) ON CONFLICT(id) DO UPDATE SET reason = excluded.reason, revision = excluded.revision",
+    revision,
+  );
+  enqueueStatus(storage, current, true);
+}
+
+export function clearStorageAdmissionUnsafe(
+  storage: DurableObjectStorage,
+  coveredRevision: number,
+): boolean {
+  const unsafe = [
+    ...storage.sql.exec<{ revision: number }>(
+      'SELECT revision FROM storage_budget_admission_guard WHERE id = 1',
+    ),
+  ][0];
+  if (!unsafe || unsafe.revision > coveredRevision) return false;
+  storage.sql.exec(
+    'DELETE FROM storage_budget_admission_guard WHERE id = 1 AND revision <= ?',
+    coveredRevision,
+  );
+  return true;
+}
+
+export function storageAdmissionUnsafe(storage: DurableObjectStorage): boolean {
+  return (
+    [
+      ...storage.sql.exec<{ id: number }>(
+        'SELECT id FROM storage_budget_admission_guard WHERE id = 1',
+      ),
+    ].length > 0
+  );
+}
+
+export function clearStorageCapBlockIfCapacityReturned(
+  storage: DurableObjectStorage,
+  current: BudgetState,
+): void {
+  if (
+    current.blockedReason !== undefined &&
+    current.reservedBytes + current.committedBytes < ARCHIVE_STORAGE_CAP_BYTES
+  ) {
+    storage.sql.exec('DELETE FROM storage_budget_blocks WHERE id = 1');
+  }
+}
+
 function enqueueAcknowledgement(
   storage: DurableObjectStorage,
   current: BudgetState,
@@ -217,26 +325,80 @@ export async function reserveBudgetStorage(
   input: { orgId: string; objects: StorageBudgetObject[] },
 ): Promise<StorageBudgetReservation> {
   const objects = normalizeObjects(input.objects);
-  budgetState(storage, input.orgId);
+  const initial = budgetState(storage, input.orgId);
+  if (storageAdmissionUnsafe(storage)) {
+    return {
+      accepted: false,
+      reason: 'storage_cap_exceeded',
+      snapshot: snapshot(storage, initial),
+    };
+  }
   const existingInR2 = new Map<string, boolean>();
-  for (const object of objects) {
-    const row = [
-      ...storage.sql.exec<{ object_key: string }>(
-        'SELECT object_key FROM storage_budget_objects WHERE object_key = ?',
-        object.objectKey,
-      ),
-    ][0];
-    if (row) continue;
-    const existing = await env.ARCHIVE_STORAGE.head(object.objectKey);
-    if (existing && existing.size !== object.bytes) {
-      throw new ArchiveContractError('storage_object_metadata_mismatch');
+  try {
+    for (const object of objects) {
+      const row = [
+        ...storage.sql.exec<{ object_key: string }>(
+          'SELECT object_key FROM storage_budget_objects WHERE object_key = ?',
+          object.objectKey,
+        ),
+      ][0];
+      if (row) continue;
+      const existing = await env.ARCHIVE_STORAGE.head(object.objectKey);
+      if (existing && existing.size !== object.bytes) {
+        throw new ArchiveContractError('storage_object_metadata_mismatch');
+      }
+      existingInR2.set(object.objectKey, existing !== null);
     }
-    existingInR2.set(object.objectKey, existing !== null);
+  } catch (error) {
+    storage.transactionSync(() => {
+      let discoveredBytes = 0;
+      for (const object of objects) {
+        if (!existingInR2.get(object.objectKey)) continue;
+        const existing = [
+          ...storage.sql.exec<{
+            object_class: StorageBudgetObjectClass;
+            bytes: number;
+            expires_at: string | null;
+          }>(
+            'SELECT object_class, bytes, expires_at FROM storage_budget_objects WHERE object_key = ?',
+            object.objectKey,
+          ),
+        ][0];
+        if (existing) {
+          assertExistingObject(existing, object);
+          continue;
+        }
+        storage.sql.exec(
+          "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status) VALUES (?, ?, ?, ?, 'committed')",
+          object.objectKey,
+          object.objectClass,
+          object.bytes,
+          object.expiresAt,
+        );
+        discoveredBytes += object.bytes;
+      }
+      if (discoveredBytes > 0) {
+        storage.sql.exec(
+          'UPDATE storage_budget_state SET committed_bytes = committed_bytes + ?, mutation_version = mutation_version + 1 WHERE id = 1',
+          discoveredBytes,
+        );
+      }
+      markStorageAdmissionUnsafe(storage, budgetState(storage, input.orgId));
+    });
+    throw error;
   }
 
   let result!: StorageBudgetReservation;
   storage.transactionSync(() => {
     const current = budgetState(storage, input.orgId);
+    if (storageAdmissionUnsafe(storage)) {
+      result = {
+        accepted: false,
+        reason: 'storage_cap_exceeded',
+        snapshot: snapshot(storage, current),
+      };
+      return;
+    }
     const additions: StorageBudgetObject[] = [];
     const existingObjects: StorageBudgetObject[] = [];
     for (const object of objects) {
@@ -256,19 +418,6 @@ export async function reserveBudgetStorage(
     }
     const additionalBytes = additions.reduce((sum, object) => sum + object.bytes, 0);
     const existingBytes = existingObjects.reduce((sum, object) => sum + object.bytes, 0);
-    if (
-      additionalBytes > 0 &&
-      current.committedBytes + current.reservedBytes + existingBytes + additionalBytes >
-        ARCHIVE_STORAGE_CAP_BYTES
-    ) {
-      enqueueStatus(storage, current, true);
-      result = {
-        accepted: false,
-        reason: 'storage_cap_exceeded',
-        snapshot: snapshot(storage, current),
-      };
-      return;
-    }
     for (const object of existingObjects) {
       storage.sql.exec(
         "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status) VALUES (?, ?, ?, ?, 'committed')",
@@ -277,6 +426,27 @@ export async function reserveBudgetStorage(
         object.bytes,
         object.expiresAt,
       );
+    }
+    const exceedsCap =
+      additionalBytes > 0 &&
+      current.committedBytes + current.reservedBytes + existingBytes + additionalBytes >
+        ARCHIVE_STORAGE_CAP_BYTES;
+    if (exceedsCap) {
+      if (existingBytes > 0) {
+        storage.sql.exec(
+          'UPDATE storage_budget_state SET committed_bytes = committed_bytes + ?, mutation_version = mutation_version + 1 WHERE id = 1',
+          existingBytes,
+        );
+      }
+      setStorageCapBlocked(storage);
+      const blocked = budgetState(storage, input.orgId);
+      enqueueStatus(storage, blocked, true);
+      result = {
+        accepted: false,
+        reason: 'storage_cap_exceeded',
+        snapshot: snapshot(storage, budgetState(storage, input.orgId)),
+      };
+      return;
     }
     for (const object of additions) {
       storage.sql.exec(
@@ -382,6 +552,8 @@ export function releaseBudgetStorage(
         'UPDATE storage_budget_state SET reserved_bytes = reserved_bytes - ?, mutation_version = mutation_version + 1 WHERE id = 1',
         releasedBytes,
       );
+      const current = budgetState(storage, input.orgId);
+      clearStorageCapBlockIfCapacityReturned(storage, current);
       enqueueStatus(storage, budgetState(storage, input.orgId));
     }
   });
