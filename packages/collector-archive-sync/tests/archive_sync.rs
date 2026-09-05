@@ -1137,4 +1137,31 @@ async fn failing_keyring_delete_does_not_claim_purge() {
     );
     assert!(live_keys.load("org_1").unwrap().is_some());
     assert!(pending_disk_path(live_dir.path(), &live_pending).exists());
+
+    let stop_dir = TempDir::new().unwrap();
+    let stop_keys = FailingDeleteKeyStore::new();
+    let mut stop_spool = ArchiveSpool::open(stop_dir.path(), "org_1", &stop_keys).unwrap();
+    let stop_pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    stop_spool.persist_pending(&stop_pending).unwrap();
+    let later = snapshot(ArchiveSource::Codex, CODEX, 11);
+    let later_session = later.source_session_id.clone();
+    let stop_uploader = ScriptedUploader::new([Err(ArchiveClientError::Forbidden {
+        reason: "credential_revoked".to_string(),
+    })]);
+    let stop_report = run_archive_cycle(
+        &stop_uploader,
+        &mut stop_spool,
+        &stop_keys,
+        &[later],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert!(!stop_report.purged);
+    assert!(stop_report.halted);
+    assert_eq!(stop_report.captured, 0);
+    assert!(stop_spool
+        .pending(ArchiveSource::Codex, &later_session)
+        .unwrap()
+        .is_none());
 }

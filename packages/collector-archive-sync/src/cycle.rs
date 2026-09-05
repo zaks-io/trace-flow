@@ -26,6 +26,7 @@ pub struct ArchiveCycleReport {
     pub captured: u32,
     pub purged: bool,
     pub frozen: bool,
+    pub halted: bool,
     pub first_error: Option<String>,
 }
 
@@ -54,7 +55,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
 
     if policy.uploads() {
         replay_pending(uploader, spool, key_store, &mut report, cancel).await;
-        if report.purged || report.frozen {
+        if report.purged || report.frozen || report.halted {
             return report;
         }
     }
@@ -77,7 +78,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
                 break;
             }
         }
-        if report.purged || report.frozen {
+        if report.purged || report.frozen || report.halted {
             break;
         }
     }
@@ -122,6 +123,7 @@ async fn replay_pending<U: ArchiveUploader>(
                     Ok(UploadOutcome::Halt(class)) => {
                         report.failed += 1;
                         record_error(report, class);
+                        report.halted = true;
                         break;
                     }
                     Err(class) => {
@@ -205,6 +207,7 @@ async fn capture_snapshot<U: ArchiveUploader>(
             Ok(UploadOutcome::Halt(class)) => {
                 report.failed += 1;
                 record_error(report, class);
+                report.halted = true;
                 return Err("halt");
             }
             Err(class) => {

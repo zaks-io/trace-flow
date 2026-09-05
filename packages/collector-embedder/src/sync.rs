@@ -545,9 +545,9 @@ async fn run_archive_work(
         let mut report = ArchiveCycleReport::default();
         match ArchiveSpool::purge_at(&archive.spool_dir, org_id, archive.key_store.as_ref()) {
             Ok(()) => report.purged = true,
-            Err(_) => {
+            Err(err) => {
                 report.failed = 1;
-                report.first_error = Some("archive_purge".to_string());
+                report.first_error = Some(err.class().to_string());
             }
         }
         return report;
