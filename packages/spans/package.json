@@ -15,12 +15,12 @@
   },
   "dependencies": {
     "@trace-flow/otel-conventions": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.11"
   },
   "license": "Apache-2.0"
 }

@@ -19,15 +19,15 @@
     "@cloudflare/sandbox": "0.12.1",
     "@trace-flow/convex": "workspace:*",
     "@trace-flow/pricing": "workspace:*",
-    "convex": "^1.38.0"
+    "convex": "1.38.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260511.1",
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@trace-flow/mcp-core": "workspace:*",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.6",
-    "wrangler": "^4.88.0"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.127.1"
   },
   "license": "Apache-2.0"
 }

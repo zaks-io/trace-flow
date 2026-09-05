@@ -20,7 +20,7 @@ path = "src/main.rs"
 # endpoint defaults). The CLI is a thin clap + stdout shim over it; the desktop app links the same crate.
 collector-embedder = { path = "../../packages/collector-embedder" }
 collector-contracts = { path = "../../packages/collector-contracts" }
-# Used directly only by the hidden `cursor-dryrun` verification command (TRA-108): read the local
+# Used directly only by the hidden `cursor-dryrun` verification command: read the local
 # Cursor state.vscdb and print aggregate counts without uploading.
 collector-parser = { path = "../../packages/collector-parser" }
 collector-sync = { path = "../../packages/collector-sync" }

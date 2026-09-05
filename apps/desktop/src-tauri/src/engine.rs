@@ -10,7 +10,7 @@
 //! [`collector_embedder::sync::run`] the CLI calls, so redaction, cursor advance-only-on-2xx, and
 //! batching are identical across both embedders.
 //!
-//! **First-egress gate (TRA-115 AC #2):** on a fresh install the engine starts `paused`. Nothing is
+//! **First-egress gate:** on a fresh install the engine starts `paused`. Nothing is
 //! read for upload and nothing is POSTed until the user explicitly authorizes it — either
 //! `StartSyncing` (resume + one-time backfill) or `SyncNow` (resume + one incremental cycle).
 //! Detecting sources (file counts) is read-only and does not require resuming.

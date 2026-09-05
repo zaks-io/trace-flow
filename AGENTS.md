@@ -186,15 +186,10 @@ When a Codex session encounters something confusing or spends significant debugg
 
 <!-- Add session notes below this line -->
 
-- 2026-05-30: **CLOUD-DEV = EVERYTHING IN THE CLOUD. The only local process is the web dev server
-  (Next.js on localhost:3000). NO local Workers, NO local data, ever.** When testing the collector (CLI or
-  desktop), point it at the **deployed cloud `-dev` ingest Worker** and the **Convex Cloud dev deployment**
-  (`TRACE_FLOW_INGEST_URL` = the cloud `-dev` ingest route, `TRACE_FLOW_CONVEX_SITE_URL` = the cloud-dev
-  `*.convex.site`). The collector-embedder bakes **production** URLs, so reaching Cloud-Dev REQUIRES these
-  overrides; a bare launch hits PROD. Do NOT use `bun run dev:all` Workers on `http://127.0.0.1:8787` as the
-  ingest target — that's a LOCAL Worker and is wrong. Check results in CLOUD: `wrangler … --remote`, the
-  Cloud Convex dev dashboard, and `/app/agents`. `127.0.0.1` Workers only apply in explicit Self-Contained
-  Local / Cursor-mode, which Isaac does NOT want here. See `CONTEXT.md` → Environments.
+- 2026-05-30: In this collector workflow, Cloud-Dev runs Workers and data services in the cloud; only
+  the Next.js web server runs locally on `localhost:3000`. Collector tests must override
+  `TRACE_FLOW_INGEST_URL` and `TRACE_FLOW_CONVEX_SITE_URL` with the deployed Cloud-Dev endpoints because
+  the baked defaults target production, and results must be verified through the remote cloud tools.
 
 - 2026-05-28: Agent Conversation Analytics was rebaselined as **not production-ready**. Do not treat
   the Rust collector crates, ignored `headless_e2e` tests, dev-only Cloudflare queue/consumer, manual

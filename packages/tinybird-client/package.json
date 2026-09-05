@@ -14,10 +14,10 @@
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260511.1",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.11"
   },
   "license": "Apache-2.0"
 }

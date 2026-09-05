@@ -15,14 +15,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@sentry/cloudflare": "^10.53.1",
+    "@sentry/cloudflare": "^10.73.0",
     "@trace-flow/types": "workspace:*",
-    "eventsource-parser": "^3.0.8"
+    "eventsource-parser": "^3.1.1"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.11",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.11"
   },
   "license": "Apache-2.0"
 }

@@ -28,26 +28,26 @@
     "bench:report": "bun run src/cli.ts bench --all --markdown"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3",
-    "@ai-sdk/google": "^3",
-    "@ai-sdk/groq": "^3",
-    "@ai-sdk/openai": "^3",
+    "@ai-sdk/anthropic": "^3.0.116",
+    "@ai-sdk/google": "^3.0.120",
+    "@ai-sdk/groq": "^3.0.64",
+    "@ai-sdk/openai": "^3.0.104",
     "@inkjs/ui": "^2.0.0",
-    "@openrouter/ai-sdk-provider": "^2",
+    "@openrouter/ai-sdk-provider": "^2.10.0",
     "@trace-flow/llm-providers": "workspace:*",
     "@trace-flow/types": "workspace:*",
     "@trace-flow/utils": "workspace:*",
-    "ai": "^6",
-    "commander": "^12.0.0",
-    "eventsource-parser": "^3.0.8",
+    "ai": "^6.0.275",
+    "commander": "^12.1.0",
+    "eventsource-parser": "^3.1.1",
     "ink": "^6.8.0",
     "react": "^19.2.6",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/node": "^22",
+    "@types/node": "^22.20.1",
     "@types/react": "^19.2.14",
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   },
   "license": "Apache-2.0"
 }

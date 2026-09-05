@@ -3,7 +3,7 @@ name = "trace-flow-desktop"
 version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
-description = "Trace Flow Desktop: the menu-bar Collector that syncs local Claude/Codex transcripts (TRA-115)"
+description = "Trace Flow Desktop: the menu-bar Collector that syncs local Claude and Codex transcripts"
 
 [package.metadata.dist]
 dist = false

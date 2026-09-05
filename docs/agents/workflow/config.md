@@ -307,7 +307,7 @@ workflow logic lives in the centrally managed org skills pinned by
   `Done` when merge and verification evidence exists
 - Orchestrator recurring mechanism: Codex heartbeat automation
   `trace-flow-workflow-orchestrator`, file
-  `/Users/isaacsuttell/.codex/automations/trace-flow-workflow-orchestrator/automation.toml`,
+  `~/.codex/automations/trace-flow-workflow-orchestrator/automation.toml`,
   `FREQ=MINUTELY;INTERVAL=15`, currently `PAUSED`
 - Recurring scope: current ready and active Linear `TRA` Roadmap issues with
   repo label `zaks-io/trace-flow`, plus open GitHub PRs; do not scan/promote
