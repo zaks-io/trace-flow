@@ -29,6 +29,8 @@ import {
   newLedger,
   ledgerEffects,
   seedPendingCommit,
+  expectIntegrity,
+  expectAgentFactSyncAccepted,
 } from './ledger.integration.fixtures';
 import type { ArchiveUploadRequest, ArchiveApiEnv } from './ledger.integration.fixtures';
 
@@ -63,8 +65,12 @@ describe('Archive Session Ledger', () => {
       stub,
       await envelope(currentScope, { ...upload, observations: [badRecord] }),
     );
-    expect(rejected.response.status).toBe(400);
-    expect(rejected.body.error).toBe('payload_hash_mismatch');
+    expectIntegrity(rejected, 'payload_hash_mismatch');
+    expect(rejected.body.newly_recorded).toBe(true);
+    const stableRetry = await call(newLedger(currentScope), await envelope(currentScope, upload));
+    expectIntegrity(stableRetry, 'payload_hash_mismatch');
+    expect(stableRetry.body.operation_id).toBe(rejected.body.operation_id);
+    expect(stableRetry.body.newly_recorded).toBe(false);
     const state = await runInDurableObject(stub, (_instance, durableState) => ({
       ledgerState: [
         ...durableState.storage.sql.exec<{ count: number }>(
@@ -76,12 +82,92 @@ describe('Archive Session Ledger', () => {
           'SELECT COUNT(*) AS count FROM ledger_elements',
         ),
       ][0]?.count,
+      integrity: [
+        ...durableState.storage.sql.exec<{ error_class: string; operation_id: string }>(
+          'SELECT error_class, operation_id FROM ledger_integrity_state WHERE id = 1',
+        ),
+      ],
     }));
-    expect(state).toEqual({ ledgerState: 0, ledgerElements: 0 });
+    expect(state).toEqual({
+      ledgerState: 0,
+      ledgerElements: 0,
+      integrity: [
+        {
+          error_class: 'payload_hash_mismatch',
+          operation_id: rejected.body.operation_id,
+        },
+      ],
+    });
     const listed = await runtimeEnv.ARCHIVE_STORAGE.list({
       prefix: await archiveSessionPrefix(currentScope),
     });
     expect(listed.objects).toHaveLength(0);
+  });
+
+  it('contains integrity failure to one session while another session commits', async () => {
+    const failedScope = scope('codex', `isolated-failure-${crypto.randomUUID()}`);
+    const healthyScope = {
+      ...failedScope,
+      sourceSessionId: `isolated-healthy-${crypto.randomUUID()}`,
+    };
+    const failedRecord = await observation(
+      failedScope.source,
+      failedScope.sourceSessionId,
+      partFor(failedScope.source),
+      'failed-record',
+      '{"failed":true}',
+    );
+    const healthyRecord = await observation(
+      healthyScope.source,
+      healthyScope.sourceSessionId,
+      partFor(healthyScope.source),
+      'healthy-record',
+      '{"healthy":true}',
+    );
+    const failedUpload = {
+      source_session_id: failedScope.sourceSessionId,
+      observations: [
+        { ...failedRecord, content_sha256: await digest(new TextEncoder().encode('tampered')) },
+      ],
+      checkpoint: await checkpoint(
+        failedScope.source,
+        failedScope.sourceSessionId,
+        partFor(failedScope.source),
+        [failedRecord],
+      ),
+      complete_prefix_base64: base64(exactPrefix([failedRecord])),
+    };
+    const healthyUpload = {
+      source_session_id: healthyScope.sourceSessionId,
+      observations: [healthyRecord],
+      checkpoint: await checkpoint(
+        healthyScope.source,
+        healthyScope.sourceSessionId,
+        partFor(healthyScope.source),
+        [healthyRecord],
+      ),
+      complete_prefix_base64: base64(exactPrefix([healthyRecord])),
+    };
+    const [failed, healthy] = await Promise.all([
+      call(newLedger(failedScope), await envelope(failedScope, failedUpload)),
+      call(newLedger(healthyScope), await envelope(healthyScope, healthyUpload)),
+    ]);
+    expectIntegrity(failed, 'payload_hash_mismatch');
+    expect(healthy.response.status).toBe(200);
+    expect(healthy.body).toMatchObject({
+      status: 'acknowledged',
+      source_session_id: healthyScope.sourceSessionId,
+      generation: 1,
+    });
+    const failedObjects = await runtimeEnv.ARCHIVE_STORAGE.list({
+      prefix: await archiveSessionPrefix(failedScope),
+    });
+    const healthyObjects = await runtimeEnv.ARCHIVE_STORAGE.list({
+      prefix: await archiveSessionPrefix(healthyScope),
+    });
+    expect(failedObjects.objects).toHaveLength(0);
+    expect(healthyObjects.objects).toHaveLength(2);
+    await expectAgentFactSyncAccepted(failedScope, 'integrity-fact-sync-secret');
   });
 
   it('resumes a pending intent after a partial immutable R2 write', async () => {
@@ -456,62 +542,71 @@ describe('Archive Session Ledger', () => {
     }
   });
 
-  it('rejects a pending intent whose stored ciphertext no longer matches the plan', async () => {
-    const currentScope = scope('codex', `pending-tamper-${crypto.randomUUID()}`);
-    const record = await observation(
-      'codex',
-      currentScope.sourceSessionId,
-      partFor('codex'),
-      '0',
-      '"pending-tamper"',
-    );
-    const upload = {
-      source_session_id: currentScope.sourceSessionId,
-      observations: [record],
-      checkpoint: await checkpoint('codex', currentScope.sourceSessionId, partFor('codex'), [
-        record,
-      ]),
-      complete_prefix_base64: base64(exactPrefix([record])),
-    };
-    const { stub } = await seedPendingCommit(currentScope, upload);
-    const pendingBody = await runInDurableObject(
-      stub,
-      (_instance, state) =>
-        [
-          ...state.storage.sql.exec<{ data: string }>(
-            'SELECT data FROM pending_intent_parts WHERE object_index = 0 AND part_index = 0',
-          ),
-        ][0]?.data,
-    );
-    if (!pendingBody) throw new Error('pending body missing');
-    const tampered = JSON.parse(pendingBody) as { ciphertext: string };
-    tampered.ciphertext = `${tampered.ciphertext.slice(0, -2)}AA`;
-    await runInDurableObject(stub, (_instance, state) => {
-      state.storage.sql.exec(
-        'UPDATE pending_intent_parts SET data = ? WHERE object_index = 0 AND part_index = 0',
-        JSON.stringify(tampered),
+  it.each([
+    { objectIndex: 0, objectClass: 'chunk' },
+    { objectIndex: 1, objectClass: 'manifest' },
+  ] as const)(
+    'rejects a pending $objectClass object whose stored ciphertext no longer matches the plan',
+    async ({ objectIndex }) => {
+      const currentScope = scope('codex', `pending-tamper-${crypto.randomUUID()}`);
+      const record = await observation(
+        'codex',
+        currentScope.sourceSessionId,
+        partFor('codex'),
+        '0',
+        '"pending-tamper"',
       );
-    });
+      const upload = {
+        source_session_id: currentScope.sourceSessionId,
+        observations: [record],
+        checkpoint: await checkpoint('codex', currentScope.sourceSessionId, partFor('codex'), [
+          record,
+        ]),
+        complete_prefix_base64: base64(exactPrefix([record])),
+      };
+      const { stub } = await seedPendingCommit(currentScope, upload);
+      const pendingBody = await runInDurableObject(
+        stub,
+        (_instance, state) =>
+          [
+            ...state.storage.sql.exec<{ data: string }>(
+              'SELECT data FROM pending_intent_parts WHERE object_index = ? AND part_index = 0',
+              objectIndex,
+            ),
+          ][0]?.data,
+      );
+      if (!pendingBody) throw new Error('pending body missing');
+      const tampered = JSON.parse(pendingBody) as { ciphertext: string };
+      tampered.ciphertext = `${tampered.ciphertext.slice(0, -2)}AA`;
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec(
+          'UPDATE pending_intent_parts SET data = ? WHERE object_index = ? AND part_index = 0',
+          JSON.stringify(tampered),
+          objectIndex,
+        );
+      });
 
-    const retry = await call(stub, await envelope(currentScope, upload));
-    expect(retry.response.status).toBe(409);
-    expect(retry.body.error).toBe('pending_object_verification_failed');
-    const listed = await runtimeEnv.ARCHIVE_STORAGE.list({
-      prefix: await archiveSessionPrefix(currentScope),
-    });
-    expect(listed.objects).toHaveLength(1);
-    const intentState = await runInDurableObject(stub, (_instance, state) => ({
-      ledgerElements: [
-        ...state.storage.sql.exec<{ count: number }>(
-          'SELECT COUNT(*) AS count FROM ledger_elements',
-        ),
-      ][0]?.count,
-      status: [
-        ...state.storage.sql.exec<{ status: string }>('SELECT status FROM pending_intents LIMIT 1'),
-      ][0]?.status,
-    }));
-    expect(intentState).toEqual({ ledgerElements: 0, status: 'building' });
-  });
+      const retry = await call(stub, await envelope(currentScope, upload));
+      expectIntegrity(retry, 'pending_object_verification_failed');
+      const listed = await runtimeEnv.ARCHIVE_STORAGE.list({
+        prefix: await archiveSessionPrefix(currentScope),
+      });
+      expect(listed.objects).toHaveLength(1);
+      const intentState = await runInDurableObject(stub, (_instance, state) => ({
+        ledgerElements: [
+          ...state.storage.sql.exec<{ count: number }>(
+            'SELECT COUNT(*) AS count FROM ledger_elements',
+          ),
+        ][0]?.count,
+        status: [
+          ...state.storage.sql.exec<{ status: string }>(
+            'SELECT status FROM pending_intents LIMIT 1',
+          ),
+        ][0]?.status,
+      }));
+      expect(intentState).toEqual({ ledgerElements: 0, status: 'building' });
+    },
+  );
 
   it('rejects corrupted pending intent metadata before recovery effects', async () => {
     const currentScope = scope('codex', `pending-metadata-${crypto.randomUUID()}`);
@@ -542,8 +637,7 @@ describe('Archive Session Ledger', () => {
     });
 
     const rejected = await call(stub, await envelope(currentScope, upload));
-    expect(rejected.response.status).toBe(409);
-    expect(rejected.body.error).toBe('pending_intent_corrupt');
+    expectIntegrity(rejected, 'pending_intent_corrupt');
     const state = await runInDurableObject(stub, (_instance, durableState) => ({
       ledgerState: [
         ...durableState.storage.sql.exec<{ count: number }>(

@@ -11,7 +11,6 @@ import {
   archiveSessionPrefix,
   packNewElements,
   decompress,
-  verifyOrPutImmutableObject,
   commitArchiveSession,
   ARCHIVE_STORAGE_CAP_BYTES,
   readPendingIntent,
@@ -31,6 +30,10 @@ import {
   envelope,
   call,
   newLedger,
+  seedPendingCommit,
+  readLedgerSnapshot,
+  expectIntegrity,
+  expectAgentFactSyncAccepted,
 } from './ledger.integration.fixtures';
 import type {
   ArchiveScope,
@@ -121,7 +124,113 @@ describe('Archive Session Ledger', () => {
     expect(await rawManifest!.text()).not.toContain('PLAINTEXT_MARKER');
   });
 
-  it('rejects an immutable collision without acknowledging the upload', async () => {
+  it('latches a committed R2 corruption before the next canonical commit', async () => {
+    const currentScope = scope('codex', `committed-corruption-${crypto.randomUUID()}`);
+    const first = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      '0',
+      '{"value":"first"}',
+    );
+    const initialUpload: ArchiveUploadRequest = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [first],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [first],
+      ),
+      complete_prefix_base64: base64(exactPrefix([first])),
+    };
+    const initial = await call(
+      newLedger(currentScope),
+      await envelope(currentScope, initialUpload),
+    );
+    expect(initial.response.status).toBe(200);
+    const priorState = await runInDurableObject(newLedger(currentScope), (_instance, state) =>
+      readLedgerSnapshot(state.storage),
+    );
+    const manifestKey = initial.body.manifest_key as string;
+    const corruptBody = '{"corrupt":"committed-manifest"}';
+    await runtimeEnv.ARCHIVE_STORAGE.put(manifestKey, corruptBody);
+    const objectsBeforeAppend = (
+      await runtimeEnv.ARCHIVE_STORAGE.list({ prefix: await archiveSessionPrefix(currentScope) })
+    ).objects.map(({ key, size }) => ({ key, size }));
+
+    const second = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      '1',
+      '{"value":"second"}',
+    );
+    const nextUpload: ArchiveUploadRequest = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [first, second],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [first, second],
+      ),
+      complete_prefix_base64: base64(exactPrefix([first, second])),
+    };
+    const rejected = await call(newLedger(currentScope), await envelope(currentScope, nextUpload));
+    expectIntegrity(rejected, 'r2_object_verification_failed');
+    expect(rejected.body.newly_recorded).toBe(true);
+    const stateAfterRejection = await runInDurableObject(
+      newLedger(currentScope),
+      (_instance, state) => readLedgerSnapshot(state.storage),
+    );
+    expect(stateAfterRejection).toEqual(priorState);
+    const corruptObject = await runtimeEnv.ARCHIVE_STORAGE.get(manifestKey);
+    expect(await corruptObject!.text()).toBe(corruptBody);
+    const objectsAfterRejection = (
+      await runtimeEnv.ARCHIVE_STORAGE.list({ prefix: await archiveSessionPrefix(currentScope) })
+    ).objects.map(({ key, size }) => ({ key, size }));
+    expect(objectsAfterRejection).toEqual(objectsBeforeAppend);
+
+    const retry = await call(newLedger(currentScope), await envelope(currentScope, nextUpload));
+    expectIntegrity(retry, 'r2_object_verification_failed');
+    expect(retry.body.operation_id).toBe(rejected.body.operation_id);
+    expect(retry.body.newly_recorded).toBe(false);
+    const objectsAfterRetry = (
+      await runtimeEnv.ARCHIVE_STORAGE.list({ prefix: await archiveSessionPrefix(currentScope) })
+    ).objects.map(({ key, size }) => ({ key, size }));
+    expect(objectsAfterRetry).toEqual(objectsBeforeAppend);
+
+    const healthyScope = {
+      ...currentScope,
+      sourceSessionId: `committed-corruption-healthy-${crypto.randomUUID()}`,
+    };
+    const healthyRecord = await observation(
+      healthyScope.source,
+      healthyScope.sourceSessionId,
+      partFor(healthyScope.source),
+      'healthy-0',
+      '{"value":"healthy"}',
+    );
+    const healthy = await call(
+      newLedger(healthyScope),
+      await envelope(healthyScope, {
+        source_session_id: healthyScope.sourceSessionId,
+        observations: [healthyRecord],
+        checkpoint: await checkpoint(
+          healthyScope.source,
+          healthyScope.sourceSessionId,
+          partFor(healthyScope.source),
+          [healthyRecord],
+        ),
+        complete_prefix_base64: base64(exactPrefix([healthyRecord])),
+      }),
+    );
+    expect(healthy.response.status).toBe(200);
+    await expectAgentFactSyncAccepted(currentScope, 'committed-corruption-fact-secret');
+  });
+
+  it('leaves a colliding manifest noncanonical and rejects stable retries', async () => {
     const currentScope = scope('codex', `verify-${crypto.randomUUID()}`);
     const record = await observation(
       'codex',
@@ -138,17 +247,39 @@ describe('Archive Session Ledger', () => {
       ]),
       complete_prefix_base64: base64(exactPrefix([record])),
     };
-    const stub = newLedger(currentScope);
-    const first = await call(stub, await envelope(currentScope, upload));
-    const chunkKey = (first.body.chunk_keys as string[])[0]!;
-    await runtimeEnv.ARCHIVE_STORAGE.put(chunkKey, 'corrupt');
-    await expect(
-      verifyOrPutImmutableObject(runtimeEnv.ARCHIVE_STORAGE, {
-        key: chunkKey,
-        body: 'different',
-        objectClass: 'chunk',
-      }),
-    ).rejects.toMatchObject({ errorClass: 'immutable_object_collision' });
+    const { stub } = await seedPendingCommit(currentScope, upload);
+    const manifestObject = await runInDurableObject(stub, (_instance, state) => {
+      const pending = readPendingIntent(state.storage);
+      return pending?.objects.find(({ objectClass }) => objectClass === 'manifest');
+    });
+    if (!manifestObject) throw new Error('pending manifest missing');
+    const manifestKey = manifestObject.key;
+    await runtimeEnv.ARCHIVE_STORAGE.put(
+      manifestKey,
+      'x'.repeat(new TextEncoder().encode(manifestObject.body).byteLength),
+    );
+
+    const rejected = await call(stub, await envelope(currentScope, upload));
+    expectIntegrity(rejected, 'immutable_object_collision');
+    expect(rejected.body.newly_recorded).toBe(true);
+    const canonicalState = await runInDurableObject(stub, (_instance, state) => ({
+      ledger: [...state.storage.sql.exec('SELECT data FROM ledger_state')],
+      elements: [...state.storage.sql.exec('SELECT data FROM ledger_elements')],
+    }));
+    expect(canonicalState).toEqual({ ledger: [], elements: [] });
+    const beforeRetry = (
+      await runtimeEnv.ARCHIVE_STORAGE.list({ prefix: await archiveSessionPrefix(currentScope) })
+    ).objects.map(({ key, size }) => ({ key, size }));
+    expect(beforeRetry.map(({ key }) => key)).toContain(manifestKey);
+
+    const retry = await call(newLedger(currentScope), await envelope(currentScope, upload));
+    expectIntegrity(retry, 'immutable_object_collision');
+    expect(retry.body.operation_id).toBe(rejected.body.operation_id);
+    expect(retry.body.newly_recorded).toBe(false);
+    const afterRetry = (
+      await runtimeEnv.ARCHIVE_STORAGE.list({ prefix: await archiveSessionPrefix(currentScope) })
+    ).objects.map(({ key, size }) => ({ key, size }));
+    expect(afterRetry).toEqual(beforeRetry);
   });
 
   it('rejects a storage-cap upload before the first R2 mutation and blocks archive status', async () => {

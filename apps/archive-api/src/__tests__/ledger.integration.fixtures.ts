@@ -4,6 +4,7 @@ import {
   runInDurableObject,
   waitOnExecutionContext,
 } from 'cloudflare:test';
+import { expect, vi } from 'vitest';
 import {
   createArchiveEncryptionKeyVersion,
   decryptArchiveObject,
@@ -33,7 +34,7 @@ import {
   recordChainHash,
 } from '../archive-chain';
 import { archiveSessionPrefix, packNewElements, decompress } from '../archive-packing';
-import { storageBudgetObject, verifyOrPutImmutableObject } from '../archive-r2';
+import { storageBudgetObject } from '../archive-r2';
 import type { ArchiveSessionLedger } from '../archive-ledger';
 import type { StorageBudget } from '../archive-storage-budget';
 import { app } from '../index';
@@ -45,7 +46,7 @@ import { MAX_ARCHIVE_UPLOAD_BYTES } from '../archive-request';
 import { buildAcknowledgement, intentDigest } from '../archive-ledger-support';
 import { commitArchiveSession } from '../archive-ledger-commit';
 import { ARCHIVE_STORAGE_CAP_BYTES } from '../archive-storage-budget';
-import type { ArchiveAcknowledgement, LedgerSnapshot } from '../archive-ledger-state';
+import type { ArchiveAcknowledgement, LedgerCommit, LedgerSnapshot } from '../archive-ledger-state';
 import { readLedgerScan, readLedgerSnapshot } from '../archive-ledger-storage';
 import {
   encodePendingPlaintext,
@@ -248,6 +249,17 @@ export async function call(
   return { response, body: await response.json() };
 }
 
+export function expectIntegrity(
+  result: { response: Response; body: Record<string, unknown> },
+  errorClass: string,
+): void {
+  expect(result.response.status).toBe(409);
+  expect(result.body).toMatchObject({
+    error: 'integrity_error',
+    error_class: errorClass,
+  });
+}
+
 export function newLedger(currentScope: ArchiveScope): DurableObjectStub<ArchiveSessionLedger> {
   const id = runtimeEnv.ARCHIVE_SESSION_LEDGER.idFromName(
     JSON.stringify([
@@ -304,6 +316,7 @@ export async function ledgerEffects(
 export async function seedPendingCommit(
   currentScope: ArchiveScope,
   upload: ArchiveUploadRequest,
+  mutateCommit?: (commit: LedgerCommit) => void,
 ): Promise<{
   stub: DurableObjectStub<ArchiveSessionLedger>;
   acknowledgement: ArchiveAcknowledgement;
@@ -372,7 +385,7 @@ export async function seedPendingCommit(
     body,
     objectClass,
   }));
-  const commit = {
+  const commit: LedgerCommit = {
     scope: currentScope,
     keyVersion: KEY_VERSION,
     elementCount: elements.length,
@@ -395,6 +408,7 @@ export async function seedPendingCommit(
       replace: true,
     },
   };
+  mutateCommit?.(commit);
   const expectedPendingObjects = expectedObjects.map(
     ({ key: objectKey, objectClass, plaintext }) => ({
       key: objectKey,
@@ -428,6 +442,88 @@ export async function seedPendingCommit(
   return { stub, acknowledgement };
 }
 
+export async function expectAgentFactSyncAccepted(
+  currentScope: ArchiveScope,
+  collectorSecret: string,
+): Promise<void> {
+  __resetPolicyCache();
+  const collectorKey = `collector:${await sha256Hex(collectorSecret)}`;
+  const queueSend = vi.fn(async () => {});
+  const agentEnv = {
+    COLLECTOR_CREDS: {
+      get: async (key: string) =>
+        key === collectorKey
+          ? JSON.stringify({
+              orgId: currentScope.orgId,
+              userId: currentScope.userId,
+              collectorId: 'collector-1',
+              expiresAt: Date.now() + 60_000,
+              status: 'active',
+              createdAt: Date.now(),
+            })
+          : null,
+    },
+    AGENT_QUEUE: { sendBatch: queueSend },
+    AGENT_INGEST_LIMITER: { limit: async () => ({ success: true }) },
+    CONVEX_SITE_URL: 'https://agent-convex.test',
+    AGENT_INGEST_SHARED_SECRET: 'agent-shared-secret',
+  } as unknown as AgentIngestEnv;
+  const previousFetch = globalThis.fetch;
+  const agentFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (
+      request.method === 'GET' &&
+      url.origin === 'https://agent-convex.test' &&
+      url.pathname === '/agent-ingest/compatibility-policy'
+    ) {
+      return Response.json({
+        minDesktopVersion: '1.0.0',
+        minParserVersion: '1.0.0',
+        denylistedVersions: [],
+        updatedAt: Date.now(),
+      });
+    }
+    if (
+      request.method === 'POST' &&
+      url.origin === 'https://agent-convex.test' &&
+      url.pathname === '/agent-ingest/claim-sessions'
+    ) {
+      const body = await request.json<{ sessionPks?: unknown }>();
+      if (!Array.isArray(body.sessionPks)) throw new Error('claim request malformed');
+      return Response.json({
+        results: body.sessionPks.map((sessionPk) => ({
+          sessionPk,
+          status: 'claimed',
+          ownerUserId: currentScope.userId,
+        })),
+      });
+    }
+    return previousFetch(input, init);
+  });
+  try {
+    const ingestContext = createExecutionContext();
+    const ingestResponse = await agentIngestApp.fetch(
+      new Request('https://agent.test/v1/ingest', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Trace-Flow-Collector-Secret': collectorSecret,
+        },
+        body: JSON.stringify(agentIngestEnvelope()),
+      }),
+      agentEnv,
+      ingestContext,
+    );
+    await waitOnExecutionContext(ingestContext);
+    expect(ingestResponse.status).toBe(202);
+    expect(await ingestResponse.json()).toMatchObject({ accepted: true, sessions: 1 });
+    expect(queueSend).toHaveBeenCalledTimes(1);
+  } finally {
+    agentFetch.mockRestore();
+  }
+}
+
 export {
   createExecutionContext,
   runInDurableObject,
@@ -448,7 +544,6 @@ export {
   packNewElements,
   decompress,
   storageBudgetObject,
-  verifyOrPutImmutableObject,
   app,
   payloadBytes,
   prefixChainHash,

@@ -29,6 +29,7 @@ import {
   call,
   newLedger,
   ledgerEffects,
+  expectIntegrity,
 } from './ledger.integration.fixtures';
 import type { StoredElement } from './ledger.integration.fixtures';
 
@@ -100,8 +101,7 @@ describe('Archive Session Ledger', () => {
         checkpoint: shortened,
       }),
     );
-    expect(missingProof.response.status).toBe(409);
-    expect(missingProof.body.error).toBe('missing_historical_prefix_proof');
+    expectIntegrity(missingProof, 'missing_historical_prefix_proof');
 
     const changedRecord = await observation(
       'codex',
@@ -123,8 +123,7 @@ describe('Archive Session Ledger', () => {
         complete_prefix_base64: base64(exactPrefix([changedRecord])),
       }),
     );
-    expect(historicalChange.response.status).toBe(409);
-    expect(historicalChange.body.error).toBe('historical_prefix_changed');
+    expectIntegrity(historicalChange, 'missing_historical_prefix_proof');
 
     const state = await runInDurableObject(
       stub,
@@ -178,8 +177,7 @@ describe('Archive Session Ledger', () => {
         complete_prefix_base64: base64(exactPrefix([record])),
       }),
     );
-    expect(shortened.response.status).toBe(409);
-    expect(shortened.body.error).toBe('checkpoint_regressed');
+    expectIntegrity(shortened, 'checkpoint_regressed');
   });
 
   it.each(['claude', 'codex'] as const)(
@@ -283,8 +281,7 @@ describe('Archive Session Ledger', () => {
           },
         }),
       );
-      expect(shortened.response.status).toBe(409);
-      expect(shortened.body.error).toBe('checkpoint_regressed');
+      expectIntegrity(shortened, 'checkpoint_regressed');
 
       const after = await runInDurableObject(stub, (_instance, durableState) => ({
         ledger: [
@@ -387,8 +384,7 @@ describe('Archive Session Ledger', () => {
           complete_prefix_base64: base64(fullPrefix),
         }),
       );
-      expect(rejected.response.status).toBe(409);
-      expect(rejected.body).toEqual({ error: 'checkpoint_regressed' });
+      expectIntegrity(rejected, 'checkpoint_regressed');
 
       const after = await ledgerEffects(stub, currentScope);
       expect(after).toEqual(before);
@@ -441,8 +437,7 @@ describe('Archive Session Ledger', () => {
         complete_prefix_base64: base64(exactPrefix([changedRecord])),
       }),
     );
-    expect(changed.response.status).toBe(409);
-    expect(changed.body.error).toBe('historical_prefix_changed');
+    expectIntegrity(changed, 'historical_prefix_changed');
   });
 
   it.each([
@@ -554,8 +549,7 @@ describe('Archive Session Ledger', () => {
         complete_prefix_base64: base64(originalPrefix),
       }),
     );
-    expect(mismatched.response.status).toBe(400);
-    expect(mismatched.body.error).toBe('checkpoint_prefix_unverifiable');
+    expectIntegrity(mismatched, 'checkpoint_prefix_unverifiable');
 
     const changedPrefix = new TextEncoder().encode('\n\t\n{"uuid":"r1"}\n');
     const changedCheckpoint = {
@@ -574,8 +568,7 @@ describe('Archive Session Ledger', () => {
         complete_prefix_base64: base64(changedPrefix),
       }),
     );
-    expect(rejected.response.status).toBe(409);
-    expect(rejected.body.error).toBe('historical_prefix_changed');
+    expectIntegrity(rejected, 'checkpoint_prefix_unverifiable');
   });
 
   it('validates large binary base64 payloads and rejects noncanonical UTF-8 base64', async () => {
