@@ -19,6 +19,7 @@ import {
   hasForeignCredentialClass,
 } from './export-grant';
 import { MAX_ARCHIVE_UPLOAD_BYTES, readBoundedJson } from './archive-request';
+import { statusFor } from './archive-ledger-support';
 import { appendArchiveAuditEvent } from './audit';
 import { publishArchiveIntegrityStatus } from './archive-integrity-status';
 
