@@ -2,7 +2,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use collector_archive::{ArchiveSource, CompletedScanCheckpoint};
+use collector_archive::{
+    default_transcript_part_id, ArchiveSource, ArchiveUploadRequest, CompletedScanCheckpoint,
+};
 
 use crate::crypto::{decrypt, encrypt};
 use crate::error::{ArchiveSyncError, ArchiveSyncResult};
@@ -12,7 +14,7 @@ use crate::key_store::{ArchiveKeyStore, ArchiveSpoolKey};
 pub const ARCHIVE_SPOOL_CAP_BYTES: u64 = 2_147_483_648;
 pub use crate::key_store::ARCHIVE_SPOOL_KEYRING_SERVICE;
 
-const PENDING_KIND: u8 = 1;
+const PENDING_KIND: u8 = 2;
 const CLAUDE: u8 = 1;
 const CODEX: u8 = 2;
 
@@ -20,8 +22,42 @@ const CODEX: u8 = 2;
 pub struct PendingArchiveRequest {
     pub source: ArchiveSource,
     pub source_session_id: String,
+    pub source_transcript_part_id: String,
     pub expected_record_count: u64,
+    pub expected_appended_records: u64,
     pub body: Vec<u8>,
+}
+
+impl PendingArchiveRequest {
+    pub fn from_upload(
+        source: ArchiveSource,
+        request: &ArchiveUploadRequest,
+        body: Vec<u8>,
+    ) -> Self {
+        Self {
+            source,
+            source_session_id: request.source_session_id.clone(),
+            source_transcript_part_id: request.checkpoint.source_transcript_part_id().to_string(),
+            expected_record_count: request.checkpoint.record_count,
+            expected_appended_records: request.observations.len() as u64,
+            body,
+        }
+    }
+
+    pub fn default_part(source: ArchiveSource) -> String {
+        default_transcript_part_id(source)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingLoad {
+    Ready(PendingArchiveRequest),
+    Corrupt {
+        source: ArchiveSource,
+        source_session_id: String,
+        source_transcript_part_id: String,
+        class: &'static str,
+    },
 }
 
 pub struct ArchiveSpool {
@@ -58,12 +94,14 @@ impl ArchiveSpool {
                 key
             }
         };
-        Ok(Self {
+        let spool = Self {
             root,
             org_id,
             key,
             cap_bytes,
-        })
+        };
+        spool.recover_acknowledged_pending();
+        Ok(spool)
     }
 
     pub fn on_disk_bytes(&self) -> ArchiveSyncResult<u64> {
@@ -71,9 +109,18 @@ impl ArchiveSpool {
     }
 
     pub fn persist_pending(&self, pending: &PendingArchiveRequest) -> ArchiveSyncResult<()> {
-        let path = self.pending_path(pending.source, &pending.source_session_id)?;
+        let path = self.pending_path(
+            pending.source,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        )?;
         let plaintext = encode_pending(pending);
-        let aad = self.aad("pending", pending.source, &pending.source_session_id);
+        let aad = self.aad(
+            "pending",
+            pending.source,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        );
         let blob = encrypt(&self.key, &aad, &plaintext)?;
         self.write_capped(&path, &blob)
     }
@@ -83,15 +130,33 @@ impl ArchiveSpool {
         source: ArchiveSource,
         source_session_id: &str,
     ) -> ArchiveSyncResult<Option<PendingArchiveRequest>> {
-        let path = self.pending_path(source, source_session_id)?;
+        self.pending_part(
+            source,
+            source_session_id,
+            &default_transcript_part_id(source),
+        )
+    }
+
+    pub fn pending_part(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> ArchiveSyncResult<Option<PendingArchiveRequest>> {
+        let path = self.pending_path(source, source_session_id, source_transcript_part_id)?;
         self.read_encrypted(
             &path,
-            &self.aad("pending", source, source_session_id),
+            &self.aad(
+                "pending",
+                source,
+                source_session_id,
+                source_transcript_part_id,
+            ),
             decode_pending,
         )
     }
 
-    pub fn all_pending(&self) -> ArchiveSyncResult<Vec<PendingArchiveRequest>> {
+    pub fn all_pending(&self) -> ArchiveSyncResult<Vec<PendingLoad>> {
         let mut pending = Vec::new();
         for source in [ArchiveSource::Claude, ArchiveSource::Codex] {
             let dir = self.root.join("pending").join(source.as_str());
@@ -101,28 +166,97 @@ impl ArchiveSpool {
             for entry in entries {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().and_then(|ext| ext.to_str()) != Some("bin") {
+                if path.is_file() {
+                    pending.push(PendingLoad::Corrupt {
+                        source,
+                        source_session_id: path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        source_transcript_part_id: default_transcript_part_id(source),
+                        class: ArchiveSyncError::Corrupt.class(),
+                    });
                     continue;
                 }
-                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                    return Err(ArchiveSyncError::Corrupt);
-                };
-                if validate_spool_session_id(stem).is_err() {
-                    return Err(ArchiveSyncError::Corrupt);
+                if !path.is_dir() {
+                    continue;
                 }
-                let stem = stem.to_string();
-                match self.pending(source, &stem) {
-                    Ok(Some(record)) => pending.push(record),
-                    Ok(None) => {}
-                    Err(err) => return Err(err),
+                let Some(session) = path.file_name().and_then(|name| name.to_str()) else {
+                    pending.push(PendingLoad::Corrupt {
+                        source,
+                        source_session_id: "unknown".to_string(),
+                        source_transcript_part_id: default_transcript_part_id(source),
+                        class: ArchiveSyncError::Corrupt.class(),
+                    });
+                    continue;
+                };
+                if validate_spool_session_id(session).is_err() {
+                    pending.push(PendingLoad::Corrupt {
+                        source,
+                        source_session_id: session.to_string(),
+                        source_transcript_part_id: default_transcript_part_id(source),
+                        class: ArchiveSyncError::Corrupt.class(),
+                    });
+                    continue;
+                }
+                let session = session.to_string();
+                let Ok(parts) = fs::read_dir(&path) else {
+                    pending.push(PendingLoad::Corrupt {
+                        source,
+                        source_session_id: session,
+                        source_transcript_part_id: default_transcript_part_id(source),
+                        class: ArchiveSyncError::Corrupt.class(),
+                    });
+                    continue;
+                };
+                for part_entry in parts {
+                    let part_entry = part_entry?;
+                    let part_path = part_entry.path();
+                    if part_path.extension().and_then(|ext| ext.to_str()) != Some("bin") {
+                        continue;
+                    }
+                    let Some(stem) = part_path.file_stem().and_then(|stem| stem.to_str()) else {
+                        pending.push(PendingLoad::Corrupt {
+                            source,
+                            source_session_id: session.clone(),
+                            source_transcript_part_id: default_transcript_part_id(source),
+                            class: ArchiveSyncError::Corrupt.class(),
+                        });
+                        continue;
+                    };
+                    let part_id = match part_id_from_file_stem(stem) {
+                        Some(part_id) => part_id,
+                        None => {
+                            pending.push(PendingLoad::Corrupt {
+                                source,
+                                source_session_id: session.clone(),
+                                source_transcript_part_id: stem.to_string(),
+                                class: ArchiveSyncError::Corrupt.class(),
+                            });
+                            continue;
+                        }
+                    };
+                    match self.pending_part(source, &session, &part_id) {
+                        Ok(Some(record)) => pending.push(PendingLoad::Ready(record)),
+                        Ok(None) => {}
+                        Err(err) => pending.push(PendingLoad::Corrupt {
+                            source,
+                            source_session_id: session.clone(),
+                            source_transcript_part_id: part_id,
+                            class: err.class(),
+                        }),
+                    }
                 }
             }
         }
         pending.sort_by(|left, right| {
-            left.source
-                .as_str()
-                .cmp(right.source.as_str())
-                .then_with(|| left.source_session_id.cmp(&right.source_session_id))
+            let (left_source, left_session, left_part) = load_sort_key(left);
+            let (right_source, right_session, right_part) = load_sort_key(right);
+            left_source
+                .cmp(right_source)
+                .then_with(|| left_session.cmp(right_session))
+                .then_with(|| left_part.cmp(right_part))
         });
         Ok(pending)
     }
@@ -133,9 +267,10 @@ impl ArchiveSpool {
         source_session_id: &str,
         checkpoint: &CompletedScanCheckpoint,
     ) -> ArchiveSyncResult<()> {
-        let path = self.progress_path(source, source_session_id)?;
+        let part = checkpoint.source_transcript_part_id();
+        let path = self.progress_path(source, source_session_id, part)?;
         let plaintext = serde_json::to_vec(checkpoint)?;
-        let aad = self.aad("progress", source, source_session_id);
+        let aad = self.aad("progress", source, source_session_id, part);
         let blob = encrypt(&self.key, &aad, &plaintext)?;
         self.write_capped(&path, &blob)
     }
@@ -145,10 +280,28 @@ impl ArchiveSpool {
         source: ArchiveSource,
         source_session_id: &str,
     ) -> ArchiveSyncResult<Option<CompletedScanCheckpoint>> {
-        let path = self.progress_path(source, source_session_id)?;
+        self.progress_part(
+            source,
+            source_session_id,
+            &default_transcript_part_id(source),
+        )
+    }
+
+    pub fn progress_part(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> ArchiveSyncResult<Option<CompletedScanCheckpoint>> {
+        let path = self.progress_path(source, source_session_id, source_transcript_part_id)?;
         self.read_encrypted(
             &path,
-            &self.aad("progress", source, source_session_id),
+            &self.aad(
+                "progress",
+                source,
+                source_session_id,
+                source_transcript_part_id,
+            ),
             |plain| serde_json::from_slice(plain).map_err(|_| ArchiveSyncError::Corrupt),
         )
     }
@@ -158,7 +311,57 @@ impl ArchiveSpool {
         source: ArchiveSource,
         source_session_id: &str,
     ) -> ArchiveSyncResult<()> {
-        remove_if_present(&self.pending_path(source, source_session_id)?)
+        self.clear_pending_part(
+            source,
+            source_session_id,
+            &default_transcript_part_id(source),
+        )
+    }
+
+    pub fn clear_pending_part(
+        &self,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> ArchiveSyncResult<()> {
+        remove_if_present(&self.pending_path(
+            source,
+            source_session_id,
+            source_transcript_part_id,
+        )?)
+    }
+
+    /// Persist the acknowledged checkpoint first, then drop pending. Progress may be written
+    /// while the spool is at capacity because the pending file is released as part of the same
+    /// transition.
+    pub fn commit_acknowledgement(
+        &self,
+        pending: &PendingArchiveRequest,
+        checkpoint: &CompletedScanCheckpoint,
+    ) -> ArchiveSyncResult<()> {
+        let pending_path = self.pending_path(
+            pending.source,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        )?;
+        let progress_path = self.progress_path(
+            pending.source,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        )?;
+        let plaintext = serde_json::to_vec(checkpoint)?;
+        let aad = self.aad(
+            "progress",
+            pending.source,
+            &pending.source_session_id,
+            &pending.source_transcript_part_id,
+        );
+        let blob = encrypt(&self.key, &aad, &plaintext)?;
+        if let Some(parent) = progress_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&progress_path, &blob)?;
+        remove_if_present(&pending_path)
     }
 
     pub fn purge(&self, key_store: &dyn ArchiveKeyStore) -> ArchiveSyncResult<()> {
@@ -190,12 +393,14 @@ impl ArchiveSpool {
                 if root.exists() {
                     cleanup_tmp_files(&root)?;
                 }
-                Ok(Some(Self {
+                let spool = Self {
                     root,
                     org_id,
                     key,
                     cap_bytes: ARCHIVE_SPOOL_CAP_BYTES,
-                }))
+                };
+                spool.recover_acknowledged_pending();
+                Ok(Some(spool))
             }
             None => {
                 if durable_files_exist(&root)? {
@@ -203,6 +408,33 @@ impl ArchiveSpool {
                 } else {
                     Ok(None)
                 }
+            }
+        }
+    }
+
+    fn recover_acknowledged_pending(&self) {
+        let Ok(loads) = self.all_pending() else {
+            return;
+        };
+        for load in loads {
+            let PendingLoad::Ready(pending) = load else {
+                continue;
+            };
+            let Ok(Some(progress)) = self.progress_part(
+                pending.source,
+                &pending.source_session_id,
+                &pending.source_transcript_part_id,
+            ) else {
+                continue;
+            };
+            if progress.record_count >= pending.expected_record_count
+                && progress.source_transcript_part_id() == pending.source_transcript_part_id
+            {
+                let _ = self.clear_pending_part(
+                    pending.source,
+                    &pending.source_session_id,
+                    &pending.source_transcript_part_id,
+                );
             }
         }
     }
@@ -242,29 +474,39 @@ impl ArchiveSpool {
         &self,
         source: ArchiveSource,
         source_session_id: &str,
+        source_transcript_part_id: &str,
     ) -> ArchiveSyncResult<PathBuf> {
         Ok(self
             .root
             .join("pending")
             .join(source.as_str())
-            .join(session_file_name(source_session_id)?))
+            .join(session_dir_name(source_session_id)?)
+            .join(part_file_name(source_transcript_part_id)?))
     }
 
     fn progress_path(
         &self,
         source: ArchiveSource,
         source_session_id: &str,
+        source_transcript_part_id: &str,
     ) -> ArchiveSyncResult<PathBuf> {
         Ok(self
             .root
             .join("progress")
             .join(source.as_str())
-            .join(session_file_name(source_session_id)?))
+            .join(session_dir_name(source_session_id)?)
+            .join(part_file_name(source_transcript_part_id)?))
     }
 
-    fn aad(&self, kind: &str, source: ArchiveSource, source_session_id: &str) -> Vec<u8> {
+    fn aad(
+        &self,
+        kind: &str,
+        source: ArchiveSource,
+        source_session_id: &str,
+        source_transcript_part_id: &str,
+    ) -> Vec<u8> {
         format!(
-            "{kind}:{}:{}:{source_session_id}",
+            "{kind}:{}:{}:{source_session_id}:{source_transcript_part_id}",
             self.org_id,
             source.as_str()
         )
@@ -311,14 +553,68 @@ pub(crate) fn validate_spool_session_id(value: &str) -> ArchiveSyncResult<()> {
     Ok(())
 }
 
-fn session_file_name(source_session_id: &str) -> ArchiveSyncResult<String> {
+fn session_dir_name(source_session_id: &str) -> ArchiveSyncResult<String> {
     validate_spool_session_id(source_session_id)?;
-    Ok(format!("{source_session_id}.bin"))
+    Ok(source_session_id.to_string())
+}
+
+fn part_file_name(source_transcript_part_id: &str) -> ArchiveSyncResult<String> {
+    if source_transcript_part_id.is_empty()
+        || source_transcript_part_id.contains(['/', '\\'])
+        || part_id_from_file_stem(&source_transcript_part_id.replace(':', "_")).is_none()
+    {
+        return Err(ArchiveSyncError::InvalidSession);
+    }
+    Ok(format!(
+        "{}.bin",
+        source_transcript_part_id.replace(':', "_")
+    ))
+}
+
+fn part_id_from_file_stem(stem: &str) -> Option<String> {
+    if stem == "claude_part_parent" {
+        return Some("claude:part:parent".to_string());
+    }
+    if stem == "codex_part_primary" {
+        return Some("codex:part:primary".to_string());
+    }
+    if let Some(hex) = stem.strip_prefix("claude_part_sha256_") {
+        if hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Some(format!("claude:part:sha256:{hex}"));
+        }
+    }
+    None
+}
+
+fn load_sort_key(load: &PendingLoad) -> (&str, &str, &str) {
+    match load {
+        PendingLoad::Ready(pending) => (
+            pending.source.as_str(),
+            pending.source_session_id.as_str(),
+            pending.source_transcript_part_id.as_str(),
+        ),
+        PendingLoad::Corrupt {
+            source,
+            source_session_id,
+            source_transcript_part_id,
+            ..
+        } => (
+            source.as_str(),
+            source_session_id.as_str(),
+            source_transcript_part_id.as_str(),
+        ),
+    }
 }
 
 fn encode_pending(pending: &PendingArchiveRequest) -> Vec<u8> {
     let session = pending.source_session_id.as_bytes();
-    let mut out = Vec::with_capacity(1 + 1 + 2 + session.len() + 8 + pending.body.len());
+    let part = pending.source_transcript_part_id.as_bytes();
+    let mut out =
+        Vec::with_capacity(1 + 1 + 2 + session.len() + 2 + part.len() + 8 + 8 + pending.body.len());
     out.push(PENDING_KIND);
     out.push(match pending.source {
         ArchiveSource::Claude => CLAUDE,
@@ -326,13 +622,16 @@ fn encode_pending(pending: &PendingArchiveRequest) -> Vec<u8> {
     });
     out.extend_from_slice(&(session.len() as u16).to_be_bytes());
     out.extend_from_slice(session);
+    out.extend_from_slice(&(part.len() as u16).to_be_bytes());
+    out.extend_from_slice(part);
     out.extend_from_slice(&pending.expected_record_count.to_be_bytes());
+    out.extend_from_slice(&pending.expected_appended_records.to_be_bytes());
     out.extend_from_slice(&pending.body);
     out
 }
 
 fn decode_pending(bytes: &[u8]) -> ArchiveSyncResult<PendingArchiveRequest> {
-    if bytes.len() < 1 + 1 + 2 + 8 {
+    if bytes.len() < 1 + 1 + 2 + 2 + 8 + 8 {
         return Err(ArchiveSyncError::Corrupt);
     }
     if bytes[0] != PENDING_KIND {
@@ -348,25 +647,44 @@ fn decode_pending(bytes: &[u8]) -> ArchiveSyncResult<PendingArchiveRequest> {
     let session_end = session_start
         .checked_add(session_len)
         .ok_or(ArchiveSyncError::Corrupt)?;
-    let count_end = session_end
-        .checked_add(8)
+    if bytes.len() < session_end.saturating_add(2) {
+        return Err(ArchiveSyncError::Corrupt);
+    }
+    let part_len = u16::from_be_bytes([bytes[session_end], bytes[session_end + 1]]) as usize;
+    let part_start = session_end
+        .checked_add(2)
         .ok_or(ArchiveSyncError::Corrupt)?;
-    if bytes.len() < count_end {
+    let part_end = part_start
+        .checked_add(part_len)
+        .ok_or(ArchiveSyncError::Corrupt)?;
+    let count_end = part_end.checked_add(8).ok_or(ArchiveSyncError::Corrupt)?;
+    let appended_end = count_end.checked_add(8).ok_or(ArchiveSyncError::Corrupt)?;
+    if bytes.len() < appended_end {
         return Err(ArchiveSyncError::Corrupt);
     }
     let source_session_id = std::str::from_utf8(&bytes[session_start..session_end])
         .map_err(|_| ArchiveSyncError::Corrupt)?
         .to_string();
+    let source_transcript_part_id = std::str::from_utf8(&bytes[part_start..part_end])
+        .map_err(|_| ArchiveSyncError::Corrupt)?
+        .to_string();
     let expected_record_count = u64::from_be_bytes(
-        bytes[session_end..count_end]
+        bytes[part_end..count_end]
+            .try_into()
+            .map_err(|_| ArchiveSyncError::Corrupt)?,
+    );
+    let expected_appended_records = u64::from_be_bytes(
+        bytes[count_end..appended_end]
             .try_into()
             .map_err(|_| ArchiveSyncError::Corrupt)?,
     );
     Ok(PendingArchiveRequest {
         source,
         source_session_id,
+        source_transcript_part_id,
         expected_record_count,
-        body: bytes[count_end..].to_vec(),
+        expected_appended_records,
+        body: bytes[appended_end..].to_vec(),
     })
 }
 

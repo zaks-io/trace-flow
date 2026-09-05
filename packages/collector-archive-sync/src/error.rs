@@ -16,6 +16,8 @@ pub enum ArchiveSyncError {
     KeyUnavailable,
     #[error("archive acknowledgement does not match the pending request")]
     AcknowledgementMismatch,
+    #[error("archive upload is too large")]
+    UploadTooLarge,
     #[error("archive I/O failed")]
     Io(#[from] std::io::Error),
     #[error("archive crypto failed")]
@@ -37,6 +39,7 @@ impl ArchiveSyncError {
             Self::InvalidSession => "invalid_archive_session",
             Self::KeyUnavailable => "archive_key_unavailable",
             Self::AcknowledgementMismatch => "archive_ack_mismatch",
+            Self::UploadTooLarge => "upload_too_large",
             Self::Io(_) => "archive_io",
             Self::Crypto => "archive_crypto",
             Self::Scan(_) => "archive_scan",

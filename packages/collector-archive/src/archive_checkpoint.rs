@@ -61,7 +61,7 @@ impl CompletedScanCheckpoint {
     }
 }
 
-pub(crate) fn default_transcript_part_id(source: ArchiveSource) -> String {
+pub fn default_transcript_part_id(source: ArchiveSource) -> String {
     match source {
         ArchiveSource::Claude => "claude:part:parent".to_string(),
         ArchiveSource::Codex => "codex:part:primary".to_string(),

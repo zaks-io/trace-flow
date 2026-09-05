@@ -2,17 +2,19 @@ use collector_archive::ArchiveSource;
 use tokio_util::sync::CancellationToken;
 
 use crate::ack::acknowledgement_matches;
+use crate::bound::build_bounded_pending;
 use crate::client::ArchiveUploader;
 use crate::error::ArchiveSyncError;
 use crate::key_store::ArchiveKeyStore;
 use crate::policy::{policy_from_denial_reason, ArchivePolicy};
-use crate::scan::scan_snapshot;
-use crate::spool::{ArchiveSpool, PendingArchiveRequest};
+use crate::spool::{ArchiveSpool, PendingArchiveRequest, PendingLoad};
 
 #[derive(Debug, Clone)]
 pub struct ArchiveSnapshot {
     pub source: ArchiveSource,
     pub source_session_id: String,
+    pub source_transcript_part_id: String,
+    pub transcript_part_identity: Option<String>,
     pub bytes: Vec<u8>,
     pub observed_at: i64,
 }
@@ -49,12 +51,7 @@ pub async fn run_archive_cycle<U: ArchiveUploader>(
     }
 
     if policy.uploads() {
-        if replay_pending(uploader, spool, key_store, &mut report, cancel)
-            .await
-            .is_err()
-        {
-            return report;
-        }
+        replay_pending(uploader, spool, key_store, &mut report, cancel).await;
         if report.purged || report.frozen {
             return report;
         }
@@ -88,36 +85,43 @@ async fn replay_pending<U: ArchiveUploader>(
     key_store: &dyn ArchiveKeyStore,
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
-) -> Result<(), ()> {
+) {
     let pending = match spool.all_pending() {
         Ok(pending) => pending,
         Err(err) => {
             report.failed += 1;
             record_error(report, err.class());
-            return Err(());
+            return;
         }
     };
     for record in pending {
         if cancel.is_some_and(CancellationToken::is_cancelled) {
             break;
         }
-        match upload_pending(uploader, spool, key_store, &record, cancel).await {
-            Ok(UploadOutcome::Advanced) => report.uploaded += 1,
-            Ok(UploadOutcome::Frozen) => {
-                report.frozen = true;
-                break;
-            }
-            Ok(UploadOutcome::Purged) => {
-                report.purged = true;
-                break;
-            }
-            Err(class) => {
+        match record {
+            PendingLoad::Corrupt { class, .. } => {
                 report.failed += 1;
                 record_error(report, class);
             }
+            PendingLoad::Ready(record) => {
+                match upload_pending(uploader, spool, key_store, &record, cancel).await {
+                    Ok(UploadOutcome::Advanced) => report.uploaded += 1,
+                    Ok(UploadOutcome::Frozen) => {
+                        report.frozen = true;
+                        break;
+                    }
+                    Ok(UploadOutcome::Purged) => {
+                        report.purged = true;
+                        break;
+                    }
+                    Err(class) => {
+                        report.failed += 1;
+                        record_error(report, class);
+                    }
+                }
+            }
         }
     }
-    Ok(())
 }
 
 async fn capture_snapshot<U: ArchiveUploader>(
@@ -128,73 +132,71 @@ async fn capture_snapshot<U: ArchiveUploader>(
     report: &mut ArchiveCycleReport,
     cancel: Option<&CancellationToken>,
 ) -> Result<(), &'static str> {
-    if spool
-        .pending(snapshot.source, &snapshot.source_session_id)
-        .map_err(|err| {
-            record_error(report, err.class());
-            err.class()
-        })?
-        .is_some()
-    {
-        return Ok(());
-    }
-    let prior = spool
-        .progress(snapshot.source, &snapshot.source_session_id)
-        .map_err(|err| {
-            record_error(report, err.class());
-            err.class()
-        })?;
-    let scan = scan_snapshot(
-        snapshot.source,
-        &snapshot.source_session_id,
-        &snapshot.bytes,
-        snapshot.observed_at,
-        prior.as_ref(),
-    )
-    .map_err(|err| {
-        report.failed += 1;
-        record_error(report, err.class());
-        err.class()
-    })?;
-    if scan.observations.is_empty() {
-        return Ok(());
-    }
-    let request = scan.into_upload_request(&snapshot.bytes).map_err(|err| {
-        report.failed += 1;
-        record_error(report, ArchiveSyncError::from(err).class());
-        "archive_scan"
-    })?;
-    let body = serde_json::to_vec(&request).map_err(|_| {
-        report.failed += 1;
-        record_error(report, "archive_state");
-        "archive_state"
-    })?;
-    let pending = PendingArchiveRequest {
-        source: snapshot.source,
-        source_session_id: snapshot.source_session_id.clone(),
-        expected_record_count: request.checkpoint.record_count,
-        body,
-    };
-    spool.persist_pending(&pending).map_err(|err| {
-        report.failed += 1;
-        record_error(report, err.class());
-        err.class()
-    })?;
-    report.captured += 1;
-    match upload_pending(uploader, spool, key_store, &pending, cancel).await {
-        Ok(UploadOutcome::Advanced) => {
-            report.uploaded += 1;
-            Ok(())
+    loop {
+        if cancel.is_some_and(CancellationToken::is_cancelled) {
+            return Ok(());
         }
-        Ok(UploadOutcome::Frozen) => {
-            report.frozen = true;
-            Ok(())
+        match spool.pending_part(
+            snapshot.source,
+            &snapshot.source_session_id,
+            &snapshot.source_transcript_part_id,
+        ) {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(err) => {
+                report.failed += 1;
+                record_error(report, err.class());
+                return Ok(());
+            }
         }
-        Ok(UploadOutcome::Purged) => Err("purged"),
-        Err(class) => {
+        let prior = match spool.progress_part(
+            snapshot.source,
+            &snapshot.source_session_id,
+            &snapshot.source_transcript_part_id,
+        ) {
+            Ok(prior) => prior,
+            Err(err) => {
+                report.failed += 1;
+                record_error(report, err.class());
+                return Ok(());
+            }
+        };
+        let pending = match build_bounded_pending(
+            snapshot.source,
+            &snapshot.source_session_id,
+            snapshot.transcript_part_identity.as_deref(),
+            &snapshot.bytes,
+            snapshot.observed_at,
+            prior.as_ref(),
+        ) {
+            Ok(Some(pending)) => pending,
+            Ok(None) => return Ok(()),
+            Err(err) => {
+                report.failed += 1;
+                record_error(report, err.class());
+                return Ok(());
+            }
+        };
+        if let Err(err) = spool.persist_pending(&pending) {
             report.failed += 1;
-            record_error(report, class);
-            Err(class)
+            record_error(report, err.class());
+            return Ok(());
+        }
+        report.captured += 1;
+        match upload_pending(uploader, spool, key_store, &pending, cancel).await {
+            Ok(UploadOutcome::Advanced) => {
+                report.uploaded += 1;
+            }
+            Ok(UploadOutcome::Frozen) => {
+                report.frozen = true;
+                return Ok(());
+            }
+            Ok(UploadOutcome::Purged) => return Err("purged"),
+            Err(class) => {
+                report.failed += 1;
+                record_error(report, class);
+                return Err(class);
+            }
         }
     }
 }
@@ -219,10 +221,7 @@ async fn upload_pending<U: ArchiveUploader>(
             }
             let checkpoint = pending_checkpoint(pending)?;
             spool
-                .persist_progress(pending.source, &pending.source_session_id, &checkpoint)
-                .map_err(|err| err.class())?;
-            spool
-                .clear_pending(pending.source, &pending.source_session_id)
+                .commit_acknowledgement(pending, &checkpoint)
                 .map_err(|err| err.class())?;
             Ok(UploadOutcome::Advanced)
         }

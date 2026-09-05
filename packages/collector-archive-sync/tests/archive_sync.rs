@@ -3,12 +3,15 @@ use std::collections::VecDeque;
 use std::fs;
 use std::sync::{Arc, Mutex};
 
-use collector_archive::{scan_claude_jsonl, ArchiveSource};
+use collector_archive::{
+    claude_transcript_part_id, default_transcript_part_id, scan_claude_jsonl, ArchiveSource,
+};
 use collector_archive_sync::{
     acknowledgement_matches, run_archive_cycle, ArchiveAcknowledgement, ArchiveClient,
     ArchiveClientConfig, ArchiveClientError, ArchiveEnrollmentRecord, ArchiveKeyStore,
     ArchivePolicy, ArchiveSnapshot, ArchiveSpool, ArchiveSpoolKey, ArchiveUploader, MemoryKeyStore,
-    PendingArchiveRequest, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
+    PendingArchiveRequest, PendingLoad, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
+    MAX_ARCHIVE_UPLOAD_BYTES, MAX_UPLOAD_OBSERVATIONS,
 };
 use collector_contracts::AgentSource;
 use tempfile::TempDir;
@@ -60,8 +63,9 @@ fn ack_for(pending: &PendingArchiveRequest) -> ArchiveAcknowledgement {
         duplicate: false,
         source: pending.source,
         source_session_id: pending.source_session_id.clone(),
+        source_transcript_part_id: Some(pending.source_transcript_part_id.clone()),
         contribution_id: "con_1".to_string(),
-        appended_records: pending.expected_record_count,
+        appended_records: pending.expected_appended_records,
         appended_checkpoint: true,
         record_count: pending.expected_record_count,
         generation: 1,
@@ -77,6 +81,8 @@ fn snapshot(source: ArchiveSource, bytes: &[u8], observed_at: i64) -> ArchiveSna
     ArchiveSnapshot {
         source,
         source_session_id,
+        source_transcript_part_id: default_transcript_part_id(source),
+        transcript_part_identity: None,
         bytes: bytes.to_vec(),
         observed_at,
     }
@@ -89,14 +95,23 @@ fn pending_from_bytes(
 ) -> PendingArchiveRequest {
     let session = collector_archive_sync::archive_source_session_id(source, bytes).unwrap();
     let scan =
-        collector_archive_sync::scan_snapshot(source, &session, bytes, observed_at, None).unwrap();
+        collector_archive_sync::scan_snapshot(source, &session, None, bytes, observed_at, None)
+            .unwrap();
     let request = scan.into_upload_request(bytes).unwrap();
-    PendingArchiveRequest {
-        source,
-        source_session_id: session,
-        expected_record_count: request.checkpoint.record_count,
-        body: serde_json::to_vec(&request).unwrap(),
-    }
+    PendingArchiveRequest::from_upload(source, &request, serde_json::to_vec(&request).unwrap())
+}
+
+fn pending_disk_path(
+    root: &std::path::Path,
+    pending: &PendingArchiveRequest,
+) -> std::path::PathBuf {
+    root.join("pending")
+        .join(pending.source.as_str())
+        .join(&pending.source_session_id)
+        .join(format!(
+            "{}.bin",
+            pending.source_transcript_part_id.replace(':', "_")
+        ))
 }
 
 #[test]
@@ -132,7 +147,9 @@ fn path_escaping_session_id_does_not_write_outside_the_spool() {
     let escaped = PendingArchiveRequest {
         source: ArchiveSource::Claude,
         source_session_id: "../outside".to_string(),
+        source_transcript_part_id: default_transcript_part_id(ArchiveSource::Claude),
         expected_record_count: 1,
+        expected_appended_records: 1,
         body: b"{}".to_vec(),
     };
     assert!(spool.persist_pending(&escaped).is_err());
@@ -147,11 +164,7 @@ fn corruption_fails_loud_and_does_not_advance_progress() {
     let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
     let spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
     spool.persist_pending(&pending).unwrap();
-    let path = dir
-        .path()
-        .join("pending")
-        .join("claude")
-        .join(format!("{}.bin", pending.source_session_id));
+    let path = pending_disk_path(dir.path(), &pending);
     let mut blob = fs::read(&path).unwrap();
     let last = blob.len() - 1;
     blob[last] ^= 0xff;
@@ -554,4 +567,367 @@ async fn archive_client_posts_json_with_required_headers() {
     assert!(lowered.contains("content-type: application/json"));
     assert!(!lowered.contains("content-encoding: gzip"));
     assert!(request.contains(r#"{"source_session_id":"s"}"#));
+}
+
+struct AckingUploader {
+    bodies: RefCell<Vec<Vec<u8>>>,
+    session_record_count: Cell<u64>,
+}
+
+impl AckingUploader {
+    fn new() -> Self {
+        Self {
+            bodies: RefCell::new(Vec::new()),
+            session_record_count: Cell::new(0),
+        }
+    }
+}
+
+impl ArchiveUploader for AckingUploader {
+    async fn upload(
+        &self,
+        source: ArchiveSource,
+        body: &[u8],
+        _cancel: Option<&CancellationToken>,
+    ) -> Result<ArchiveAcknowledgement, ArchiveClientError> {
+        let value: serde_json::Value = serde_json::from_slice(body).unwrap();
+        let appended = value["observations"].as_array().map(Vec::len).unwrap_or(0) as u64;
+        let part_count = value["checkpoint"]["record_count"].as_u64().unwrap();
+        self.session_record_count
+            .set(self.session_record_count.get() + appended);
+        self.bodies.borrow_mut().push(body.to_vec());
+        Ok(ArchiveAcknowledgement {
+            status: "acknowledged".to_string(),
+            duplicate: false,
+            source,
+            source_session_id: value["source_session_id"].as_str().unwrap().to_string(),
+            source_transcript_part_id: value["checkpoint"]["source_transcript_part_id"]
+                .as_str()
+                .map(str::to_string),
+            contribution_id: "con_1".to_string(),
+            appended_records: appended,
+            appended_checkpoint: true,
+            record_count: self.session_record_count.get().max(part_count),
+            generation: 1,
+            chain_head: "sha256:00".to_string(),
+            manifest_key: "manifest".to_string(),
+            chunk_keys: vec![],
+        })
+    }
+}
+
+fn padded_records(count: usize, pad: usize, session: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for index in 0..count {
+        let line = format!(
+            r#"{{"sessionId":"{session}","uuid":"r{index}","pad":"{}"}}"#,
+            "x".repeat(pad)
+        );
+        out.extend_from_slice(line.as_bytes());
+        out.push(b'\n');
+    }
+    out
+}
+
+#[tokio::test]
+async fn oversized_session_splits_at_byte_limit() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let bytes = padded_records(12, 400_000, "big-session");
+    let full = collector_archive_sync::scan_snapshot(
+        ArchiveSource::Claude,
+        "big-session",
+        None,
+        &bytes,
+        10,
+        None,
+    )
+    .unwrap()
+    .into_upload_request(&bytes)
+    .unwrap();
+    assert!(serde_json::to_vec(&full).unwrap().len() > MAX_ARCHIVE_UPLOAD_BYTES);
+
+    let uploader = AckingUploader::new();
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Claude, &bytes, 10)],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert!(report.uploaded >= 2);
+    assert_eq!(report.failed, 0);
+    for body in uploader.bodies.borrow().iter() {
+        assert!(body.len() <= MAX_ARCHIVE_UPLOAD_BYTES);
+        let value: serde_json::Value = serde_json::from_slice(body).unwrap();
+        assert!(value["observations"].as_array().unwrap().len() <= MAX_UPLOAD_OBSERVATIONS);
+    }
+    let progress = spool
+        .progress(ArchiveSource::Claude, "big-session")
+        .unwrap()
+        .expect("progress advanced through remaining bytes");
+    assert_eq!(progress.record_count, 12);
+    let first: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[1]).unwrap();
+    assert_eq!(
+        second["prior_checkpoint"]["record_count"],
+        first["checkpoint"]["record_count"]
+    );
+    assert_eq!(
+        second["prior_checkpoint"]["prefix_chain_sha256"],
+        first["checkpoint"]["prefix_chain_sha256"]
+    );
+}
+
+#[tokio::test]
+async fn oversized_session_splits_at_observation_count() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let bytes = padded_records(5, 8, "count-session");
+    let pending = collector_archive_sync::build_bounded_pending_with_limits(
+        ArchiveSource::Claude,
+        "count-session",
+        None,
+        &bytes,
+        10,
+        None,
+        MAX_ARCHIVE_UPLOAD_BYTES,
+        2,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(pending.expected_record_count, 2);
+    assert_eq!(pending.expected_appended_records, 2);
+    spool.persist_pending(&pending).unwrap();
+    let uploader = ScriptedUploader::new([Ok(ack_for(&pending))]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(report.uploaded, 1);
+    let progress = spool
+        .progress(ArchiveSource::Claude, "count-session")
+        .unwrap()
+        .unwrap();
+    assert_eq!(progress.record_count, 2);
+    let rest = collector_archive_sync::build_bounded_pending_with_limits(
+        ArchiveSource::Claude,
+        "count-session",
+        None,
+        &bytes,
+        11,
+        Some(&progress),
+        MAX_ARCHIVE_UPLOAD_BYTES,
+        2,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(rest.expected_record_count, 4);
+    assert_eq!(rest.expected_appended_records, 2);
+}
+
+#[tokio::test]
+async fn acknowledgement_at_exact_cap_clears_pending() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    {
+        let spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, u64::MAX).unwrap();
+        spool.persist_pending(&pending).unwrap();
+    }
+    let used = ArchiveSpool::open(dir.path(), "org_1", &keys)
+        .unwrap()
+        .on_disk_bytes()
+        .unwrap();
+    let mut spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, used).unwrap();
+    let uploader = ScriptedUploader::new([Ok(ack_for(&pending))]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(report.failed, 0);
+    assert!(spool
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_none());
+    assert!(spool
+        .progress(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn relaunch_clears_pending_already_covered_by_progress() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let pending = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let scan = scan_claude_jsonl(&pending.source_session_id, CLAUDE, 10, None).unwrap();
+    let used = {
+        let spool = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, u64::MAX).unwrap();
+        spool.persist_pending(&pending).unwrap();
+        spool
+            .persist_progress(
+                ArchiveSource::Claude,
+                &pending.source_session_id,
+                &scan.checkpoint,
+            )
+            .unwrap();
+        assert!(spool
+            .pending(ArchiveSource::Claude, &pending.source_session_id)
+            .unwrap()
+            .is_some());
+        spool.on_disk_bytes().unwrap()
+    };
+    let relaunched = ArchiveSpool::open_with_cap(dir.path(), "org_1", &keys, used).unwrap();
+    assert!(relaunched
+        .pending(ArchiveSource::Claude, &pending.source_session_id)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        relaunched
+            .progress(ArchiveSource::Claude, &pending.source_session_id)
+            .unwrap()
+            .unwrap()
+            .record_count,
+        scan.checkpoint.record_count
+    );
+}
+
+#[tokio::test]
+async fn corrupt_claude_pending_does_not_block_codex() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let claude = pending_from_bytes(ArchiveSource::Claude, CLAUDE, 10);
+    let codex = pending_from_bytes(ArchiveSource::Codex, CODEX, 11);
+    spool.persist_pending(&claude).unwrap();
+    spool.persist_pending(&codex).unwrap();
+    let path = pending_disk_path(dir.path(), &claude);
+    let mut blob = fs::read(&path).unwrap();
+    let last = blob.len() - 1;
+    blob[last] ^= 0xff;
+    fs::write(&path, &blob).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), blob);
+
+    let uploader = ScriptedUploader::new([Ok(ack_for(&codex))]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(report.failed, 1);
+    assert_eq!(report.first_error.as_deref(), Some("archive_spool_corrupt"));
+    assert_eq!(fs::read(&path).unwrap(), blob);
+    assert!(spool
+        .pending(ArchiveSource::Claude, &claude.source_session_id)
+        .is_err());
+    assert!(spool
+        .pending(ArchiveSource::Codex, &codex.source_session_id)
+        .unwrap()
+        .is_none());
+    let loads = spool.all_pending().unwrap();
+    assert!(loads.iter().any(|load| matches!(
+        load,
+        PendingLoad::Corrupt {
+            source: ArchiveSource::Claude,
+            class: "archive_spool_corrupt",
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn claude_parent_and_subagent_same_session_upload_independently() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let parent_bytes = br#"{"sessionId":"session-1","uuid":"parent-1"}
+{"sessionId":"session-1","uuid":"parent-2"}
+"#;
+    let subagent_bytes = br#"{"sessionId":"session-1","uuid":"sub-1","agentId":"agent-001"}
+{"sessionId":"session-1","uuid":"sub-2","agentId":"agent-001"}
+"#;
+    let parent_part = default_transcript_part_id(ArchiveSource::Claude);
+    let sub_part = claude_transcript_part_id("agent-001").unwrap();
+    let snapshots = [
+        ArchiveSnapshot {
+            source: ArchiveSource::Claude,
+            source_session_id: "session-1".to_string(),
+            source_transcript_part_id: parent_part.clone(),
+            transcript_part_identity: None,
+            bytes: parent_bytes.to_vec(),
+            observed_at: 10,
+        },
+        ArchiveSnapshot {
+            source: ArchiveSource::Claude,
+            source_session_id: "session-1".to_string(),
+            source_transcript_part_id: sub_part.clone(),
+            transcript_part_identity: Some("agent-001".to_string()),
+            bytes: subagent_bytes.to_vec(),
+            observed_at: 11,
+        },
+    ];
+    let uploader = AckingUploader::new();
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &snapshots,
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(report.uploaded, 2);
+    assert_eq!(report.failed, 0);
+    assert_eq!(uploader.bodies.borrow().len(), 2);
+    let first: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[0]).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&uploader.bodies.borrow()[1]).unwrap();
+    assert_eq!(
+        first["checkpoint"]["source_transcript_part_id"].as_str(),
+        Some(parent_part.as_str())
+    );
+    assert_eq!(
+        second["checkpoint"]["source_transcript_part_id"].as_str(),
+        Some(sub_part.as_str())
+    );
+    assert_eq!(first["checkpoint"]["record_count"], 2);
+    assert_eq!(second["checkpoint"]["record_count"], 2);
+    let parent_progress = spool
+        .progress_part(ArchiveSource::Claude, "session-1", &parent_part)
+        .unwrap()
+        .unwrap();
+    let sub_progress = spool
+        .progress_part(ArchiveSource::Claude, "session-1", &sub_part)
+        .unwrap()
+        .unwrap();
+    assert_eq!(parent_progress.record_count, 2);
+    assert_eq!(sub_progress.record_count, 2);
+    assert_ne!(
+        parent_progress.source_transcript_part_id(),
+        sub_progress.source_transcript_part_id()
+    );
+    assert_ne!(
+        parent_progress.prefix_chain_sha256,
+        sub_progress.prefix_chain_sha256
+    );
 }

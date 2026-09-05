@@ -29,9 +29,9 @@ use anyhow::{Context, Result};
 use collector_api_client::{CollectorApiClient, CollectorApiClientConfig};
 use collector_archive::ArchiveSource;
 use collector_archive_sync::{
-    archive_source_session_id, policy_from_denial_reason, run_archive_cycle, ArchiveClient,
-    ArchiveClientConfig, ArchiveCycleReport, ArchiveEnrollmentRecord, ArchiveKeyStore,
-    ArchiveSnapshot, ArchiveSpool, OsKeyStore,
+    archive_source_session_id, policy_from_denial_reason, run_archive_cycle, transcript_part_for,
+    ArchiveClient, ArchiveClientConfig, ArchiveCycleReport, ArchiveEnrollmentRecord,
+    ArchiveKeyStore, ArchiveSnapshot, ArchiveSpool, OsKeyStore,
 };
 
 pub use collector_archive_sync::{ArchivePolicy, MemoryKeyStore};
@@ -209,6 +209,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     let mut discovery_passes = 0usize;
     let mut files_read = 0usize;
     let mut archive_snapshots = Vec::new();
+    let mut archive_discovery_errors = Vec::new();
     let mut prepared = Vec::new();
 
     for source in ingestable_sources() {
@@ -228,6 +229,7 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
                 .await?;
                 files_read += pass.files_read;
                 archive_snapshots.extend(pass.snapshots);
+                archive_discovery_errors.extend(pass.archive_discovery_errors);
                 pass.units
             }
             None => assemble_cursor_source_units(&store, &cfg, window, &mut report)?,
@@ -236,7 +238,15 @@ pub async fn run_detailed(cfg: RunConfig<'_>) -> Result<SyncRunOutcome> {
     }
 
     let archive = if let Some(archive_cfg) = &cfg.archive {
-        Some(run_archive_work(archive_cfg, cfg.org_id, &cfg.credential, &archive_snapshots).await)
+        let mut report =
+            run_archive_work(archive_cfg, cfg.org_id, &cfg.credential, &archive_snapshots).await;
+        for class in &archive_discovery_errors {
+            report.failed += 1;
+            if report.first_error.is_none() {
+                report.first_error = Some(class.clone());
+            }
+        }
+        Some(report)
     } else {
         None
     };
@@ -364,6 +374,7 @@ struct JsonlPass {
     units: Vec<SyncUnit>,
     snapshots: Vec<ArchiveSnapshot>,
     files_read: usize,
+    archive_discovery_errors: Vec<String>,
 }
 
 /// Discover + assemble units for a JSONL source (Claude, Codex): one walk, one full read per needed
@@ -400,13 +411,15 @@ async fn assemble_jsonl_pass(
         }
     }
 
-    let snapshots = archive_snapshots_from_bytes(source, &archive_files, &bytes_by_path, report);
+    let (snapshots, archive_discovery_errors) =
+        archive_snapshots_from_bytes(source, &archive_files, &bytes_by_path);
 
     if selected.is_empty() {
         return Ok(JsonlPass {
             units: Vec::new(),
             snapshots,
             files_read,
+            archive_discovery_errors,
         });
     }
 
@@ -447,6 +460,7 @@ async fn assemble_jsonl_pass(
         units,
         snapshots,
         files_read,
+        archive_discovery_errors,
     })
 }
 
@@ -473,36 +487,37 @@ fn archive_snapshots_from_bytes(
     source: AgentSource,
     archive_files: &[DiscoveredFile],
     bytes_by_path: &HashMap<String, Vec<u8>>,
-    report: &mut SourceReport,
-) -> Vec<ArchiveSnapshot> {
+) -> (Vec<ArchiveSnapshot>, Vec<String>) {
     let Ok(archive_source) = ArchiveSource::try_from(source) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let mut snapshots = Vec::new();
+    let mut errors = Vec::new();
     for file in archive_files {
         let Some(bytes) = bytes_by_path.get(&file.path) else {
-            report.failed += 1;
-            report
-                .first_error
-                .get_or_insert_with(|| "invalid_archive_session".to_string());
+            errors.push("archive_io".to_string());
             continue;
         };
         match archive_source_session_id(archive_source, bytes) {
-            Ok(source_session_id) => snapshots.push(ArchiveSnapshot {
-                source: archive_source,
-                source_session_id,
-                bytes: bytes.clone(),
-                observed_at: file.mtime_ms as i64,
-            }),
-            Err(_) => {
-                report.failed += 1;
-                report
-                    .first_error
-                    .get_or_insert_with(|| "invalid_archive_session".to_string());
+            Ok(source_session_id) => {
+                match transcript_part_for(archive_source, Some(&file.path), bytes) {
+                    Ok((source_transcript_part_id, transcript_part_identity)) => {
+                        snapshots.push(ArchiveSnapshot {
+                            source: archive_source,
+                            source_session_id,
+                            source_transcript_part_id,
+                            transcript_part_identity,
+                            bytes: bytes.clone(),
+                            observed_at: file.mtime_ms as i64,
+                        });
+                    }
+                    Err(_) => errors.push("invalid_archive_session".to_string()),
+                }
             }
+            Err(_) => errors.push("invalid_archive_session".to_string()),
         }
     }
-    snapshots
+    (snapshots, errors)
 }
 
 async fn run_archive_work(
@@ -611,6 +626,7 @@ pub fn window_from_since(since: &str) -> Result<Window> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use collector_archive::default_transcript_part_id;
     use collector_archive_sync::{
         ArchiveEnrollmentRecord, ArchiveKeyStore, ArchiveSpool, PendingArchiveRequest,
     };
@@ -620,6 +636,17 @@ mod tests {
 
     const CLAUDE: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/claude.jsonl");
     const CODEX: &[u8] = include_bytes!("../../collector-archive/tests/fixtures/codex.jsonl");
+
+    fn test_pending(session: &str, body: &[u8]) -> PendingArchiveRequest {
+        PendingArchiveRequest {
+            source: ArchiveSource::Claude,
+            source_session_id: session.to_string(),
+            source_transcript_part_id: default_transcript_part_id(ArchiveSource::Claude),
+            expected_record_count: 1,
+            expected_appended_records: 1,
+            body: body.to_vec(),
+        }
+    }
 
     #[test]
     fn since_maps_to_the_adr_presets() {
@@ -937,12 +964,10 @@ mod tests {
         write_home_transcripts(home.path());
         let keys = Arc::new(MemoryKeyStore::new());
         let spool_dir = state.path().join("archive-spool-org_1");
-        let pending = PendingArchiveRequest {
-            source: ArchiveSource::Claude,
-            source_session_id: "claude-session-001".to_string(),
-            expected_record_count: 1,
-            body: b"{\"source_session_id\":\"claude-session-001\"}".to_vec(),
-        };
+        let pending = test_pending(
+            "claude-session-001",
+            b"{\"source_session_id\":\"claude-session-001\"}",
+        );
         {
             let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
             spool.persist_pending(&pending).unwrap();
@@ -991,12 +1016,10 @@ mod tests {
         let keys = Arc::new(MemoryKeyStore::new());
         let spool_dir = state.path().join("archive-spool-org_1");
         let enrollment_path = state.path().join("archive-enrollment-org_1.json");
-        let pending = PendingArchiveRequest {
-            source: ArchiveSource::Claude,
-            source_session_id: "claude-session-001".to_string(),
-            expected_record_count: 1,
-            body: b"{\"source_session_id\":\"claude-session-001\"}".to_vec(),
-        };
+        let pending = test_pending(
+            "claude-session-001",
+            b"{\"source_session_id\":\"claude-session-001\"}",
+        );
         {
             let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
             spool.persist_pending(&pending).unwrap();
@@ -1042,12 +1065,10 @@ mod tests {
         let keys = Arc::new(MemoryKeyStore::new());
         let spool_dir = state.path().join("archive-spool-org_1");
         let enrollment_path = state.path().join("archive-enrollment-org_1.json");
-        let pending = PendingArchiveRequest {
-            source: ArchiveSource::Claude,
-            source_session_id: "claude-session-001".to_string(),
-            expected_record_count: 1,
-            body: b"{\"source_session_id\":\"claude-session-001\"}".to_vec(),
-        };
+        let pending = test_pending(
+            "claude-session-001",
+            b"{\"source_session_id\":\"claude-session-001\"}",
+        );
         {
             let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
             spool.persist_pending(&pending).unwrap();
@@ -1093,12 +1114,10 @@ mod tests {
         let keys = Arc::new(MemoryKeyStore::new());
         let spool_dir = state.path().join("archive-spool-org_1");
         let enrollment_path = state.path().join("archive-enrollment-org_1.json");
-        let pending = PendingArchiveRequest {
-            source: ArchiveSource::Claude,
-            source_session_id: "claude-session-001".to_string(),
-            expected_record_count: 1,
-            body: b"{\"source_session_id\":\"claude-session-001\"}".to_vec(),
-        };
+        let pending = test_pending(
+            "claude-session-001",
+            b"{\"source_session_id\":\"claude-session-001\"}",
+        );
         {
             let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
             spool.persist_pending(&pending).unwrap();
@@ -1141,12 +1160,10 @@ mod tests {
         write_home_transcripts(home.path());
         let keys = Arc::new(MemoryKeyStore::new());
         let spool_dir = state.path().join("archive-spool-org_1");
-        let pending = PendingArchiveRequest {
-            source: ArchiveSource::Claude,
-            source_session_id: "claude-session-001".to_string(),
-            expected_record_count: 1,
-            body: b"{\"source_session_id\":\"claude-session-001\"}".to_vec(),
-        };
+        let pending = test_pending(
+            "claude-session-001",
+            b"{\"source_session_id\":\"claude-session-001\"}",
+        );
         {
             let spool = ArchiveSpool::open(&spool_dir, "org_1", keys.as_ref()).unwrap();
             spool.persist_pending(&pending).unwrap();
@@ -1199,5 +1216,37 @@ mod tests {
             .map(|(_, report)| report.advanced)
             .sum();
         assert!(fact_advanced >= 1);
+    }
+
+    #[test]
+    fn archive_unreadable_and_invalid_session_stay_off_fact_report() {
+        let files = vec![
+            DiscoveredFile {
+                path: "/missing.jsonl".to_string(),
+                mtime_ms: 1.0,
+                size_bytes: 1,
+            },
+            DiscoveredFile {
+                path: "/bad.jsonl".to_string(),
+                mtime_ms: 1.0,
+                size_bytes: 1,
+            },
+            DiscoveredFile {
+                path: "/ok.jsonl".to_string(),
+                mtime_ms: 1.0,
+                size_bytes: 1,
+            },
+        ];
+        let mut bytes = HashMap::new();
+        bytes.insert("/bad.jsonl".to_string(), b"{\"uuid\":\"x\"}".to_vec());
+        bytes.insert(
+            "/ok.jsonl".to_string(),
+            br#"{"sessionId":"claude-session-001","uuid":"r1"}"#.to_vec(),
+        );
+        let (snapshots, errors) = archive_snapshots_from_bytes(AgentSource::Claude, &files, &bytes);
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(errors.len(), 2);
+        assert!(errors.contains(&"archive_io".to_string()));
+        assert!(errors.contains(&"invalid_archive_session".to_string()));
     }
 }

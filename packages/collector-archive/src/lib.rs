@@ -21,14 +21,17 @@ mod jsonl_whitespace;
 mod manifest;
 mod types;
 
+pub use archive_checkpoint::default_transcript_part_id;
 pub use archive_wire::{ArchiveUploadRequest, JsonlScan};
 pub use chain::{ArchiveChain, ChainError, CommitReport};
 pub use elements::{ArchiveRecord, ChainElement, CommittedScanCheckpoint};
 pub use encoding::{EncodedPayload, PayloadEncoding};
 pub use framing::hash_framed;
 pub use jsonl::{
-    scan_claude_jsonl, scan_claude_jsonl_part, scan_codex_jsonl, scan_jsonl, JsonlError,
+    claude_transcript_part_id, scan_claude_jsonl, scan_claude_jsonl_part, scan_codex_jsonl,
+    scan_jsonl, JsonlError,
 };
+pub use jsonl_prefix::complete_record_end_offsets;
 pub use manifest::{ArchiveSessionManifest, ChunkByteRange, ManifestElement, ManifestError};
 pub use types::{
     sha256, validate_versions, ArchiveAppendProof, ArchiveError, ArchiveObservation, ArchiveSource,

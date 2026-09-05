@@ -5,6 +5,7 @@
 //! [`ARCHIVE_SPOOL_CAP_BYTES`] and [`ArchiveClient`] POSTs of those exact pending bytes.
 
 mod ack;
+mod bound;
 mod client;
 mod crypto;
 mod cycle;
@@ -16,6 +17,10 @@ mod scan;
 mod spool;
 
 pub use ack::{acknowledgement_matches, ArchiveAcknowledgement};
+pub use bound::{
+    build_bounded_pending, build_bounded_pending_with_limits, MAX_ARCHIVE_UPLOAD_BYTES,
+    MAX_UPLOAD_OBSERVATIONS,
+};
 pub use client::{ArchiveClient, ArchiveClientConfig, ArchiveUploader};
 pub use collector_archive::ArchiveSource;
 pub use cycle::{run_archive_cycle, ArchiveCycleReport, ArchiveSnapshot};
@@ -23,9 +28,10 @@ pub use enrollment::ArchiveEnrollmentRecord;
 pub use error::{ArchiveClientError, ArchiveSyncError, ArchiveSyncResult};
 pub use key_store::{ArchiveKeyStore, ArchiveSpoolKey, MemoryKeyStore, OsKeyStore};
 pub use policy::{policy_from_denial_reason, ArchivePolicy};
-pub use scan::{archive_source_session_id, scan_snapshot};
+pub use scan::{archive_source_session_id, scan_snapshot, transcript_part_for};
 pub use spool::{
-    ArchiveSpool, PendingArchiveRequest, ARCHIVE_SPOOL_CAP_BYTES, ARCHIVE_SPOOL_KEYRING_SERVICE,
+    ArchiveSpool, PendingArchiveRequest, PendingLoad, ARCHIVE_SPOOL_CAP_BYTES,
+    ARCHIVE_SPOOL_KEYRING_SERVICE,
 };
 
 /// Exact on-disk Archive Spool cap. Do not substitute a rounded gigabyte.
