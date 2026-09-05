@@ -83,6 +83,13 @@ function installFetchMock(): void {
       if (!authorizeResponder) throw new Error(`unexpected fetch (no authorize stub): ${req.url}`);
       return authorizeResponder(req, await req.text());
     }
+    if (
+      req.method === 'POST' &&
+      url.origin === CONVEX &&
+      url.pathname === '/archive-api/key/active'
+    ) {
+      return new Response(JSON.stringify({ error: 'Archive key unavailable' }), { status: 404 });
+    }
     if (req.method === 'POST' && url.origin === CONVEX && url.pathname === '/archive-api/key') {
       if (!keyResponder) throw new Error(`unexpected fetch (no key stub): ${req.url}`);
       return keyResponder();

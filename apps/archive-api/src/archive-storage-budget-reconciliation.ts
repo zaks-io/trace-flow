@@ -1,5 +1,6 @@
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError } from './archive-contract';
+import { isRotationTempObjectKey } from './archive-key-rotation-state';
 import { archiveOrganizationPrefix } from './archive-storage-key';
 import {
   budgetState,
@@ -142,7 +143,8 @@ function writeReconciliationState(storage: DurableObjectStorage, value: Reconcil
   );
 }
 
-function inventoryObject(key: string, size: number, prefix: string): InventoryObject {
+function inventoryObject(key: string, size: number, prefix: string): InventoryObject | null {
+  if (isRotationTempObjectKey(key)) return null;
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = new RegExp(
     `^${escapedPrefix}/contributions/[0-9a-f]{64}/sessions/(?:claude|codex)/[0-9a-f]{64}/(chunks|manifests)/[0-9a-f]{64}$`,
@@ -208,7 +210,7 @@ function applyInventoryObject(storage: DurableObjectStorage, object: InventoryOb
   }
   if (row) return false;
   storage.sql.exec(
-    "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status) VALUES (?, ?, ?, NULL, 'committed')",
+    "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, ?, ?, NULL, 'committed', NULL)",
     object.objectKey,
     object.objectClass,
     object.bytes,
@@ -494,7 +496,8 @@ export async function reconcileBudgetInventoryPage(
   let inventoryError: Error | undefined;
   for (const object of listed.objects) {
     try {
-      inventory.push(inventoryObject(object.key, object.size, prefix));
+      const inventoried = inventoryObject(object.key, object.size, prefix);
+      if (inventoried) inventory.push(inventoried);
     } catch (error) {
       inventoryError ??=
         error instanceof Error ? error : new ArchiveContractError('inventory_object_invalid');
@@ -549,7 +552,7 @@ export async function reconcileBudgetInventoryPage(
           }
         } else {
           storage.sql.exec(
-            "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status) VALUES (?, ?, ?, NULL, 'committed')",
+            "INSERT INTO storage_budget_objects (object_key, object_class, bytes, expires_at, status, key_version) VALUES (?, ?, ?, NULL, 'committed', NULL)",
             object.objectKey,
             object.objectClass,
             object.bytes,
