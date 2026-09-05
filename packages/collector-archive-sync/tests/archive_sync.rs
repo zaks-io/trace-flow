@@ -911,6 +911,8 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
     assert_eq!(replay.failed, 0);
     assert!(replay.uploaded >= 2);
     assert!(replay.first_error.is_none());
+    assert_eq!(ack.session_record_count.get(), 300);
+    assert!(ack.bodies.borrow().len() >= 2);
     assert!(relaunched
         .all_pending()
         .unwrap()
@@ -924,6 +926,99 @@ async fn bounded_upload_failure_keeps_later_records_after_source_disappears() {
         .progress(ArchiveSource::Claude, "disappear-session")
         .unwrap()
         .expect("progress recovered every observed record");
+    assert_eq!(progress.record_count, 300);
+}
+
+#[tokio::test]
+async fn existing_pending_does_not_strand_later_observed_bytes() {
+    let dir = TempDir::new().unwrap();
+    let keys = MemoryKeyStore::new();
+    let mut spool = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let bytes = padded_records(300, 20_000, "pending-session");
+    let first = collector_archive_sync::build_bounded_pending(
+        ArchiveSource::Claude,
+        "pending-session",
+        None,
+        &bytes,
+        10,
+        None,
+    )
+    .unwrap()
+    .expect("first bounded request");
+    assert!(first.expected_record_count >= 1);
+    assert!(first.expected_record_count < 300);
+    spool.persist_pending(&first).unwrap();
+    assert_eq!(
+        spool
+            .slices_for_part(
+                ArchiveSource::Claude,
+                "pending-session",
+                &default_transcript_part_id(ArchiveSource::Claude),
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let uploader = ScriptedUploader::new([
+        Err(ArchiveClientError::Unavailable {
+            reason: "archive unavailable".to_string(),
+        }),
+        Err(ArchiveClientError::Unavailable {
+            reason: "archive unavailable".to_string(),
+        }),
+    ]);
+    let report = run_archive_cycle(
+        &uploader,
+        &mut spool,
+        &keys,
+        &[snapshot(ArchiveSource::Claude, &bytes, 11)],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(report.uploaded, 0);
+    assert!(report.failed >= 1);
+    assert!(report.captured >= 1);
+
+    let ready: Vec<PendingArchiveRequest> = spool
+        .all_pending()
+        .unwrap()
+        .into_iter()
+        .filter_map(|load| match load {
+            PendingLoad::Ready(record) => Some(record),
+            PendingLoad::Corrupt { .. } => None,
+        })
+        .collect();
+    assert!(
+        ready.len() >= 2,
+        "existing pending must not skip later observed snapshot bytes"
+    );
+    let durable_records: u64 = ready
+        .iter()
+        .map(|record| record.expected_appended_records)
+        .sum();
+    assert_eq!(durable_records, 300);
+
+    drop(spool);
+    let mut relaunched = ArchiveSpool::open(dir.path(), "org_1", &keys).unwrap();
+    let ack = AckingUploader::new();
+    let replay = run_archive_cycle(
+        &ack,
+        &mut relaunched,
+        &keys,
+        &[],
+        ArchivePolicy::Enrolled,
+        None,
+    )
+    .await;
+    assert_eq!(replay.failed, 0);
+    assert!(replay.uploaded >= 2);
+    assert_eq!(ack.session_record_count.get(), 300);
+    let progress = relaunched
+        .progress(ArchiveSource::Claude, "pending-session")
+        .unwrap()
+        .expect("existing-pending remainder recovered after source disappearance");
     assert_eq!(progress.record_count, 300);
 }
 
