@@ -104,7 +104,6 @@ export async function reencryptArchiveObject(
     fromWrappedKey: string;
     toWrappedKey: string;
     injectFailure?: ArchiveKeyRotationFailureInjection;
-    holdBeforeReplace?: () => Promise<void>;
   },
 ): Promise<'rotated' | 'already'> {
   const expectedClass = objectClassFromBudget(input.objectClass);
@@ -179,15 +178,14 @@ export async function reencryptArchiveObject(
   if (input.injectFailure === 'before_replace') {
     throw new ArchiveContractError('rotation_failure_injected');
   }
-  if (input.holdBeforeReplace) await input.holdBeforeReplace();
-  assertRotationReplaceAllowed(storage, {
+  await commitRotationReplacement(env, storage, {
+    objectKey: input.objectKey,
+    replacementBody,
     operationId: input.operationId,
     generation: input.generation,
     fromVersion: input.fromVersion,
     toVersion: input.toVersion,
   });
-
-  await putEncryptedObject(env.ARCHIVE_STORAGE, input.objectKey, replacementBody);
   const replaced = await readObjectBody(env.ARCHIVE_STORAGE, input.objectKey);
   if (replaced !== replacementBody) {
     throw new ArchiveContractError('r2_object_verification_failed');
@@ -211,6 +209,27 @@ export async function reencryptArchiveObject(
     new TextEncoder().encode(replacementBody).byteLength,
   );
   return 'rotated';
+}
+
+export async function commitRotationReplacement(
+  env: Pick<ArchiveApiEnv, 'ARCHIVE_STORAGE'>,
+  storage: DurableObjectStorage,
+  input: {
+    objectKey: string;
+    replacementBody: string;
+    operationId: string;
+    generation: number;
+    fromVersion: number;
+    toVersion: number;
+  },
+): Promise<void> {
+  assertRotationReplaceAllowed(storage, {
+    operationId: input.operationId,
+    generation: input.generation,
+    fromVersion: input.fromVersion,
+    toVersion: input.toVersion,
+  });
+  await putEncryptedObject(env.ARCHIVE_STORAGE, input.objectKey, input.replacementBody);
 }
 
 export function startStoredRotation(

@@ -27,7 +27,7 @@ import { __resetArchivePolicyCache } from '../enrollment';
 import type { StorageBudget } from '../archive-storage-budget';
 import type { ArchiveApiEnv } from '../context';
 import { app } from '../index';
-import { ARCHIVE_ROTATION_TEMP_SUFFIX, reencryptArchiveObject } from '../archive-key-rotation';
+import { ARCHIVE_ROTATION_TEMP_SUFFIX, commitRotationReplacement } from '../archive-key-rotation';
 
 const WRAPPING_SECRET = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=';
 const CONVEX = 'https://archive-convex.test';
@@ -888,37 +888,23 @@ describe('Archive encryption key rotation', () => {
     const { orgId, v1, v2, objects } = await seedOrg('stale-worker');
     const stub = await startRotation(orgId, 'rotate-stale-v1-v2');
     const objectKey = objects[0]!.objectKey;
-    let releaseHold = (): void => undefined;
-    let held = (): void => undefined;
-    const hold = new Promise<void>((resolve) => {
-      releaseHold = resolve;
+    const envelope = await readEnvelope(objectKey);
+    const plaintext = await decryptArchiveObject(envelope, {
+      key: await cryptoKey(orgId, 1, v1),
+      orgId,
+      objectKey,
+      objectClass: envelope.objectClass,
+      keyVersion: 1,
     });
-    const reached = new Promise<void>((resolve) => {
-      held = resolve;
-    });
-    const stale = runInDurableObject(stub, async (_instance, state) => {
-      try {
-        await reencryptArchiveObject(runtimeEnv, state.storage, {
-          orgId,
-          objectKey,
-          objectClass: 'agent_archive_chunk',
-          operationId: 'rotate-stale-v1-v2',
-          generation: 1,
-          fromVersion: 1,
-          toVersion: 2,
-          fromWrappedKey: v1,
-          toWrappedKey: v2,
-          holdBeforeReplace: async () => {
-            held();
-            await hold;
-          },
-        });
-        return 'wrote';
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    });
-    await reached;
+    const staleReplacement = JSON.stringify(
+      await encryptArchiveObject(plaintext, {
+        key: await cryptoKey(orgId, 2, v2),
+        orgId,
+        objectKey,
+        objectClass: envelope.objectClass,
+        keyVersion: 2,
+      }),
+    );
     const first = await stub.advanceKeyRotation({ orgId, limit: 8 });
     expect(first.status).toBe('succeeded');
     const v3 = await wrapKey(orgId, 3);
@@ -937,8 +923,22 @@ describe('Archive encryption key rotation', () => {
     const second = await stub.advanceKeyRotation({ orgId, limit: 8 });
     expect(second.status).toBe('succeeded');
     expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
-    releaseHold();
-    expect(await stale).toBe('archive_key_rotation_stale');
+    const stale = await runInDurableObject(stub, async (instance: StorageBudget, state) => {
+      try {
+        await commitRotationReplacement(instance.env, state.storage, {
+          objectKey,
+          replacementBody: staleReplacement,
+          operationId: 'rotate-stale-v1-v2',
+          generation: 1,
+          fromVersion: 1,
+          toVersion: 2,
+        });
+        return 'wrote';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    expect(stale).toBe('archive_key_rotation_stale');
     expect((await readEnvelope(objectKey)).keyVersion).toBe(3);
     expect(await decryptStored(objectKey, orgId, 3, v3)).toEqual(
       new TextEncoder().encode('chunk-body-stale-worker'),
