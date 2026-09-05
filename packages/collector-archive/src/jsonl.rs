@@ -139,6 +139,9 @@ fn scan_jsonl_with_part(
     let prior_offset = prior_checkpoint
         .map(|checkpoint| checkpoint.last_complete_byte_offset as usize)
         .unwrap_or(0);
+    if complete_offset < prior_offset {
+        return Err(JsonlError::HistoricalPrefixShortened);
+    }
     let appended_bytes = &bytes[prior_offset..complete_offset];
     let prefix_chain_sha256 = match prior_checkpoint {
         Some(previous) if appended_bytes.is_empty() => previous.prefix_chain_sha256,
@@ -181,7 +184,7 @@ fn scan_jsonl_with_part(
         append_proof: prior_checkpoint.map(|previous| crate::types::ArchiveAppendProof {
             prior_prefix_chain_sha256: previous.prefix_chain_sha256,
             appended_prefix_base64: base64::engine::general_purpose::STANDARD
-                .encode(&bytes[previous.last_complete_byte_offset as usize..complete_offset]),
+                .encode(appended_bytes),
         }),
     })
 }

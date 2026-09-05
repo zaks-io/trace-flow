@@ -4,6 +4,7 @@ import { ArchiveContractError, assertIdentifier } from '../archive-contract';
 
 const vectors = JSON.parse(vectorsJson) as {
   controls: string[];
+  accepted: string[];
   boundary: {
     stable_id_prefix: string;
     non_bmp: string;
@@ -35,6 +36,14 @@ describe('archive identifier contract', () => {
       expect(() => assertIdentifier(`collector${control}`, 'invalid_record_identity')).toThrow(
         ArchiveContractError,
       );
+    }
+  });
+
+  it('accepts the shared line-separator vectors', () => {
+    for (const separator of vectors.accepted) {
+      expect(() =>
+        assertIdentifier(`collector${separator}`, 'invalid_record_identity'),
+      ).not.toThrow();
     }
   });
 

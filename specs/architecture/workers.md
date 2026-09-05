@@ -2,9 +2,9 @@
 
 The core model and agent data planes are split into six Cloudflare Workers: Proxy, Proxy Consumer,
 Agent Ingest, Agent Consumer, Pipes API, and Raw API. Production also deploys Web, MCP, and Analyst
-Sandbox Workers. `apps/archive-api` is a disabled authorization scaffold with no persistence or
-production environment. This document explains why these responsibilities are separated and how the
-core Workers communicate.
+Sandbox Workers. `apps/archive-api` is a disabled development persistence slice using Durable Objects
+and R2 with no production environment. This document explains why these responsibilities are
+separated and how the core Workers communicate.
 
 ## Why Separate Workers?
 

@@ -463,6 +463,86 @@ fn trailing_partial_is_excluded_then_becomes_a_record_when_completed() {
     );
 }
 
+type ScanFunction =
+    fn(String, &[u8], i64, Option<&CompletedScanCheckpoint>) -> Result<JsonlScan, JsonlError>;
+
+fn assert_blank_tail_cursor_continuation(scan: ScanFunction, initial: &[u8], completed: &[u8]) {
+    let first = scan("session-1".to_string(), initial, 10, None).unwrap();
+    let complete_offset = initial.iter().rposition(|byte| *byte == b'\n').unwrap() + 1;
+    assert_eq!(
+        first.checkpoint.last_complete_byte_offset,
+        complete_offset as u64
+    );
+    assert_eq!(first.observations.len(), 1);
+
+    let mut partial = initial.to_vec();
+    partial.extend_from_slice(b"   {\"uuid\":\"r2\"");
+    let mut misaligned_prior = first.checkpoint.clone();
+    misaligned_prior.last_complete_byte_offset = (complete_offset + 1) as u64;
+    misaligned_prior.observed_file_size = partial.len() as u64;
+    misaligned_prior.complete_prefix_sha256 = sha256(&partial[..complete_offset + 1]);
+    assert!(matches!(
+        scan(
+            "session-1".to_string(),
+            &partial,
+            11,
+            Some(&misaligned_prior),
+        ),
+        Err(JsonlError::HistoricalPrefixShortened)
+    ));
+    let partial_scan = scan(
+        "session-1".to_string(),
+        &partial,
+        11,
+        Some(&first.checkpoint),
+    )
+    .unwrap();
+    assert_eq!(partial_scan.observations.len(), 0);
+    assert_eq!(
+        partial_scan.checkpoint.last_complete_byte_offset,
+        first.checkpoint.last_complete_byte_offset
+    );
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(partial_scan.append_proof.unwrap().appended_prefix_base64,)
+            .unwrap(),
+        Vec::<u8>::new(),
+    );
+
+    let completed_scan = scan(
+        "session-1".to_string(),
+        completed,
+        12,
+        Some(&first.checkpoint),
+    )
+    .unwrap();
+    assert_eq!(completed_scan.observations.len(), 1);
+    assert_eq!(
+        completed_scan.checkpoint.observed_file_size,
+        completed.len() as u64
+    );
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(completed_scan.append_proof.unwrap().appended_prefix_base64,)
+            .unwrap(),
+        &completed[complete_offset..],
+    );
+}
+
+#[test]
+fn blank_unterminated_tails_keep_claude_and_codex_cursors_newline_aligned() {
+    assert_blank_tail_cursor_continuation(
+        scan_claude_jsonl,
+        b"{\"uuid\":\"r1\"}\n   ",
+        b"{\"uuid\":\"r1\"}\n   {\"uuid\":\"r2\"}\n",
+    );
+    assert_blank_tail_cursor_continuation(
+        scan_codex_jsonl,
+        b"{\"event\":\"r1\"}\n   ",
+        b"{\"event\":\"r1\"}\n   {\"event\":\"r2\"}\n",
+    );
+}
+
 #[test]
 fn append_scan_exposes_only_the_bounded_suffix_proof() {
     let first = scan_codex_jsonl("session-1", b"{\"a\":1}\n", 10, None).unwrap();
@@ -588,6 +668,15 @@ fn identifier_validation_matches_the_worker_utf16_contract() {
                 ArchiveError::InvalidIdentifier { .. }
             ))
         ));
+    }
+
+    for separator in vectors["accepted"].as_array().unwrap() {
+        let separator = separator.as_str().unwrap();
+        let source_bytes = serde_json::to_vec(&serde_json::json!({
+            "uuid": format!("collector{separator}")
+        }))
+        .unwrap();
+        assert!(scan_claude_jsonl("session-1", &source_bytes, 10, None).is_ok());
     }
 
     let boundary = &vectors["boundary"];

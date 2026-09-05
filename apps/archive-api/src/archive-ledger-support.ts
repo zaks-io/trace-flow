@@ -91,17 +91,27 @@ export function statusFor(errorClass: string): number {
     errorClass === 'archive_upload_observation_limit'
   )
     return 413;
-  if (
-    errorClass === 'duplicate_record_version' ||
-    errorClass === 'checkpoint_regressed' ||
-    errorClass.includes('historical') ||
-    errorClass.includes('chain') ||
-    errorClass.includes('immutable') ||
-    errorClass.includes('verification')
-  ) {
-    return 409;
-  }
-  if (errorClass.includes('key_unavailable') || errorClass === 'pending_commit_exists') return 503;
+  if (CONFLICT_ERROR_CLASSES.has(errorClass)) return 409;
+  if (TRANSIENT_ERROR_CLASSES.has(errorClass)) return 503;
   if (errorClass === 'archive_commit_failed') return 500;
   return 400;
 }
+
+const CONFLICT_ERROR_CLASSES = new Set([
+  'duplicate_record_version',
+  'checkpoint_regressed',
+  'missing_historical_prefix_proof',
+  'historical_prefix_changed',
+  'unexpected_historical_prefix_proof',
+  'immutable_object_collision',
+  'r2_object_verification_failed',
+  'compressed_chunk_verification_failed',
+  'manifest_encryption_verification_failed',
+  'pending_intent_corrupt',
+  'pending_intent_mismatch',
+  'pending_intent_head_mismatch',
+  'pending_object_verification_failed',
+  'ledger_state_corrupt',
+]);
+
+const TRANSIENT_ERROR_CLASSES = new Set(['key_unavailable', 'pending_commit_exists']);

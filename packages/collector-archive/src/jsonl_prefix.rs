@@ -17,7 +17,7 @@ pub(crate) fn complete_prefix_offset(bytes: &[u8]) -> Result<usize, JsonlError> 
         return Ok(newline_end);
     }
     if bytes[newline_end..].iter().all(is_archive_blank_byte) {
-        return Ok(bytes.len());
+        return Ok(newline_end);
     }
     if serde_json::from_slice::<Value>(&bytes[newline_end..]).is_ok() {
         Ok(bytes.len())

@@ -1,5 +1,6 @@
 {
   "controls": ["\u0000", "\u0001", "\u001f", "\u007f"],
+  "accepted": ["\u2028", "\u2029"],
   "boundary": {
     "stable_id_prefix": "x",
     "non_bmp": "😀",

@@ -154,7 +154,7 @@ export class ArchiveContractError extends Error {
   }
 }
 
-const IDENTIFIER_PATTERN = /^.+$/u;
+const IDENTIFIER_PATTERN = /^[\s\S]+$/u;
 
 function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {

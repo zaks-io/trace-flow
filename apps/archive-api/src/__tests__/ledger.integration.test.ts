@@ -40,14 +40,20 @@ import type { ArchiveSessionLedger } from '../archive-ledger';
 import { app } from '../index';
 import type { ArchiveApiEnv } from '../context';
 import { payloadBytes } from '../archive-contract';
-import { parseAndValidateUpload } from '../archive-validation';
+import { parseAndValidateUpload, sourceFingerprints } from '../archive-validation';
 import { prefixChainHash } from '../archive-prefix-validation';
 import { MAX_ARCHIVE_UPLOAD_BYTES } from '../archive-request';
 import { buildAcknowledgement, intentDigest } from '../archive-ledger-support';
 import { commitArchiveSession } from '../archive-ledger-commit';
 import type { ArchiveAcknowledgement, LedgerSnapshot } from '../archive-ledger-state';
 import { readLedgerScan, readLedgerSnapshot } from '../archive-ledger-storage';
-import { readPendingIntent, writeIntent, type PendingIntent } from '../archive-ledger-intent';
+import {
+  encodePendingPlaintext,
+  encryptPendingIntentState,
+  pendingIntentStateHash,
+  writeIntent,
+  type PendingIntent,
+} from '../archive-ledger-intent';
 import claudeFixture from '../../../../packages/collector-archive/tests/fixtures/claude.jsonl?raw';
 import codexFixture from '../../../../packages/collector-archive/tests/fixtures/codex.jsonl?raw';
 import rustWireSessionJson from '../../../../packages/collector-archive/tests/fixtures/archive-wire-session.json?raw';
@@ -333,25 +339,79 @@ async function seedPendingCommit(
     chainHead: checkpoint.chain_hash,
     generation: 1,
     manifestKey: plan.manifestKey,
+    manifestHeadPageKey: plan.manifestHeadPageKey,
   };
   const acknowledgement = buildAcknowledgement(state, false, 1, true, [
     ...plan.chunks.map((chunk) => chunk.objectKey),
   ]);
-  const objects = [
+  const expectedObjects = [
     ...plan.chunks.map((chunk) => ({
       key: chunk.objectKey,
       body: chunk.encryptedBody,
       objectClass: 'chunk' as const,
+      plaintext: chunk.plainBytes,
     })),
-    { key: plan.manifestKey, body: plan.manifestBody, objectClass: 'manifest' as const },
+    {
+      key: plan.manifestKey,
+      body: plan.manifestBody,
+      objectClass: 'manifest' as const,
+      plaintext: new TextEncoder().encode(plan.manifestPlaintextBody),
+    },
   ];
+  const objects = expectedObjects.map(({ key: objectKey, body, objectClass }) => ({
+    key: objectKey,
+    body,
+    objectClass,
+  }));
+  const commit = {
+    scope: currentScope,
+    keyVersion: KEY_VERSION,
+    elementCount: elements.length,
+    recordCount: 1,
+    chainHead: checkpoint.chain_hash,
+    generation: 1,
+    manifestKey: plan.manifestKey,
+    manifestHeadPageKey: plan.manifestHeadPageKey,
+    newElements: elements,
+    ranges: Object.fromEntries(
+      (plan.manifest.elements ?? []).map((element) => [
+        String(element.chain_sequence),
+        element.byte_range,
+      ]),
+    ),
+    scan: {
+      partId: validated.checkpoint.source_transcript_part_id,
+      checkpoint: validated.checkpoint,
+      fingerprints: sourceFingerprints(validated.observations),
+      replace: true,
+    },
+  };
+  const expectedPendingObjects = expectedObjects.map(
+    ({ key: objectKey, objectClass, plaintext }) => ({
+      key: objectKey,
+      objectClass,
+      plaintextBase64: encodePendingPlaintext(plaintext),
+    }),
+  );
+  const intentHash = await intentDigest({ scope: currentScope, upload: validated });
   const intent: PendingIntent = {
-    intentHash: await intentDigest({ scope: currentScope, upload: validated }),
+    intentHash,
     status: 'building',
     baseElementCount: 0,
     baseChainHead: GENESIS_CHAIN_HASH,
     objects,
     acknowledgement,
+    commit,
+    expectedObjects: expectedPendingObjects,
+    stateHash: await pendingIntentStateHash(intentHash, commit, expectedPendingObjects),
+    stateAuthentication: await encryptPendingIntentState(
+      intentHash,
+      commit,
+      expectedPendingObjects,
+      key,
+      currentScope.orgId,
+      KEY_VERSION,
+    ),
   };
   await runInDurableObject(stub, (_instance, durableState) =>
     writeIntent(durableState.storage, intent),
@@ -425,20 +485,6 @@ describe('Archive Session Ledger', () => {
   it('uses a partial index for active intent recovery after many committed generations', async () => {
     const currentScope = scope('codex', `active-intent-index-${crypto.randomUUID()}`);
     const stub = newLedger(currentScope);
-    const acknowledgement: ArchiveAcknowledgement = {
-      status: 'acknowledged',
-      duplicate: false,
-      source: currentScope.source,
-      source_session_id: currentScope.sourceSessionId,
-      contribution_id: currentScope.contributionId,
-      appended_records: 1,
-      appended_checkpoint: true,
-      record_count: 1,
-      generation: 1,
-      chain_head: GENESIS_CHAIN_HASH,
-      manifest_key: 'manifest-test-key',
-      chunk_keys: [],
-    };
     const result = await runInDurableObject(stub, (_instance, durableState) => {
       for (let index = 0; index < 2048; index++) {
         durableState.storage.sql.exec(
@@ -455,14 +501,13 @@ describe('Archive Session Ledger', () => {
         ),
       ];
       const planBefore = explain();
-      writeIntent(durableState.storage, {
-        intentHash: 'active-intent',
-        status: 'building',
-        baseElementCount: 2048,
-        baseChainHead: GENESIS_CHAIN_HASH,
-        objects: [],
-        acknowledgement,
-      });
+      durableState.storage.sql.exec(
+        'INSERT INTO pending_intents (intent_hash, status, base_element_count, base_chain_head) VALUES (?, ?, ?, ?)',
+        'active-intent',
+        'building',
+        2048,
+        GENESIS_CHAIN_HASH,
+      );
       return {
         committedCount: [
           ...durableState.storage.sql.exec<{ count: number }>(
@@ -471,7 +516,11 @@ describe('Archive Session Ledger', () => {
         ][0]?.count,
         planBefore,
         planAfter: explain(),
-        pendingIntentHash: readPendingIntent(durableState.storage)?.intentHash,
+        pendingIntentHash: [
+          ...durableState.storage.sql.exec<{ intent_hash: string }>(
+            "SELECT intent_hash FROM pending_intents WHERE status = 'building' LIMIT 1",
+          ),
+        ][0]?.intent_hash,
       };
     });
     const assertIndexed = (plan: { detail: string }[]) => {
@@ -1759,6 +1808,217 @@ describe('Archive Session Ledger', () => {
     expect(intentState).toBe('committed');
   });
 
+  it.each(['claude', 'codex'] as const)(
+    'recovers a disappeared collector intent before an advancing %s upload',
+    async (source) => {
+      const currentScope = scope(source, `pending-advance-${crypto.randomUUID()}`);
+      const firstRecord = await observation(
+        source,
+        currentScope.sourceSessionId,
+        partFor(source),
+        source === 'claude' ? 'r1' : '0',
+        '"pending-first"',
+      );
+      const firstUpload = {
+        source_session_id: currentScope.sourceSessionId,
+        observations: [firstRecord],
+        checkpoint: await checkpoint(source, currentScope.sourceSessionId, partFor(source), [
+          firstRecord,
+        ]),
+        complete_prefix_base64: base64(exactPrefix([firstRecord])),
+      };
+      const { stub } = await seedPendingCommit(currentScope, firstUpload);
+      const secondRecord = await observation(
+        source,
+        currentScope.sourceSessionId,
+        partFor(source),
+        source === 'claude' ? 'r2' : '1',
+        '"pending-second"',
+      );
+      const secondUpload = {
+        source_session_id: currentScope.sourceSessionId,
+        observations: [firstRecord, secondRecord],
+        checkpoint: await checkpoint(source, currentScope.sourceSessionId, partFor(source), [
+          firstRecord,
+          secondRecord,
+        ]),
+        complete_prefix_base64: base64(exactPrefix([firstRecord, secondRecord])),
+      };
+
+      const firstAdvance = await call(stub, await envelope(currentScope, secondUpload));
+      expect(firstAdvance.response.status).toBe(200);
+      expect(firstAdvance.body.appended_records).toBe(1);
+      expect(firstAdvance.body.record_count).toBe(2);
+      expect(firstAdvance.body.generation).toBe(2);
+      const objectsAfterAdvance = await runtimeEnv.ARCHIVE_STORAGE.list({
+        prefix: await archiveSessionPrefix(currentScope),
+      });
+
+      const replay = await call(stub, await envelope(currentScope, secondUpload));
+      expect(replay.response.status).toBe(200);
+      expect(replay.body).toEqual(firstAdvance.body);
+      const objectsAfterReplay = await runtimeEnv.ARCHIVE_STORAGE.list({
+        prefix: await archiveSessionPrefix(currentScope),
+      });
+      expect(objectsAfterReplay.objects.map(({ key }) => key).sort()).toEqual(
+        objectsAfterAdvance.objects.map(({ key }) => key).sort(),
+      );
+      const effects = await ledgerEffects(stub, currentScope);
+      expect(effects.storage.ledgerElements).toHaveLength(4);
+      expect(
+        (effects.storage.pendingIntents ?? []).every((intent) => intent.status === 'committed'),
+      ).toBe(true);
+    },
+  );
+
+  it('recovers a pending intent through the real handler for a second enrolled collector', async () => {
+    const currentScope = scope('codex', `handler-pending-recovery-${crypto.randomUUID()}`);
+    const identities = [
+      { secret: crypto.randomUUID(), collectorId: 'pending-recovery-one' },
+      { secret: crypto.randomUUID(), collectorId: 'pending-recovery-two' },
+    ];
+    const enrolled = await Promise.all(
+      identities.map(async (identity) => ({
+        ...identity,
+        hashedSecret: await sha256Hex(identity.secret),
+      })),
+    );
+    for (const identity of enrolled) {
+      await runtimeEnv.COLLECTOR_CREDS.put(
+        `collector:${identity.hashedSecret}`,
+        JSON.stringify({
+          orgId: currentScope.orgId,
+          userId: currentScope.userId,
+          collectorId: identity.collectorId,
+          expiresAt: Date.now() + 3_600_000,
+          status: 'active',
+          createdAt: Date.now(),
+        }),
+      );
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname === '/archive-api/authorize-write') {
+        const body = await request.json<{ collectorId?: unknown; hashedSecret?: unknown }>();
+        const identity = enrolled.find(
+          (candidate) =>
+            candidate.collectorId === body.collectorId &&
+            candidate.hashedSecret === body.hashedSecret,
+        );
+        if (!identity) return Response.json({ allowed: false, reason: 'not_enrolled' });
+        return Response.json({
+          allowed: true,
+          enrollmentId: `enrollment-${identity.collectorId}`,
+          contributionId: currentScope.contributionId,
+          orgId: currentScope.orgId,
+          userId: currentScope.userId,
+          collectorId: identity.collectorId,
+          collectorCredentialId: identity.hashedSecret,
+        });
+      }
+      if (url.pathname === '/archive-api/key') {
+        return Response.json({
+          wrappedKey: await archiveKey(currentScope.orgId),
+          keyVersion: KEY_VERSION,
+        });
+      }
+      throw new Error(`unexpected fetch: ${request.method} ${request.url}`);
+    });
+    const handlerEnv = {
+      COLLECTOR_CREDS: runtimeEnv.COLLECTOR_CREDS,
+      CONVEX_SITE_URL: 'https://archive-convex.test',
+      ARCHIVE_API_SHARED_SECRET: 'archive-api-shared-test-value',
+      ARCHIVE_STORAGE: runtimeEnv.ARCHIVE_STORAGE,
+      ARCHIVE_SESSION_LEDGER: runtimeEnv.ARCHIVE_SESSION_LEDGER,
+      ARCHIVE_KEY_VERSION: String(KEY_VERSION),
+      ARCHIVE_KEY_WRAPPING_SECRET: WRAPPING_SECRET,
+    } as unknown as ArchiveApiEnv;
+    const firstRecord = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      '0',
+      '"handler-pending-first"',
+    );
+    const firstUpload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [firstRecord],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [firstRecord],
+      ),
+      complete_prefix_base64: base64(exactPrefix([firstRecord])),
+    };
+    await seedPendingCommit(currentScope, firstUpload);
+    const secondRecord = await observation(
+      currentScope.source,
+      currentScope.sourceSessionId,
+      partFor(currentScope.source),
+      '1',
+      '"handler-pending-second"',
+    );
+    const advancingUpload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [firstRecord, secondRecord],
+      checkpoint: await checkpoint(
+        currentScope.source,
+        currentScope.sourceSessionId,
+        partFor(currentScope.source),
+        [firstRecord, secondRecord],
+      ),
+      complete_prefix_base64: base64(exactPrefix([firstRecord, secondRecord])),
+    };
+    const send = async (secret: string) => {
+      const executionContext = createExecutionContext();
+      const response = await app.fetch(
+        new Request('https://archive.test/v1/archive/uploads', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Trace-Flow-Collector-Secret': secret,
+            'X-Trace-Flow-Archive-Source': currentScope.source,
+          },
+          body: JSON.stringify(advancingUpload),
+        }),
+        handlerEnv,
+        executionContext,
+      );
+      await waitOnExecutionContext(executionContext);
+      return { response, body: await response.json<Record<string, unknown>>() };
+    };
+
+    try {
+      const result = await send(enrolled[1]!.secret);
+      expect(result.response.status).toBe(200);
+      expect(result.body).toMatchObject({ record_count: 2, generation: 2 });
+      const listed = await runtimeEnv.ARCHIVE_STORAGE.list({
+        prefix: await archiveSessionPrefix(currentScope),
+      });
+      expect(listed.objects.length).toBeGreaterThan(2);
+      for (const object of listed.objects) {
+        const stored = await runtimeEnv.ARCHIVE_STORAGE.get(object.key);
+        if (!stored) throw new Error('archive object missing');
+        const storedText = await stored.text();
+        expect(storedText).not.toContain(firstRecord.payload);
+        expect(storedText).not.toContain(secondRecord.payload);
+      }
+      const replay = await send(enrolled[0]!.secret);
+      expect(replay.response.status).toBe(200);
+      expect(replay.body).toEqual(result.body);
+      const replayObjects = await runtimeEnv.ARCHIVE_STORAGE.list({
+        prefix: await archiveSessionPrefix(currentScope),
+      });
+      expect(replayObjects.objects.map(({ key }) => key).sort()).toEqual(
+        listed.objects.map(({ key }) => key).sort(),
+      );
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it('rejects a pending intent whose stored ciphertext no longer matches the plan', async () => {
     const currentScope = scope('codex', `pending-tamper-${crypto.randomUUID()}`);
     const record = await observation(
@@ -1814,6 +2074,56 @@ describe('Archive Session Ledger', () => {
       ][0]?.status,
     }));
     expect(intentState).toEqual({ ledgerElements: 0, status: 'building' });
+  });
+
+  it('rejects corrupted pending intent metadata before recovery effects', async () => {
+    const currentScope = scope('codex', `pending-metadata-${crypto.randomUUID()}`);
+    const record = await observation(
+      'codex',
+      currentScope.sourceSessionId,
+      partFor('codex'),
+      '0',
+      '"pending-metadata"',
+    );
+    const upload = {
+      source_session_id: currentScope.sourceSessionId,
+      observations: [record],
+      checkpoint: await checkpoint('codex', currentScope.sourceSessionId, partFor('codex'), [
+        record,
+      ]),
+      complete_prefix_base64: base64(exactPrefix([record])),
+    };
+    const { stub } = await seedPendingCommit(currentScope, upload);
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec('DELETE FROM pending_intent_metadata');
+      state.storage.sql.exec(
+        'INSERT INTO pending_intent_metadata (intent_hash, part_index, data) VALUES (?, ?, ?)',
+        'unknown',
+        0,
+        '{',
+      );
+    });
+
+    const rejected = await call(stub, await envelope(currentScope, upload));
+    expect(rejected.response.status).toBe(409);
+    expect(rejected.body.error).toBe('pending_intent_corrupt');
+    const state = await runInDurableObject(stub, (_instance, durableState) => ({
+      ledgerState: [
+        ...durableState.storage.sql.exec<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM ledger_state',
+        ),
+      ][0]?.count,
+      ledgerElements: [
+        ...durableState.storage.sql.exec<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM ledger_elements',
+        ),
+      ][0]?.count,
+    }));
+    expect(state).toEqual({ ledgerState: 0, ledgerElements: 0 });
+    const objects = await runtimeEnv.ARCHIVE_STORAGE.list({
+      prefix: await archiveSessionPrefix(currentScope),
+    });
+    expect(objects.objects).toHaveLength(1);
   });
 
   it('reads one requested Claude checkpoint part without scanning the part table', async () => {

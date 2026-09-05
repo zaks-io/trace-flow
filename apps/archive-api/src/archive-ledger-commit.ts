@@ -1,17 +1,12 @@
-import { parseArchiveWrappedKeyVersion, unwrapArchiveEncryptionKey } from '@trace-flow/utils';
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, type ArchiveScope } from './archive-contract';
-import { packNewElementsPaged, type PlannedManifestObject } from './archive-packing';
+import { packNewElementsPaged } from './archive-packing';
 import {
   assertIncomingObservationCount,
   parseAndValidateUpload,
   sourceFingerprints,
 } from './archive-validation';
-import {
-  verifyEncryptedPlannedObject,
-  verifyOrPutImmutableObject,
-  type ArchiveR2Object,
-} from './archive-r2';
+import { verifyEncryptedPlannedObject, type ArchiveR2Object } from './archive-r2';
 import {
   type ArchiveAcknowledgement,
   type LedgerCommit,
@@ -24,10 +19,21 @@ import {
   readPendingIntent,
   markIntentReady,
   writeIntent,
+  assertPendingIntentAuthenticated,
+  encryptPendingIntentState,
+  pendingIntentStateHash,
   type PendingIntent,
 } from './archive-ledger-intent';
 import { reconcileArchiveUpload } from './archive-ledger-reconciliation';
 import { buildAcknowledgement, intentDigest, parseCommitEnvelope } from './archive-ledger-support';
+import {
+  assertPendingIntentMatches,
+  pendingExpectedObjects,
+  recoverPendingIntent,
+  unwrapKey,
+  verifyObjects,
+  verifyPendingIntentBodies,
+} from './archive-ledger-intent-recovery';
 
 export async function commitArchiveSession(
   storage: DurableObjectStorage,
@@ -39,7 +45,7 @@ export async function commitArchiveSession(
   let state = readLedgerSnapshot(storage);
   state = assertScope(state, envelope.scope);
   const upload = await parseAndValidateUpload(envelope.upload, envelope.scope);
-  const scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
+  let scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
   const configuredKeyVersion = Number(env.ARCHIVE_KEY_VERSION);
   if (envelope.keyVersion !== configuredKeyVersion) {
     throw new ArchiveContractError('archive_key_version_mismatch');
@@ -53,7 +59,9 @@ export async function commitArchiveSession(
   if (priorIntent?.status === 'committed') return priorIntent.acknowledgement;
   const existingPending = readPendingIntent(storage);
   if (existingPending && existingPending.intentHash !== intentHash) {
-    throw new ArchiveContractError('pending_commit_exists');
+    await recoverPendingIntent(storage, env, envelope, state, existingPending);
+    state = assertScope(readLedgerSnapshot(storage), envelope.scope);
+    scan = readLedgerScan(storage, upload.checkpoint.source_transcript_part_id);
   }
   if (
     priorIntent &&
@@ -139,14 +147,6 @@ export async function commitArchiveSession(
     appendCheckpoint,
     plan.chunks.map((chunk) => chunk.objectKey),
   );
-  const intent: PendingIntent = {
-    intentHash,
-    status: 'building',
-    baseElementCount: state.elementCount,
-    baseChainHead: state.chainHead,
-    objects,
-    acknowledgement,
-  };
   const commit: LedgerCommit = {
     scope: envelope.scope,
     keyVersion: envelope.keyVersion,
@@ -178,8 +178,27 @@ export async function commitArchiveSession(
     })),
     ...plan.manifestObjects,
   ];
+  const expectedPendingObjects = pendingExpectedObjects(expectedObjects);
+  const stateHash = await pendingIntentStateHash(intentHash, commit, expectedPendingObjects);
+  const stateAuthentication = await encryptPendingIntentState(
+    intentHash,
+    commit,
+    expectedPendingObjects,
+    archiveKey,
+    envelope.scope.orgId,
+    envelope.keyVersion,
+  );
   if (priorIntent) {
+    await assertPendingIntentAuthenticated({
+      ...priorIntent,
+      key: archiveKey,
+      orgId: envelope.scope.orgId,
+      keyVersion: envelope.keyVersion,
+    });
     assertPendingIntentMatches(priorIntent, expectedObjects);
+    if (stateHash !== priorIntent.stateHash) {
+      throw new ArchiveContractError('pending_intent_mismatch');
+    }
     await verifyPendingIntentBodies(
       priorIntent.objects,
       expectedObjects,
@@ -189,71 +208,26 @@ export async function commitArchiveSession(
     );
     await verifyObjects(env.ARCHIVE_STORAGE, priorIntent.objects);
     if (priorIntent.status === 'building') markIntentReady(storage, intentHash);
-    commitIntent(storage, intentHash, commit, priorIntent.acknowledgement);
+    commitIntent(storage, intentHash, priorIntent.commit!, priorIntent.acknowledgement);
     return priorIntent.acknowledgement;
   }
+  const intent: PendingIntent = {
+    intentHash,
+    status: 'building',
+    baseElementCount: state.elementCount,
+    baseChainHead: state.chainHead,
+    objects,
+    acknowledgement,
+    commit,
+    expectedObjects: expectedPendingObjects,
+    stateHash,
+    stateAuthentication,
+  };
   writeIntent(storage, intent);
   markIntentReady(storage, intentHash);
   await verifyObjects(env.ARCHIVE_STORAGE, objects);
   commitIntent(storage, intentHash, commit, acknowledgement);
   return acknowledgement;
-}
-
-function assertPendingIntentMatches(
-  intent: PendingIntent,
-  expected: { key: string; objectClass: ArchiveR2Object['objectClass'] }[],
-): void {
-  const actual = intent.objects.map(({ key, objectClass }) => ({ key, objectClass }));
-  const expectedDescriptors = expected.map(({ key, objectClass }) => ({ key, objectClass }));
-  if (JSON.stringify(actual) !== JSON.stringify(expectedDescriptors)) {
-    throw new ArchiveContractError('pending_intent_mismatch');
-  }
-}
-
-async function verifyPendingIntentBodies(
-  pending: ArchiveR2Object[],
-  expected: (
-    | PlannedManifestObject
-    | { key: string; body: string; objectClass: 'chunk'; plaintext: Uint8Array }
-  )[],
-  key: CryptoKey,
-  orgId: string,
-  keyVersion: number,
-): Promise<void> {
-  const proofs = new Map(expected.map((object) => [object.key, object]));
-  for (const object of pending) {
-    const plan = proofs.get(object.key);
-    if (plan?.objectClass !== object.objectClass) {
-      throw new ArchiveContractError('pending_intent_mismatch');
-    }
-    try {
-      await verifyEncryptedPlannedObject(object, key, orgId, keyVersion, plan.plaintext);
-    } catch (error) {
-      if (error instanceof ArchiveContractError) throw error;
-      throw new ArchiveContractError('pending_object_verification_failed');
-    }
-  }
-}
-
-async function unwrapKey(
-  env: ArchiveApiEnv,
-  envelope: { scope: ArchiveScope; keyVersion: number; wrappedKey: string },
-): Promise<CryptoKey> {
-  return unwrapArchiveEncryptionKey(
-    parseArchiveWrappedKeyVersion(envelope.wrappedKey, {
-      orgId: envelope.scope.orgId,
-      keyVersion: envelope.keyVersion,
-    }),
-    {
-      orgId: envelope.scope.orgId,
-      keyVersion: envelope.keyVersion,
-      wrappingSecretBase64: env.ARCHIVE_KEY_WRAPPING_SECRET,
-    },
-  );
-}
-
-async function verifyObjects(bucket: R2Bucket, objects: ArchiveR2Object[]): Promise<void> {
-  for (const object of objects) await verifyOrPutImmutableObject(bucket, object);
 }
 
 function assertScope(state: LedgerSnapshot, scope: ArchiveScope): LedgerSnapshot {

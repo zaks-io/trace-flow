@@ -2,6 +2,16 @@ import { ArchiveContractError } from './archive-contract';
 import type { ArchiveR2Object } from './archive-r2';
 import { type ArchiveAcknowledgement, type LedgerCommit } from './archive-ledger-state';
 import { persistLedgerCommit } from './archive-ledger-storage';
+import type { PendingExpectedObject } from './archive-ledger-intent-state';
+
+export {
+  assertPendingIntentAuthenticated,
+  decodePendingPlaintext,
+  encodePendingPlaintext,
+  pendingIntentStateHash,
+  encryptPendingIntentState,
+  type PendingExpectedObject,
+} from './archive-ledger-intent-state';
 
 export interface PendingIntent {
   intentHash: string;
@@ -10,6 +20,10 @@ export interface PendingIntent {
   baseChainHead: string;
   objects: ArchiveR2Object[];
   acknowledgement: ArchiveAcknowledgement;
+  commit?: LedgerCommit;
+  expectedObjects?: PendingExpectedObject[];
+  stateHash?: string;
+  stateAuthentication?: string;
 }
 
 const INTENT_PART_SIZE = 64 * 1024;
@@ -28,6 +42,10 @@ function readIntentMetadata(
 ): {
   acknowledgement: ArchiveAcknowledgement;
   objects?: { key: string; objectClass: ArchiveR2Object['objectClass']; partCount: number }[];
+  commit?: LedgerCommit;
+  expectedObjects?: PendingExpectedObject[];
+  stateHash?: string;
+  stateAuthentication?: string;
 } {
   const parts = [
     ...storage.sql.exec<{ data: string }>(
@@ -36,21 +54,39 @@ function readIntentMetadata(
     ),
   ];
   if (parts.length === 0) throw new ArchiveContractError('pending_intent_corrupt');
-  const metadata = JSON.parse(parts.map((part) => part.data).join('')) as {
+  let metadata: {
     acknowledgement?: ArchiveAcknowledgement;
     objects?: {
       key: string;
       objectClass: ArchiveR2Object['objectClass'];
       partCount: number;
     }[];
+    commit?: LedgerCommit;
+    expectedObjects?: PendingExpectedObject[];
+    stateHash?: string;
+    stateAuthentication?: string;
   };
+  try {
+    metadata = JSON.parse(parts.map((part) => part.data).join('')) as typeof metadata;
+  } catch {
+    throw new ArchiveContractError('pending_intent_corrupt');
+  }
   if (
-    !metadata.acknowledgement ||
-    (metadata.objects !== undefined && !Array.isArray(metadata.objects))
+    typeof metadata !== 'object' ||
+    !metadata?.acknowledgement ||
+    (metadata.objects !== undefined && !Array.isArray(metadata.objects)) ||
+    (metadata.expectedObjects !== undefined && !Array.isArray(metadata.expectedObjects))
   ) {
     throw new ArchiveContractError('pending_intent_corrupt');
   }
-  return { acknowledgement: metadata.acknowledgement, objects: metadata.objects };
+  return {
+    acknowledgement: metadata.acknowledgement,
+    objects: metadata.objects,
+    commit: metadata.commit,
+    expectedObjects: metadata.expectedObjects,
+    stateHash: metadata.stateHash,
+    stateAuthentication: metadata.stateAuthentication,
+  };
 }
 
 export function readIntent(
@@ -80,6 +116,14 @@ export function readIntent(
     };
   }
   if (!metadata.objects) throw new ArchiveContractError('pending_intent_corrupt');
+  if (
+    !metadata.commit ||
+    !metadata.expectedObjects ||
+    !metadata.stateHash ||
+    !metadata.stateAuthentication
+  ) {
+    throw new ArchiveContractError('pending_intent_corrupt');
+  }
   const objects = metadata.objects.map((descriptor, objectIndex) => {
     const parts = [
       ...storage.sql.exec<{ data: string }>(
@@ -111,6 +155,10 @@ export function readIntent(
     baseChainHead: row.base_chain_head,
     objects,
     acknowledgement: metadata.acknowledgement,
+    commit: metadata.commit,
+    expectedObjects: metadata.expectedObjects,
+    stateHash: metadata.stateHash,
+    stateAuthentication: metadata.stateAuthentication,
   };
 }
 
@@ -124,6 +172,14 @@ export function readPendingIntent(storage: DurableObjectStorage): PendingIntent 
 }
 
 export function writeIntent(storage: DurableObjectStorage, intent: PendingIntent): void {
+  if (
+    !intent.commit ||
+    !intent.expectedObjects ||
+    !intent.stateHash ||
+    !intent.stateAuthentication
+  ) {
+    throw new ArchiveContractError('pending_intent_corrupt');
+  }
   const descriptors = intent.objects.map((object) => ({
     key: object.key,
     objectClass: object.objectClass,
@@ -132,6 +188,10 @@ export function writeIntent(storage: DurableObjectStorage, intent: PendingIntent
   const metadata = JSON.stringify({
     acknowledgement: intent.acknowledgement,
     objects: descriptors,
+    commit: intent.commit,
+    expectedObjects: intent.expectedObjects,
+    stateHash: intent.stateHash,
+    stateAuthentication: intent.stateAuthentication,
   });
   storage.transactionSync(() => {
     storage.sql.exec(
