@@ -1,18 +1,21 @@
 import type { ArchiveApiEnv } from './context';
 import { ArchiveContractError, type ArchiveScope } from './archive-contract';
 import { packNewElementsPaged } from './archive-packing';
+import { assertPlannedChain } from './archive-chain';
 import {
   assertIncomingObservationCount,
   parseAndValidateUpload,
   sourceFingerprints,
 } from './archive-validation';
 import {
+  ArchiveR2BatchWriteError,
   storageBudgetObject,
   verifyEncryptedPlannedObject,
   type ArchiveR2Object,
 } from './archive-r2';
 import {
   type ArchiveAcknowledgement,
+  type CommitEnvelope,
   type LedgerCommit,
   type LedgerSnapshot,
 } from './archive-ledger-state';
@@ -40,6 +43,12 @@ import {
   verifyObjectsAndReleaseDefinitivelyUnwritten,
   verifyPendingIntentBodies,
 } from './archive-ledger-intent-recovery';
+import {
+  ArchiveSessionIntegrityError,
+  isSessionIntegrityErrorClass,
+  readSessionIntegrity,
+  recordSessionIntegrity,
+} from './archive-session-integrity';
 
 export async function commitArchiveSession(
   storage: DurableObjectStorage,
@@ -47,6 +56,30 @@ export async function commitArchiveSession(
   value: unknown,
 ): Promise<ArchiveAcknowledgement> {
   const envelope = parseCommitEnvelope(value);
+  const existingFailure = readSessionIntegrity(storage, envelope.scope);
+  if (existingFailure) throw new ArchiveSessionIntegrityError(existingFailure, false);
+  try {
+    return await commitArchiveSessionEnvelope(storage, env, envelope);
+  } catch (error) {
+    if (error instanceof ArchiveSessionIntegrityError) throw error;
+    const contractError =
+      error instanceof ArchiveContractError
+        ? error
+        : error instanceof ArchiveR2BatchWriteError && error.cause instanceof ArchiveContractError
+          ? error.cause
+          : null;
+    if (contractError && isSessionIntegrityErrorClass(contractError.errorClass)) {
+      throw await recordSessionIntegrity(storage, envelope.scope, contractError.errorClass);
+    }
+    throw error;
+  }
+}
+
+async function commitArchiveSessionEnvelope(
+  storage: DurableObjectStorage,
+  env: ArchiveApiEnv,
+  envelope: CommitEnvelope,
+): Promise<ArchiveAcknowledgement> {
   assertIncomingObservationCount(envelope.upload);
   let state = readLedgerSnapshot(storage);
   state = assertScope(state, envelope.scope);
@@ -59,6 +92,7 @@ export async function commitArchiveSession(
   if (state.keyVersion !== undefined && state.keyVersion !== envelope.keyVersion) {
     throw new ArchiveContractError('archive_key_version_mismatch');
   }
+  const archiveKey = await unwrapKey(env, envelope);
 
   const intentHash = await intentDigest({ scope: envelope.scope, upload });
   const priorIntent = readIntent(storage, intentHash);
@@ -91,6 +125,7 @@ export async function commitArchiveSession(
     scan,
   );
   if (newElements.length === 0) return buildAcknowledgement(state, true, 0, false, []);
+  await assertPlannedChain(state.chainHead, state.elementCount, newElements);
 
   const ledgerElements = newElements.map((element) => {
     if (element.kind !== 'record') return element;
@@ -109,7 +144,6 @@ export async function commitArchiveSession(
     manifestKey: undefined,
     manifestHeadPageKey: state.manifestHeadPageKey,
   };
-  const archiveKey = await unwrapKey(env, envelope);
   const plan = await packNewElementsPaged(
     envelope.scope,
     storage,
@@ -208,6 +242,12 @@ export async function commitArchiveSession(
       orgId: envelope.scope.orgId,
       keyVersion: envelope.keyVersion,
     });
+    if (!priorIntent.commit) throw new ArchiveContractError('pending_intent_corrupt');
+    await assertPlannedChain(
+      priorIntent.baseChainHead,
+      priorIntent.baseElementCount,
+      priorIntent.commit.newElements,
+    );
     assertPendingIntentMatches(priorIntent, expectedObjects);
     if (stateHash !== priorIntent.stateHash) {
       throw new ArchiveContractError('pending_intent_mismatch');
@@ -244,7 +284,7 @@ export async function commitArchiveSession(
       orgId: envelope.scope.orgId,
       objects: priorIntent.objects.map(storageBudgetObject),
     });
-    commitIntent(storage, intentHash, priorIntent.commit!, priorIntent.acknowledgement);
+    commitIntent(storage, intentHash, priorIntent.commit, priorIntent.acknowledgement);
     await budget.recordArchiveAcknowledgement({
       orgId: envelope.scope.orgId,
       acknowledgedAt: Date.now(),

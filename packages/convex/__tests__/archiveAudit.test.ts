@@ -435,15 +435,36 @@ describe('archive audit control plane', () => {
     expect(completed.created).toBe(true);
     expect(completedReplay.created).toBe(false);
 
-    await world.t.mutation(internal.archiveAuditInternal.appendSemanticEvent, {
-      binding: { kind: 'collector_credential', collectorCredentialId: world.ownerCred },
-      action: 'integrity_failure',
-      outcome: 'failure',
-      operationId: 'integrity:session-1:attempt-1',
-      targetKind: 'session',
-      targetId: 'session-1',
-      source: 'claude',
-      sourceSessionId: 'session-1',
+    const integrityFailure = await world.t.mutation(
+      internal.archiveAuditInternal.appendSemanticEvent,
+      {
+        binding: { kind: 'collector_credential', collectorCredentialId: world.ownerCred },
+        action: 'integrity_failure',
+        outcome: 'failure',
+        operationId: 'integrity:session-1:attempt-1',
+        targetKind: 'session',
+        targetId: 'session-1',
+        source: 'claude',
+        sourceSessionId: 'session-1',
+      },
+    );
+    const integrityFailureReplay = await world.t.mutation(
+      internal.archiveAuditInternal.appendSemanticEvent,
+      {
+        binding: { kind: 'collector_credential', collectorCredentialId: world.ownerCred },
+        action: 'integrity_failure',
+        outcome: 'failure',
+        operationId: 'integrity:session-1:attempt-1',
+        targetKind: 'session',
+        targetId: 'session-1',
+        source: 'claude',
+        sourceSessionId: 'session-1',
+      },
+    );
+    expect(integrityFailure.created).toBe(true);
+    expect(integrityFailureReplay).toEqual({
+      eventId: integrityFailure.eventId,
+      created: false,
     });
     await world.t.mutation(internal.archiveAuditInternal.appendSemanticEvent, {
       binding: { kind: 'collector_credential', collectorCredentialId: world.ownerCred },

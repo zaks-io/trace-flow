@@ -492,6 +492,101 @@ describe('convex/http.ts internal routes', () => {
     });
   });
 
+  describe('POST /archive-api/session-integrity', () => {
+    const COLLECTOR_CREDENTIAL_ID = 'n57axc8sefsfp6k28nx6c481js806pwv';
+
+    beforeEach(() => {
+      vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');
+    });
+
+    it('requires the shared secret and never logs the supplied credential', async () => {
+      const probe = 'integrity-route-secret-probe';
+      const logs = captureConsoleLogs();
+      try {
+        const res = await createApp(deps).request(
+          'http://localhost/archive-api/session-integrity',
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${probe}` },
+            body: JSON.stringify({
+              collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
+              source: 'codex',
+              sourceSessionId: 'session-1',
+              errorClass: 'payload_hash_mismatch',
+            }),
+          },
+          ctx,
+        );
+        expect(res.status).toBe(401);
+        expect(ctx.runMutation).not.toHaveBeenCalled();
+        expect(logs.text()).not.toContain(probe);
+      } finally {
+        logs.restore();
+      }
+    });
+
+    it('forwards only Source, session, and error metadata', async () => {
+      ctx.runMutation.mockResolvedValueOnce({
+        contributionId: 'contribution-1',
+        source: 'codex',
+        sourceSessionId: 'session-1',
+        errorClass: 'payload_hash_mismatch',
+        updatedAt: 123,
+      });
+      const res = await createApp(deps).request(
+        'http://localhost/archive-api/session-integrity',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer archive-secret',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
+            source: 'codex',
+            sourceSessionId: 'session-1',
+            errorClass: 'payload_hash_mismatch',
+            payload: 'must-not-forward',
+            path: '/must/not/forward',
+            secret: 'must-not-forward',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(200);
+      expect(ctx.runMutation).toHaveBeenCalledOnce();
+      expect(ctx.runMutation.mock.calls[0]?.[1]).toEqual({
+        collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
+        source: 'codex',
+        sourceSessionId: 'session-1',
+        errorClass: 'payload_hash_mismatch',
+      });
+      expect(JSON.stringify(ctx.runMutation.mock.calls[0]?.[1])).not.toContain('must-not-forward');
+    });
+
+    it('rejects path-like session and error metadata', async () => {
+      const res = await createApp(deps).request(
+        'http://localhost/archive-api/session-integrity',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer archive-secret',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            collectorCredentialId: COLLECTOR_CREDENTIAL_ID,
+            source: 'claude',
+            sourceSessionId: '/tmp/transcript.jsonl',
+            errorClass: 'payload_hash_mismatch',
+          }),
+        },
+        ctx,
+      );
+      expect(res.status).toBe(400);
+      expect(ctx.runMutation).not.toHaveBeenCalled();
+    });
+  });
+
   describe('POST /archive-api/key', () => {
     beforeEach(() => {
       vi.stubEnv('ARCHIVE_API_SHARED_SECRET', 'archive-secret');

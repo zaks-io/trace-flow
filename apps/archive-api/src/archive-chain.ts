@@ -4,6 +4,7 @@ import {
   CHAIN_HASH_VERSION,
   type ArchiveObservation,
   type CompletedScanCheckpoint,
+  type LedgerElement,
   type StoredElement,
   type StoredRecord,
   digestBytes,
@@ -164,4 +165,26 @@ export async function buildRecord(
     previous_chain_hash,
     chain_hash,
   };
+}
+
+export async function assertPlannedChain(
+  previousChainHash: string,
+  firstSequence: number,
+  elements: LedgerElement[],
+): Promise<void> {
+  let previous = previousChainHash;
+  for (const [offset, element] of elements.entries()) {
+    const sequence = firstSequence + offset;
+    if (element.chain_sequence !== sequence || element.previous_chain_hash !== previous) {
+      throw new ArchiveContractError('chain_link_verification_failed');
+    }
+    const expected =
+      element.kind === 'record'
+        ? await recordChainHash(previous, sequence, element)
+        : await checkpointChainHash(previous, sequence, element.checkpoint);
+    if (element.chain_hash !== expected) {
+      throw new ArchiveContractError('chain_link_verification_failed');
+    }
+    previous = element.chain_hash;
+  }
 }

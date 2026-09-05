@@ -370,23 +370,24 @@ export async function appendArchiveAuditEvent(
 ): Promise<{ eventId: Id<'archiveAuditEvents'>; created: boolean }> {
   const operationId = validateAuditOperationId(event.operationId);
   const now = event.now ?? Date.now();
-  const existingSuccess = await ctx.db
+  const idempotentOutcome = event.action === 'integrity_failure' ? event.outcome : 'success';
+  const existingIdempotentEvent = await ctx.db
     .query('archiveAuditEvents')
     .withIndex('by_org_operation_action_outcome', (q) =>
       q
         .eq('orgId', event.orgId)
         .eq('operationId', operationId)
         .eq('action', event.action)
-        .eq('outcome', 'success'),
+        .eq('outcome', idempotentOutcome),
     )
     .first();
 
   const decision = decideAuditAppend({
-    existingSuccess: existingSuccess ? { action: existingSuccess.action } : null,
+    existingSuccess: existingIdempotentEvent ? { action: existingIdempotentEvent.action } : null,
     incoming: { action: event.action, outcome: event.outcome },
   });
-  if (decision === 'replay' && existingSuccess) {
-    return { eventId: existingSuccess._id, created: false };
+  if (existingIdempotentEvent && (decision === 'replay' || event.action === 'integrity_failure')) {
+    return { eventId: existingIdempotentEvent._id, created: false };
   }
 
   const eventId = await ctx.db.insert('archiveAuditEvents', {

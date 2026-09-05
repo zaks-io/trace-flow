@@ -380,6 +380,19 @@ export const upsertSessionIntegrity = internalMutation({
     const existing = pickOldestDocument(existingRows);
 
     if (existing) {
+      if (
+        existing.errorClass === args.errorClass &&
+        existing.repairOutcome === args.repairOutcome
+      ) {
+        return {
+          contributionId: existing.contributionId,
+          source: existing.source,
+          sourceSessionId: existing.sourceSessionId,
+          errorClass: existing.errorClass,
+          repairOutcome: existing.repairOutcome,
+          updatedAt: existing.updatedAt,
+        };
+      }
       await ctx.db.patch(existing._id, {
         errorClass: args.errorClass,
         repairOutcome: args.repairOutcome,

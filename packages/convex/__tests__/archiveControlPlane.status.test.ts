@@ -350,6 +350,14 @@ describe('archive control plane status and lifecycle', () => {
     expect(memberRow.contributionId).toBe(memberEnroll.contributionId);
     expect(ownerRow.contributionId).not.toBe(memberRow.contributionId);
 
+    const ownerDuplicate = await world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
+      collectorCredentialId: world.ownerCred,
+      source: 'claude',
+      sourceSessionId: 'shared-session',
+      errorClass: 'owner_gap',
+    });
+    expect(ownerDuplicate).toEqual(ownerRow);
+
     const ownerReplay = await world.t.mutation(internal.archiveInternal.upsertSessionIntegrity, {
       collectorCredentialId: world.ownerCred,
       source: 'claude',
